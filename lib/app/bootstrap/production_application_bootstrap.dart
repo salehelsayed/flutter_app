@@ -990,6 +990,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 required expectedReactionAction,
                 required expectedReactionTombstone,
                 required completedAt,
+                outcome,
               }) => dbCompleteDirectNotificationDisplayOutboxEntryIfExact(
                 db,
                 eventId: eventId,
@@ -1003,6 +1004,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 expectedReactionAction: expectedReactionAction,
                 expectedReactionTombstone: expectedReactionTombstone,
                 completedAt: completedAt,
+                outcome: outcome,
               ),
           dbRetireIfExact:
               ({
@@ -3495,7 +3497,36 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 required expectedReactionId,
                 required expectedReactionAction,
                 required expectedReactionTombstone,
+                required completedAt,
+                outcome,
               }) => dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
+                db,
+                eventId: eventId,
+                expectedRevision: expectedRevision,
+                expectedEventKind: expectedEventKind,
+                expectedGroupId: expectedGroupId,
+                expectedMessageId: expectedMessageId,
+                expectedActorPeerId: expectedActorPeerId,
+                expectedEventTimestamp: expectedEventTimestamp,
+                expectedReactionId: expectedReactionId,
+                expectedReactionAction: expectedReactionAction,
+                expectedReactionTombstone: expectedReactionTombstone,
+                completedAt: completedAt,
+                outcome: outcome,
+              ),
+          dbRetireIfExact:
+              ({
+                required eventId,
+                required expectedRevision,
+                required expectedEventKind,
+                required expectedGroupId,
+                required expectedMessageId,
+                required expectedActorPeerId,
+                required expectedEventTimestamp,
+                required expectedReactionId,
+                required expectedReactionAction,
+                required expectedReactionTombstone,
+              }) => dbRetireGroupNotificationDisplayOutboxEntryIfExact(
                 db,
                 eventId: eventId,
                 expectedRevision: expectedRevision,
@@ -5087,6 +5118,24 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             null;
       },
     );
+    Future<String?> resolveCompletedOutcomePhysicalPeerId() async {
+      try {
+        final identity = await repository.loadIdentity();
+        if (identity == null) return null;
+
+        final authority = await linkedInstallationAuthority.load(
+          expectedAccountPeerId: identity.peerId,
+        );
+        return selectNotificationCompletedOutcomePhysicalPeerId(
+          accountPeerId: identity.peerId,
+          accountPublicKey: identity.publicKey,
+          authority: authority,
+        );
+      } catch (_) {
+        return null;
+      }
+    }
+
     Future<int> cleanupDirectMediaBlobCustodyLocally() async {
       final result = await directMediaBlobCustodyDrain.runLocalCleanupBounded();
       emitFlowEvent(
@@ -6103,6 +6152,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       reactionTerminal: directNotificationReactionTerminalRepository,
       coordinator: directNotificationPresentationCoordinator,
       canonicalReconciler: directCanonicalReconciler,
+      resolveCompletedOutcomePhysicalPeerId:
+          resolveCompletedOutcomePhysicalPeerId,
+      completedOutcomeProducerEnabled: false,
       enqueueReconciliation: (peerId) =>
           dbEnqueueDirectNotificationReconciliationOutbox(db, peerId: peerId),
       projectDisplay: (entry) async {
@@ -6182,9 +6234,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             if (target == null) {
               throw const DirectNotificationDisplayStateUnavailableException();
             }
-            if (target.contactPeerId != entry.peerId ||
-                target.isIncoming ||
-                target.isDeleted ||
+            if (!directReactionTargetAllowsNotificationDisplay(
+                  target: target,
+                  expectedContactPeerId: entry.peerId,
+                ) ||
                 reaction == null ||
                 reaction.isRemoved ||
                 reaction.id != entry.reactionId ||
@@ -6596,6 +6649,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       pendingMembershipMessageRepo: groupPendingMembershipMessageRepository,
       pendingReactionRepo: groupPendingReactionRepository,
       notificationDisplayOutbox: groupNotificationDisplayOutboxRepository,
+      resolveCompletedOutcomePhysicalPeerId:
+          resolveCompletedOutcomePhysicalPeerId,
+      completedOutcomeProducerEnabled: false,
       notificationReconciliationOutbox:
           groupNotificationReconciliationOutboxRepository,
       loadLatestUnreadNotificationMessage: (groupId) async {

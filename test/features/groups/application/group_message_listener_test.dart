@@ -1000,6 +1000,17 @@ final class _HistoryRepairDisplayOutboxSpy
 
   @override
   Future<bool> completeIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    Object? outcome,
+  }) async {
+    final current = entries[expected.eventId];
+    if (current == null || current.revision != expected.revision) return false;
+    entries.remove(expected.eventId);
+    return true;
+  }
+
+  @override
+  Future<bool> retireIfExact(
     GroupNotificationDisplayOutboxEntry expected,
   ) async {
     final current = entries[expected.eventId];

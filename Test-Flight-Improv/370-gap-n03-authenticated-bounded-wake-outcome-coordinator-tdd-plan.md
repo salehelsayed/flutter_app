@@ -1,9 +1,9 @@
 # 370 - GAP-N03 Authenticated Bounded Wake Outcome Coordinator
 
-Status: **PREREQUISITE_BLOCKED / CONTRACT_READY / INDEPENDENTLY REVIEWED / N03 SLICE 2 OF 2 / DEFAULT-OFF / NOT RELEASE-ELIGIBLE**
+Status: **EXECUTION_READY / PREREQUISITES_VALIDATED / CONTRACT READY / INDEPENDENTLY REVIEWED / N03 SLICE 2 OF 2 / DEFAULT-OFF / NOT RELEASE-ELIGIBLE**
 Type: Modification
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` §5.1, `WakeOutcomeAck`, race rules, A-13/A-24/A-26, and AC-04/AC-05; GAP-N03 / WP-03 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`
-Classification: prerequisite-blocked relay/protocol adopter and last N03-owned mechanism slice
+Classification: execution-ready relay/protocol adopter and last N03-owned mechanism slice
 Closure tier: deterministic Go/Dart host plus an independent-process Redis-protocol handoff fixture; no phone, S2, or provider campaign
 
 ## Planning Progress
@@ -13,6 +13,7 @@ Closure tier: deterministic Go/Dart host plus an independent-process Redis-proto
 | 2026-08-15 | Evidence Collector | Plan-368 receipt; four relay adapters; direct/protected/group stores and ACKs; Redis backends; inbox stream auth; Go node/bridge fanout; Dart bridge and Plan-369 contract | All producers converge at one Plan-368 fixed-wake gateway. Delivery ACK deletes direct inbox rows, so a wake obligation cannot live on an inbox row. | Reuse one Redis authority and one gateway; add no payload queue. |
 | 2026-08-15 | Planner using `$tdd-plan` | Graphify TDD context, capability defaults, route privacy, provider result handling, process-test and gate registration | A fixed 500 ms delay, one record family/due index/coordinator, one action, and one strict all-relay drain cover the causal boundary. | Wait for Plan 369's checksum-valid receipt, then author TC-370-01 RED. |
 | 2026-08-15 | Independent reviewers using `$tdd-review` | Provider crash boundary, outcome-before-store order, route/capability races, mixed relays, restart ownership, drain composition, test discovery | Initial exact-once, absent-ACK, stored-route, any-success fanout, and real-Redis assumptions were unsound. | Replace them in this plan; do not add Plan 371. |
+| 2026-08-15 | Prerequisite validator | Plan-369 receipt/checksum and machine identity fields; Plan-368 receipt/checksum | Plan 369's sibling checksum, exact completion marker, base HEAD, frozen tested tree, dirty snapshot, and Graphify fingerprint validate; Plan 368 remains checksum-valid. | TC-370-00 passes; begin TC-370-01 semantic RED against the frozen Plan-369 API. |
 
 ## Problem And Evidence
 
@@ -59,25 +60,27 @@ Primary production/test/gate files:
 
 ## Dependency Contract
 
-Plan 370 has two causal prerequisites:
+Plan 370's two causal prerequisites are now checksum-valid:
 
-1. Plan 368's checksum-valid N02 fixed opaque-wake gateway; and
-2. Plan 369's checksum-valid canonical local completed-outcome outbox.
+1. Plan 368's N02 fixed opaque-wake gateway, receipt SHA-256 `0d6747b448a97103b750eaa275a37ded1cceeff096582b0fb05b15d1357ca5f1`; and
+2. Plan 369's canonical local completed-outcome foundation, receipt SHA-256 `8d4229405b1b39ac26dd2304fa77455322be8b25c1b1f573a4903f0044d4873c`.
 
-Plan 369 is execution-blocked until it produces
-`Test-Flight-Improv/evidence/369/README.md` and sibling checksum with:
+The verified Plan-369 receipt at
+`Test-Flight-Improv/evidence/369/README.md` records:
 
 ```text
 N03_DURABLE_LOCAL_OUTCOME_FOUNDATION_CODE_COMPLETE
-Base HEAD: <40 lowercase hex>
-Frozen tested tree: <40 lowercase hex>
-Dirty snapshot SHA-256: <64 lowercase hex>
-Graphify fingerprint: <16 lowercase hex>
+Base HEAD: 8d86501e46f1a06e724daf8009cd3bf0f807578c
+Frozen tested tree: 61e1b1935a022e7ad0f54d207549903a728e9b86
+Dirty snapshot SHA-256: ff0c29a6e3ea5ed013aeb147b589c34de74b9131fce0d700e8c1f4d4b360f96b
+Graphify fingerprint: ec9a45bfd76c0f40
 ```
 
-The receipt must bind the v116 migration, atomic direct/group completion,
-correlation vectors, mutations, curated/core gates, analyzer, and hygiene.
-Plan 369 has no phone gate.
+Its sibling checksum binds the v116 migration, atomic direct/group completion,
+physical/event correlation and identity qualification, account-transfer
+exclusion, mutations, preservation/curated/account/core gates, analyzer,
+format/diff hygiene, and Graphify refresh. Plan 369 correctly had no phone gate.
+The executable checksum/marker/shape preflight remains below and is TC-370-00.
 
 ```bash
 (
@@ -609,12 +612,13 @@ and one strict all-participant drain—without Plan 371.
 
 ## Arbiter Decision
 
-**PASS AS A PREREQUISITE-BLOCKED CONTRACT.** Do not execute until Plan 369's
-checksum-bound handoff exists. Once unblocked, the plan is coherent, causally
-testable, and the minimum safe second/last N03-owned slice.
+**PASS FOR EXECUTION; PREREQUISITES VALIDATED.** Plan 369's checksum-bound
+handoff exists and TC-370-00 validates it together with Plan 368. The reviewed
+scope remains the coherent, causally testable minimum second/last N03-owned
+slice.
 
 ## Execution Progress
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | prerequisite blocked | - | - | Plan 368 validated; Plan 369 not executed | wait for checksum-valid Plan-369 receipt | TC-370-00 preflight |
+| 2026-08-15 | TC-370-00 prerequisite | `evidence/369/README.md`, `README.md.sha256`; `evidence/368/README.md`, `README.md.sha256` | Both sibling checksum checks pass; both exact markers pass; Plan-369 base/tree/dirty/Graphify field shapes pass | Plan-369 receipt SHA-256 `8d4229405b1b39ac26dd2304fa77455322be8b25c1b1f573a4903f0044d4873c`; base `8d86501e46f1a06e724daf8009cd3bf0f807578c`; frozen tree `61e1b1935a022e7ad0f54d207549903a728e9b86`; dirty snapshot `ff0c29a6e3ea5ed013aeb147b589c34de74b9131fce0d700e8c1f4d4b360f96b`; Graphify `ec9a45bfd76c0f40` | **PASS; execution unblocked. No Plan-370 RED or implementation yet.** | TC-370-01 semantic RED |

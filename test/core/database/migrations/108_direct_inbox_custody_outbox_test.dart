@@ -70,8 +70,8 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 115);
-      expect(await _userVersion(upgraded), 115);
+      expect(currentIdentityDatabaseVersion, 116);
+      expect(await _userVersion(upgraded), 116);
       expect(await upgraded.query('messages'), hasLength(1));
       expect(
         await upgraded.query('direct_inbox_custody_outbox'),
@@ -142,7 +142,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(upgraded), 115);
+      expect(await _userVersion(upgraded), 116);
       await _expectExactSchema(upgraded);
       expect(
         await upgraded.query(
@@ -225,10 +225,11 @@ void main() {
         // 361: DB v113 appended another entry, shifting it to `length - 7`.
         // 362: DB v114 appended another entry, shifting it to `length - 8`.
         // 365: DB v115 appended another entry, shifting it to `length - 9`.
+        // 369: DB v116 appended another entry, shifting it to `length - 10`.
         // The assertion itself is unchanged; only its position moved.
         classified(
           'test/core/database/migrations/104_group_exit_diagnostics_test.dart',
-          'expect(registry[registry.length - 9].version, $historicalVersion);',
+          'expect(registry[registry.length - 10].version, $historicalVersion);',
         ): 1,
         classified(
           'test/core/database/migrations/106_group_notification_display_outbox_test.dart',

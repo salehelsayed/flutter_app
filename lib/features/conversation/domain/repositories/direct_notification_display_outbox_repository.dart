@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+
 import '../models/direct_notification_display_outbox_entry.dart';
 
 abstract class DirectNotificationDisplayOutboxRepository {
@@ -31,7 +33,10 @@ abstract class DirectNotificationDisplayOutboxRepository {
     required DateTime nextAttemptAt,
   });
 
-  Future<bool> completeIfExact(DirectNotificationDisplayOutboxEntry expected);
+  Future<bool> completeIfExact(
+    DirectNotificationDisplayOutboxEntry expected, {
+    NotificationCompletedOutcomeCandidate? outcome,
+  });
 
   Future<bool> retireIfExact(DirectNotificationDisplayOutboxEntry expected);
 

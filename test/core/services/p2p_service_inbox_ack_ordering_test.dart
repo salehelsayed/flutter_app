@@ -15,7 +15,6 @@ import 'package:flutter_app/core/database/helpers/protected_group_content_db_hel
 import 'package:flutter_app/core/database/helpers/protected_group_reaction_target_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
-import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
@@ -1588,10 +1587,33 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
       expectedReactionId: reactionStateId,
       expectedReactionAction: 'add',
       expectedReactionTombstone: false,
+      completedAt: '2026-08-13T10:30:00.000000Z',
+    ),
+    isFalse,
+    reason:
+        'stale A cannot overwrite terminal authority after canonical state advanced to B',
+  );
+  expect(
+    await dbLoadGroupNotificationDisplayOutboxEntry(db, priorTransition),
+    isNotNull,
+    reason: 'a refused zero-row terminal write retains exact display custody',
+  );
+  expect(
+    await dbRetireGroupNotificationDisplayOutboxEntryIfExact(
+      db,
+      eventId: priorTransition,
+      expectedRevision: 1,
+      expectedEventKind: 'reaction',
+      expectedGroupId: group.id,
+      expectedMessageId: reactionTargetId,
+      expectedActorPeerId: sender.peerId,
+      expectedEventTimestamp: priorReactionAt,
+      expectedReactionId: reactionStateId,
+      expectedReactionAction: 'add',
+      expectedReactionTombstone: false,
     ),
     isTrue,
-    reason:
-        'exact A display custody terminalizes even after canonical state advanced to B',
+    reason: 'the stale coordinator path retires exact custody without outcome',
   );
   expect(
     await dbLoadGroupNotificationDisplayOutboxEntry(db, priorTransition),
@@ -1696,8 +1718,9 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
   expect(restoredReaction['removed_at'], isNull);
   expect(
     restoredReaction['notification_display_terminal_event_id'],
-    boundedReactionEventIdentity(priorTransition),
-    reason: 'rollback restores the durable terminal without re-notification',
+    isNull,
+    reason:
+        'history rollback does not synthesize terminal display authority for stale A',
   );
   expect(await db.query('group_notification_display_outbox'), isEmpty);
   final queryPlan = await db.rawQuery(

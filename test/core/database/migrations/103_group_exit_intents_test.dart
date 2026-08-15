@@ -104,16 +104,16 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 115);
-      expect(productionCreateMigrations.last.version, 115);
-      expect(productionUpgradeMigrations.last.version, 115);
+      expect(currentIdentityDatabaseVersion, 116);
+      expect(productionCreateMigrations.last.version, 116);
+      expect(productionUpgradeMigrations.last.version, 116);
       expect(
-        productionCreateMigrations[productionCreateMigrations.length - 4]
+        productionCreateMigrations[productionCreateMigrations.length - 5]
             .version,
         112,
       );
       expect(
-        productionUpgradeMigrations[productionUpgradeMigrations.length - 4]
+        productionUpgradeMigrations[productionUpgradeMigrations.length - 5]
             .version,
         112,
       );
@@ -131,7 +131,7 @@ void main() {
       );
       expect(
         productionUpgradeMigrations.last.name,
-        '115_group_media_blob_custody',
+        '116_notification_completed_outcome_outbox',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

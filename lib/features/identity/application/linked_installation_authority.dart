@@ -231,6 +231,53 @@ class LinkedInstallationAuthoritySnapshot {
       disposition == LinkedInstallationDisposition.failClosed;
 }
 
+/// Selects the exact installation-local peer that owns completed notification
+/// outcomes, or refuses when the persisted identity/authority is inconsistent.
+///
+/// A primary installation owns the logical account peer. A linked secondary
+/// owns its distinct transport peer; it must never namespace outcomes under the
+/// shared logical account. Both selections are derived from their public keys
+/// here so a malformed or partially rewritten identity fails closed even if a
+/// caller constructs an authority snapshot outside [LinkedInstallationAuthority].
+String? selectNotificationCompletedOutcomePhysicalPeerId({
+  required String accountPeerId,
+  required String accountPublicKey,
+  required LinkedInstallationAuthoritySnapshot authority,
+}) {
+  if (accountPeerId.isEmpty ||
+      accountPeerId.trim() != accountPeerId ||
+      accountPublicKey.isEmpty ||
+      accountPublicKey.trim() != accountPublicKey ||
+      !ed25519PublicKeyMatchesPeerId(
+        base64PublicKey: accountPublicKey,
+        claimedPeerId: accountPeerId,
+      )) {
+    return null;
+  }
+
+  if (authority.isOrdinaryPrimary) return accountPeerId;
+  if (!authority.isActiveLinkedSecondary) return null;
+
+  final credential = authority.credential;
+  if (credential == null ||
+      credential.state != LinkedTransportCredentialState.active ||
+      credential.accountPeerId != accountPeerId ||
+      credential.accountPublicKey != accountPublicKey ||
+      credential.transportPeerId == accountPeerId ||
+      credential.transportPublicKey == accountPublicKey ||
+      credential.transportPeerId.isEmpty ||
+      credential.transportPeerId.trim() != credential.transportPeerId ||
+      credential.transportPublicKey.isEmpty ||
+      credential.transportPublicKey.trim() != credential.transportPublicKey ||
+      !ed25519PublicKeyMatchesPeerId(
+        base64PublicKey: credential.transportPublicKey,
+        claimedPeerId: credential.transportPeerId,
+      )) {
+    return null;
+  }
+  return credential.transportPeerId;
+}
+
 /// Outcome of one linked setup step.
 enum LinkedInstallationSetupResult {
   success,
@@ -335,6 +382,10 @@ class LinkedInstallationAuthority {
       claimedPeerId: credential.transportPeerId,
     )) {
       return _failClosed('transport_peer_derivation_mismatch');
+    }
+    if (credential.transportPeerId == credential.accountPeerId ||
+        credential.transportPublicKey == credential.accountPublicKey) {
+      return _failClosed('transport_equals_account_identity');
     }
 
     return LinkedInstallationAuthoritySnapshot(

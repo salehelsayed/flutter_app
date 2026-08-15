@@ -16,6 +16,8 @@ import 'package:flutter_app/core/notifications/group_notification_canonical_reco
 import 'package:flutter_app/core/notifications/group_notification_read_projector.dart';
 import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
@@ -214,6 +216,8 @@ class GroupMessageListener {
   _loadLatestActiveNotificationReaction;
   final GroupNotificationEventAcknowledgedResolver?
   _isGroupNotificationEventAcknowledged;
+  final Future<String?> Function()? _resolveCompletedOutcomePhysicalPeerId;
+  final bool _completedOutcomeProducerEnabled;
   late final GroupNotificationCanonicalReconciler?
   _notificationCanonicalReconciler;
   late final GroupNotificationDisplayRetryCoordinator<
@@ -303,6 +307,8 @@ class GroupMessageListener {
     loadLatestActiveNotificationReaction,
     GroupNotificationEventAcknowledgedResolver?
     isGroupNotificationEventAcknowledged,
+    Future<String?> Function()? resolveCompletedOutcomePhysicalPeerId,
+    bool completedOutcomeProducerEnabled = false,
     BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask,
     EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask,
   }) : _groupRepo = groupRepo,
@@ -345,7 +351,10 @@ class GroupMessageListener {
        _loadLatestActiveNotificationReaction =
            loadLatestActiveNotificationReaction,
        _isGroupNotificationEventAcknowledged =
-           isGroupNotificationEventAcknowledged {
+           isGroupNotificationEventAcknowledged,
+       _resolveCompletedOutcomePhysicalPeerId =
+           resolveCompletedOutcomePhysicalPeerId,
+       _completedOutcomeProducerEnabled = completedOutcomeProducerEnabled {
     final readSource = msgRepo is GroupConversationReadEventSource
         ? msgRepo as GroupConversationReadEventSource
         : null;
@@ -422,9 +431,17 @@ class GroupMessageListener {
             entryIdentity: (entry) => entry.eventId,
             loadEarliestNextAttemptAt: displayOutbox.loadEarliestNextAttemptAt,
             project: _projectNotificationDisplayEntry,
-            complete: (entry) async {
-              final completed = await displayOutbox.completeIfExact(entry);
+            completeWithOutcome: (entry, outcome) async {
+              final completed = await displayOutbox.completeIfExact(
+                entry,
+                outcome: outcome,
+              );
               if (!completed) {
+                throw const GroupNotificationDisplayRetryableException();
+              }
+            },
+            retire: (entry) async {
+              if (!await displayOutbox.retireIfExact(entry)) {
                 throw const GroupNotificationDisplayRetryableException();
               }
             },
@@ -460,12 +477,20 @@ class GroupMessageListener {
                 reconciliationOutbox.loadEarliestNextAttemptAt,
             project: (entry) async {
               await canonicalReconciler.reconcile(entry.groupId);
-              return GroupNotificationDisplayRetryDisposition.completed;
+              return const GroupNotificationDisplayProjectionResult.completed();
             },
-            complete: (entry) async {
+            completeWithOutcome: (entry, outcome) async {
+              if (outcome != null) {
+                throw StateError(
+                  'group reconciliation cannot carry a display outcome',
+                );
+              }
               if (!await reconciliationOutbox.completeIfExact(entry)) {
                 throw const GroupNotificationDisplayRetryableException();
               }
+            },
+            retire: (_) async {
+              throw StateError('group reconciliation cannot retire');
             },
             recordFailure: (entry, _) async {
               await reconciliationOutbox.recordFailureIfExact(
@@ -1156,12 +1181,12 @@ class GroupMessageListener {
     );
   }
 
-  Future<GroupNotificationDisplayRetryDisposition>
+  Future<GroupNotificationDisplayProjectionResult>
   _projectNotificationDisplayEntry(GroupNotificationDisplayOutboxEntry entry) {
     final coordinator = _notificationPresentationCoordinator;
     if (coordinator == null) {
-      return Future<GroupNotificationDisplayRetryDisposition>.value(
-        GroupNotificationDisplayRetryDisposition.retryLater,
+      return Future<GroupNotificationDisplayProjectionResult>.value(
+        const GroupNotificationDisplayProjectionResult.retryLater(),
       );
     }
     return coordinator.runForGroup(
@@ -1170,7 +1195,7 @@ class GroupMessageListener {
     );
   }
 
-  Future<GroupNotificationDisplayRetryDisposition>
+  Future<GroupNotificationDisplayProjectionResult>
   _projectNotificationDisplayEntryInsideKey(
     GroupNotificationDisplayOutboxEntry entry,
   ) async {
@@ -1179,11 +1204,11 @@ class GroupMessageListener {
         _projectMessageNotificationDisplay(entry),
       GroupNotificationDisplayOutboxKind.reaction =>
         _projectReactionNotificationDisplay(entry),
-      _ => GroupNotificationDisplayRetryDisposition.completed,
+      _ => const GroupNotificationDisplayProjectionResult.retired(),
     };
   }
 
-  Future<GroupNotificationDisplayRetryDisposition>
+  Future<GroupNotificationDisplayProjectionResult>
   _projectMessageNotificationDisplay(
     GroupNotificationDisplayOutboxEntry entry,
   ) async {
@@ -1193,19 +1218,21 @@ class GroupMessageListener {
         entry.messageId,
       );
       if (deletionGroup == entry.groupId) {
-        return GroupNotificationDisplayRetryDisposition.completed;
+        return const GroupNotificationDisplayProjectionResult.retired();
       }
       throw const GroupNotificationDisplayStateUnavailableException();
     }
     if (message.groupId != entry.groupId ||
         message.senderPeerId != entry.actorPeerId ||
         !_sameNotificationEventTime(message.timestamp, entry.eventTimestamp) ||
-        !message.isIncoming ||
-        message.readAt != null ||
+        !message.isIncoming) {
+      return const GroupNotificationDisplayProjectionResult.retired();
+    }
+    if (message.readAt != null ||
         !_privateMediaAvailability.allowsMediaDerivatives(
           message.privateMediaPolicy,
         )) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.completed();
     }
     final selfPeerId = await _resolveSelfPeerId();
     if (selfPeerId == null || selfPeerId.isEmpty) {
@@ -1216,17 +1243,17 @@ class GroupMessageListener {
       selfPeerId,
     );
     if (!eligibility.shouldDisplay) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.completed();
     }
     final service = _notificationService;
     final tracker = _groupConversationTracker;
     final lifecycle = _getAppLifecycleState;
     if (service == null || tracker == null || lifecycle == null) {
-      return GroupNotificationDisplayRetryDisposition.retryLater;
+      return const GroupNotificationDisplayProjectionResult.retryLater();
     }
     final group = await _groupRepo.getGroup(entry.groupId);
     if (group == null) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.completed();
     }
     final isPrivate = message.privateMediaPolicy.isPrivate;
     final attachments = isPrivate || _mediaAttachmentRepo == null
@@ -1240,7 +1267,7 @@ class GroupMessageListener {
       contentKind: ConversationNotificationContentKind.message,
       eventIdentity: message.id,
     )) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.completed();
     }
     final result = await maybeShowNotification(
       notificationService: service,
@@ -1274,17 +1301,35 @@ class GroupMessageListener {
               .markAnnouncement(payload: payload, messageId: messageId),
       backgroundDuplicateGuardDelay: Duration.zero,
     );
-    return _retryDispositionForPresentation(result);
+    return _projectionForPresentation(
+      result: result,
+      producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+      eventKey:
+          message.logicalDeliveryId == null &&
+              message.id.startsWith(
+                kUnauthenticatedIncomingGroupMessageIdPrefix,
+              )
+          ? null
+          : trySelectNotificationCompletedOutcomeEventKey(
+              producerKind:
+                  NotificationCompletedOutcomeProducerKind.groupMessage,
+              authenticatedEnvelope: <String, Object?>{
+                'messageId': message.id,
+                if (message.logicalDeliveryId != null)
+                  'logicalDeliveryId': message.logicalDeliveryId,
+              },
+            ),
+    );
   }
 
-  Future<GroupNotificationDisplayRetryDisposition>
+  Future<GroupNotificationDisplayProjectionResult>
   _projectReactionNotificationDisplay(
     GroupNotificationDisplayOutboxEntry entry,
   ) async {
     if (entry.reactionAction != GroupReactionPayload.actionAdd ||
         entry.reactionTombstone != false ||
         entry.reactionId == null) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.retired();
     }
     final target = await _msgRepo.getMessage(entry.messageId);
     if (target == null) {
@@ -1292,24 +1337,26 @@ class GroupMessageListener {
         entry.messageId,
       );
       if (deletionGroup == entry.groupId) {
-        return GroupNotificationDisplayRetryDisposition.completed;
+        return const GroupNotificationDisplayProjectionResult.retired();
       }
       throw const GroupNotificationDisplayStateUnavailableException();
     }
-    if (target.groupId != entry.groupId ||
-        !target.privateMediaPolicy.isOrdinary) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+    if (target.groupId != entry.groupId) {
+      return const GroupNotificationDisplayProjectionResult.retired();
+    }
+    if (!target.privateMediaPolicy.isOrdinary) {
+      return const GroupNotificationDisplayProjectionResult.completed();
     }
     final selfPeerId = await _resolveSelfPeerId();
     if (selfPeerId == null || selfPeerId.isEmpty) {
       throw const GroupNotificationDisplayStateUnavailableException();
     }
     if (target.senderPeerId != selfPeerId || target.isIncoming) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.retired();
     }
     final reactionRepo = _reactionRepo;
     if (reactionRepo == null) {
-      return GroupNotificationDisplayRetryDisposition.retryLater;
+      return const GroupNotificationDisplayProjectionResult.retryLater();
     }
     final reaction = await reactionRepo.getReactionForSenderIncludingRemoved(
       messageId: entry.messageId,
@@ -1319,27 +1366,27 @@ class GroupMessageListener {
         reaction.id != entry.reactionId ||
         reaction.isRemoved ||
         reaction.timestamp != entry.eventTimestamp) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.retired();
     }
     if (reaction.notificationAcknowledgedAt != null) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.completed();
     }
     final eligibility = await _resolveGroupNotificationDisplayEligibility(
       entry.groupId,
       selfPeerId,
     );
     if (!eligibility.shouldDisplay) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.completed();
     }
     final service = _notificationService;
     final tracker = _groupConversationTracker;
     final lifecycle = _getAppLifecycleState;
     if (service == null || tracker == null || lifecycle == null) {
-      return GroupNotificationDisplayRetryDisposition.retryLater;
+      return const GroupNotificationDisplayProjectionResult.retryLater();
     }
     final group = await _groupRepo.getGroup(entry.groupId);
     if (group == null) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.completed();
     }
     var actorName = '';
     try {
@@ -1360,7 +1407,7 @@ class GroupMessageListener {
       contentKind: ConversationNotificationContentKind.reaction,
       eventIdentity: boundedReactionEventIdentity(entry.eventId),
     )) {
-      return GroupNotificationDisplayRetryDisposition.completed;
+      return const GroupNotificationDisplayProjectionResult.completed();
     }
     final result = await maybeShowNotification(
       notificationService: service,
@@ -1391,14 +1438,51 @@ class GroupMessageListener {
                 messageId: messageId,
               ),
     );
-    return _retryDispositionForPresentation(result);
+    return _projectionForPresentation(
+      result: result,
+      producerKind: NotificationCompletedOutcomeProducerKind.groupReaction,
+      eventKey: entry.eventId.startsWith('legacy-reaction:')
+          ? null
+          : trySelectNotificationCompletedOutcomeEventKey(
+              producerKind:
+                  NotificationCompletedOutcomeProducerKind.groupReaction,
+              authenticatedEnvelope: <String, Object?>{
+                'notificationTransitionId': entry.eventId,
+              },
+            ),
+    );
   }
 
-  GroupNotificationDisplayRetryDisposition _retryDispositionForPresentation(
-    NotificationPresentationResult result,
-  ) => result == NotificationPresentationResult.contendedRetryable
-      ? GroupNotificationDisplayRetryDisposition.retryLater
-      : GroupNotificationDisplayRetryDisposition.completed;
+  Future<GroupNotificationDisplayProjectionResult> _projectionForPresentation({
+    required NotificationPresentationResult result,
+    required NotificationCompletedOutcomeProducerKind producerKind,
+    required String? eventKey,
+  }) async {
+    if (result == NotificationPresentationResult.contendedRetryable) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
+    }
+    NotificationCompletedOutcomeCandidate? outcome;
+    if (_completedOutcomeProducerEnabled &&
+        result == NotificationPresentationResult.osPosted) {
+      final physicalPeerId = await _resolveCompletedOutcomePhysicalPeerId
+          ?.call();
+      if (physicalPeerId != null &&
+          physicalPeerId.isNotEmpty &&
+          eventKey != null &&
+          eventKey.isNotEmpty) {
+        outcome = NotificationCompletedOutcomeCandidate(
+          physicalPeerId: physicalPeerId,
+          producerKind: producerKind,
+          eventKey: eventKey,
+          outcome: NotificationCompletedOutcomeCategory.osPosted,
+          completedAt: DateTime.now().toUtc(),
+        );
+      }
+    }
+    return GroupNotificationDisplayProjectionResult.completed(
+      outcomeCandidate: outcome,
+    );
+  }
 
   Future<bool> _isNotificationEventAcknowledged({
     required String groupId,
@@ -1761,14 +1845,15 @@ class GroupMessageListener {
   String? _userMessageWorkKey(Map<String, dynamic> data) {
     final rawMessageId = data['messageId'];
     if (rawMessageId is! String) return null;
-    final messageId = rawMessageId.trim();
-    if (messageId.isEmpty) return null;
+    if (rawMessageId.isEmpty || rawMessageId.trim() != rawMessageId) {
+      return null;
+    }
 
     final rawText = data['text'];
     final text = rawText is String ? rawText : '';
     if (text.startsWith('{"__sys":')) return null;
 
-    return messageId;
+    return rawMessageId;
   }
 
   Future<void> _handleQueuedUserMessage(
@@ -2279,7 +2364,7 @@ class GroupMessageListener {
           outcome is IncomingGroupMessageIgnored &&
           outcome.canonicalMessage != null &&
           _notificationDisplayOutbox != null &&
-          wireMessageId?.trim() == outcome.canonicalMessage!.id) {
+          wireMessageId == outcome.canonicalMessage!.id) {
         // Only an authority-exact stable-ID replay may recover custody left
         // not-ready by a crash after canonical persistence. Rejected events
         // carry no canonical authority and can never promote a reused wire ID.
@@ -2294,8 +2379,8 @@ class GroupMessageListener {
         final canonicalMessage = outcome.canonicalMessage;
         final displayOutbox = _notificationDisplayOutbox;
         if (!isHistoryRepair && displayOutbox != null) {
-          final aliasEventId = wireMessageId?.trim().isNotEmpty == true
-              ? wireMessageId!.trim()
+          final aliasEventId = wireMessageId?.isNotEmpty == true
+              ? wireMessageId!
               : canonicalMessage.id;
           await displayOutbox.reconcileMessageAliasReady(
             aliasEventId: aliasEventId,

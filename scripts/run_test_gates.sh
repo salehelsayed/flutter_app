@@ -254,6 +254,9 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/application/direct_notification_display_retry_coordinator_test.dart"
   "test/features/conversation/application/direct_notification_display_outbox_wiring_test.dart"
   "test/features/conversation/application/direct_notification_reconciliation_wiring_test.dart"
+  # 369: typed completed-effect classification is shared with the direct
+  # canonical display owner and must stay pinned in the 1:1 lane.
+  "test/features/push/application/show_notification_use_case_test.dart"
   "test/features/conversation/application/reaction_listener_test.dart"
   "test/core/notifications/direct_notification_read_projector_test.dart"
   "test/core/notifications/direct_group_notification_lane_isolation_test.dart"

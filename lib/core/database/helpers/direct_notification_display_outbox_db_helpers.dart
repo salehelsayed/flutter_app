@@ -2,7 +2,10 @@ import 'dart:math' as math;
 
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../../notifications/notification_completed_outcome.dart';
+import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import 'notification_completed_outcome_outbox_db_helpers.dart';
 
 const String _table = 'direct_notification_display_outbox';
 const int kDirectNotificationDisplayOutboxCapacity = 512;
@@ -216,6 +219,7 @@ Future<bool> dbCompleteDirectNotificationDisplayOutboxEntryIfExact(
   required String? expectedReactionAction,
   required bool? expectedReactionTombstone,
   required String completedAt,
+  NotificationCompletedOutcomeCandidate? outcome,
 }) => dbWriteTransaction(db, (txn) async {
   if (!await _tableExists(txn)) return false;
   final where = StringBuffer(
@@ -320,6 +324,23 @@ Future<bool> dbCompleteDirectNotificationDisplayOutboxEntryIfExact(
         expectedReactionId,
       ],
     );
+  }
+
+  if (outcome != null) {
+    final insertResult =
+        await dbInsertNotificationCompletedOutcomeWithinTransaction(
+          txn,
+          candidate: outcome,
+          now: DateTime.parse(completedAt).toUtc(),
+        );
+    if (insertResult ==
+        NotificationCompletedOutcomeInsertResult.existingDifferent) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'NOTIFICATION_OUTCOME_CATEGORY_REPLAY',
+        details: const <String, Object?>{'reason': 'outcome_category_replay'},
+      );
+    }
   }
 
   final deleted = await txn.delete(

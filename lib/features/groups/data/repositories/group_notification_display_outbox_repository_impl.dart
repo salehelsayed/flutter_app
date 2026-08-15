@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+
 import '../../domain/models/group_message.dart';
 import '../../domain/models/group_notification_display_outbox_entry.dart';
 import '../../domain/repositories/group_notification_display_outbox_repository.dart';
@@ -38,8 +40,23 @@ class GroupNotificationDisplayOutboxRepositoryImpl
     required String? expectedReactionId,
     required String? expectedReactionAction,
     required bool? expectedReactionTombstone,
+    required String completedAt,
+    NotificationCompletedOutcomeCandidate? outcome,
   })
   dbCompleteIfExact;
+  final Future<bool> Function({
+    required String eventId,
+    required int expectedRevision,
+    required String expectedEventKind,
+    required String expectedGroupId,
+    required String expectedMessageId,
+    required String expectedActorPeerId,
+    required String expectedEventTimestamp,
+    required String? expectedReactionId,
+    required String? expectedReactionAction,
+    required bool? expectedReactionTombstone,
+  })
+  dbRetireIfExact;
   final Future<bool> Function({
     required String aliasEventId,
     required String canonicalEventId,
@@ -77,6 +94,7 @@ class GroupNotificationDisplayOutboxRepositoryImpl
     required this.dbLoadEarliestNextAttemptAt,
     required this.dbRecordRetryIfExact,
     required this.dbCompleteIfExact,
+    required this.dbRetireIfExact,
     required this.dbReconcileMessageAliasReady,
     required this.dbDeleteForGroup,
     required this.dbDeleteForMessage,
@@ -150,7 +168,10 @@ class GroupNotificationDisplayOutboxRepositoryImpl
   }
 
   @override
-  Future<bool> completeIfExact(GroupNotificationDisplayOutboxEntry expected) {
+  Future<bool> completeIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    NotificationCompletedOutcomeCandidate? outcome,
+  }) {
     return dbCompleteIfExact(
       eventId: expected.eventId,
       expectedRevision: expected.revision,
@@ -162,8 +183,25 @@ class GroupNotificationDisplayOutboxRepositoryImpl
       expectedReactionId: expected.reactionId,
       expectedReactionAction: expected.reactionAction,
       expectedReactionTombstone: expected.reactionTombstone,
+      completedAt: now().toUtc().toIso8601String(),
+      outcome: outcome,
     );
   }
+
+  @override
+  Future<bool> retireIfExact(GroupNotificationDisplayOutboxEntry expected) =>
+      dbRetireIfExact(
+        eventId: expected.eventId,
+        expectedRevision: expected.revision,
+        expectedEventKind: expected.eventKind,
+        expectedGroupId: expected.groupId,
+        expectedMessageId: expected.messageId,
+        expectedActorPeerId: expected.actorPeerId,
+        expectedEventTimestamp: expected.eventTimestamp,
+        expectedReactionId: expected.reactionId,
+        expectedReactionAction: expected.reactionAction,
+        expectedReactionTombstone: expected.reactionTombstone,
+      );
 
   @override
   Future<bool> reconcileMessageAliasReady({

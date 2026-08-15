@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.d
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/core/database/migrations/108_direct_inbox_custody_outbox.dart';
+import 'package:flutter_app/core/database/migrations/116_notification_completed_outcome_outbox.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_active_importer.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
@@ -452,8 +453,8 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 115);
-        expect(manifest.databaseVersion, 115);
+        expect(currentIdentityDatabaseVersion, 116);
+        expect(manifest.databaseVersion, 116);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -547,8 +548,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 115);
-        expect(await _userVersion(productionStaged), 115);
+        expect(await _userVersion(productionActive), 116);
+        expect(await _userVersion(productionStaged), 116);
         final activeInventory =
             await MigrationDatabaseSchemaInventory.fromDatabase(
               productionActive,
@@ -588,7 +589,7 @@ CREATE TABLE identity (
           removeRow,
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 115);
+        expect(manifest.databaseVersion, 116);
         expect(manifest.schemaInventory.schemaHash, stagedInventory.schemaHash);
 
         await MigrationDatabaseActiveImporter(
@@ -673,8 +674,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 115);
-        expect(await _userVersion(productionStaged), 115);
+        expect(await _userVersion(productionActive), 116);
+        expect(await _userVersion(productionStaged), 116);
 
         const pendingMessageId = 'tc345-transfer-pending';
         const pendingAttachmentId = 'tc345-transfer-pending-media';
@@ -789,7 +790,7 @@ CREATE TABLE identity (
           orderBy: 'message_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 115);
+        expect(manifest.databaseVersion, 116);
 
         final result =
             await MigrationDatabaseActiveImporter(
@@ -903,8 +904,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 115);
-        expect(await _userVersion(productionStaged), 115);
+        expect(await _userVersion(productionActive), 116);
+        expect(await _userVersion(productionStaged), 116);
 
         const incarnation = '34734734734734734734734734734734';
         const manifestHash =
@@ -948,7 +949,7 @@ CREATE TABLE identity (
           orderBy: 'attachment_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 115);
+        expect(manifest.databaseVersion, 116);
         expect(
           manifest.schemaInventory.tables['direct_media_blob_custody'],
           isNotEmpty,
@@ -1043,8 +1044,8 @@ CREATE TABLE identity (
         if (productionStaged.isOpen) await productionStaged.close();
       });
 
-      expect(await _userVersion(productionActive), 115);
-      expect(await _userVersion(productionStaged), 115);
+      expect(await _userVersion(productionActive), 116);
+      expect(await _userVersion(productionStaged), 116);
 
       const contactPeerId =
           '12D3KooWP7CwQswqLKZbwvYd9wrEynnL9F2aKVP1X9huNASBTuqj';
@@ -1100,7 +1101,7 @@ CREATE TABLE identity (
       );
 
       final manifest = await _manifestFor(productionStaged);
-      expect(manifest.databaseVersion, 115);
+      expect(manifest.databaseVersion, 116);
       expect(
         manifest.schemaInventory.tables['direct_contact_device_bindings'],
         isNotEmpty,
@@ -1163,8 +1164,88 @@ CREATE TABLE identity (
         ),
       );
     });
+
+    test(
+      'TC-369-01 active import never transfers completed outcomes',
+      () async {
+        await activeDb.close();
+        await stagedDb.close();
+        activeDb = await openDatabase(
+          p.join(tempDir.path, 'tc369-active.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        stagedDb = await openDatabase(
+          p.join(tempDir.path, 'tc369-staged.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        await activeDb.insert(
+          kNotificationCompletedOutcomeOutboxTable,
+          _completedOutcomeRow('a'),
+        );
+        await stagedDb.insert(
+          kNotificationCompletedOutcomeOutboxTable,
+          _completedOutcomeRow('b'),
+        );
+        final manifest = await _manifestFor(stagedDb);
+        var expectedPortableRows = 0;
+        for (final tableName
+            in manifest.schemaInventory.transferableTableNames) {
+          expectedPortableRows +=
+              (await stagedDb.rawQuery(
+                    'SELECT COUNT(*) FROM "$tableName"',
+                  )).single.values.single
+                  as int;
+        }
+
+        final result =
+            await MigrationDatabaseActiveImporter(
+              activeDatabase: activeDb,
+            ).importVerifiedStagedDatabase(
+              MigrationDatabaseImportStagingResult(
+                database: stagedDb,
+                manifest: manifest,
+                stagedDatabasePath: p.join(tempDir.path, 'tc369-staged.db'),
+              ),
+            );
+
+        expect(
+          await stagedDb.query(kNotificationCompletedOutcomeOutboxTable),
+          hasLength(1),
+          reason: 'the verified source remains immutable during active import',
+        );
+        expect(
+          await activeDb.query(kNotificationCompletedOutcomeOutboxTable),
+          isEmpty,
+          reason: 'stale destination and transferred sibling authority clear',
+        );
+        expect(
+          result.importedTables,
+          isNot(contains(kNotificationCompletedOutcomeOutboxTable)),
+        );
+        expect(result.importedRows, expectedPortableRows);
+      },
+    );
   });
 }
+
+Map<String, Object?> _completedOutcomeRow(String seed) => <String, Object?>{
+  'wake_correlation': seed * 64,
+  'outcome': 'os_posted',
+  'revision': 1,
+  'retry_count': 0,
+  'last_error_code': null,
+  'last_attempt_at': null,
+  'next_attempt_at': null,
+  'completed_at': '2026-08-15T12:00:00.000Z',
+  'created_at': '2026-08-15T12:00:00.000Z',
+  'expires_at': '2026-08-22T12:00:00.000Z',
+};
 
 Map<String, Object?> _diagnosticRow({
   required String groupRef,

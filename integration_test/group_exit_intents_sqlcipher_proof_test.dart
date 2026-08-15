@@ -141,7 +141,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(currentIdentityDatabaseVersion, 113);
+        expect(currentIdentityDatabaseVersion, 116);
         expect(await _userVersion(db), 103);
         expect(await _cipherVersion(db), isNotEmpty);
         final entry = productionUpgradeMigrations.singleWhere(
@@ -240,7 +240,7 @@ void main() {
 
         // Reopen through the current production registry after both refusals:
         // the historical v103 authority remains exact while this sentinel
-        // deliberately advances its current-schema pin through v111.
+        // deliberately advances its current-schema pin through v116.
         db = await sqlcipher.openDatabase(
           upgradePath,
           password: password,
@@ -250,7 +250,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 112);
+        expect(await _userVersion(db), 116);
         expect(await _cipherVersion(db), isNotEmpty);
         expect((await db.query('group_exit_intents')).single, queued);
         expect(await db.query('groups'), legacyGroups);

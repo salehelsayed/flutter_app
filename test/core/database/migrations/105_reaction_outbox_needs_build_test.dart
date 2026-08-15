@@ -73,10 +73,10 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 115);
+      expect(currentIdentityDatabaseVersion, 116);
       expect(
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
-        115,
+        116,
       );
 
       // Rows preserved verbatim, rowid included (tiebreak readers).

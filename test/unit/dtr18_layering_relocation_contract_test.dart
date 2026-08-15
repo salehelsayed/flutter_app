@@ -239,7 +239,10 @@ const _productionBootstrapNormalizedSha256 =
     // Plan 366 adds the plural direct-private media generation and Barrier-B
     // delegates plus fresh-share authorization pass-throughs on the same
     // repository constructions; composition remains app-owned.
-    'f0a72c2bbe53cf3128a7012557794b8dbd38d9bc9104057f49747681403725c3';
+    // Plan 369 adds validated installation-identity resolution and default-off
+    // completed-outcome producer seams at that same app-owned composition
+    // boundary; it does not move an adapter or introduce a core shim.
+    '3137c869688e2c6027664da690a3ff6f228d08a782727fc406c5ab10356754f1';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

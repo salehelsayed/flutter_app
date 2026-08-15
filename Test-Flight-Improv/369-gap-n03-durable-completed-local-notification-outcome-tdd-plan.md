@@ -1,6 +1,6 @@
 # 369 - GAP-N03 Durable Completed Local Notification Outcome Foundation
 
-Status: **EXECUTION_READY / INDEPENDENTLY REVIEWED / N03 SLICE 1 OF 2 / DEFAULT-OFF / NOT N03-COMPLETE / NOT RELEASE-ELIGIBLE**
+Status: **POST-EXECUTION AUDIT CLOSED / N03 DURABLE LOCAL OUTCOME FOUNDATION CODE COMPLETE / N03 SLICE 1 OF 2 / HOST VERIFIED / DEFAULT-OFF / NOT N03-COMPLETE / NOT RELEASE-ELIGIBLE**
 Type: Modification
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` §§5.1, 6, 8, and 9; GAP-N03 and WP-03 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`
 Classification: implementation-ready local persistence and projection boundary; prerequisite for the relay outcome protocol
@@ -439,7 +439,7 @@ plan369_gate_dir="$(mktemp -d /tmp/plan369-gates.XXXXXX)"
     test/features/groups/integration/group_multi_device_convergence_test.dart \
     --name '^(typed message claim uses exact NSE filename and token-matched commit|honors claim and tone files written by the Swift NSE|typed group card disables Android auto-cancel and persists an exact payload generation|same ids remain notification kind and peer scoped|same-user multi-device convergence mute, unread, and local notifications stay device-local across joined sibling devices)$' \
     --file-reporter "json:$plan369_gate_dir/preservation.json"
-  test "$(jq -s '[.[] | select(.type == "testStart")] | length' "$plan369_gate_dir/preservation.json")" -eq 5
+  test "$(jq -s '[.[] | select(.type == "testStart" and .test.url != null)] | length' "$plan369_gate_dir/preservation.json")" -eq 5
   test "$(jq -s '[.[] | select(.type == "testDone" and .skipped == true)] | length' "$plan369_gate_dir/preservation.json")" -eq 0
 )
 
@@ -496,21 +496,28 @@ user's unrelated dirty files.
   per-screen activation callbacks, or capability activation blocks completion
   and requires re-review.
 
-- [ ] Plan-368 checksum/marker/tree preflight passes.
-- [ ] Every TC-369 behavior has a named causal test, and the four listed
+- [x] Plan-368 checksum/marker/tree preflight passes.
+- [x] Every TC-369 behavior has a named causal test, and the four listed
       representative mutations re-red their owners.
-- [ ] v116 create/upgrade/reopen/downgrade and full migration-chain host proofs pass.
-- [ ] Only canonical v106/v107 display custody can append an outcome.
-- [ ] Replay/dedup/ambiguous/compatibility/delivery-ACK counterexamples append none.
-- [ ] Account migration/export/import never transfers installation-bound v116
+- [x] v116 create/upgrade/reopen/downgrade and full migration-chain host proofs pass.
+- [x] Only canonical v106/v107 display custody can append an outcome.
+- [x] Replay/dedup/ambiguous/compatibility/delivery-ACK counterexamples append none.
+- [x] Account migration/export/import never transfers installation-bound v116
       rows, and global version/schema sentinels are updated deliberately.
-- [ ] Same-chat/read remain explicit no-outcome until N04/N05/N11; no lifecycle,
+- [x] Same-chat/read remain explicit no-outcome until N04/N05/N11; no lifecycle,
       activation, viewport, or cross-device clearing scope leaked into this plan.
-- [ ] Focused, preservation, both curated lanes, exact account-migration tests,
+- [x] Focused, preservation, both curated lanes, exact account-migration tests,
       one justified dart-only `core-host-all`, analyzer/format/diff, and graph
       refresh pass; no feature/full-host sweep runs.
-- [ ] A checksum-bound frozen-tree receipt records retained logs or explicitly
+- [x] A checksum-bound frozen-tree receipt records retained logs or explicitly
       labels any non-retained attestation.
+
+Done boundary: the checksum-valid
+[`evidence/369` receipt](evidence/369/README.md) binds the final tested tree and
+records `N03_DURABLE_LOCAL_OUTCOME_FOUNDATION_CODE_COMPLETE`. This is the
+default-off local foundation only; Plan 370 still owns the authenticated relay
+outcome/coordinator/drain, and full N03/live/PRD/release acceptance remains
+open.
 
 ## Handoff
 
@@ -562,4 +569,10 @@ successor.
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | Plan-368 prerequisite validated during planning | awaiting execution | TC-369-01 RED |
+| 2026-08-15 | TC-369-00 prerequisite | `evidence/368/README.md`, sibling checksum, frozen tree | Checksum, exact marker, pinned receipt SHA, and tree object PASS | Plan-368 frozen tree `924e8f64ebc7c9dca2de83890ecad144fefbdaf2` | **PASS** | TC-369-01 RED |
+| 2026-08-15 | Semantic RED | v116 migration owner | Selected TC-369-01 failed before the table/migration existed | One exact owner selected; raw output not retained | **Expected RED** | Implement bounded local authority |
+| 2026-08-15 | Foundation GREEN | v116 model/correlation/repository; direct/group projection/completion; identity; account transfer | Focused exactly 9/9 PASS; preservation 5/5; account 3/3 | Typed exact authority, rollback, no-outcome counterexamples, and installation locality proven | **PASS** | Mutations and family gates |
+| 2026-08-15 | Mutation audit | direct/group completion, presentation result, correlation | Four isolated mutations each re-red TC-369-02/03/04 and were reverted | Raw mutation logs explicitly non-retained | **PASS** | Curated lanes |
+| 2026-08-15 | Curated/family gates | registered 1:1/groups/core surfaces | `1to1` +3261 ~10 PASS; `groups` +4201 PASS; dart-only core 412 paths / +3324 PASS / 0 skip/fail | Final authoritative logs hashed in receipt | **PASS** | Hygiene |
+| 2026-08-15 | Hygiene and integration fanout | 68 changed Dart files; SQLCipher sentinels; runtime-root/DTR records | Format canonical; full analyzer `No issues found!`; diff clean; stale current-schema assertions repinned to v116 | No phone, feature/full-host, or full host-all gate required | **PASS** | Graph/freeze |
+| 2026-08-15 | Graph/freeze/receipt | Graphify artifacts; alternate Git index; `evidence/369` | Current/anchored `ec9a45bfd76c0f40`; frozen tree `61e1b1935a022e7ad0f54d207549903a728e9b86`; receipt checksum PASS | Receipt SHA-256 `8d4229405b1b39ac26dd2304fa77455322be8b25c1b1f573a4903f0044d4873c` | **CLOSED AT DEFAULT-OFF LOCAL-FOUNDATION BOUNDARY** | Plan 370 TC-370-00 |

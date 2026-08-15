@@ -118,8 +118,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 115);
-      expect(await _userVersion(db), 115);
+      expect(currentIdentityDatabaseVersion, 116);
+      expect(await _userVersion(db), 116);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -131,9 +131,9 @@ void main() {
           entries.single.run,
           same(runDirectNotificationDurabilityMigration),
         );
-        expect(registry.last.version, 115);
-        expect(registry.last.name, '115_group_media_blob_custody');
-        expect(registry[registry.length - 4].version, 112);
+        expect(registry.last.version, 116);
+        expect(registry.last.name, '116_notification_completed_outcome_outbox');
+        expect(registry[registry.length - 5].version, 112);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
@@ -475,7 +475,7 @@ void main() {
       addTearDown(() async {
         if (db.isOpen) await db.close();
       });
-      expect(await _userVersion(db), 115);
+      expect(await _userVersion(db), 116);
       expect(
         await dbLoadDirectNotificationReactionTerminalEvent(
           db,
@@ -1030,6 +1030,7 @@ DirectNotificationDisplayOutboxRepositoryImpl _displayRepository(
         required expectedReactionAction,
         required expectedReactionTombstone,
         required completedAt,
+        outcome,
       }) => dbCompleteDirectNotificationDisplayOutboxEntryIfExact(
         db,
         eventId: eventId,
@@ -1043,6 +1044,7 @@ DirectNotificationDisplayOutboxRepositoryImpl _displayRepository(
         expectedReactionAction: expectedReactionAction,
         expectedReactionTombstone: expectedReactionTombstone,
         completedAt: completedAt,
+        outcome: outcome,
       ),
   dbRetireIfExact:
       ({

@@ -4,6 +4,8 @@ import 'package:flutter_app/core/notifications/direct_notification_canonical_rec
 import 'package:flutter_app/core/notifications/direct_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/direct_notification_display_retry_coordinator.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -21,6 +23,21 @@ typedef ProjectDirectNotificationDisplayEntry =
 typedef EnqueueDirectNotificationReconciliation =
     Future<void> Function(String peerId);
 
+/// Whether an outgoing message may still anchor an incoming reaction card.
+///
+/// This predicate is shared by initial custody and live retry projection so a
+/// hide/private-media terminalization race cannot leave a reaction eligible
+/// for native presentation or a durable completed outcome.
+bool directReactionTargetAllowsNotificationDisplay({
+  required ConversationMessage target,
+  required String expectedContactPeerId,
+}) =>
+    target.contactPeerId == expectedContactPeerId &&
+    !target.isIncoming &&
+    !target.isDeleted &&
+    !target.isHidden &&
+    !target.privateMediaState.isTerminal;
+
 /// Shared production owner for every direct show/read/reconciliation mutation.
 ///
 /// A null display projection means canonical state proved the staged event is
@@ -35,6 +52,8 @@ final class DirectNotificationProjectionOwner {
     required ProjectDirectNotificationDisplayEntry projectDisplay,
     required DirectNotificationCanonicalReconciler canonicalReconciler,
     required EnqueueDirectNotificationReconciliation enqueueReconciliation,
+    Future<String?> Function()? resolveCompletedOutcomePhysicalPeerId,
+    this.completedOutcomeProducerEnabled = false,
     DateTime Function()? nowUtc,
     this.retryDelay = const Duration(seconds: 65),
   }) : _displayOutbox = displayOutbox,
@@ -44,6 +63,8 @@ final class DirectNotificationProjectionOwner {
        _projectDisplay = projectDisplay,
        _canonicalReconciler = canonicalReconciler,
        _enqueueReconciliation = enqueueReconciliation,
+       _resolveCompletedOutcomePhysicalPeerId =
+           resolveCompletedOutcomePhysicalPeerId,
        _nowUtc = nowUtc ?? DateTime.now {
     _displayRetry =
         DirectNotificationDisplayRetryCoordinator<
@@ -55,8 +76,11 @@ final class DirectNotificationProjectionOwner {
               (entry.peerId, entry.eventKind, entry.eventId),
           loadEarliestNextAttemptAt: _displayOutbox.loadEarliestNextAttemptAt,
           project: _projectInsidePeerLane,
-          complete: (entry) async {
-            if (!await _displayOutbox.completeIfExact(entry)) {
+          completeWithOutcome: (entry, outcome) async {
+            if (!await _displayOutbox.completeIfExact(
+              entry,
+              outcome: outcome,
+            )) {
               throw const DirectNotificationDisplayRetryableException();
             }
           },
@@ -80,9 +104,21 @@ final class DirectNotificationProjectionOwner {
               _reconciliationOutbox.loadEarliestNextAttemptAt,
           project: (entry) async {
             await _canonicalReconciler.reconcile(entry.peerId);
-            return DirectNotificationDisplayRetryDisposition.completed;
+            return const DirectNotificationDisplayProjectionResult.completed(
+              outcomeCandidate: null,
+            );
           },
-          complete: (entry) async {
+          completeWithOutcome: (entry, outcome) async {
+            if (outcome != null) {
+              throw StateError(
+                'direct reconciliation cannot emit a completed outcome',
+              );
+            }
+            if (!await _reconciliationOutbox.completeIfExact(entry)) {
+              throw const DirectNotificationDisplayRetryableException();
+            }
+          },
+          retire: (entry) async {
             if (!await _reconciliationOutbox.completeIfExact(entry)) {
               throw const DirectNotificationDisplayRetryableException();
             }
@@ -105,8 +141,10 @@ final class DirectNotificationProjectionOwner {
   final ProjectDirectNotificationDisplayEntry _projectDisplay;
   final DirectNotificationCanonicalReconciler _canonicalReconciler;
   final EnqueueDirectNotificationReconciliation _enqueueReconciliation;
+  final Future<String?> Function()? _resolveCompletedOutcomePhysicalPeerId;
   final DateTime Function() _nowUtc;
   final Duration retryDelay;
+  final bool completedOutcomeProducerEnabled;
   late final DirectNotificationDisplayRetryCoordinator<
     DirectNotificationDisplayOutboxEntry
   >
@@ -141,8 +179,10 @@ final class DirectNotificationProjectionOwner {
   }) async {
     if (_disposed ||
         payload.action != ReactionPayload.addAction ||
-        targetMessage.isIncoming ||
-        targetMessage.contactPeerId != payload.senderPeerId) {
+        !directReactionTargetAllowsNotificationDisplay(
+          target: targetMessage,
+          expectedContactPeerId: payload.senderPeerId,
+        )) {
       return;
     }
     final now = _nowUtc().toUtc().toIso8601String();
@@ -283,19 +323,59 @@ final class DirectNotificationProjectionOwner {
     }
   }
 
-  Future<DirectNotificationDisplayRetryDisposition> _projectInsidePeerLane(
+  Future<DirectNotificationDisplayProjectionResult> _projectInsidePeerLane(
     DirectNotificationDisplayOutboxEntry entry,
   ) => _coordinator.runForPeer(entry.peerId, () async {
     final result = await _projectDisplay(entry);
-    return switch (result) {
-      null => DirectNotificationDisplayRetryDisposition.retired,
-      NotificationPresentationResult.contendedRetryable =>
-        DirectNotificationDisplayRetryDisposition.retryLater,
-      NotificationPresentationResult.shown ||
-      NotificationPresentationResult.terminalSuppressed =>
-        DirectNotificationDisplayRetryDisposition.completed,
-    };
+    if (result == null) {
+      return const DirectNotificationDisplayProjectionResult.retired();
+    }
+    if (result == NotificationPresentationResult.contendedRetryable) {
+      return const DirectNotificationDisplayProjectionResult.retryLater();
+    }
+    final outcome = result == NotificationPresentationResult.osPosted
+        ? await _buildCompletedOutcomeCandidate(entry)
+        : null;
+    return DirectNotificationDisplayProjectionResult.completed(
+      outcomeCandidate: outcome,
+    );
   });
+
+  Future<NotificationCompletedOutcomeCandidate?>
+  _buildCompletedOutcomeCandidate(
+    DirectNotificationDisplayOutboxEntry entry,
+  ) async {
+    if (!completedOutcomeProducerEnabled) return null;
+    final physicalPeerId = await _resolveCompletedOutcomePhysicalPeerId?.call();
+    if (physicalPeerId == null || physicalPeerId.isEmpty) return null;
+    final producerKind = switch (entry.eventKind) {
+      DirectNotificationDisplayOutboxKind.message =>
+        NotificationCompletedOutcomeProducerKind.directMessage,
+      DirectNotificationDisplayOutboxKind.reaction =>
+        NotificationCompletedOutcomeProducerKind.directReaction,
+      _ => null,
+    };
+    if (producerKind == null) {
+      return null;
+    }
+    final eventKey = trySelectNotificationCompletedOutcomeEventKey(
+      producerKind: producerKind,
+      authenticatedEnvelope: <String, Object?>{
+        if (entry.eventKind == DirectNotificationDisplayOutboxKind.message)
+          'messageId': entry.messageId,
+        if (entry.eventKind == DirectNotificationDisplayOutboxKind.reaction)
+          'reactionId': entry.reactionId,
+      },
+    );
+    if (eventKey == null) return null;
+    return NotificationCompletedOutcomeCandidate(
+      physicalPeerId: physicalPeerId,
+      producerKind: producerKind,
+      eventKey: eventKey,
+      outcome: NotificationCompletedOutcomeCategory.osPosted,
+      completedAt: _nowUtc().toUtc(),
+    );
+  }
 
   Future<void> _recordDisplayFailure(
     DirectNotificationDisplayOutboxEntry entry,

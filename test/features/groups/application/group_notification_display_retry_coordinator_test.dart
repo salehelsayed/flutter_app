@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
 import 'package:flutter_app/features/groups/application/group_notification_display_retry_coordinator.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -28,12 +29,14 @@ void main() {
             firstProjection.complete();
             await releaseFirst.future;
           }
-          return GroupNotificationDisplayRetryDisposition.completed;
+          return const GroupNotificationDisplayProjectionResult.completed();
         },
-        complete: (row) async {
+        completeWithOutcome: (row, outcome) async {
+          expect(outcome, isNull);
           completed.add(row);
           rows.remove(row);
         },
+        retire: (_) async {},
         recordFailure: (_, _) async {},
       );
 
@@ -66,9 +69,13 @@ void main() {
             rows.take(limit).toList(growable: false),
         project: (row) async {
           if (row == 2 && failTwo) throw StateError('plugin unavailable');
-          return GroupNotificationDisplayRetryDisposition.completed;
+          return const GroupNotificationDisplayProjectionResult.completed();
         },
-        complete: (row) async => rows.remove(row),
+        completeWithOutcome: (row, outcome) async {
+          expect(outcome, isNull);
+          rows.remove(row);
+        },
+        retire: (_) async {},
         recordFailure: (row, _) async => failures.add(row),
         scheduleRetry: (_) => delayedRetries++,
       );
@@ -90,8 +97,10 @@ void main() {
     var delayedRetries = 0;
     final coordinator = GroupNotificationDisplayRetryCoordinator<int>(
       loadReady: ({required limit}) async => rows,
-      project: (_) async => GroupNotificationDisplayRetryDisposition.retryLater,
-      complete: (_) async => completed = true,
+      project: (_) async =>
+          const GroupNotificationDisplayProjectionResult.retryLater(),
+      completeWithOutcome: (_, _) async => completed = true,
+      retire: (_) async {},
       recordFailure: (_, _) async {},
       scheduleRetry: (_) => delayedRetries++,
     );
@@ -115,9 +124,10 @@ void main() {
         project: (_) async {
           projectionStarted.complete();
           await releaseProjection.future;
-          return GroupNotificationDisplayRetryDisposition.completed;
+          return const GroupNotificationDisplayProjectionResult.completed();
         },
-        complete: (_) async => completions++,
+        completeWithOutcome: (_, _) async => completions++,
+        retire: (_) async {},
         recordFailure: (_, _) async => failures++,
       );
 
@@ -161,13 +171,15 @@ void main() {
             project: (row) async {
               projected.add(row.id);
               return row.id == 1
-                  ? GroupNotificationDisplayRetryDisposition.retryLater
-                  : GroupNotificationDisplayRetryDisposition.completed;
+                  ? const GroupNotificationDisplayProjectionResult.retryLater()
+                  : const GroupNotificationDisplayProjectionResult.completed();
             },
-            complete: (row) async {
+            completeWithOutcome: (row, outcome) async {
+              expect(outcome, isNull);
               completed.add(row.id);
               rowIds.remove(row.id);
             },
+            retire: (_) async {},
             recordFailure: (row, _) async => failed.add(row.id),
             scheduleRetry: scheduled.add,
           );
@@ -214,9 +226,13 @@ void main() {
                       ),
             project: (row) async {
               projected.add(row.id);
-              return GroupNotificationDisplayRetryDisposition.completed;
+              return const GroupNotificationDisplayProjectionResult.completed();
             },
-            complete: (row) async => durableRows.remove(row),
+            completeWithOutcome: (row, outcome) async {
+              expect(outcome, isNull);
+              durableRows.remove(row);
+            },
+            retire: (_) async {},
             recordFailure: (_, _) async {},
             scheduleRetry: scheduled.add,
           );
@@ -245,8 +261,9 @@ void main() {
         loadReady: ({required limit}) async => const <int>[],
         loadEarliestNextAttemptAt: () async => null,
         project: (_) async =>
-            GroupNotificationDisplayRetryDisposition.completed,
-        complete: (_) async {},
+            const GroupNotificationDisplayProjectionResult.completed(),
+        completeWithOutcome: (_, _) async {},
+        retire: (_) async {},
         recordFailure: (_, _) async {},
         scheduleRetry: scheduled.add,
       );
@@ -272,8 +289,9 @@ void main() {
           return null;
         },
         project: (_) async =>
-            GroupNotificationDisplayRetryDisposition.completed,
-        complete: (_) async {},
+            const GroupNotificationDisplayProjectionResult.completed(),
+        completeWithOutcome: (_, _) async {},
+        retire: (_) async {},
         recordFailure: (_, _) async {},
         scheduleRetry: (_) {},
       );
@@ -298,11 +316,12 @@ void main() {
         loadReady: ({required limit}) async => rows.take(limit).toList(),
         loadEarliestNextAttemptAt: () async => null,
         project: (_) async =>
-            GroupNotificationDisplayRetryDisposition.completed,
-        complete: (_) async {
+            const GroupNotificationDisplayProjectionResult.completed(),
+        completeWithOutcome: (_, _) async {
           // The loaded generation was replaced before completion.
           throw const GroupNotificationDisplayRetryableException();
         },
+        retire: (_) async {},
         recordFailure: (_, error) async {
           failures.add(error);
           // No durable deadline models recordRetryIfExact == false against
@@ -331,7 +350,8 @@ void main() {
         loadReady: ({required limit}) async => const <int>[13],
         loadEarliestNextAttemptAt: () async => null,
         project: (_) async => throw StateError('projection failed'),
-        complete: (_) async {},
+        completeWithOutcome: (_, _) async {},
+        retire: (_) async {},
         recordFailure: (_, _) async =>
             throw StateError('retry CAS unavailable'),
         scheduleRetry: scheduled.add,
@@ -341,6 +361,49 @@ void main() {
 
       expect(scheduled, [Duration.zero]);
       expect(coordinator.isRunning, isFalse);
+    },
+  );
+
+  test(
+    'typed completion preserves outcomes while retired custody uses its own callback',
+    () async {
+      final rows = <int>[1, 2];
+      final candidate = NotificationCompletedOutcomeCandidate(
+        physicalPeerId: 'peer-physical',
+        producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+        eventKey: 'logical-delivery-1',
+        outcome: NotificationCompletedOutcomeCategory.osPosted,
+        completedAt: DateTime.utc(2026, 8, 15, 12),
+      );
+      NotificationCompletedOutcomeCandidate? completedOutcome;
+      final completed = <int>[];
+      final retired = <int>[];
+      final coordinator = GroupNotificationDisplayRetryCoordinator<int>(
+        batchSize: 2,
+        loadReady: ({required limit}) async => rows.take(limit).toList(),
+        project: (row) async => row == 1
+            ? GroupNotificationDisplayProjectionResult.completed(
+                outcomeCandidate: candidate,
+              )
+            : const GroupNotificationDisplayProjectionResult.retired(),
+        completeWithOutcome: (row, outcome) async {
+          completed.add(row);
+          completedOutcome = outcome;
+          rows.remove(row);
+        },
+        retire: (row) async {
+          retired.add(row);
+          rows.remove(row);
+        },
+        recordFailure: (_, _) async {},
+      );
+
+      await coordinator.retryNow();
+
+      expect(completed, <int>[1]);
+      expect(completedOutcome, same(candidate));
+      expect(retired, <int>[2]);
+      expect(rows, isEmpty);
     },
   );
 }

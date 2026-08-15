@@ -40,7 +40,7 @@ void main() {
         isTrue,
         reason: 'TC-343-10 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 113);
+      expect(currentIdentityDatabaseVersion, 116);
 
       final previousFlowEventLoggingEnabled = flowEventLoggingEnabled;
       flowEventLoggingEnabled = false;
@@ -77,7 +77,7 @@ void main() {
         await db.close();
         db = null;
 
-        proofStage = 'upgrade-v108-through-v109-to-current-v111';
+        proofStage = 'upgrade-v108-through-v109-to-current-v116';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -87,7 +87,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 112);
+        expect(await _userVersion(db), 116);
         expect(await _cipherVersion(db), isNotEmpty);
         final currentTextCustody = <String, Object?>{
           ...textCustody,
@@ -321,7 +321,7 @@ END
         proofStage = 'second-production-migration-pass-is-stable';
         await runProductionOnUpgrade(db, 108, 109);
         await runDirectReactionInboxCustodyOutboxMigration(db);
-        expect(await _userVersion(db), 112);
+        expect(await _userVersion(db), 116);
         expect(await _authoritySnapshot(db), convergedSnapshot);
         await db.close();
         db = null;
@@ -340,7 +340,7 @@ END
           throwsA(anything),
         );
 
-        proofStage = 'correct-current-v111-reopen-unchanged-after-refusal';
+        proofStage = 'correct-current-v116-reopen-unchanged-after-refusal';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -350,7 +350,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 112);
+        expect(await _userVersion(db), 116);
         expect(await _authoritySnapshot(db), convergedSnapshot);
       } catch (error, stackTrace) {
         fail('TC-343-10 failed at $proofStage: $error\n$stackTrace');

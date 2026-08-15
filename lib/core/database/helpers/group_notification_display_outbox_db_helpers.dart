@@ -3,7 +3,10 @@ import 'dart:math' as math;
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../notifications/deterministic_notification_id.dart';
+import '../../notifications/notification_completed_outcome.dart';
+import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import 'notification_completed_outcome_outbox_db_helpers.dart';
 import 'protected_group_reaction_display_terminal_db_helpers.dart';
 
 const String _table = 'group_notification_display_outbox';
@@ -182,6 +185,8 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
   required String? expectedReactionId,
   required String? expectedReactionAction,
   required bool? expectedReactionTombstone,
+  required String completedAt,
+  NotificationCompletedOutcomeCandidate? outcome,
 }) => dbWriteTransaction(db, (txn) async {
   if (!await _tableExists(txn)) return false;
   final where = StringBuffer(
@@ -230,7 +235,7 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
   // Both writes share this transaction, so a failed CAS/delete cannot leave a
   // false terminal fact and a successful delete cannot lose dedupe authority.
   if (expectedEventKind == 'message') {
-    await txn.rawUpdate(
+    final updated = await txn.rawUpdate(
       'UPDATE group_messages '
       'SET notification_display_terminal_event_id = ? '
       'WHERE id = ? AND group_id = ? AND sender_peer_id = ? '
@@ -246,12 +251,13 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
         eventId,
       ],
     );
+    if (updated != 1) return false;
   } else if (expectedEventKind == 'reaction' &&
       expectedReactionId != null &&
       expectedReactionAction == 'add' &&
       expectedReactionTombstone == false) {
     final terminalIdentity = boundedReactionEventIdentity(eventId);
-    await txn.rawUpdate(
+    final updated = await txn.rawUpdate(
       'UPDATE message_reactions '
       'SET notification_display_terminal_event_id = ? '
       'WHERE id = ? AND message_id = ? AND sender_peer_id = ? '
@@ -271,6 +277,7 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
         expectedGroupId,
       ],
     );
+    if (updated != 1) return false;
     await dbAppendProtectedGroupReactionDisplayTerminalIfExact(
       txn,
       groupId: expectedGroupId,
@@ -280,6 +287,23 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
       reactionId: expectedReactionId,
       eventTimestamp: expectedEventTimestamp,
     );
+  }
+
+  if (outcome != null) {
+    final insertResult =
+        await dbInsertNotificationCompletedOutcomeWithinTransaction(
+          txn,
+          candidate: outcome,
+          now: DateTime.parse(completedAt).toUtc(),
+        );
+    if (insertResult ==
+        NotificationCompletedOutcomeInsertResult.existingDifferent) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'NOTIFICATION_OUTCOME_CATEGORY_REPLAY',
+        details: const <String, Object?>{'reason': 'outcome_category_replay'},
+      );
+    }
   }
 
   final deleted = await txn.delete(
@@ -292,6 +316,82 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
   }
   return true;
 }, exclusive: true);
+
+/// Retires stale or ineligible custody without recording display authority.
+///
+/// Every immutable comparand and the ready revision must still match so a
+/// reused event id or newer retry generation cannot be deleted by an older
+/// projection.
+Future<bool> dbRetireGroupNotificationDisplayOutboxEntryIfExact(
+  DatabaseExecutor db, {
+  required String eventId,
+  required int expectedRevision,
+  required String expectedEventKind,
+  required String expectedGroupId,
+  required String expectedMessageId,
+  required String expectedActorPeerId,
+  required String expectedEventTimestamp,
+  required String? expectedReactionId,
+  required String? expectedReactionAction,
+  required bool? expectedReactionTombstone,
+}) async {
+  if (!await _tableExists(db)) return false;
+  final where = StringBuffer(
+    'event_id = ? AND revision = ? AND readiness = ? '
+    'AND event_kind = ? AND group_id = ? AND message_id = ? '
+    'AND actor_peer_id = ? AND event_timestamp = ?',
+  );
+  final whereArgs = <Object?>[
+    eventId,
+    expectedRevision,
+    'ready',
+    expectedEventKind,
+    expectedGroupId,
+    expectedMessageId,
+    expectedActorPeerId,
+    expectedEventTimestamp,
+  ];
+  _appendNullableComparand(
+    where,
+    whereArgs,
+    column: 'reaction_id',
+    value: expectedReactionId,
+  );
+  _appendNullableComparand(
+    where,
+    whereArgs,
+    column: 'reaction_action',
+    value: expectedReactionAction,
+  );
+  _appendNullableComparand(
+    where,
+    whereArgs,
+    column: 'reaction_tombstone',
+    value: expectedReactionTombstone == null
+        ? null
+        : (expectedReactionTombstone ? 1 : 0),
+  );
+  return await db.delete(
+        _table,
+        where: where.toString(),
+        whereArgs: whereArgs,
+      ) ==
+      1;
+}
+
+void _appendNullableComparand(
+  StringBuffer where,
+  List<Object?> whereArgs, {
+  required String column,
+  required Object? value,
+}) {
+  if (value == null) {
+    where.write(' AND $column IS NULL');
+  } else {
+    where.write(' AND $column = ?');
+    whereArgs.add(value);
+  }
+}
 
 /// Atomically moves duplicate-message display custody onto its canonical row.
 ///

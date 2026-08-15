@@ -3,7 +3,13 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:sqflite_common/sqlite_api.dart';
 
+enum MigrationDatabaseTableTransferPolicy { accountPortable, installationLocal }
+
 class MigrationDatabaseSchemaInventory {
+  static const Set<String> installationLocalTableNames = <String>{
+    'notification_completed_outcome_outbox',
+  };
+
   final Map<String, List<String>> tables;
 
   MigrationDatabaseSchemaInventory._(Map<String, List<String>> tables)
@@ -42,6 +48,21 @@ class MigrationDatabaseSchemaInventory {
   }
 
   List<String> get tableNames => List.unmodifiable(tables.keys);
+
+  List<String> get transferableTableNames =>
+      List.unmodifiable(tableNames.where((name) => !isInstallationLocal(name)));
+
+  List<String> get presentInstallationLocalTableNames =>
+      List.unmodifiable(tableNames.where(isInstallationLocal));
+
+  static bool isInstallationLocal(String tableName) =>
+      installationLocalTableNames.contains(tableName);
+
+  static MigrationDatabaseTableTransferPolicy transferPolicyFor(
+    String tableName,
+  ) => isInstallationLocal(tableName)
+      ? MigrationDatabaseTableTransferPolicy.installationLocal
+      : MigrationDatabaseTableTransferPolicy.accountPortable;
 
   String get schemaHash {
     final canonical = jsonEncode(toJson());

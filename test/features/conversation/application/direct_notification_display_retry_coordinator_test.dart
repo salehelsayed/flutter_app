@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
 import 'package:flutter_app/features/conversation/application/direct_notification_display_retry_coordinator.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -23,9 +24,13 @@ void main() {
             firstStarted.complete();
             await releaseFirst.future;
           }
-          return DirectNotificationDisplayRetryDisposition.completed;
+          return const DirectNotificationDisplayProjectionResult.completed();
         },
-        complete: (row) async => rows.remove(row),
+        completeWithOutcome: (row, outcome) async {
+          expect(outcome, isNull);
+          rows.remove(row);
+        },
+        retire: (_) async {},
         recordFailure: (_, _) async {},
       );
 
@@ -58,12 +63,14 @@ void main() {
         entryIdentity: (row) => row,
         loadEarliestNextAttemptAt: () async => due,
         project: (row) async => row == 1
-            ? DirectNotificationDisplayRetryDisposition.retryLater
-            : DirectNotificationDisplayRetryDisposition.completed,
-        complete: (row) async {
+            ? const DirectNotificationDisplayProjectionResult.retryLater()
+            : const DirectNotificationDisplayProjectionResult.completed(),
+        completeWithOutcome: (row, outcome) async {
+          expect(outcome, isNull);
           completed.add(row);
           rows.remove(row);
         },
+        retire: (_) async {},
         recordFailure: (_, _) async {},
         scheduleRetry: scheduled.add,
       );
@@ -85,9 +92,10 @@ void main() {
       project: (_) async {
         started.complete();
         await release.future;
-        return DirectNotificationDisplayRetryDisposition.completed;
+        return const DirectNotificationDisplayProjectionResult.completed();
       },
-      complete: (_) async => completions++,
+      completeWithOutcome: (_, _) async => completions++,
+      retire: (_) async {},
       recordFailure: (_, _) async {},
     );
 
@@ -99,4 +107,37 @@ void main() {
 
     expect(completions, 0);
   });
+
+  test(
+    'completed projection carries its immutable outcome candidate',
+    () async {
+      final rows = <int>[1];
+      final candidate = NotificationCompletedOutcomeCandidate(
+        physicalPeerId: 'peer-physical',
+        producerKind: NotificationCompletedOutcomeProducerKind.directMessage,
+        eventKey: 'message-1',
+        outcome: NotificationCompletedOutcomeCategory.osPosted,
+        completedAt: DateTime.utc(2026, 8, 15, 12),
+      );
+      NotificationCompletedOutcomeCandidate? completedOutcome;
+      final coordinator = DirectNotificationDisplayRetryCoordinator<int>(
+        loadReady: ({required limit}) async => rows.take(limit).toList(),
+        project: (_) async =>
+            DirectNotificationDisplayProjectionResult.completed(
+              outcomeCandidate: candidate,
+            ),
+        completeWithOutcome: (row, outcome) async {
+          completedOutcome = outcome;
+          rows.remove(row);
+        },
+        retire: (_) async => fail('completed custody must not retire'),
+        recordFailure: (_, _) async {},
+      );
+
+      await coordinator.retryNow();
+
+      expect(completedOutcome, same(candidate));
+      expect(rows, isEmpty);
+    },
+  );
 }

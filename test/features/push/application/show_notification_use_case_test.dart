@@ -169,7 +169,7 @@ void main() {
       },
     );
 
-    test('typed presentation reports shown and policy suppression', () async {
+    test('TC-369-03 only an approved completed effect carries an outcome', () async {
       expect(
         await maybeShowNotification(
           notificationService: notificationService,
@@ -179,7 +179,7 @@ void main() {
           senderUsername: 'Team',
           messageText: 'Shown',
         ),
-        NotificationPresentationResult.shown,
+        NotificationPresentationResult.osPosted,
       );
       expect(
         await maybeShowNotification(
@@ -191,8 +191,110 @@ void main() {
           messageText: 'Suppressed',
           suppressNotification: true,
         ),
-        NotificationPresentationResult.terminalSuppressed,
+        NotificationPresentationResult.terminalWithoutOutcome,
       );
+      tracker.setActive('group:visible-result');
+      expect(
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          contactPeerId: 'group:visible-result',
+          senderUsername: 'Team',
+          messageText: 'Visible',
+        ),
+        NotificationPresentationResult.terminalWithoutOutcome,
+      );
+      tracker.clear();
+      expect(
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'group:remote-result',
+          senderUsername: 'Team',
+          messageText: 'Remote',
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required payload, String? messageId}) async => true,
+          backgroundDuplicateGuardDelay: Duration.zero,
+        ),
+        NotificationPresentationResult.terminalWithoutOutcome,
+      );
+      expect(
+        NotificationPresentationResult.inChat.carriesApprovedOutcome,
+        isTrue,
+      );
+      expect(
+        NotificationPresentationResult.suppressedPolicy.carriesApprovedOutcome,
+        isTrue,
+      );
+      expect(
+        NotificationPresentationResult
+            .terminalWithoutOutcome
+            .carriesApprovedOutcome,
+        isFalse,
+      );
+
+      final ambiguousService = _HookedNotificationService((_) async {
+        throw StateError('native result is ambiguous');
+      });
+      await expectLater(
+        maybeShowNotification(
+          notificationService: ambiguousService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'group:ambiguous-result',
+          senderUsername: 'Team',
+          messageText: 'Ambiguous',
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      final directory = await Directory.systemTemp.createTemp(
+        'tc369-post-show-bookkeeping-failure-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final postShowService = FakeNotificationService();
+      final coordinator = DurableNotificationToneLease(
+        directory: directory,
+        pendingClaimWait: Duration.zero,
+        pendingToneReservationWait: Duration.zero,
+      );
+      final claimFile = File(
+        '${directory.path}/${DurableNotificationToneLease.eventClaimsDirectoryName}/'
+        '${DurableNotificationToneLease.messageEventClaimFileName(type: 'new_message', eventIdentity: 'tc369-post-show-message')}',
+      );
+
+      Future<NotificationPresentationResult> showAfterMarkerFault() =>
+          maybeShowNotification(
+            notificationService: postShowService,
+            conversationTracker: tracker,
+            getAppLifecycleState: () => AppLifecycleState.paused,
+            contactPeerId: 'peer-tc369-post-show',
+            senderUsername: 'Alice',
+            messageText: 'Already displayed',
+            messageId: 'tc369-post-show-message',
+            durableNotificationCoordinatorResolver: () async => coordinator,
+            markRecentRemoteNotificationAnnouncement:
+                ({required payload, String? messageId}) async {
+                  throw StateError('synthetic post-show marker failure');
+                },
+          );
+
+      expect(
+        await showAfterMarkerFault(),
+        NotificationPresentationResult.osPosted,
+        reason:
+            'a bookkeeping error after the native callback cannot erase the completed OS effect',
+      );
+      expect(postShowService.shown, hasLength(1));
+      expect(claimFile.readAsStringSync(), contains('"state":"committed"'));
+      expect(_pendingToneFiles(directory), isEmpty);
+      expect(
+        await showAfterMarkerFault(),
+        NotificationPresentationResult.terminalWithoutOutcome,
+      );
+      expect(postShowService.shown, hasLength(1));
     });
 
     test(
@@ -643,47 +745,6 @@ void main() {
         ]),
       );
     });
-
-    test(
-      'post-show bookkeeping failure retains committed claim and tone',
-      () async {
-        final directory = await Directory.systemTemp.createTemp(
-          'live-notification-post-show-failure-',
-        );
-        addTearDown(() => directory.delete(recursive: true));
-        final coordinator = DurableNotificationToneLease(
-          directory: directory,
-          pendingClaimWait: Duration.zero,
-          pendingToneReservationWait: Duration.zero,
-        );
-        final claimFile = File(
-          '${directory.path}/${DurableNotificationToneLease.eventClaimsDirectoryName}/'
-          '${DurableNotificationToneLease.messageEventClaimFileName(type: 'new_message', eventIdentity: 'message-post-show')}',
-        );
-
-        Future<void> show() => maybeShowNotification(
-          notificationService: notificationService,
-          conversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.paused,
-          contactPeerId: 'peer-post-show',
-          senderUsername: 'Alice',
-          messageText: 'Already displayed',
-          messageId: 'message-post-show',
-          durableNotificationCoordinatorResolver: () async => coordinator,
-          markRecentRemoteNotificationAnnouncement:
-              ({required payload, String? messageId}) async {
-                throw StateError('synthetic post-show marker failure');
-              },
-        );
-
-        await expectLater(show(), throwsA(isA<StateError>()));
-        expect(notificationService.shown, hasLength(1));
-        expect(claimFile.readAsStringSync(), contains('"state":"committed"'));
-        expect(_pendingToneFiles(directory), isEmpty);
-        await show();
-        expect(notificationService.shown, hasLength(1));
-      },
-    );
 
     test(
       'reaction bursts debounce per conversation while different peers stay audible',

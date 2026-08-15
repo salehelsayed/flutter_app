@@ -88,7 +88,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 115);
+        expect(currentIdentityDatabaseVersion, 116);
         expect(
           inventory.tableNames,
           containsAll(<String>[
@@ -169,7 +169,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 115);
+        expect(currentIdentityDatabaseVersion, 116);
         // 362: v114 adds the two nullable linked-fanout columns.
         // 365: v115 adds blob identity, group scope, and explicit owner lane.
         expect(inventory.tables['direct_media_blob_custody'], <String>[
@@ -205,6 +205,47 @@ void main() {
             'media_blob_manifest_hash',
           ]),
         );
+      },
+    );
+
+    test(
+      'TC-369-01 migration inventory marks outcome installation local',
+      () async {
+        db = await openDatabase(
+          inMemoryDatabasePath,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+
+        final inventory = await MigrationDatabaseSchemaInventory.fromDatabase(
+          db!,
+        );
+
+        const tableName = 'notification_completed_outcome_outbox';
+        expect(currentIdentityDatabaseVersion, 116);
+        expect(inventory.tableNames, contains(tableName));
+        expect(
+          MigrationDatabaseSchemaInventory.transferPolicyFor(tableName),
+          MigrationDatabaseTableTransferPolicy.installationLocal,
+        );
+        expect(inventory.presentInstallationLocalTableNames, <String>[
+          tableName,
+        ]);
+        expect(inventory.transferableTableNames, isNot(contains(tableName)));
+        expect(inventory.tables[tableName], <String>[
+          'completed_at',
+          'created_at',
+          'expires_at',
+          'last_attempt_at',
+          'last_error_code',
+          'next_attempt_at',
+          'outcome',
+          'retry_count',
+          'revision',
+          'wake_correlation',
+        ]);
       },
     );
   });

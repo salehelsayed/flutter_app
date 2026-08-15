@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+
 import '../models/group_message.dart';
 import '../models/group_notification_display_outbox_entry.dart';
 
@@ -28,7 +30,13 @@ abstract class GroupNotificationDisplayOutboxRepository {
 
   /// Completes only when revision and every immutable authority field still
   /// match [expected], preventing delete/reinsert ABA at a reused event ID.
-  Future<bool> completeIfExact(GroupNotificationDisplayOutboxEntry expected);
+  Future<bool> completeIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    NotificationCompletedOutcomeCandidate? outcome,
+  });
+
+  /// Retires stale/ineligible custody without writing a terminal display fact.
+  Future<bool> retireIfExact(GroupNotificationDisplayOutboxEntry expected);
 
   /// Promotes canonical message custody and atomically retires or re-keys a
   /// reminted logical-delivery alias marker.

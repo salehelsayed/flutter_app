@@ -4,11 +4,18 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -58,6 +65,7 @@ final class _MemoryNotificationDisplayOutbox
   final Map<String, GroupNotificationDisplayOutboxEntry> entries = {};
   final List<String> operations = [];
   final List<GroupNotificationDisplayOutboxEntry> completionAttempts = [];
+  final List<NotificationCompletedOutcomeCandidate?> completionOutcomes = [];
   Future<void> Function(GroupNotificationDisplayOutboxEntry entry)? onStage;
   Future<void> Function(GroupNotificationDisplayOutboxEntry entry)? onComplete;
   bool rejectRetryCas = false;
@@ -153,11 +161,35 @@ final class _MemoryNotificationDisplayOutbox
 
   @override
   Future<bool> completeIfExact(
-    GroupNotificationDisplayOutboxEntry expected,
-  ) async {
+    GroupNotificationDisplayOutboxEntry expected, {
+    NotificationCompletedOutcomeCandidate? outcome,
+  }) async {
     operations.add('complete:${expected.eventId}:${expected.revision}');
     completionAttempts.add(expected);
+    completionOutcomes.add(outcome);
     await onComplete?.call(expected);
+    final current = entries[expected.eventId];
+    if (current == null ||
+        current.revision != expected.revision ||
+        current.eventKind != expected.eventKind ||
+        current.groupId != expected.groupId ||
+        current.messageId != expected.messageId ||
+        current.actorPeerId != expected.actorPeerId ||
+        current.eventTimestamp != expected.eventTimestamp ||
+        current.reactionId != expected.reactionId ||
+        current.reactionAction != expected.reactionAction ||
+        current.reactionTombstone != expected.reactionTombstone) {
+      return false;
+    }
+    entries.remove(expected.eventId);
+    return true;
+  }
+
+  @override
+  Future<bool> retireIfExact(
+    GroupNotificationDisplayOutboxEntry expected,
+  ) async {
+    operations.add('retire:${expected.eventId}:${expected.revision}');
     final current = entries[expected.eventId];
     if (current == null ||
         current.revision != expected.revision ||
@@ -467,6 +499,8 @@ Future<_Fixture> _buildFixture({
   InMemoryMediaAttachmentRepository? mediaRepo,
   Future<DurableNotificationToneLease> Function()? durableResolver,
   Future<String?> Function()? getSelfPeerId,
+  Future<String?> Function()? resolveCompletedOutcomePhysicalPeerId,
+  bool completedOutcomeProducerEnabled = false,
   GroupNotificationEventAcknowledgedResolver?
   isGroupNotificationEventAcknowledged,
 }) async {
@@ -507,6 +541,9 @@ Future<_Fixture> _buildFixture({
     getAppLifecycleState: () => AppLifecycleState.resumed,
     remoteNotificationGate: _NoopRecentRemoteNotificationGate(),
     notificationDisplayOutbox: displayOutbox,
+    resolveCompletedOutcomePhysicalPeerId:
+        resolveCompletedOutcomePhysicalPeerId,
+    completedOutcomeProducerEnabled: completedOutcomeProducerEnabled,
     isGroupNotificationEventAcknowledged: isGroupNotificationEventAcknowledged,
     durableNotificationCoordinatorResolver: durableResolver,
   );
@@ -552,6 +589,840 @@ Future<void> _seedPendingReaction({
 }
 
 void main() {
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+
+  test(
+    'TC-369-02 exact display completion and outcome are one transaction',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'group_outcome_atomic_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+      final db = await databaseFactoryFfi.openDatabase(
+        '${tempDir.path}/identity.db',
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: onDatabaseVersionChangeError,
+        ),
+      );
+      addTearDown(() async {
+        if (db.isOpen) await db.close();
+      });
+      const completedAt = '2026-08-15T10:00:00.000Z';
+      const groupId = 'group-atomic';
+
+      Future<void> insertMessage(String messageId) =>
+          db.insert('group_messages', <String, Object?>{
+            'id': messageId,
+            'group_id': groupId,
+            'sender_peer_id': _senderPeerId,
+            'text': 'canonical group content',
+            'timestamp': completedAt,
+            'created_at': completedAt,
+          });
+      GroupNotificationDisplayOutboxEntry readyEntry(String messageId) =>
+          GroupNotificationDisplayOutboxEntry.message(
+            eventId: messageId,
+            groupId: groupId,
+            messageId: messageId,
+            actorPeerId: _senderPeerId,
+            eventTimestamp: completedAt,
+            readiness: GroupNotificationDisplayOutboxReadiness.ready,
+            createdAt: completedAt,
+            updatedAt: completedAt,
+          );
+      NotificationCompletedOutcomeCandidate candidate(
+        String messageId,
+        NotificationCompletedOutcomeCategory outcome,
+      ) => NotificationCompletedOutcomeCandidate(
+        physicalPeerId: '12D3KooWgroup-physical',
+        producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+        eventKey: 'logical-$messageId',
+        outcome: outcome,
+        completedAt: DateTime.parse(completedAt),
+      );
+      Future<bool> complete(
+        GroupNotificationDisplayOutboxEntry entry,
+        NotificationCompletedOutcomeCandidate outcome,
+      ) => dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
+        db,
+        eventId: entry.eventId,
+        expectedRevision: entry.revision,
+        expectedEventKind: entry.eventKind,
+        expectedGroupId: entry.groupId,
+        expectedMessageId: entry.messageId,
+        expectedActorPeerId: entry.actorPeerId,
+        expectedEventTimestamp: entry.eventTimestamp,
+        expectedReactionId: entry.reactionId,
+        expectedReactionAction: entry.reactionAction,
+        expectedReactionTombstone: entry.reactionTombstone,
+        completedAt: completedAt,
+        outcome: outcome,
+      );
+
+      const exactId = 'group-exact-message';
+      await insertMessage(exactId);
+      final exact = readyEntry(exactId);
+      await db.insert('group_notification_display_outbox', exact.toMap());
+      expect(
+        await complete(
+          exact,
+          candidate(exactId, NotificationCompletedOutcomeCategory.osPosted),
+        ),
+        isTrue,
+      );
+      expect(
+        await db.query(
+          'group_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[exactId],
+        ),
+        isEmpty,
+      );
+      expect(
+        (await db.query(
+          'group_messages',
+          columns: const <String>['notification_display_terminal_event_id'],
+          where: 'id = ?',
+          whereArgs: const <Object?>[exactId],
+        )).single['notification_display_terminal_event_id'],
+        exactId,
+      );
+      final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
+        physicalPeerId: '12D3KooWgroup-physical',
+        producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+        eventKey: 'logical-$exactId',
+      );
+      expect(
+        (await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[correlation],
+        )).single['outcome'],
+        'os_posted',
+      );
+
+      await db.insert('group_notification_display_outbox', exact.toMap());
+      expect(
+        await complete(
+          exact,
+          candidate(
+            exactId,
+            NotificationCompletedOutcomeCategory.suppressedPolicy,
+          ),
+        ),
+        isTrue,
+      );
+      expect(
+        (await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[correlation],
+        )).single['outcome'],
+        'os_posted',
+      );
+
+      // A zero-row terminal update is not authority: custody and outcome stay.
+      const missingId = 'group-missing-canonical-message';
+      final missing = readyEntry(missingId);
+      await db.insert('group_notification_display_outbox', missing.toMap());
+      expect(
+        await complete(
+          missing,
+          candidate(missingId, NotificationCompletedOutcomeCategory.osPosted),
+        ),
+        isFalse,
+      );
+      expect(
+        await db.query(
+          'group_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[missingId],
+        ),
+        hasLength(1),
+      );
+      final missingCorrelation =
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: '12D3KooWgroup-physical',
+            producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+            eventKey: 'logical-$missingId',
+          );
+      expect(
+        await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[missingCorrelation],
+        ),
+        isEmpty,
+      );
+
+      Future<void> insertReactionTarget(String messageId) =>
+          db.insert('group_messages', <String, Object?>{
+            'id': messageId,
+            'group_id': groupId,
+            'sender_peer_id': _selfPeerId,
+            'text': 'self-authored reaction target',
+            'timestamp': completedAt,
+            'created_at': completedAt,
+          });
+      Future<void> insertReaction({
+        required String reactionId,
+        required String messageId,
+        String? terminalEventId,
+      }) => db.insert('message_reactions', <String, Object?>{
+        'id': reactionId,
+        'message_id': messageId,
+        'emoji': '👍',
+        'sender_peer_id': _senderPeerId,
+        'timestamp': completedAt,
+        'created_at': completedAt,
+        'notification_display_terminal_event_id': terminalEventId,
+      });
+      GroupNotificationDisplayOutboxEntry reactionEntry({
+        required String eventId,
+        required String messageId,
+        required String reactionId,
+      }) => GroupNotificationDisplayOutboxEntry.reaction(
+        eventId: eventId,
+        groupId: groupId,
+        messageId: messageId,
+        actorPeerId: _senderPeerId,
+        eventTimestamp: completedAt,
+        reactionId: reactionId,
+        reactionAction: GroupReactionPayload.actionAdd,
+        reactionTombstone: false,
+        readiness: GroupNotificationDisplayOutboxReadiness.ready,
+        createdAt: completedAt,
+        updatedAt: completedAt,
+      );
+      NotificationCompletedOutcomeCandidate reactionCandidate(String eventId) =>
+          NotificationCompletedOutcomeCandidate(
+            physicalPeerId: '12D3KooWgroup-physical',
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.groupReaction,
+            eventKey: eventId,
+            outcome: NotificationCompletedOutcomeCategory.osPosted,
+            completedAt: DateTime.parse(completedAt),
+          );
+      Future<void> appendProtectedReactionSource({
+        required String eventId,
+        required String messageId,
+        required String reactionId,
+      }) => dbAppendGroupEventLogEntry(
+        db,
+        groupId: groupId,
+        eventType: 'protected_reaction',
+        sourcePeerId: _senderPeerId,
+        sourceEventId: 'pr1:$eventId',
+        sourceTimestamp: completedAt,
+        payload: <String, Object?>{
+          'custodyKind': 'group_content_v1',
+          'groupId': groupId,
+          'payloadType': 'group_reaction',
+          'contentEventId': eventId,
+          'logicalSenderPeerId': _senderPeerId,
+          'payload': <String, Object?>{
+            'id': reactionId,
+            'eventId': eventId,
+            'messageId': messageId,
+            'senderPeerId': _senderPeerId,
+            'action': GroupReactionPayload.actionAdd,
+            'timestamp': completedAt,
+          },
+        },
+      );
+      Future<bool> completeReaction(
+        GroupNotificationDisplayOutboxEntry entry,
+      ) => dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
+        db,
+        eventId: entry.eventId,
+        expectedRevision: entry.revision,
+        expectedEventKind: entry.eventKind,
+        expectedGroupId: entry.groupId,
+        expectedMessageId: entry.messageId,
+        expectedActorPeerId: entry.actorPeerId,
+        expectedEventTimestamp: entry.eventTimestamp,
+        expectedReactionId: entry.reactionId,
+        expectedReactionAction: entry.reactionAction,
+        expectedReactionTombstone: entry.reactionTombstone,
+        completedAt: completedAt,
+        outcome: reactionCandidate(entry.eventId),
+      );
+
+      const reactionTargetId = 'group-exact-reaction-target';
+      const reactionId = 'group-exact-reaction-state';
+      const reactionEventId = 'group-exact-reaction-transition';
+      await insertReactionTarget(reactionTargetId);
+      await insertReaction(reactionId: reactionId, messageId: reactionTargetId);
+      await appendProtectedReactionSource(
+        eventId: reactionEventId,
+        messageId: reactionTargetId,
+        reactionId: reactionId,
+      );
+      final exactReaction = reactionEntry(
+        eventId: reactionEventId,
+        messageId: reactionTargetId,
+        reactionId: reactionId,
+      );
+      await db.insert(
+        'group_notification_display_outbox',
+        exactReaction.toMap(),
+      );
+      expect(await completeReaction(exactReaction), isTrue);
+      expect(
+        (await db.query(
+          'message_reactions',
+          columns: const <String>['notification_display_terminal_event_id'],
+          where: 'id = ?',
+          whereArgs: const <Object?>[reactionId],
+        )).single['notification_display_terminal_event_id'],
+        boundedReactionEventIdentity(reactionEventId),
+      );
+      expect(
+        await db.query(
+          'group_event_log',
+          where: 'group_id = ? AND source_event_id = ? AND event_type = ?',
+          whereArgs: const <Object?>[
+            groupId,
+            'prdt1:$reactionEventId',
+            'protected_reaction_display_terminal',
+          ],
+        ),
+        hasLength(1),
+        reason:
+            'the exact protected source must append its durable display terminal',
+      );
+      final reactionCorrelation =
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: '12D3KooWgroup-physical',
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.groupReaction,
+            eventKey: reactionEventId,
+          );
+      expect(
+        (await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[reactionCorrelation],
+        )).single['outcome'],
+        'os_posted',
+      );
+      expect(
+        await db.query(
+          'group_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[reactionEventId],
+        ),
+        isEmpty,
+      );
+
+      const missingReactionTargetId = 'group-missing-reaction-target';
+      const missingReactionId = 'group-missing-reaction-state';
+      const missingReactionEventId = 'group-missing-reaction-transition';
+      await insertReactionTarget(missingReactionTargetId);
+      final missingReaction = reactionEntry(
+        eventId: missingReactionEventId,
+        messageId: missingReactionTargetId,
+        reactionId: missingReactionId,
+      );
+      await db.insert(
+        'group_notification_display_outbox',
+        missingReaction.toMap(),
+      );
+      expect(await completeReaction(missingReaction), isFalse);
+      expect(
+        await db.query(
+          'group_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[missingReactionEventId],
+        ),
+        hasLength(1),
+      );
+      expect(
+        await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[
+            tryComputeNotificationCompletedOutcomeCorrelation(
+              physicalPeerId: '12D3KooWgroup-physical',
+              producerKind:
+                  NotificationCompletedOutcomeProducerKind.groupReaction,
+              eventKey: missingReactionEventId,
+            ),
+          ],
+        ),
+        isEmpty,
+      );
+
+      const staleReactionTargetId = 'group-stale-reaction-target';
+      const staleReactionId = 'group-stale-reaction-state';
+      const staleReactionEventId = 'group-stale-reaction-transition';
+      await insertReactionTarget(staleReactionTargetId);
+      await insertReaction(
+        reactionId: staleReactionId,
+        messageId: staleReactionTargetId,
+        terminalEventId: 'newer-reaction-terminal',
+      );
+      final staleReaction = reactionEntry(
+        eventId: staleReactionEventId,
+        messageId: staleReactionTargetId,
+        reactionId: staleReactionId,
+      );
+      await db.insert(
+        'group_notification_display_outbox',
+        staleReaction.toMap(),
+      );
+      expect(await completeReaction(staleReaction), isFalse);
+      expect(
+        (await db.query(
+          'message_reactions',
+          columns: const <String>['notification_display_terminal_event_id'],
+          where: 'id = ?',
+          whereArgs: const <Object?>[staleReactionId],
+        )).single['notification_display_terminal_event_id'],
+        'newer-reaction-terminal',
+      );
+      expect(
+        await db.query(
+          'group_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[staleReactionEventId],
+        ),
+        hasLength(1),
+      );
+
+      const faultReactionTargetId = 'group-fault-reaction-target';
+      const faultReactionId = 'group-fault-reaction-state';
+      const faultReactionEventId = 'group-fault-reaction-transition';
+      await insertReactionTarget(faultReactionTargetId);
+      await insertReaction(
+        reactionId: faultReactionId,
+        messageId: faultReactionTargetId,
+      );
+      await appendProtectedReactionSource(
+        eventId: faultReactionEventId,
+        messageId: faultReactionTargetId,
+        reactionId: faultReactionId,
+      );
+      final faultReaction = reactionEntry(
+        eventId: faultReactionEventId,
+        messageId: faultReactionTargetId,
+        reactionId: faultReactionId,
+      );
+      await db.insert(
+        'group_notification_display_outbox',
+        faultReaction.toMap(),
+      );
+      await db.execute('''
+        CREATE TRIGGER tc369_group_reaction_delete_fault
+        BEFORE DELETE ON group_notification_display_outbox
+        WHEN OLD.event_id = '$faultReactionEventId'
+        BEGIN
+          SELECT RAISE(ABORT, 'tc369 injected reaction delete fault');
+        END
+      ''');
+      await expectLater(
+        completeReaction(faultReaction),
+        throwsA(isA<DatabaseException>()),
+      );
+      expect(
+        (await db.query(
+          'message_reactions',
+          columns: const <String>['notification_display_terminal_event_id'],
+          where: 'id = ?',
+          whereArgs: const <Object?>[faultReactionId],
+        )).single['notification_display_terminal_event_id'],
+        isNull,
+      );
+      expect(
+        await db.query(
+          'group_event_log',
+          where: 'group_id = ? AND source_event_id = ?',
+          whereArgs: const <Object?>[groupId, 'prdt1:$faultReactionEventId'],
+        ),
+        isEmpty,
+      );
+      expect(
+        await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[
+            tryComputeNotificationCompletedOutcomeCorrelation(
+              physicalPeerId: '12D3KooWgroup-physical',
+              producerKind:
+                  NotificationCompletedOutcomeProducerKind.groupReaction,
+              eventKey: faultReactionEventId,
+            ),
+          ],
+        ),
+        isEmpty,
+      );
+      expect(
+        await db.query(
+          'group_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[faultReactionEventId],
+        ),
+        hasLength(1),
+      );
+
+      // An injected final-delete fault proves the terminal and outcome writes
+      // cannot escape their shared exclusive transaction.
+      const faultId = 'group-fault-message';
+      await insertMessage(faultId);
+      final fault = readyEntry(faultId);
+      await db.insert('group_notification_display_outbox', fault.toMap());
+      await db.execute('''
+        CREATE TRIGGER tc369_group_delete_fault
+        BEFORE DELETE ON group_notification_display_outbox
+        WHEN OLD.event_id = '$faultId'
+        BEGIN
+          SELECT RAISE(ABORT, 'tc369 injected delete fault');
+        END
+      ''');
+      await expectLater(
+        complete(
+          fault,
+          candidate(faultId, NotificationCompletedOutcomeCategory.osPosted),
+        ),
+        throwsA(isA<DatabaseException>()),
+      );
+      expect(
+        (await db.query(
+          'group_messages',
+          columns: const <String>['notification_display_terminal_event_id'],
+          where: 'id = ?',
+          whereArgs: const <Object?>[faultId],
+        )).single['notification_display_terminal_event_id'],
+        isNull,
+      );
+      expect(
+        await db.query(
+          'group_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[faultId],
+        ),
+        hasLength(1),
+      );
+      final faultCorrelation =
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: '12D3KooWgroup-physical',
+            producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+            eventKey: 'logical-$faultId',
+          );
+      expect(
+        await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[faultCorrelation],
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'TC-369-05 canonical display custody is the sole group outcome producer',
+    () async {
+      final defaultOff = await _buildFixture();
+      addTearDown(defaultOff.listener.dispose);
+      final defaultMessage = _incomingMessage(id: 'default-off-message');
+      await defaultOff.messageRepo.saveMessage(defaultMessage);
+      defaultOff.outbox.seedReady(_readyMessageEntry(defaultMessage));
+      await defaultOff.listener.retryPendingNotificationDisplays();
+      expect(defaultOff.outbox.completionOutcomes, const [null]);
+
+      final enabled = await _buildFixture(
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWgroup-physical-installation',
+        completedOutcomeProducerEnabled: true,
+      );
+      addTearDown(enabled.listener.dispose);
+      final aliasedMessage = GroupMessage(
+        id: 'canonical-message-id',
+        logicalDeliveryId: 'authenticated-logical-delivery-id',
+        groupId: _groupId,
+        senderPeerId: _senderPeerId,
+        senderUsername: 'Sender',
+        text: 'Canonical alias',
+        timestamp: DateTime.utc(2026, 8, 15, 10, 1),
+        isIncoming: true,
+        createdAt: DateTime.utc(2026, 8, 15, 10, 1),
+      );
+      await enabled.messageRepo.saveMessage(aliasedMessage);
+      enabled.outbox.seedReady(_readyMessageEntry(aliasedMessage));
+      await enabled.listener.retryPendingNotificationDisplays();
+
+      final messageOutcome = enabled.outbox.completionOutcomes.single;
+      expect(messageOutcome, isNotNull);
+      expect(
+        messageOutcome!.physicalPeerId,
+        '12D3KooWgroup-physical-installation',
+      );
+      expect(
+        messageOutcome.producerKind,
+        NotificationCompletedOutcomeProducerKind.groupMessage,
+      );
+      expect(messageOutcome.eventKey, 'authenticated-logical-delivery-id');
+
+      final target = _selfAuthoredTarget('reaction-target');
+      const rawTransition =
+          'raw-notification-transition-that-must-not-be-bounded';
+      await enabled.messageRepo.saveMessage(target);
+      await enabled.reactionRepo.saveReaction(
+        const MessageReaction(
+          id: 'reaction-state',
+          messageId: 'reaction-target',
+          emoji: '👍',
+          senderPeerId: _senderPeerId,
+          timestamp: '2026-08-03T10:03:00.000Z',
+          createdAt: '2026-08-03T10:03:00.000Z',
+        ),
+      );
+      enabled.outbox.seedReady(
+        _readyReactionEntry(eventId: rawTransition, messageId: target.id),
+      );
+      await enabled.listener.retryPendingNotificationDisplays();
+
+      final reactionOutcome = enabled.outbox.completionOutcomes.last;
+      expect(reactionOutcome, isNotNull);
+      expect(
+        reactionOutcome!.producerKind,
+        NotificationCompletedOutcomeProducerKind.groupReaction,
+      );
+      expect(reactionOutcome.eventKey, rawTransition);
+
+      final authenticatedLegacyMessage = _incomingMessage(
+        id: 'authenticated-legacy-message-id',
+        timestamp: DateTime.utc(2026, 8, 15, 10, 2),
+      );
+      await enabled.messageRepo.saveMessage(authenticatedLegacyMessage);
+      enabled.outbox.seedReady(_readyMessageEntry(authenticatedLegacyMessage));
+      await enabled.listener.retryPendingNotificationDisplays();
+      expect(
+        enabled.outbox.completionOutcomes.last?.eventKey,
+        authenticatedLegacyMessage.id,
+        reason:
+            'an authenticated legacy envelope may fall back to its exact message id',
+      );
+
+      final siblingWithoutIdentity = await _buildFixture(
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async => null,
+      );
+      addTearDown(siblingWithoutIdentity.listener.dispose);
+      final siblingMessage = _incomingMessage(
+        id: 'same-event-on-sibling-installation',
+      );
+      await siblingWithoutIdentity.messageRepo.saveMessage(siblingMessage);
+      siblingWithoutIdentity.outbox.seedReady(
+        _readyMessageEntry(siblingMessage),
+      );
+      await siblingWithoutIdentity.listener.retryPendingNotificationDisplays();
+      expect(siblingWithoutIdentity.notifications.showAttempts, 1);
+      expect(
+        siblingWithoutIdentity.outbox.completionOutcomes,
+        const [null],
+        reason:
+            'a sibling with no local physical identity cannot inherit another installation outcome',
+      );
+      expect(
+        messageOutcome.physicalPeerId,
+        '12D3KooWgroup-physical-installation',
+      );
+
+      final muted = await _buildFixture(
+        group: _group(isMuted: true),
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWgroup-physical-installation',
+      );
+      addTearDown(muted.listener.dispose);
+      final mutedMessage = _incomingMessage(id: 'muted-policy-message');
+      await muted.messageRepo.saveMessage(mutedMessage);
+      muted.outbox.seedReady(_readyMessageEntry(mutedMessage));
+      await muted.listener.retryPendingNotificationDisplays();
+      expect(muted.notifications.showAttempts, 0);
+      expect(muted.outbox.completionOutcomes, const [null]);
+
+      final acknowledged = await _buildFixture(
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWgroup-physical-installation',
+        isGroupNotificationEventAcknowledged:
+            ({
+              required groupId,
+              required contentKind,
+              required eventIdentity,
+            }) async => true,
+      );
+      addTearDown(acknowledged.listener.dispose);
+      final acknowledgedMessage = _incomingMessage(
+        id: 'delivery-acknowledged-message',
+      );
+      await acknowledged.messageRepo.saveMessage(acknowledgedMessage);
+      acknowledged.outbox.seedReady(_readyMessageEntry(acknowledgedMessage));
+      await acknowledged.listener.retryPendingNotificationDisplays();
+      expect(acknowledged.notifications.showAttempts, 0);
+      expect(
+        acknowledged.outbox.completionOutcomes,
+        const [null],
+        reason: 'delivery/read acknowledgement is not completed-effect proof',
+      );
+
+      final compatibility = await _buildFixture(
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWgroup-physical-installation',
+      );
+      addTearDown(compatibility.listener.dispose);
+      await compatibility.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'messageId': 'history-compatibility-message',
+        'text': 'History only',
+        'timestamp': '2026-08-14T10:00:00.000Z',
+      }, deliveryDisposition: GroupMessageDeliveryDisposition.historyRepair);
+      expect(compatibility.notifications.showAttempts, 0);
+      expect(compatibility.outbox.entries, isEmpty);
+      expect(compatibility.outbox.completionOutcomes, isEmpty);
+
+      final unauthenticatedMessage = await _buildFixture(
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWgroup-physical-installation',
+      );
+      addTearDown(unauthenticatedMessage.listener.dispose);
+      final locallyGeneratedMessage = _incomingMessage(
+        id: '${kUnauthenticatedIncomingGroupMessageIdPrefix}tc369',
+      );
+      await unauthenticatedMessage.messageRepo.saveMessage(
+        locallyGeneratedMessage,
+      );
+      unauthenticatedMessage.outbox.seedReady(
+        _readyMessageEntry(locallyGeneratedMessage),
+      );
+      await unauthenticatedMessage.listener.retryPendingNotificationDisplays();
+      expect(unauthenticatedMessage.notifications.showAttempts, 1);
+      expect(
+        unauthenticatedMessage.outbox.completionOutcomes,
+        const [null],
+        reason:
+            'a locally generated compatibility id has no authenticated event authority',
+      );
+
+      final whitespaceLogical = await _buildFixture(
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWgroup-physical-installation',
+      );
+      addTearDown(whitespaceLogical.listener.dispose);
+      final whitespaceLogicalMessage = GroupMessage(
+        id: 'whitespace-logical-message',
+        logicalDeliveryId: ' logical-delivery-with-edge-space ',
+        groupId: _groupId,
+        senderPeerId: _senderPeerId,
+        senderUsername: 'Sender',
+        text: 'Canonical content',
+        timestamp: DateTime.utc(2026, 8, 15, 10, 3),
+        isIncoming: true,
+        createdAt: DateTime.utc(2026, 8, 15, 10, 3),
+      );
+      await whitespaceLogical.messageRepo.saveMessage(whitespaceLogicalMessage);
+      whitespaceLogical.outbox.seedReady(
+        _readyMessageEntry(whitespaceLogicalMessage),
+      );
+      await whitespaceLogical.listener.retryPendingNotificationDisplays();
+      expect(whitespaceLogical.notifications.showAttempts, 1);
+      expect(
+        whitespaceLogical.outbox.completionOutcomes,
+        const [null],
+        reason:
+            'a present non-canonical logical id cannot fall back to message id',
+      );
+
+      Future<void> proveReactionWithoutOutcome({
+        required _Fixture fixture,
+        required String targetId,
+        required String reactionId,
+        required String eventId,
+        required String timestamp,
+      }) async {
+        final reactionTarget = _selfAuthoredTarget(targetId);
+        await fixture.messageRepo.saveMessage(reactionTarget);
+        await fixture.reactionRepo.saveReaction(
+          MessageReaction(
+            id: reactionId,
+            messageId: targetId,
+            emoji: '👍',
+            senderPeerId: _senderPeerId,
+            timestamp: timestamp,
+            createdAt: timestamp,
+          ),
+        );
+        fixture.outbox.seedReady(
+          _readyReactionEntry(
+            eventId: eventId,
+            messageId: targetId,
+            reactionId: reactionId,
+            timestamp: timestamp,
+          ),
+        );
+        await fixture.listener.retryPendingNotificationDisplays();
+        expect(fixture.notifications.showAttempts, 1);
+        expect(fixture.outbox.completionOutcomes, const [null]);
+      }
+
+      final legacyReaction = await _buildFixture(
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWgroup-physical-installation',
+      );
+      addTearDown(legacyReaction.listener.dispose);
+      const legacyReactionTimestamp = '2026-08-15T10:04:00.000Z';
+      const legacyReactionId = 'legacy-reaction-state';
+      const legacyReactionTargetId = 'legacy-reaction-target';
+      final syntheticLegacyTransition = const GroupReactionPayload(
+        id: legacyReactionId,
+        messageId: legacyReactionTargetId,
+        emoji: '👍',
+        action: GroupReactionPayload.actionAdd,
+        senderPeerId: _senderPeerId,
+        timestamp: legacyReactionTimestamp,
+      ).notificationTransitionId;
+      expect(syntheticLegacyTransition, startsWith('legacy-reaction:'));
+      await proveReactionWithoutOutcome(
+        fixture: legacyReaction,
+        targetId: legacyReactionTargetId,
+        reactionId: legacyReactionId,
+        eventId: syntheticLegacyTransition,
+        timestamp: legacyReactionTimestamp,
+      );
+
+      final whitespaceReaction = await _buildFixture(
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWgroup-physical-installation',
+      );
+      addTearDown(whitespaceReaction.listener.dispose);
+      await proveReactionWithoutOutcome(
+        fixture: whitespaceReaction,
+        targetId: 'whitespace-reaction-target',
+        reactionId: 'whitespace-reaction-state',
+        eventId: ' raw-reaction-transition ',
+        timestamp: '2026-08-15T10:05:00.000Z',
+      );
+    },
+  );
+
   test(
     'TC-366-04a history repair cannot stage or reconcile a display claim',
     () async {
@@ -1181,7 +2052,7 @@ void main() {
       reAdd.notificationTransitionId,
       isNot(firstAdd.notificationTransitionId),
     );
-    expect(explicit.notificationTransitionId, 'explicit-transition');
+    expect(explicit.notificationTransitionId, ' explicit-transition ');
   });
 
   test(

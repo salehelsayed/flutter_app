@@ -1,6 +1,14 @@
+import 'dart:io';
+
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/notifications/direct_notification_canonical_reconciler.dart';
 import 'package:flutter_app/core/notifications/direct_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
 import 'package:flutter_app/features/conversation/application/direct_notification_projection_owner.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
@@ -11,8 +19,214 @@ import 'package:flutter_app/features/conversation/domain/repositories/direct_not
 import 'package:flutter_app/features/conversation/domain/repositories/direct_notification_reaction_terminal_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_notification_reconciliation_outbox_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+
+  test(
+    'TC-369-02 exact display completion and outcome are one transaction',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'direct_outcome_atomic_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+      final db = await databaseFactoryFfi.openDatabase(
+        '${tempDir.path}/identity.db',
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: onDatabaseVersionChangeError,
+        ),
+      );
+      addTearDown(() async {
+        if (db.isOpen) await db.close();
+      });
+      const completedAt = '2026-08-15T10:00:00.000Z';
+      const peerId = 'peer-direct-atomic';
+      await db.insert('contacts', <String, Object?>{
+        'peer_id': peerId,
+        'public_key': 'public-direct-atomic',
+        'rendezvous': 'relay-direct-atomic',
+        'username': 'Direct Atomic',
+        'signature': 'signature-direct-atomic',
+        'scanned_at': completedAt,
+      });
+
+      Future<void> insertMessage(String messageId) =>
+          db.insert('messages', <String, Object?>{
+            'id': messageId,
+            'contact_peer_id': peerId,
+            'sender_peer_id': peerId,
+            'text': 'canonical content',
+            'timestamp': completedAt,
+            'status': 'delivered',
+            'is_incoming': 1,
+            'created_at': completedAt,
+          });
+      DirectNotificationDisplayOutboxEntry readyEntry(String messageId) =>
+          DirectNotificationDisplayOutboxEntry.message(
+            eventId: messageId,
+            peerId: peerId,
+            messageId: messageId,
+            actorPeerId: peerId,
+            eventTimestamp: completedAt,
+            readiness: DirectNotificationDisplayOutboxReadiness.ready,
+            createdAt: completedAt,
+            updatedAt: completedAt,
+          );
+      NotificationCompletedOutcomeCandidate candidate(
+        String messageId,
+        NotificationCompletedOutcomeCategory outcome,
+      ) => NotificationCompletedOutcomeCandidate(
+        physicalPeerId: '12D3KooWdirect-physical',
+        producerKind: NotificationCompletedOutcomeProducerKind.directMessage,
+        eventKey: messageId,
+        outcome: outcome,
+        completedAt: DateTime.parse(completedAt),
+      );
+      Future<bool> complete(
+        DirectNotificationDisplayOutboxEntry entry,
+        NotificationCompletedOutcomeCandidate outcome,
+      ) => dbCompleteDirectNotificationDisplayOutboxEntryIfExact(
+        db,
+        eventId: entry.eventId,
+        expectedRevision: entry.revision,
+        expectedEventKind: entry.eventKind,
+        expectedPeerId: entry.peerId,
+        expectedMessageId: entry.messageId,
+        expectedActorPeerId: entry.actorPeerId,
+        expectedEventTimestamp: entry.eventTimestamp,
+        expectedReactionId: entry.reactionId,
+        expectedReactionAction: entry.reactionAction,
+        expectedReactionTombstone: entry.reactionTombstone,
+        completedAt: completedAt,
+        outcome: outcome,
+      );
+
+      const exactId = 'direct-exact-message';
+      await insertMessage(exactId);
+      final exact = readyEntry(exactId);
+      await db.insert('direct_notification_display_outbox', exact.toMap());
+      expect(
+        await complete(
+          exact,
+          candidate(exactId, NotificationCompletedOutcomeCategory.osPosted),
+        ),
+        isTrue,
+      );
+      expect(
+        await db.query(
+          'direct_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[exactId],
+        ),
+        isEmpty,
+      );
+      expect(
+        (await db.query(
+          'messages',
+          columns: const <String>['notification_display_terminal_event_id'],
+          where: 'id = ?',
+          whereArgs: const <Object?>[exactId],
+        )).single['notification_display_terminal_event_id'],
+        exactId,
+      );
+      final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
+        physicalPeerId: '12D3KooWdirect-physical',
+        producerKind: NotificationCompletedOutcomeProducerKind.directMessage,
+        eventKey: exactId,
+      );
+      expect(correlation, isNotNull);
+      expect(
+        (await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[correlation],
+        )).single['outcome'],
+        'os_posted',
+      );
+
+      // A valid category replay completes custody without rewriting the first
+      // immutable completed-effect category.
+      await db.insert('direct_notification_display_outbox', exact.toMap());
+      expect(
+        await complete(
+          exact,
+          candidate(exactId, NotificationCompletedOutcomeCategory.inChat),
+        ),
+        isTrue,
+      );
+      expect(
+        (await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[correlation],
+        )).single['outcome'],
+        'os_posted',
+      );
+
+      // A delete fault occurs after terminal/outcome writes in source order;
+      // the exclusive transaction must roll all three facts back together.
+      const faultId = 'direct-fault-message';
+      await insertMessage(faultId);
+      final fault = readyEntry(faultId);
+      await db.insert('direct_notification_display_outbox', fault.toMap());
+      await db.execute('''
+        CREATE TRIGGER tc369_direct_delete_fault
+        BEFORE DELETE ON direct_notification_display_outbox
+        WHEN OLD.event_id = '$faultId'
+        BEGIN
+          SELECT RAISE(ABORT, 'tc369 injected delete fault');
+        END
+      ''');
+      await expectLater(
+        complete(
+          fault,
+          candidate(faultId, NotificationCompletedOutcomeCategory.osPosted),
+        ),
+        throwsA(isA<DatabaseException>()),
+      );
+      expect(
+        (await db.query(
+          'messages',
+          columns: const <String>['notification_display_terminal_event_id'],
+          where: 'id = ?',
+          whereArgs: const <Object?>[faultId],
+        )).single['notification_display_terminal_event_id'],
+        isNull,
+      );
+      expect(
+        await db.query(
+          'direct_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[faultId],
+        ),
+        hasLength(1),
+      );
+      final faultCorrelation =
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: '12D3KooWdirect-physical',
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.directMessage,
+            eventKey: faultId,
+          );
+      expect(
+        await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[faultCorrelation],
+        ),
+        isEmpty,
+      );
+    },
+  );
+
   test(
     'TC-331-08 message marker first survives display throw and restart',
     () async {
@@ -211,6 +425,247 @@ void main() {
       owner.dispose();
     },
   );
+
+  test(
+    'TC-369-05 canonical display custody is the sole direct outcome producer',
+    () async {
+      final now = DateTime.utc(2026, 8, 15, 10);
+      const message = ConversationMessage(
+        id: 'authenticated-message-key',
+        contactPeerId: 'peer-a',
+        senderPeerId: 'peer-a',
+        text: 'hello',
+        timestamp: '2026-08-15T10:00:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-08-15T10:00:00.000Z',
+      );
+
+      final defaultOff = _DisplayOutbox(() => now);
+      final defaultOffOwner = _owner(
+        display: defaultOff,
+        service: _GenerationService(),
+        now: () => now,
+        project: (_) async => NotificationPresentationResult.osPosted,
+      );
+      await defaultOffOwner.stageMessage(message);
+      await defaultOffOwner.promoteMessageReadyIfExact(message);
+      await defaultOffOwner.retryNow();
+      expect(defaultOff.completedOutcomes, const [null]);
+      defaultOffOwner.dispose();
+
+      final enabled = _DisplayOutbox(() => now);
+      final enabledOwner = _owner(
+        display: enabled,
+        service: _GenerationService(),
+        now: () => now,
+        project: (_) async => NotificationPresentationResult.osPosted,
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWphysical-installation',
+      );
+      await enabledOwner.stageMessage(message);
+      await enabledOwner.promoteMessageReadyIfExact(message);
+      await enabledOwner.retryNow();
+
+      final candidate = enabled.completedOutcomes.single;
+      expect(candidate, isNotNull);
+      expect(candidate!.physicalPeerId, '12D3KooWphysical-installation');
+      expect(
+        candidate.producerKind,
+        NotificationCompletedOutcomeProducerKind.directMessage,
+      );
+      expect(candidate.eventKey, 'authenticated-message-key');
+      expect(candidate.outcome, NotificationCompletedOutcomeCategory.osPosted);
+      expect(candidate.completedAt, now);
+      enabledOwner.dispose();
+
+      const target = ConversationMessage(
+        id: 'direct-reaction-target',
+        contactPeerId: 'peer-a',
+        senderPeerId: 'peer-self',
+        text: 'mine',
+        timestamp: '2026-08-15T09:59:00.000Z',
+        status: 'sent',
+        isIncoming: false,
+        createdAt: '2026-08-15T09:59:00.000Z',
+      );
+      const reaction = ReactionPayload(
+        id: 'authenticated-direct-reaction-key',
+        messageId: 'direct-reaction-target',
+        emoji: '👍',
+        action: ReactionPayload.addAction,
+        senderPeerId: 'peer-a',
+        timestamp: '2026-08-15T10:01:00.000Z',
+      );
+      final reactionDisplay = _DisplayOutbox(() => now);
+      final reactionOwner = _owner(
+        display: reactionDisplay,
+        service: _GenerationService(),
+        now: () => now,
+        project: (_) async => NotificationPresentationResult.osPosted,
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWphysical-installation',
+      );
+      await reactionOwner.stageReaction(
+        payload: reaction,
+        targetMessage: target,
+      );
+      await reactionOwner.promoteReactionReadyIfExact(
+        payload: reaction,
+        targetMessage: target,
+      );
+      await reactionOwner.retryNow();
+      expect(
+        reactionDisplay.completedOutcomes.single?.producerKind,
+        NotificationCompletedOutcomeProducerKind.directReaction,
+      );
+      expect(
+        reactionDisplay.completedOutcomes.single?.eventKey,
+        reaction.id,
+        reason: 'the authenticated raw reaction id, not its bounded card id',
+      );
+      reactionOwner.dispose();
+
+      for (final ineligibleTarget in <ConversationMessage>[
+        target.copyWith(hiddenAt: '2026-08-15T10:00:30.000Z'),
+        target.copyWith(privateMediaState: PrivateMediaLifecycleState.consumed),
+      ]) {
+        final residueDisplay = _DisplayOutbox(() => now);
+        var projected = false;
+        final residueOwner = _owner(
+          display: residueDisplay,
+          service: _GenerationService(),
+          now: () => now,
+          project: (_) async {
+            projected = true;
+            return NotificationPresentationResult.osPosted;
+          },
+          completedOutcomeProducerEnabled: true,
+          resolveCompletedOutcomePhysicalPeerId: () async =>
+              '12D3KooWphysical-installation',
+        );
+        expect(
+          directReactionTargetAllowsNotificationDisplay(
+            target: ineligibleTarget,
+            expectedContactPeerId: reaction.senderPeerId,
+          ),
+          isFalse,
+        );
+        await residueOwner.stageReaction(
+          payload: reaction,
+          targetMessage: ineligibleTarget,
+        );
+        await residueOwner.promoteReactionReadyIfExact(
+          payload: reaction,
+          targetMessage: ineligibleTarget,
+        );
+        await residueOwner.retryNow();
+        expect(residueDisplay.rows, isEmpty);
+        expect(residueDisplay.completedOutcomes, isEmpty);
+        expect(projected, isFalse);
+        residueOwner.dispose();
+      }
+
+      final siblingDisplay = _DisplayOutbox(() => now);
+      final siblingOwner = _owner(
+        display: siblingDisplay,
+        service: _GenerationService(),
+        now: () => now,
+        project: (_) async => NotificationPresentationResult.osPosted,
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async => null,
+      );
+      await siblingOwner.stageMessage(message);
+      await siblingOwner.promoteMessageReadyIfExact(message);
+      expect(siblingDisplay.completedOutcomes, isEmpty);
+      await siblingOwner.retryNow();
+      expect(
+        siblingDisplay.completedOutcomes,
+        const [null],
+        reason:
+            'a sibling without this installation physical identity cannot inherit its outcome',
+      );
+      expect(
+        candidate.physicalPeerId,
+        '12D3KooWphysical-installation',
+        reason: 'the first installation candidate remains installation-bound',
+      );
+      siblingOwner.dispose();
+
+      var policyResolverCalled = false;
+      final policyDisplay = _DisplayOutbox(() => now);
+      final policyOwner = _owner(
+        display: policyDisplay,
+        service: _GenerationService(),
+        now: () => now,
+        project: (_) async =>
+            NotificationPresentationResult.terminalWithoutOutcome,
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async {
+          policyResolverCalled = true;
+          return '12D3KooWphysical-installation';
+        },
+      );
+      await policyOwner.stageMessage(message);
+      await policyOwner.promoteMessageReadyIfExact(message);
+      await policyOwner.retryNow();
+      expect(policyDisplay.completedOutcomes, const [null]);
+      expect(policyResolverCalled, isFalse);
+      policyOwner.dispose();
+
+      final bypassDisplay = _DisplayOutbox(() => now);
+      final bypassOwner = _owner(
+        display: bypassDisplay,
+        service: _GenerationService(),
+        now: () => now,
+        project: (_) async => null,
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWphysical-installation',
+      );
+      await bypassOwner.stageMessage(message);
+      await bypassOwner.promoteMessageReadyIfExact(message);
+      await bypassOwner.retryNow();
+      expect(bypassDisplay.completedOutcomes, isEmpty);
+      expect(bypassDisplay.retired, const ['authenticated-message-key']);
+      bypassOwner.dispose();
+
+      const unanchoredCompatibilityMessage = ConversationMessage(
+        id: ' legacy-unanchored-message ',
+        contactPeerId: 'peer-a',
+        senderPeerId: 'peer-a',
+        text: 'legacy',
+        timestamp: '2026-08-15T10:02:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-08-15T10:02:00.000Z',
+      );
+      final compatibilityDisplay = _DisplayOutbox(() => now);
+      final compatibilityOwner = _owner(
+        display: compatibilityDisplay,
+        service: _GenerationService(),
+        now: () => now,
+        project: (_) async => NotificationPresentationResult.osPosted,
+        completedOutcomeProducerEnabled: true,
+        resolveCompletedOutcomePhysicalPeerId: () async =>
+            '12D3KooWphysical-installation',
+      );
+      await compatibilityOwner.stageMessage(unanchoredCompatibilityMessage);
+      await compatibilityOwner.promoteMessageReadyIfExact(
+        unanchoredCompatibilityMessage,
+      );
+      await compatibilityOwner.retryNow();
+      expect(
+        compatibilityDisplay.completedOutcomes,
+        const [null],
+        reason:
+            'an unanchored non-canonical compatibility id may complete locally but cannot mint an outcome',
+      );
+      compatibilityOwner.dispose();
+    },
+  );
 }
 
 DirectNotificationProjectionOwner _owner({
@@ -218,6 +673,8 @@ DirectNotificationProjectionOwner _owner({
   required _GenerationService service,
   required DateTime Function() now,
   required ProjectDirectNotificationDisplayEntry project,
+  Future<String?> Function()? resolveCompletedOutcomePhysicalPeerId,
+  bool completedOutcomeProducerEnabled = false,
 }) {
   final coordinator = DirectNotificationPresentationCoordinator();
   final reconciler = DirectNotificationCanonicalReconciler(
@@ -236,6 +693,9 @@ DirectNotificationProjectionOwner _owner({
     projectDisplay: project,
     canonicalReconciler: reconciler,
     enqueueReconciliation: (_) async {},
+    resolveCompletedOutcomePhysicalPeerId:
+        resolveCompletedOutcomePhysicalPeerId,
+    completedOutcomeProducerEnabled: completedOutcomeProducerEnabled,
     nowUtc: now,
     retryDelay: const Duration(hours: 1),
   );
@@ -248,6 +708,7 @@ final class _DisplayOutbox
   final DateTime Function() now;
   final Map<String, DirectNotificationDisplayOutboxEntry> rows = {};
   final List<String> completed = [];
+  final List<NotificationCompletedOutcomeCandidate?> completedOutcomes = [];
   final List<String> retired = [];
 
   String _key(String peerId, String eventKind, String eventId) =>
@@ -354,13 +815,15 @@ final class _DisplayOutbox
 
   @override
   Future<bool> completeIfExact(
-    DirectNotificationDisplayOutboxEntry expected,
-  ) async {
+    DirectNotificationDisplayOutboxEntry expected, {
+    NotificationCompletedOutcomeCandidate? outcome,
+  }) async {
     final key = _key(expected.peerId, expected.eventKind, expected.eventId);
     final current = rows[key];
     if (current?.revision != expected.revision) return false;
     rows.remove(key);
     completed.add(expected.eventId);
+    completedOutcomes.add(outcome);
     return true;
   }
 

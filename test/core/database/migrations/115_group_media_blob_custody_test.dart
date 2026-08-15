@@ -104,8 +104,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 115);
-      expect(await _userVersion(db), 115);
+      expect(currentIdentityDatabaseVersion, 116);
+      expect(await _userVersion(db), 116);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -114,9 +114,10 @@ void main() {
         expect(entries, hasLength(1));
         expect(entries.single.name, '115_group_media_blob_custody');
         expect(entries.single.run, same(runGroupMediaBlobCustodyMigration));
-        expect(registry.last, same(entries.single));
         final index114 = registry.indexWhere((entry) => entry.version == 114);
         expect(registry.indexOf(entries.single), index114 + 1);
+        expect(registry[registry.indexOf(entries.single) + 1].version, 116);
+        expect(registry.last.version, 116);
       }
 
       final columns = await _columnNames(db, kDirectMediaBlobCustodyTable);
@@ -186,14 +187,14 @@ void main() {
       db = await databaseFactoryFfi.openDatabase(
         databasePath,
         options: OpenDatabaseOptions(
-          version: 115,
+          version: currentIdentityDatabaseVersion,
           singleInstance: false,
           onCreate: runProductionOnCreate,
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(db), 115);
+      expect(await _userVersion(db), 116);
     },
   );
 

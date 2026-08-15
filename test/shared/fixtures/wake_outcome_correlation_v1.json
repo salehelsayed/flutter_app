@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "domain": "mknoon/wake-outcome/v1",
+  "vectors": [
+    {
+      "name": "direct_message_primary",
+      "installationRole": "primary",
+      "physicalPeerId": "12D3KooWA4WHZmYAWGCJbRwU41DwZLtCpoUW6NMWRcmWzEzbnuye",
+      "producerKind": "direct_message",
+      "kindByte": 1,
+      "eventKey": "dm-authenticated-018f7b42",
+      "envelope": {
+        "type": "chat",
+        "messageId": "dm-authenticated-018f7b42"
+      },
+      "preimageHex": "000000166d6b6e6f6f6e2f77616b652d6f7574636f6d652f763100000034313244334b6f6f57413457485a6d59415747434a62527755343144775a4c7443706f5557364e4d5752636d577a457a626e7579650100000019646d2d61757468656e746963617465642d3031386637623432",
+      "digest": "8de60f1321300162dd4b0fed8d87b2017c4fa5b459cced3ec6d3a1d52241076d"
+    },
+    {
+      "name": "direct_reaction_linked",
+      "installationRole": "linked",
+      "physicalPeerId": "12D3KooWJ5oYx8r7qK4mN2pV6sT9uA3bC1dE5fG7hR8wX2yZ4QpL",
+      "producerKind": "direct_reaction",
+      "kindByte": 2,
+      "eventKey": "direct-reaction-R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_",
+      "boundedLocalIdentity": "reaction:08e31ae2e9bde97cd787de9cbdea68f34699e567c930a1b5",
+      "envelope": {
+        "type": "reaction",
+        "messageId": "dm-parent-018f7b42",
+        "reactionId": "direct-reaction-R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_R9x_"
+      },
+      "preimageHex": "000000166d6b6e6f6f6e2f77616b652d6f7574636f6d652f763100000034313244334b6f6f574a356f5978387237714b346d4e32705636735439754133624331644535664737685238775832795a3451704c02000000706469726563742d7265616374696f6e2d5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f5239785f",
+      "digest": "5d1ac9d45b690e2ce3ca94cd3128878bb50618392a81f7b13e4fa951eda11e36"
+    },
+    {
+      "name": "group_message_alias_primary",
+      "installationRole": "primary",
+      "physicalPeerId": "12D3KooWA4WHZmYAWGCJbRwU41DwZLtCpoUW6NMWRcmWzEzbnuye",
+      "producerKind": "group_message",
+      "kindByte": 3,
+      "eventKey": "logical-delivery-018f7b43-stable",
+      "envelope": {
+        "type": "group_message",
+        "groupId": "group-018f7b43",
+        "messageId": "reminted-alias-message-018f7b43",
+        "logicalDeliveryId": "logical-delivery-018f7b43-stable"
+      },
+      "preimageHex": "000000166d6b6e6f6f6e2f77616b652d6f7574636f6d652f763100000034313244334b6f6f57413457485a6d59415747434a62527755343144775a4c7443706f5557364e4d5752636d577a457a626e75796503000000206c6f676963616c2d64656c69766572792d30313866376234332d737461626c65",
+      "digest": "40a33f2cdadb0ecbe0eee4ea5a8ab51e43d32ee69562f74a1c982fc701beaa01"
+    },
+    {
+      "name": "group_reaction_linked",
+      "installationRole": "linked",
+      "physicalPeerId": "12D3KooWJ5oYx8r7qK4mN2pV6sT9uA3bC1dE5fG7hR8wX2yZ4QpL",
+      "producerKind": "group_reaction",
+      "kindByte": 4,
+      "eventKey": "group-transition-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-",
+      "boundedLocalIdentity": "reaction:f687fcfa92eb51e4d86162dcde61c9c8d99d5efdc8d0387b",
+      "envelope": {
+        "type": "group_reaction",
+        "groupId": "group-018f7b43",
+        "messageId": "group-message-018f7b43",
+        "notificationTransitionId": "group-transition-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-T7z-"
+      },
+      "preimageHex": "000000166d6b6e6f6f6e2f77616b652d6f7574636f6d652f763100000034313244334b6f6f574a356f5978387237714b346d4e32705636735439754133624331644535664737685238775832795a3451704c040000008167726f75702d7472616e736974696f6e2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d54377a2d",
+      "digest": "10f9a3db95e1853b80faaae870e3b80cd52e46b41b1a3d274c1648f1729d1e82"
+    }
+  ]
+}

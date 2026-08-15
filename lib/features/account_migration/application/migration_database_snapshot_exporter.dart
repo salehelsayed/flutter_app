@@ -114,6 +114,7 @@ class MigrationDatabaseSnapshotExporter {
         key: destinationKey,
         cipherMetadata: cipherMetadata,
       );
+      await _eraseInstallationLocalRows(exportedDb);
       final integrityResult = await adapter.runIntegrityCheck(exportedDb);
       if (integrityResult.toLowerCase() != 'ok') {
         throw MigrationDatabaseSnapshotExportException(
@@ -123,6 +124,10 @@ class MigrationDatabaseSnapshotExporter {
       final inventory = await MigrationDatabaseSchemaInventory.fromDatabase(
         exportedDb,
       );
+      if (closeExportedDatabaseAfterValidation) {
+        await exportedDb.close();
+        exportedDb = null;
+      }
       final checksum = await computeFileChecksum(destinationPath);
       return MigrationDatabaseSnapshotExportResult(
         destinationPath: destinationPath,
@@ -144,6 +149,19 @@ class MigrationDatabaseSnapshotExporter {
   static Future<String> computeFileChecksum(String path) async {
     final digest = sha256.convert(await File(path).readAsBytes());
     return digest.toString();
+  }
+
+  static Future<void> _eraseInstallationLocalRows(Database db) async {
+    for (final tableName
+        in MigrationDatabaseSchemaInventory.installationLocalTableNames) {
+      final present = await db.rawQuery(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        <Object?>[tableName],
+      );
+      if (present.isNotEmpty) {
+        await db.delete(tableName);
+      }
+    }
   }
 
   static Future<MigrationSqlCipherCapability> probeSqlCipherExportCapability({
@@ -273,7 +291,7 @@ class DefaultMigrationSqlCipherExportAdapter
     return sqlcipher.openDatabase(
       path,
       password: key, // SNAPSHOT_PASSPHRASE
-      readOnly: true,
+      readOnly: false,
       singleInstance: false,
       onConfigure: (db) => _applyCipherPragmas(db, cipherMetadata),
     );

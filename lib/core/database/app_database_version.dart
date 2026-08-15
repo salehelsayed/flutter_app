@@ -64,4 +64,7 @@
 // and group ownership, an exact relay blob ID, a separate group artifact root,
 // and a durable group no-demotion fingerprint. Historical rows retain their
 // exact v114 projection and receive deterministic direct defaults.
-const int currentIdentityDatabaseVersion = 115;
+// 369: DB v116 adds the installation-local, seven-day completed notification
+// outcome outbox. Historical display/terminal facts are deliberately not
+// backfilled because they cannot prove that a local effect completed.
+const int currentIdentityDatabaseVersion = 116;

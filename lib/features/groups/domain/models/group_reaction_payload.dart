@@ -43,7 +43,7 @@ class GroupReactionPayload {
   /// wire [eventId]. Including the immutable transition timestamp prevents a
   /// REMOVE followed by a same-state re-ADD from reusing display custody.
   String get notificationTransitionId {
-    final explicit = eventId?.trim();
+    final explicit = eventId;
     if (explicit != null && explicit.isNotEmpty) return explicit;
     final parsedTimestamp = DateTime.tryParse(timestamp);
     final normalizedTimestamp = parsedTimestamp == null
@@ -72,8 +72,7 @@ class GroupReactionPayload {
       'action': action,
       'senderPeerId': senderPeerId,
       'timestamp': timestamp,
-      if (eventId != null && eventId!.trim().isNotEmpty)
-        'eventId': eventId!.trim(),
+      if (eventId != null && eventId!.isNotEmpty) 'eventId': eventId,
     });
   }
 
@@ -93,7 +92,9 @@ class GroupReactionPayload {
       final action = _requiredString(payload['action']);
       final senderPeerId = _requiredString(payload['senderPeerId']);
       final timestamp = _requiredString(payload['timestamp']);
-      final eventId = _optionalString(payload['eventId']);
+      final rawEventId = payload['eventId'];
+      if (rawEventId != null && rawEventId is! String) return null;
+      final eventId = rawEventId as String?;
 
       if (id == null ||
           messageId == null ||
@@ -143,9 +144,4 @@ String? _requiredString(Object? value) {
   }
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
-}
-
-String? _optionalString(Object? value) {
-  if (value == null) return null;
-  return _requiredString(value);
 }

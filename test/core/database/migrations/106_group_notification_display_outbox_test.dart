@@ -84,6 +84,7 @@ Future<bool> _completeDisplayEntry(
   expectedReactionId: expected.reactionId,
   expectedReactionAction: expected.reactionAction,
   expectedReactionTombstone: expected.reactionTombstone,
+  completedAt: _t0,
 );
 
 void main() {
@@ -136,10 +137,10 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 115);
+      expect(currentIdentityDatabaseVersion, 116);
       expect(
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
-        115,
+        116,
       );
       expect(await db.query('group_reaction_replay_outbox'), hasLength(1));
 
@@ -296,7 +297,7 @@ void main() {
       );
       expect(
         (await fresh.rawQuery('PRAGMA user_version')).single.values.single,
-        115,
+        116,
       );
       await fresh.close();
     },
@@ -471,6 +472,22 @@ void main() {
       );
       addTearDown(db.close);
 
+      await db.insert('group_messages', <String, Object?>{
+        'id': 'message-a',
+        'group_id': 'group-a',
+        'sender_peer_id': 'peer-sender',
+        'text': 'retry target',
+        'timestamp': _t0,
+        'created_at': _t0,
+      });
+      await dbInsertReaction(db, <String, Object?>{
+        'id': 'reaction-a',
+        'message_id': 'message-a',
+        'emoji': '\u{1F44D}',
+        'sender_peer_id': 'peer-reactor',
+        'timestamp': _t0,
+        'created_at': _t0,
+      });
       await dbStageGroupNotificationDisplayOutboxEntry(
         db,
         _message(
@@ -1109,6 +1126,14 @@ void main() {
       );
       addTearDown(db.close);
 
+      await db.insert('group_messages', <String, Object?>{
+        'id': 'message-a',
+        'group_id': 'group-a',
+        'sender_peer_id': 'peer-sender',
+        'text': 'adapter target',
+        'timestamp': _t0,
+        'created_at': _t0,
+      });
       var clock = DateTime.parse(_t1);
       final repository = GroupNotificationDisplayOutboxRepositoryImpl(
         dbStage: (row) => dbStageGroupNotificationDisplayOutboxEntry(db, row),
@@ -1162,7 +1187,36 @@ void main() {
               required expectedReactionId,
               required expectedReactionAction,
               required expectedReactionTombstone,
+              required completedAt,
+              outcome,
             }) => dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
+              db,
+              eventId: eventId,
+              expectedRevision: expectedRevision,
+              expectedEventKind: expectedEventKind,
+              expectedGroupId: expectedGroupId,
+              expectedMessageId: expectedMessageId,
+              expectedActorPeerId: expectedActorPeerId,
+              expectedEventTimestamp: expectedEventTimestamp,
+              expectedReactionId: expectedReactionId,
+              expectedReactionAction: expectedReactionAction,
+              expectedReactionTombstone: expectedReactionTombstone,
+              completedAt: completedAt,
+              outcome: outcome,
+            ),
+        dbRetireIfExact:
+            ({
+              required eventId,
+              required expectedRevision,
+              required expectedEventKind,
+              required expectedGroupId,
+              required expectedMessageId,
+              required expectedActorPeerId,
+              required expectedEventTimestamp,
+              required expectedReactionId,
+              required expectedReactionAction,
+              required expectedReactionTombstone,
+            }) => dbRetireGroupNotificationDisplayOutboxEntryIfExact(
               db,
               eventId: eventId,
               expectedRevision: expectedRevision,

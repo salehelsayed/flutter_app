@@ -4,13 +4,30 @@ export 'package:flutter_app/core/notifications/conversation_notification_content
 
 /// Result of attempting to publish one canonical notification event.
 ///
-/// A retry outbox may clear [shown] and [terminalSuppressed] work. It must keep
-/// [contendedRetryable], because another producer still owns only a provisional
-/// claim and has not proved that an OS card was published.
+/// Only [osPosted], [inChat], and [suppressedPolicy] describe an approved local
+/// effect that may later become a durable wake outcome. [terminalWithoutOutcome]
+/// deliberately covers replay, dedupe, compatibility, stale-policy, and other
+/// terminal branches that are not proof of a completed effect.
 enum NotificationPresentationResult {
-  shown,
-  terminalSuppressed,
-  contendedRetryable,
+  osPosted,
+  inChat,
+  suppressedPolicy,
+  terminalWithoutOutcome,
+  contendedRetryable;
+
+  /// Compatibility aliases for callers that only need terminal/retry behavior.
+  /// New outcome producers must switch on the five canonical values above.
+  @Deprecated('Use osPosted')
+  static const NotificationPresentationResult shown = osPosted;
+
+  @Deprecated('Use terminalWithoutOutcome')
+  static const NotificationPresentationResult terminalSuppressed =
+      terminalWithoutOutcome;
+
+  bool get carriesApprovedOutcome =>
+      this == osPosted || this == inChat || this == suppressedPolicy;
+
+  bool get isTerminal => this != contendedRetryable;
 }
 
 /// Privacy-normalized canonical unread state for one stable conversation card.

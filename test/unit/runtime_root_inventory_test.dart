@@ -1846,10 +1846,10 @@ flutter:
       // 361: v113 adds the direct linked-device blob-free event fanout
       // columns; the floor advances with it.
       'lib/core/database/app_database_version.dart':
-          // Plan 365 advances the shared custody schema while preserving this
+          // Plan 369 advances the installation-local outcome schema while preserving this
           // runtime-root check's requirement that the production DB floor is
           // explicitly pinned.
-          'const int currentIdentityDatabaseVersion = 115;',
+          'const int currentIdentityDatabaseVersion = 116;',
     };
     for (final entry in preservedSources.entries) {
       final source = requiredSource(entry.key);

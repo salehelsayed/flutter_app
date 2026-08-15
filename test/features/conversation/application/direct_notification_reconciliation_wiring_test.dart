@@ -393,8 +393,10 @@ final class _EmptyDisplayOutbox
   }) async => false;
 
   @override
-  Future<bool> completeIfExact(DirectNotificationDisplayOutboxEntry _) async =>
-      false;
+  Future<bool> completeIfExact(
+    DirectNotificationDisplayOutboxEntry _, {
+    Object? outcome,
+  }) async => false;
 
   @override
   Future<bool> retireIfExact(DirectNotificationDisplayOutboxEntry _) async =>

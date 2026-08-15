@@ -100,6 +100,7 @@ import 'package:flutter_app/core/database/migrations/112_direct_linked_device_ad
 import 'package:flutter_app/core/database/migrations/113_direct_linked_device_event_fanout.dart';
 import 'package:flutter_app/core/database/migrations/114_direct_linked_device_media_blob_fanout.dart';
 import 'package:flutter_app/core/database/migrations/115_group_media_blob_custody.dart';
+import 'package:flutter_app/core/database/migrations/116_notification_completed_outcome_outbox.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
@@ -1480,7 +1481,7 @@ void main() {
     test(
       'production registries contain one ordered direct forwarded v97 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 115);
+        expect(currentIdentityDatabaseVersion, 116);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1500,7 +1501,7 @@ void main() {
     test(
       'production registries contain one ordered deletion journal v98 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 115);
+        expect(currentIdentityDatabaseVersion, 116);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1514,157 +1515,156 @@ void main() {
         }
       },
     );
-    test(
-      'production registries preserve v100-v115 and end with group media blob custody v115',
-      () {
-        expect(currentIdentityDatabaseVersion, 115);
-        for (final registry in [
-          productionCreateMigrations,
-          productionUpgradeMigrations,
-        ]) {
-          final index99 = registry.indexWhere((entry) => entry.version == 99);
-          final index100 = registry.indexWhere((entry) => entry.version == 100);
-          final index101 = registry.indexWhere((entry) => entry.version == 101);
-          final index102 = registry.indexWhere((entry) => entry.version == 102);
-          final index103 = registry.indexWhere((entry) => entry.version == 103);
-          final index104 = registry.indexWhere((entry) => entry.version == 104);
-          final index105 = registry.indexWhere((entry) => entry.version == 105);
-          final index106 = registry.indexWhere((entry) => entry.version == 106);
-          final index107 = registry.indexWhere((entry) => entry.version == 107);
-          final index108 = registry.indexWhere((entry) => entry.version == 108);
-          final index109 = registry.indexWhere((entry) => entry.version == 109);
-          final index110 = registry.indexWhere((entry) => entry.version == 110);
-          final index111 = registry.indexWhere((entry) => entry.version == 111);
-          final index112 = registry.indexWhere((entry) => entry.version == 112);
-          final index113 = registry.indexWhere((entry) => entry.version == 113);
-          expect(registry.where((entry) => entry.version == 100), hasLength(1));
-          expect(registry.where((entry) => entry.version == 101), hasLength(1));
-          expect(registry.where((entry) => entry.version == 102), hasLength(1));
-          expect(registry.where((entry) => entry.version == 103), hasLength(1));
-          expect(registry.where((entry) => entry.version == 104), hasLength(1));
-          expect(registry.where((entry) => entry.version == 105), hasLength(1));
-          expect(registry.where((entry) => entry.version == 106), hasLength(1));
-          expect(registry.where((entry) => entry.version == 107), hasLength(1));
-          expect(registry.where((entry) => entry.version == 108), hasLength(1));
-          expect(registry.where((entry) => entry.version == 109), hasLength(1));
-          expect(registry.where((entry) => entry.version == 110), hasLength(1));
-          expect(registry.where((entry) => entry.version == 111), hasLength(1));
-          expect(registry.where((entry) => entry.version == 112), hasLength(1));
-          expect(registry.where((entry) => entry.version == 113), hasLength(1));
-          expect(registry.where((entry) => entry.version == 114), hasLength(1));
-          expect(registry.where((entry) => entry.version == 115), hasLength(1));
-          expect(index99, greaterThanOrEqualTo(0));
-          expect(index100, index99 + 1);
-          expect(index101, index100 + 1);
-          expect(index102, index101 + 1);
-          expect(index103, index102 + 1);
-          expect(index104, index103 + 1);
-          expect(index105, index104 + 1);
-          expect(index106, index105 + 1);
-          expect(index107, index106 + 1);
-          expect(index108, index107 + 1);
-          expect(index109, index108 + 1);
-          expect(index110, index109 + 1);
-          expect(index111, index110 + 1);
-          expect(index112, index111 + 1);
-          expect(index113, index112 + 1);
-          final index114 = registry.indexWhere((entry) => entry.version == 114);
-          expect(index114, index113 + 1);
-          final index115 = registry.indexWhere((entry) => entry.version == 115);
-          expect(index115, index114 + 1);
-          expect(index115, registry.length - 1);
-          expect(registry[index100].name, '100_direct_private_media_lifecycle');
-          expect(
-            registry[index100].run,
-            same(runDirectPrivateMediaLifecycleMigration),
-          );
-          expect(registry[index101].name, '101_group_private_media_lifecycle');
-          expect(
-            registry[index101].run,
-            same(runGroupPrivateMediaLifecycleMigration),
-          );
-          expect(registry[index102].name, '102_groups_self_removed_at');
-          expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
-          expect(registry[index103].name, '103_group_exit_intents');
-          expect(registry[index103].run, same(runGroupExitIntentsMigration));
-          expect(registry[index104].name, '104_group_exit_diagnostics');
-          expect(
-            registry[index104].run,
-            same(runGroupExitDiagnosticsMigration),
-          );
-          expect(registry[index105].name, '105_reaction_outbox_needs_build');
-          expect(
-            registry[index105].run,
-            same(runReactionOutboxNeedsBuildMigration),
-          );
-          expect(
-            registry[index106].name,
-            '106_group_notification_display_outbox',
-          );
-          expect(
-            registry[index106].run,
-            same(runGroupNotificationDisplayOutboxMigration),
-          );
-          expect(registry[index107].name, '107_direct_notification_durability');
-          expect(
-            registry[index107].run,
-            same(runDirectNotificationDurabilityMigration),
-          );
-          expect(registry[index108].name, '108_direct_inbox_custody_outbox');
-          expect(
-            registry[index108].run,
-            same(runDirectInboxCustodyOutboxMigration),
-          );
-          expect(
-            registry[index109].name,
-            '109_direct_reaction_inbox_custody_outbox',
-          );
-          expect(
-            registry[index109].run,
-            same(runDirectReactionInboxCustodyOutboxMigration),
-          );
-          expect(registry[index110].name, '110_direct_media_custody_intent');
-          expect(
-            registry[index110].run,
-            same(runDirectMediaCustodyIntentMigration),
-          );
-          expect(registry[index111].name, '111_direct_media_blob_custody');
-          expect(
-            registry[index111].run,
-            same(runDirectMediaBlobCustodyMigration),
-          );
-          expect(
-            registry[index112].name,
-            '112_direct_linked_device_addressing',
-          );
-          expect(
-            registry[index112].run,
-            same(runDirectLinkedDeviceAddressingMigration),
-          );
-          expect(
-            registry[index113].name,
-            '113_direct_linked_device_event_fanout',
-          );
-          expect(
-            registry[index113].run,
-            same(runDirectLinkedDeviceEventFanoutMigration),
-          );
-          expect(
-            registry[index114].name,
-            '114_direct_linked_device_media_blob_fanout',
-          );
-          expect(
-            registry[index114].run,
-            same(runDirectLinkedDeviceMediaBlobFanoutMigration),
-          );
-          expect(registry[index115].name, '115_group_media_blob_custody');
-          expect(
-            registry[index115].run,
-            same(runGroupMediaBlobCustodyMigration),
-          );
-        }
-      },
-    );
+    test('TC-369-01 production registry reaches v116 exactly once', () {
+      expect(currentIdentityDatabaseVersion, 116);
+      for (final registry in [
+        productionCreateMigrations,
+        productionUpgradeMigrations,
+      ]) {
+        final index99 = registry.indexWhere((entry) => entry.version == 99);
+        final index100 = registry.indexWhere((entry) => entry.version == 100);
+        final index101 = registry.indexWhere((entry) => entry.version == 101);
+        final index102 = registry.indexWhere((entry) => entry.version == 102);
+        final index103 = registry.indexWhere((entry) => entry.version == 103);
+        final index104 = registry.indexWhere((entry) => entry.version == 104);
+        final index105 = registry.indexWhere((entry) => entry.version == 105);
+        final index106 = registry.indexWhere((entry) => entry.version == 106);
+        final index107 = registry.indexWhere((entry) => entry.version == 107);
+        final index108 = registry.indexWhere((entry) => entry.version == 108);
+        final index109 = registry.indexWhere((entry) => entry.version == 109);
+        final index110 = registry.indexWhere((entry) => entry.version == 110);
+        final index111 = registry.indexWhere((entry) => entry.version == 111);
+        final index112 = registry.indexWhere((entry) => entry.version == 112);
+        final index113 = registry.indexWhere((entry) => entry.version == 113);
+        expect(registry.where((entry) => entry.version == 100), hasLength(1));
+        expect(registry.where((entry) => entry.version == 101), hasLength(1));
+        expect(registry.where((entry) => entry.version == 102), hasLength(1));
+        expect(registry.where((entry) => entry.version == 103), hasLength(1));
+        expect(registry.where((entry) => entry.version == 104), hasLength(1));
+        expect(registry.where((entry) => entry.version == 105), hasLength(1));
+        expect(registry.where((entry) => entry.version == 106), hasLength(1));
+        expect(registry.where((entry) => entry.version == 107), hasLength(1));
+        expect(registry.where((entry) => entry.version == 108), hasLength(1));
+        expect(registry.where((entry) => entry.version == 109), hasLength(1));
+        expect(registry.where((entry) => entry.version == 110), hasLength(1));
+        expect(registry.where((entry) => entry.version == 111), hasLength(1));
+        expect(registry.where((entry) => entry.version == 112), hasLength(1));
+        expect(registry.where((entry) => entry.version == 113), hasLength(1));
+        expect(registry.where((entry) => entry.version == 114), hasLength(1));
+        expect(registry.where((entry) => entry.version == 115), hasLength(1));
+        expect(registry.where((entry) => entry.version == 116), hasLength(1));
+        expect(index99, greaterThanOrEqualTo(0));
+        expect(index100, index99 + 1);
+        expect(index101, index100 + 1);
+        expect(index102, index101 + 1);
+        expect(index103, index102 + 1);
+        expect(index104, index103 + 1);
+        expect(index105, index104 + 1);
+        expect(index106, index105 + 1);
+        expect(index107, index106 + 1);
+        expect(index108, index107 + 1);
+        expect(index109, index108 + 1);
+        expect(index110, index109 + 1);
+        expect(index111, index110 + 1);
+        expect(index112, index111 + 1);
+        expect(index113, index112 + 1);
+        final index114 = registry.indexWhere((entry) => entry.version == 114);
+        expect(index114, index113 + 1);
+        final index115 = registry.indexWhere((entry) => entry.version == 115);
+        expect(index115, index114 + 1);
+        final index116 = registry.indexWhere((entry) => entry.version == 116);
+        expect(index116, index115 + 1);
+        expect(index116, registry.length - 1);
+        expect(registry[index100].name, '100_direct_private_media_lifecycle');
+        expect(
+          registry[index100].run,
+          same(runDirectPrivateMediaLifecycleMigration),
+        );
+        expect(registry[index101].name, '101_group_private_media_lifecycle');
+        expect(
+          registry[index101].run,
+          same(runGroupPrivateMediaLifecycleMigration),
+        );
+        expect(registry[index102].name, '102_groups_self_removed_at');
+        expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
+        expect(registry[index103].name, '103_group_exit_intents');
+        expect(registry[index103].run, same(runGroupExitIntentsMigration));
+        expect(registry[index104].name, '104_group_exit_diagnostics');
+        expect(registry[index104].run, same(runGroupExitDiagnosticsMigration));
+        expect(registry[index105].name, '105_reaction_outbox_needs_build');
+        expect(
+          registry[index105].run,
+          same(runReactionOutboxNeedsBuildMigration),
+        );
+        expect(
+          registry[index106].name,
+          '106_group_notification_display_outbox',
+        );
+        expect(
+          registry[index106].run,
+          same(runGroupNotificationDisplayOutboxMigration),
+        );
+        expect(registry[index107].name, '107_direct_notification_durability');
+        expect(
+          registry[index107].run,
+          same(runDirectNotificationDurabilityMigration),
+        );
+        expect(registry[index108].name, '108_direct_inbox_custody_outbox');
+        expect(
+          registry[index108].run,
+          same(runDirectInboxCustodyOutboxMigration),
+        );
+        expect(
+          registry[index109].name,
+          '109_direct_reaction_inbox_custody_outbox',
+        );
+        expect(
+          registry[index109].run,
+          same(runDirectReactionInboxCustodyOutboxMigration),
+        );
+        expect(registry[index110].name, '110_direct_media_custody_intent');
+        expect(
+          registry[index110].run,
+          same(runDirectMediaCustodyIntentMigration),
+        );
+        expect(registry[index111].name, '111_direct_media_blob_custody');
+        expect(
+          registry[index111].run,
+          same(runDirectMediaBlobCustodyMigration),
+        );
+        expect(registry[index112].name, '112_direct_linked_device_addressing');
+        expect(
+          registry[index112].run,
+          same(runDirectLinkedDeviceAddressingMigration),
+        );
+        expect(
+          registry[index113].name,
+          '113_direct_linked_device_event_fanout',
+        );
+        expect(
+          registry[index113].run,
+          same(runDirectLinkedDeviceEventFanoutMigration),
+        );
+        expect(
+          registry[index114].name,
+          '114_direct_linked_device_media_blob_fanout',
+        );
+        expect(
+          registry[index114].run,
+          same(runDirectLinkedDeviceMediaBlobFanoutMigration),
+        );
+        expect(registry[index115].name, '115_group_media_blob_custody');
+        expect(registry[index115].run, same(runGroupMediaBlobCustodyMigration));
+        expect(
+          registry[index116].name,
+          '116_notification_completed_outcome_outbox',
+        );
+        expect(
+          registry[index116].run,
+          same(runNotificationCompletedOutcomeOutboxMigration),
+        );
+      }
+    });
 
     test(
       'PB266-05 full create and v103 to v104 preserve predecessor state',
@@ -2059,7 +2059,7 @@ void main() {
     test('production create and v95 upgrade registries include media library '
         'state v96', () async {
       // TC-228-13: v96 appears exactly once in both registry branches.
-      expect(currentIdentityDatabaseVersion, 115);
+      expect(currentIdentityDatabaseVersion, 116);
       expect(
         productionCreateMigrations.where((e) => e.version == 96).length,
         1,

@@ -1,14 +1,45 @@
 import 'dart:async';
 
-enum GroupNotificationDisplayRetryDisposition { completed, retryLater }
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+
+enum GroupNotificationDisplayRetryDisposition { completed, retired, retryLater }
+
+/// One canonical projection decision plus its immutable completed-effect
+/// candidate. Keeping both in one value prevents retry-generation side maps.
+final class GroupNotificationDisplayProjectionResult {
+  const GroupNotificationDisplayProjectionResult._({
+    required this.disposition,
+    this.outcomeCandidate,
+  });
+
+  const GroupNotificationDisplayProjectionResult.completed({
+    NotificationCompletedOutcomeCandidate? outcomeCandidate,
+  }) : this._(
+         disposition: GroupNotificationDisplayRetryDisposition.completed,
+         outcomeCandidate: outcomeCandidate,
+       );
+
+  const GroupNotificationDisplayProjectionResult.retired()
+    : this._(disposition: GroupNotificationDisplayRetryDisposition.retired);
+
+  const GroupNotificationDisplayProjectionResult.retryLater()
+    : this._(disposition: GroupNotificationDisplayRetryDisposition.retryLater);
+
+  final GroupNotificationDisplayRetryDisposition disposition;
+  final NotificationCompletedOutcomeCandidate? outcomeCandidate;
+}
 
 typedef LoadGroupNotificationDisplayBatch<T> =
     Future<List<T>> Function({required int limit});
 typedef LoadEarliestGroupNotificationDisplayNextAttemptAt =
     Future<DateTime?> Function();
 typedef ProjectGroupNotificationDisplay<T> =
-    Future<GroupNotificationDisplayRetryDisposition> Function(T entry);
-typedef CompleteGroupNotificationDisplay<T> = Future<void> Function(T entry);
+    Future<GroupNotificationDisplayProjectionResult> Function(T entry);
+typedef CompleteGroupNotificationDisplayWithOutcome<T> =
+    Future<void> Function(
+      T entry,
+      NotificationCompletedOutcomeCandidate? outcome,
+    );
 typedef RecordGroupNotificationDisplayFailure<T> =
     Future<void> Function(T entry, Object error);
 typedef ScheduleGroupNotificationDisplayRetry = void Function(Duration delay);
@@ -27,7 +58,8 @@ final class GroupNotificationDisplayRetryCoordinator<T> {
   GroupNotificationDisplayRetryCoordinator({
     required this.loadReady,
     required this.project,
-    required this.complete,
+    required this.completeWithOutcome,
+    required this.retire,
     required this.recordFailure,
     this.entryIdentity,
     this.loadEarliestNextAttemptAt,
@@ -50,7 +82,8 @@ final class GroupNotificationDisplayRetryCoordinator<T> {
 
   final LoadGroupNotificationDisplayBatch<T> loadReady;
   final ProjectGroupNotificationDisplay<T> project;
-  final CompleteGroupNotificationDisplay<T> complete;
+  final CompleteGroupNotificationDisplayWithOutcome<T> completeWithOutcome;
+  final Future<void> Function(T entry) retire;
   final RecordGroupNotificationDisplayFailure<T> recordFailure;
   final GroupNotificationDisplayEntryIdentity<T>? entryIdentity;
   final LoadEarliestGroupNotificationDisplayNextAttemptAt?
@@ -116,14 +149,20 @@ final class GroupNotificationDisplayRetryCoordinator<T> {
           if (failedEntryIdentities.contains(_identityOf(entry))) continue;
           late Object failure;
           try {
-            final disposition = await project(entry);
+            final projection = await project(entry);
             // Disposal is a hard mutation fence. A projection that was already
             // in flight may finish its read/native call, but it cannot retire
             // or rewrite durable custody after its owner has been torn down.
             if (_disposed) return;
-            if (disposition ==
+            if (projection.disposition ==
                 GroupNotificationDisplayRetryDisposition.completed) {
-              await complete(entry);
+              await completeWithOutcome(entry, projection.outcomeCandidate);
+              if (_disposed) return;
+              continue;
+            }
+            if (projection.disposition ==
+                GroupNotificationDisplayRetryDisposition.retired) {
+              await retire(entry);
               if (_disposed) return;
               continue;
             }

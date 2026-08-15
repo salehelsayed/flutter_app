@@ -105,7 +105,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
             : contactPeerId,
       },
     );
-    return NotificationPresentationResult.terminalSuppressed;
+    return NotificationPresentationResult.terminalWithoutOutcome;
   }
 
   final lifecycleState = getAppLifecycleState();
@@ -124,7 +124,9 @@ Future<NotificationPresentationResult> maybeShowNotification({
             : contactPeerId,
       },
     );
-    return NotificationPresentationResult.terminalSuppressed;
+    // N04/N05/N11 own the final same-chat/read effect authority. Until that
+    // shared boundary exists this is terminal, but it cannot mint an outcome.
+    return NotificationPresentationResult.terminalWithoutOutcome;
   }
 
   if (consumeRecentRemoteNotificationAnnouncement != null) {
@@ -149,7 +151,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
               : contactPeerId,
         },
       );
-      return NotificationPresentationResult.terminalSuppressed;
+      return NotificationPresentationResult.terminalWithoutOutcome;
     }
   }
 
@@ -200,7 +202,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
                 : contactPeerId,
           },
         );
-        return NotificationPresentationResult.terminalSuppressed;
+        return NotificationPresentationResult.terminalWithoutOutcome;
       }
     } catch (error) {
       // Storage/locking failure is the sole fail-open case. There is no durable
@@ -442,12 +444,25 @@ Future<NotificationPresentationResult> maybeShowNotification({
   // would double-alert. Gated on messageId so it never over-suppresses an
   // unrelated bare-payload message.
   if (markRecentRemoteNotificationAnnouncement != null && messageId != null) {
-    await markRecentRemoteNotificationAnnouncement(
-      payload: routePayload ?? contactPeerId,
-      messageId: messageId,
-    );
+    try {
+      await markRecentRemoteNotificationAnnouncement(
+        payload: routePayload ?? contactPeerId,
+        messageId: messageId,
+      );
+    } catch (error) {
+      // Native publication already returned normally. Dedupe bookkeeping is a
+      // separate recoverable residue and cannot erase the truthful OS outcome.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_REMOTE_ANNOUNCEMENT_MARK_FAILED',
+        details: {
+          'type': notificationEventType,
+          'errorType': error.runtimeType.toString(),
+        },
+      );
+    }
   }
-  return NotificationPresentationResult.shown;
+  return NotificationPresentationResult.osPosted;
 }
 
 final class _NotificationClaimOwnershipLostBeforeShow implements Exception {

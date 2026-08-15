@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/migrations/116_notification_completed_outcome_outbox.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_snapshot_exporter.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_database_manifest.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -109,6 +112,69 @@ void main() {
     );
 
     test(
+      'TC-369-01 exported snapshot carries empty outcome authority',
+      () async {
+        await sourceDb!.close();
+        await exportedDb!.close();
+        sourceDb = await openDatabase(
+          p.join(tempDir!.path, 'v116-source.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        exportedDb = await openDatabase(
+          p.join(tempDir!.path, 'v116-export-copy.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        await sourceDb!.insert(
+          kNotificationCompletedOutcomeOutboxTable,
+          _outcomeRow('a'),
+        );
+        await exportedDb!.insert(
+          kNotificationCompletedOutcomeOutboxTable,
+          _outcomeRow('a'),
+        );
+        final outputPath = p.join(tempDir!.path, 'v116.snapshot.db');
+        final exporter = MigrationDatabaseSnapshotExporter(
+          adapter: RecordingSnapshotExportAdapter(
+            verificationDb: exportedDb!,
+            bytesToWrite: List<int>.filled(64, 11),
+          ),
+          closeExportedDatabaseAfterValidation: false,
+        );
+
+        final result = await exporter.exportSnapshot(
+          sourceDb: sourceDb!,
+          destinationPath: outputPath,
+          destinationKey: 'staged-db-key',
+          sourceAppVersion: '1.2.3',
+          sourceBuildNumber: '456',
+        );
+
+        expect(
+          await sourceDb!.query(kNotificationCompletedOutcomeOutboxTable),
+          hasLength(1),
+          reason: 'sanitizing a copied snapshot cannot mutate the live DB',
+        );
+        expect(
+          await exportedDb!.query(kNotificationCompletedOutcomeOutboxTable),
+          isEmpty,
+        );
+        expect(
+          result.manifest.schemaInventory.tables.containsKey(
+            kNotificationCompletedOutcomeOutboxTable,
+          ),
+          isTrue,
+          reason: 'the current-version empty schema remains transferable',
+        );
+      },
+    );
+
+    test(
       'runs sqlcipher_export through rawQuery for Android sqflite',
       () async {
         final db = RecordingSqlCipherExportDatabase();
@@ -158,6 +224,19 @@ void main() {
     );
   });
 }
+
+Map<String, Object?> _outcomeRow(String seed) => <String, Object?>{
+  'wake_correlation': seed * 64,
+  'outcome': 'os_posted',
+  'revision': 1,
+  'retry_count': 0,
+  'last_error_code': null,
+  'last_attempt_at': null,
+  'next_attempt_at': null,
+  'completed_at': '2026-08-15T12:00:00.000Z',
+  'created_at': '2026-08-15T12:00:00.000Z',
+  'expires_at': '2026-08-22T12:00:00.000Z',
+};
 
 Future<void> _createSeededAccountDb(Database db) async {
   await db.execute('''

@@ -1,5 +1,4 @@
 import 'package:uuid/uuid.dart';
-
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -18,6 +17,9 @@ import 'package:flutter_app/features/groups/domain/models/group_pending_key_repa
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+
+const String kUnauthenticatedIncomingGroupMessageIdPrefix =
+    'local_unattributed_group_message_';
 
 const _maxIncomingMessageFutureClockSkew = Duration(minutes: 5);
 const _incomingMediaRetrySearchLimit = 200;
@@ -204,14 +206,31 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
   );
 
   final sanitizedText = sanitizeMessageText(text);
+  if ((messageId != null && messageId.isEmpty) ||
+      (logicalDeliveryId != null && logicalDeliveryId.isEmpty)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_HANDLE_INCOMING_MSG_NONCANONICAL_ID_REJECTED',
+      details: const <String, Object?>{},
+    );
+    return const IncomingGroupMessageDetailedOutcome.ignored();
+  }
+  // These are authenticated event authorities. Preserve their exact bytes;
+  // edge whitespace and other non-canonical forms must never be normalized
+  // into an outcome-eligible identity. Message storage retains its incumbent
+  // normalized primary key, while a non-canonical raw key leaves a durable,
+  // deliberately non-canonical logical marker so outcome retry cannot mistake
+  // that local row for authenticated legacy authority.
   final normalizedMessageId = messageId?.trim();
   final stableMessageId =
       normalizedMessageId != null && normalizedMessageId.isNotEmpty
       ? normalizedMessageId
       : null;
   final stableLogicalDeliveryId =
-      logicalDeliveryId != null && logicalDeliveryId.trim().isNotEmpty
-      ? logicalDeliveryId.trim()
+      logicalDeliveryId != null && logicalDeliveryId.isNotEmpty
+      ? logicalDeliveryId
+      : messageId != null && messageId.trim() != messageId
+      ? ' n03-noncanonical-message-id:$messageId'
       : null;
   final normalizedTransportPeerId = transportPeerId?.trim();
   final resolvedTransportPeerId =
@@ -764,7 +783,9 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
     }
   }
 
-  if (stableMessageId != null && stableLogicalDeliveryId != null) {
+  if (stableMessageId != null &&
+      stableLogicalDeliveryId != null &&
+      stableLogicalDeliveryId.trim() == stableLogicalDeliveryId) {
     final existingByLogicalDelivery = await msgRepo
         .getMessageByLogicalDeliveryId(
           groupId,
@@ -918,7 +939,9 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
   }
 
   // 4. Use wire messageId if provided, otherwise generate one
-  final resolvedMessageId = stableMessageId ?? const Uuid().v4();
+  final resolvedMessageId =
+      stableMessageId ??
+      '$kUnauthenticatedIncomingGroupMessageIdPrefix${const Uuid().v4()}';
   final mediaReceivedAt = privateMediaPolicy.requiresRedaction
       ? now.millisecondsSinceEpoch
       : null;

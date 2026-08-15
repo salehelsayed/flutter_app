@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+
 import '../../domain/models/direct_notification_display_outbox_entry.dart';
 import '../../domain/repositories/direct_notification_display_outbox_repository.dart';
 
@@ -47,6 +49,7 @@ class DirectNotificationDisplayOutboxRepositoryImpl
     required String? expectedReactionAction,
     required bool? expectedReactionTombstone,
     required String completedAt,
+    NotificationCompletedOutcomeCandidate? outcome,
   })
   dbCompleteIfExact;
   final Future<bool> Function({
@@ -162,20 +165,23 @@ class DirectNotificationDisplayOutboxRepositoryImpl
   }
 
   @override
-  Future<bool> completeIfExact(DirectNotificationDisplayOutboxEntry expected) =>
-      dbCompleteIfExact(
-        eventId: expected.eventId,
-        expectedRevision: expected.revision,
-        expectedEventKind: expected.eventKind,
-        expectedPeerId: expected.peerId,
-        expectedMessageId: expected.messageId,
-        expectedActorPeerId: expected.actorPeerId,
-        expectedEventTimestamp: expected.eventTimestamp,
-        expectedReactionId: expected.reactionId,
-        expectedReactionAction: expected.reactionAction,
-        expectedReactionTombstone: expected.reactionTombstone,
-        completedAt: now().toUtc().toIso8601String(),
-      );
+  Future<bool> completeIfExact(
+    DirectNotificationDisplayOutboxEntry expected, {
+    NotificationCompletedOutcomeCandidate? outcome,
+  }) => dbCompleteIfExact(
+    eventId: expected.eventId,
+    expectedRevision: expected.revision,
+    expectedEventKind: expected.eventKind,
+    expectedPeerId: expected.peerId,
+    expectedMessageId: expected.messageId,
+    expectedActorPeerId: expected.actorPeerId,
+    expectedEventTimestamp: expected.eventTimestamp,
+    expectedReactionId: expected.reactionId,
+    expectedReactionAction: expected.reactionAction,
+    expectedReactionTombstone: expected.reactionTombstone,
+    completedAt: now().toUtc().toIso8601String(),
+    outcome: outcome,
+  );
 
   @override
   Future<bool> retireIfExact(DirectNotificationDisplayOutboxEntry expected) =>

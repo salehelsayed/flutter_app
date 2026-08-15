@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_schema_inventory.dart';
@@ -65,12 +68,13 @@ class MigrationDatabaseActiveImporter {
       );
     }
 
-    final stagedLogicalChecksum =
-        await MigrationDatabaseImportStaging.computeDatabaseChecksumForTesting(
-          staged.database,
-        );
+    final stagedLogicalChecksum = await _computeTransferableLogicalChecksum(
+      staged.database,
+    );
+    final transferableTableNames =
+        staged.manifest.schemaInventory.transferableTableNames;
     final tableRows = <String, List<Map<String, Object?>>>{};
-    for (final tableName in staged.manifest.schemaInventory.tableNames) {
+    for (final tableName in transferableTableNames) {
       tableRows[tableName] = await staged.database.query(tableName);
     }
 
@@ -120,8 +124,7 @@ class MigrationDatabaseActiveImporter {
         }
         final importedChecksum =
             await (_activeLogicalChecksum ??
-                MigrationDatabaseImportStaging
-                    .computeDatabaseChecksumForTesting)(txn);
+                _computeTransferableLogicalChecksum)(txn);
         if (importedChecksum != stagedLogicalChecksum) {
           throw const MigrationDatabaseActiveImportException(
             'Active database checksum does not match imported staged database',
@@ -130,9 +133,7 @@ class MigrationDatabaseActiveImporter {
       });
 
       return MigrationDatabaseActiveImportResult(
-        importedTables: List.unmodifiable(
-          staged.manifest.schemaInventory.tableNames,
-        ),
+        importedTables: List.unmodifiable(transferableTableNames),
         importedRows: importedRows,
       );
     } finally {
@@ -173,5 +174,34 @@ class MigrationDatabaseActiveImporter {
       return 'missing quick_check result';
     }
     return rows.first.values.first?.toString() ?? 'missing quick_check result';
+  }
+
+  static Future<String> _computeTransferableLogicalChecksum(
+    DatabaseExecutor db,
+  ) async {
+    final inventory = await MigrationDatabaseSchemaInventory.fromDatabase(db);
+    final payload = <String, Object?>{};
+    for (final tableName in inventory.tableNames) {
+      final columns = inventory.tables[tableName] ?? const <String>[];
+      final rows =
+          MigrationDatabaseSchemaInventory.isInstallationLocal(tableName)
+          ? const <Map<String, Object?>>[]
+          : await db.query(tableName);
+      payload[tableName] = rows
+          .map(
+            (row) => <String, Object?>{
+              for (final column in columns)
+                column: _normalizeChecksumValue(row[column]),
+            },
+          )
+          .toList(growable: false);
+    }
+    return sha256.convert(utf8.encode(jsonEncode(payload))).toString();
+  }
+
+  static Object? _normalizeChecksumValue(Object? value) {
+    if (value is DateTime) return value.toIso8601String();
+    if (value is List<int>) return base64Encode(value);
+    return value;
   }
 }
