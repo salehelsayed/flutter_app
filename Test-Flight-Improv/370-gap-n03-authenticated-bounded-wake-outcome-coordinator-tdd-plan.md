@@ -12,7 +12,7 @@ Closure tier: deterministic Go/Dart host plus an independent-process Redis-proto
 |---|---|---|---|---|
 | 2026-08-15 | Evidence Collector | Plan-368 receipt; four relay adapters; direct/protected/group stores and ACKs; Redis backends; inbox stream auth; Go node/bridge fanout; Dart bridge and Plan-369 contract | All producers converge at one Plan-368 fixed-wake gateway. Delivery ACK deletes direct inbox rows, so a wake obligation cannot live on an inbox row. | Reuse one Redis authority and one gateway; add no payload queue. |
 | 2026-08-15 | Planner using `$tdd-plan` | Graphify TDD context, capability defaults, route privacy, provider result handling, process-test and gate registration | A fixed 500 ms delay, one record family/due index/coordinator, one action, and one strict all-relay drain cover the causal boundary. | Wait for Plan 369's checksum-valid receipt, then author TC-370-01 RED. |
-| 2026-08-15 | Independent reviewers using `$tdd-review` | Provider crash boundary, outcome-before-store order, route/capability races, mixed relays, restart ownership, drain composition, test discovery | Initial exact-once, absent-ACK, stored-route, any-success fanout, and real-Redis assumptions were unsound. | Replace them in this plan; do not add Plan 371. |
+| 2026-08-15 | Independent reviewers using `$tdd-review` | Provider crash boundary, outcome-before-store order, route/capability races, mixed relays, restart ownership, drain composition, test discovery | Initial exact-once, absent-ACK, stored-route, any-success fanout, and real-Redis assumptions were unsound. | Replace them in this plan; do not add a third N03-owned slice. |
 | 2026-08-15 | Prerequisite validator | Plan-369 receipt/checksum and machine identity fields; Plan-368 receipt/checksum | Plan 369's sibling checksum, exact completion marker, base HEAD, frozen tested tree, dirty snapshot, and Graphify fingerprint validate; Plan 368 remains checksum-valid. | TC-370-00 passes; begin TC-370-01 semantic RED against the frozen Plan-369 API. |
 | 2026-08-15 | Post-execution auditor | Frozen 36-path source/test/script/runtime-root/Graph surface; exact causal, mutation, preservation, curated, relay, hygiene, analyzer, and graph receipts | The single paired default-false seam gates both capabilities, both producers, and the drainer; Redis is the durable owner, memory is immediate/terminal non-owner, and recovery is at-least-once. | Bind the final tested tree in `evidence/370`; leave full N03, live acceptance, activation, and release open. |
 
@@ -297,7 +297,8 @@ The only wire body is:
 
 No third N03-specific implementation/audit plan is warranted. Plans 369 and 370
 complete the default-off N03-owned foundation; shared-wave eligibility closes
-with the named downstream gaps, not a Plan 371.
+with the named downstream gaps, not a third N03-owned slice. Plan number 371 is
+therefore free for the single GAP-N04 successor.
 
 ## Test Contract
 
@@ -622,7 +623,7 @@ drain trigger, permissive action decoding, and any-success relay fanout. They
 also found vacuous test discovery and an unnecessary external Redis blocker.
 Every item is resolved in the revised contract with one record family, one due
 index, one coordinator, one return-bearing incumbent gateway, one strict action,
-and one strict all-participant drain—without Plan 371.
+and one strict all-participant drain—without a third N03-owned slice.
 
 ## Arbiter Decision
 
@@ -642,4 +643,4 @@ activation, deployment, and release eligibility remain false/open.
 | 2026-08-15 | Five isolated semantic mutations | TC-370-01, TC-370-02, TC-370-04, and exact node owner | Outcome-only `eb98f031...`, split transaction `c9eb7773...`, discard absent tombstone `cbfce306...`, revoke-CAS loss `0cb3ec39...`, any-success node `b94205eb...`: each exact owner RED, then mutation reverted and owner GREEN | Full non-retained hashes are bound in `evidence/370/README.md` | **5/5 required mutation families RED then GREEN.** | Final focused and preservation gates |
 | 2026-08-15 | Final causal and preservation gates | Five Dart owners; five relay owners; race TC-370-04; node; bridge; tagged process; twelve preservation sentinels | Dart 5/5, relay 5/5, race 1, node 1, bridge 1, process PASS with two subcases, preservation 12/12; zero skips; race emitted only the warning-class macOS linker message | Non-retained log/JSON hashes are bound in `evidence/370/README.md` | **PASS.** | Curated/family/hygiene closure |
 | 2026-08-15 | Final proportional gates and frozen audit | Curated `groups`, relay-all, host-batch contract, shell syntax, Go vet/gofmt, changed Dart, analyzer, diff, Graphify | `groups` 4,262 Dart PASS plus bridge/node/relay; relay-all 309 PASS; host batch/syntax/vet/gofmt/14-file Dart format/full analyze/diff PASS; Graphify current/anchored at `1cd2db6f3341312b` (76,031 / 111,542; overlay 1,584 / 15,682 / 1,247) | Base `ddf4b1459187b074128213e72b8456bd44e39cef`; frozen tested tree `79664ab276372316833a03de0c90c3423c6129f4`; dirty snapshot `26f862323fe4242296c9a626ab5e3b23e5c1d6911ebdf5a9e66f6bbfe2b756ed` | **POST-EXECUTION AUDIT CLOSED. No phone, core/feature/full-host, live provider/Redis, deployment, activation, or release leg was run.** | Checksum-bind receipt and hand off shared-wave work |
-| 2026-08-15 | Receipt and handoff | `evidence/370/README.md`, `README.md.sha256`; Plan/status/index/coverage closure | `shasum -a 256 -c README.md.sha256` PASS; exact marker and base/frozen/dirty/Graph identity regexes PASS | Receipt SHA-256 `14af6bddc18cda365b1bda36bc69d1c0d23b5f7106dc6f9f72e04641eada0b04` | **FOUNDATION CODE COMPLETE; `N03_COMPLETE=false`, live acceptance false, default-off, not release-eligible.** | N04-N08/N11 and WP-07; no Plan 371 |
+| 2026-08-15 | Receipt and handoff | `evidence/370/README.md`, `README.md.sha256`; Plan/status/index/coverage closure | `shasum -a 256 -c README.md.sha256` PASS; exact marker and base/frozen/dirty/Graph identity regexes PASS | Receipt SHA-256 `14af6bddc18cda365b1bda36bc69d1c0d23b5f7106dc6f9f72e04641eada0b04` | **FOUNDATION CODE COMPLETE; `N03_COMPLETE=false`, live acceptance false, default-off, not release-eligible.** | N04-N08/N11 and WP-07; no third N03-owned slice |
