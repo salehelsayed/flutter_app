@@ -1708,10 +1708,11 @@ func TestRelayNotificationClosure_PushRouteEncryptedResolutionFeedsEveryRichSend
 			"SendGroupNotification",
 			"SendNotification",
 			"sendGroupReactionNotificationForRoute",
+			"sendOpaqueWakeThroughGateway",
 			"sendReactionNotificationForRoute",
 		}
 		if !reflect.DeepEqual(gatewayCallers, wantCallers) {
-			t.Fatalf("selection gateway callers = %#v, want all four adapters %#v", gatewayCallers, wantCallers)
+			t.Fatalf("selection gateway callers = %#v, want four adapters plus outcome gateway %#v", gatewayCallers, wantCallers)
 		}
 		if groupSelect == token.NoPos || groupAttempted == token.NoPos || groupGo == token.NoPos ||
 			!(groupSelect < groupAttempted && groupAttempted < groupGo) {

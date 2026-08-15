@@ -96,6 +96,7 @@ Future<bool?> handleAppResumed({
   Future<int> Function()?
   retryAllPendingGroupKeyRepairsFn, // Finding 02 UDM-B (Step 8i)
   Future<void> Function()? retryPushRegistrationFn,
+  Future<void> Function()? drainNotificationCompletedOutcomesFn,
   bool skipDirectInboxDrain = false,
   bool skipGroupInboxDrain = false,
   bool awaitCanonicalInboxDrains = false,
@@ -279,6 +280,22 @@ Future<bool?> handleAppResumed({
       );
       readinessProofRecorder?.noteTransportSessionReset(
         trigger: 'bridge_reinitialize',
+      );
+    }
+
+    // Plan 370: resume reuses the bootstrap-owned, in-flight-coalesced v116
+    // drain. It starts only after bridge health is restored and remains outside
+    // the latency-critical canonical inbox ordering below.
+    final drainCompletedOutcomes = drainNotificationCompletedOutcomesFn;
+    if (drainCompletedOutcomes != null) {
+      unawaited(
+        Future<void>.sync(drainCompletedOutcomes).catchError((Object error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'APP_LIFECYCLE_RESUME_NOTIFICATION_OUTCOME_DRAIN_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
+          );
+        }),
       );
     }
 

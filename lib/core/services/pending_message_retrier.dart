@@ -79,6 +79,7 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryUnackedMessagesOverride;
   final Future<int> Function()? drainDirectInboxCustodyOutboxFn;
   final Future<int> Function()? verifyInboxCustodyFn;
+  final Future<void> Function()? drainNotificationCompletedOutcomesFn;
 
   /// 195: OS connectivity-restored edges (the 182 `connectivityRestoredSignal`
   /// adapter). Each event schedules a [networkRestoredDebounce]-debounced
@@ -148,6 +149,7 @@ class PendingMessageRetrier {
     this.retryUnackedMessagesOverride,
     this.drainDirectInboxCustodyOutboxFn,
     this.verifyInboxCustodyFn,
+    this.drainNotificationCompletedOutcomesFn,
     this.networkRestoredSignal,
     this.retryDebounce = defaultRetryDebounce,
     this.networkRestoredDebounce = defaultNetworkRestoredDebounce,
@@ -164,6 +166,10 @@ class PendingMessageRetrier {
   /// Starts listening for state transitions.
   void start() {
     emitFlowEvent(layer: 'FL', event: 'PENDING_RETRIER_START', details: {});
+
+    // Plan 370: reopen/cold-start shares the same durable outcome drain owner
+    // as reconnect, restored-network, periodic, and resume triggers.
+    unawaited(_drainNotificationCompletedOutcomes());
 
     _wasOnline = _isOnline(p2pService.currentState);
     _wasGroupRecoveryReady = _isGroupRecoveryReady(p2pService.currentState);
@@ -252,6 +258,7 @@ class PendingMessageRetrier {
     if (_isNetworkRestoredFlushing) return;
     _isNetworkRestoredFlushing = true;
     try {
+      unawaited(_drainNotificationCompletedOutcomes());
       await _drainDirectMediaBlobCustody();
       // TC-343-05: the shared text+reaction exact-envelope custody composite is
       // the first retry family on the OS-restored light pass. Its internal
@@ -410,6 +417,20 @@ class PendingMessageRetrier {
       emitFlowEvent(
         layer: 'FL',
         event: 'PENDING_RETRIER_DIRECT_MEDIA_BLOB_CUSTODY_DRAIN_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  Future<void> _drainNotificationCompletedOutcomes() async {
+    final drain = drainNotificationCompletedOutcomesFn;
+    if (drain == null) return;
+    try {
+      await drain();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_NOTIFICATION_OUTCOME_DRAIN_ERROR',
         details: {'errorType': error.runtimeType.toString()},
       );
     }
@@ -605,8 +626,12 @@ class PendingMessageRetrier {
     Duration? unackedOlderThan,
     bool periodic = false,
   }) async {
-    if (_isRetrying) return;
+    if (_isRetrying) {
+      unawaited(_drainNotificationCompletedOutcomes());
+      return;
+    }
     if (_isExternalRecoveryInProgressFn?.call() == true) {
+      unawaited(_drainNotificationCompletedOutcomes());
       emitFlowEvent(
         layer: 'FL',
         event: 'PENDING_RETRIER_SKIPPED_EXTERNAL_RECOVERY',
@@ -617,6 +642,7 @@ class PendingMessageRetrier {
     _isRetrying = true;
 
     try {
+      unawaited(_drainNotificationCompletedOutcomes());
       final groupRecoveryEnabled = _isGroupRecoveryEnabled();
       final groupRecoveryReady = _isGroupRecoveryReady(p2pService.currentState);
 

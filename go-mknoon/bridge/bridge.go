@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -1556,6 +1557,111 @@ func InboxAck(paramsJSON string) (result string) {
 	}
 	if params.CustodyContract == node.AckOrExpiryCustodyContract {
 		response["custodyContract"] = node.AckOrExpiryCustodyContract
+	}
+	return okJSON(response)
+}
+
+// InboxWakeOutcome submits the installation-local notification-completion
+// outcome to every configured relay participant.
+//
+// Input JSON is intentionally exact:
+//
+//	{"correlation":"<64 lowercase hex>","wakeNotRequired":true}
+//
+// Unknown or duplicate keys, a false/missing boolean, and non-canonical
+// correlations are rejected before the node is consulted.
+func InboxWakeOutcome(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	correlation, err := parseInboxWakeOutcomeBridgeRequest(paramsJSON)
+	if err != nil {
+		return errJSON("INVALID_INPUT", err.Error())
+	}
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	outcome, outcomeErr := n.InboxWakeOutcome(correlation)
+	return inboxWakeOutcomeBridgeResponse(outcome, outcomeErr)
+}
+
+func parseInboxWakeOutcomeBridgeRequest(paramsJSON string) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader([]byte(paramsJSON)))
+	start, err := decoder.Token()
+	if err != nil {
+		return "", fmt.Errorf("invalid JSON: %w", err)
+	}
+	if delimiter, ok := start.(json.Delim); !ok || delimiter != '{' {
+		return "", fmt.Errorf("wake outcome request must be a JSON object")
+	}
+
+	seen := make(map[string]struct{}, 2)
+	correlation := ""
+	wakeNotRequired := false
+	for decoder.More() {
+		token, tokenErr := decoder.Token()
+		if tokenErr != nil {
+			return "", fmt.Errorf("invalid JSON key: %w", tokenErr)
+		}
+		key, ok := token.(string)
+		if !ok {
+			return "", fmt.Errorf("wake outcome request key must be a string")
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return "", fmt.Errorf("duplicate wake outcome request key %q", key)
+		}
+		seen[key] = struct{}{}
+		switch key {
+		case "correlation":
+			if err := decoder.Decode(&correlation); err != nil {
+				return "", fmt.Errorf("invalid correlation: %w", err)
+			}
+		case "wakeNotRequired":
+			if err := decoder.Decode(&wakeNotRequired); err != nil {
+				return "", fmt.Errorf("invalid wakeNotRequired: %w", err)
+			}
+		default:
+			return "", fmt.Errorf("unknown wake outcome request key %q", key)
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return "", fmt.Errorf("invalid JSON object: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return "", fmt.Errorf("wake outcome request has trailing JSON")
+		}
+		return "", fmt.Errorf("invalid JSON tail: %w", err)
+	}
+	if _, ok := seen["correlation"]; !ok || !node.IsCanonicalWakeOutcomeCorrelation(correlation) {
+		return "", fmt.Errorf("correlation must be 64 lowercase hexadecimal characters")
+	}
+	if _, ok := seen["wakeNotRequired"]; !ok || !wakeNotRequired {
+		return "", fmt.Errorf("wakeNotRequired must be present and true")
+	}
+	return correlation, nil
+}
+
+func inboxWakeOutcomeBridgeResponse(outcome node.InboxWakeOutcomeResult, err error) string {
+	response := map[string]interface{}{
+		"ok":                      err == nil && outcome.AllParticipantsTerminal,
+		"allParticipantsTerminal": outcome.AllParticipantsTerminal,
+		"participantCount":        outcome.ParticipantCount,
+		"acceptedCount":           outcome.AcceptedCount,
+		"unsupportedCount":        outcome.UnsupportedCount,
+		"retryableCount":          outcome.RetryableCount,
+	}
+	if err != nil {
+		response["errorCode"] = "INBOX_WAKE_OUTCOME_RETRYABLE"
+		response["errorMessage"] = err.Error()
 	}
 	return okJSON(response)
 }

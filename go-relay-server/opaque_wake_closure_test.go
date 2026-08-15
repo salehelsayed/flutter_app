@@ -702,7 +702,7 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 		plan368AssertCalls(t, probe, 2, 2, 0)
 	})
 
-	t.Run("one resolver owner and four selection callers", func(t *testing.T) {
+	t.Run("one resolver owner and four adapters plus outcome gateway", func(t *testing.T) {
 		paths, err := filepath.Glob("*.go")
 		if err != nil {
 			t.Fatalf("glob production Go: %v", err)
@@ -754,11 +754,12 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 			"SendGroupNotification",
 			"SendNotification",
 			"sendGroupReactionNotificationForRoute",
+			"sendOpaqueWakeThroughGateway",
 			"sendReactionNotificationForRoute",
 		}
 		if !reflect.DeepEqual(selectionCallers, wantCallers) {
 			t.Fatalf(
-				"selection callers = %#v, want all four adapters %#v",
+				"selection callers = %#v, want four adapters plus outcome gateway %#v",
 				selectionCallers,
 				wantCallers,
 			)

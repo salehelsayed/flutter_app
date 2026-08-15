@@ -238,6 +238,15 @@ readonly GO_NODE_LIBP2P_REFACTOR_TEST="go-mknoon/node/libp2p_refactor_contract_t
 readonly GO_NODE_LIBP2P_REFACTOR_RUN='TestGoLibp2pProductionShapeBudget|TestStartDoesNotHoldNodeLockAcrossHostCreation|TestStartRejectsConcurrentStartWhileHostCreationInProgress|TestStartHostCreationFailureRollsBackPublishedState|TestStartHostCreationPanicClearsInProgressAndAllowsRetry|TestStopDuringStartInProgressIsExplicitAndNonMutating|TestReconnectRelaysDuringStartInProgressFailsFast|TestGroupDialKnownMembersRunsBoundedParallel|TestDiscoverAndConnectGroupPeersRunsBoundedParallel|TestRunGroupDiscoveryCycleBoundsGlobalGroupDialConcurrency|TestRelaySelectorFanOutRunsDistinctRelaysInParallel|TestRelaySelectorFanOutAllFailPreservesAggregateError|TestSendMessageWithTransport_AckFrameValidation|TestHandleIncomingMessage_BindsAuthenticatedRemotePeerAndClassifiedTransport|TestHandleIncomingMessage_DeferredDirectAck_WritesAckAfterConfirm|TestHandleIncomingMessage_DeferredDirectAck_FalseConfirmDoesNotAck|TestHandleIncomingMessage_DeferredDirectAck_TimesOutWithoutConfirm|TestHandleIncomingMessage_DirectAckContract_AttachesConfirmNonce|TestShouldDeferDirectAck_ReactionAndDeletion|TestR3Deadline_|TestSendMessage_ReturnsUnackedWhenReceiverDoesNotConfirmDirectChat|TestTC34104BootstrapPublishSkipsOnlyPeerRefreshAndStillPublishes|TestTC34104BootstrapPublishPreservesAuthorizationBeforeCrypto'
 readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST="go-mknoon/bridge/bridge_entrypoint_contract_test.go"
 readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN='TestBridgeExportedHandlersUseSharedEntrypoint|TestBridgeGroupPublishContractsPreservedAfterHelperExtraction|TestTC34103GroupPublishMapsPeerRefreshControlOutsideMessageOpts'
+# Plan 370 (GAP-N03): strict all-participant node completion and the exact
+# gomobile bridge request are shared Go owners outside the Dart globs. Register
+# each as its own non-vacuous later-wave host-all row.
+readonly GO_NODE_WAKE_OUTCOME_TEST="go-mknoon/node/inbox_wake_outcome_test.go"
+readonly GO_NODE_WAKE_OUTCOME_NAME='TestInboxWakeOutcomeAllRelayCompletion'
+readonly GO_NODE_WAKE_OUTCOME_RUN='^TestInboxWakeOutcomeAllRelayCompletion$'
+readonly GO_BRIDGE_WAKE_OUTCOME_TEST="go-mknoon/bridge/inbox_wake_outcome_test.go"
+readonly GO_BRIDGE_WAKE_OUTCOME_NAME='TestInboxWakeOutcomeBridgeStrictRequest'
+readonly GO_BRIDGE_WAKE_OUTCOME_RUN='^TestInboxWakeOutcomeBridgeStrictRequest$'
 # Plan 367 (GAP-N02): independent-process Redis durability for the encrypted
 # opaque push-route vault. This stays one synthetic host-all inventory row even
 # though its non-vacuous proof intentionally performs one exact discovery call
@@ -245,6 +254,12 @@ readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN='TestBridgeExportedHandlersUseSharedE
 readonly GO_RELAY_PUSH_VAULT_PROCESS_TEST="go-relay-server/push_token_vault_process_integration_test.go"
 readonly GO_RELAY_PUSH_VAULT_PROCESS_NAME='TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff'
 readonly GO_RELAY_PUSH_VAULT_PROCESS_RUN='^TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff$'
+# Plan 370 (GAP-N03): independent-process recovery of the Redis-backed delayed
+# wake obligation. Keep this as one later-wave host-all synthetic row with its
+# own non-vacuous discovery and execution calls.
+readonly GO_RELAY_WAKE_OUTCOME_PROCESS_TEST="go-relay-server/wake_outcome_process_integration_test.go"
+readonly GO_RELAY_WAKE_OUTCOME_PROCESS_NAME='TestRedisWakeOutcomeObligationSurvivesRelayProcessHandoff'
+readonly GO_RELAY_WAKE_OUTCOME_PROCESS_RUN='^TestRedisWakeOutcomeObligationSurvivesRelayProcessHandoff$'
 # Plan 368 (GAP-N02): the existing unfiltered relay-module sweep is one
 # synthetic host-all row. The script is intentionally non-executable, so both
 # the printed command and execution dispatch must invoke it through bash.
@@ -265,7 +280,7 @@ Options:
   --batch-flutter            Run the selected Dart paths in one exact-path
                              Flutter invocation; Go legs remain separate.
   --dart-only                Omit non-Dart plan items. For host-all this removes
-                             the ten Go/relay tails so a composed gate can run its
+                             the thirteen Go/relay tails so a composed gate can run its
                              full Go lane exactly once.
   --concurrency <N>          Flutter batch process count from 1 through 64
                              (default: 1).
@@ -447,7 +462,10 @@ case "$scope" in
         printf '%s\n' "$GO_NODE_WAKETOKEN_TEST"
         printf '%s\n' "$GO_NODE_LIBP2P_REFACTOR_TEST"
         printf '%s\n' "$GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST"
+        printf '%s\n' "$GO_NODE_WAKE_OUTCOME_TEST"
+        printf '%s\n' "$GO_BRIDGE_WAKE_OUTCOME_TEST"
         printf '%s\n' "$GO_RELAY_PUSH_VAULT_PROCESS_TEST"
+        printf '%s\n' "$GO_RELAY_WAKE_OUTCOME_PROCESS_TEST"
         printf '%s\n' "$GO_RELAY_ALL_SCRIPT"
       fi
     } >"$plan_file"
@@ -556,8 +574,20 @@ is_go_bridge_entrypoint_refactor_test() {
   [ "$1" = "$GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST" ]
 }
 
+is_go_node_wake_outcome_test() {
+  [ "$1" = "$GO_NODE_WAKE_OUTCOME_TEST" ]
+}
+
+is_go_bridge_wake_outcome_test() {
+  [ "$1" = "$GO_BRIDGE_WAKE_OUTCOME_TEST" ]
+}
+
 is_go_relay_push_vault_process_test() {
   [ "$1" = "$GO_RELAY_PUSH_VAULT_PROCESS_TEST" ]
+}
+
+is_go_relay_wake_outcome_process_test() {
+  [ "$1" = "$GO_RELAY_WAKE_OUTCOME_PROCESS_TEST" ]
 }
 
 is_go_relay_all_script() {
@@ -639,6 +669,24 @@ print_command_for_path() {
     printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '%s' -count=1)" "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN"
     return
   fi
+  if is_go_node_wake_outcome_test "$path"; then
+    printf "(set -euo pipefail; cd go-mknoon; plan370_node_log=\"\$(mktemp /tmp/plan370-node.XXXXXX)\"; trap 'rm -f \"\$plan370_node_log\"' EXIT; GOTOOLCHAIN=go1.25.0 go test ./node -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.25.0 go test ./node -run '%s' -count=1 -v | tee \"\$plan370_node_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan370_node_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan370_node_log\")" \
+      "$GO_NODE_WAKE_OUTCOME_RUN" \
+      "$GO_NODE_WAKE_OUTCOME_NAME" \
+      "$GO_NODE_WAKE_OUTCOME_RUN" \
+      "$GO_NODE_WAKE_OUTCOME_NAME" \
+      "$GO_NODE_WAKE_OUTCOME_NAME"
+    return
+  fi
+  if is_go_bridge_wake_outcome_test "$path"; then
+    printf "(set -euo pipefail; cd go-mknoon; plan370_bridge_log=\"\$(mktemp /tmp/plan370-bridge.XXXXXX)\"; trap 'rm -f \"\$plan370_bridge_log\"' EXIT; GOTOOLCHAIN=go1.25.0 go test ./bridge -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.25.0 go test ./bridge -run '%s' -count=1 -v | tee \"\$plan370_bridge_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan370_bridge_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan370_bridge_log\")" \
+      "$GO_BRIDGE_WAKE_OUTCOME_RUN" \
+      "$GO_BRIDGE_WAKE_OUTCOME_NAME" \
+      "$GO_BRIDGE_WAKE_OUTCOME_RUN" \
+      "$GO_BRIDGE_WAKE_OUTCOME_NAME" \
+      "$GO_BRIDGE_WAKE_OUTCOME_NAME"
+    return
+  fi
   if is_go_relay_push_vault_process_test "$path"; then
     printf "(set -euo pipefail; cd go-relay-server; plan367_process_log=\"\$(mktemp /tmp/plan367-process.XXXXXX)\"; trap 'rm -f \"\$plan367_process_log\"' EXIT; GOTOOLCHAIN=go1.25.0 go test -tags integration . -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.25.0 go test -tags integration . -run '%s' -count=1 -v | tee \"\$plan367_process_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan367_process_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan367_process_log\")" \
       "$GO_RELAY_PUSH_VAULT_PROCESS_RUN" \
@@ -646,6 +694,15 @@ print_command_for_path() {
       "$GO_RELAY_PUSH_VAULT_PROCESS_RUN" \
       "$GO_RELAY_PUSH_VAULT_PROCESS_NAME" \
       "$GO_RELAY_PUSH_VAULT_PROCESS_NAME"
+    return
+  fi
+  if is_go_relay_wake_outcome_process_test "$path"; then
+    printf "(set -euo pipefail; cd go-relay-server; plan370_process_log=\"\$(mktemp /tmp/plan370-process.XXXXXX)\"; trap 'rm -f \"\$plan370_process_log\"' EXIT; GOTOOLCHAIN=go1.25.0 go test -tags integration . -list '%s' | rg -x '%s'; GOTOOLCHAIN=go1.25.0 go test -tags integration . -run '%s' -count=1 -v | tee \"\$plan370_process_log\"; test \"\$(rg -c '^--- PASS: %s ' \"\$plan370_process_log\")\" -eq 1; ! rg -q '^[[:space:]]*--- SKIP: %s' \"\$plan370_process_log\")" \
+      "$GO_RELAY_WAKE_OUTCOME_PROCESS_RUN" \
+      "$GO_RELAY_WAKE_OUTCOME_PROCESS_NAME" \
+      "$GO_RELAY_WAKE_OUTCOME_PROCESS_RUN" \
+      "$GO_RELAY_WAKE_OUTCOME_PROCESS_NAME" \
+      "$GO_RELAY_WAKE_OUTCOME_PROCESS_NAME"
     return
   fi
   if is_go_relay_all_script "$path"; then
@@ -697,6 +754,36 @@ run_path() {
     (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN" -count=1)
     return
   fi
+  if is_go_node_wake_outcome_test "$path"; then
+    (
+      set -euo pipefail
+      cd go-mknoon
+      plan370_node_log="$(mktemp /tmp/plan370-node.XXXXXX)"
+      trap 'rm -f "$plan370_node_log"' EXIT
+      GOTOOLCHAIN=go1.25.0 go test ./node -list "$GO_NODE_WAKE_OUTCOME_RUN" |
+        rg -x "$GO_NODE_WAKE_OUTCOME_NAME"
+      GOTOOLCHAIN=go1.25.0 go test ./node -run "$GO_NODE_WAKE_OUTCOME_RUN" \
+        -count=1 -v | tee "$plan370_node_log"
+      test "$(rg -c "^--- PASS: $GO_NODE_WAKE_OUTCOME_NAME " "$plan370_node_log")" -eq 1
+      ! rg -q "^[[:space:]]*--- SKIP: $GO_NODE_WAKE_OUTCOME_NAME" "$plan370_node_log"
+    )
+    return
+  fi
+  if is_go_bridge_wake_outcome_test "$path"; then
+    (
+      set -euo pipefail
+      cd go-mknoon
+      plan370_bridge_log="$(mktemp /tmp/plan370-bridge.XXXXXX)"
+      trap 'rm -f "$plan370_bridge_log"' EXIT
+      GOTOOLCHAIN=go1.25.0 go test ./bridge -list "$GO_BRIDGE_WAKE_OUTCOME_RUN" |
+        rg -x "$GO_BRIDGE_WAKE_OUTCOME_NAME"
+      GOTOOLCHAIN=go1.25.0 go test ./bridge -run "$GO_BRIDGE_WAKE_OUTCOME_RUN" \
+        -count=1 -v | tee "$plan370_bridge_log"
+      test "$(rg -c "^--- PASS: $GO_BRIDGE_WAKE_OUTCOME_NAME " "$plan370_bridge_log")" -eq 1
+      ! rg -q "^[[:space:]]*--- SKIP: $GO_BRIDGE_WAKE_OUTCOME_NAME" "$plan370_bridge_log"
+    )
+    return
+  fi
   if is_go_relay_push_vault_process_test "$path"; then
     (
       set -euo pipefail
@@ -711,6 +798,23 @@ run_path() {
         -count=1 -v | tee "$plan367_process_log"
       test "$(rg -c "^--- PASS: $GO_RELAY_PUSH_VAULT_PROCESS_NAME " "$plan367_process_log")" -eq 1
       ! rg -q "^[[:space:]]*--- SKIP: $GO_RELAY_PUSH_VAULT_PROCESS_NAME" "$plan367_process_log"
+    )
+    return
+  fi
+  if is_go_relay_wake_outcome_process_test "$path"; then
+    (
+      set -euo pipefail
+      cd go-relay-server
+      plan370_process_log="$(mktemp /tmp/plan370-process.XXXXXX)"
+      trap 'rm -f "$plan370_process_log"' EXIT
+      GOTOOLCHAIN=go1.25.0 go test -tags integration . \
+        -list "$GO_RELAY_WAKE_OUTCOME_PROCESS_RUN" |
+        rg -x "$GO_RELAY_WAKE_OUTCOME_PROCESS_NAME"
+      GOTOOLCHAIN=go1.25.0 go test -tags integration . \
+        -run "$GO_RELAY_WAKE_OUTCOME_PROCESS_RUN" \
+        -count=1 -v | tee "$plan370_process_log"
+      test "$(rg -c "^--- PASS: $GO_RELAY_WAKE_OUTCOME_PROCESS_NAME " "$plan370_process_log")" -eq 1
+      ! rg -q "^[[:space:]]*--- SKIP: $GO_RELAY_WAKE_OUTCOME_PROCESS_NAME" "$plan370_process_log"
     )
     return
   fi

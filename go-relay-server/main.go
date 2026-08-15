@@ -120,6 +120,9 @@ func main() {
 		directReactionPushEnabledEnv,
 	)
 	groupInbox := stores.GroupInbox
+	if stores.WakeOutcomeCoordinator != nil {
+		stores.WakeOutcomeCoordinator.Start(ctx)
+	}
 	groupInbox.SetGroupReactionPushEnabled(loadGroupReactionPushEnabledFromEnv())
 	log.Printf(
 		"[GROUP_INBOX] group reaction push enabled=%v (default off; %s)",
@@ -267,6 +270,7 @@ func main() {
 	sig := <-sigCh
 
 	log.Printf("Shutting down (%s)...", sig)
+	cancel()
 	sub.Close()
 	store.StopCleanup()
 	media.StopCleanup()

@@ -1,10 +1,10 @@
 # 370 - GAP-N03 Authenticated Bounded Wake Outcome Coordinator
 
-Status: **EXECUTION_READY / PREREQUISITES_VALIDATED / CONTRACT READY / INDEPENDENTLY REVIEWED / N03 SLICE 2 OF 2 / DEFAULT-OFF / NOT RELEASE-ELIGIBLE**
+Status: **POST-EXECUTION AUDIT CLOSED / N03 WAKE OUTCOME COORDINATOR FOUNDATION CODE COMPLETE / N03 SLICE 2 OF 2 / HOST VERIFIED / DEFAULT-OFF / NOT N03-COMPLETE / LIVE-ACCEPTANCE-BLOCKED / NOT RELEASE-ELIGIBLE**
 Type: Modification
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` §5.1, `WakeOutcomeAck`, race rules, A-13/A-24/A-26, and AC-04/AC-05; GAP-N03 / WP-03 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`
-Classification: execution-ready relay/protocol adopter and last N03-owned mechanism slice
-Closure tier: deterministic Go/Dart host plus an independent-process Redis-protocol handoff fixture; no phone, S2, or provider campaign
+Classification: implemented and post-execution-audited relay/protocol adopter; last N03-owned mechanism slice
+Closure tier: deterministic Go/Dart host plus an independent-process Redis-protocol handoff fixture; no phone, live Redis/provider, full-host, deployment, activation, or release claim
 
 ## Planning Progress
 
@@ -14,6 +14,7 @@ Closure tier: deterministic Go/Dart host plus an independent-process Redis-proto
 | 2026-08-15 | Planner using `$tdd-plan` | Graphify TDD context, capability defaults, route privacy, provider result handling, process-test and gate registration | A fixed 500 ms delay, one record family/due index/coordinator, one action, and one strict all-relay drain cover the causal boundary. | Wait for Plan 369's checksum-valid receipt, then author TC-370-01 RED. |
 | 2026-08-15 | Independent reviewers using `$tdd-review` | Provider crash boundary, outcome-before-store order, route/capability races, mixed relays, restart ownership, drain composition, test discovery | Initial exact-once, absent-ACK, stored-route, any-success fanout, and real-Redis assumptions were unsound. | Replace them in this plan; do not add Plan 371. |
 | 2026-08-15 | Prerequisite validator | Plan-369 receipt/checksum and machine identity fields; Plan-368 receipt/checksum | Plan 369's sibling checksum, exact completion marker, base HEAD, frozen tested tree, dirty snapshot, and Graphify fingerprint validate; Plan 368 remains checksum-valid. | TC-370-00 passes; begin TC-370-01 semantic RED against the frozen Plan-369 API. |
+| 2026-08-15 | Post-execution auditor | Frozen 36-path source/test/script/runtime-root/Graph surface; exact causal, mutation, preservation, curated, relay, hygiene, analyzer, and graph receipts | The single paired default-false seam gates both capabilities, both producers, and the drainer; Redis is the durable owner, memory is immediate/terminal non-owner, and recovery is at-least-once. | Bind the final tested tree in `evidence/370`; leave full N03, live acceptance, activation, and release open. |
 
 ## Problem And Evidence
 
@@ -559,6 +560,13 @@ its named test; revert only that mutation before final gates.
 - Expected RED is recorded only after the exact TC-370-01 name is discovered and
   its assertion fails. The current repository's “no tests to run” exit zero is
   explicitly not RED evidence.
+- Recorded execution chronology: the historical first discovery-guarded RED was
+  not captured because the tests and implementation landed concurrently. This
+  plan makes no retrospective first-RED claim. Later genuine causal REDs covered
+  wrong due-type partial events, preflight double lookup/provider work,
+  source-digest route CAS, stale-due head-of-line blocking, malformed scalar
+  delay, memory retryable ownership, boundary `FEFF`, and protected near-expiry
+  suppression before their final GREEN owners.
 - Green sentinel: one exact dual-capable Redis store owns pending state; an
   outcome-before-store tombstone prevents later obligation; delivery ACK cannot
   suppress it; one live claimant consumes an honest provider result; restart
@@ -569,25 +577,31 @@ its named test; revert only that mutation before final gates.
   per-adapter coordinator, new DB/native/UI owner, exact-once promise, or
   default-on capability.
 
-- [ ] Plan-369 and Plan-368 checksum/identity preflights pass.
-- [ ] All seven causal rows and five representative mutations pass on the final tree.
-- [ ] Route-at-commit CAS, all producer eligibility, atomic event/state, and
+- [x] Plan-369 and Plan-368 checksum/identity preflights pass.
+- [x] All seven causal rows and five representative mutations pass on the final tree.
+- [x] Route-at-commit CAS, all producer eligibility, atomic event/state, and
       delivery-ACK separation are proven.
-- [ ] Both store-before-outcome and outcome-before-store orders are safe.
-- [ ] Provider recovery is documented/tested as at-least-once with one live claim
+- [x] Both store-before-outcome and outcome-before-store orders are safe.
+- [x] Provider recovery is documented/tested as at-least-once with one live claim
       owner and fixed collapse identifiers.
-- [ ] Strict authenticated grammar and all-participant mixed-relay fanout retain
+- [x] Strict authenticated grammar and all-participant mixed-relay fanout retain
       v116 on every retryable participant failure.
-- [ ] Production composition drains persisted rows after commit/reopen/reconnect/
+- [x] Production composition drains persisted rows after commit/reopen/reconnect/
       resume without a second scheduler.
-- [ ] Focused/race/process/preservation, curated `groups`, relay family,
+- [x] Focused/race/process/preservation, curated `groups`, relay family,
       analyzer/vet/format/diff, and graph refresh pass; no phone/full-host run.
-- [ ] Combined admission remains false and no live/release claim is made.
+- [x] Combined admission remains false and no live/release claim is made.
 
 ## Handoff
 
 - Completion marker: `N03_WAKE_OUTCOME_COORDINATOR_FOUNDATION_CODE_COMPLETE`.
-- First RED: the discovery-guarded TC-370-01 command above.
+- Closure receipt: `Test-Flight-Improv/evidence/370/README.md`, SHA-256
+  `14af6bddc18cda365b1bda36bc69d1c0d23b5f7106dc6f9f72e04641eada0b04`;
+  the sibling `README.md.sha256` validates canonically.
+- TDD chronology: the historical first discovery-guarded RED was not captured
+  because tests and implementation landed concurrently; no first-RED receipt is
+  claimed. The later causal repairs and five isolated mutation REDs are recorded
+  in the checksum-bound closure receipt.
 - Registration: shared Dart paths are registered without adding a runner;
   untagged relay tests match the existing closure prefix; tagged process test
   gets one synthetic later-wave `host-all` row.
@@ -612,13 +626,20 @@ and one strict all-participant drain—without Plan 371.
 
 ## Arbiter Decision
 
-**PASS FOR EXECUTION; PREREQUISITES VALIDATED.** Plan 369's checksum-bound
-handoff exists and TC-370-00 validates it together with Plan 368. The reviewed
-scope remains the coherent, causally testable minimum second/last N03-owned
-slice.
+**POST-EXECUTION AUDIT CLOSED.** Plan 369's checksum-bound handoff and Plan
+368's fixed-wake receipt remain valid. The implemented surface is the reviewed
+coherent minimum: one Redis authority/coordinator, one authenticated action,
+one strict all-relay drain, and one paired default-false seam. The two N03-owned
+slices are foundation-code-complete, while `N03_COMPLETE`, live acceptance,
+activation, deployment, and release eligibility remain false/open.
 
 ## Execution Progress
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-08-15 | TC-370-00 prerequisite | `evidence/369/README.md`, `README.md.sha256`; `evidence/368/README.md`, `README.md.sha256` | Both sibling checksum checks pass; both exact markers pass; Plan-369 base/tree/dirty/Graphify field shapes pass | Plan-369 receipt SHA-256 `8d4229405b1b39ac26dd2304fa77455322be8b25c1b1f573a4903f0044d4873c`; base `8d86501e46f1a06e724daf8009cd3bf0f807578c`; frozen tree `61e1b1935a022e7ad0f54d207549903a728e9b86`; dirty snapshot `ff0c29a6e3ea5ed013aeb147b589c34de74b9131fce0d700e8c1f4d4b360f96b`; Graphify `ec9a45bfd76c0f40` | **PASS; execution unblocked. No Plan-370 RED or implementation yet.** | TC-370-01 semantic RED |
+| 2026-08-15 | Causal implementation and repair | Relay Redis owner/coordinator and four producers; strict action; node/bridge; Dart drainer and production lifecycle composition | Historical first RED not captured because tests/implementation landed concurrently; subsequent real REDs exposed wrong due type, double preflight, missing source-digest CAS, stale-due HOL, malformed scalar, memory ownership, `FEFF`, and near-expiry defects | Final contract has one Redis state family/due index, atomic event/obligation/tombstone behavior, strict authenticated action, typed provider result, all-participant drain, and one paired `false` seam | **GREEN after causal repairs; no exact-once, native, live-provider, live-Redis, activation, or release claim.** | Isolated mutations |
+| 2026-08-15 | Five isolated semantic mutations | TC-370-01, TC-370-02, TC-370-04, and exact node owner | Outcome-only `eb98f031...`, split transaction `c9eb7773...`, discard absent tombstone `cbfce306...`, revoke-CAS loss `0cb3ec39...`, any-success node `b94205eb...`: each exact owner RED, then mutation reverted and owner GREEN | Full non-retained hashes are bound in `evidence/370/README.md` | **5/5 required mutation families RED then GREEN.** | Final focused and preservation gates |
+| 2026-08-15 | Final causal and preservation gates | Five Dart owners; five relay owners; race TC-370-04; node; bridge; tagged process; twelve preservation sentinels | Dart 5/5, relay 5/5, race 1, node 1, bridge 1, process PASS with two subcases, preservation 12/12; zero skips; race emitted only the warning-class macOS linker message | Non-retained log/JSON hashes are bound in `evidence/370/README.md` | **PASS.** | Curated/family/hygiene closure |
+| 2026-08-15 | Final proportional gates and frozen audit | Curated `groups`, relay-all, host-batch contract, shell syntax, Go vet/gofmt, changed Dart, analyzer, diff, Graphify | `groups` 4,262 Dart PASS plus bridge/node/relay; relay-all 309 PASS; host batch/syntax/vet/gofmt/14-file Dart format/full analyze/diff PASS; Graphify current/anchored at `1cd2db6f3341312b` (76,031 / 111,542; overlay 1,584 / 15,682 / 1,247) | Base `ddf4b1459187b074128213e72b8456bd44e39cef`; frozen tested tree `79664ab276372316833a03de0c90c3423c6129f4`; dirty snapshot `26f862323fe4242296c9a626ab5e3b23e5c1d6911ebdf5a9e66f6bbfe2b756ed` | **POST-EXECUTION AUDIT CLOSED. No phone, core/feature/full-host, live provider/Redis, deployment, activation, or release leg was run.** | Checksum-bind receipt and hand off shared-wave work |
+| 2026-08-15 | Receipt and handoff | `evidence/370/README.md`, `README.md.sha256`; Plan/status/index/coverage closure | `shasum -a 256 -c README.md.sha256` PASS; exact marker and base/frozen/dirty/Graph identity regexes PASS | Receipt SHA-256 `14af6bddc18cda365b1bda36bc69d1c0d23b5f7106dc6f9f72e04641eada0b04` | **FOUNDATION CODE COMPLETE; `N03_COMPLETE=false`, live acceptance false, default-off, not release-eligible.** | N04-N08/N11 and WP-07; no Plan 371 |

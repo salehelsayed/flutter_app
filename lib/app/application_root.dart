@@ -440,6 +440,7 @@ class MyApp extends StatefulWidget {
   final PendingMessageRetrier pendingMessageRetrier;
   final Future<int> Function()? drainDirectInboxCustodyOutbox;
   final Future<int> Function()? drainDirectMediaBlobCustody;
+  final Future<void> Function()? drainNotificationCompletedOutcomes;
   final PendingPostMediaUploadRetrier pendingPostMediaUploadRetrier;
   final PendingPostDeliveryRetrier pendingPostDeliveryRetrier;
   final PendingPostFollowOnRetrier pendingPostFollowOnRetrier;
@@ -583,6 +584,7 @@ class MyApp extends StatefulWidget {
     required this.pendingMessageRetrier,
     this.drainDirectInboxCustodyOutbox,
     this.drainDirectMediaBlobCustody,
+    this.drainNotificationCompletedOutcomes,
     required this.pendingPostMediaUploadRetrier,
     required this.pendingPostDeliveryRetrier,
     required this.pendingPostFollowOnRetrier,
@@ -2439,6 +2441,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             : () => privateMediaRecovery!,
         directMediaBlobLocalCleanupFn: widget.directMediaBlobLocalCleanup,
         retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
+        drainNotificationCompletedOutcomesFn:
+            widget.drainNotificationCompletedOutcomes,
         skipDirectInboxDrain: droppedPushRecoveryOwnsInbox,
         skipGroupInboxDrain: droppedPushRecoveryOwnsInbox,
         awaitCanonicalInboxDrains: awaitIosCanonicalDrains,

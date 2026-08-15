@@ -129,11 +129,11 @@ const _closureConsumerUriRewrites = <String, String>{
       'post_repository_impl.dart',
 };
 
-// Plan 347 deliberately adds local cleanup plus the exact custody drain ahead
-// of mutable upload retry; the DTR-18 relocation and feature-import floor stay
+// Plans 347 and 370 deliberately add app-owned lifecycle callbacks ahead of
+// incumbent recovery; the DTR-18 relocation and feature-import floor stay
 // unchanged.
 const _resumeSha256 =
-    '019ed707358a864cbee8021f4881bbe6b3e45ec4e39bf8adc2d334261a05814c';
+    '59e79cb5247d99e0481c952e0ded0de88dd173f1edb268b9332375037c3a9e30';
 const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
@@ -184,8 +184,10 @@ const _privacySha256 =
 // Plan 365 adds the two strict group-media progress callbacks and runs the
 // existing protected-content owner to a bounded fixed point on linked resume;
 // this remains app-owned lifecycle composition and relocates nothing.
+// Plan 370 forwards the single default-off completed-outcome drain callback
+// through that same application-owned resume boundary; nothing relocates.
 const _applicationRootNormalizedSha256 =
-    'c9c8f7e174f1a1989b089e25ed9d675e09134986a5d2787d13dbee40d66f7a8a';
+    'cf9caa9b0e25f718c2ce99584f321cb3a632d783e082365ad676aac1d9e7f21a';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -242,7 +244,10 @@ const _productionBootstrapNormalizedSha256 =
     // Plan 369 adds validated installation-identity resolution and default-off
     // completed-outcome producer seams at that same app-owned composition
     // boundary; it does not move an adapter or introduce a core shim.
-    '3137c869688e2c6027664da690a3ff6f228d08a782727fc406c5ab10356754f1';
+    // Plan 370 composes the one default-off, production-tested drain factory
+    // and threads its callback through existing retry/resume owners; no
+    // adapter boundary moves.
+    '33d16b84d267ac928748dac692d4b49b2932db2aba195b7491e3376e2b77ea2a';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

@@ -13,6 +13,37 @@ import 'package:flutter_test/flutter_test.dart';
 /// reverting to a blocking full drain (or an unconditional background drain).
 void main() {
   test(
+    'TC-370-07 handleAppResumed invokes the shared outcome drain after bridge health',
+    () async {
+      final source = await File(
+        'lib/app/lifecycle/handle_app_resumed.dart',
+      ).readAsString();
+
+      expect(
+        'Future<void> Function()? drainNotificationCompletedOutcomesFn,'
+            .allMatches(source),
+        hasLength(1),
+      );
+      expect(
+        'Future<void>.sync(drainCompletedOutcomes)'.allMatches(source),
+        hasLength(1),
+        reason: 'resume must invoke the same coalesced callback exactly once',
+      );
+      final bridgeHealth = source.indexOf(
+        'final bridgeOk = await bridge.checkHealth();',
+      );
+      final outcomeDrain = source.indexOf(
+        'Future<void>.sync(drainCompletedOutcomes)',
+      );
+      final reprime = source.indexOf(
+        'final reprime = p2pService.performImmediateHealthCheck();',
+      );
+      expect(bridgeHealth, lessThan(outcomeDrain));
+      expect(outcomeDrain, lessThan(reprime));
+    },
+  );
+
+  test(
     'handle_app_resumed drains first page only and schedules the continuation '
     'conditionally outside the gate',
     () async {

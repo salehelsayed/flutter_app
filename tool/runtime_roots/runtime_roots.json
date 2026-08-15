@@ -550,20 +550,6 @@
       "evidence": []
     },
     {
-      "path": "lib/core/notifications/notification_completed_outcome_outbox_repository.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "Plan 369 / Plan 370",
-      "reason": "Plan 369 deliberately leaves the default-off v116 repository host-rooted until Plan 370 composes the single production drainer.",
-      "condition": "Remove or reclassify only with the Plan 370 drainer composition or an explicit replacement decision.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
       "path": "lib/features/account_migration/application/account_migration_import_precondition.dart",
       "rootKinds": [],
       "disposition": "explained-root",

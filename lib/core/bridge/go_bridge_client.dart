@@ -150,6 +150,10 @@ class GoBridgeClient extends Bridge {
     'inbox:retrieve': _CmdSpec('inboxRetrieve', true),
     'inbox:retrieve_pending': _CmdSpec('inboxRetrievePending', true),
     'inbox:ack': _CmdSpec('inboxAck', true),
+    // Plan 370: default-off completed-notification outcome. Native platform
+    // dispatch and framework adoption remain downstream work; this host bridge
+    // registration is the sole Dart -> gomobile command seam.
+    'inbox:wake_outcome': _CmdSpec('inboxWakeOutcome', true),
     'inbox:register_token': _CmdSpec('inboxRegisterToken', true),
     'inbox:unregister_token': _CmdSpec('inboxUnregisterToken', true),
     // FDC-09 §12: register the recipient's opaque wake-token set (access-token
@@ -196,7 +200,11 @@ class GoBridgeClient extends Bridge {
     'bg:begin': _CmdSpec('bgBegin', false, allowRawStringResponse: true),
     'bg:end': _CmdSpec('bgEnd', true),
     // FDC-S4 measurement: read the OS background grant (seconds) and return it.
-    'bg:grantProbe': _CmdSpec('bgGrantProbe', false, allowRawStringResponse: true),
+    'bg:grantProbe': _CmdSpec(
+      'bgGrantProbe',
+      false,
+      allowRawStringResponse: true,
+    ),
     'bg:timeRemaining': _CmdSpec(
       'bgTimeRemaining',
       false,

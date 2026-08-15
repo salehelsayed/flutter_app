@@ -1,10 +1,12 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"sort"
 	"sync"
@@ -15,10 +17,13 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 )
 
-// DirectReactionPushCapability is advertised only by upgraded clients whose
-// direct-reaction notification pipeline is available. Old relays ignore the
-// additive capabilities field; old clients omit it and remain push-ineligible.
-const DirectReactionPushCapability = "direct_reaction_v1"
+// Push capabilities are additive. Old relays ignore the capabilities field and
+// old clients omit values they cannot honor.
+const (
+	DirectReactionPushCapability = "direct_reaction_v1"
+	OpaqueWakePushCapability     = "opaque_wake_v1"
+	WakeOutcomePushCapability    = "wake_outcome_v1"
+)
 
 const (
 	// AckOrExpiryCustodyContract is the exact proof returned only by the
@@ -37,6 +42,7 @@ const (
 	inboxRetrieveAckCustodyAction = "retrieve_custody_pending_v1"
 	inboxAckCustodyAction         = "ack_custody_v1"
 	inboxAckCustodyFanoutLimit    = 3
+	inboxWakeOutcomeAction        = "wake_outcome_v1"
 )
 
 // InboxMessage represents a message stored in the offline inbox.
@@ -48,14 +54,16 @@ type InboxMessage struct {
 }
 
 type inboxRequest struct {
-	Action   string   `json:"action"`
-	To       string   `json:"to,omitempty"`
-	From     string   `json:"from,omitempty"`
-	Message  string   `json:"message,omitempty"`
-	Limit    int      `json:"limit,omitempty"`
-	EntryIds []string `json:"entryIds,omitempty"`
-	Token    string   `json:"token,omitempty"`
-	Platform string   `json:"platform,omitempty"`
+	Action          string   `json:"action"`
+	Correlation     string   `json:"correlation,omitempty"`
+	WakeNotRequired bool     `json:"wakeNotRequired,omitempty"`
+	To              string   `json:"to,omitempty"`
+	From            string   `json:"from,omitempty"`
+	Message         string   `json:"message,omitempty"`
+	Limit           int      `json:"limit,omitempty"`
+	EntryIds        []string `json:"entryIds,omitempty"`
+	Token           string   `json:"token,omitempty"`
+	Platform        string   `json:"platform,omitempty"`
 	// Plan 256: additive push-token capabilities. Omitted for legacy clients so
 	// their register_token frame remains byte-compatible with old relays.
 	Capabilities []string `json:"capabilities,omitempty"`
@@ -108,7 +116,37 @@ var (
 	ErrInboxCustodyAdmissionDisabled = errors.New("inbox custody admission disabled")
 	ErrInboxCustodyInvalidReceipt    = errors.New("invalid inbox custody receipt")
 	ErrInboxCustodyPartial           = errors.New("partial inbox custody operation")
+	ErrInboxWakeOutcomeRetryable     = errors.New("retryable inbox wake outcome")
 )
+
+// InboxWakeOutcomeRelayDisposition is the terminal/retryable result for one
+// distinct configured relay peer. Multiple transport addresses for one peer do
+// not create additional participants.
+type InboxWakeOutcomeRelayDisposition string
+
+const (
+	InboxWakeOutcomeAccepted    InboxWakeOutcomeRelayDisposition = "accepted"
+	InboxWakeOutcomeUnsupported InboxWakeOutcomeRelayDisposition = "unsupported"
+	InboxWakeOutcomeRetryable   InboxWakeOutcomeRelayDisposition = "retryable"
+)
+
+type InboxWakeOutcomeRelayResult struct {
+	RelayID     string
+	Disposition InboxWakeOutcomeRelayDisposition
+	Error       string
+}
+
+// InboxWakeOutcomeResult retains the outcome for every distinct configured
+// relay. AllParticipantsTerminal is true only when every participant returned
+// OK/idempotent or the exact old-relay unsupported response.
+type InboxWakeOutcomeResult struct {
+	Relays                  []InboxWakeOutcomeRelayResult
+	ParticipantCount        int
+	AcceptedCount           int
+	UnsupportedCount        int
+	RetryableCount          int
+	AllParticipantsTerminal bool
+}
 
 type InboxStoreOutcome struct {
 	StoreStatus     string
@@ -1467,6 +1505,178 @@ func mapInboxAckCustodyRelays[T any](
 	close(jobs)
 	wg.Wait()
 	return results
+}
+
+// IsCanonicalWakeOutcomeCorrelation reports whether value is the sole wire
+// identity accepted by wake_outcome_v1: exactly 32 SHA-256 bytes encoded as 64
+// lowercase hexadecimal characters.
+func IsCanonicalWakeOutcomeCorrelation(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// InboxWakeOutcome submits the local completed-notification outcome to every
+// distinct configured relay. Unlike RelaySelector.FanOut, one accepting leg
+// never hides another participant's retryable failure.
+func (n *Node) InboxWakeOutcome(correlation string) (InboxWakeOutcomeResult, error) {
+	if !IsCanonicalWakeOutcomeCorrelation(correlation) {
+		return InboxWakeOutcomeResult{}, fmt.Errorf("invalid wake outcome correlation")
+	}
+
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+	if h == nil {
+		return InboxWakeOutcomeResult{}, fmt.Errorf("node not started")
+	}
+
+	relays := n.buildRelaySelector(nil).Relays()
+	if len(relays) == 0 {
+		return InboxWakeOutcomeResult{}, fmt.Errorf("no relays configured")
+	}
+
+	deadline := time.Now().Add(InboxTimeout)
+	legs := mapInboxAckCustodyRelays(relays, func(relay RelayInfo) (InboxWakeOutcomeRelayDisposition, error) {
+		return n.sendInboxWakeOutcomeRelay(h, relay, correlation, deadline)
+	})
+	result := InboxWakeOutcomeResult{
+		Relays:           make([]InboxWakeOutcomeRelayResult, len(relays)),
+		ParticipantCount: len(relays),
+	}
+	for index, relay := range relays {
+		disposition := legs[index].value
+		if legs[index].err != nil {
+			disposition = InboxWakeOutcomeRetryable
+		}
+		result.Relays[index] = InboxWakeOutcomeRelayResult{
+			RelayID:     relay.ID.String(),
+			Disposition: disposition,
+		}
+		switch disposition {
+		case InboxWakeOutcomeAccepted:
+			result.AcceptedCount++
+		case InboxWakeOutcomeUnsupported:
+			result.UnsupportedCount++
+		default:
+			result.RetryableCount++
+			if legs[index].err != nil {
+				result.Relays[index].Error = legs[index].err.Error()
+			}
+		}
+	}
+	result.AllParticipantsTerminal = result.RetryableCount == 0
+	if !result.AllParticipantsTerminal {
+		return result, fmt.Errorf(
+			"%w: %d/%d relay participants require retry",
+			ErrInboxWakeOutcomeRetryable,
+			result.RetryableCount,
+			result.ParticipantCount,
+		)
+	}
+	return result, nil
+}
+
+func (n *Node) sendInboxWakeOutcomeRelay(
+	h host.Host,
+	relay RelayInfo,
+	correlation string,
+	deadline time.Time,
+) (InboxWakeOutcomeRelayDisposition, error) {
+	var lastErr error
+	for _, candidate := range relayInfoAttemptCandidates(relay) {
+		timeout := time.Until(deadline)
+		if timeout <= 0 {
+			lastErr = context.DeadlineExceeded
+			break
+		}
+		raw, err := n.exchangeInboxRequest(h, candidate, inboxRequest{
+			Action:          inboxWakeOutcomeAction,
+			Correlation:     correlation,
+			WakeNotRequired: true,
+		}, timeout)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		disposition, parseErr := parseInboxWakeOutcomeResponse(raw)
+		if parseErr != nil {
+			lastErr = parseErr
+			continue
+		}
+		return disposition, nil
+	}
+	if lastErr == nil {
+		lastErr = ErrInboxWakeOutcomeRetryable
+	}
+	return InboxWakeOutcomeRetryable, lastErr
+}
+
+func parseInboxWakeOutcomeResponse(raw []byte) (InboxWakeOutcomeRelayDisposition, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	start, err := decoder.Token()
+	if err != nil {
+		return InboxWakeOutcomeRetryable, fmt.Errorf("decode wake outcome response: %w", err)
+	}
+	if delimiter, ok := start.(json.Delim); !ok || delimiter != '{' {
+		return InboxWakeOutcomeRetryable, fmt.Errorf("wake outcome response must be an object")
+	}
+
+	seen := make(map[string]struct{}, 2)
+	status := ""
+	errorText := ""
+	for decoder.More() {
+		token, tokenErr := decoder.Token()
+		if tokenErr != nil {
+			return InboxWakeOutcomeRetryable, fmt.Errorf("decode wake outcome response key: %w", tokenErr)
+		}
+		key, ok := token.(string)
+		if !ok {
+			return InboxWakeOutcomeRetryable, fmt.Errorf("wake outcome response key must be a string")
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return InboxWakeOutcomeRetryable, fmt.Errorf("duplicate wake outcome response key %q", key)
+		}
+		seen[key] = struct{}{}
+		switch key {
+		case "status":
+			if err := decoder.Decode(&status); err != nil {
+				return InboxWakeOutcomeRetryable, fmt.Errorf("decode wake outcome status: %w", err)
+			}
+		case "error":
+			if err := decoder.Decode(&errorText); err != nil {
+				return InboxWakeOutcomeRetryable, fmt.Errorf("decode wake outcome error: %w", err)
+			}
+		default:
+			return InboxWakeOutcomeRetryable, fmt.Errorf("unknown wake outcome response key %q", key)
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return InboxWakeOutcomeRetryable, fmt.Errorf("close wake outcome response: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return InboxWakeOutcomeRetryable, fmt.Errorf("wake outcome response has trailing JSON")
+		}
+		return InboxWakeOutcomeRetryable, fmt.Errorf("decode wake outcome response tail: %w", err)
+	}
+
+	switch {
+	case status == "OK" && errorText == "":
+		return InboxWakeOutcomeAccepted, nil
+	case status == "ERROR" && errorText == "Unknown action: wake_outcome_v1":
+		return InboxWakeOutcomeUnsupported, nil
+	case status == "":
+		return InboxWakeOutcomeRetryable, fmt.Errorf("wake outcome response missing status")
+	default:
+		return InboxWakeOutcomeRetryable, fmt.Errorf("wake outcome relay returned nonterminal response")
+	}
 }
 
 // InboxRegisterToken registers an FCM push token with all configured relays.

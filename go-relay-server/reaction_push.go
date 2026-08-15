@@ -90,6 +90,7 @@ func extractDirectReactionPushMetadata(message string) (
 	if exactString(envelope["type"]) != "message_reaction" {
 		return directReactionPushMetadata{}, false, false
 	}
+	rawEventID, rawEventIDValid := wakeOutcomeJSONStringField(message, "eventId")
 
 	metadata = directReactionPushMetadata{
 		EventID:         exactString(envelope["eventId"]),
@@ -98,7 +99,8 @@ func extractDirectReactionPushMetadata(message string) (
 		EnvelopeSender:  exactString(envelope["senderPeerId"]),
 		EnvelopeVersion: exactString(envelope["version"]),
 	}
-	if metadata.EnvelopeVersion != "2" ||
+	if !rawEventIDValid || rawEventID != metadata.EventID ||
+		metadata.EnvelopeVersion != "2" ||
 		metadata.EventID == "" ||
 		metadata.Action != "add" ||
 		metadata.TargetMessageID == "" ||
@@ -207,6 +209,11 @@ func extractGroupReactionPushMetadata(
 	if !ok || !hasExactGroupReactionExtensionKeys(extension) {
 		return groupReactionPushMetadata{}, true, false
 	}
+	rawTransitionID, rawTransitionIDValid := wakeOutcomeJSONStringField(
+		message,
+		"notificationExtension",
+		"transitionId",
+	)
 	if !exactJSONInteger(extension["version"], 1) ||
 		exactString(extension["signatureAlgorithm"]) != "ed25519" {
 		return groupReactionPushMetadata{}, true, false
@@ -220,7 +227,8 @@ func extractGroupReactionPushMetadata(
 	baseEnvelopeHash := exactString(extension["baseEnvelopeHash"])
 	signedPayload := exactString(extension["signedPayload"])
 	signature := exactString(extension["signature"])
-	if transitionID == "" || (action != "add" && action != "remove") ||
+	if !rawTransitionIDValid || rawTransitionID != transitionID ||
+		transitionID == "" || (action != "add" && action != "remove") ||
 		targetMessageID == "" || extensionReactorPeerID == "" ||
 		extensionReactorTransportPeerID == "" || extensionReplayHash == "" ||
 		baseEnvelopeHash == "" || signedPayload == "" || signature == "" ||

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/core/application/protected_group_content_runtime_quiescence.dart';
 import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_drainer.dart';
 import 'package:flutter_app/core/services/protected_group_content_contract.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -279,6 +280,7 @@ import 'package:flutter_app/features/contact_request/application/key_exchange_re
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
+import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_repository_impl.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
@@ -822,6 +824,21 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               await canonicalRuntimeBindingCoordinator.retireAccount();
             },
     );
+    Future<void> Function()? notificationCompletedOutcomeDrainKick;
+    void kickNotificationCompletedOutcomeDrain() {
+      final drain = notificationCompletedOutcomeDrainKick;
+      if (drain == null) return;
+      unawaited(
+        drain().catchError((Object error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'NOTIFICATION_COMPLETED_OUTCOME_POST_COMMIT_KICK_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
+          );
+        }),
+      );
+    }
+
     // Establish (or clear) projection ownership off the pre-runApp critical path.
     // Both group backfills and deferred Firebase/push eligibility await this
     // retained future below.
@@ -991,21 +1008,28 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 required expectedReactionTombstone,
                 required completedAt,
                 outcome,
-              }) => dbCompleteDirectNotificationDisplayOutboxEntryIfExact(
-                db,
-                eventId: eventId,
-                expectedRevision: expectedRevision,
-                expectedEventKind: expectedEventKind,
-                expectedPeerId: expectedPeerId,
-                expectedMessageId: expectedMessageId,
-                expectedActorPeerId: expectedActorPeerId,
-                expectedEventTimestamp: expectedEventTimestamp,
-                expectedReactionId: expectedReactionId,
-                expectedReactionAction: expectedReactionAction,
-                expectedReactionTombstone: expectedReactionTombstone,
-                completedAt: completedAt,
-                outcome: outcome,
-              ),
+              }) async {
+                final completed =
+                    await dbCompleteDirectNotificationDisplayOutboxEntryIfExact(
+                      db,
+                      eventId: eventId,
+                      expectedRevision: expectedRevision,
+                      expectedEventKind: expectedEventKind,
+                      expectedPeerId: expectedPeerId,
+                      expectedMessageId: expectedMessageId,
+                      expectedActorPeerId: expectedActorPeerId,
+                      expectedEventTimestamp: expectedEventTimestamp,
+                      expectedReactionId: expectedReactionId,
+                      expectedReactionAction: expectedReactionAction,
+                      expectedReactionTombstone: expectedReactionTombstone,
+                      completedAt: completedAt,
+                      outcome: outcome,
+                    );
+                if (completed && outcome != null) {
+                  kickNotificationCompletedOutcomeDrain();
+                }
+                return completed;
+              },
           dbRetireIfExact:
               ({
                 required eventId,
@@ -3499,21 +3523,28 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 required expectedReactionTombstone,
                 required completedAt,
                 outcome,
-              }) => dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
-                db,
-                eventId: eventId,
-                expectedRevision: expectedRevision,
-                expectedEventKind: expectedEventKind,
-                expectedGroupId: expectedGroupId,
-                expectedMessageId: expectedMessageId,
-                expectedActorPeerId: expectedActorPeerId,
-                expectedEventTimestamp: expectedEventTimestamp,
-                expectedReactionId: expectedReactionId,
-                expectedReactionAction: expectedReactionAction,
-                expectedReactionTombstone: expectedReactionTombstone,
-                completedAt: completedAt,
-                outcome: outcome,
-              ),
+              }) async {
+                final completed =
+                    await dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
+                      db,
+                      eventId: eventId,
+                      expectedRevision: expectedRevision,
+                      expectedEventKind: expectedEventKind,
+                      expectedGroupId: expectedGroupId,
+                      expectedMessageId: expectedMessageId,
+                      expectedActorPeerId: expectedActorPeerId,
+                      expectedEventTimestamp: expectedEventTimestamp,
+                      expectedReactionId: expectedReactionId,
+                      expectedReactionAction: expectedReactionAction,
+                      expectedReactionTombstone: expectedReactionTombstone,
+                      completedAt: completedAt,
+                      outcome: outcome,
+                    );
+                if (completed && outcome != null) {
+                  kickNotificationCompletedOutcomeDrain();
+                }
+                return completed;
+              },
           dbRetireIfExact:
               ({
                 required eventId,
@@ -4987,6 +5018,20 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create and initialize the bridge (Go native)
     bridge = GoBridgeClient();
+    final notificationCompletedOutcomeDrainComposition =
+        NotificationCompletedOutcomeDrainComposition(
+          database: db,
+          sendOutcome: ({required correlation}) =>
+              callP2PInboxWakeOutcome(bridge, correlation: correlation),
+          admissionEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
+          runNetworkAction: (action) => runAccountRuntimeNetworkVoidAction(
+            operation: 'notification_completed_outcome_drain',
+            action: action,
+          ),
+        );
+    final drainNotificationCompletedOutcomes =
+        notificationCompletedOutcomeDrainComposition.drain;
+    notificationCompletedOutcomeDrainKick = drainNotificationCompletedOutcomes;
     // Declared before the linked-media drain closure that captures it. The
     // service is assigned later in this composition phase, before any runtime
     // owner can invoke that closure.
@@ -6154,7 +6199,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       canonicalReconciler: directCanonicalReconciler,
       resolveCompletedOutcomePhysicalPeerId:
           resolveCompletedOutcomePhysicalPeerId,
-      completedOutcomeProducerEnabled: false,
+      completedOutcomeProducerEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
       enqueueReconciliation: (peerId) =>
           dbEnqueueDirectNotificationReconciliationOutbox(db, peerId: peerId),
       projectDisplay: (entry) async {
@@ -6651,7 +6696,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       notificationDisplayOutbox: groupNotificationDisplayOutboxRepository,
       resolveCompletedOutcomePhysicalPeerId:
           resolveCompletedOutcomePhysicalPeerId,
-      completedOutcomeProducerEnabled: false,
+      completedOutcomeProducerEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
       notificationReconciliationOutbox:
           groupNotificationReconciliationOutboxRepository,
       loadLatestUnreadNotificationMessage: (groupId) async {
@@ -9386,6 +9431,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       // reconnecting clients do not stampede the relay in lockstep.
       jitterRandom: Random(),
       drainDirectInboxCustodyOutboxFn: drainDirectInboxCustodyFamilies,
+      drainNotificationCompletedOutcomesFn: drainNotificationCompletedOutcomes,
       verifyInboxCustodyFn: () => runAccountRuntimeNetworkAction(
         operation: 'pending_retrier_inbox_custody_verify',
         blockedValue: 0,
@@ -10031,6 +10077,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         messageRouter: messageRouter,
         pendingMessageRetrier: pendingMessageRetrier,
         drainDirectInboxCustodyOutbox: drainDirectInboxCustodyFamilies,
+        drainNotificationCompletedOutcomes: drainNotificationCompletedOutcomes,
         // 361: blob-free fanout authoring plus the restricted linked runtime
         // seams. The resolver builds the authoring owner at route-push time so
         // role facts and the local transport identity are current; a

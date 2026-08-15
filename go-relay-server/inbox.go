@@ -91,6 +91,38 @@ type pushMessageFactory func() *messaging.Message
 
 type resolvedPushMessageFactory func(platform string) (*messaging.Message, error)
 
+// pushDeliveryResult is the deliberately coarse provider boundary shared by
+// immediate Plan-368 sends and the bounded wake-outcome coordinator. It never
+// carries provider, route, peer, or event material.
+type pushDeliveryResult string
+
+const (
+	pushDeliveryAccepted  pushDeliveryResult = "accepted"
+	pushDeliveryPermanent pushDeliveryResult = "permanent"
+	pushDeliveryRetryable pushDeliveryResult = "retryable"
+)
+
+// The resolver gateway already returns errors for route selection/build
+// failures. These private sentinels let that same error channel carry the
+// coarse provider disposition without changing mailboxDirty's Plan-368 API.
+// sendSelectedPushThroughGateway consumes them before its ordinary route-error
+// accounting, so the incumbent logs and metrics remain unchanged.
+var (
+	errPushDeliveryPermanent = errors.New("push delivery permanently rejected")
+	errPushDeliveryRetryable = errors.New("push delivery retryable")
+)
+
+func pushDeliveryResultError(result pushDeliveryResult) error {
+	switch result {
+	case pushDeliveryAccepted:
+		return nil
+	case pushDeliveryPermanent:
+		return errPushDeliveryPermanent
+	default:
+		return errPushDeliveryRetryable
+	}
+}
+
 type tokenEntry struct {
 	Token        string
 	Platform     string
@@ -208,13 +240,15 @@ func (ps *PushService) sendPushRouteThroughGateway(
 		return err
 	}
 	if draft == nil {
-		ps.sendWithRetry(ctx, nil, target.Route, allowStrictFallback)
-		return nil
+		return pushDeliveryResultError(
+			ps.sendWithRetry(ctx, nil, target.Route, allowStrictFallback),
+		)
 	}
 	providerMessage := *draft
 	providerMessage.Token = target.Token
-	ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback)
-	return nil
+	return pushDeliveryResultError(
+		ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback),
+	)
 }
 
 func (ps *PushService) sendRichPushThroughGateway(
@@ -258,7 +292,7 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 	initialRoute pushRouteLease,
 	requiredCapability string,
 	buildRichMessage pushMessageFactory,
-) {
+) pushDeliveryResult {
 	route := copyPushRouteLease(initialRoute)
 	initialOpaque, eligible := classifySelectedPushRoute(route, requiredCapability)
 	if !eligible {
@@ -266,7 +300,7 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 		if initialOpaque {
 			log.Printf("[PUSH] outcome=opaque_route_invalid")
 		}
-		return
+		return pushDeliveryRetryable
 	}
 	opaqueLocked := initialOpaque
 
@@ -274,7 +308,7 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 		selectedOpaque, selectedEligible := classifySelectedPushRoute(route, requiredCapability)
 		if !selectedEligible || (opaqueLocked && !selectedOpaque) {
 			pushSentCounter.WithLabelValues("route_refresh_ineligible").Inc()
-			return
+			return pushDeliveryRetryable
 		}
 
 		var err error
@@ -286,16 +320,16 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 		if errors.Is(err, ErrPushRouteStale) {
 			if selectionAttempt == 1 {
 				pushSentCounter.WithLabelValues("route_stale").Inc()
-				return
+				return pushDeliveryRetryable
 			}
 			refreshed, lookupErr := ps.selectPushRoute(peerID, requiredCapability)
 			if lookupErr != nil {
 				pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
-				return
+				return pushDeliveryRetryable
 			}
 			if refreshed == nil {
 				pushSentCounter.WithLabelValues("route_refresh_ineligible").Inc()
-				return
+				return pushDeliveryRetryable
 			}
 			route = copyPushRouteLease(*refreshed)
 			continue
@@ -303,26 +337,118 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 		if errors.Is(err, errOpaqueWakeUnsupportedPlatform) {
 			pushSentCounter.WithLabelValues("unsupported_platform").Inc()
 			log.Printf("[PUSH] outcome=unsupported_platform")
-			return
+			return pushDeliveryRetryable
+		}
+		if errors.Is(err, errPushDeliveryPermanent) {
+			return pushDeliveryPermanent
+		}
+		if errors.Is(err, errPushDeliveryRetryable) {
+			return pushDeliveryRetryable
 		}
 		if err != nil {
 			pushSentCounter.WithLabelValues("route_resolution_failed").Inc()
-			return
+			return pushDeliveryRetryable
 		}
-		return
+		return pushDeliveryAccepted
+	}
+
+	return pushDeliveryRetryable
+}
+
+// sendWakeOutcomeThroughGateway is the coordinator's only provider entrypoint.
+// A delayed obligation always re-selects a fresh route and requires the
+// incumbent producer capability plus Plan-368's fixed opaque classifier. The
+// admission capability itself is intentionally not required here: removing
+// wake_outcome_v1 releases an already-due fixed wake instead of stranding it.
+func (ps *PushService) sendWakeOutcomeThroughGateway(
+	ctx context.Context,
+	recipientPeerID string,
+	policy wakeOutcomeRoutePolicy,
+) pushDeliveryResult {
+	requiredCapability, validPolicy := wakeOutcomeRequiredCapability(policy)
+	if !validPolicy {
+		return pushDeliveryRetryable
+	}
+
+	route, err := ps.selectPushRoute(recipientPeerID, requiredCapability)
+	if err != nil || route == nil {
+		return pushDeliveryRetryable
+	}
+	return ps.sendOpaqueWakeThroughGateway(ctx, recipientPeerID, *route, policy)
+}
+
+// sendOpaqueWakeThroughGateway is the one additional Plan-370 caller of the
+// Plan-368 selected gateway. It is shared by due coordinator sends and
+// capacity fallbacks that retain their exact CAS-valid route.
+func (ps *PushService) sendOpaqueWakeThroughGateway(
+	ctx context.Context,
+	recipientPeerID string,
+	route pushRouteLease,
+	policy wakeOutcomeRoutePolicy,
+) pushDeliveryResult {
+	requiredCapability, validPolicy := wakeOutcomeRequiredCapability(policy)
+	if !validPolicy {
+		return pushDeliveryRetryable
+	}
+	opaque, eligible := classifySelectedPushRoute(route, requiredCapability)
+	if !eligible || !opaque {
+		return pushDeliveryRetryable
+	}
+
+	return ps.sendSelectedPushThroughGateway(
+		ctx,
+		recipientPeerID,
+		route,
+		requiredCapability,
+		nil,
+	)
+}
+
+func wakeOutcomeRequiredCapability(policy wakeOutcomeRoutePolicy) (string, bool) {
+	switch policy {
+	case wakeOutcomePolicyNone:
+		return "", true
+	case wakeOutcomePolicyDirectReaction:
+		return directReactionCapability, true
+	case wakeOutcomePolicyGroupReaction:
+		return groupReactionCapability, true
+	default:
+		return "", false
 	}
 }
 
-func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerId, message string) {
-	route, err := ps.selectPushRoute(toPeerId, "")
-	if err != nil {
-		pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
-		return
-	}
-	if route == nil {
-		pushSentCounter.WithLabelValues("missing_token").Inc()
-		log.Printf("[PUSH] outcome=missing_route")
-		return
+func recordDirectMissingPushRoute() {
+	pushSentCounter.WithLabelValues("missing_token").Inc()
+	log.Printf("[PUSH] outcome=missing_route")
+}
+
+func recordGroupMissingPushRoute() {
+	pushSentCounter.WithLabelValues("missing_token").Inc()
+	log.Printf("[PUSH] outcome=missing_route")
+}
+
+func (ps *PushService) SendNotification(
+	ctx context.Context,
+	toPeerId string,
+	fromPeerId string,
+	message string,
+	selectedRoute ...pushRouteLease,
+) {
+	var route *pushRouteLease
+	if len(selectedRoute) > 0 {
+		copy := copyPushRouteLease(selectedRoute[0])
+		route = &copy
+	} else {
+		var err error
+		route, err = ps.selectPushRoute(toPeerId, "")
+		if err != nil {
+			pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
+			return
+		}
+		if route == nil {
+			recordDirectMissingPushRoute()
+			return
+		}
 	}
 
 	ps.sendSelectedPushThroughGateway(
@@ -423,16 +549,23 @@ func (ps *PushService) SendGroupNotification(
 	senderTransportPeerID string,
 	messageID string,
 	message string,
+	selectedRoute ...pushRouteLease,
 ) {
-	route, err := ps.selectPushRoute(toPeerId, "")
-	if err != nil {
-		pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
-		return
-	}
-	if route == nil {
-		pushSentCounter.WithLabelValues("missing_token").Inc()
-		log.Printf("[PUSH] outcome=missing_route")
-		return
+	var route *pushRouteLease
+	if len(selectedRoute) > 0 {
+		copy := copyPushRouteLease(selectedRoute[0])
+		route = &copy
+	} else {
+		var err error
+		route, err = ps.selectPushRoute(toPeerId, "")
+		if err != nil {
+			pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
+			return
+		}
+		if route == nil {
+			recordGroupMissingPushRoute()
+			return
+		}
 	}
 
 	ps.sendSelectedPushThroughGateway(
@@ -473,16 +606,16 @@ func (ps *PushService) sendWithRetry(
 	msg *messaging.Message,
 	route pushRouteLease,
 	allowStrictFallback bool,
-) {
+) pushDeliveryResult {
 	if ps.sender == nil && ps.client == nil {
 		pushSentCounter.WithLabelValues("provider_unavailable").Inc()
 		log.Printf("[PUSH] provider unavailable outcome=provider_unavailable")
-		return
+		return pushDeliveryRetryable
 	}
 	if msg == nil {
 		pushSentCounter.WithLabelValues("invalid_payload").Inc()
 		log.Printf("[PUSH] outcome=invalid_payload")
-		return
+		return pushDeliveryRetryable
 	}
 	totalAttempts := len(ps.retryDelays) + 1
 
@@ -491,24 +624,27 @@ func (ps *PushService) sendWithRetry(
 		if err == nil {
 			pushSentCounter.WithLabelValues("success").Inc()
 			log.Printf("[PUSH] outcome=success attempt=%d total_attempts=%d", attempt, totalAttempts)
-			return
+			return pushDeliveryAccepted
 		}
 
 		if reason := permanentPushErrorReason(err); reason != "" {
-			_, revokeErr := ps.tokenBackend.RevokeIfCurrent(route)
+			revoked, revokeErr := ps.tokenBackend.RevokeIfCurrent(route)
 			pushSentCounter.WithLabelValues("invalid_token").Inc()
 			if revokeErr != nil {
 				log.Printf("[PUSH] outcome=revoke_failed reason=%s", reason)
 			}
 			log.Printf("[PUSH] outcome=invalid_token reason=%s", reason)
-			return
+			if revokeErr != nil || !revoked {
+				return pushDeliveryRetryable
+			}
+			return pushDeliveryPermanent
 		}
 
 		if isPayloadTooLargeError(err) {
 			if !allowStrictFallback {
 				pushSentCounter.WithLabelValues("payload_too_large").Inc()
 				log.Printf("[PUSH] outcome=payload_too_large fallback=disabled")
-				return
+				return pushDeliveryRetryable
 			}
 			// A provider size rejection is permanent for this exact object. Rebuild
 			// once from authenticated routing fields only, then make exactly one
@@ -518,7 +654,7 @@ func (ps *PushService) sendWithRetry(
 			if strict == nil {
 				pushSentCounter.WithLabelValues("payload_too_large").Inc()
 				log.Printf("[PUSH] outcome=payload_too_large fallback=unavailable")
-				return
+				return pushDeliveryRetryable
 			}
 
 			fallbackErr := ps.send(ctx, strict)
@@ -526,26 +662,30 @@ func (ps *PushService) sendWithRetry(
 				pushSentCounter.WithLabelValues("success").Inc()
 				pushSentCounter.WithLabelValues("payload_too_large_fallback").Inc()
 				log.Printf("[PUSH] outcome=success fallback=strict")
-				return
+				return pushDeliveryAccepted
 			}
+			fallbackResult := pushDeliveryRetryable
 			if reason := permanentPushErrorReason(fallbackErr); reason != "" {
-				_, revokeErr := ps.tokenBackend.RevokeIfCurrent(route)
+				revoked, revokeErr := ps.tokenBackend.RevokeIfCurrent(route)
 				pushSentCounter.WithLabelValues("invalid_token").Inc()
 				if revokeErr != nil {
 					log.Printf("[PUSH] outcome=revoke_failed reason=%s", reason)
 				}
 				log.Printf("[PUSH] outcome=invalid_token reason=%s fallback=strict", reason)
+				if revokeErr == nil && revoked {
+					fallbackResult = pushDeliveryPermanent
+				}
 			} else {
 				pushSentCounter.WithLabelValues("failed").Inc()
 			}
 			log.Printf("[PUSH] outcome=fallback_failed fallback=strict")
-			return
+			return fallbackResult
 		}
 
 		if attempt == totalAttempts {
 			pushSentCounter.WithLabelValues("failed").Inc()
 			log.Printf("[PUSH] outcome=failed attempts=%d", attempt)
-			return
+			return pushDeliveryRetryable
 		}
 
 		delay := ps.retryDelays[attempt-1]
@@ -554,9 +694,11 @@ func (ps *PushService) sendWithRetry(
 		if !waitForRetryDelay(ctx, delay) {
 			pushSentCounter.WithLabelValues("failed").Inc()
 			log.Printf("[PUSH] outcome=context_canceled")
-			return
+			return pushDeliveryRetryable
 		}
 	}
+
+	return pushDeliveryRetryable
 }
 
 func waitForRetryDelay(ctx context.Context, delay time.Duration) bool {
@@ -1611,10 +1753,23 @@ type InboxStore struct {
 	// Plan 256: typed direct-reaction wake is separately default-off. Ordinary
 	// inbox custody and ordinary push eligibility are unchanged by this flag.
 	directReactionPushEnabled bool
+	// Plan 370: the paired durable wake-outcome admission is default-off and is
+	// enabled by bootstrap only for the Redis authority.
+	wakeOutcomeAdmissionEnabled bool
 }
 
 func (is *InboxStore) SetDirectReactionPushEnabled(enabled bool) {
 	is.directReactionPushEnabled = enabled
+}
+
+func (is *InboxStore) SetWakeOutcomeAdmissionEnabled(enabled bool) {
+	if is != nil {
+		is.wakeOutcomeAdmissionEnabled = enabled
+	}
+}
+
+func (is *InboxStore) WakeOutcomeAdmissionEnabled() bool {
+	return is != nil && is.wakeOutcomeAdmissionEnabled
 }
 
 // NewInboxStore creates an InboxStore with an in-memory backend.
@@ -1671,9 +1826,73 @@ func (is *InboxStore) ClearWakeTokens(peerId string) {
 	is.wakeTokens.ClearWakeTokens(peerId)
 }
 
+type wakeOutcomePreflightFallbackKind uint8
+
+const (
+	wakeOutcomePreflightNotAttempted wakeOutcomePreflightFallbackKind = iota
+	wakeOutcomePreflightLookupFailed
+	wakeOutcomePreflightNoRoute
+	wakeOutcomePreflightSelectedRoute
+)
+
+// wakeOutcomePreflightFallback carries the one incumbent route decision made
+// before a Redis admission attempt. It is consumed only after a genuinely new
+// event store. Lookup errors and nil routes stay no-provider; a selected but
+// non-admitted lease feeds the existing route-bearing gateway without another
+// directory read.
+type wakeOutcomePreflightFallback struct {
+	kind     wakeOutcomePreflightFallbackKind
+	producer wakeOutcomeProducerKind
+	route    pushRouteLease
+}
+
 func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error) {
 	entry = ensureInboxMessageID(entry)
-	result, err := is.backend.Store(toPeerId, entry)
+	result, admissionStatus, admission, preflightFallback, handled, err := is.storeWithWakeOutcome(
+		toPeerId,
+		entry,
+	)
+	if handled {
+		if err != nil {
+			log.Printf("[INBOX] Store failed for %s from %s: wake outcome transaction failed",
+				toPeerId[:min(20, len(toPeerId))],
+				entry.From[:min(20, len(entry.From))])
+			return "", err
+		}
+		switch result {
+		case InboxStoreResultDuplicate:
+			log.Printf("[INBOX] Duplicate message for %s from %s — skipped",
+				toPeerId[:min(20, len(toPeerId))],
+				entry.From[:min(20, len(entry.From))])
+			inboxStoredCounter.Inc()
+			return InboxStoreResultDuplicate, nil
+		case InboxStoreResultRejectedFull:
+			inboxRejectedFullCounter.Inc()
+			inboxCappedCounter.Inc()
+			log.Printf("[INBOX] Rejected store for %s from %s: inbox full",
+				toPeerId[:min(20, len(toPeerId))],
+				entry.From[:min(20, len(entry.From))])
+			return InboxStoreResultRejectedFull, nil
+		case InboxStoreResultStored:
+			is.recordStoredWithoutPush(toPeerId, entry)
+			switch admissionStatus {
+			case wakeOutcomeAdmissionDelayed, wakeOutcomeAdmissionSuppressed:
+				// Delayed obligations and completed/existing authority suppress the
+				// incumbent immediate provider call.
+			case wakeOutcomeAdmissionCapacityFallback, wakeOutcomeAdmissionImmediateFallback:
+				is.launchDirectPushForWakeAdmission(toPeerId, entry, admission)
+			default:
+				// Unknown backend dispositions must fail toward delivery, never toward
+				// silently losing the wake.
+				is.launchDirectPushForWakeAdmission(toPeerId, entry, admission)
+			}
+			return InboxStoreResultStored, nil
+		default:
+			return "", fmt.Errorf("unexpected inbox store result %q", result)
+		}
+	}
+
+	result, err = is.backend.Store(toPeerId, entry)
 	if err != nil {
 		log.Printf("[INBOX] Store failed for %s from %s: %v",
 			toPeerId[:min(20, len(toPeerId))],
@@ -1697,14 +1916,157 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 			entry.From[:min(20, len(entry.From))])
 		return InboxStoreResultRejectedFull, nil
 	}
-	is.recordStoredAndLaunchPush(toPeerId, entry)
+	is.recordStoredWithoutPush(toPeerId, entry)
+	is.launchStoredDirectPushAfterPreflight(toPeerId, entry, preflightFallback)
 	return InboxStoreResultStored, nil
+}
+
+// storeWithWakeOutcome attempts the optional durable Redis admission path. A
+// memory/legacy backend, an ineligible producer, or any preflight failure falls
+// back to the incumbent store path without delaying delivery. Route-CAS
+// conflicts are retried with one fresh lease; a second conflict also falls back
+// because neither transaction committed an event or obligation.
+func (is *InboxStore) storeWithWakeOutcome(
+	toPeerID string,
+	entry inboxMessage,
+) (
+	InboxStoreResult,
+	wakeOutcomeAdmissionStatus,
+	wakeOutcomeAdmission,
+	wakeOutcomePreflightFallback,
+	bool,
+	error,
+) {
+	var zeroStatus wakeOutcomeAdmissionStatus
+	if !is.WakeOutcomeAdmissionEnabled() {
+		return "", zeroStatus, wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
+	}
+	backend, ok := is.backend.(interface {
+		StoreWithWakeOutcome(
+			toPeerID string,
+			entry inboxMessage,
+			admission wakeOutcomeAdmission,
+		) (InboxStoreResult, wakeOutcomeAdmissionStatus, error)
+	})
+	if !ok {
+		return "", zeroStatus, wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
+	}
+
+	producer, requiredCapability, verifiedEventKey, eligible := is.directWakeOutcomeProducer(toPeerID, entry)
+	if !eligible {
+		return "", zeroStatus, wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
+	}
+
+	for routeAttempt := 0; routeAttempt < 2; routeAttempt++ {
+		fallback, admission, admitted := is.preflightDirectWakeOutcome(
+			toPeerID,
+			entry,
+			producer,
+			requiredCapability,
+			verifiedEventKey,
+		)
+		if !admitted {
+			return "", zeroStatus, wakeOutcomeAdmission{}, fallback, false, nil
+		}
+
+		result, status, err := backend.StoreWithWakeOutcome(toPeerID, entry, admission)
+		if errors.Is(err, errWakeOutcomeRouteChanged) {
+			if routeAttempt == 1 {
+				return "", zeroStatus, wakeOutcomeAdmission{}, fallback, false, nil
+			}
+			continue
+		}
+		return result, status, admission, wakeOutcomePreflightFallback{}, true, err
+	}
+
+	return "", zeroStatus, wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
+}
+
+func (is *InboxStore) preflightDirectWakeOutcome(
+	toPeerID string,
+	entry inboxMessage,
+	producer wakeOutcomeProducerKind,
+	requiredCapability string,
+	verifiedEventKey string,
+) (wakeOutcomePreflightFallback, wakeOutcomeAdmission, bool) {
+	fallback := wakeOutcomePreflightFallback{producer: producer}
+	route, err := is.push.selectPushRoute(toPeerID, requiredCapability)
+	if err != nil {
+		fallback.kind = wakeOutcomePreflightLookupFailed
+		return fallback, wakeOutcomeAdmission{}, false
+	}
+	if route == nil {
+		fallback.kind = wakeOutcomePreflightNoRoute
+		return fallback, wakeOutcomeAdmission{}, false
+	}
+	fallback.kind = wakeOutcomePreflightSelectedRoute
+	fallback.route = copyPushRouteLease(*route)
+	if verifiedEventKey != "" {
+		admission, admitted := newWakeOutcomeAdmissionForEvent(
+			toPeerID,
+			producer,
+			verifiedEventKey,
+			*route,
+			entry.Timestamp,
+			directWakeOutcomeExpiryMs(entry),
+		)
+		return fallback, admission, admitted
+	}
+	admission, admitted := newWakeOutcomeAdmission(
+		toPeerID,
+		entry.Message,
+		producer,
+		*route,
+		entry.Timestamp,
+		directWakeOutcomeExpiryMs(entry),
+	)
+	return fallback, admission, admitted
+}
+
+func (is *InboxStore) directWakeOutcomeProducer(
+	toPeerID string,
+	entry inboxMessage,
+) (wakeOutcomeProducerKind, string, string, bool) {
+	if is == nil || is.push == nil {
+		return 0, "", "", false
+	}
+	if reaction, recognized, eligible := extractDirectReactionPushMetadata(entry.Message); recognized {
+		if !eligible || reaction.EnvelopeSender != entry.From || !is.directReactionPushEnabled {
+			return 0, "", "", false
+		}
+		authorized := is.wakeTokens != nil &&
+			is.wakeTokens.HasRegisteredSet(toPeerID) &&
+			is.wakeTokens.IsAuthorized(toPeerID, entry.WakeToken)
+		if !authorized {
+			return 0, "", "", false
+		}
+		return wakeOutcomeProducerDirectReaction, directReactionCapability, reaction.EventID, true
+	}
+
+	metadata := extractChatPushMetadata(entry.Message)
+	if !metadata.ShouldNotify || (is.wakeTokens != nil && wakeTokenGateEnforced &&
+		!is.wakeTokens.IsAuthorized(toPeerID, entry.WakeToken)) {
+		return 0, "", "", false
+	}
+	return wakeOutcomeProducerDirectMessage, "", "", true
+}
+
+func directWakeOutcomeExpiryMs(entry inboxMessage) int64 {
+	if entry.ExpiresAtMs > 0 {
+		return entry.ExpiresAtMs
+	}
+	return entry.Timestamp + maxMessageAge.Milliseconds()
 }
 
 // recordStoredAndLaunchPush is shared by legacy Store and the protected
 // store-after-atomic-commit path. Callers must invoke it only for a genuinely
 // new durable row; duplicates and failed/ambiguous commits never refanout.
 func (is *InboxStore) recordStoredAndLaunchPush(toPeerId string, entry inboxMessage) {
+	is.recordStoredWithoutPush(toPeerId, entry)
+	is.launchStoredDirectPush(toPeerId, entry)
+}
+
+func (is *InboxStore) recordStoredWithoutPush(toPeerId string, entry inboxMessage) {
 	inboxStoredCounter.Inc()
 	if biz != nil {
 		biz.RecordMessageStored()
@@ -1713,7 +2075,9 @@ func (is *InboxStore) recordStoredAndLaunchPush(toPeerId string, entry inboxMess
 	log.Printf("[INBOX] Stored message for %s from %s",
 		toPeerId[:min(20, len(toPeerId))],
 		entry.From[:min(20, len(entry.From))])
+}
 
+func (is *InboxStore) launchStoredDirectPush(toPeerId string, entry inboxMessage) {
 	// Fire push only for supported user-visible envelope types (the existing
 	// ShouldNotify type filter) AND only when the sender is authorized to wake the
 	// recipient (FDC-09 §12 access-token gate — LAYERED ON TOP of ShouldNotify,
@@ -1770,6 +2134,77 @@ func (is *InboxStore) recordStoredAndLaunchPush(toPeerId string, entry inboxMess
 				toPeerId[:min(20, len(toPeerId))])
 		}
 	}
+}
+
+func (is *InboxStore) launchStoredDirectPushAfterPreflight(
+	toPeerID string,
+	entry inboxMessage,
+	fallback wakeOutcomePreflightFallback,
+) {
+	if fallback.kind == wakeOutcomePreflightNotAttempted {
+		is.launchStoredDirectPush(toPeerID, entry)
+		return
+	}
+
+	// Re-run the incumbent authorization/type decision after persistence. This
+	// preserves wake-token and reaction-flag changes without repeating the route
+	// lookup that the admission preflight already consumed.
+	producer, _, _, eligible := is.directWakeOutcomeProducer(toPeerID, entry)
+	if !eligible || producer != fallback.producer {
+		is.launchStoredDirectPush(toPeerID, entry)
+		return
+	}
+
+	switch fallback.kind {
+	case wakeOutcomePreflightLookupFailed:
+		if producer == wakeOutcomeProducerDirectReaction {
+			pushSentCounter.WithLabelValues("reaction_route_error").Inc()
+		} else {
+			pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
+		}
+	case wakeOutcomePreflightNoRoute:
+		if producer == wakeOutcomeProducerDirectReaction {
+			pushSentCounter.WithLabelValues("reaction_incapable").Inc()
+		} else {
+			recordDirectMissingPushRoute()
+		}
+	case wakeOutcomePreflightSelectedRoute:
+		route := copyPushRouteLease(fallback.route)
+		if producer == wakeOutcomeProducerDirectReaction {
+			go is.push.sendReactionNotificationForRoute(
+				context.Background(),
+				toPeerID,
+				route,
+				entry.From,
+				entry.Message,
+			)
+		} else {
+			go is.push.SendNotification(
+				context.Background(),
+				toPeerID,
+				entry.From,
+				entry.Message,
+				route,
+			)
+		}
+	}
+}
+
+func (is *InboxStore) launchDirectPushForWakeAdmission(
+	toPeerID string,
+	_ inboxMessage,
+	admission wakeOutcomeAdmission,
+) {
+	if is == nil || is.push == nil {
+		return
+	}
+	route := admission.Route()
+	go is.push.sendOpaqueWakeThroughGateway(
+		context.Background(),
+		toPeerID,
+		route,
+		admission.policy,
+	)
 }
 
 func (is *InboxStore) Capacity() int {
@@ -1861,9 +2296,10 @@ type groupInboxHistoryGap struct {
 
 // GroupInboxStore wraps a GroupInboxBackend.
 type GroupInboxStore struct {
-	backend                  GroupInboxBackend
-	push                     *PushService
-	groupReactionPushEnabled bool
+	backend                     GroupInboxBackend
+	push                        *PushService
+	groupReactionPushEnabled    bool
+	wakeOutcomeAdmissionEnabled bool
 }
 
 // NewGroupInboxStore creates a store with an in-memory backend.
@@ -1886,6 +2322,16 @@ func (s *GroupInboxStore) SetPush(push *PushService) {
 
 func (s *GroupInboxStore) SetGroupReactionPushEnabled(enabled bool) {
 	s.groupReactionPushEnabled = enabled
+}
+
+func (s *GroupInboxStore) SetWakeOutcomeAdmissionEnabled(enabled bool) {
+	if s != nil {
+		s.wakeOutcomeAdmissionEnabled = enabled
+	}
+}
+
+func (s *GroupInboxStore) WakeOutcomeAdmissionEnabled() bool {
+	return s != nil && s.wakeOutcomeAdmissionEnabled
 }
 
 func (s *GroupInboxStore) Store(groupId, from, message string) error {
@@ -1920,12 +2366,24 @@ func (s *GroupInboxStore) store(
 		return GroupInboxStoreResultDuplicate, nil
 	}
 	if result == GroupInboxStoreResultStored {
-		groupInboxStoredCounter.Inc()
-		log.Printf("[GROUP_INBOX] Stored message for group %s from %s",
-			groupId[:min(20, len(groupId))],
-			from[:min(20, len(from))])
+		s.recordGroupStored(groupId, from)
 	}
 	return result, nil
+}
+
+func (s *GroupInboxStore) recordGroupStored(groupID, from string) {
+	groupInboxStoredCounter.Inc()
+	log.Printf("[GROUP_INBOX] Stored message for group %s from %s",
+		groupID[:min(20, len(groupID))],
+		from[:min(20, len(from))])
+}
+
+type groupWakeOutcomeDispatch struct {
+	preflight    wakeOutcomePreflightFallback
+	admission    wakeOutcomeAdmission
+	hasAdmission bool
+	status       wakeOutcomeAdmissionStatus
+	hasResult    bool
 }
 
 func (s *GroupInboxStore) StoreWithPushRecipients(
@@ -1949,7 +2407,20 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 			reaction.ReplayRecipientTransportPeerIDs...,
 		)
 	}
-	result, err := s.store(groupId, from, message, normalizedRecipients)
+	result, wakeDispatches, handled, err := s.storeWithWakeOutcomes(
+		groupId,
+		from,
+		message,
+		normalizedRecipients,
+		reaction,
+		recognizedReaction,
+		validReaction,
+	)
+	if !handled {
+		result, err = s.store(groupId, from, message, normalizedRecipients)
+	} else if err == nil && result == GroupInboxStoreResultStored {
+		s.recordGroupStored(groupId, from)
+	}
 	if err != nil {
 		return err
 	}
@@ -1970,7 +2441,13 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 			log.Printf("[GROUP_REACTION_WAKE] outcome=invalid_or_disabled")
 			return nil
 		}
-		s.fanOutGroupReactionPush(groupId, from, message, reaction)
+		s.fanOutGroupReactionPush(
+			groupId,
+			from,
+			message,
+			reaction,
+			wakeDispatches,
+		)
 		return nil
 	}
 
@@ -1978,8 +2455,228 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 		return nil
 	}
 
-	s.fanOutPush(groupId, from, normalizedRecipients, message)
+	s.fanOutPush(
+		groupId,
+		from,
+		normalizedRecipients,
+		message,
+		wakeDispatches,
+	)
 	return nil
+}
+
+// storeWithWakeOutcomes admits all qualifying recipients alongside the group
+// event in one optional Redis transaction. A route-CAS conflict rebuilds the
+// complete recipient set once; a second conflict returns to the incumbent
+// immediate path, and no split event/obligation commit is possible.
+func (s *GroupInboxStore) storeWithWakeOutcomes(
+	groupID string,
+	from string,
+	message string,
+	recipientPeerIDs []string,
+	reaction groupReactionPushMetadata,
+	recognizedReaction bool,
+	validReaction bool,
+) (
+	GroupInboxStoreResult,
+	map[string]groupWakeOutcomeDispatch,
+	bool,
+	error,
+) {
+	if !s.WakeOutcomeAdmissionEnabled() {
+		return "", nil, false, nil
+	}
+	backend, ok := s.backend.(interface {
+		StoreWithRecipientsAndWakeOutcomes(
+			groupID string,
+			from string,
+			message string,
+			recipientPeerIDs []string,
+			admissions []wakeOutcomeAdmission,
+		) (GroupInboxStoreResult, []wakeOutcomeAdmissionResult, error)
+	})
+	if !ok || s.push == nil {
+		return "", nil, false, nil
+	}
+
+	producer := wakeOutcomeProducerGroupMessage
+	requiredCapability := ""
+	verifiedEventKey := ""
+	wakeRecipients := recipientPeerIDs
+	if recognizedReaction {
+		if !validReaction || reaction.Action != "add" || !s.groupReactionPushEnabled {
+			return "", nil, false, nil
+		}
+		producer = wakeOutcomeProducerGroupReaction
+		requiredCapability = groupReactionCapability
+		verifiedEventKey = reaction.TransitionID
+		wakeRecipients = reaction.NotificationRecipientTransportPeerIDs
+	}
+
+	storedAt := time.Now()
+	eventTTL := groupMessageTTL
+	if redisBackend, ok := s.backend.(*redisGroupInboxBackend); ok {
+		if redisBackend.wakeOutcomes != nil {
+			storedAt = redisBackend.wakeOutcomes.nowTime()
+		}
+		if redisBackend.ttl > 0 && redisBackend.ttl < eventTTL {
+			eventTTL = redisBackend.ttl
+		}
+	}
+	storedAtMs := storedAt.UnixMilli()
+	eventExpiresAtMs := storedAtMs + eventTTL.Milliseconds()
+	for routeAttempt := 0; routeAttempt < 2; routeAttempt++ {
+		admissions, dispatches := s.groupWakeOutcomeAdmissions(
+			from,
+			message,
+			wakeRecipients,
+			producer,
+			requiredCapability,
+			verifiedEventKey,
+			storedAtMs,
+			eventExpiresAtMs,
+		)
+		if len(admissions) == 0 {
+			return "", groupWakeOutcomeFallbackDispatches(dispatches), false, nil
+		}
+
+		result, admissionResults, err := backend.StoreWithRecipientsAndWakeOutcomes(
+			groupID,
+			from,
+			message,
+			recipientPeerIDs,
+			admissions,
+		)
+		if errors.Is(err, errWakeOutcomeRouteChanged) {
+			if routeAttempt == 1 {
+				return "", groupWakeOutcomeFallbackDispatches(dispatches), false, nil
+			}
+			continue
+		}
+		if err != nil {
+			return "", nil, true, err
+		}
+		return result, correlateGroupWakeOutcomeDispatches(
+			admissions,
+			admissionResults,
+			dispatches,
+		), true, nil
+	}
+
+	return "", nil, false, nil
+}
+
+func (s *GroupInboxStore) groupWakeOutcomeAdmissions(
+	from string,
+	message string,
+	recipientPeerIDs []string,
+	producer wakeOutcomeProducerKind,
+	requiredCapability string,
+	verifiedEventKey string,
+	storedAtMs int64,
+	eventExpiresAtMs int64,
+) ([]wakeOutcomeAdmission, map[string]groupWakeOutcomeDispatch) {
+	normalizedRecipients := normalizePeerIds(recipientPeerIDs)
+	admissions := make([]wakeOutcomeAdmission, 0, len(normalizedRecipients))
+	dispatches := make(map[string]groupWakeOutcomeDispatch, len(normalizedRecipients))
+	for _, recipientPeerID := range normalizedRecipients {
+		if recipientPeerID == "" || recipientPeerID == from {
+			continue
+		}
+		fallback := wakeOutcomePreflightFallback{producer: producer}
+		route, err := s.push.selectPushRoute(recipientPeerID, requiredCapability)
+		if err != nil {
+			fallback.kind = wakeOutcomePreflightLookupFailed
+			dispatches[recipientPeerID] = groupWakeOutcomeDispatch{preflight: fallback}
+			continue
+		}
+		if route == nil {
+			fallback.kind = wakeOutcomePreflightNoRoute
+			dispatches[recipientPeerID] = groupWakeOutcomeDispatch{preflight: fallback}
+			continue
+		}
+		fallback.kind = wakeOutcomePreflightSelectedRoute
+		fallback.route = copyPushRouteLease(*route)
+		var admission wakeOutcomeAdmission
+		var admitted bool
+		if verifiedEventKey != "" {
+			admission, admitted = newWakeOutcomeAdmissionForEvent(
+				recipientPeerID,
+				producer,
+				verifiedEventKey,
+				*route,
+				storedAtMs,
+				eventExpiresAtMs,
+			)
+		} else {
+			admission, admitted = newWakeOutcomeAdmission(
+				recipientPeerID,
+				message,
+				producer,
+				*route,
+				storedAtMs,
+				eventExpiresAtMs,
+			)
+		}
+		dispatch := groupWakeOutcomeDispatch{preflight: fallback}
+		if admitted {
+			admissions = append(admissions, admission)
+			dispatch.admission = admission
+			dispatch.hasAdmission = true
+		}
+		dispatches[recipientPeerID] = dispatch
+	}
+	return admissions, dispatches
+}
+
+func correlateGroupWakeOutcomeDispatches(
+	admissions []wakeOutcomeAdmission,
+	results []wakeOutcomeAdmissionResult,
+	dispatches map[string]groupWakeOutcomeDispatch,
+) map[string]groupWakeOutcomeDispatch {
+	if dispatches == nil {
+		dispatches = make(map[string]groupWakeOutcomeDispatch, len(admissions))
+	}
+	for _, admission := range admissions {
+		dispatch := dispatches[admission.RecipientPeerID()]
+		dispatch.admission = admission
+		dispatch.hasAdmission = true
+		dispatches[admission.RecipientPeerID()] = dispatch
+	}
+	for _, result := range results {
+		dispatch, ok := dispatches[result.recipientPeerID]
+		if !ok || dispatch.admission.Correlation() != result.correlation {
+			continue
+		}
+		dispatch.status = result.status
+		dispatch.hasResult = true
+		dispatches[result.recipientPeerID] = dispatch
+	}
+	return dispatches
+}
+
+func groupWakeOutcomeFallbackDispatches(
+	dispatches map[string]groupWakeOutcomeDispatch,
+) map[string]groupWakeOutcomeDispatch {
+	for recipientPeerID, dispatch := range dispatches {
+		dispatch.admission = wakeOutcomeAdmission{}
+		dispatch.hasAdmission = false
+		dispatch.status = ""
+		dispatch.hasResult = false
+		dispatches[recipientPeerID] = dispatch
+	}
+	return dispatches
+}
+
+func suppressImmediateWake(dispatch groupWakeOutcomeDispatch) bool {
+	return dispatch.hasResult &&
+		(dispatch.status == wakeOutcomeAdmissionDelayed ||
+			dispatch.status == wakeOutcomeAdmissionSuppressed)
+}
+
+func recordGroupReactionIncapableSkipped() {
+	groupReactionWakeCounter.WithLabelValues("incapable_skipped").Inc()
+	log.Printf("[GROUP_REACTION_WAKE] outcome=incapable_skipped")
 }
 
 func (s *GroupInboxStore) fanOutGroupReactionPush(
@@ -1987,6 +2684,7 @@ func (s *GroupInboxStore) fanOutGroupReactionPush(
 	from string,
 	message string,
 	metadata groupReactionPushMetadata,
+	wakeDispatches map[string]groupWakeOutcomeDispatch,
 ) {
 	if s.push == nil {
 		// Plan 320 P3: previously a silent return.
@@ -2007,22 +2705,57 @@ func (s *GroupInboxStore) fanOutGroupReactionPush(
 			groupReactionWakeCounter.WithLabelValues("self_or_empty_skipped").Inc()
 			continue
 		}
-		route, err := s.push.selectPushRoute(peerID, groupReactionCapability)
-		if err != nil {
-			groupReactionWakeCounter.WithLabelValues("route_error").Inc()
-			continue
+		dispatch, preflighted := wakeDispatches[peerID]
+		var route pushRouteLease
+		if dispatch.hasAdmission {
+			// The exact route and producer eligibility were CAS-valid with the
+			// group event. Count the same synchronous attempted disposition as the
+			// incumbent path even when the provider call is delayed/suppressed.
+			route = dispatch.admission.Route()
+		} else if preflighted {
+			switch dispatch.preflight.kind {
+			case wakeOutcomePreflightLookupFailed:
+				groupReactionWakeCounter.WithLabelValues("route_error").Inc()
+				continue
+			case wakeOutcomePreflightNoRoute:
+				recordGroupReactionIncapableSkipped()
+				continue
+			case wakeOutcomePreflightSelectedRoute:
+				route = copyPushRouteLease(dispatch.preflight.route)
+			default:
+				preflighted = false
+			}
 		}
-		if route == nil {
-			groupReactionWakeCounter.WithLabelValues("incapable_skipped").Inc()
-			log.Printf("[GROUP_REACTION_WAKE] outcome=incapable_skipped")
-			continue
+		if !dispatch.hasAdmission && !preflighted {
+			selected, err := s.push.selectPushRoute(peerID, groupReactionCapability)
+			if err != nil {
+				groupReactionWakeCounter.WithLabelValues("route_error").Inc()
+				continue
+			}
+			if selected == nil {
+				recordGroupReactionIncapableSkipped()
+				continue
+			}
+			route = *selected
 		}
 		groupReactionWakeCounter.WithLabelValues("attempted").Inc()
 		log.Printf("[GROUP_REACTION_WAKE] outcome=dispatched")
+		if dispatch.hasAdmission {
+			if suppressImmediateWake(dispatch) {
+				continue
+			}
+			go s.push.sendOpaqueWakeThroughGateway(
+				context.Background(),
+				peerID,
+				route,
+				dispatch.admission.policy,
+			)
+			continue
+		}
 		go s.push.sendGroupReactionNotificationForRoute(
 			context.Background(),
 			peerID,
-			*route,
+			route,
 			groupID,
 			message,
 			metadata,
@@ -2060,6 +2793,7 @@ func (s *GroupInboxStore) fanOutPush(
 	from string,
 	recipientPeerIds []string,
 	message string,
+	wakeDispatches map[string]groupWakeOutcomeDispatch,
 ) {
 	if s.push == nil || len(recipientPeerIds) == 0 {
 		return
@@ -2075,6 +2809,39 @@ func (s *GroupInboxStore) fanOutPush(
 			continue
 		}
 		seen[peerID] = struct{}{}
+		if dispatch, preflighted := wakeDispatches[peerID]; preflighted {
+			if dispatch.hasAdmission {
+				if suppressImmediateWake(dispatch) {
+					continue
+				}
+				go s.push.sendOpaqueWakeThroughGateway(
+					context.Background(),
+					peerID,
+					dispatch.admission.Route(),
+					dispatch.admission.policy,
+				)
+				continue
+			}
+			switch dispatch.preflight.kind {
+			case wakeOutcomePreflightLookupFailed:
+				pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
+				continue
+			case wakeOutcomePreflightNoRoute:
+				recordGroupMissingPushRoute()
+				continue
+			case wakeOutcomePreflightSelectedRoute:
+				go s.push.SendGroupNotification(
+					context.Background(),
+					peerID,
+					groupId,
+					from,
+					messageID,
+					message,
+					dispatch.preflight.route,
+				)
+				continue
+			}
+		}
 		go s.push.SendGroupNotification(
 			context.Background(),
 			peerID,
@@ -2421,6 +3188,87 @@ func writeFrame(w io.Writer, data []byte) error {
 }
 
 // --- Inbox stream handler ---
+
+type wakeOutcomeRequest struct {
+	action          string
+	correlation     string
+	wakeNotRequired bool
+}
+
+var errInvalidWakeOutcomeRequest = errors.New("invalid wake outcome request")
+
+// decodeWakeOutcomeRequest is intentionally action-local. The inherited inbox
+// decoder is permissive for compatibility, whereas this authenticated outcome
+// arm has exactly three fields and rejects duplicate keys as well as unknown
+// ones. Keeping the correlation out of inboxRequest also prevents it from
+// becoming an accidental recipient/routing alias for any legacy action.
+func decodeWakeOutcomeRequest(raw []byte) (wakeOutcomeRequest, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+	}
+
+	var request wakeOutcomeRequest
+	seen := make(map[string]struct{}, 3)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+		}
+		seen[key] = struct{}{}
+
+		switch key {
+		case "action":
+			if err := decoder.Decode(&request.action); err != nil {
+				return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+			}
+		case "correlation":
+			if err := decoder.Decode(&request.correlation); err != nil {
+				return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+			}
+		case "wakeNotRequired":
+			if err := decoder.Decode(&request.wakeNotRequired); err != nil {
+				return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+			}
+		default:
+			return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+		}
+	}
+
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') {
+		return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+	}
+	if len(seen) != 3 || request.action != wakeOutcomeAction ||
+		!request.wakeNotRequired || !isCanonicalWakeOutcomeCorrelation(request.correlation) {
+		return wakeOutcomeRequest{}, errInvalidWakeOutcomeRequest
+	}
+	return request, nil
+}
+
+func isCanonicalWakeOutcomeCorrelation(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for _, candidate := range []byte(value) {
+		if (candidate < '0' || candidate > '9') &&
+			(candidate < 'a' || candidate > 'f') {
+			return false
+		}
+	}
+	return true
+}
 
 type inboxRequest struct {
 	Action   string                 `json:"action"`
@@ -2827,6 +3675,21 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 		// request field. An empty set clears the gate (back to fail-open).
 		inbox.RegisterWakeTokens(remotePeer, req.WakeTokens)
 		resp = inboxResponse{Status: "OK"}
+
+	case wakeOutcomeAction:
+		outcome, err := decodeWakeOutcomeRequest(requestBytes)
+		if err != nil {
+			resp = inboxResponse{Status: "ERROR", Error: "invalid wake outcome request"}
+		} else if inbox == nil {
+			resp = inboxResponse{Status: "ERROR", Error: "wake outcome retryable"}
+		} else if _, err := inbox.CompleteWakeOutcome(remotePeer, outcome.correlation); err != nil {
+			// Capacity, backend availability, and transient storage failures are all
+			// intentionally one finite retryable wire result. Never echo backend or
+			// correlation material into the response/log surface.
+			resp = inboxResponse{Status: "ERROR", Error: "wake outcome retryable"}
+		} else {
+			resp = inboxResponse{Status: "OK"}
+		}
 
 	case "group_store":
 		if req.GroupId == "" || req.Message == "" {

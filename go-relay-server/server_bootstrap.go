@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -45,10 +46,12 @@ type controlPlaneStores struct {
 	GroupInbox *GroupInboxStore
 	Push       *PushService
 
-	RendezvousBackend RendezvousBackend
-	InboxBackend      InboxBackend
-	GroupInboxBackend GroupInboxBackend
-	PushTokenBackend  PushTokenBackend
+	RendezvousBackend      RendezvousBackend
+	InboxBackend           InboxBackend
+	GroupInboxBackend      GroupInboxBackend
+	PushTokenBackend       PushTokenBackend
+	WakeOutcomeBackend     *redisWakeOutcomeStore
+	WakeOutcomeCoordinator *wakeOutcomeCoordinator
 
 	closeFn func() error
 }
@@ -114,6 +117,8 @@ func newControlPlaneStores(
 			PushTokenBackend:  pushBackend,
 		}
 		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
+		stores.Inbox.SetWakeOutcomeAdmissionEnabled(false)
+		stores.GroupInbox.SetWakeOutcomeAdmissionEnabled(false)
 		return stores, nil
 	case backendKindRedis:
 		if cfg.RedisURL == "" {
@@ -143,6 +148,9 @@ func newControlPlaneStores(
 			limits.MaxGroupInboxMessages,
 			groupMessageTTL,
 		)
+		wakeOutcomeBackend := newRedisWakeOutcomeStore(client, cfg.RedisPrefix)
+		inboxBackend.wakeOutcomes = wakeOutcomeBackend
+		groupInboxBackend.wakeOutcomes = wakeOutcomeBackend
 		groupInbox := NewGroupInboxStoreWithBackend(groupInboxBackend)
 		groupInbox.SetPush(push)
 
@@ -153,15 +161,23 @@ func newControlPlaneStores(
 				push,
 				limits.MaxInboxMessagesPerPeer,
 			),
-			GroupInbox:        groupInbox,
-			Push:              push,
-			RendezvousBackend: rzBackend,
-			InboxBackend:      inboxBackend,
-			GroupInboxBackend: groupInboxBackend,
-			PushTokenBackend:  pushBackend,
-			closeFn:           client.Close,
+			GroupInbox:         groupInbox,
+			Push:               push,
+			RendezvousBackend:  rzBackend,
+			InboxBackend:       inboxBackend,
+			GroupInboxBackend:  groupInboxBackend,
+			PushTokenBackend:   pushBackend,
+			WakeOutcomeBackend: wakeOutcomeBackend,
+			WakeOutcomeCoordinator: newWakeOutcomeCoordinator(
+				wakeOutcomeBackend,
+				push.sendWakeOutcomeThroughGateway,
+				time.Now,
+			),
+			closeFn: client.Close,
 		}
 		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
+		stores.Inbox.SetWakeOutcomeAdmissionEnabled(true)
+		stores.GroupInbox.SetWakeOutcomeAdmissionEnabled(true)
 		return stores, nil
 	default:
 		return nil, fmt.Errorf("unsupported relay backend: %s", cfg.Kind)

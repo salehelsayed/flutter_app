@@ -2694,6 +2694,109 @@ void main() {
       reason: 'the exact drain is the resume seam for the linked role',
     );
   });
+
+  test(
+    'TC-370-07 production composes one default-off outcome admission and one shared drain callback',
+    () {
+      final production = File(_productionPath).readAsStringSync();
+      final applicationRoot = File(_applicationRootPath).readAsStringSync();
+      final bridgeClient = File(
+        'lib/core/bridge/p2p_bridge_client.dart',
+      ).readAsStringSync();
+
+      expect(
+        bridgeClient,
+        contains(
+          "const bool kWakeOutcomeCoordinatorAdmissionEnabled = bool.fromEnvironment(",
+        ),
+      );
+      expect(
+        bridgeClient,
+        contains("defaultValue: false"),
+        reason: 'the combined capability/producer/drain admission stays dark',
+      );
+      expect(
+        'NotificationCompletedOutcomeDrainComposition('.allMatches(production),
+        hasLength(1),
+        reason:
+            'bootstrap owns exactly one production-tested drain composition',
+      );
+      final unit = parseString(content: production, path: _productionPath).unit;
+      final compositionVisitor =
+          _NotificationCompletedOutcomeDrainCompositionVisitor();
+      unit.accept(compositionVisitor);
+      expect(
+        compositionVisitor.constructions,
+        hasLength(1),
+        reason: 'the single composition must be structurally discoverable',
+      );
+      final compositionArguments = <String, String>{
+        for (final argument
+            in compositionVisitor.constructions.single.arguments
+                .whereType<NamedExpression>())
+          argument.name.label.name: argument.expression.toSource(),
+      };
+      expect(
+        compositionArguments['admissionEnabled'],
+        'kWakeOutcomeCoordinatorAdmissionEnabled',
+        reason: 'the shared default-off seam must gate the production drainer',
+      );
+      expect(
+        compositionArguments['sendOutcome'],
+        '({required correlation}) => '
+        'callP2PInboxWakeOutcome(bridge, correlation: correlation)',
+        reason: 'production must send through the strict real bridge call',
+      );
+      expect(
+        compositionArguments['runNetworkAction'],
+        "(action) => runAccountRuntimeNetworkVoidAction(operation: "
+        "'notification_completed_outcome_drain', action: action)",
+        reason:
+            'the drainer must remain inside the account-migration network gate',
+      );
+      expect(
+        'notificationCompletedOutcomeDrainKick = '
+                'drainNotificationCompletedOutcomes;'
+            .allMatches(production),
+        hasLength(1),
+        reason: 'post-commit kicks must reach the production-owned callback',
+      );
+      expect(
+        'completedOutcomeProducerEnabled: '
+                'kWakeOutcomeCoordinatorAdmissionEnabled,'
+            .allMatches(production),
+        hasLength(2),
+        reason: 'direct and group producers share the combined admission',
+      );
+      expect(
+        'if (completed && outcome != null) {'.allMatches(production),
+        hasLength(2),
+        reason: 'both atomic display owners kick only after an outcome commit',
+      );
+      expect(
+        'drainNotificationCompletedOutcomesFn: '
+                'drainNotificationCompletedOutcomes,'
+            .allMatches(production),
+        hasLength(1),
+        reason: 'the pending retrier receives the one shared callback',
+      );
+      expect(
+        'drainNotificationCompletedOutcomes: '
+                'drainNotificationCompletedOutcomes,'
+            .allMatches(production),
+        hasLength(1),
+        reason: 'ApplicationRoot receives that same callback for resume',
+      );
+      expect(
+        applicationRoot,
+        contains(
+          'drainNotificationCompletedOutcomesFn:\n'
+          '            widget.drainNotificationCompletedOutcomes,',
+        ),
+        reason: 'the root passes the bootstrap owner into handleAppResumed',
+      );
+    },
+  );
 }
 
 /// Collects every `MessageRepositoryImpl(...)` construction in a unit.
@@ -2715,6 +2818,30 @@ class _MessageRepositoryConstructionVisitor extends RecursiveAstVisitor<void> {
   void visitMethodInvocation(MethodInvocation node) {
     if (node.target == null &&
         node.methodName.name == 'MessageRepositoryImpl') {
+      constructions.add(node.argumentList);
+    }
+    super.visitMethodInvocation(node);
+  }
+}
+
+final class _NotificationCompletedOutcomeDrainCompositionVisitor
+    extends RecursiveAstVisitor<void> {
+  final List<ArgumentList> constructions = <ArgumentList>[];
+
+  @override
+  void visitInstanceCreationExpression(InstanceCreationExpression node) {
+    if (node.constructorName.type.name.lexeme ==
+        'NotificationCompletedOutcomeDrainComposition') {
+      constructions.add(node.argumentList);
+    }
+    super.visitInstanceCreationExpression(node);
+  }
+
+  @override
+  void visitMethodInvocation(MethodInvocation node) {
+    if (node.target == null &&
+        node.methodName.name ==
+            'NotificationCompletedOutcomeDrainComposition') {
       constructions.add(node.argumentList);
     }
     super.visitMethodInvocation(node);

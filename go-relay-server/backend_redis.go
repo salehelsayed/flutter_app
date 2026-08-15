@@ -28,9 +28,10 @@ type redisRendezvousBackend struct {
 }
 
 type redisInboxBackend struct {
-	client     *redis.Client
-	prefix     string
-	maxPerPeer int
+	client       *redis.Client
+	prefix       string
+	maxPerPeer   int
+	wakeOutcomes *redisWakeOutcomeStore
 	// Test-only clock. Nil is equivalent to time.Now.
 	now func() time.Time
 	// Test-only failpoints keep atomicity and ambiguous-commit behavior
@@ -40,10 +41,11 @@ type redisInboxBackend struct {
 }
 
 type redisGroupInboxBackend struct {
-	client      *redis.Client
-	prefix      string
-	maxPerGroup int
-	ttl         time.Duration
+	client       *redis.Client
+	prefix       string
+	maxPerGroup  int
+	ttl          time.Duration
+	wakeOutcomes *redisWakeOutcomeStore
 }
 
 type redisPushTokenBackend struct {
@@ -1920,11 +1922,19 @@ func (b *redisPushTokenBackend) lookupEncryptedRoute(peerID string) (*pushRouteL
 	if err != nil {
 		return nil, err
 	}
+	var legacyDigest [32]byte
+	if record.SourceLegacyDigest != "" {
+		legacyDigest, err = parsePushTokenLegacyDigest(record.SourceLegacyDigest)
+		if err != nil {
+			return nil, fmt.Errorf("decode push route source legacy digest: %w", err)
+		}
+	}
 	route := &pushRouteLease{
 		Handle:       record.Handle,
 		Generation:   record.Generation,
 		Capabilities: append([]string(nil), record.Capabilities...),
 		lookupKey:    directoryKey,
+		legacyDigest: legacyDigest,
 	}
 	if _, err := b.resolveEncryptedRoute(*route, directoryKey, peerID); err != nil {
 		return nil, err
@@ -2015,8 +2025,13 @@ func encryptedDirectoryMatchesRoute(record pushTokenDirectoryRecord, route pushR
 		return record.SourceLegacyDigest != "" &&
 			record.SourceLegacyDigest == pushRouteLegacyDigestHex(route)
 	}
+	expectedSourceLegacyDigest := ""
+	if route.legacyDigest != ([32]byte{}) {
+		expectedSourceLegacyDigest = pushRouteLegacyDigestHex(route)
+	}
 	return route.Handle != "" && route.Generation > 0 &&
-		record.Handle == route.Handle && record.Generation == route.Generation
+		record.Handle == route.Handle && record.Generation == route.Generation &&
+		record.SourceLegacyDigest == expectedSourceLegacyDigest
 }
 
 func (b *redisPushTokenBackend) resolveEncryptedRoute(

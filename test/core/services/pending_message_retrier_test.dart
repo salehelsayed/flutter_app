@@ -1937,5 +1937,69 @@ void main() {
         });
       },
     );
+
+    test(
+      'TC-370-07 startup reconnect network-restored and periodic triggers share the completed-outcome drain',
+      () {
+        fakeAsync((async) {
+          final restored = StreamController<void>.broadcast(sync: true);
+          var outcomeDrainCount = 0;
+          var unackedRetryCount = 0;
+          final releaseOutcomeDrain = Completer<void>();
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            networkRestoredSignal: restored.stream,
+            retryDebounce: const Duration(milliseconds: 10),
+            networkRestoredDebounce: const Duration(milliseconds: 10),
+            periodicRetryInterval: const Duration(seconds: 1),
+            drainNotificationCompletedOutcomesFn: () async {
+              outcomeDrainCount++;
+              await releaseOutcomeDrain.future;
+            },
+            retryFailedMessagesOverride: () async => 0,
+            retryUnackedMessagesOverride: () async {
+              unackedRetryCount++;
+              return 0;
+            },
+          );
+
+          retrier.start();
+          async.flushMicrotasks();
+          expect(outcomeDrainCount, 1, reason: 'cold-start/reopen kick');
+
+          restored.add(null);
+          async.elapse(const Duration(milliseconds: 10));
+          async.flushMicrotasks();
+          expect(outcomeDrainCount, 2, reason: 'network-restored light pass');
+
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: <String>['/relay'],
+            ),
+          );
+          async.elapse(const Duration(milliseconds: 10));
+          async.flushMicrotasks();
+          expect(outcomeDrainCount, 3, reason: 'online/reconnect full pass');
+
+          async.elapse(const Duration(seconds: 1));
+          async.flushMicrotasks();
+          expect(outcomeDrainCount, 4, reason: 'existing periodic tick');
+          expect(
+            unackedRetryCount,
+            greaterThan(0),
+            reason: 'a slow outcome relay cannot block incumbent retry lanes',
+          );
+          releaseOutcomeDrain.complete();
+          async.flushMicrotasks();
+          restored.close();
+        });
+      },
+    );
   });
 }

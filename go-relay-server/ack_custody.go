@@ -1002,7 +1002,11 @@ func (is *InboxStore) StoreAckCustody(
 	}
 
 	entry = ensureInboxMessageID(entry)
-	result, storedEntry, err := backend.StoreAckCustody(toPeerID, entry, dedupeKey)
+	result, storedEntry, admissionStatus, admission, preflightFallback, handled, err :=
+		is.storeAckCustodyWithWakeOutcome(toPeerID, entry, dedupeKey)
+	if !handled {
+		result, storedEntry, err = backend.StoreAckCustody(toPeerID, entry, dedupeKey)
+	}
 	if err != nil {
 		if errors.Is(err, errAckCustodyIdentityConflict) {
 			recordAckCustodyStoreResult(ackCustodyStoreMetricIdentityConflict)
@@ -1015,7 +1019,19 @@ func (is *InboxStore) StoreAckCustody(
 	switch result {
 	case InboxStoreResultStored:
 		recordAckCustodyStoreResult(ackCustodyStoreMetricStored)
-		is.recordStoredAndLaunchPush(toPeerID, storedEntry)
+		if handled {
+			is.recordStoredWithoutPush(toPeerID, storedEntry)
+			switch admissionStatus {
+			case wakeOutcomeAdmissionDelayed, wakeOutcomeAdmissionSuppressed:
+			case wakeOutcomeAdmissionCapacityFallback, wakeOutcomeAdmissionImmediateFallback:
+				is.launchDirectPushForWakeAdmission(toPeerID, storedEntry, admission)
+			default:
+				is.launchStoredDirectPush(toPeerID, storedEntry)
+			}
+		} else {
+			is.recordStoredWithoutPush(toPeerID, storedEntry)
+			is.launchStoredDirectPushAfterPreflight(toPeerID, storedEntry, preflightFallback)
+		}
 	case InboxStoreResultDuplicate:
 		recordAckCustodyStoreResult(ackCustodyStoreMetricDuplicate)
 	case InboxStoreResultRejectedFull:
@@ -1025,6 +1041,62 @@ func (is *InboxStore) StoreAckCustody(
 		return "", inboxMessage{}, fmt.Errorf("store ack custody returned unknown result %q", result)
 	}
 	return result, storedEntry, nil
+}
+
+func (is *InboxStore) storeAckCustodyWithWakeOutcome(
+	toPeerID string,
+	entry inboxMessage,
+	dedupeKey string,
+) (
+	InboxStoreResult,
+	inboxMessage,
+	wakeOutcomeAdmissionStatus,
+	wakeOutcomeAdmission,
+	wakeOutcomePreflightFallback,
+	bool,
+	error,
+) {
+	backend, ok := is.backend.(interface {
+		StoreAckCustodyWithWakeOutcome(
+			toPeerID string,
+			entry inboxMessage,
+			dedupeKey string,
+			admission wakeOutcomeAdmission,
+		) (InboxStoreResult, inboxMessage, wakeOutcomeAdmissionStatus, error)
+	})
+	if !ok || !is.WakeOutcomeAdmissionEnabled() {
+		return "", inboxMessage{}, "", wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
+	}
+	producer, requiredCapability, verifiedEventKey, eligible := is.directWakeOutcomeProducer(toPeerID, entry)
+	if !eligible {
+		return "", inboxMessage{}, "", wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
+	}
+	for routeAttempt := 0; routeAttempt < 2; routeAttempt++ {
+		fallback, admission, admitted := is.preflightDirectWakeOutcome(
+			toPeerID,
+			entry,
+			producer,
+			requiredCapability,
+			verifiedEventKey,
+		)
+		if !admitted {
+			return "", inboxMessage{}, "", wakeOutcomeAdmission{}, fallback, false, nil
+		}
+		result, storedEntry, status, err := backend.StoreAckCustodyWithWakeOutcome(
+			toPeerID,
+			entry,
+			dedupeKey,
+			admission,
+		)
+		if errors.Is(err, errWakeOutcomeRouteChanged) {
+			if routeAttempt == 1 {
+				return "", inboxMessage{}, "", wakeOutcomeAdmission{}, fallback, false, nil
+			}
+			continue
+		}
+		return result, storedEntry, status, admission, wakeOutcomePreflightFallback{}, true, err
+	}
+	return "", inboxMessage{}, "", wakeOutcomeAdmission{}, wakeOutcomePreflightFallback{}, false, nil
 }
 
 // RetrieveAckCustodyPending is available even while admission is disabled. A

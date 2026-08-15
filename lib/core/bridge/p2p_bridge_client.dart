@@ -833,15 +833,28 @@ Future<Map<String, dynamic>> callP2PInboxStore(
 /// Returns: `{ "ok": true, "registered": true }`
 const directReactionPushCapability = 'direct_reaction_v1';
 const groupReactionPushCapability = 'group_reaction_v1';
+const opaqueWakePushCapability = 'opaque_wake_v1';
+const wakeOutcomePushCapability = 'wake_outcome_v1';
+
+/// One default-off admission boundary for the complete N03 foundation.
+///
+/// Production append, both relay capabilities, and the completed-outcome
+/// drainer must all read this same value. Advertising only one of the paired
+/// capabilities is never an admitted configuration.
+const bool kWakeOutcomeCoordinatorAdmissionEnabled = bool.fromEnvironment(
+  'MKNOON_ENABLE_WAKE_OUTCOME_COORDINATOR',
+  defaultValue: false,
+);
+
+const Duration _inboxWakeOutcomeNativeDeadline = Duration(seconds: 15);
 
 Future<Map<String, dynamic>> callP2PInboxRegisterToken(
   Bridge bridge, {
   required String token,
   required String platform,
-  List<String> capabilities = const [
-    directReactionPushCapability,
-    groupReactionPushCapability,
-  ],
+  List<String>? capabilities,
+  bool wakeOutcomeCoordinatorAdmissionEnabled =
+      kWakeOutcomeCoordinatorAdmissionEnabled,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -849,12 +862,33 @@ Future<Map<String, dynamic>> callP2PInboxRegisterToken(
     details: {'platform': platform},
   );
 
+  final callerCapabilities = capabilities;
+  if (callerCapabilities != null &&
+      (callerCapabilities.contains(opaqueWakePushCapability) ||
+          callerCapabilities.contains(wakeOutcomePushCapability))) {
+    throw ArgumentError(
+      'wake outcome capabilities are owned by the combined admission seam',
+    );
+  }
+  final effectiveCapabilities = List<String>.unmodifiable([
+    ...?callerCapabilities,
+    if (callerCapabilities == null) ...const [
+      directReactionPushCapability,
+      groupReactionPushCapability,
+    ],
+    if (wakeOutcomeCoordinatorAdmissionEnabled) ...const [
+      opaqueWakePushCapability,
+      wakeOutcomePushCapability,
+    ],
+  ]);
+
   final request = {
     'cmd': 'inbox:register_token',
     'payload': {
       'token': token,
       'platform': platform,
-      if (capabilities.isNotEmpty) 'capabilities': capabilities,
+      if (effectiveCapabilities.isNotEmpty)
+        'capabilities': effectiveCapabilities,
     },
   };
 
@@ -1017,6 +1051,122 @@ Future<Map<String, dynamic>> callP2PInboxAck(
   );
 
   return response;
+}
+
+/// Reports that the completed local notification outcome proves a fixed wake
+/// is unnecessary. The relay derives the installation identity from the
+/// authenticated stream; the request therefore contains no peer, event,
+/// conversation, route, provider, or notification material.
+///
+/// A row is terminal only when the returned map has `ok:true`,
+/// `allParticipantsTerminal:true`, and `retryableCount:0`. Any exception or
+/// other response must retain the durable local row for retry.
+Future<Map<String, dynamic>> callP2PInboxWakeOutcome(
+  Bridge bridge, {
+  required String correlation,
+}) async {
+  if (!_isCanonicalWakeOutcomeCorrelation(correlation)) {
+    throw ArgumentError.value(
+      correlation,
+      'correlation',
+      'must be exactly 64 lowercase hexadecimal characters',
+    );
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_WAKE_OUTCOME_REQUEST',
+    details: const {},
+  );
+
+  final request = {
+    'cmd': 'inbox:wake_outcome',
+    'payload': {'correlation': correlation, 'wakeNotRequired': true},
+  };
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      // The Go node owns a fixed 15s all-participant deadline. Keep the Dart
+      // watchdog outside that native budget so it cannot win the boundary race.
+      .timeout(_inboxWakeOutcomeNativeDeadline + p2pBridgeWatchdogMargin);
+  final decoded = jsonDecode(responseJson);
+  if (decoded is! Map<String, dynamic>) {
+    throw const FormatException(
+      'wake outcome bridge response is not an object',
+    );
+  }
+  _validateInboxWakeOutcomeResponse(decoded);
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_WAKE_OUTCOME_RESPONSE',
+    details: {
+      'ok': decoded['ok'],
+      'allParticipantsTerminal': decoded['allParticipantsTerminal'],
+      'participantCount': decoded['participantCount'],
+      'retryableCount': decoded['retryableCount'],
+    },
+  );
+  return decoded;
+}
+
+bool _isCanonicalWakeOutcomeCorrelation(String value) {
+  if (value.length != 64) return false;
+  for (final codeUnit in value.codeUnits) {
+    final isDigit = codeUnit >= 0x30 && codeUnit <= 0x39;
+    final isLowerHex = codeUnit >= 0x61 && codeUnit <= 0x66;
+    if (!isDigit && !isLowerHex) return false;
+  }
+  return true;
+}
+
+void _validateInboxWakeOutcomeResponse(Map<String, dynamic> response) {
+  final participantCount = response['participantCount'];
+  final acceptedCount = response['acceptedCount'];
+  final unsupportedCount = response['unsupportedCount'];
+  final retryableCount = response['retryableCount'];
+  if (response['ok'] is! bool ||
+      response['allParticipantsTerminal'] is! bool ||
+      participantCount is! int ||
+      acceptedCount is! int ||
+      unsupportedCount is! int ||
+      retryableCount is! int ||
+      participantCount <= 0 ||
+      acceptedCount < 0 ||
+      unsupportedCount < 0 ||
+      retryableCount < 0 ||
+      participantCount != acceptedCount + unsupportedCount + retryableCount) {
+    throw const FormatException('invalid wake outcome participant result');
+  }
+
+  final allParticipantsTerminal = response['allParticipantsTerminal'] as bool;
+  final ok = response['ok'] as bool;
+  final expectedTerminal = retryableCount == 0;
+  if (allParticipantsTerminal != expectedTerminal || ok != expectedTerminal) {
+    throw const FormatException('inconsistent wake outcome terminal result');
+  }
+
+  const commonKeys = <String>{
+    'ok',
+    'allParticipantsTerminal',
+    'participantCount',
+    'acceptedCount',
+    'unsupportedCount',
+    'retryableCount',
+  };
+  final expectedKeys = <String>{
+    ...commonKeys,
+    if (!expectedTerminal) ...const {'errorCode', 'errorMessage'},
+  };
+  if (response.keys.toSet().length != expectedKeys.length ||
+      !response.keys.toSet().containsAll(expectedKeys)) {
+    throw const FormatException('invalid wake outcome result shape');
+  }
+  if (!expectedTerminal &&
+      (response['errorCode'] != 'INBOX_WAKE_OUTCOME_RETRYABLE' ||
+          response['errorMessage'] is! String ||
+          (response['errorMessage'] as String).isEmpty)) {
+    throw const FormatException('invalid wake outcome retry result');
+  }
 }
 
 // --- Media ---

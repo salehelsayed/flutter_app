@@ -41,6 +41,7 @@ type redisHelperRequest struct {
 	Admission                  bool               `json:"admission,omitempty"`
 	CustodyExpiresAtOrBeforeMs int64              `json:"custodyExpiresAtOrBeforeMs,omitempty"`
 	NowMs                      int64              `json:"nowMs,omitempty"`
+	Correlation                string             `json:"correlation,omitempty"`
 }
 
 type redisHelperResponse struct {
@@ -62,6 +63,10 @@ type redisHelperResponse struct {
 	Acked          int                `json:"acked,omitempty"`
 	Count          int                `json:"count,omitempty"`
 	Peers          int                `json:"peers,omitempty"`
+	Correlation    string             `json:"correlation,omitempty"`
+	WakeState      string             `json:"wakeState,omitempty"`
+	ClaimToken     string             `json:"claimToken,omitempty"`
+	ClaimRevision  uint64             `json:"claimRevision,omitempty"`
 }
 
 func TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace(t *testing.T) {
@@ -534,6 +539,76 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 	case "push_route_stats":
 		resp.Count = stores.PushTokenBackend.TokenCount()
 		resp.PlatformCounts = stores.PushTokenBackend.PlatformCounts()
+	case "store_wake_outcome":
+		if len(req.Messages) != 1 || stores.WakeOutcomeBackend == nil {
+			t.Fatal("store_wake_outcome requires one message and Redis wake backend")
+		}
+		stores.WakeOutcomeBackend.now = func() time.Time { return helperNow }
+		route, err := stores.PushTokenBackend.LookupRoute(req.PeerID)
+		if err != nil || route == nil {
+			t.Fatalf("wake route lookup = %#v/%v", route, err)
+		}
+		admission, ok := newWakeOutcomeAdmission(
+			req.PeerID,
+			req.Messages[0],
+			wakeOutcomeProducerDirectMessage,
+			*route,
+			helperNow.UnixMilli(),
+			helperNow.Add(24*time.Hour).UnixMilli(),
+		)
+		if !ok {
+			t.Fatal("store_wake_outcome route was not admitted")
+		}
+		backend, ok := stores.InboxBackend.(interface {
+			StoreWithWakeOutcome(
+				string,
+				inboxMessage,
+				wakeOutcomeAdmission,
+			) (InboxStoreResult, wakeOutcomeAdmissionStatus, error)
+		})
+		if !ok {
+			t.Fatalf("wake inbox backend = %T", stores.InboxBackend)
+		}
+		result, status, err := backend.StoreWithWakeOutcome(
+			req.PeerID,
+			inboxMessage{
+				ID:   "process-wake-" + admission.correlation,
+				From: req.From, Message: req.Messages[0], Timestamp: helperNow.UnixMilli(),
+			},
+			admission,
+		)
+		if err != nil {
+			t.Fatalf("StoreWithWakeOutcome: %v", err)
+		}
+		resp.StoreStatus = string(result)
+		resp.State = string(status)
+		resp.Correlation = admission.correlation
+	case "claim_wake_outcome":
+		if stores.WakeOutcomeBackend == nil {
+			t.Fatal("claim_wake_outcome requires Redis wake backend")
+		}
+		stores.WakeOutcomeBackend.now = func() time.Time { return helperNow }
+		claims, err := stores.WakeOutcomeBackend.claimDue(helperNow, 10)
+		if err != nil {
+			t.Fatalf("claimDue: %v", err)
+		}
+		resp.Count = len(claims)
+		if len(claims) > 0 {
+			resp.Correlation = claims[0].correlation
+			resp.ClaimToken = claims[0].token
+			resp.ClaimRevision = claims[0].revision
+			record := requireRedisHelperWakeRecord(t, stores.WakeOutcomeBackend, claims[0].peerID, claims[0].correlation)
+			resp.WakeState = string(record.State)
+		}
+	case "inspect_wake_outcome":
+		if stores.WakeOutcomeBackend == nil {
+			t.Fatal("inspect_wake_outcome requires Redis wake backend")
+		}
+		record := requireRedisHelperWakeRecord(t, stores.WakeOutcomeBackend, req.PeerID, req.Correlation)
+		resp.Correlation = req.Correlation
+		resp.WakeState = string(record.State)
+		resp.ClaimToken = record.ClaimToken
+		resp.ClaimRevision = record.Revision
 	case "store_group_batch":
 		for _, message := range req.Messages {
 			if err := stores.GroupInbox.Store(req.GroupID, req.From, message); err != nil {
@@ -559,6 +634,24 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 	if _, err := os.Stdout.Write(payload); err != nil {
 		t.Fatalf("write helper response: %v", err)
 	}
+}
+
+func requireRedisHelperWakeRecord(
+	t *testing.T,
+	store *redisWakeOutcomeStore,
+	peerID string,
+	correlation string,
+) redisWakeOutcomeRecord {
+	t.Helper()
+	payload, err := store.client.HGet(context.Background(), store.stateKey(peerID), correlation).Result()
+	if err != nil {
+		t.Fatalf("read helper wake record: %v", err)
+	}
+	record, err := decodeRedisWakeOutcomeRecord(payload)
+	if err != nil {
+		t.Fatalf("decode helper wake record: %v", err)
+	}
+	return record
 }
 
 func runRedisHelper(t *testing.T, req redisHelperRequest) redisHelperResponse {

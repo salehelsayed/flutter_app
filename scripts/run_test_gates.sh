@@ -441,6 +441,13 @@ readonly INTRO_TESTS=(
 
 readonly GROUP_TESTS=(
   "test/features/groups/integration/group_messaging_smoke_test.dart"
+  # 370: one default-off authenticated completed-outcome drain is shared by
+  # bridge admission, persisted custody, retry lifecycle, resume and bootstrap.
+  "test/core/bridge/p2p_bridge_client_wake_outcome_test.dart"
+  "test/core/notifications/notification_completed_outcome_drain_composition_test.dart"
+  "test/core/services/pending_message_retrier_test.dart"
+  "test/core/lifecycle/handle_app_resumed_phase2_continuation_wiring_test.dart"
+  "test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart"
   # 329: a deleted FCM batch recovers both canonical inbox families before the
   # native generation is acknowledged; keep all shared seams in this lane too.
   "test/core/notifications/dropped_push_recovery_bridge_test.dart"

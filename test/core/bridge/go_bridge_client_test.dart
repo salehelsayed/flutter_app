@@ -185,6 +185,7 @@ void main() {
       'inbox:retrieve': 'inboxRetrieve',
       'inbox:retrieve_pending': 'inboxRetrievePending',
       'inbox:ack': 'inboxAck',
+      'inbox:wake_outcome': 'inboxWakeOutcome',
       'inbox:store': 'inboxStore',
       'inbox:register_token': 'inboxRegisterToken',
       'inbox:unregister_token': 'inboxUnregisterToken',
@@ -3365,7 +3366,7 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 67 commands are covered', () async {
+  test('all 68 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -3413,6 +3414,7 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'inbox:retrieve',
       'inbox:retrieve_pending',
       'inbox:ack',
+      'inbox:wake_outcome',
       'inbox:register_token',
       'inbox:unregister_token',
       'inbox:register_wake_tokens',
@@ -3450,8 +3452,8 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       'bg:timeRemaining',
     ];
 
-    expect(allCmds, hasLength(67));
-    expect(allCmds.toSet(), hasLength(67));
+    expect(allCmds, hasLength(68));
+    expect(allCmds.toSet(), hasLength(68));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({
