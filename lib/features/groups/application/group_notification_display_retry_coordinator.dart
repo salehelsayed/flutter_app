@@ -10,23 +10,41 @@ final class GroupNotificationDisplayProjectionResult {
   const GroupNotificationDisplayProjectionResult._({
     required this.disposition,
     this.outcomeCandidate,
+    this.sqlHandoffCompleted = false,
+    this.preserveReadyRevision = false,
   });
 
   const GroupNotificationDisplayProjectionResult.completed({
     NotificationCompletedOutcomeCandidate? outcomeCandidate,
+    bool sqlHandoffCompleted = false,
   }) : this._(
          disposition: GroupNotificationDisplayRetryDisposition.completed,
          outcomeCandidate: outcomeCandidate,
+         sqlHandoffCompleted: sqlHandoffCompleted,
        );
 
   const GroupNotificationDisplayProjectionResult.retired()
     : this._(disposition: GroupNotificationDisplayRetryDisposition.retired);
 
-  const GroupNotificationDisplayProjectionResult.retryLater()
-    : this._(disposition: GroupNotificationDisplayRetryDisposition.retryLater);
+  const GroupNotificationDisplayProjectionResult.retryLater({
+    bool preserveReadyRevision = false,
+  }) : this._(
+         disposition: GroupNotificationDisplayRetryDisposition.retryLater,
+         preserveReadyRevision: preserveReadyRevision,
+       );
 
   final GroupNotificationDisplayRetryDisposition disposition;
   final NotificationCompletedOutcomeCandidate? outcomeCandidate;
+
+  /// The Plan-372 final-effect callback already completed or verified exact
+  /// SQL custody before returning from the presentation boundary. Legacy
+  /// projections leave this false and retain the incumbent completion path.
+  final bool sqlHandoffCompleted;
+
+  /// A terminal ledger receipt already owns retry identity, so rewriting the
+  /// raw READY revision would only invalidate transaction-B cleanup. The row
+  /// remains immediately recoverable without recording another SQL failure.
+  final bool preserveReadyRevision;
 }
 
 typedef LoadGroupNotificationDisplayBatch<T> =
@@ -115,6 +133,8 @@ final class GroupNotificationDisplayRetryCoordinator<T> {
     var needsLaterRetry = false;
     var inspectDeferredCustody = false;
     var needsImmediateRetry = false;
+    var needsImmediateRetryWhenDeadlineMissing = false;
+    var hasRevisionPreservingRetry = false;
     var batches = 0;
     final failedEntryIdentities = <Object?>{};
     try {
@@ -148,6 +168,7 @@ final class GroupNotificationDisplayRetryCoordinator<T> {
           if (_disposed) return;
           if (failedEntryIdentities.contains(_identityOf(entry))) continue;
           late Object failure;
+          var preserveReadyRevision = false;
           try {
             final projection = await project(entry);
             // Disposal is a hard mutation fence. A projection that was already
@@ -156,7 +177,9 @@ final class GroupNotificationDisplayRetryCoordinator<T> {
             if (_disposed) return;
             if (projection.disposition ==
                 GroupNotificationDisplayRetryDisposition.completed) {
-              await completeWithOutcome(entry, projection.outcomeCandidate);
+              if (!projection.sqlHandoffCompleted) {
+                await completeWithOutcome(entry, projection.outcomeCandidate);
+              }
               if (_disposed) return;
               continue;
             }
@@ -166,6 +189,7 @@ final class GroupNotificationDisplayRetryCoordinator<T> {
               if (_disposed) return;
               continue;
             }
+            preserveReadyRevision = projection.preserveReadyRevision;
             failure = const GroupNotificationDisplayRetryableException();
           } catch (error) {
             if (_disposed) return;
@@ -175,7 +199,12 @@ final class GroupNotificationDisplayRetryCoordinator<T> {
           needsLaterRetry = true;
           inspectDeferredCustody = true;
           failedEntryIdentities.add(_identityOf(entry));
-          await recordFailure(entry, failure);
+          if (preserveReadyRevision) {
+            hasRevisionPreservingRetry = true;
+          } else {
+            needsImmediateRetryWhenDeadlineMissing = true;
+            await recordFailure(entry, failure);
+          }
           if (_disposed) return;
         }
 
@@ -207,7 +236,11 @@ final class GroupNotificationDisplayRetryCoordinator<T> {
             // A failed CAS can remove the deferred row between record/query.
             // Keep one immediate bounded follow-up for other ready custody; an
             // actually empty follow-up observes no deadline and arms no timer.
-            retryDelay = Duration.zero;
+            retryDelay = needsImmediateRetryWhenDeadlineMissing
+                ? Duration.zero
+                : hasRevisionPreservingRetry
+                ? const Duration(seconds: 65)
+                : Duration.zero;
           }
         }
       } finally {

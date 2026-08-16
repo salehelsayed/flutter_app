@@ -2,11 +2,17 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
 import 'package:flutter_app/core/notifications/app_group_path_channel.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -1022,6 +1028,137 @@ void main() {
         ConversationNotificationContentKind.reaction,
       );
     },
+  );
+
+  test(
+    'TC-372-05b one coordination lock rejects reentrant and inverse acquisition',
+    () async {
+      const key = 'peer-final-effect-reentrant';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      final identity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.direct,
+        value: key,
+      )!;
+      final context = DurableLocalNotificationEffectContext(
+        currentOpaqueBinding: 'v1:${'a' * 64}',
+        eventCorrelation: 'b' * 64,
+        conversationDigest: identity.digest,
+        producerKind: LocalNotificationProducerKind.directMessage,
+        sourceCustody: LocalNotificationSourceCustody.sqlReady,
+        presentationOwner: LocalNotificationPresentationOwner.mainApp,
+        readFinalCanonicalDisposition: () async {
+          // Public registry entry while runFinalEffect owns the same lock must
+          // fail immediately. Waiting on the isolate tail would deadlock.
+          await registry.recordContentMetadata(
+            conversationKey: key,
+            notificationId: id,
+            metadata: const ConversationNotificationContentMetadata(
+              kind: ConversationNotificationContentKind.message,
+              eventIdentity: 'reentrant-event',
+              generation: 'reentrant-generation',
+            ),
+          );
+          return DurableLocalNotificationCanonicalDisposition.eligible;
+        },
+      );
+      expect(
+        await LocalNotificationLedgerStore(
+          directory: directory,
+        ).initializeOrRebind(
+          currentOpaqueBinding: context.currentOpaqueBinding,
+        ),
+        isNotNull,
+      );
+
+      await expectLater(
+        registry.runFinalEffect(
+          context: context,
+          appVisibility: _FixedVisibility(),
+          conversationIdentity: identity,
+          conversationKey: key,
+          notificationId: id,
+          metadata: const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity:
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            generation: 'final-effect-generation',
+          ),
+          retireCurrent: () async {},
+          publishNative: () async => fail('native must not be entered'),
+        ),
+        throwsA(
+          isA<NotificationIdAllocationException>().having(
+            (error) => error.operation,
+            'operation',
+            'registry_lock_reentrant',
+          ),
+        ),
+      );
+
+      // The rejected nested acquisition did not poison the registry tail.
+      expect(await registry.lookup(key), id);
+
+      // A direct ledger owner and the registry share the same isolate-level
+      // serializer on Darwin. The second blocking flock must be queued in
+      // Dart so the first asynchronous callback can resume and release it.
+      final contentionDirectory = Directory('${directory.path}/contention');
+      final storeEntered = Completer<void>();
+      final releaseStore = Completer<void>();
+      final contenderCompleted = Completer<void>();
+      final originalPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        final blockingStore = LocalNotificationLedgerStore(
+          directory: contentionDirectory,
+          beforeRename: (prepared, target) async {
+            storeEntered.complete();
+            await releaseStore.future;
+          },
+        );
+        final storeOwner = blockingStore.initializeOrRebind(
+          currentOpaqueBinding: context.currentOpaqueBinding,
+        );
+        await storeEntered.future.timeout(const Duration(seconds: 2));
+
+        final contendingRegistry = DurableConversationNotificationIdRegistry(
+          directory: contentionDirectory,
+        );
+        final contender = contendingRegistry
+            .resolve(
+              'peer-store-registry-contention',
+              activeNotificationIds: () async => const <Object?>[],
+            )
+            .whenComplete(contenderCompleted.complete);
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+        expect(contenderCompleted.isCompleted, isFalse);
+
+        releaseStore.complete();
+        expect(await storeOwner.timeout(const Duration(seconds: 2)), isNotNull);
+        expect(await contender.timeout(const Duration(seconds: 2)), isNotNull);
+      } finally {
+        debugDefaultTargetPlatformOverride = originalPlatform;
+        if (!releaseStore.isCompleted) releaseStore.complete();
+      }
+    },
+  );
+}
+
+final class _FixedVisibility extends AppVisibilitySuppressionReader {
+  @override
+  Future<AppVisibilityEvaluation> evaluate(
+    AppVisibilityConversationIdentity? identity,
+  ) async => const AppVisibilityEvaluation(
+    isForegroundActive: false,
+    maySuppress: false,
+    lifecycle: AppVisibilityLifecycle.background,
+    revision: 1,
+    lifecycleGeneration: 1,
   );
 }
 

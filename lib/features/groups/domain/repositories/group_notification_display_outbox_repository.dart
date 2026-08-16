@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 
 import '../models/group_message.dart';
 import '../models/group_notification_display_outbox_entry.dart';
@@ -9,6 +10,14 @@ abstract class GroupNotificationDisplayOutboxRepository {
   Future<void> stage(GroupNotificationDisplayOutboxEntry entry);
 
   Future<GroupNotificationDisplayOutboxEntry?> loadByEventId(String eventId);
+
+  /// Persists the opaque event correlation on one exact READY row before the
+  /// file-ledger final-effect boundary can be entered. The returned revision
+  /// is the only revision that may be used by the final canonical CAS.
+  Future<GroupNotificationDisplayOutboxEntry?> bindDurableCorrelationIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    required String durableEventCorrelation,
+  });
 
   Future<bool> promoteReadyIfExact({
     required String eventId,
@@ -33,6 +42,21 @@ abstract class GroupNotificationDisplayOutboxRepository {
   Future<bool> completeIfExact(
     GroupNotificationDisplayOutboxEntry expected, {
     NotificationCompletedOutcomeCandidate? outcome,
+  });
+
+  /// Completes exact READY custody or verifies the typed terminal left by the
+  /// same transaction when a crash happened before ledger settlement.
+  Future<DurableLocalNotificationSqlHandoffResult> completeOrVerifyIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    NotificationCompletedOutcomeCandidate? outcome,
+    String? durableEventCorrelation,
+  });
+
+  /// Releases raw READY custody only after the exact ledger terminal settled.
+  /// The SQL implementation atomically persists a reconciliation trigger.
+  Future<bool> retireAfterDurableSettlementIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    String? durableEventCorrelation,
   });
 
   /// Retires stale/ineligible custody without writing a terminal display fact.

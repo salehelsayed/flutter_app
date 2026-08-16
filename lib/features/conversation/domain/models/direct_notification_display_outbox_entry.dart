@@ -12,6 +12,11 @@ class DirectNotificationDisplayOutboxErrorCode {
   static const String displayFailed = 'display_failed';
   static const String claimPending = 'claim_pending';
   static const String stateUnavailable = 'state_unavailable';
+
+  /// Reserved SQLite-trigger stamp for a physical canonical owner deletion.
+  /// A normal retry always writes an ISO-8601 attempt time, so this value is
+  /// unambiguous on the exact READY row even on an existing v107 schema.
+  static const String canonicalRetirementAttemptMarker = 'canonical_retired';
 }
 
 /// Identifier-only durable custody for one direct notification transition.
@@ -150,6 +155,14 @@ class DirectNotificationDisplayOutboxEntry {
 
   bool get isReady =>
       readiness == DirectNotificationDisplayOutboxReadiness.ready;
+
+  bool get hasCanonicalRetirementProof =>
+      isReady &&
+      lastErrorCode ==
+          DirectNotificationDisplayOutboxErrorCode.stateUnavailable &&
+      lastAttemptAt ==
+          DirectNotificationDisplayOutboxErrorCode
+              .canonicalRetirementAttemptMarker;
 
   Map<String, Object?> toMap() => <String, Object?>{
     'event_id': eventId,

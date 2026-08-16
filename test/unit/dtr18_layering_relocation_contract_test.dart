@@ -186,8 +186,10 @@ const _privacySha256 =
 // this remains app-owned lifecycle composition and relocates nothing.
 // Plan 370 forwards the single default-off completed-outcome drain callback
 // through that same application-owned resume boundary; nothing relocates.
+// Plan 372 threads canonical-notification binding retirement through the same
+// MyApp/startup-router account boundary; no adapter or resume owner moves.
 const _applicationRootNormalizedSha256 =
-    'cf9caa9b0e25f718c2ce99584f321cb3a632d783e082365ad676aac1d9e7f21a';
+    'caa80756a395892866804f9491e9beb42397b4391c46e4e160afa4a5e0ff18c2';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -247,7 +249,10 @@ const _productionBootstrapNormalizedSha256 =
     // Plan 370 composes the one default-off, production-tested drain factory
     // and threads its callback through existing retry/resume owners; no
     // adapter boundary moves.
-    '33d16b84d267ac928748dac692d4b49b2932db2aba195b7491e3376e2b77ea2a';
+    // Plan 372 composes the shared final-effect ledger, canonical binding,
+    // exact SQL handoff/recovery and trigger repair at this same app-owned
+    // bootstrap boundary; no repository adapter or core shim moves.
+    '55dcdf8d0c983627a4bd94f21b979676f8949ad8ca36355f6dc3622bdfdc881c';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

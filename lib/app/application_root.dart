@@ -513,6 +513,7 @@ class MyApp extends StatefulWidget {
   final AccountMigrationReceiverStartFn? accountMigrationStartReceiver;
   final AccountMigrationReceiverStopFn? accountMigrationStopReceiver;
   final AccountMigrationReceiverEvents? accountMigrationReceiverEvents;
+  final Future<void> Function()? retireCanonicalNotificationBinding;
 
   /// Restores active authority on app resume when a Move Account export
   /// pause is stale (no export run in flight). See handleAppResumed.
@@ -656,6 +657,7 @@ class MyApp extends StatefulWidget {
     this.accountMigrationStartReceiver,
     this.accountMigrationStopReceiver,
     this.accountMigrationReceiverEvents,
+    this.retireCanonicalNotificationBinding,
     this.accountMigrationRecoverExportPause,
     this.deferredRuntimeStartup,
     this.ingestStagedPushEnvelopes,
@@ -3285,6 +3287,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               widget.iosNotificationRecoveryCoordinator?.clearAccount,
           invalidateAppVisibility:
               _appVisibilityAuthority.invalidateSynchronously,
+          retireCanonicalNotificationBinding:
+              widget.retireCanonicalNotificationBinding,
           ingestStagedPushEnvelopes: () => _ingestStagedPushEnvelopes(
             source: 'startup_router_notification_tap',
           ),

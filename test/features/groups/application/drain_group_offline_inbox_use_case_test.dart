@@ -11,6 +11,11 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -28,6 +33,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
@@ -56,6 +62,19 @@ import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _drainOpaqueBinding =
+    'v1:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+const _drainPhysicalPeerId = '12D3KooWgroup-drain-display-test';
+
+Future<DurableNotificationToneLease> _openDrainDurableToneLease() async {
+  final directory = await Directory.systemTemp.createTemp(
+    'group-drain-display-tone-',
+  );
+  addTearDown(() async {
+    if (await directory.exists()) await directory.delete(recursive: true);
+  });
+  return DurableNotificationToneLease(directory: directory);
+}
 
 final _fixedDateFixtureRetentionNow = DateTime.utc(2026, 5, 8, 12);
 
@@ -395,6 +414,34 @@ final class _DrainNotificationDisplayOutbox
   ) async => entries[eventId];
 
   @override
+  Future<GroupNotificationDisplayOutboxEntry?> bindDurableCorrelationIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    required String durableEventCorrelation,
+  }) async {
+    final current = entries[expected.eventId];
+    if (current == null ||
+        current.revision != expected.revision ||
+        !current.isReady ||
+        !_sameAuthority(current, expected)) {
+      return null;
+    }
+    final existing = groupNotificationDisplayDurableCorrelationFromMarker(
+      current.lastAttemptAt,
+    );
+    if (existing != null) {
+      return existing == durableEventCorrelation ? current : null;
+    }
+    final bound = current.copyWith(
+      lastAttemptAt: groupNotificationDisplayDurableCorrelationMarker(
+        durableEventCorrelation,
+      ),
+      updatedAt: _now.toIso8601String(),
+    );
+    entries[expected.eventId] = bound;
+    return bound;
+  }
+
+  @override
   Future<bool> promoteReadyIfExact({
     required String eventId,
     required int expectedRevision,
@@ -473,6 +520,30 @@ final class _DrainNotificationDisplayOutbox
     entries.remove(expected.eventId);
     return true;
   }
+
+  @override
+  Future<DurableLocalNotificationSqlHandoffResult> completeOrVerifyIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    Object? outcome,
+    String? durableEventCorrelation,
+  }) async {
+    final current = entries[expected.eventId];
+    if (current == null ||
+        current.revision != expected.revision ||
+        !_sameAuthority(current, expected)) {
+      return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+    }
+    if (durableEventCorrelation == null) {
+      entries.remove(expected.eventId);
+    }
+    return DurableLocalNotificationSqlHandoffResult.committed;
+  }
+
+  @override
+  Future<bool> retireAfterDurableSettlementIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    String? durableEventCorrelation,
+  }) => retireIfExact(expected);
 
   @override
   Future<bool> retireIfExact(
@@ -571,9 +642,161 @@ final class _DrainNotificationDisplayOutbox
   }
 }
 
-final class _FailOnceDrainNotificationService extends FakeNotificationService {
+final class _DrainMemoryDurableEffectRegistry
+    implements DurableLocalNotificationEffectRegistry {
+  @override
+  Future<DurableLocalNotificationEffectResult> runFinalEffect({
+    required DurableLocalNotificationEffectContext context,
+    required AppVisibilitySuppressionReader appVisibility,
+    required AppVisibilityConversationIdentity conversationIdentity,
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentMetadata metadata,
+    required Future<void> Function() retireCurrent,
+    required Future<void> Function() publishNative,
+    Future<void> Function()? publishNativeSilently,
+    PublishDurableLocalNotificationAtFinalBarrier? publishNativeAtFinalBarrier,
+    ResolveDurableLocalNotificationActiveIds? activeNotificationIds,
+  }) => throw UnsupportedError('the drain notification fake owns the boundary');
+
+  @override
+  Future<LocalNotificationRecordV1?> settleSqlReadyEffect({
+    required String currentOpaqueBinding,
+    required String eventCorrelation,
+    required int expectedRevision,
+  }) async {
+    final now = DateTime.utc(2026, 5, 8).toIso8601String();
+    return LocalNotificationRecordV1(
+      eventCorrelation: eventCorrelation,
+      conversationDigest: eventCorrelation,
+      producerKind: LocalNotificationProducerKind.groupMessage,
+      sourceCustody: LocalNotificationSourceCustody.sqlReady,
+      readState: LocalNotificationReadState.unread,
+      presentationState: LocalNotificationPresentationState.osPosted,
+      presentationOwner: LocalNotificationPresentationOwner.mainApp,
+      notificationId: 1,
+      contentGeneration: durableLocalNotificationContentGeneration(
+        eventCorrelation,
+      ),
+      lastEvaluatedLifecycle: LocalNotificationEvaluatedLifecycle.unknown,
+      visibilityRevision: null,
+      lifecycleGeneration: null,
+      effectPhase: LocalNotificationEffectPhase.settled,
+      attemptKind: null,
+      effectToken: null,
+      revision: expectedRevision + 1,
+      createdAtUtc: now,
+      updatedAtUtc: now,
+      terminalAtUtc: now,
+      settledAtUtc: now,
+    );
+  }
+
+  @override
+  Future<LocalNotificationRecordV1?> lookupExactEffect({
+    required String currentOpaqueBinding,
+    required String eventCorrelation,
+    required String conversationDigest,
+    required int notificationId,
+    required String contentGeneration,
+  }) async => null;
+
+  @override
+  Future<List<LocalNotificationRecordV1>> listSqlReadyEffectTerminals({
+    required String currentOpaqueBinding,
+  }) async => const <LocalNotificationRecordV1>[];
+
+  @override
+  Future<LocalNotificationRecordV1?> upgradeRelayCustodyToSqlReady({
+    required String currentOpaqueBinding,
+    required String eventCorrelation,
+    required int expectedRevision,
+  }) async => null;
+}
+
+final class _FailOnceDrainNotificationService extends FakeNotificationService
+    implements MessageNotificationDurableFinalEffectBoundary {
+  _FailOnceDrainNotificationService({this.failFirst = true});
+
+  final bool failFirst;
+  bool _failureConsumed = false;
   int showAttempts = 0;
   Future<void> Function()? beforeShowAttempt;
+
+  @override
+  Future<DurableLocalNotificationEffectResult>
+  showMessageNotificationWithDurableFinalEffect({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    required ConversationNotificationContentKind contentKind,
+    required String contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+    required DurableLocalNotificationEffectContext durableEffectContext,
+    required AppVisibilitySuppressionReader finalVisibility,
+    required AppVisibilityConversationIdentity conversationIdentity,
+    required PublishNativeMessageNotificationAtDurableBarrier publishNative,
+  }) async {
+    if (failFirst && !_failureConsumed) {
+      // TC-330 models a known failure before native entry. Post-entry
+      // ambiguity/recovery belongs to the Plan 372 final-effect tests.
+      await beforeShowAttempt?.call();
+      _failureConsumed = true;
+      showAttempts = 1;
+      throw StateError('simulated pre-native notification failure');
+    }
+    final disposition = await durableEffectContext
+        .readFinalCanonicalDisposition();
+    if (disposition ==
+        DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
+      return const DurableLocalNotificationEffectResult.retryable();
+    }
+    final presentationState = switch (disposition) {
+      DurableLocalNotificationCanonicalDisposition.eligible =>
+        LocalNotificationPresentationState.osPosted,
+      DurableLocalNotificationCanonicalDisposition.suppressedPolicy =>
+        LocalNotificationPresentationState.suppressedPolicy,
+      DurableLocalNotificationCanonicalDisposition.read ||
+      DurableLocalNotificationCanonicalDisposition.cancelled =>
+        LocalNotificationPresentationState.cancelled,
+      DurableLocalNotificationCanonicalDisposition.retryableUnknown =>
+        LocalNotificationPresentationState.notEvaluated,
+    };
+    if (disposition == DurableLocalNotificationCanonicalDisposition.eligible) {
+      final entered = await publishNative(
+        ({required bool silent}) => showMessageNotification(
+          contactPeerId: contactPeerId,
+          senderUsername: senderUsername,
+          messageText: messageText,
+          payload: payload,
+          silent: silent,
+          contentKind: contentKind,
+          contentEventIdentity: contentEventIdentity,
+          snapshot: snapshot,
+        ),
+        () async => true,
+      );
+      if (!entered) {
+        return const DurableLocalNotificationEffectResult.retryable();
+      }
+    }
+    return DurableLocalNotificationEffectResult(
+      disposition: switch (presentationState) {
+        LocalNotificationPresentationState.osPosted =>
+          DurableLocalNotificationEffectDisposition.osPosted,
+        LocalNotificationPresentationState.suppressedPolicy =>
+          DurableLocalNotificationEffectDisposition.suppressedPolicy,
+        _ => DurableLocalNotificationEffectDisposition.cancelled,
+      },
+      receipt: DurableLocalNotificationEffectReceipt(
+        eventCorrelation: durableEffectContext.eventCorrelation,
+        recordRevision: 1,
+        presentationState: presentationState,
+      ),
+    );
+  }
 
   @override
   Future<void> showMessageNotification({
@@ -588,7 +811,8 @@ final class _FailOnceDrainNotificationService extends FakeNotificationService {
   }) async {
     await beforeShowAttempt?.call();
     showAttempts++;
-    if (showAttempts == 1) {
+    if (failFirst && !_failureConsumed) {
+      _failureConsumed = true;
       throw StateError('simulated notification display failure');
     }
     await super.showMessageNotification(
@@ -3733,7 +3957,7 @@ void main() {
       );
       final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
       final outbox = _DrainNotificationDisplayOutbox();
-      final notifications = FakeNotificationService();
+      final notifications = _FailOnceDrainNotificationService(failFirst: false);
       final listener = GroupMessageListener(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -3744,6 +3968,11 @@ void main() {
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.paused,
         notificationDisplayOutbox: outbox,
+        durableNotificationCoordinatorResolver: _openDrainDurableToneLease,
+        resolveCurrentOpaqueBinding: () async => _drainOpaqueBinding,
+        resolveCompletedOutcomePhysicalPeerId: () async => _drainPhysicalPeerId,
+        durableLocalNotificationEffectRegistry:
+            _DrainMemoryDurableEffectRegistry(),
       );
       addTearDown(listener.dispose);
 
@@ -13972,6 +14201,12 @@ void main() {
           getAppLifecycleState: () => AppLifecycleState.resumed,
           remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
           notificationDisplayOutbox: outbox,
+          durableNotificationCoordinatorResolver: _openDrainDurableToneLease,
+          resolveCurrentOpaqueBinding: () async => _drainOpaqueBinding,
+          resolveCompletedOutcomePhysicalPeerId: () async =>
+              _drainPhysicalPeerId,
+          durableLocalNotificationEffectRegistry:
+              _DrainMemoryDurableEffectRegistry(),
         );
         addTearDown(listener.dispose);
         bridge.addPage('group-1', '', [
@@ -14027,6 +14262,12 @@ void main() {
           getAppLifecycleState: () => AppLifecycleState.resumed,
           remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
           notificationDisplayOutbox: outbox,
+          durableNotificationCoordinatorResolver: _openDrainDurableToneLease,
+          resolveCurrentOpaqueBinding: () async => _drainOpaqueBinding,
+          resolveCompletedOutcomePhysicalPeerId: () async =>
+              _drainPhysicalPeerId,
+          durableLocalNotificationEffectRegistry:
+              _DrainMemoryDurableEffectRegistry(),
         );
         addTearDown(listener.dispose);
         bridge.addPage('group-1', '', [
@@ -14107,6 +14348,12 @@ void main() {
           getAppLifecycleState: () => AppLifecycleState.resumed,
           remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
           notificationDisplayOutbox: outbox,
+          durableNotificationCoordinatorResolver: _openDrainDurableToneLease,
+          resolveCurrentOpaqueBinding: () async => _drainOpaqueBinding,
+          resolveCompletedOutcomePhysicalPeerId: () async =>
+              _drainPhysicalPeerId,
+          durableLocalNotificationEffectRegistry:
+              _DrainMemoryDurableEffectRegistry(),
         );
         addTearDown(listener.dispose);
         final reaction = jsonEncode({
@@ -14189,6 +14436,12 @@ void main() {
           getAppLifecycleState: () => AppLifecycleState.resumed,
           remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
           notificationDisplayOutbox: outbox,
+          durableNotificationCoordinatorResolver: _openDrainDurableToneLease,
+          resolveCurrentOpaqueBinding: () async => _drainOpaqueBinding,
+          resolveCompletedOutcomePhysicalPeerId: () async =>
+              _drainPhysicalPeerId,
+          durableLocalNotificationEffectRegistry:
+              _DrainMemoryDurableEffectRegistry(),
         );
         addTearDown(listener.dispose);
         final reaction = jsonEncode({

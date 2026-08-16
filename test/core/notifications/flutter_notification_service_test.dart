@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -6,10 +7,16 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -79,6 +86,7 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
+    debugSetFlowEventSink(null);
     if (notificationIdDirectory.existsSync()) {
       notificationIdDirectory.deleteSync(recursive: true);
     }
@@ -207,6 +215,72 @@ void main() {
       expect(platformSpecifics['channelName'], mknoonMessagesChannelName);
     },
   );
+
+  test('durable display diagnostics contain only fixed opaque codes', () async {
+    final registry = DurableConversationNotificationIdRegistry(
+      directory: notificationIdDirectory,
+    );
+    const binding =
+        'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    expect(
+      await LocalNotificationLedgerStore(
+        directory: notificationIdDirectory,
+      ).initializeOrRebind(currentOpaqueBinding: binding),
+      isNotNull,
+    );
+    final service = buildService(registry: registry);
+    await service.initialize();
+    final events = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(events.add);
+    const rawPeer = 'raw-peer-never-log-9TzH8J7K6L5M4N3P2Q1';
+    const rawSender = 'raw-sender-never-log';
+    const rawRoute = 'group:raw-group-never-log|message:raw-event-never-log';
+    final identity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.direct,
+      value: rawPeer,
+    )!;
+    final context = DurableLocalNotificationEffectContext(
+      currentOpaqueBinding: binding,
+      eventCorrelation: 'a' * 64,
+      conversationDigest: identity.digest,
+      producerKind: LocalNotificationProducerKind.directMessage,
+      sourceCustody: LocalNotificationSourceCustody.sqlReady,
+      presentationOwner: LocalNotificationPresentationOwner.mainApp,
+      readFinalCanonicalDisposition: () async =>
+          DurableLocalNotificationCanonicalDisposition.eligible,
+    );
+
+    final result = await service.showMessageNotificationWithDurableFinalEffect(
+      contactPeerId: rawPeer,
+      senderUsername: rawSender,
+      messageText: 'raw body never log',
+      payload: rawRoute,
+      contentKind: ConversationNotificationContentKind.message,
+      contentEventIdentity: context.eventCorrelation,
+      durableEffectContext: context,
+      finalVisibility: _BackgroundVisibility(),
+      conversationIdentity: identity,
+      publishNative: (showNative, authorize) async {
+        if (!await authorize()) return false;
+        await showNative(silent: false);
+        return true;
+      },
+    );
+
+    expect(
+      result.disposition,
+      DurableLocalNotificationEffectDisposition.osPosted,
+    );
+    final encodedEvents = jsonEncode(events);
+    expect(encodedEvents, isNot(contains(rawPeer)));
+    expect(encodedEvents, isNot(contains(rawSender)));
+    expect(encodedEvents, isNot(contains(rawRoute)));
+    expect(encodedEvents, isNot(contains('raw body never log')));
+    final shown = events.singleWhere(
+      (event) => event['event'] == 'NOTIFICATION_SHOWN',
+    );
+    expect((shown['details'] as Map)['durable'], isTrue);
+  });
 
   test(
     'Android native boundary runs after registry retirement and directly wraps show',
@@ -1104,6 +1178,19 @@ void main() {
       hasLength(cancelCount),
     );
   });
+}
+
+final class _BackgroundVisibility extends AppVisibilitySuppressionReader {
+  @override
+  Future<AppVisibilityEvaluation> evaluate(
+    AppVisibilityConversationIdentity? identity,
+  ) async => const AppVisibilityEvaluation(
+    isForegroundActive: false,
+    maySuppress: false,
+    lifecycle: AppVisibilityLifecycle.background,
+    revision: 1,
+    lifecycleGeneration: 1,
+  );
 }
 
 Future<void> _sendNotificationResponse({

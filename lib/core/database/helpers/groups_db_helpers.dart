@@ -4,6 +4,7 @@ import '../db_write_transaction.dart';
 import '../../utils/flow_event_emitter.dart';
 import 'group_event_log_db_helpers.dart';
 import 'group_notification_display_outbox_db_helpers.dart';
+import 'group_notification_reconciliation_outbox_db_helpers.dart';
 import 'pending_group_broadcasts_db_helpers.dart';
 
 /// Inserts a group into the database.
@@ -337,7 +338,12 @@ Future<void> dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox(
       if (!updated) {
         throw StateError('cannot dissolve a missing group');
       }
-      await dbDeleteGroupNotificationDisplayOutboxForGroup(txn, id);
+      await dbDeleteGroupNotificationDisplayOutboxForGroup(
+        txn,
+        id,
+        preserveReadyCustody: true,
+      );
+      await dbEnqueueGroupNotificationReconciliationOutbox(txn, groupId: id);
     });
 
     emitFlowEvent(
@@ -394,7 +400,15 @@ Future<void> dbCommitProtectedDissolvedGroup(
     if (!updated) {
       throw StateError('cannot dissolve a missing group');
     }
-    await dbDeleteGroupNotificationDisplayOutboxForGroup(transaction, groupId);
+    await dbDeleteGroupNotificationDisplayOutboxForGroup(
+      transaction,
+      groupId,
+      preserveReadyCustody: true,
+    );
+    await dbEnqueueGroupNotificationReconciliationOutbox(
+      transaction,
+      groupId: groupId,
+    );
     await dbAppendGroupEventLogEntryInTransaction(
       transaction,
       groupId: groupId,
@@ -576,8 +590,13 @@ Future<void> dbDeleteGroup(Database db, String id) async {
 
   try {
     await dbWriteTransaction(db, (txn) async {
-      await dbDeleteGroupNotificationDisplayOutboxForGroup(txn, id);
+      await dbDeleteGroupNotificationDisplayOutboxForGroup(
+        txn,
+        id,
+        preserveReadyCustody: true,
+      );
       await txn.delete('groups', where: 'id = ?', whereArgs: [id]);
+      await dbEnqueueGroupNotificationReconciliationOutbox(txn, groupId: id);
     });
 
     emitFlowEvent(

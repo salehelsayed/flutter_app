@@ -7464,7 +7464,7 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
       // message-kind display marker in this same transaction so a replay can
       // never leave a card for media the user can no longer open. Same-message
       // reaction rows and every other message survive.
-      await dbDeleteDirectNotificationDisplayOutboxMessageEntriesForMessage(
+      await dbRetireUnarmedDirectNotificationDisplayOutboxMessageEntriesForMessage(
         txn,
         peerId: senderPeerId as String,
         messageId: messageId,

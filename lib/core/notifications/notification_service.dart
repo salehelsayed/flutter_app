@@ -1,4 +1,7 @@
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 
 export 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 
@@ -200,6 +203,12 @@ abstract interface class ConversationNotificationGenerationReplacement {
 typedef NativeMessageNotificationShow =
     Future<void> Function({required bool silent});
 
+typedef PublishNativeMessageNotificationAtDurableBarrier =
+    Future<bool> Function(
+      NativeMessageNotificationShow showNative,
+      AuthorizeDurableLocalNotificationNativeEntry authorize,
+    );
+
 /// Owns the narrow boundary where a prepared notification is handed to the
 /// platform. Android durable event/tone owners use this seam so ordinary
 /// registry failures remain known pre-publication failures, while a platform
@@ -217,6 +226,36 @@ abstract interface class MessageNotificationNativePublicationBoundary {
     required Future<void> Function(NativeMessageNotificationShow showNative)
     publishNative,
   });
+}
+
+/// Optional exact-correlation path whose terminal presentation result is
+/// decided under the stable-id registry lock at the final native boundary.
+/// Legacy and unanchored callers continue using [NotificationService].
+abstract interface class MessageNotificationDurableFinalEffectBoundary {
+  Future<DurableLocalNotificationEffectResult>
+  showMessageNotificationWithDurableFinalEffect({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    required ConversationNotificationContentKind contentKind,
+    required String contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+    required DurableLocalNotificationEffectContext durableEffectContext,
+    required AppVisibilitySuppressionReader finalVisibility,
+    required AppVisibilityConversationIdentity conversationIdentity,
+    required PublishNativeMessageNotificationAtDurableBarrier publishNative,
+  });
+}
+
+/// Optional post-handoff hook. It is invoked only after an exact terminal
+/// observer has completed its SQL handoff and ledger settlement outside the
+/// registry lock, so recovery reconciliation never interposes between them.
+abstract interface class MessageNotificationDurablePostHandoffReconciliation {
+  Future<void> notifyDurableEffectHandoffComplete(
+    DurableLocalNotificationEffectReceipt receipt,
+  );
 }
 
 /// Abstract interface for showing local notifications.

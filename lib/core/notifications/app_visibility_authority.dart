@@ -151,6 +151,9 @@ final class AppVisibilityEvaluation {
   const AppVisibilityEvaluation({
     required this.isForegroundActive,
     required this.maySuppress,
+    this.lifecycle,
+    this.revision,
+    this.lifecycleGeneration,
   });
 
   static const failNotify = AppVisibilityEvaluation(
@@ -160,6 +163,21 @@ final class AppVisibilityEvaluation {
 
   final bool isForegroundActive;
   final bool maySuppress;
+
+  /// Exact native snapshot identity used by the final notification-effect
+  /// barrier. Null means the read was missing, stale, malformed, invalidated,
+  /// or otherwise unsuitable for durable suppression authority.
+  final AppVisibilityLifecycle? lifecycle;
+  final int? revision;
+  final int? lifecycleGeneration;
+
+  bool get hasExactSnapshotMetadata =>
+      lifecycle != null &&
+      isPositiveAppVisibilityInt64(revision) &&
+      isPositiveAppVisibilityInt64(lifecycleGeneration) &&
+      ((lifecycle == AppVisibilityLifecycle.foregroundActive) ==
+          isForegroundActive) &&
+      (!maySuppress || lifecycle == AppVisibilityLifecycle.foregroundActive);
 }
 
 /// Small injection boundary used by notification presentation owners.
@@ -228,7 +246,24 @@ final class AppVisibilityAuthority extends AppVisibilitySuppressionReader {
     return _serialize(() async {
       if (!_canContinue(epoch)) return AppVisibilityEvaluation.failNotify;
       final read = await _safeRead();
-      if (!_canContinue(epoch) || !_adoptForegroundRead(read)) {
+      if (!_canContinue(epoch)) return AppVisibilityEvaluation.failNotify;
+      if (_isCurrentNonForegroundRead(read)) {
+        final snapshot = read!.snapshot;
+        // A structurally current same-boot inactive/background read is useful
+        // evidence for the durable final-effect record, but never suppression
+        // authority. Fence this exact generation from later route adoption.
+        _ineligibleLifecycleGeneration = snapshot.lifecycleGeneration;
+        _invalidationEpoch++;
+        _currentRead = null;
+        return AppVisibilityEvaluation(
+          isForegroundActive: false,
+          maySuppress: false,
+          lifecycle: snapshot.lifecycle,
+          revision: snapshot.revision,
+          lifecycleGeneration: snapshot.lifecycleGeneration,
+        );
+      }
+      if (!_adoptForegroundRead(read)) {
         return AppVisibilityEvaluation.failNotify;
       }
       final current = _currentRead!;
@@ -242,6 +277,9 @@ final class AppVisibilityAuthority extends AppVisibilitySuppressionReader {
               currentBootSession: current.currentBootSession,
               expectedConversationDigest: identity.digest,
             ),
+        lifecycle: current.snapshot.lifecycle,
+        revision: current.snapshot.revision,
+        lifecycleGeneration: current.snapshot.lifecycleGeneration,
       );
     });
   }
@@ -352,6 +390,19 @@ final class AppVisibilityAuthority extends AppVisibilitySuppressionReader {
         currentMonotonicMs: write.currentMonotonicMs,
         currentBootSession: write.currentBootSession,
       );
+
+  bool _isCurrentNonForegroundRead(AppVisibilityPlatformRead? read) {
+    if (read == null ||
+        !read.snapshot.isValid ||
+        read.snapshot.lifecycle == AppVisibilityLifecycle.foregroundActive ||
+        !isNonnegativeAppVisibilityInt64(read.currentMonotonicMs) ||
+        !isCanonicalAppVisibilityBootSession(read.currentBootSession) ||
+        read.snapshot.bootSession != read.currentBootSession) {
+      return false;
+    }
+    final ageMs = read.currentMonotonicMs - read.snapshot.updatedMonotonicMs;
+    return ageMs >= 0 && ageMs < appVisibilityFreshnessWindowMs;
+  }
 
   bool _canContinue(int epoch) => !_disposed && epoch == _invalidationEpoch;
 

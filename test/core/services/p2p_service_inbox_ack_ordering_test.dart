@@ -1722,7 +1722,43 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
     reason:
         'history rollback does not synthesize terminal display authority for stale A',
   );
-  expect(await db.query('group_notification_display_outbox'), isEmpty);
+  final retainedDisplayRows = await db.query(
+    'group_notification_display_outbox',
+  );
+  expect(
+    retainedDisplayRows,
+    hasLength(1),
+    reason:
+        'protected cleanup retains only correlation-bound READY custody for the retired canonical reaction',
+  );
+  expect(
+    retainedDisplayRows.single,
+    allOf(<Object>[
+      containsPair('event_id', invalidTransition),
+      containsPair('event_kind', 'reaction'),
+      containsPair('group_id', group.id),
+      containsPair('message_id', reactionTargetId),
+      containsPair('actor_peer_id', sender.peerId),
+      containsPair('event_timestamp', invalidReactionAt),
+      containsPair('reaction_id', reactionStateId),
+      containsPair('reaction_action', 'add'),
+      containsPair('reaction_tombstone', 0),
+      containsPair('readiness', 'ready'),
+      containsPair('revision', 2),
+      containsPair('retry_count', 0),
+      containsPair('last_error_code', 'state_unavailable'),
+      containsPair(
+        'last_attempt_at',
+        kGroupNotificationDisplayCanonicalRetiredMarker,
+      ),
+      containsPair('next_attempt_at', null),
+    ]),
+  );
+  expect(
+    await dbLoadGroupNotificationDisplayOutboxEntry(db, priorTransition),
+    isNull,
+    reason: 'the earlier reaction lane remains exactly retired',
+  );
   final queryPlan = await db.rawQuery(
     'EXPLAIN QUERY PLAN '
     'SELECT * FROM group_event_log INDEXED BY idx_group_event_log_event_type '
@@ -1757,6 +1793,8 @@ Future<void> _exerciseProtectedContentAdapterAndReconciliation() async {
       authority: later,
     ),
     isTrue,
+    reason:
+        'retained canonical-retired display custody does not reopen protected reconciliation',
   );
   final afterInitialComplete = await db.query(
     'group_event_log',

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 
@@ -16,12 +17,28 @@ final class BoundedPosixFlockUnavailableException implements Exception {
   String toString() => 'BoundedPosixFlockUnavailableException';
 }
 
+/// Same-isolate recursive acquisition of one lock path.
+///
+/// On Darwin a blocking second descriptor would freeze the isolate that must
+/// resume the first asynchronous owner. Treat recursion as a fail-closed
+/// programming error before entering `flock(2)`.
+final class BoundedPosixFlockReentrantException implements Exception {
+  const BoundedPosixFlockReentrantException(this.path);
+
+  final String path;
+
+  @override
+  String toString() => 'BoundedPosixFlockReentrantException($path)';
+}
+
 typedef _OpenNative = Int32 Function(Pointer<Utf8>, Int32);
 typedef _OpenDart = int Function(Pointer<Utf8>, int);
 typedef _FlockNative = Int32 Function(Int32, Int32);
 typedef _FlockDart = int Function(int, int);
 typedef _CloseNative = Int32 Function(Int32);
 typedef _CloseDart = int Function(int);
+typedef _FsyncNative = Int32 Function(Int32);
+typedef _FsyncDart = int Function(int);
 
 /// BSD `flock` shared by notification ownership stores.
 ///
@@ -39,6 +56,9 @@ final class BoundedPosixFlock {
   static const int lockNonBlocking = 4;
   static const int lockUnlock = 8;
   static final _BoundedPosixFlockApi _api = _BoundedPosixFlockApi.load();
+  static final Object _isolateOwnerZoneKey = Object();
+  static final Map<String, Future<void>> _isolateTails =
+      <String, Future<void>>{};
 
   static Future<T> withExclusive<T>(File file, Future<T> Function() action) =>
       _withExclusive(file, action, ownerCompletion: false);
@@ -55,7 +75,79 @@ final class BoundedPosixFlock {
     Future<T> Function() action,
   ) => _withExclusive(file, action, ownerCompletion: true);
 
+  /// Flushes the directory entry after an atomic rename. Flushing only the
+  /// file contents does not make rename metadata power-loss safe on POSIX.
+  static void syncDirectory(Directory directory) {
+    final nativePath = directory.path.toNativeUtf8();
+    late final int descriptor;
+    try {
+      descriptor = _api.open(nativePath, 0);
+    } finally {
+      malloc.free(nativePath);
+    }
+    if (descriptor < 0) {
+      throw FileSystemException(
+        'Unable to open notification directory for sync',
+        directory.path,
+      );
+    }
+    try {
+      if (_api.fsync(descriptor) != 0) {
+        throw FileSystemException(
+          'Unable to sync notification directory',
+          directory.path,
+        );
+      }
+    } finally {
+      _api.close(descriptor);
+    }
+  }
+
   static Future<T> _withExclusive<T>(
+    File file,
+    Future<T> Function() action, {
+    required bool ownerCompletion,
+  }) {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return _withExclusiveNative(
+        file,
+        action,
+        ownerCompletion: ownerCompletion,
+      );
+    }
+    return _serializeBlockingPlatformAcquisition(
+      file,
+      () =>
+          _withExclusiveNative(file, action, ownerCompletion: ownerCompletion),
+    );
+  }
+
+  static Future<T> _serializeBlockingPlatformAcquisition<T>(
+    File file,
+    Future<T> Function() action,
+  ) async {
+    final key = file.absolute.path;
+    if (Zone.current[_isolateOwnerZoneKey] == key) {
+      throw BoundedPosixFlockReentrantException(key);
+    }
+    final previous = _isolateTails[key] ?? Future<void>.value();
+    final release = Completer<void>();
+    _isolateTails[key] = release.future;
+    await previous;
+    try {
+      return await runZoned(
+        action,
+        zoneValues: <Object, Object>{_isolateOwnerZoneKey: key},
+      );
+    } finally {
+      release.complete();
+      if (identical(_isolateTails[key], release.future)) {
+        _isolateTails.remove(key);
+      }
+    }
+  }
+
+  static Future<T> _withExclusiveNative<T>(
     File file,
     Future<T> Function() action, {
     required bool ownerCompletion,
@@ -127,11 +219,13 @@ final class _BoundedPosixFlockApi {
     required this.open,
     required this.flock,
     required this.close,
+    required this.fsync,
   });
 
   final _OpenDart open;
   final _FlockDart flock;
   final _CloseDart close;
+  final _FsyncDart fsync;
 
   factory _BoundedPosixFlockApi.load() {
     if (!(Platform.isAndroid ||
@@ -147,6 +241,7 @@ final class _BoundedPosixFlockApi {
       open: library.lookupFunction<_OpenNative, _OpenDart>('open'),
       flock: library.lookupFunction<_FlockNative, _FlockDart>('flock'),
       close: library.lookupFunction<_CloseNative, _CloseDart>('close'),
+      fsync: library.lookupFunction<_FsyncNative, _FsyncDart>('fsync'),
     );
   }
 }

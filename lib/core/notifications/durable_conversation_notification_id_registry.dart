@@ -8,10 +8,15 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
-import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/app_group_path_channel.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/bounded_posix_flock.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dart';
 
 typedef ActiveNotificationIdsResolver = Future<Iterable<Object?>> Function();
@@ -48,27 +53,40 @@ final class NotificationIdAllocationException implements Exception {
 /// Allocation is serialized in-isolate and with BSD `flock`, covering the main
 /// Flutter isolate, Firebase headless isolates, and separate app processes.
 final class DurableConversationNotificationIdRegistry
-    implements ConversationNotificationContentRegistry {
+    implements
+        ConversationNotificationContentRegistry,
+        DurableLocalNotificationEffectRegistry {
   DurableConversationNotificationIdRegistry({
     required this.directory,
     this.maxProbeAttempts = 128,
     NotificationIdCandidateGenerator? candidateGenerator,
+    DurableLocalNotificationEffectCoordinator?
+    localNotificationEffectCoordinator,
   }) : _candidateGenerator =
-           candidateGenerator ?? _defaultNotificationIdCandidate;
+           candidateGenerator ?? _defaultNotificationIdCandidate,
+       _localNotificationEffectCoordinator =
+           localNotificationEffectCoordinator ??
+           DurableLocalNotificationEffectCoordinator(
+             ledgerStore: LocalNotificationLedgerStore(directory: directory),
+           );
 
   final Directory directory;
   final int maxProbeAttempts;
   final NotificationIdCandidateGenerator _candidateGenerator;
+  final DurableLocalNotificationEffectCoordinator
+  _localNotificationEffectCoordinator;
 
   static const directoryName = 'NotificationConversationIds';
   static const coordinationLockFileName = '.coordination.lock';
   static const ownerFileSuffix = '.owner';
   static const contentKindFileSuffix = '.content-kind';
+  static const contentActivationIntentFileSuffix = '.content-intent';
   static const _opaqueActiveOwner = 'opaque-active';
   static const _maxNotificationId = 0x7fffffff;
   static final RegExp _ownerFilePattern = RegExp(r'^(\d+)\.owner$');
   static final Map<String, Future<void>> _isolateTails =
       <String, Future<void>>{};
+  static final Object _coordinationLockZoneKey = Object();
 
   static Future<DurableConversationNotificationIdRegistry> openDefault({
     AppGroupPathChannel? appGroupPathChannel,
@@ -147,7 +165,7 @@ final class DurableConversationNotificationIdRegistry
         '$coordinationLockFileName',
       );
       return await _serializeInIsolate(lock.path, () {
-        return _NotificationIdFlock.withExclusive(lock, () async {
+        return _withCoordinationLock(lock, () async {
           final owner = sha256.convert(utf8.encode(normalized)).toString();
           final snapshot = await _readSnapshot(owner);
           final existingId = snapshot.ownerIds.isEmpty
@@ -253,7 +271,7 @@ final class DurableConversationNotificationIdRegistry
     await directory.create(recursive: true);
     final lock = _coordinationLockFile();
     return _serializeInIsolate(lock.path, () {
-      return _NotificationIdFlock.withExclusive(lock, () async {
+      return _withCoordinationLock(lock, () async {
         await _requireExactOwner(id, normalized);
         final prepared = await _prepareContentMetadataFile(id, metadata);
         try {
@@ -306,7 +324,7 @@ final class DurableConversationNotificationIdRegistry
     if (snapshot?.generation != generation) return false;
     final lock = _coordinationLockFile();
     return _serializeInIsolate(lock.path, () {
-      return _NotificationIdFlock.withExclusive(lock, () async {
+      return _withCoordinationLock(lock, () async {
         if (!await _hasExactOwner(id, normalized)) return false;
         if (await _readContentMetadataFile(id) != snapshot) return false;
         final prepared = await _prepareContentMetadataFile(id, metadata);
@@ -348,7 +366,7 @@ final class DurableConversationNotificationIdRegistry
     }
     final lock = _coordinationLockFile();
     return _serializeInIsolate(lock.path, () {
-      return _NotificationIdFlock.withExclusive(lock, () async {
+      return _withCoordinationLock(lock, () async {
         if (!await _hasExactOwner(id, normalized)) return false;
         // The database/read-eligibility query above deliberately runs outside
         // flock. Compare the full generation-bearing snapshot here to close
@@ -381,7 +399,7 @@ final class DurableConversationNotificationIdRegistry
     if (snapshot?.generation != expectedGeneration) return false;
     final lock = _coordinationLockFile();
     return _serializeInIsolate(lock.path, () {
-      return _NotificationIdFlock.withExclusive(lock, () async {
+      return _withCoordinationLock(lock, () async {
         if (!await _hasExactOwner(id, normalized)) return false;
         if (await _readContentMetadataFile(id) != snapshot) return false;
         await cancel();
@@ -402,7 +420,7 @@ final class DurableConversationNotificationIdRegistry
     await directory.create(recursive: true);
     final lock = _coordinationLockFile();
     await _serializeInIsolate(lock.path, () {
-      return _NotificationIdFlock.withExclusive(lock, () async {
+      return _withCoordinationLock(lock, () async {
         await _requireExactOwner(id, normalized);
         await _publishContentMetadataFile(id, metadata);
       });
@@ -420,7 +438,7 @@ final class DurableConversationNotificationIdRegistry
     await directory.create(recursive: true);
     final lock = _coordinationLockFile();
     await _serializeInIsolate(lock.path, () {
-      return _NotificationIdFlock.withExclusive(lock, () async {
+      return _withCoordinationLock(lock, () async {
         await _requireExactOwner(id, normalized);
         await _publishContentMetadataFile(
           id,
@@ -464,10 +482,189 @@ final class DurableConversationNotificationIdRegistry
     if (!await directory.exists()) return;
     final lock = _coordinationLockFile();
     await _serializeInIsolate(lock.path, () {
-      return _NotificationIdFlock.withExclusive(lock, () async {
+      return _withCoordinationLock(lock, () async {
         if (!await _hasExactOwner(id, normalized)) return;
         await _deleteContentKindFile(id);
       });
+    });
+  }
+
+  @override
+  Future<DurableLocalNotificationEffectResult> runFinalEffect({
+    required DurableLocalNotificationEffectContext context,
+    required AppVisibilitySuppressionReader appVisibility,
+    required AppVisibilityConversationIdentity conversationIdentity,
+    required String conversationKey,
+    required int notificationId,
+    required ConversationNotificationContentMetadata metadata,
+    required Future<void> Function() retireCurrent,
+    required Future<void> Function() publishNative,
+    Future<void> Function()? publishNativeSilently,
+    PublishDurableLocalNotificationAtFinalBarrier? publishNativeAtFinalBarrier,
+    ResolveDurableLocalNotificationActiveIds? activeNotificationIds,
+  }) async {
+    final normalized = _normalizedConversationKey(conversationKey);
+    final id = _requiredNotificationId(notificationId);
+    await directory.create(recursive: true);
+    final lock = _coordinationLockFile();
+    return _serializeInIsolate(lock.path, () {
+      return _withCoordinationLock(lock, () async {
+        await _requireExactOwner(id, normalized);
+        File? prepared;
+        try {
+          final result = await _localNotificationEffectCoordinator.runLockHeld(
+            context: context,
+            appVisibility: appVisibility,
+            conversationIdentity: conversationIdentity,
+            notificationId: id,
+            metadata: metadata,
+            prepareContent: () async {
+              await _ensureContentActivationIntent(
+                id,
+                metadata,
+                context.currentOpaqueBinding,
+              );
+              prepared = await _prepareContentMetadataFile(id, metadata);
+            },
+            retireCurrent: retireCurrent,
+            retireAndActivateContent: () async {
+              final exactPrepared = prepared;
+              if (exactPrepared == null) {
+                throw StateError('content metadata was not prepared');
+              }
+              if (!await _activateContentFromIntent(
+                id: id,
+                metadata: metadata,
+                currentOpaqueBinding: context.currentOpaqueBinding,
+                retireCurrent: retireCurrent,
+                prepared: exactPrepared,
+              )) {
+                throw StateError('content activation intent mismatch');
+              }
+            },
+            ensureContentActivated: () => _activateContentFromIntent(
+              id: id,
+              metadata: metadata,
+              currentOpaqueBinding: context.currentOpaqueBinding,
+              retireCurrent: retireCurrent,
+            ),
+            hasContentActivationIntent: () async {
+              final intent = await _readContentActivationIntent(id);
+              return intent != null &&
+                  intent.opaqueBinding == context.currentOpaqueBinding &&
+                  intent.matchesNext(metadata);
+            },
+            completeContentActivation: () => _deleteContentActivationIntent(id),
+            exactContentIsCurrent: () async =>
+                await _readContentMetadataFile(id) == metadata,
+            clearActivatedContent: () => _deleteContentKindFile(id),
+            publishNative: publishNative,
+            publishNativeSilently: publishNativeSilently,
+            publishNativeAtFinalBarrier: publishNativeAtFinalBarrier,
+            activeNotificationIds: activeNotificationIds,
+          );
+          if (result.receipt != null) {
+            await _deleteContentActivationIntent(id);
+          }
+          return result;
+        } finally {
+          final exactPrepared = prepared;
+          if (exactPrepared != null) {
+            try {
+              if (await exactPrepared.exists()) await exactPrepared.delete();
+            } on FileSystemException {
+              // Hidden prepared files are ignored and can be retried.
+            }
+          }
+        }
+      });
+    });
+  }
+
+  @override
+  Future<LocalNotificationRecordV1?> settleSqlReadyEffect({
+    required String currentOpaqueBinding,
+    required String eventCorrelation,
+    required int expectedRevision,
+  }) async {
+    if (!await directory.exists()) return null;
+    final lock = _coordinationLockFile();
+    return _serializeInIsolate(lock.path, () {
+      return _withCoordinationLock(
+        lock,
+        () => _localNotificationEffectCoordinator.settleSqlReadyEffectLockHeld(
+          currentOpaqueBinding: currentOpaqueBinding,
+          eventCorrelation: eventCorrelation,
+          expectedRevision: expectedRevision,
+        ),
+      );
+    });
+  }
+
+  @override
+  Future<LocalNotificationRecordV1?> lookupExactEffect({
+    required String currentOpaqueBinding,
+    required String eventCorrelation,
+    required String conversationDigest,
+    required int notificationId,
+    required String contentGeneration,
+  }) async {
+    if (!await directory.exists()) return null;
+    final lock = _coordinationLockFile();
+    return _serializeInIsolate(lock.path, () {
+      return _withCoordinationLock(
+        lock,
+        () => _localNotificationEffectCoordinator.lookupExactEffectLockHeld(
+          currentOpaqueBinding: currentOpaqueBinding,
+          eventCorrelation: eventCorrelation,
+          conversationDigest: conversationDigest,
+          notificationId: notificationId,
+          contentGeneration: contentGeneration,
+        ),
+      );
+    });
+  }
+
+  @override
+  Future<List<LocalNotificationRecordV1>> listSqlReadyEffectTerminals({
+    required String currentOpaqueBinding,
+  }) async {
+    if (!await directory.exists()) {
+      throw const NotificationIdAllocationException(
+        operation: 'ledger_terminal_list',
+        errorType: 'StateError',
+      );
+    }
+    final lock = _coordinationLockFile();
+    return _serializeInIsolate(lock.path, () {
+      return _withCoordinationLock(
+        lock,
+        () => _localNotificationEffectCoordinator
+            .listSqlReadyEffectTerminalsLockHeld(
+              currentOpaqueBinding: currentOpaqueBinding,
+            ),
+      );
+    });
+  }
+
+  @override
+  Future<LocalNotificationRecordV1?> upgradeRelayCustodyToSqlReady({
+    required String currentOpaqueBinding,
+    required String eventCorrelation,
+    required int expectedRevision,
+  }) async {
+    if (!await directory.exists()) return null;
+    final lock = _coordinationLockFile();
+    return _serializeInIsolate(lock.path, () {
+      return _withCoordinationLock(
+        lock,
+        () => _localNotificationEffectCoordinator
+            .upgradeRelayCustodyToSqlReadyLockHeld(
+              currentOpaqueBinding: currentOpaqueBinding,
+              eventCorrelation: eventCorrelation,
+              expectedRevision: expectedRevision,
+            ),
+      );
     });
   }
 
@@ -556,6 +753,11 @@ final class DurableConversationNotificationIdRegistry
     '${directory.path}${Platform.pathSeparator}$id$contentKindFileSuffix',
   );
 
+  File _contentActivationIntentFile(int id) => File(
+    '${directory.path}${Platform.pathSeparator}$id'
+    '$contentActivationIntentFileSuffix',
+  );
+
   File _coordinationLockFile() => File(
     '${directory.path}${Platform.pathSeparator}$coordinationLockFileName',
   );
@@ -588,7 +790,107 @@ final class DurableConversationNotificationIdRegistry
 
   Future<void> _deleteContentKindFile(int id) async {
     final file = _contentKindFile(id);
-    if (await file.exists()) await file.delete();
+    if (await file.exists()) {
+      await file.delete();
+      BoundedPosixFlock.syncDirectory(directory);
+    }
+  }
+
+  Future<_ContentActivationIntent?> _readContentActivationIntent(int id) async {
+    final file = _contentActivationIntentFile(id);
+    try {
+      if (!await file.exists()) return null;
+      return _ContentActivationIntent.tryFromJson(
+        jsonDecode(await file.readAsString()),
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> _ensureContentActivationIntent(
+    int id,
+    ConversationNotificationContentMetadata metadata,
+    String currentOpaqueBinding,
+  ) async {
+    final existingFile = _contentActivationIntentFile(id);
+    if (await existingFile.exists()) {
+      final existing = await _readContentActivationIntent(id);
+      if (existing != null &&
+          existing.opaqueBinding == currentOpaqueBinding &&
+          existing.matchesNext(metadata)) {
+        return;
+      }
+      // The caller already owns the registry lock and the current binding's
+      // ledger has granted this exact CLAIMED owner. A mismatched sidecar is
+      // therefore stale residue from a retired/rebound authority and may be
+      // atomically replaced; it can never authorize an effect by itself.
+    }
+    final intent = _ContentActivationIntent(
+      opaqueBinding: currentOpaqueBinding,
+      previousDigest: _contentActivationMetadataDigest(
+        await _readContentMetadataFile(id),
+      ),
+      nextDigest: _contentActivationMetadataDigest(metadata)!,
+    );
+    final temporary = File(
+      '${directory.path}${Platform.pathSeparator}.$id-intent-'
+      '${_randomFileSuffix()}.tmp',
+    );
+    try {
+      await temporary.writeAsString(jsonEncode(intent.toJson()), flush: true);
+      await temporary.rename(existingFile.path);
+      BoundedPosixFlock.syncDirectory(directory);
+    } finally {
+      try {
+        if (await temporary.exists()) await temporary.delete();
+      } on FileSystemException {
+        // Hidden complete intent files are never authoritative.
+      }
+    }
+  }
+
+  Future<bool> _activateContentFromIntent({
+    required int id,
+    required ConversationNotificationContentMetadata metadata,
+    required String currentOpaqueBinding,
+    required Future<void> Function() retireCurrent,
+    File? prepared,
+  }) async {
+    final current = await _readContentMetadataFile(id);
+    if (current == metadata) return true;
+    final intent = await _readContentActivationIntent(id);
+    if (intent == null ||
+        intent.opaqueBinding != currentOpaqueBinding ||
+        !intent.matchesNext(metadata)) {
+      return false;
+    }
+    if (_contentActivationMetadataDigest(current) != intent.previousDigest) {
+      return false;
+    }
+
+    final exactPrepared =
+        prepared ?? await _prepareContentMetadataFile(id, metadata);
+    try {
+      await retireCurrent();
+      await _activatePreparedContentMetadataFile(id, exactPrepared);
+      return true;
+    } finally {
+      if (prepared == null) {
+        try {
+          if (await exactPrepared.exists()) await exactPrepared.delete();
+        } on FileSystemException {
+          // The durable intent remains available for another exact retry.
+        }
+      }
+    }
+  }
+
+  Future<void> _deleteContentActivationIntent(int id) async {
+    final file = _contentActivationIntentFile(id);
+    if (!await file.exists()) return;
+    await file.delete();
+    BoundedPosixFlock.syncDirectory(directory);
   }
 
   Future<bool> _hasExactOwner(int id, String normalizedConversationKey) async {
@@ -668,6 +970,12 @@ final class DurableConversationNotificationIdRegistry
     }
   }
 
+  String _randomFileSuffix() {
+    final random = Random.secure();
+    final token = List<int>.generate(12, (_) => random.nextInt(256));
+    return base64UrlEncode(token).replaceAll('=', '');
+  }
+
   Future<void> _activatePreparedContentMetadataFile(
     int id,
     File prepared,
@@ -677,12 +985,19 @@ final class DurableConversationNotificationIdRegistry
     // this project's host test matrix are POSIX, so readers see old or new
     // metadata and never an absent delete/rename gap.
     await prepared.rename(target.path);
+    BoundedPosixFlock.syncDirectory(directory);
   }
 
   Future<T> _serializeInIsolate<T>(
     String key,
     Future<T> Function() action,
   ) async {
+    if (Zone.current[_coordinationLockZoneKey] == key) {
+      throw const NotificationIdAllocationException(
+        operation: 'registry_lock_reentrant',
+        errorType: 'StateError',
+      );
+    }
     // BSD flock already coordinates distinct descriptors in one Android
     // process. Bypass the legacy Dart tail there so contenders observe the
     // same finite acquisition bound instead of waiting behind an unbounded
@@ -702,6 +1017,19 @@ final class DurableConversationNotificationIdRegistry
         _isolateTails.remove(key);
       }
     }
+  }
+
+  Future<T> _withCoordinationLock<T>(File lock, Future<T> Function() action) {
+    if (Zone.current[_coordinationLockZoneKey] == lock.path) {
+      throw const NotificationIdAllocationException(
+        operation: 'registry_lock_reentrant',
+        errorType: 'StateError',
+      );
+    }
+    return runZoned(
+      () => _NotificationIdFlock.withExclusive(lock, action),
+      zoneValues: <Object, Object>{_coordinationLockZoneKey: lock.path},
+    );
   }
 
   static int? _validNotificationId(Object? value) {
@@ -725,6 +1053,72 @@ final class DurableConversationNotificationIdRegistry
     return ByteData.sublistView(Uint8List.fromList(bytes)).getUint32(0) &
         _maxNotificationId;
   }
+}
+
+final class _ContentActivationIntent {
+  const _ContentActivationIntent({
+    required this.opaqueBinding,
+    required this.previousDigest,
+    required this.nextDigest,
+  });
+
+  final String opaqueBinding;
+  final String? previousDigest;
+  final String nextDigest;
+
+  bool matchesNext(ConversationNotificationContentMetadata metadata) =>
+      _contentActivationMetadataDigest(metadata) == nextDigest;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'v': 1,
+    'opaqueBinding': opaqueBinding,
+    'previousDigest': previousDigest,
+    'nextDigest': nextDigest,
+  };
+
+  static _ContentActivationIntent? tryFromJson(Object? value) {
+    if (value is! Map ||
+        value.keys.any((key) => key is! String) ||
+        value.keys.toSet().difference(const <Object>{
+          'v',
+          'opaqueBinding',
+          'previousDigest',
+          'nextDigest',
+        }).isNotEmpty ||
+        value.length != 4 ||
+        value['v'] != 1 ||
+        !isCanonicalLocalNotificationOpaqueBinding(value['opaqueBinding'])) {
+      return null;
+    }
+    final previousDigest = value['previousDigest'];
+    final nextDigest = value['nextDigest'];
+    if ((previousDigest != null &&
+            (previousDigest is! String ||
+                !_contentActivationDigestPattern.hasMatch(previousDigest))) ||
+        nextDigest is! String ||
+        !_contentActivationDigestPattern.hasMatch(nextDigest)) {
+      return null;
+    }
+    return _ContentActivationIntent(
+      opaqueBinding: value['opaqueBinding']! as String,
+      previousDigest: previousDigest as String?,
+      nextDigest: nextDigest,
+    );
+  }
+}
+
+final RegExp _contentActivationDigestPattern = RegExp(r'^[0-9a-f]{64}$');
+
+String? _contentActivationMetadataDigest(
+  ConversationNotificationContentMetadata? metadata,
+) {
+  if (metadata == null) return null;
+  final canonical = jsonEncode(metadata.toJson());
+  return sha256
+      .convert(
+        utf8.encode('mknoon-content-activation-intent-v1\u0000$canonical'),
+      )
+      .toString();
 }
 
 final class _RegistrySnapshot {

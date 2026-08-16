@@ -16,6 +16,12 @@ flutter_concurrency=""
 flutter_reporter=""
 
 readonly ONE_TO_ONE_HOST_TESTS=(
+  # 372: shared final-effect ledger, barrier, convergence and production
+  # ownership census stay registered for the wave-level host aggregate.
+  "test/core/notifications/local_notification_ledger_test.dart"
+  "test/core/notifications/local_notification_final_effect_test.dart"
+  "test/core/notifications/local_notification_projection_convergence_test.dart"
+  "test/core/notifications/local_notification_ledger_wiring_test.dart"
   "test/features/conversation/integration/two_user_message_exchange_test.dart"
   "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"
   "test/features/conversation/integration/media_attachment_flow_test.dart"

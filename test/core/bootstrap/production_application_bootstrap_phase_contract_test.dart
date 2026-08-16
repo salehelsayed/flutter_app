@@ -1233,9 +1233,17 @@ void main() {
     // 2. Display PROJECTION: the same terminal states suppress the card.
     final projection = production.indexOf('projectDisplay: (entry) async {');
     expect(projection, greaterThan(-1));
-    final projectionBody = production.substring(
+    final messageProjection = production.indexOf(
+      'case DirectNotificationDisplayOutboxKind.message:',
       projection,
-      production.indexOf('return maybeShowNotification(', projection),
+    );
+    expect(messageProjection, greaterThan(projection));
+    final projectionBody = production.substring(
+      messageProjection,
+      production.indexOf(
+        'final presentation = await maybeShowNotification(',
+        messageProjection,
+      ),
     );
     for (final guard in const <String>[
       'message.isDeleted',
@@ -1245,7 +1253,7 @@ void main() {
       expect(
         projectionBody.contains(guard),
         isTrue,
-        reason: 'display projection must suppress: \$guard',
+        reason: 'display projection must suppress: $guard',
       );
     }
 

@@ -11,8 +11,11 @@ import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
-import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -44,8 +47,25 @@ const _localTransportPeerId = 'transport-local';
 const _senderPeerId = 'peer-sender';
 const _senderTransportPeerId = 'transport-sender';
 const _senderDeviceId = 'device-sender';
+const _physicalPeerId = 'physical-peer-local';
+const _currentOpaqueBinding =
+    'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const _eventTimestamp = '2026-08-15T10:20:00.000000Z';
 final _projectionNow = DateTime.utc(2030, 1, 1);
+const _backgroundVisibility = AppVisibilityEvaluation(
+  isForegroundActive: false,
+  maySuppress: false,
+  lifecycle: AppVisibilityLifecycle.background,
+  revision: 1,
+  lifecycleGeneration: 1,
+);
+const _exactVisibleVisibility = AppVisibilityEvaluation(
+  isForegroundActive: true,
+  maySuppress: true,
+  lifecycle: AppVisibilityLifecycle.foregroundActive,
+  revision: 2,
+  lifecycleGeneration: 1,
+);
 
 enum _ProtectedKind { message, reaction }
 
@@ -150,6 +170,84 @@ final class _NoopRecentRemoteNotificationGate
   }) async {}
 }
 
+final class _DurableFakeNotificationService extends FakeNotificationService
+    implements MessageNotificationDurableFinalEffectBoundary {
+  _DurableFakeNotificationService(this.registry);
+
+  final DurableConversationNotificationIdRegistry registry;
+  int? _activeNotificationId;
+  final durableResults = <DurableLocalNotificationEffectResult>[];
+
+  @override
+  Future<DurableLocalNotificationEffectResult>
+  showMessageNotificationWithDurableFinalEffect({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    required ConversationNotificationContentKind contentKind,
+    required String contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+    required DurableLocalNotificationEffectContext durableEffectContext,
+    required AppVisibilitySuppressionReader finalVisibility,
+    required AppVisibilityConversationIdentity conversationIdentity,
+    required PublishNativeMessageNotificationAtDurableBarrier publishNative,
+  }) async {
+    final notificationId = await registry.resolve(
+      contactPeerId,
+      activeNotificationIds: () async => _activeNotificationId == null
+          ? const <Object?>[]
+          : <Object?>[_activeNotificationId],
+    );
+    final metadata = ConversationNotificationContentMetadata(
+      kind: contentKind,
+      eventIdentity: durableEffectContext.eventCorrelation,
+      generation: durableLocalNotificationContentGeneration(
+        durableEffectContext.eventCorrelation,
+      ),
+    );
+
+    Future<void> showNative({required bool silent}) async {
+      await super.showMessageNotification(
+        contactPeerId: contactPeerId,
+        senderUsername: senderUsername,
+        messageText: messageText,
+        payload: payload,
+        silent: silent,
+        contentKind: contentKind,
+        contentEventIdentity: contentEventIdentity,
+        snapshot: snapshot,
+      );
+      _activeNotificationId = notificationId;
+    }
+
+    final result = await registry.runFinalEffect(
+      context: durableEffectContext,
+      appVisibility: finalVisibility,
+      conversationIdentity: conversationIdentity,
+      conversationKey: contactPeerId,
+      notificationId: notificationId,
+      metadata: metadata,
+      retireCurrent: () async => _activeNotificationId = null,
+      publishNative: () async {
+        final entered = await publishNative(showNative, () async => true);
+        if (!entered) {
+          throw StateError('durable native entry was not authorized');
+        }
+      },
+      publishNativeSilently: () => showNative(silent: true),
+      publishNativeAtFinalBarrier: (authorize) =>
+          publishNative(showNative, authorize),
+      activeNotificationIds: () async => _activeNotificationId == null
+          ? const <Object?>[]
+          : <Object?>[_activeNotificationId],
+    );
+    durableResults.add(result);
+    return result;
+  }
+}
+
 final class _SqlDisplayOutbox {
   _SqlDisplayOutbox(Database database) {
     repository = GroupNotificationDisplayOutboxRepositoryImpl(
@@ -157,6 +255,35 @@ final class _SqlDisplayOutbox {
           dbStageGroupNotificationDisplayOutboxEntry(database, row),
       dbLoadByEventId: (eventId) =>
           dbLoadGroupNotificationDisplayOutboxEntry(database, eventId),
+      dbBindDurableCorrelationIfExact:
+          ({
+            required eventId,
+            required expectedRevision,
+            required expectedEventKind,
+            required expectedGroupId,
+            required expectedMessageId,
+            required expectedActorPeerId,
+            required expectedEventTimestamp,
+            required expectedReactionId,
+            required expectedReactionAction,
+            required expectedReactionTombstone,
+            required durableEventCorrelation,
+            required updatedAt,
+          }) => dbBindGroupNotificationDisplayOutboxDurableCorrelationIfExact(
+            database,
+            eventId: eventId,
+            expectedRevision: expectedRevision,
+            expectedEventKind: expectedEventKind,
+            expectedGroupId: expectedGroupId,
+            expectedMessageId: expectedMessageId,
+            expectedActorPeerId: expectedActorPeerId,
+            expectedEventTimestamp: expectedEventTimestamp,
+            expectedReactionId: expectedReactionId,
+            expectedReactionAction: expectedReactionAction,
+            expectedReactionTombstone: expectedReactionTombstone,
+            durableEventCorrelation: durableEventCorrelation,
+            updatedAt: updatedAt,
+          ),
       dbPromoteReadyIfExact:
           ({required eventId, required expectedRevision, required updatedAt}) =>
               dbPromoteGroupNotificationDisplayOutboxReadyIfExact(
@@ -222,6 +349,68 @@ final class _SqlDisplayOutbox {
               outcome: outcome,
             );
           },
+      dbCompleteOrVerifyIfExact:
+          ({
+            required eventId,
+            required expectedRevision,
+            required expectedEventKind,
+            required expectedGroupId,
+            required expectedMessageId,
+            required expectedActorPeerId,
+            required expectedEventTimestamp,
+            required expectedReactionId,
+            required expectedReactionAction,
+            required expectedReactionTombstone,
+            required completedAt,
+            outcome,
+            durableEventCorrelation,
+          }) async {
+            completionOutcomes.add(outcome);
+            return dbCompleteOrVerifyGroupNotificationDisplayOutboxEntryIfExact(
+              database,
+              eventId: eventId,
+              expectedRevision: expectedRevision,
+              expectedEventKind: expectedEventKind,
+              expectedGroupId: expectedGroupId,
+              expectedMessageId: expectedMessageId,
+              expectedActorPeerId: expectedActorPeerId,
+              expectedEventTimestamp: expectedEventTimestamp,
+              expectedReactionId: expectedReactionId,
+              expectedReactionAction: expectedReactionAction,
+              expectedReactionTombstone: expectedReactionTombstone,
+              completedAt: completedAt,
+              outcome: outcome,
+              durableEventCorrelation: durableEventCorrelation,
+            );
+          },
+      dbRetireAfterDurableSettlementIfExact:
+          ({
+            required eventId,
+            required expectedRevision,
+            required expectedEventKind,
+            required expectedGroupId,
+            required expectedMessageId,
+            required expectedActorPeerId,
+            required expectedEventTimestamp,
+            required expectedReactionId,
+            required expectedReactionAction,
+            required expectedReactionTombstone,
+            durableEventCorrelation,
+          }) =>
+              dbRetireGroupNotificationDisplayOutboxAfterDurableSettlementIfExact(
+                database,
+                eventId: eventId,
+                expectedRevision: expectedRevision,
+                expectedEventKind: expectedEventKind,
+                expectedGroupId: expectedGroupId,
+                expectedMessageId: expectedMessageId,
+                expectedActorPeerId: expectedActorPeerId,
+                expectedEventTimestamp: expectedEventTimestamp,
+                expectedReactionId: expectedReactionId,
+                expectedReactionAction: expectedReactionAction,
+                expectedReactionTombstone: expectedReactionTombstone,
+                durableEventCorrelation: durableEventCorrelation,
+              ),
       dbRetireIfExact:
           ({
             required eventId,
@@ -389,6 +578,7 @@ Future<_ReplayAuthority> _buildReplayAuthority(Database database) async {
 Future<void> _exerciseVisibilityCase({
   required Database database,
   required _ReplayAuthority replay,
+  required DurableConversationNotificationIdRegistry durableRegistry,
   required _ProtectedKind kind,
   required _VisibilityCase visibilityCase,
 }) async {
@@ -411,6 +601,13 @@ Future<void> _exerciseVisibilityCase({
     timestamp: reactionAt,
   );
   final eventId = kind == _ProtectedKind.message ? messageId : reactionEventId;
+  final durableCorrelation = tryComputeNotificationCompletedOutcomeCorrelation(
+    physicalPeerId: _physicalPeerId,
+    producerKind: kind == _ProtectedKind.message
+        ? NotificationCompletedOutcomeProducerKind.groupMessage
+        : NotificationCompletedOutcomeProducerKind.groupReaction,
+    eventKey: eventId,
+  )!;
 
   if (kind == _ProtectedKind.reaction) {
     final target = GroupMessage(
@@ -428,16 +625,13 @@ Future<void> _exerciseVisibilityCase({
 
   final initialVisibility =
       visibilityCase == _VisibilityCase.visibleAtStageThenBackground
-      ? const AppVisibilityEvaluation(
-          isForegroundActive: true,
-          maySuppress: true,
-        )
-      : AppVisibilityEvaluation.failNotify;
+      ? _exactVisibleVisibility
+      : _backgroundVisibility;
   final visibility = _MutableVisibility(
     expectedGroupId: _groupId,
     evaluation: initialVisibility,
   );
-  final notifications = FakeNotificationService();
+  final notifications = _DurableFakeNotificationService(durableRegistry);
   final messages = _SqlMessageRepository(database);
   final reactions = _SqlReactionRepository(database);
   final outbox = _SqlDisplayOutbox(database);
@@ -451,6 +645,9 @@ Future<void> _exerciseVisibilityCase({
     reactionRepo: reactions,
     remoteNotificationGate: _NoopRecentRemoteNotificationGate(),
     notificationDisplayOutbox: outbox.repository,
+    resolveCompletedOutcomePhysicalPeerId: () async => _physicalPeerId,
+    resolveCurrentOpaqueBinding: () async => _currentOpaqueBinding,
+    durableLocalNotificationEffectRegistry: durableRegistry,
     durableNotificationCoordinatorResolver: () async {
       throw StateError('durable tone claims are outside TC-371-05b');
     },
@@ -641,11 +838,8 @@ Future<void> _exerciseVisibilityCase({
   final shouldPost =
       visibilityCase == _VisibilityCase.visibleAtStageThenBackground;
   visibility.evaluation = shouldPost
-      ? AppVisibilityEvaluation.failNotify
-      : const AppVisibilityEvaluation(
-          isForegroundActive: true,
-          maySuppress: true,
-        );
+      ? _backgroundVisibility
+      : _exactVisibleVisibility;
   final flowEvents = <Map<String, dynamic>>[];
   debugSetFlowEventSink(flowEvents.add);
   try {
@@ -654,8 +848,16 @@ Future<void> _exerciseVisibilityCase({
     debugSetFlowEventSink(null);
   }
 
-  expect(visibility.evaluations, hasLength(1), reason: caseToken);
-  expect(visibility.evaluations.single?.normalizedId, 'group:$_groupId');
+  expect(
+    visibility.evaluations,
+    hasLength(2),
+    reason:
+        '$caseToken must use the post-stage preflight and final durable barrier',
+  );
+  expect(
+    visibility.evaluations.map((identity) => identity?.normalizedId),
+    everyElement('group:$_groupId'),
+  );
   expect(
     await outbox.repository.loadByEventId(eventId),
     isNull,
@@ -668,6 +870,15 @@ Future<void> _exerciseVisibilityCase({
     await database.query('notification_completed_outcome_outbox'),
     isEmpty,
     reason: '$caseToken must not emit osPosted or inChat outcome custody',
+  );
+  expect(
+    notifications.durableResults.map((result) => result.disposition),
+    <DurableLocalNotificationEffectDisposition>[
+      shouldPost
+          ? DurableLocalNotificationEffectDisposition.osPosted
+          : DurableLocalNotificationEffectDisposition.inChat,
+    ],
+    reason: '$caseToken must terminate at the durable final barrier',
   );
 
   final freshVisibleSuppressions = flowEvents.where(
@@ -689,24 +900,21 @@ Future<void> _exerciseVisibilityCase({
     expect(notifications.shown, isEmpty, reason: caseToken);
     expect(
       freshVisibleSuppressions,
-      hasLength(1),
-      reason: '$caseToken must take terminalWithoutOutcome at projection',
+      isEmpty,
+      reason: '$caseToken must bypass the legacy pre-ledger suppression exit',
     );
   }
 
   if (kind == _ProtectedKind.message) {
     final row = await dbLoadGroupMessage(database, messageId);
-    expect(row?['notification_display_terminal_event_id'], eventId);
+    expect(row?['notification_display_terminal_event_id'], durableCorrelation);
   } else {
     final row = await dbLoadActiveOrTombstonedReactionForSender(
       database,
       messageId,
       _senderPeerId,
     );
-    expect(
-      row?['notification_display_terminal_event_id'],
-      boundedReactionEventIdentity(eventId),
-    );
+    expect(row?['notification_display_terminal_event_id'], durableCorrelation);
   }
 
   await listener.stop();
@@ -738,12 +946,43 @@ void main() {
         if (database.isOpen) await database.close();
       });
       final replay = await _buildReplayAuthority(database);
+      final ledgerRoot = await Directory.systemTemp.createTemp(
+        'plan372-group-visibility-',
+      );
+      addTearDown(() async {
+        if (await ledgerRoot.exists()) {
+          await ledgerRoot.delete(recursive: true);
+        }
+      });
+      final ledgerDirectory = Directory(
+        '${ledgerRoot.path}${Platform.pathSeparator}'
+        '${DurableConversationNotificationIdRegistry.directoryName}',
+      );
+      final ledgerStore = LocalNotificationLedgerStore(
+        directory: ledgerDirectory,
+        nowUtc: () => _projectionNow,
+      );
+      expect(
+        await ledgerStore.initializeOrRebind(
+          currentOpaqueBinding: _currentOpaqueBinding,
+        ),
+        isNotNull,
+      );
+      final durableRegistry = DurableConversationNotificationIdRegistry(
+        directory: ledgerDirectory,
+        localNotificationEffectCoordinator:
+            DurableLocalNotificationEffectCoordinator(
+              ledgerStore: ledgerStore,
+              nowUtc: () => _projectionNow,
+            ),
+      );
 
       for (final kind in _ProtectedKind.values) {
         for (final visibilityCase in _VisibilityCase.values) {
           await _exerciseVisibilityCase(
             database: database,
             replay: replay,
+            durableRegistry: durableRegistry,
             kind: kind,
             visibilityCase: visibilityCase,
           );

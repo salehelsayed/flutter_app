@@ -320,9 +320,11 @@ Future<DbIncomingDirectDeletionResult> dbApplyIncomingDirectMessageDeletion(
       IncomingDirectDeletionOutcome outcome,
       Map<String, Object?>? row,
     ) async {
-      // Message display custody is identifier-only and peer-scoped, so the
-      // existing message-scoped retirement body is the exact owner here.
-      await dbDeleteDirectNotificationDisplayOutboxForMessage(
+      // Unarmed custody cannot have entered the final-effect protocol and may
+      // retire with the canonical tombstone. READY custody is preserved: a
+      // loaded/PUBLISHING owner must observe this tombstone, terminalize with
+      // zero native presentation, and hand off its exact v107 revision.
+      await dbRetireUnarmedDirectNotificationDisplayOutboxForMessage(
         txn,
         peerId: senderPeerId,
         messageId: messageId,
@@ -4758,7 +4760,7 @@ Future<void> _retireDirectPrivateMessageDisplayMarker(
   );
   final peerId = rows.isEmpty ? null : rows.single['contact_peer_id'];
   if (peerId is! String || peerId.isEmpty) return;
-  await dbDeleteDirectNotificationDisplayOutboxMessageEntriesForMessage(
+  await dbRetireUnarmedDirectNotificationDisplayOutboxMessageEntriesForMessage(
     txn,
     peerId: peerId,
     messageId: messageId,

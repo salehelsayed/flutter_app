@@ -1,5 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_bridge.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -350,6 +354,207 @@ void main() {
     expect(publisher.publications.last.binding, isNull);
     expect(lease.binding, provisional);
   });
+
+  test(
+    'platform-neutral binding suspends before exact shared and ledger rebind',
+    () async {
+      final primary = _MemorySecureKeyStore();
+      final shared = _MemorySecureKeyStore();
+      final trace = <String>[];
+      final coordinator = CanonicalRuntimeBindingCoordinator(
+        secureKeyStore: primary,
+        suspendLocalNotificationLedgerClaims: (binding) async {
+          trace.add('suspend:${binding ?? 'none'}');
+        },
+        publishSharedBinding: (binding) async {
+          trace.add('shared:${binding ?? 'none'}');
+          await publishCanonicalRuntimeSharedBinding(
+            sharedKeyStore: shared,
+            opaqueBinding: binding,
+          );
+        },
+        rebindLocalNotificationLedger: (binding) async {
+          trace.add('ledger:${binding ?? 'none'}');
+        },
+        createInstallationId: () => 'installation-secret-123',
+      );
+
+      final startup = await coordinator.loadStartupBinding();
+      expect(startup.hasAccount, isFalse);
+      final provisional = startup.leaseBinding;
+      expect(trace, <String>['shared:none', 'ledger:$provisional']);
+      trace.clear();
+
+      final binding = await coordinator.publishAccount('peer-a');
+      expect(isCanonicalRuntimeOpaqueBinding(binding), isTrue);
+      expect(trace, <String>[
+        'suspend:none',
+        'shared:$binding',
+        'ledger:$binding',
+      ]);
+      expect(
+        await shared.read(canonicalRuntimeSharedAccountBindingStorageKey),
+        binding,
+      );
+      expect(await coordinator.readCurrentAccountBinding(), binding);
+      trace.clear();
+
+      expect(await coordinator.retireAccount(), provisional);
+      expect(trace, <String>[
+        'suspend:$binding',
+        'shared:none',
+        'ledger:$provisional',
+      ]);
+      expect(
+        await shared.read(canonicalRuntimeSharedAccountBindingStorageKey),
+        isNull,
+      );
+      expect(await coordinator.readCurrentAccountBinding(), isNull);
+      final lowerHex = List<String>.filled(64, 'a').join();
+      final upperHex = List<String>.filled(64, 'A').join();
+      expect(isCanonicalRuntimeOpaqueBinding(' v1:$lowerHex'), isFalse);
+      expect(isCanonicalRuntimeOpaqueBinding('v1:$upperHex'), isFalse);
+    },
+  );
+
+  test('startup resumes a crash-suspended still-canonical binding', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'canonical-binding-suspended-startup-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final primary = _MemorySecureKeyStore();
+    final binding = 'v1:${List<String>.filled(64, 'd').join()}';
+    await primary.write(
+      canonicalRuntimeInstallationIdStorageKey,
+      'installation-before-crash',
+    );
+    await primary.write(canonicalRuntimeAccountBindingStorageKey, binding);
+    final store = LocalNotificationLedgerStore(directory: root);
+    await store.initializeOrRebind(currentOpaqueBinding: binding);
+    final suspended = await store.suspendClaims(currentOpaqueBinding: binding);
+    expect(suspended?.claimsSuspended, isTrue);
+
+    final coordinator = CanonicalRuntimeBindingCoordinator(
+      secureKeyStore: primary,
+      rebindLocalNotificationLedger: (current) async {
+        expect(current, binding);
+        final resumed = await store.initializeOrRebind(
+          currentOpaqueBinding: current!,
+        );
+        if (resumed == null || resumed.claimsSuspended) {
+          throw StateError('ledger did not resume');
+        }
+      },
+    );
+
+    final startup = await coordinator.loadStartupBinding();
+
+    expect(startup.hasAccount, isTrue);
+    expect(startup.leaseBinding, binding);
+    expect(
+      (await store.read(currentOpaqueBinding: binding))?.claimsSuspended,
+      isFalse,
+    );
+  });
+
+  test(
+    'verified logout and no-account restart cannot revive same-account records',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'canonical-binding-logout-ledger-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final primary = _MemorySecureKeyStore();
+      final store = LocalNotificationLedgerStore(directory: root);
+
+      Future<void> rebind(String? binding) async {
+        final rebound = await store.initializeOrRebind(
+          currentOpaqueBinding: binding!,
+        );
+        if (rebound == null || rebound.claimsSuspended) {
+          throw StateError('ledger rebind failed');
+        }
+      }
+
+      Future<void> suspend(String? binding) async {
+        if (binding == null) return;
+        final suspended = await store.suspendClaims(
+          currentOpaqueBinding: binding,
+        );
+        if (suspended == null || !suspended.claimsSuspended) {
+          throw StateError('ledger suspension failed');
+        }
+      }
+
+      CanonicalRuntimeBindingCoordinator coordinator() =>
+          CanonicalRuntimeBindingCoordinator(
+            secureKeyStore: primary,
+            rebindLocalNotificationLedger: rebind,
+            suspendLocalNotificationLedgerClaims: suspend,
+            createInstallationId: () => 'logout-ledger-installation',
+          );
+
+      final first = coordinator();
+      await first.loadStartupBinding();
+      final accountBinding = await first.publishAccount('same-account');
+      final now = DateTime.utc(2026, 8, 16, 12).toIso8601String();
+      final unresolved = LocalNotificationRecordV1(
+        eventCorrelation: 'a' * 64,
+        conversationDigest: 'b' * 64,
+        producerKind: LocalNotificationProducerKind.directMessage,
+        sourceCustody: LocalNotificationSourceCustody.sqlReady,
+        readState: LocalNotificationReadState.unread,
+        presentationState: LocalNotificationPresentationState.notEvaluated,
+        presentationOwner: LocalNotificationPresentationOwner.mainApp,
+        notificationId: 17,
+        contentGeneration: 'ledger:${'a' * 64}',
+        lastEvaluatedLifecycle: LocalNotificationEvaluatedLifecycle.unknown,
+        visibilityRevision: null,
+        lifecycleGeneration: null,
+        effectPhase: LocalNotificationEffectPhase.ready,
+        attemptKind: null,
+        effectToken: null,
+        revision: 1,
+        createdAtUtc: now,
+        updatedAtUtc: now,
+        terminalAtUtc: null,
+        settledAtUtc: null,
+      );
+      expect(unresolved.isValid, isTrue);
+      expect(
+        await store.mutate(
+          currentOpaqueBinding: accountBinding,
+          mutation: (current) => current.copyWith(
+            storeRevision: current.storeRevision + 1,
+            records: <String, LocalNotificationRecordV1>{
+              unresolved.eventCorrelation: unresolved,
+            },
+          ),
+        ),
+        isNotNull,
+      );
+
+      final noAccountBinding = await first.retireAccount();
+      expect(
+        (await store.read(currentOpaqueBinding: noAccountBinding))?.records,
+        isEmpty,
+      );
+
+      final restarted = coordinator();
+      final startup = await restarted.loadStartupBinding();
+      expect(startup.hasAccount, isFalse);
+      expect(startup.leaseBinding, noAccountBinding);
+      expect(
+        (await store.read(currentOpaqueBinding: noAccountBinding))?.records,
+        isEmpty,
+      );
+      expect(await restarted.publishAccount('same-account'), accountBinding);
+      expect(
+        (await store.read(currentOpaqueBinding: accountBinding))?.records,
+        isEmpty,
+      );
+    },
+  );
 }
 
 class _FakeLeaseGateway implements CanonicalRuntimeLeaseGateway {

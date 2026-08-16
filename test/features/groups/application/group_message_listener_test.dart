@@ -17,6 +17,7 @@ import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
@@ -968,6 +969,12 @@ final class _HistoryRepairDisplayOutboxSpy
   ) async => entries[eventId];
 
   @override
+  Future<GroupNotificationDisplayOutboxEntry?> bindDurableCorrelationIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    required String durableEventCorrelation,
+  }) async => null;
+
+  @override
   Future<bool> promoteReadyIfExact({
     required String eventId,
     required int expectedRevision,
@@ -1014,6 +1021,28 @@ final class _HistoryRepairDisplayOutboxSpy
     entries.remove(expected.eventId);
     return true;
   }
+
+  @override
+  Future<DurableLocalNotificationSqlHandoffResult> completeOrVerifyIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    Object? outcome,
+    String? durableEventCorrelation,
+  }) async {
+    final current = entries[expected.eventId];
+    if (current == null || current.revision != expected.revision) {
+      return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+    }
+    if (durableEventCorrelation == null) {
+      entries.remove(expected.eventId);
+    }
+    return DurableLocalNotificationSqlHandoffResult.committed;
+  }
+
+  @override
+  Future<bool> retireAfterDurableSettlementIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    String? durableEventCorrelation,
+  }) => retireIfExact(expected);
 
   @override
   Future<bool> retireIfExact(

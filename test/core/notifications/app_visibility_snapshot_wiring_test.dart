@@ -28,7 +28,7 @@ void main() {
     'TC-371-05a production has one suppression owner and no notification tracker lifecycle bypass',
     () {
       final calls = _discoverMaybeShowNotificationCalls();
-      expect(calls, hasLength(10));
+      expect(calls, hasLength(14));
       expect(
         <String, List<String>>{
           for (final path in calls.map((call) => call.path).toSet())
@@ -43,6 +43,7 @@ void main() {
           _bootstrapPath: <String>[
             'appVisibilityAuthority',
             'appVisibilityAuthority',
+            'appVisibilityAuthority',
           ],
           _foregroundFallbackPath: <String>['visibility', 'visibility'],
           _directMessagePath: <String>['appVisibility!'],
@@ -50,6 +51,9 @@ void main() {
           _groupReactionPath: <String>['visibility'],
           _groupListenerPath: <String>[
             '_appVisibility',
+            'visibility',
+            'visibility',
+            'visibility',
             'visibility',
             'visibility',
           ],

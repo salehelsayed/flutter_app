@@ -3,16 +3,24 @@ import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../shared/fakes/fake_app_visibility.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -21,7 +29,7 @@ void main() {
   final log = <MethodCall>[];
   final staged = <StagedPushEnvelope>[];
 
-  setUp(() {
+  setUp(() async {
     log.clear();
     staged.clear();
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -66,6 +74,9 @@ void main() {
     debugSetBackgroundReactionNotificationCoordinatorResolver(
       () async => reactionCoordinator,
     );
+    debugSetBackgroundMessageNotificationCoordinatorResolver(
+      () async => reactionCoordinator,
+    );
     addTearDown(() {
       if (reactionCoordinatorDirectory.existsSync()) {
         reactionCoordinatorDirectory.deleteSync(recursive: true);
@@ -77,9 +88,50 @@ void main() {
     final notificationIdRegistry = DurableConversationNotificationIdRegistry(
       directory: notificationIdDirectory,
     );
+    const currentOpaqueBinding =
+        'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    await LocalNotificationLedgerStore(
+      directory: notificationIdDirectory,
+    ).initializeOrRebind(currentOpaqueBinding: currentOpaqueBinding);
     debugSetBackgroundConversationNotificationIdRegistryResolver(
       () async => notificationIdRegistry,
     );
+    debugSetBackgroundDurableLocalNotificationEffectResolver(({
+      required routeTarget,
+      required fallback,
+      required metadata,
+    }) async {
+      final resolved = fallback.resolvedEventIdentity;
+      final identity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.direct,
+        value: routeTarget.peerId ?? '',
+      );
+      if (resolved == null || identity == null) return null;
+      final isReaction =
+          metadata.kind == ConversationNotificationContentKind.reaction;
+      final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
+        physicalPeerId: 'staging-test-physical-peer',
+        producerKind: isReaction
+            ? NotificationCompletedOutcomeProducerKind.directReaction
+            : NotificationCompletedOutcomeProducerKind.directMessage,
+        eventKey: resolved.canonicalEventId,
+      );
+      if (correlation == null) return null;
+      return DurableLocalNotificationEffectContext(
+        currentOpaqueBinding: currentOpaqueBinding,
+        eventCorrelation: correlation,
+        conversationDigest: identity.digest,
+        producerKind: isReaction
+            ? LocalNotificationProducerKind.directReaction
+            : LocalNotificationProducerKind.directMessage,
+        sourceCustody: LocalNotificationSourceCustody.sqlReady,
+        presentationOwner:
+            LocalNotificationPresentationOwner.androidPushService,
+        readFinalCanonicalDisposition: () async =>
+            DurableLocalNotificationCanonicalDisposition.eligible,
+      );
+    });
+    debugSetBackgroundAppVisibilityResolver(() async => FixedAppVisibility());
     addTearDown(() {
       if (notificationIdDirectory.existsSync()) {
         notificationIdDirectory.deleteSync(recursive: true);
@@ -101,6 +153,9 @@ void main() {
     debugResetBackgroundPushNotificationDisplayEligibilityResolver();
     debugResetBackgroundPushEnvelopeStager();
     debugResetBackgroundAccountMigrationNetworkGate();
+    debugResetBackgroundDurableLocalNotificationEffectResolver();
+    debugResetBackgroundAppVisibilityResolver();
+    debugResetBackgroundMessageNotificationCoordinatorResolver();
     debugResetBackgroundReactionNotificationCoordinatorResolver();
     debugResetBackgroundConversationNotificationIdRegistryResolver();
     debugResetBackgroundNotificationsInitialization();

@@ -228,6 +228,7 @@ void main() {
     Future<void> Function()? clearDeliveredNotifications,
     Future<void> Function()? clearIosNotificationRecovery,
     VoidCallback? invalidateAppVisibility,
+    Future<void> Function()? retireCanonicalNotificationBinding,
     Future<RemoteMessage?> Function()? getInitialRemoteMessage,
     bool Function()? shouldHandleInitialPushOpen,
     Future<IosApnsInitialNotificationOpenDisposition> Function()?
@@ -278,6 +279,7 @@ void main() {
         clearDeliveredNotifications: clearDeliveredNotifications,
         clearIosNotificationRecovery: clearIosNotificationRecovery,
         invalidateAppVisibility: invalidateAppVisibility,
+        retireCanonicalNotificationBinding: retireCanonicalNotificationBinding,
         getInitialRemoteMessage: getInitialRemoteMessage,
         shouldHandleInitialPushOpen: shouldHandleInitialPushOpen,
         consumeInitialIosApnsNotificationOpen:
@@ -523,6 +525,9 @@ void main() {
           invalidateAppVisibility: () {
             cleanupOrder.add('visibility-invalidated');
           },
+          retireCanonicalNotificationBinding: () async {
+            cleanupOrder.add('canonical-binding-retired');
+          },
           clearIosNotificationRecovery: () async {
             cleanupOrder.add('native-recovery-cleared');
             iosRecoveryClearCount += 1;
@@ -551,6 +556,7 @@ void main() {
       expect(iosRecoveryClearCount, 1);
       expect(cleanupOrder, <String>[
         'visibility-invalidated',
+        'canonical-binding-retired',
         'native-recovery-cleared',
       ]);
       expect(authorityExistedDuringRecoveryClear, isTrue);

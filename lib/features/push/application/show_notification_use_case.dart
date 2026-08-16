@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -88,6 +89,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
   LoadConversationNotificationSnapshot? loadConversationNotificationSnapshot,
   String notificationEventType = 'new_message',
   Duration backgroundDuplicateGuardDelay = const Duration(seconds: 2),
+  DurableLocalNotificationEffectContext? durableEffectContext,
 }) async {
   final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
     lane: contactPeerId.trim().startsWith('group:')
@@ -103,14 +105,18 @@ Future<NotificationPresentationResult> maybeShowNotification({
   if (suppressNotification) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'NOTIFICATION_SUPPRESSED',
+      event: durableEffectContext == null
+          ? 'NOTIFICATION_SUPPRESSED'
+          : 'NOTIFICATION_DEFERRED',
       details: {'reason': suppressionReason},
     );
-    return NotificationPresentationResult.terminalWithoutOutcome;
+    return durableEffectContext == null
+        ? NotificationPresentationResult.terminalWithoutOutcome
+        : NotificationPresentationResult.contendedRetryable;
   }
 
   final visibility = await appVisibility.evaluate(visibilityIdentity);
-  if (visibility.maySuppress) {
+  if (visibility.maySuppress && durableEffectContext == null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'NOTIFICATION_SUPPRESSED',
@@ -135,15 +141,23 @@ Future<NotificationPresentationResult> maybeShowNotification({
     if (shouldSuppress) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'NOTIFICATION_SUPPRESSED',
+        event: durableEffectContext == null
+            ? 'NOTIFICATION_SUPPRESSED'
+            : 'NOTIFICATION_LEGACY_DEDUPE_RECONCILE',
         details: {
           'reason': 'recent_remote_push',
-          'contactPeerId': contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
+          if (durableEffectContext == null)
+            'contactPeerId': contactPeerId.length > 10
+                ? contactPeerId.substring(0, 10)
+                : contactPeerId,
         },
       );
-      return NotificationPresentationResult.terminalWithoutOutcome;
+      if (durableEffectContext == null) {
+        return NotificationPresentationResult.terminalWithoutOutcome;
+      }
+      // The legacy marker is not durable final-effect authority. An anchored
+      // attempt continues into the ledger, where an already-terminal sibling
+      // replays its receipt and an in-flight sibling remains retryable.
     }
   }
 
@@ -185,16 +199,23 @@ Future<NotificationPresentationResult> maybeShowNotification({
           DurableNotificationClaimDisposition.committedOrUnavailable) {
         emitFlowEvent(
           layer: 'FL',
-          event: 'NOTIFICATION_SUPPRESSED',
+          event: durableEffectContext == null
+              ? 'NOTIFICATION_SUPPRESSED'
+              : 'NOTIFICATION_LEGACY_CLAIM_RECONCILE',
           details: {
             'reason': 'message_event_already_claimed',
             'type': notificationEventType,
-            'contactPeerId': contactPeerId.length > 10
-                ? contactPeerId.substring(0, 10)
-                : contactPeerId,
+            if (durableEffectContext == null)
+              'contactPeerId': contactPeerId.length > 10
+                  ? contactPeerId.substring(0, 10)
+                  : contactPeerId,
           },
         );
-        return NotificationPresentationResult.terminalWithoutOutcome;
+        if (durableEffectContext == null) {
+          return NotificationPresentationResult.terminalWithoutOutcome;
+        }
+        // The exact ledger, not the legacy event-claim projection, decides
+        // whether this is a terminal replay or an ambiguous in-flight owner.
       }
     } catch (error) {
       // Storage/locking failure is the sole fail-open case. There is no durable
@@ -207,12 +228,17 @@ Future<NotificationPresentationResult> maybeShowNotification({
       durableNotificationCoordinator = null;
       claimStorageFailedOpen = true;
     }
-    assert(messageClaim != null || claimStorageFailedOpen);
+    assert(
+      messageClaim != null ||
+          claimStorageFailedOpen ||
+          durableEffectContext != null,
+    );
   }
 
   DurableNotificationToneReservation? toneReservation;
   DurableNotificationClaimedPublicationResult? claimedPublication;
   DurableNotificationTonePublicationResult? tonePublication;
+  DurableLocalNotificationEffectResult? durableEffectResult;
 
   Future<void> releaseToneReservationAfterDisplayFailure() async {
     final reservation = toneReservation;
@@ -294,34 +320,88 @@ Future<NotificationPresentationResult> maybeShowNotification({
       _ => null,
     };
 
-    Future<void> publishAtNativeBoundary(
+    Future<bool> publishAtNativeBoundary(
       NativeMessageNotificationShow showNative,
+      AuthorizeDurableLocalNotificationNativeEntry authorize,
     ) async {
       Future<void> publishWithExactToneOwner() async {
         final reservation = toneReservation;
         if (reservation == null) {
+          if (!await authorize()) {
+            throw const DurableNotificationPublicationNotAuthorizedException();
+          }
           await showNative(silent: silent);
           return;
         }
-        tonePublication = await reservation.publishAndCommit(
-          () => showNative(silent: false),
-        );
+        tonePublication = await reservation.publishAndCommit(() async {
+          if (!await authorize()) {
+            throw const DurableNotificationPublicationNotAuthorizedException();
+          }
+          await showNative(silent: false);
+        });
         if (!tonePublication!.publishedAudibly) {
+          if (!await authorize()) {
+            throw const DurableNotificationPublicationNotAuthorizedException();
+          }
           await showNative(silent: true);
         }
       }
 
-      claimedPublication = messageClaim == null
-          ? null
-          : await messageClaim.publishAndCommit(publishWithExactToneOwner);
-      if (claimedPublication == null) {
-        await publishWithExactToneOwner();
-      } else if (!claimedPublication!.published) {
+      try {
+        claimedPublication = messageClaim == null
+            ? null
+            : await messageClaim.publishAndCommit(publishWithExactToneOwner);
+        if (claimedPublication == null) {
+          await publishWithExactToneOwner();
+        } else if (!claimedPublication!.published) {
+          return false;
+        }
+        return true;
+      } on DurableNotificationPublicationNotAuthorizedException {
+        return false;
+      }
+    }
+
+    Future<void> publishLegacyAtNativeBoundary(
+      NativeMessageNotificationShow showNative,
+    ) async {
+      final entered = await publishAtNativeBoundary(
+        showNative,
+        () async => true,
+      );
+      if (!entered) {
         throw const _NotificationClaimOwnershipLostBeforeShow();
       }
     }
 
-    if (defaultTargetPlatform == TargetPlatform.android &&
+    if (durableEffectContext != null) {
+      if (visibilityIdentity == null ||
+          contentKind == null ||
+          eventIdentity == null ||
+          notificationService
+              is! MessageNotificationDurableFinalEffectBoundary) {
+        await releaseToneReservationAfterDisplayFailure();
+        await releaseMessageClaimAfterDisplayFailure();
+        return NotificationPresentationResult.contendedRetryable;
+      }
+      final durableBoundary =
+          notificationService as MessageNotificationDurableFinalEffectBoundary;
+      durableEffectResult = await durableBoundary
+          .showMessageNotificationWithDurableFinalEffect(
+            contactPeerId: contactPeerId,
+            senderUsername: senderUsername,
+            messageText: messageText,
+            payload: routePayload,
+            silent: silent,
+            contentKind: contentKind,
+            contentEventIdentity: eventIdentity,
+            snapshot: snapshot,
+            durableEffectContext: durableEffectContext,
+            finalVisibility: appVisibility,
+            conversationIdentity: visibilityIdentity,
+            publishNative: publishAtNativeBoundary,
+          );
+    } else if (defaultTargetPlatform == TargetPlatform.android &&
         notificationService is MessageNotificationNativePublicationBoundary) {
       final publicationBoundary =
           notificationService as MessageNotificationNativePublicationBoundary;
@@ -336,7 +416,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
         contentKind: contentKind,
         contentEventIdentity: eventIdentity,
         snapshot: snapshot,
-        publishNative: publishAtNativeBoundary,
+        publishNative: publishLegacyAtNativeBoundary,
       );
     } else {
       Future<void> fallbackNativeShow({required bool silent}) =>
@@ -350,7 +430,64 @@ Future<NotificationPresentationResult> maybeShowNotification({
             contentEventIdentity: eventIdentity,
             snapshot: snapshot,
           );
-      await publishAtNativeBoundary(fallbackNativeShow);
+      await publishLegacyAtNativeBoundary(fallbackNativeShow);
+    }
+
+    final durableReceipt = durableEffectResult?.receipt;
+    if (durableReceipt != null) {
+      final handoffCompleted = await _notifyDurableEffectTerminal(
+        context: durableEffectContext!,
+        receipt: durableReceipt,
+        notificationEventType: notificationEventType,
+      );
+      if (handoffCompleted &&
+          durableEffectContext.terminalObserverCompletesSqlHandoff &&
+          notificationService
+              is MessageNotificationDurablePostHandoffReconciliation) {
+        await (notificationService
+                as MessageNotificationDurablePostHandoffReconciliation)
+            .notifyDurableEffectHandoffComplete(durableReceipt);
+      }
+    }
+
+    if (durableEffectResult != null &&
+        durableEffectResult.disposition !=
+            DurableLocalNotificationEffectDisposition.osPosted) {
+      if (durableEffectResult.currentNativeEntryAttempted &&
+          !durableEffectResult.currentNativeEntryWasSilentRepair) {
+        // Publication ownership is intentionally detached: the ledger retains
+        // PUBLISHING and exact marker custody for recovery.
+        toneReservation = null;
+        messageClaim = null;
+      } else {
+        await releaseToneReservationAfterDisplayFailure();
+        await releaseMessageClaimAfterDisplayFailure();
+      }
+      return switch (durableEffectResult.disposition) {
+        DurableLocalNotificationEffectDisposition.inChat =>
+          NotificationPresentationResult.inChat,
+        DurableLocalNotificationEffectDisposition.suppressedPolicy =>
+          NotificationPresentationResult.suppressedPolicy,
+        DurableLocalNotificationEffectDisposition.cancelled =>
+          NotificationPresentationResult.terminalWithoutOutcome,
+        DurableLocalNotificationEffectDisposition.retryable ||
+        DurableLocalNotificationEffectDisposition.ambiguous =>
+          NotificationPresentationResult.contendedRetryable,
+        DurableLocalNotificationEffectDisposition.osPosted =>
+          NotificationPresentationResult.osPosted,
+      };
+    }
+    if (durableEffectResult != null &&
+        durableEffectResult.disposition ==
+            DurableLocalNotificationEffectDisposition.osPosted &&
+        (!durableEffectResult.currentNativeEntryAttempted ||
+            durableEffectResult.currentNativeEntryWasSilentRepair)) {
+      // A terminal/active-inventory replay or force-silent repair owns no
+      // fresh audible/event publication. Release newly prepared legacy owners
+      // and skip their commit bookkeeping.
+      await releaseToneReservationAfterDisplayFailure();
+      await releaseMessageClaimAfterDisplayFailure();
+      return NotificationPresentationResult.osPosted;
     }
   } on _NotificationClaimOwnershipLostBeforeShow {
     await releaseToneReservationAfterDisplayFailure();
@@ -403,9 +540,10 @@ Future<NotificationPresentationResult> maybeShowNotification({
       event: 'NOTIFICATION_TONE_RESERVATION_COMMIT_FAILED',
       details: {
         'type': notificationEventType,
-        'contactPeerId': contactPeerId.length > 10
-            ? contactPeerId.substring(0, 10)
-            : contactPeerId,
+        if (durableEffectContext == null)
+          'contactPeerId': contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
       },
     );
   }
@@ -417,13 +555,13 @@ Future<NotificationPresentationResult> maybeShowNotification({
       event: 'NOTIFICATION_CLAIM_COMMIT_FAILED',
       details: {
         'type': notificationEventType,
-        'contactPeerId': contactPeerId.length > 10
-            ? contactPeerId.substring(0, 10)
-            : contactPeerId,
+        if (durableEffectContext == null)
+          'contactPeerId': contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
       },
     );
   }
-
   // Once the native callback returns, Android has acknowledged the show call.
   // Commit failures and all later bookkeeping failures deliberately retain
   // both owners fail-closed; releasing here could alert twice.
@@ -455,6 +593,29 @@ Future<NotificationPresentationResult> maybeShowNotification({
     }
   }
   return NotificationPresentationResult.osPosted;
+}
+
+Future<bool> _notifyDurableEffectTerminal({
+  required DurableLocalNotificationEffectContext context,
+  required DurableLocalNotificationEffectReceipt receipt,
+  required String notificationEventType,
+}) async {
+  final observer = context.onEffectTerminal;
+  if (observer == null) return false;
+  try {
+    await observer(receipt);
+    return true;
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'LOCAL_NOTIFICATION_EFFECT_HANDOFF_FAILED',
+      details: {
+        'type': notificationEventType,
+        'errorType': error.runtimeType.toString(),
+      },
+    );
+    return false;
+  }
 }
 
 final class _NotificationClaimOwnershipLostBeforeShow implements Exception {

@@ -9,7 +9,16 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:background_push_crypto/background_push_crypto.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
@@ -42,6 +51,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/conversation/application/direct_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
@@ -52,6 +62,7 @@ import 'package:flutter_app/features/push/application/push_decrypt_preview.dart'
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
 import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_notification_display_outbox_entry.dart';
 import 'package:flutter_app/features/groups/application/group_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
@@ -215,8 +226,21 @@ typedef BackgroundGroupNotificationPostShowValidator =
     Future<BackgroundGroupNotificationPostShowDecision> Function(
       BackgroundManagedGroupNotificationComparand comparand,
     );
+typedef BackgroundDurableLocalNotificationEffectResolver =
+    Future<DurableLocalNotificationEffectContext?> Function({
+      required NotificationRouteTarget routeTarget,
+      required BackgroundPushNotificationFallback fallback,
+      required ConversationNotificationContentMetadata metadata,
+    });
+typedef BackgroundAppVisibilityResolver =
+    Future<AppVisibilitySuppressionReader> Function();
 
-enum BackgroundDirectNotificationPostShowDecision { keep, retire, unknown }
+enum BackgroundDirectNotificationPostShowDecision {
+  keep,
+  read,
+  retire,
+  unknown,
+}
 
 class BackgroundDirectReactionLocalState {
   const BackgroundDirectReactionLocalState({
@@ -328,6 +352,13 @@ _backgroundGroupReactionLocalStateResolver =
 BackgroundGroupNotificationPostShowValidator
 _backgroundGroupNotificationPostShowValidator =
     _validateBackgroundGroupNotificationAfterShowFromEncryptedDb;
+BackgroundDurableLocalNotificationEffectResolver
+_backgroundDurableLocalNotificationEffectResolver =
+    _resolveBackgroundDurableLocalNotificationEffect;
+BackgroundAppVisibilityResolver _backgroundAppVisibilityResolver = () async =>
+    AppVisibilityAuthority(
+      platformBridge: MethodChannelAppVisibilityPlatformBridge(),
+    );
 
 @visibleForTesting
 void debugSetBackgroundPushNotificationResolver(
@@ -461,6 +492,33 @@ void debugSetBackgroundGroupNotificationPostShowValidator(
 void debugResetBackgroundGroupNotificationPostShowValidator() {
   _backgroundGroupNotificationPostShowValidator =
       _validateBackgroundGroupNotificationAfterShowFromEncryptedDb;
+}
+
+@visibleForTesting
+void debugSetBackgroundDurableLocalNotificationEffectResolver(
+  BackgroundDurableLocalNotificationEffectResolver resolver,
+) {
+  _backgroundDurableLocalNotificationEffectResolver = resolver;
+}
+
+@visibleForTesting
+void debugResetBackgroundDurableLocalNotificationEffectResolver() {
+  _backgroundDurableLocalNotificationEffectResolver =
+      _resolveBackgroundDurableLocalNotificationEffect;
+}
+
+@visibleForTesting
+void debugSetBackgroundAppVisibilityResolver(
+  BackgroundAppVisibilityResolver resolver,
+) {
+  _backgroundAppVisibilityResolver = resolver;
+}
+
+@visibleForTesting
+void debugResetBackgroundAppVisibilityResolver() {
+  _backgroundAppVisibilityResolver = () async => AppVisibilityAuthority(
+    platformBridge: MethodChannelAppVisibilityPlatformBridge(),
+  );
 }
 
 @visibleForTesting
@@ -649,6 +707,44 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   DurableNotificationEventClaim? notificationEventClaim;
   DurableNotificationToneReservation? notificationToneReservation;
   DurableNotificationTonePublicationResult? tonePublication;
+  Future<void> releaseProvisionalNotificationOwners({
+    required String reason,
+  }) async {
+    final tone = notificationToneReservation;
+    final claim = notificationEventClaim;
+    notificationToneReservation = null;
+    notificationEventClaim = null;
+    if (tone != null) {
+      try {
+        await tone.release();
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_BACKGROUND_MESSAGE_TONE_RELEASE_FAILED',
+          details: <String, Object?>{
+            'kind': reason,
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+      }
+    }
+    if (claim != null) {
+      try {
+        await claim.release();
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_BACKGROUND_MESSAGE_CLAIM_RELEASE_FAILED',
+          details: <String, Object?>{
+            'type': claim.type,
+            'reason': reason,
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+      }
+    }
+  }
+
   try {
     await _initializeBackgroundNotifications();
     late BackgroundPushNotificationFallback fallback;
@@ -920,20 +1016,100 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
               : null
         : null;
     final contentKind = groupContentKind ?? directContentKind;
-    final contentMetadata = contentKind == null
+    var contentMetadata = contentKind == null
         ? null
         : ConversationNotificationContentMetadata(
             kind: contentKind,
             eventIdentity: notificationEventIdentity,
             generation: createConversationNotificationGeneration(),
           );
-    final nativePayload = contentMetadata == null
+    var nativePayload = contentMetadata == null
         ? fallback.payload
         : encodeConversationNotificationPayload(
             routePayload: fallback.payload ?? conversationKey,
             conversationKey: conversationKey,
             metadata: contentMetadata,
           );
+    DurableLocalNotificationEffectContext? durableEffectContext;
+    AppVisibilitySuppressionReader? durableFinalVisibility;
+    final requiresDurableEffect =
+        defaultTargetPlatform == TargetPlatform.android &&
+        resolvedEventIdentity != null &&
+        contentMetadata != null &&
+        routeTarget != null &&
+        (routeTarget.kind == NotificationRouteTargetKind.conversation ||
+            routeTarget.kind == NotificationRouteTargetKind.group);
+    if (requiresDurableEffect) {
+      try {
+        durableEffectContext = await storageDeadline.run(
+          'durable_effect_authority',
+          () => _backgroundDurableLocalNotificationEffectResolver(
+            routeTarget: routeTarget,
+            fallback: fallback,
+            metadata: contentMetadata!,
+          ),
+        );
+        if (durableEffectContext == null) {
+          // The authenticated envelope remains staged/provider-owned. A card
+          // ID, bounded reaction alias or provider message ID is not enough to
+          // mint SQL_READY ledger authority.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+            details: const <String, Object?>{
+              'reason': 'exact_sql_authority_unavailable',
+            },
+          );
+          await releaseProvisionalNotificationOwners(
+            reason: 'durable_effect_authority_unavailable',
+          );
+          return;
+        }
+        final generation = durableLocalNotificationContentGeneration(
+          durableEffectContext.eventCorrelation,
+        );
+        if (generation == null) {
+          await releaseProvisionalNotificationOwners(
+            reason: 'durable_effect_generation_invalid',
+          );
+          return;
+        }
+        contentMetadata = ConversationNotificationContentMetadata(
+          kind: contentKind!,
+          eventIdentity: durableEffectContext.eventCorrelation,
+          generation: generation,
+        );
+        nativePayload = encodeConversationNotificationPayload(
+          routePayload: fallback.payload ?? conversationKey,
+          conversationKey: conversationKey,
+          metadata: contentMetadata,
+        );
+        durableFinalVisibility = await _backgroundAppVisibilityResolver();
+      } on BackgroundStorageDeadlineExceeded catch (error) {
+        await _recordBackgroundStorageDeferred(
+          message,
+          error,
+          outcome: 'storage_deferred',
+        );
+        await releaseProvisionalNotificationOwners(
+          reason: 'durable_effect_storage_deferred',
+        );
+        return;
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+          details: <String, Object?>{
+            'reason': 'authority_read_failed',
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+        await releaseProvisionalNotificationOwners(
+          reason: 'durable_effect_authority_read_failed',
+        );
+        return;
+      }
+    }
     Future<void> show({required bool publicationSilent}) =>
         _backgroundNotificationsPlugin.show(
           notificationId,
@@ -963,38 +1139,96 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     }
 
     DurableNotificationClaimedPublicationResult? claimedPublication;
-    Future<void> publishAtNativeBoundary() async {
+    Future<bool> publishAtDurableFinalBarrier(
+      AuthorizeDurableLocalNotificationNativeEntry authorize,
+    ) async {
       Future<void> publishWithExactToneOwner() async {
         final reservation = notificationToneReservation;
         if (reservation == null) {
+          if (!await authorize()) {
+            throw const DurableNotificationPublicationNotAuthorizedException();
+          }
           await show(publicationSilent: silent);
           return;
         }
-        tonePublication = await reservation.publishAndCommit(
-          () => show(publicationSilent: false),
-        );
+        tonePublication = await reservation.publishAndCommit(() async {
+          if (!await authorize()) {
+            throw const DurableNotificationPublicationNotAuthorizedException();
+          }
+          await show(publicationSilent: false);
+        });
         if (!tonePublication!.publishedAudibly) {
+          if (!await authorize()) {
+            throw const DurableNotificationPublicationNotAuthorizedException();
+          }
           await show(publicationSilent: true);
         }
       }
 
-      claimedPublication = notificationEventClaim == null
-          ? null
-          : await notificationEventClaim.publishAndCommit(
-              publishWithExactToneOwner,
-            );
-      if (claimedPublication == null) {
-        await publishWithExactToneOwner();
-      } else if (!claimedPublication!.published) {
-        throw const _BackgroundNotificationClaimOwnershipLost();
+      try {
+        final currentEventClaim = notificationEventClaim;
+        claimedPublication = currentEventClaim == null
+            ? null
+            : await currentEventClaim.publishAndCommit(
+                publishWithExactToneOwner,
+              );
+        if (claimedPublication == null) {
+          await publishWithExactToneOwner();
+        } else if (!claimedPublication!.published) {
+          return false;
+        }
+        return true;
+      } on DurableNotificationPublicationNotAuthorizedException {
+        return false;
       }
     }
 
+    Future<void> publishAtNativeBoundary() async {
+      final entered = await publishAtDurableFinalBarrier(() async => true);
+      if (!entered) throw const _BackgroundNotificationClaimOwnershipLost();
+    }
+
+    DurableLocalNotificationEffectResult? durableEffectResult;
     if (defaultTargetPlatform == TargetPlatform.android) {
       // Registry allocation, retirement, and metadata preparation happen
       // before Android durable owners enter `publishing`. Only the actual
       // platform show call is ambiguous if its method-channel result fails.
-      if (contentMetadata == null) {
+      final effectContext = durableEffectContext;
+      if (effectContext != null) {
+        final conversationIdentity = AppVisibilityConversationIdentity.tryParse(
+          lane: routeTarget!.kind == NotificationRouteTargetKind.group
+              ? AppVisibilityConversationLane.group
+              : AppVisibilityConversationLane.direct,
+          value: conversationKey,
+        );
+        final visibility = durableFinalVisibility;
+        if (conversationIdentity == null ||
+            visibility == null ||
+            contentMetadata == null) {
+          await releaseProvisionalNotificationOwners(
+            reason: 'durable_effect_final_authority_invalid',
+          );
+          return;
+        }
+        durableEffectResult = await notificationIdRegistry.runFinalEffect(
+          context: effectContext,
+          appVisibility: visibility,
+          conversationIdentity: conversationIdentity,
+          conversationKey: conversationKey,
+          notificationId: notificationId,
+          metadata: contentMetadata,
+          retireCurrent: () =>
+              _backgroundNotificationsPlugin.cancel(notificationId),
+          publishNative: publishAtNativeBoundary,
+          publishNativeAtFinalBarrier: publishAtDurableFinalBarrier,
+          // A recovered PUBLISHING attempt may outlive the provisional tone
+          // and event leases. Never route repair through their audible path.
+          publishNativeSilently: () => show(publicationSilent: true),
+          activeNotificationIds: () async =>
+              (await _backgroundNotificationsPlugin.getActiveNotifications())
+                  .map((notification) => notification.id),
+        );
+      } else if (contentMetadata == null) {
         await publishAtNativeBoundary();
       } else {
         await notificationIdRegistry.replaceContent(
@@ -1024,9 +1258,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         }
       }
 
-      claimedPublication = notificationEventClaim == null
+      final currentEventClaim = notificationEventClaim;
+      claimedPublication = currentEventClaim == null
           ? null
-          : await notificationEventClaim.publishAndCommit(
+          : await currentEventClaim.publishAndCommit(
               publishWithLegacyToneOwner,
             );
       if (claimedPublication == null) {
@@ -1034,6 +1269,53 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       } else if (!claimedPublication!.published) {
         throw const _BackgroundNotificationClaimOwnershipLost();
       }
+    }
+
+    final durableReceipt = durableEffectResult?.receipt;
+    if (durableReceipt != null) {
+      try {
+        await durableEffectContext?.onEffectTerminal?.call(durableReceipt);
+      } catch (error) {
+        // The registry lock is already released and EFFECT_TERMINAL is the
+        // truthful authority. Main-runtime reconciliation owns SQL replay;
+        // never release the audible/event owners because its callback failed.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_BACKGROUND_EFFECT_HANDOFF_DEFERRED',
+          details: <String, Object?>{'errorType': error.runtimeType.toString()},
+        );
+      }
+    }
+    if (durableEffectResult != null &&
+        durableEffectResult.disposition !=
+            DurableLocalNotificationEffectDisposition.osPosted) {
+      if (durableEffectResult.currentNativeEntryAttempted &&
+          !durableEffectResult.currentNativeEntryWasSilentRepair) {
+        // The platform callback may have been accepted. The ledger retains
+        // PUBLISHING and both legacy owners stay fail-closed for recovery.
+        notificationToneReservation = null;
+        notificationEventClaim = null;
+      } else {
+        await notificationToneReservation?.release();
+        await notificationEventClaim?.release();
+        notificationToneReservation = null;
+        notificationEventClaim = null;
+      }
+      return;
+    }
+    if (durableEffectResult != null &&
+        durableEffectResult.disposition ==
+            DurableLocalNotificationEffectDisposition.osPosted &&
+        (!durableEffectResult.currentNativeEntryAttempted ||
+            durableEffectResult.currentNativeEntryWasSilentRepair)) {
+      // A terminal/active-inventory replay or force-silent repair owns no
+      // fresh audible/event publication. Release provisional legacy owners;
+      // their publication results are intentionally absent.
+      await notificationToneReservation?.release();
+      await notificationEventClaim?.release();
+      notificationToneReservation = null;
+      notificationEventClaim = null;
+      return;
     }
     // The native callback returned successfully. Detach both owners before any
     // subsequent validation/bookkeeping so no later failure can reach the
@@ -1068,7 +1350,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     }
     var postShowStorageExpired = false;
     final groupComparand = fallback.groupComparand;
-    if (contentMetadata != null && groupComparand != null) {
+    if (durableEffectContext == null &&
+        contentMetadata != null &&
+        groupComparand != null) {
       try {
         final metadataMatches = switch (groupComparand) {
           BackgroundGroupMessageNotificationComparand messageComparand =>
@@ -1095,7 +1379,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
                 ),
               )
             : BackgroundGroupNotificationPostShowDecision.retire;
-        if (decision == BackgroundGroupNotificationPostShowDecision.retire) {
+        if (decision == BackgroundGroupNotificationPostShowDecision.retire ||
+            decision == BackgroundGroupNotificationPostShowDecision.read) {
           final retired = await notificationIdRegistry
               .cancelContentIfGeneration(
                 conversationKey: conversationKey,
@@ -1139,7 +1424,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         }
       }
     }
-    if (!postShowStorageExpired &&
+    if (durableEffectContext == null &&
+        !postShowStorageExpired &&
         contentMetadata != null &&
         directContentKind != null &&
         routeTarget?.kind == NotificationRouteTargetKind.conversation) {
@@ -1150,10 +1436,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             'direct_post_show_validation',
             () => _validateBackgroundDirectNotificationAfterShow(
               peerId: peerId,
-              metadata: contentMetadata,
+              metadata: contentMetadata!,
             ),
           );
-          if (decision == BackgroundDirectNotificationPostShowDecision.retire) {
+          if (decision == BackgroundDirectNotificationPostShowDecision.retire ||
+              decision == BackgroundDirectNotificationPostShowDecision.read) {
             final retired = await notificationIdRegistry
                 .cancelContentIfGeneration(
                   conversationKey: conversationKey,
@@ -1227,10 +1514,17 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
-      details: {
-        'messageId': message.messageId,
-        'payload': fallback.payload ?? '',
-      },
+      details: durableEffectContext == null
+          ? <String, Object?>{
+              'messageId': message.messageId,
+              'payload': fallback.payload ?? '',
+            }
+          : <String, Object?>{
+              'durable': true,
+              'producer': durableEffectContext.producerKind.wireName,
+              'disposition':
+                  durableEffectResult?.disposition.name ?? 'legacy_fallback',
+            },
     );
   } catch (e) {
     if (e is DurableNotificationPublicationAttemptedException) {
@@ -1451,30 +1745,45 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
   Database db, {
   required String peerId,
   required ConversationNotificationContentMetadata metadata,
+  String? canonicalEventIdentity,
+  String? acknowledgementEventIdentity,
+  String? acknowledgementGeneration,
+  DirectNotificationDisplayOutboxEntry? expectedEntry,
 }) async {
-  final eventIdentity = _trimToNull(metadata.eventIdentity);
+  final eventIdentity = _trimToNull(
+    canonicalEventIdentity ?? metadata.eventIdentity,
+  );
+  final acknowledgementIdentity = _trimToNull(
+    acknowledgementEventIdentity ?? metadata.eventIdentity,
+  );
+  final acknowledgementContentGeneration = _trimToNull(
+    acknowledgementGeneration ?? metadata.generation,
+  );
   if (eventIdentity == null) {
     return BackgroundDirectNotificationPostShowDecision.unknown;
   }
   final contact = await dbLoadContact(db, peerId);
-  final contactEligible =
-      _trimToNull(contact?['peer_id']) == peerId &&
-      (contact?['is_blocked'] as num?)?.toInt() != 1 &&
-      (contact?['is_archived'] as num?)?.toInt() != 1;
-  if (!contactEligible) {
+  if (contact == null || _trimToNull(contact['peer_id']) != peerId) {
+    return BackgroundDirectNotificationPostShowDecision.unknown;
+  }
+  if ((contact['is_blocked'] as num?)?.toInt() == 1 ||
+      (contact['is_archived'] as num?)?.toInt() == 1) {
     return BackgroundDirectNotificationPostShowDecision.retire;
   }
 
   final acknowledgement =
-      await dbLoadExactDirectNotificationReadAcknowledgement(
-        db,
-        peerId: peerId,
-        contentKind: metadata.kind.name,
-        eventIdentity: eventIdentity,
-        generation: metadata.generation,
-      );
-  if (acknowledgement != null) {
-    return BackgroundDirectNotificationPostShowDecision.retire;
+      acknowledgementIdentity == null ||
+          acknowledgementContentGeneration == null
+      ? null
+      : await dbLoadExactDirectNotificationReadAcknowledgement(
+          db,
+          peerId: peerId,
+          contentKind: metadata.kind.name,
+          eventIdentity: acknowledgementIdentity,
+          generation: acknowledgementContentGeneration,
+        );
+  if (acknowledgement != null && expectedEntry == null) {
+    return BackgroundDirectNotificationPostShowDecision.read;
   }
 
   switch (metadata.kind) {
@@ -1483,16 +1792,43 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
       if (message == null) {
         return BackgroundDirectNotificationPostShowDecision.unknown;
       }
-      final canonical =
+      if (expectedEntry != null &&
+          (expectedEntry.eventKind !=
+                  DirectNotificationDisplayOutboxKind.message ||
+              expectedEntry.eventId != eventIdentity ||
+              expectedEntry.peerId != peerId ||
+              expectedEntry.messageId != eventIdentity ||
+              _trimToNull(message['contact_peer_id']) != expectedEntry.peerId ||
+              _trimToNull(message['sender_peer_id']) !=
+                  expectedEntry.actorPeerId ||
+              _trimToNull(message['timestamp']) !=
+                  expectedEntry.eventTimestamp ||
+              (message['is_incoming'] as num?)?.toInt() != 1)) {
+        return BackgroundDirectNotificationPostShowDecision.unknown;
+      }
+      final canonicalIdentity =
           _trimToNull(message['contact_peer_id']) == peerId &&
-          (message['is_incoming'] as num?)?.toInt() == 1 &&
-          message['read_at'] == null &&
-          message['deleted_at'] == null &&
-          message['hidden_at'] == null;
-      return canonical
-          ? BackgroundDirectNotificationPostShowDecision.keep
-          : BackgroundDirectNotificationPostShowDecision.retire;
+          (message['is_incoming'] as num?)?.toInt() == 1;
+      if (!canonicalIdentity ||
+          message['deleted_at'] != null ||
+          message['hidden_at'] != null ||
+          _isBackgroundDirectPrivateMediaTerminal(
+            message['private_media_state'],
+          )) {
+        return BackgroundDirectNotificationPostShowDecision.retire;
+      }
+      if (acknowledgement != null || message['read_at'] != null) {
+        return BackgroundDirectNotificationPostShowDecision.read;
+      }
+      return BackgroundDirectNotificationPostShowDecision.keep;
     case ConversationNotificationContentKind.reaction:
+      if (expectedEntry != null &&
+          (expectedEntry.eventKind !=
+                  DirectNotificationDisplayOutboxKind.reaction ||
+              expectedEntry.eventId != eventIdentity ||
+              expectedEntry.peerId != peerId)) {
+        return BackgroundDirectNotificationPostShowDecision.unknown;
+      }
       final terminal =
           await dbLoadDirectNotificationReactionTerminalEventByIdentity(
             db,
@@ -1502,8 +1838,20 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
       if (terminal == null) {
         return BackgroundDirectNotificationPostShowDecision.unknown;
       }
-      if (terminal['notification_acknowledged_at'] != null) {
-        return BackgroundDirectNotificationPostShowDecision.retire;
+      if (expectedEntry != null &&
+          (_trimToNull(terminal['peer_id']) != expectedEntry.peerId ||
+              _trimToNull(terminal['message_id']) != expectedEntry.messageId ||
+              _trimToNull(terminal['actor_peer_id']) !=
+                  expectedEntry.actorPeerId ||
+              _trimToNull(terminal['reaction_id']) !=
+                  expectedEntry.reactionId ||
+              _trimToNull(terminal['terminal_event_id']) !=
+                  expectedEntry.eventId)) {
+        return BackgroundDirectNotificationPostShowDecision.unknown;
+      }
+      if (terminal['notification_acknowledged_at'] != null &&
+          expectedEntry == null) {
+        return BackgroundDirectNotificationPostShowDecision.read;
       }
       final messageId = terminal['message_id'] as String;
       final actorPeerId = terminal['actor_peer_id'] as String;
@@ -1513,18 +1861,460 @@ validateBackgroundDirectNotificationAfterShowInDatabase(
         messageId,
         actorPeerId,
       );
-      final canonical =
+      if (expectedEntry != null && (target == null || reaction == null)) {
+        return BackgroundDirectNotificationPostShowDecision.unknown;
+      }
+      final canonicalIdentity =
           _trimToNull(target?['contact_peer_id']) == peerId &&
-          (target?['is_incoming'] as num?)?.toInt() == 0 &&
-          target?['deleted_at'] == null &&
-          _trimToNull(reaction?['id']) ==
-              _trimToNull(terminal['reaction_id']) &&
-          reaction?['removed_at'] == null;
-      return canonical
-          ? BackgroundDirectNotificationPostShowDecision.keep
-          : BackgroundDirectNotificationPostShowDecision.retire;
+          (target?['is_incoming'] as num?)?.toInt() == 0;
+      if (expectedEntry != null && !canonicalIdentity) {
+        return BackgroundDirectNotificationPostShowDecision.unknown;
+      }
+      final cancelled =
+          !canonicalIdentity ||
+          target?['deleted_at'] != null ||
+          target?['hidden_at'] != null ||
+          _isBackgroundDirectPrivateMediaTerminal(
+            target?['private_media_state'],
+          ) ||
+          _trimToNull(reaction?['id']) !=
+              _trimToNull(terminal['reaction_id']) ||
+          reaction?['removed_at'] != null ||
+          (expectedEntry != null &&
+              _trimToNull(reaction?['timestamp']) !=
+                  expectedEntry.eventTimestamp);
+      if (cancelled) {
+        return BackgroundDirectNotificationPostShowDecision.retire;
+      }
+      if (acknowledgement != null ||
+          terminal['notification_acknowledged_at'] != null) {
+        return BackgroundDirectNotificationPostShowDecision.read;
+      }
+      return BackgroundDirectNotificationPostShowDecision.keep;
   }
 }
+
+bool _isBackgroundDirectPrivateMediaTerminal(Object? value) {
+  final state = _trimToNull(value);
+  return state == 'consumed' || state == 'expired' || state == 'unsupported';
+}
+
+/// Resolves an authenticated Android background effect only when the exact
+/// v106/v107 READY row already owns the same raw producer event. This is a
+/// read-only qualification seam: SQL custody stays in place until the main
+/// runtime replays the EFFECT_TERMINAL handoff.
+@visibleForTesting
+Future<DurableLocalNotificationEffectContext?>
+resolveBackgroundDurableLocalNotificationEffectInDatabase(
+  DatabaseExecutor db, {
+  required NotificationRouteTarget routeTarget,
+  required BackgroundPushNotificationFallback fallback,
+  required ConversationNotificationContentMetadata metadata,
+  required String currentOpaqueBinding,
+  required String physicalPeerId,
+  required ReadDurableLocalNotificationCanonicalDisposition
+  readFinalCanonicalDisposition,
+}) async {
+  final authority = await _resolveBackgroundSqlEffectAuthority(
+    db,
+    routeTarget: routeTarget,
+    fallback: fallback,
+    metadata: metadata,
+    currentOpaqueBinding: currentOpaqueBinding,
+    physicalPeerId: physicalPeerId,
+  );
+  return authority?.context(readFinalCanonicalDisposition);
+}
+
+Future<DurableLocalNotificationEffectContext?>
+_resolveBackgroundDurableLocalNotificationEffect({
+  required NotificationRouteTarget routeTarget,
+  required BackgroundPushNotificationFallback fallback,
+  required ConversationNotificationContentMetadata metadata,
+}) async {
+  final secureStore = FlutterSecureKeyStore();
+  final values = await Future.wait<String?>([
+    secureStore.read(canonicalRuntimeAccountBindingStorageKey),
+    secureStore.read(_backgroundPushTransportPeerId),
+    secureStore.read(_backgroundDbEncryptionKey),
+  ]);
+  final binding = _trimToNull(values[0]);
+  final physicalPeerId = _trimToNull(values[1]);
+  final dbKey = _trimToNull(values[2]);
+  if (!isCanonicalRuntimeOpaqueBinding(binding) ||
+      physicalPeerId == null ||
+      dbKey == null) {
+    return null;
+  }
+
+  Database? db;
+  try {
+    final dbPath = await getDatabasesPath();
+    db = await openBackgroundIdentityDbReadTolerant(
+      path: '$dbPath/identity.db',
+      key: dbKey,
+    );
+    final authority = await _resolveBackgroundSqlEffectAuthority(
+      db,
+      routeTarget: routeTarget,
+      fallback: fallback,
+      metadata: metadata,
+      currentOpaqueBinding: binding!,
+      physicalPeerId: physicalPeerId,
+    );
+    if (authority == null) return null;
+    return authority.context(
+      () => _readFinalBackgroundCanonicalDisposition(authority),
+    );
+  } finally {
+    await db?.close();
+  }
+}
+
+final class _BackgroundSqlEffectAuthority {
+  const _BackgroundSqlEffectAuthority({
+    required this.currentOpaqueBinding,
+    required this.eventCorrelation,
+    required this.conversationDigest,
+    required this.producerKind,
+    required this.routeTarget,
+    required this.fallback,
+    required this.metadata,
+    this.directEntry,
+    this.groupEntry,
+  });
+
+  final String currentOpaqueBinding;
+  final String eventCorrelation;
+  final String conversationDigest;
+  final LocalNotificationProducerKind producerKind;
+  final NotificationRouteTarget routeTarget;
+  final BackgroundPushNotificationFallback fallback;
+  final ConversationNotificationContentMetadata metadata;
+  final DirectNotificationDisplayOutboxEntry? directEntry;
+  final GroupNotificationDisplayOutboxEntry? groupEntry;
+
+  DurableLocalNotificationEffectContext context(
+    ReadDurableLocalNotificationCanonicalDisposition readFinal,
+  ) => DurableLocalNotificationEffectContext(
+    currentOpaqueBinding: currentOpaqueBinding,
+    eventCorrelation: eventCorrelation,
+    conversationDigest: conversationDigest,
+    producerKind: producerKind,
+    sourceCustody: LocalNotificationSourceCustody.sqlReady,
+    presentationOwner: LocalNotificationPresentationOwner.androidPushService,
+    readFinalCanonicalDisposition: readFinal,
+  );
+}
+
+Future<_BackgroundSqlEffectAuthority?> _resolveBackgroundSqlEffectAuthority(
+  DatabaseExecutor db, {
+  required NotificationRouteTarget routeTarget,
+  required BackgroundPushNotificationFallback fallback,
+  required ConversationNotificationContentMetadata metadata,
+  required String currentOpaqueBinding,
+  required String physicalPeerId,
+}) async {
+  final resolved = fallback.resolvedEventIdentity;
+  final rawEventIdentity = _trimToNull(resolved?.canonicalEventId);
+  if (resolved == null ||
+      rawEventIdentity == null ||
+      resolved.kind != metadata.kind ||
+      !isCanonicalRuntimeOpaqueBinding(currentOpaqueBinding)) {
+    return null;
+  }
+
+  late final NotificationCompletedOutcomeProducerKind outcomeProducer;
+  late final LocalNotificationProducerKind ledgerProducer;
+  late final String conversationValue;
+  late final String eventKey;
+  DirectNotificationDisplayOutboxEntry? directEntry;
+  GroupNotificationDisplayOutboxEntry? groupEntry;
+
+  switch (routeTarget.kind) {
+    case NotificationRouteTargetKind.conversation:
+      final peerId = _trimToNull(routeTarget.peerId);
+      if (peerId == null) return null;
+      final eventKind = metadata.kind.name;
+      final custodyEventId =
+          metadata.kind == ConversationNotificationContentKind.reaction
+          ? boundedReactionEventIdentity(rawEventIdentity)
+          : rawEventIdentity;
+      final row = await dbLoadDirectNotificationDisplayOutboxEntry(
+        db,
+        peerId: peerId,
+        eventKind: eventKind,
+        eventId: custodyEventId,
+      );
+      if (row == null) return null;
+      directEntry = DirectNotificationDisplayOutboxEntry.fromMap(row);
+      if (!directEntry.isReady ||
+          directEntry.peerId != peerId ||
+          directEntry.eventKind != eventKind ||
+          directEntry.eventId != custodyEventId ||
+          (metadata.kind == ConversationNotificationContentKind.message &&
+              directEntry.messageId != rawEventIdentity) ||
+          (metadata.kind == ConversationNotificationContentKind.reaction &&
+              directEntry.reactionId != rawEventIdentity)) {
+        return null;
+      }
+      outcomeProducer =
+          metadata.kind == ConversationNotificationContentKind.message
+          ? NotificationCompletedOutcomeProducerKind.directMessage
+          : NotificationCompletedOutcomeProducerKind.directReaction;
+      ledgerProducer =
+          metadata.kind == ConversationNotificationContentKind.message
+          ? LocalNotificationProducerKind.directMessage
+          : LocalNotificationProducerKind.directReaction;
+      eventKey =
+          trySelectNotificationCompletedOutcomeEventKey(
+            producerKind: outcomeProducer,
+            authenticatedEnvelope: <String, Object?>{
+              if (metadata.kind == ConversationNotificationContentKind.message)
+                'messageId': directEntry.messageId,
+              if (metadata.kind == ConversationNotificationContentKind.reaction)
+                'reactionId': directEntry.reactionId,
+            },
+          ) ??
+          '';
+      conversationValue = peerId;
+    case NotificationRouteTargetKind.group:
+      final groupId = _trimToNull(routeTarget.groupId);
+      if (groupId == null) return null;
+      final row = await dbLoadGroupNotificationDisplayOutboxEntry(
+        db,
+        rawEventIdentity,
+      );
+      if (row == null) return null;
+      groupEntry = GroupNotificationDisplayOutboxEntry.fromMap(row);
+      if (!groupEntry.isReady ||
+          groupEntry.groupId != groupId ||
+          groupEntry.eventKind != metadata.kind.name ||
+          groupEntry.eventId != rawEventIdentity ||
+          (metadata.kind == ConversationNotificationContentKind.message &&
+              groupEntry.messageId != rawEventIdentity)) {
+        return null;
+      }
+      outcomeProducer =
+          metadata.kind == ConversationNotificationContentKind.message
+          ? NotificationCompletedOutcomeProducerKind.groupMessage
+          : NotificationCompletedOutcomeProducerKind.groupReaction;
+      ledgerProducer =
+          metadata.kind == ConversationNotificationContentKind.message
+          ? LocalNotificationProducerKind.groupMessage
+          : LocalNotificationProducerKind.groupReaction;
+      String? logicalDeliveryId;
+      if (metadata.kind == ConversationNotificationContentKind.message) {
+        final message = await dbLoadGroupMessage(db, groupEntry.messageId);
+        logicalDeliveryId = _trimToNull(message?['logical_delivery_id']);
+      }
+      eventKey =
+          trySelectNotificationCompletedOutcomeEventKey(
+            producerKind: outcomeProducer,
+            authenticatedEnvelope: <String, Object?>{
+              if (metadata.kind == ConversationNotificationContentKind.message)
+                'messageId': groupEntry.messageId,
+              if (metadata.kind ==
+                      ConversationNotificationContentKind.message &&
+                  logicalDeliveryId != null)
+                'logicalDeliveryId': logicalDeliveryId,
+              if (metadata.kind == ConversationNotificationContentKind.reaction)
+                'notificationTransitionId': groupEntry.eventId,
+            },
+          ) ??
+          '';
+      conversationValue = 'group:$groupId';
+    case NotificationRouteTargetKind.contactRequest ||
+        NotificationRouteTargetKind.intros ||
+        NotificationRouteTargetKind.post ||
+        NotificationRouteTargetKind.postComment:
+      return null;
+  }
+
+  final identity = AppVisibilityConversationIdentity.tryParse(
+    lane: routeTarget.kind == NotificationRouteTargetKind.group
+        ? AppVisibilityConversationLane.group
+        : AppVisibilityConversationLane.direct,
+    value: conversationValue,
+  );
+  final correlation = eventKey.isEmpty
+      ? null
+      : tryComputeNotificationCompletedOutcomeCorrelation(
+          physicalPeerId: physicalPeerId,
+          producerKind: outcomeProducer,
+          eventKey: eventKey,
+        );
+  if (identity == null || correlation == null) return null;
+  return _BackgroundSqlEffectAuthority(
+    currentOpaqueBinding: currentOpaqueBinding,
+    eventCorrelation: correlation,
+    conversationDigest: identity.digest,
+    producerKind: ledgerProducer,
+    routeTarget: routeTarget,
+    fallback: fallback,
+    metadata: metadata,
+    directEntry: directEntry,
+    groupEntry: groupEntry,
+  );
+}
+
+Future<DurableLocalNotificationCanonicalDisposition>
+_readFinalBackgroundCanonicalDisposition(
+  _BackgroundSqlEffectAuthority authority,
+) async {
+  Database? db;
+  try {
+    final group = authority.groupEntry;
+    final groupComparand = authority.fallback.groupComparand;
+    final groupDecision = group == null || groupComparand == null
+        ? null
+        : await _backgroundGroupNotificationPostShowValidator(groupComparand);
+    final key = await FlutterSecureKeyStore().read(_backgroundDbEncryptionKey);
+    if (_trimToNull(key) == null) {
+      return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+    }
+    final dbPath = await getDatabasesPath();
+    db = await openBackgroundIdentityDbReadTolerant(
+      path: '$dbPath/identity.db',
+      key: key!,
+    );
+    final direct = authority.directEntry;
+    if (direct != null) {
+      final decision =
+          await validateBackgroundDirectNotificationAfterShowInDatabase(
+            db,
+            peerId: direct.peerId,
+            metadata: authority.metadata,
+            canonicalEventIdentity:
+                direct.eventKind == DirectNotificationDisplayOutboxKind.message
+                ? direct.messageId
+                : direct.eventId,
+            acknowledgementEventIdentity: authority.eventCorrelation,
+            acknowledgementGeneration:
+                durableLocalNotificationContentGeneration(
+                  authority.eventCorrelation,
+                ),
+            expectedEntry: direct,
+          );
+      // The exact READY custody reload is deliberately last. It is the SQL
+      // linearization point for the canonical facts above; a concurrent
+      // delete/read/retry revision cannot be hidden by an earlier read.
+      final row = await dbLoadDirectNotificationDisplayOutboxEntry(
+        db,
+        peerId: direct.peerId,
+        eventKind: direct.eventKind,
+        eventId: direct.eventId,
+      );
+      if (row == null) {
+        return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+      }
+      final current = DirectNotificationDisplayOutboxEntry.fromMap(row);
+      final sameIdentity = _sameDirectDisplayAuthorityIdentity(direct, current);
+      if (sameIdentity && current.hasCanonicalRetirementProof) {
+        return DurableLocalNotificationCanonicalDisposition.cancelled;
+      }
+      if (!sameIdentity || !_sameDirectDisplayAuthority(direct, current)) {
+        return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+      }
+      return switch (decision) {
+        BackgroundDirectNotificationPostShowDecision.keep =>
+          DurableLocalNotificationCanonicalDisposition.eligible,
+        BackgroundDirectNotificationPostShowDecision.read =>
+          DurableLocalNotificationCanonicalDisposition.read,
+        BackgroundDirectNotificationPostShowDecision.retire =>
+          DurableLocalNotificationCanonicalDisposition.cancelled,
+        BackgroundDirectNotificationPostShowDecision.unknown =>
+          DurableLocalNotificationCanonicalDisposition.retryableUnknown,
+      };
+    }
+
+    if (group == null || groupDecision == null) {
+      return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+    }
+    final row = await dbLoadGroupNotificationDisplayOutboxEntry(
+      db,
+      group.eventId,
+    );
+    if (row == null) {
+      return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+    }
+    final current = GroupNotificationDisplayOutboxEntry.fromMap(row);
+    final sameIdentity = _sameGroupDisplayAuthorityIdentity(group, current);
+    final retirementCorrelation =
+        groupNotificationDisplayDurableCorrelationFromMarker(
+          current.lastAttemptAt,
+        );
+    if (sameIdentity &&
+        current.isReady &&
+        isGroupNotificationDisplayCanonicalRetiredMarker(
+          current.lastAttemptAt,
+        ) &&
+        retirementCorrelation == authority.eventCorrelation) {
+      return DurableLocalNotificationCanonicalDisposition.cancelled;
+    }
+    if (!sameIdentity || !_sameGroupDisplayAuthority(group, current)) {
+      return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+    }
+    return switch (groupDecision) {
+      BackgroundGroupNotificationPostShowDecision.keep =>
+        DurableLocalNotificationCanonicalDisposition.eligible,
+      BackgroundGroupNotificationPostShowDecision.read =>
+        DurableLocalNotificationCanonicalDisposition.read,
+      BackgroundGroupNotificationPostShowDecision.retire =>
+        DurableLocalNotificationCanonicalDisposition.cancelled,
+      BackgroundGroupNotificationPostShowDecision.unknown =>
+        DurableLocalNotificationCanonicalDisposition.retryableUnknown,
+    };
+  } catch (_) {
+    return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+  } finally {
+    await db?.close();
+  }
+}
+
+bool _sameDirectDisplayAuthority(
+  DirectNotificationDisplayOutboxEntry expected,
+  DirectNotificationDisplayOutboxEntry current,
+) =>
+    _sameDirectDisplayAuthorityIdentity(expected, current) &&
+    expected.revision == current.revision;
+
+bool _sameDirectDisplayAuthorityIdentity(
+  DirectNotificationDisplayOutboxEntry expected,
+  DirectNotificationDisplayOutboxEntry current,
+) =>
+    expected.eventId == current.eventId &&
+    expected.eventKind == current.eventKind &&
+    expected.peerId == current.peerId &&
+    expected.messageId == current.messageId &&
+    expected.actorPeerId == current.actorPeerId &&
+    expected.eventTimestamp == current.eventTimestamp &&
+    expected.reactionId == current.reactionId &&
+    expected.reactionAction == current.reactionAction &&
+    expected.reactionTombstone == current.reactionTombstone &&
+    expected.readiness == current.readiness;
+
+bool _sameGroupDisplayAuthority(
+  GroupNotificationDisplayOutboxEntry expected,
+  GroupNotificationDisplayOutboxEntry current,
+) =>
+    _sameGroupDisplayAuthorityIdentity(expected, current) &&
+    expected.revision == current.revision;
+
+bool _sameGroupDisplayAuthorityIdentity(
+  GroupNotificationDisplayOutboxEntry expected,
+  GroupNotificationDisplayOutboxEntry current,
+) =>
+    expected.eventId == current.eventId &&
+    expected.eventKind == current.eventKind &&
+    expected.groupId == current.groupId &&
+    expected.messageId == current.messageId &&
+    expected.actorPeerId == current.actorPeerId &&
+    expected.eventTimestamp == current.eventTimestamp &&
+    expected.reactionId == current.reactionId &&
+    expected.reactionAction == current.reactionAction &&
+    expected.reactionTombstone == current.reactionTombstone &&
+    expected.readiness == current.readiness;
 
 Future<void> _stageResolvedPushEnvelopeIfNeeded(
   RemoteMessage message,

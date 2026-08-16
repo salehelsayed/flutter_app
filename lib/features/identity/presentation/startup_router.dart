@@ -390,6 +390,7 @@ class StartupRouter extends StatefulWidget {
   /// Invalidates the process-local visible-conversation authority before an
   /// account erase can begin clearing account-owned state.
   final VoidCallback? invalidateAppVisibility;
+  final Future<void> Function()? retireCanonicalNotificationBinding;
   final Future<void> Function()? ingestStagedPushEnvelopes;
   final NotificationOpenRouteContext Function(
     NotificationRouteTarget routeTarget,
@@ -506,6 +507,7 @@ class StartupRouter extends StatefulWidget {
     this.clearDeliveredNotifications,
     this.clearIosNotificationRecovery,
     this.invalidateAppVisibility,
+    this.retireCanonicalNotificationBinding,
     this.ingestStagedPushEnvelopes,
     this.createNotificationRouteContext,
     this.onNotificationRouteContext,
@@ -1461,6 +1463,7 @@ class _StartupRouterState extends State<StartupRouter> {
 
   Future<void> _eraseMigratedOutAccount() async {
     widget.invalidateAppVisibility?.call();
+    await widget.retireCanonicalNotificationBinding?.call();
     try {
       await widget.clearIosNotificationRecovery?.call();
     } catch (error) {
@@ -1899,6 +1902,8 @@ class _StartupRouterState extends State<StartupRouter> {
       clearDeliveredNotifications: widget.clearDeliveredNotifications,
       clearIosNotificationRecovery: widget.clearIosNotificationRecovery,
       invalidateAppVisibility: widget.invalidateAppVisibility,
+      retireCanonicalNotificationBinding:
+          widget.retireCanonicalNotificationBinding,
       ingestStagedPushEnvelopes: widget.ingestStagedPushEnvelopes,
       createNotificationRouteContext: widget.createNotificationRouteContext,
       onNotificationRouteContext: widget.onNotificationRouteContext,

@@ -9,10 +9,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
@@ -24,8 +32,10 @@ import 'package:flutter_app/features/push/application/group_reaction_notificatio
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
 import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -77,13 +87,23 @@ void main() {
           is_incoming INTEGER,
           read_at TEXT,
           deleted_at TEXT,
-          hidden_at TEXT
+          hidden_at TEXT,
+          private_media_state TEXT
         )
       ''');
       await writable.insert('contacts', const <String, Object?>{
         'peer_id': 'peer-readonly',
         'is_blocked': 0,
         'is_archived': 0,
+      });
+      await writable.insert('messages', const <String, Object?>{
+        'id': 'message-read',
+        'contact_peer_id': 'peer-readonly',
+        'is_incoming': 1,
+        'read_at': '2026-08-16T01:00:00.000Z',
+        'deleted_at': null,
+        'hidden_at': null,
+        'private_media_state': 'none',
       });
       await writable.close();
       final readOnly = await databaseFactoryFfi.openDatabase(
@@ -107,10 +127,307 @@ void main() {
         ),
         BackgroundDirectNotificationPostShowDecision.unknown,
       );
+      expect(
+        await validateBackgroundDirectNotificationAfterShowInDatabase(
+          readOnly,
+          peerId: 'peer-readonly',
+          metadata: const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity: 'message-read',
+            generation: 'generation-readonly',
+          ),
+        ),
+        BackgroundDirectNotificationPostShowDecision.read,
+      );
     },
   );
 
-  setUp(() {
+  test(
+    'background direct final facts enforce exact READY comparands and private terminals',
+    () async {
+      final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+      addTearDown(db.close);
+      await db.execute('''
+        CREATE TABLE contacts (
+          peer_id TEXT PRIMARY KEY,
+          is_blocked INTEGER NOT NULL DEFAULT 0,
+          is_archived INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          contact_peer_id TEXT,
+          sender_peer_id TEXT,
+          timestamp TEXT,
+          is_incoming INTEGER,
+          read_at TEXT,
+          deleted_at TEXT,
+          hidden_at TEXT,
+          private_media_state TEXT
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE message_reactions (
+          id TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL,
+          sender_peer_id TEXT NOT NULL,
+          timestamp TEXT,
+          removed_at TEXT,
+          UNIQUE(message_id, sender_peer_id)
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE direct_notification_reaction_terminal_events (
+          peer_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          actor_peer_id TEXT NOT NULL,
+          reaction_id TEXT NOT NULL,
+          terminal_event_id TEXT NOT NULL,
+          notification_acknowledged_at TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(peer_id, message_id, actor_peer_id)
+        )
+      ''');
+      await db.insert('contacts', const <String, Object?>{
+        'peer_id': 'peer-final-facts',
+      });
+      await db.insert('messages', const <String, Object?>{
+        'id': 'message-final-facts',
+        'contact_peer_id': 'peer-final-facts',
+        'sender_peer_id': 'peer-final-facts',
+        'timestamp': '2026-08-16T12:00:00.000Z',
+        'is_incoming': 1,
+        'read_at': null,
+        'deleted_at': null,
+        'hidden_at': null,
+        'private_media_state': 'available',
+      });
+      await db.insert('messages', const <String, Object?>{
+        'id': 'reaction-target-final-facts',
+        'contact_peer_id': 'peer-final-facts',
+        'sender_peer_id': 'peer-self-final-facts',
+        'timestamp': '2026-08-16T11:59:00.000Z',
+        'is_incoming': 0,
+        'read_at': null,
+        'deleted_at': null,
+        'hidden_at': null,
+        'private_media_state': 'available',
+      });
+      await db.insert('message_reactions', const <String, Object?>{
+        'id': 'reaction-final-facts',
+        'message_id': 'reaction-target-final-facts',
+        'sender_peer_id': 'peer-final-facts',
+        'timestamp': '2026-08-16T12:00:01.000Z',
+        'removed_at': null,
+      });
+      await db.insert(
+        'direct_notification_reaction_terminal_events',
+        const <String, Object?>{
+          'peer_id': 'peer-final-facts',
+          'message_id': 'reaction-target-final-facts',
+          'actor_peer_id': 'peer-final-facts',
+          'reaction_id': 'reaction-final-facts',
+          'terminal_event_id': 'reaction-event-final-facts',
+          'notification_acknowledged_at': null,
+          'updated_at': '2026-08-16T12:00:00.000Z',
+        },
+      );
+
+      const messageMetadata = ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: 'message-final-facts',
+        generation: 'generation-message-final-facts',
+      );
+      const reactionMetadata = ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.reaction,
+        eventIdentity: 'reaction-event-final-facts',
+        generation: 'generation-reaction-final-facts',
+      );
+      const messageEntry = DirectNotificationDisplayOutboxEntry.message(
+        eventId: 'message-final-facts',
+        peerId: 'peer-final-facts',
+        messageId: 'message-final-facts',
+        actorPeerId: 'peer-final-facts',
+        eventTimestamp: '2026-08-16T12:00:00.000Z',
+        readiness: DirectNotificationDisplayOutboxReadiness.ready,
+        revision: 2,
+        createdAt: '2026-08-16T12:00:00.000Z',
+        updatedAt: '2026-08-16T12:00:00.000Z',
+      );
+      const reactionEntry = DirectNotificationDisplayOutboxEntry.reaction(
+        eventId: 'reaction-event-final-facts',
+        peerId: 'peer-final-facts',
+        messageId: 'reaction-target-final-facts',
+        actorPeerId: 'peer-final-facts',
+        eventTimestamp: '2026-08-16T12:00:01.000Z',
+        reactionId: 'reaction-final-facts',
+        reactionAction: 'add',
+        reactionTombstone: false,
+        readiness: DirectNotificationDisplayOutboxReadiness.ready,
+        revision: 3,
+        createdAt: '2026-08-16T12:00:01.000Z',
+        updatedAt: '2026-08-16T12:00:01.000Z',
+      );
+      Future<BackgroundDirectNotificationPostShowDecision> validateMessage() =>
+          validateBackgroundDirectNotificationAfterShowInDatabase(
+            db,
+            peerId: 'peer-final-facts',
+            metadata: messageMetadata,
+            expectedEntry: messageEntry,
+          );
+      Future<BackgroundDirectNotificationPostShowDecision> validateReaction() =>
+          validateBackgroundDirectNotificationAfterShowInDatabase(
+            db,
+            peerId: 'peer-final-facts',
+            metadata: reactionMetadata,
+            expectedEntry: reactionEntry,
+          );
+
+      expect(
+        await validateMessage(),
+        BackgroundDirectNotificationPostShowDecision.keep,
+      );
+      expect(
+        await validateReaction(),
+        BackgroundDirectNotificationPostShowDecision.keep,
+      );
+
+      await db.update(
+        'messages',
+        const <String, Object?>{'sender_peer_id': 'peer-mutated'},
+        where: 'id = ?',
+        whereArgs: const <Object?>['message-final-facts'],
+      );
+      expect(
+        await validateMessage(),
+        BackgroundDirectNotificationPostShowDecision.unknown,
+        reason: 'message sender mutation cannot borrow exact READY authority',
+      );
+      await db.update(
+        'messages',
+        const <String, Object?>{
+          'sender_peer_id': 'peer-final-facts',
+          'timestamp': '2026-08-16T12:00:02.000Z',
+        },
+        where: 'id = ?',
+        whereArgs: const <Object?>['message-final-facts'],
+      );
+      expect(
+        await validateMessage(),
+        BackgroundDirectNotificationPostShowDecision.unknown,
+        reason:
+            'message timestamp mutation cannot borrow exact READY authority',
+      );
+      await db.update(
+        'messages',
+        const <String, Object?>{'timestamp': '2026-08-16T12:00:00.000Z'},
+        where: 'id = ?',
+        whereArgs: const <Object?>['message-final-facts'],
+      );
+      await db.update(
+        'direct_notification_reaction_terminal_events',
+        const <String, Object?>{'actor_peer_id': 'peer-mutated'},
+        where: 'terminal_event_id = ?',
+        whereArgs: const <Object?>['reaction-event-final-facts'],
+      );
+      expect(
+        await validateReaction(),
+        BackgroundDirectNotificationPostShowDecision.unknown,
+        reason: 'mutable terminal cannot substitute another READY actor',
+      );
+      await db.update(
+        'direct_notification_reaction_terminal_events',
+        const <String, Object?>{'actor_peer_id': 'peer-final-facts'},
+        where: 'terminal_event_id = ?',
+        whereArgs: const <Object?>['reaction-event-final-facts'],
+      );
+      await db.update(
+        'message_reactions',
+        const <String, Object?>{'timestamp': '2026-08-16T12:00:03.000Z'},
+        where: 'id = ?',
+        whereArgs: const <Object?>['reaction-final-facts'],
+      );
+      expect(
+        await validateReaction(),
+        BackgroundDirectNotificationPostShowDecision.retire,
+        reason: 'a newer reaction timestamp cancels the staged generation',
+      );
+      await db.update(
+        'message_reactions',
+        const <String, Object?>{'timestamp': '2026-08-16T12:00:01.000Z'},
+        where: 'id = ?',
+        whereArgs: const <Object?>['reaction-final-facts'],
+      );
+
+      for (final state in const <String>[
+        'consumed',
+        'expired',
+        'unsupported',
+      ]) {
+        await db.update(
+          'messages',
+          <String, Object?>{'private_media_state': state},
+          where: 'id = ?',
+          whereArgs: const <Object?>['message-final-facts'],
+        );
+        expect(
+          await validateMessage(),
+          BackgroundDirectNotificationPostShowDecision.retire,
+          reason: 'message private-media $state is terminal',
+        );
+        await db.update(
+          'messages',
+          <String, Object?>{'private_media_state': state},
+          where: 'id = ?',
+          whereArgs: const <Object?>['reaction-target-final-facts'],
+        );
+        expect(
+          await validateReaction(),
+          BackgroundDirectNotificationPostShowDecision.retire,
+          reason: 'reaction target private-media $state is terminal',
+        );
+      }
+
+      await db.update(
+        'messages',
+        const <String, Object?>{
+          'private_media_state': 'available',
+          'hidden_at': '2026-08-16T12:01:00.000Z',
+        },
+        where: 'id IN (?, ?)',
+        whereArgs: const <Object?>[
+          'message-final-facts',
+          'reaction-target-final-facts',
+        ],
+      );
+      expect(
+        await validateMessage(),
+        BackgroundDirectNotificationPostShowDecision.retire,
+      );
+      expect(
+        await validateReaction(),
+        BackgroundDirectNotificationPostShowDecision.retire,
+      );
+      await db.delete(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: const <Object?>['peer-final-facts'],
+      );
+      expect(
+        await validateMessage(),
+        BackgroundDirectNotificationPostShowDecision.unknown,
+        reason: 'missing contact is unknown, never suppression authority',
+      );
+      expect(
+        await validateReaction(),
+        BackgroundDirectNotificationPostShowDecision.unknown,
+        reason: 'missing contact is unknown, never suppression authority',
+      );
+    },
+  );
+
+  setUp(() async {
     flowEventLoggingEnabled = false;
     log.clear();
 
@@ -165,6 +482,9 @@ void main() {
     final notificationIdRegistry = DurableConversationNotificationIdRegistry(
       directory: notificationIdDirectory,
     );
+    await LocalNotificationLedgerStore(
+      directory: notificationIdDirectory,
+    ).initializeOrRebind(currentOpaqueBinding: 'v1:${'b' * 64}');
     debugSetBackgroundConversationNotificationIdRegistryResolver(
       () async => notificationIdRegistry,
     );
@@ -183,6 +503,78 @@ void main() {
     debugSetBackgroundGroupNotificationPostShowValidator(
       (_) async => BackgroundGroupNotificationPostShowDecision.keep,
     );
+    debugSetBackgroundDurableLocalNotificationEffectResolver(({
+      required routeTarget,
+      required fallback,
+      required metadata,
+    }) async {
+      final resolved = fallback.resolvedEventIdentity;
+      if (resolved == null) return null;
+      final identity = AppVisibilityConversationIdentity.tryParse(
+        lane: routeTarget.kind == NotificationRouteTargetKind.group
+            ? AppVisibilityConversationLane.group
+            : AppVisibilityConversationLane.direct,
+        value: routeTarget.kind == NotificationRouteTargetKind.group
+            ? 'group:${routeTarget.groupId}'
+            : routeTarget.peerId ?? '',
+      );
+      final outcomeProducer = switch ((routeTarget.kind, metadata.kind)) {
+        (
+          NotificationRouteTargetKind.conversation,
+          ConversationNotificationContentKind.message,
+        ) =>
+          NotificationCompletedOutcomeProducerKind.directMessage,
+        (
+          NotificationRouteTargetKind.conversation,
+          ConversationNotificationContentKind.reaction,
+        ) =>
+          NotificationCompletedOutcomeProducerKind.directReaction,
+        (
+          NotificationRouteTargetKind.group,
+          ConversationNotificationContentKind.message,
+        ) =>
+          NotificationCompletedOutcomeProducerKind.groupMessage,
+        (
+          NotificationRouteTargetKind.group,
+          ConversationNotificationContentKind.reaction,
+        ) =>
+          NotificationCompletedOutcomeProducerKind.groupReaction,
+        _ => null,
+      };
+      final ledgerProducer = switch (outcomeProducer) {
+        NotificationCompletedOutcomeProducerKind.directMessage =>
+          LocalNotificationProducerKind.directMessage,
+        NotificationCompletedOutcomeProducerKind.directReaction =>
+          LocalNotificationProducerKind.directReaction,
+        NotificationCompletedOutcomeProducerKind.groupMessage =>
+          LocalNotificationProducerKind.groupMessage,
+        NotificationCompletedOutcomeProducerKind.groupReaction =>
+          LocalNotificationProducerKind.groupReaction,
+        null => null,
+      };
+      final correlation = outcomeProducer == null
+          ? null
+          : tryComputeNotificationCompletedOutcomeCorrelation(
+              physicalPeerId: 'test-physical-peer',
+              producerKind: outcomeProducer,
+              eventKey: resolved.canonicalEventId,
+            );
+      if (identity == null || ledgerProducer == null || correlation == null) {
+        return null;
+      }
+      return DurableLocalNotificationEffectContext(
+        currentOpaqueBinding: 'v1:${'b' * 64}',
+        eventCorrelation: correlation,
+        conversationDigest: identity.digest,
+        producerKind: ledgerProducer,
+        sourceCustody: LocalNotificationSourceCustody.sqlReady,
+        presentationOwner:
+            LocalNotificationPresentationOwner.androidPushService,
+        readFinalCanonicalDisposition: () async =>
+            DurableLocalNotificationCanonicalDisposition.eligible,
+      );
+    });
+    debugSetBackgroundAppVisibilityResolver(() async => FixedAppVisibility());
   });
 
   tearDown(() {
@@ -202,6 +594,8 @@ void main() {
     debugResetBackgroundDirectReactionLocalStateResolver();
     debugResetBackgroundGroupReactionLocalStateResolver();
     debugResetBackgroundGroupNotificationPostShowValidator();
+    debugResetBackgroundDurableLocalNotificationEffectResolver();
+    debugResetBackgroundAppVisibilityResolver();
     debugResetBackgroundMessageNotificationCoordinatorResolver();
     debugResetBackgroundConversationNotificationIdRegistryResolver();
     debugResetBackgroundReactionNotificationCoordinatorResolver();
@@ -214,6 +608,422 @@ void main() {
   });
 
   group('firebaseMessagingBackgroundHandler', () {
+    test(
+      'TC-372-07b authenticated background effect authorizes before native entry',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Alice',
+            body: 'hello',
+            payload: 'peer-authorized',
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.message,
+              canonicalEventId: 'message-authorized',
+            ),
+          ),
+        );
+
+        final sqlPath =
+            '${Directory.systemTemp.path}/background-effect-authority-${DateTime.now().microsecondsSinceEpoch}.db';
+        final db = await databaseFactoryFfi.openDatabase(sqlPath);
+        addTearDown(() async {
+          await db.close();
+          await databaseFactoryFfi.deleteDatabase(sqlPath);
+        });
+        await db.execute('''
+          CREATE TABLE direct_notification_display_outbox (
+            event_id TEXT NOT NULL,
+            event_kind TEXT NOT NULL,
+            peer_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            actor_peer_id TEXT NOT NULL,
+            event_timestamp TEXT NOT NULL,
+            reaction_id TEXT,
+            reaction_action TEXT,
+            reaction_tombstone INTEGER,
+            readiness TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            retry_count INTEGER NOT NULL,
+            last_error_code TEXT,
+            last_attempt_at TEXT,
+            next_attempt_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(peer_id, event_kind, event_id)
+          )
+        ''');
+        const sqlEntry = DirectNotificationDisplayOutboxEntry.message(
+          eventId: 'message-authorized',
+          peerId: 'peer-authorized',
+          messageId: 'message-authorized',
+          actorPeerId: 'peer-authorized',
+          eventTimestamp: '2026-08-16T12:00:00.000Z',
+          readiness: DirectNotificationDisplayOutboxReadiness.ready,
+          revision: 2,
+          createdAt: '2026-08-16T12:00:00.000Z',
+          updatedAt: '2026-08-16T12:00:00.000Z',
+        );
+        await db.insert('direct_notification_display_outbox', sqlEntry.toMap());
+
+        final registryDirectory = Directory.systemTemp.createTempSync(
+          'background-effect-authority-registry-',
+        );
+        addTearDown(() {
+          if (registryDirectory.existsSync()) {
+            registryDirectory.deleteSync(recursive: true);
+          }
+        });
+        final registry = DurableConversationNotificationIdRegistry(
+          directory: registryDirectory,
+        );
+        debugSetBackgroundConversationNotificationIdRegistryResolver(
+          () async => registry,
+        );
+        const binding =
+            'v1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+        await LocalNotificationLedgerStore(
+          directory: registryDirectory,
+        ).initializeOrRebind(currentOpaqueBinding: binding);
+
+        final order = <String>[];
+        debugSetBackgroundDurableLocalNotificationEffectResolver(
+          ({required routeTarget, required fallback, required metadata}) =>
+              resolveBackgroundDurableLocalNotificationEffectInDatabase(
+                db,
+                routeTarget: routeTarget,
+                fallback: fallback,
+                metadata: metadata,
+                currentOpaqueBinding: binding,
+                physicalPeerId: 'physical-authorized',
+                readFinalCanonicalDisposition: () async {
+                  order.add('canonical');
+                  final current = await db.query(
+                    'direct_notification_display_outbox',
+                    where: 'event_id = ?',
+                    whereArgs: const <Object?>['message-authorized'],
+                  );
+                  expect(current.single['revision'], 2);
+                  return DurableLocalNotificationCanonicalDisposition.eligible;
+                },
+              ),
+        );
+        debugSetBackgroundAppVisibilityResolver(
+          () async => _OrderedBackgroundVisibility(order),
+        );
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              if (call.method == 'show') order.add('native');
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-authorized',
+            data: <String, dynamic>{
+              'type': 'new_message',
+              'sender_id': 'peer-authorized',
+              'message_id': 'message-authorized',
+            },
+          ),
+        );
+
+        expect(order, <String>['canonical', 'visibility', 'native']);
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+        final shownEvent = events.singleWhere(
+          (event) => event['event'] == 'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
+        );
+        final shownBytes = jsonEncode(shownEvent);
+        expect(shownBytes, isNot(contains('provider-authorized')));
+        expect(shownBytes, isNot(contains('peer-authorized')));
+        expect(shownBytes, isNot(contains('message-authorized')));
+        expect((shownEvent['details'] as Map)['durable'], isTrue);
+        expect(
+          await db.query('direct_notification_display_outbox'),
+          hasLength(1),
+          reason: 'the read-only background owner retains SQL custody',
+        );
+        final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
+          physicalPeerId: 'physical-authorized',
+          producerKind: NotificationCompletedOutcomeProducerKind.directMessage,
+          eventKey: 'message-authorized',
+        )!;
+        final envelope = await LocalNotificationLedgerStore(
+          directory: registryDirectory,
+        ).read(currentOpaqueBinding: binding);
+        final record = envelope!.records[correlation]!;
+        expect(
+          record.presentationOwner,
+          LocalNotificationPresentationOwner.androidPushService,
+        );
+        expect(record.effectPhase, LocalNotificationEffectPhase.effectTerminal);
+        expect(record.settledAtUtc, isNull);
+      },
+    );
+
+    test(
+      'authenticated durable-authority deferral releases provisional owners for retry',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Alice',
+            body: 'hello',
+            payload: 'peer-deferred',
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.message,
+              canonicalEventId: 'message-deferred',
+            ),
+          ),
+        );
+        var authorityReads = 0;
+        debugSetBackgroundDurableLocalNotificationEffectResolver(({
+          required routeTarget,
+          required fallback,
+          required metadata,
+        }) async {
+          authorityReads++;
+          return null;
+        });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        const message = RemoteMessage(
+          messageId: 'provider-deferred',
+          data: <String, dynamic>{
+            'type': 'new_message',
+            'sender_id': 'peer-deferred',
+            'message_id': 'message-deferred',
+          },
+        );
+        await firebaseMessagingBackgroundHandler(message);
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(authorityReads, 2);
+        expect(log.where((call) => call.method == 'show'), isEmpty);
+      },
+    );
+
+    test(
+      'authenticated background read terminalizes the durable ledger as READ',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Alice',
+            body: 'hello',
+            payload: 'peer-background-read',
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.message,
+              canonicalEventId: 'message-background-read',
+            ),
+          ),
+        );
+        final registryDirectory = Directory.systemTemp.createTempSync(
+          'background-read-terminal-registry-',
+        );
+        addTearDown(() {
+          if (registryDirectory.existsSync()) {
+            registryDirectory.deleteSync(recursive: true);
+          }
+        });
+        const binding =
+            'v1:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+        final registry = DurableConversationNotificationIdRegistry(
+          directory: registryDirectory,
+        );
+        expect(
+          await LocalNotificationLedgerStore(
+            directory: registryDirectory,
+          ).initializeOrRebind(currentOpaqueBinding: binding),
+          isNotNull,
+        );
+        debugSetBackgroundConversationNotificationIdRegistryResolver(
+          () async => registry,
+        );
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.direct,
+          value: 'peer-background-read',
+        )!;
+        final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
+          physicalPeerId: 'physical-background-read',
+          producerKind: NotificationCompletedOutcomeProducerKind.directMessage,
+          eventKey: 'message-background-read',
+        )!;
+        debugSetBackgroundDurableLocalNotificationEffectResolver(
+          ({
+            required routeTarget,
+            required fallback,
+            required metadata,
+          }) async => DurableLocalNotificationEffectContext(
+            currentOpaqueBinding: binding,
+            eventCorrelation: correlation,
+            conversationDigest: identity.digest,
+            producerKind: LocalNotificationProducerKind.directMessage,
+            sourceCustody: LocalNotificationSourceCustody.sqlReady,
+            presentationOwner:
+                LocalNotificationPresentationOwner.androidPushService,
+            readFinalCanonicalDisposition: () async =>
+                DurableLocalNotificationCanonicalDisposition.read,
+          ),
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-background-read',
+            data: <String, dynamic>{
+              'type': 'new_message',
+              'sender_id': 'peer-background-read',
+              'message_id': 'message-background-read',
+            },
+          ),
+        );
+
+        expect(log.where((call) => call.method == 'show'), isEmpty);
+        final envelope = await LocalNotificationLedgerStore(
+          directory: registryDirectory,
+        ).read(currentOpaqueBinding: binding);
+        final record = envelope!.records[correlation]!;
+        expect(record.readState, LocalNotificationReadState.read);
+        expect(
+          record.presentationState,
+          LocalNotificationPresentationState.cancelled,
+        );
+        expect(record.effectPhase, LocalNotificationEffectPhase.effectTerminal);
+      },
+    );
+
+    test(
+      'durable terminal replay releases fresh provisional owners without a second native entry',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Alice',
+            body: 'hello',
+            payload: 'peer-terminal-replay',
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.message,
+              canonicalEventId: 'message-terminal-replay',
+            ),
+          ),
+        );
+
+        final registryDirectory = Directory.systemTemp.createTempSync(
+          'background-terminal-replay-registry-',
+        );
+        addTearDown(() {
+          if (registryDirectory.existsSync()) {
+            registryDirectory.deleteSync(recursive: true);
+          }
+        });
+        final registry = DurableConversationNotificationIdRegistry(
+          directory: registryDirectory,
+        );
+        await LocalNotificationLedgerStore(
+          directory: registryDirectory,
+        ).initializeOrRebind(currentOpaqueBinding: 'v1:${'b' * 64}');
+        debugSetBackgroundConversationNotificationIdRegistryResolver(
+          () async => registry,
+        );
+
+        final firstToneDirectory = Directory.systemTemp.createTempSync(
+          'background-terminal-replay-first-tone-',
+        );
+        addTearDown(() {
+          if (firstToneDirectory.existsSync()) {
+            firstToneDirectory.deleteSync(recursive: true);
+          }
+        });
+        debugSetBackgroundMessageNotificationCoordinatorResolver(
+          () async => DurableNotificationToneLease(
+            directory: firstToneDirectory,
+            pendingClaimWait: Duration.zero,
+          ),
+        );
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+        const message = RemoteMessage(
+          messageId: 'provider-terminal-replay',
+          data: <String, dynamic>{
+            'type': 'new_message',
+            'sender_id': 'peer-terminal-replay',
+            'message_id': 'message-terminal-replay',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+
+        // Model a fresh headless isolate: the file ledger survives while the
+        // legacy event/tone projections start empty and are provisionally
+        // acquired again before the durable terminal is replayed.
+        final replayToneDirectory = Directory.systemTemp.createTempSync(
+          'background-terminal-replay-second-tone-',
+        );
+        addTearDown(() {
+          if (replayToneDirectory.existsSync()) {
+            replayToneDirectory.deleteSync(recursive: true);
+          }
+        });
+        debugSetBackgroundMessageNotificationCoordinatorResolver(
+          () async => DurableNotificationToneLease(
+            directory: replayToneDirectory,
+            pendingClaimWait: Duration.zero,
+          ),
+        );
+        debugResetRecentBackgroundNotificationGate();
+        debugResetRecentRemoteNotificationGate();
+
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(
+          log.where((call) => call.method == 'show'),
+          hasLength(1),
+          reason: 'EFFECT_TERMINAL replay must not re-enter native show',
+        );
+      },
+    );
+
     test(
       'post-show policy flip retires only the generation just shown',
       () async {
@@ -1112,7 +1922,12 @@ void main() {
         );
         expect(
           payload?.metadata.eventIdentity,
-          boundedReactionEventIdentity('reaction-inner-only'),
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: 'test-physical-peer',
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.directReaction,
+            eventKey: 'reaction-inner-only',
+          ),
         );
       },
     );
@@ -1161,7 +1976,12 @@ void main() {
         );
         expect(
           payload?.metadata.eventIdentity,
-          boundedReactionEventIdentity('group-inner-transition'),
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: 'test-physical-peer',
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.groupReaction,
+            eventKey: 'group-inner-transition',
+          ),
         );
       },
     );
@@ -4770,6 +5590,27 @@ class _ThrowingToneReservationCoordinator extends DurableNotificationToneLease {
     String conversationKey,
   ) async {
     throw const FileSystemException('tone storage unavailable');
+  }
+}
+
+final class _OrderedBackgroundVisibility
+    extends AppVisibilitySuppressionReader {
+  _OrderedBackgroundVisibility(this.order);
+
+  final List<String> order;
+
+  @override
+  Future<AppVisibilityEvaluation> evaluate(
+    AppVisibilityConversationIdentity? identity,
+  ) async {
+    order.add('visibility');
+    return const AppVisibilityEvaluation(
+      isForegroundActive: false,
+      maySuppress: false,
+      lifecycle: AppVisibilityLifecycle.background,
+      revision: 9,
+      lifecycleGeneration: 12,
+    );
   }
 }
 

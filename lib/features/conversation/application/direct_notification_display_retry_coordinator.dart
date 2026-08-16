@@ -1,4 +1,38 @@
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+
+/// The exact authenticated authority captured before a durable direct effect.
+///
+/// Raw peer and event identifiers live only in memory. The durable ledger sees
+/// their canonical digests, while the existing optional v116 writer receives
+/// the original authenticated tuple after the effect becomes terminal.
+final class DirectNotificationDurableEffectAuthority {
+  const DirectNotificationDurableEffectAuthority({
+    required this.currentOpaqueBinding,
+    required this.physicalPeerId,
+    required this.outcomeProducerKind,
+    required this.eventKey,
+    required this.receipt,
+    this.sqlReadyRevision,
+  });
+
+  final String currentOpaqueBinding;
+  final String physicalPeerId;
+  final NotificationCompletedOutcomeProducerKind outcomeProducerKind;
+  final String eventKey;
+  final DurableLocalNotificationEffectReceipt receipt;
+  final int? sqlReadyRevision;
+
+  DirectNotificationDurableEffectAuthority withSqlReadyRevision(int revision) =>
+      DirectNotificationDurableEffectAuthority(
+        currentOpaqueBinding: currentOpaqueBinding,
+        physicalPeerId: physicalPeerId,
+        outcomeProducerKind: outcomeProducerKind,
+        eventKey: eventKey,
+        receipt: receipt,
+        sqlReadyRevision: revision,
+      );
+}
 
 enum DirectNotificationDisplayRetryDisposition {
   completed,
@@ -13,13 +47,16 @@ final class DirectNotificationDisplayProjectionResult {
   const DirectNotificationDisplayProjectionResult._({
     required this.disposition,
     this.outcomeCandidate,
+    this.durableEffectAuthority,
   });
 
   const DirectNotificationDisplayProjectionResult.completed({
     NotificationCompletedOutcomeCandidate? outcomeCandidate,
+    DirectNotificationDurableEffectAuthority? durableEffectAuthority,
   }) : this._(
          disposition: DirectNotificationDisplayRetryDisposition.completed,
          outcomeCandidate: outcomeCandidate,
+         durableEffectAuthority: durableEffectAuthority,
        );
 
   const DirectNotificationDisplayProjectionResult.retired()
@@ -30,6 +67,7 @@ final class DirectNotificationDisplayProjectionResult {
 
   final DirectNotificationDisplayRetryDisposition disposition;
   final NotificationCompletedOutcomeCandidate? outcomeCandidate;
+  final DirectNotificationDurableEffectAuthority? durableEffectAuthority;
 }
 
 typedef LoadDirectNotificationDisplayBatch<T> =
@@ -41,6 +79,22 @@ typedef CompleteDirectNotificationDisplayWithOutcome<T> =
       T entry,
       NotificationCompletedOutcomeCandidate? outcome,
     );
+typedef SettleDirectNotificationDurableEffect<T> =
+    Future<void> Function(
+      T entry,
+      DirectNotificationDurableEffectAuthority authority,
+    );
+typedef NotifyDirectNotificationDurablePostSettlement<T> =
+    Future<void> Function(
+      T entry,
+      DirectNotificationDurableEffectAuthority authority,
+    );
+typedef CompleteDirectNotificationDurableSqlHandoff<T> =
+    Future<DurableLocalNotificationSqlHandoffResult> Function(
+      T entry,
+      NotificationCompletedOutcomeCandidate? outcome,
+      DirectNotificationDurableEffectAuthority authority,
+    );
 
 /// Bounded, single-flight retry engine shared by direct display and
 /// reconciliation custody. Durable rows remain the authority across restarts.
@@ -49,6 +103,9 @@ final class DirectNotificationDisplayRetryCoordinator<T> {
     required this.loadReady,
     required this.project,
     required this.completeWithOutcome,
+    this.completeDurableSqlHandoff,
+    this.settleDurableEffect,
+    this.afterDurableSettlement,
     required this.retire,
     required this.recordFailure,
     this.entryIdentity,
@@ -57,8 +114,11 @@ final class DirectNotificationDisplayRetryCoordinator<T> {
     DateTime Function()? nowUtc,
     this.batchSize = 20,
     this.maxBatchesPerRun = 4,
+    this.durableSettlementRetryDelay = const Duration(seconds: 65),
   }) : nowUtc = nowUtc ?? DateTime.now {
-    if (batchSize <= 0 || maxBatchesPerRun <= 0) {
+    if (batchSize <= 0 ||
+        maxBatchesPerRun <= 0 ||
+        durableSettlementRetryDelay.isNegative) {
       throw ArgumentError('batch bounds must be positive');
     }
   }
@@ -66,6 +126,11 @@ final class DirectNotificationDisplayRetryCoordinator<T> {
   final LoadDirectNotificationDisplayBatch<T> loadReady;
   final ProjectDirectNotificationDisplay<T> project;
   final CompleteDirectNotificationDisplayWithOutcome<T> completeWithOutcome;
+  final CompleteDirectNotificationDurableSqlHandoff<T>?
+  completeDurableSqlHandoff;
+  final SettleDirectNotificationDurableEffect<T>? settleDurableEffect;
+  final NotifyDirectNotificationDurablePostSettlement<T>?
+  afterDurableSettlement;
   final Future<void> Function(T entry) retire;
   final Future<void> Function(T entry, Object error) recordFailure;
   final Object? Function(T entry)? entryIdentity;
@@ -74,10 +139,14 @@ final class DirectNotificationDisplayRetryCoordinator<T> {
   final DateTime Function() nowUtc;
   final int batchSize;
   final int maxBatchesPerRun;
+  final Duration durableSettlementRetryDelay;
 
   Future<void>? _running;
   bool _dirty = false;
   bool _disposed = false;
+  final List<_PendingDirectNotificationDurableSettlement<T>>
+  _pendingDurableSettlements =
+      <_PendingDirectNotificationDurableSettlement<T>>[];
 
   Future<void> retryNow() {
     if (_disposed) return Future<void>.value();
@@ -98,6 +167,43 @@ final class DirectNotificationDisplayRetryCoordinator<T> {
     var batches = 0;
     final failedIdentities = <Object?>{};
     try {
+      if (_pendingDurableSettlements.isNotEmpty) {
+        final pending = List<_PendingDirectNotificationDurableSettlement<T>>.of(
+          _pendingDurableSettlements,
+        );
+        for (final completion in pending) {
+          if (_disposed) return;
+          try {
+            final completeDurable = completeDurableSqlHandoff;
+            final settle = settleDurableEffect;
+            if (completeDurable == null || settle == null) {
+              throw const DirectNotificationDisplayRetryableException();
+            }
+            // Re-prove the typed SQL terminal (normally `alreadyCommitted`)
+            // before every receipt-only settlement retry. Projection and its
+            // native callback are deliberately not re-entered here.
+            final handoff = await completeDurable(
+              completion.entry,
+              completion.outcomeCandidate,
+              completion.authority,
+            );
+            if (handoff ==
+                DurableLocalNotificationSqlHandoffResult.retryableMismatch) {
+              throw const DirectNotificationDisplayRetryableException();
+            }
+            await settle(completion.entry, completion.authority);
+            await afterDurableSettlement?.call(
+              completion.entry,
+              completion.authority,
+            );
+            _pendingDurableSettlements.remove(completion);
+          } catch (_) {
+            needsLaterRetry = true;
+            inspectDeferred = true;
+            failedIdentities.add(_identityOf(completion.entry));
+          }
+        }
+      }
       while (!_disposed && batches < maxBatchesPerRun) {
         _dirty = false;
         final loaded = await loadReady(
@@ -122,13 +228,52 @@ final class DirectNotificationDisplayRetryCoordinator<T> {
         for (final entry in batch) {
           if (_disposed) return;
           late Object failure;
+          var durableSettlementPending = false;
           try {
             final projection = await project(entry);
             if (_disposed) return;
             if (projection.disposition ==
                 DirectNotificationDisplayRetryDisposition.completed) {
-              await completeWithOutcome(entry, projection.outcomeCandidate);
-              if (_disposed) return;
+              final authority = projection.durableEffectAuthority;
+              if (authority != null) {
+                final completeDurable = completeDurableSqlHandoff;
+                if (completeDurable == null) {
+                  throw const DirectNotificationDisplayRetryableException();
+                }
+                final handoff = await completeDurable(
+                  entry,
+                  projection.outcomeCandidate,
+                  authority,
+                );
+                if (handoff ==
+                    DurableLocalNotificationSqlHandoffResult
+                        .retryableMismatch) {
+                  throw const DirectNotificationDisplayRetryableException();
+                }
+                if (_disposed) return;
+                final settle = settleDurableEffect;
+                if (settle == null) {
+                  throw const DirectNotificationDisplayRetryableException();
+                }
+                // SQL custody and the optional v116 outcome are exact and
+                // committed before the file-ledger terminal becomes SETTLED.
+                try {
+                  await settle(entry, authority);
+                  await afterDurableSettlement?.call(entry, authority);
+                } catch (_) {
+                  _rememberPendingDurableSettlement(
+                    entry: entry,
+                    outcomeCandidate: projection.outcomeCandidate,
+                    authority: authority,
+                  );
+                  durableSettlementPending = true;
+                  rethrow;
+                }
+                if (_disposed) return;
+              } else {
+                await completeWithOutcome(entry, projection.outcomeCandidate);
+                if (_disposed) return;
+              }
               continue;
             }
             if (projection.disposition ==
@@ -145,6 +290,13 @@ final class DirectNotificationDisplayRetryCoordinator<T> {
           needsLaterRetry = true;
           inspectDeferred = true;
           failedIdentities.add(_identityOf(entry));
+          if (durableSettlementPending) {
+            // Transaction A already committed and the file-ledger terminal may
+            // already be SETTLED. Advancing the raw READY revision here would
+            // invalidate the exact revision retained for transaction B and
+            // strand crash recovery. The receipt-only queue owns this retry.
+            continue;
+          }
           await recordFailure(entry, failure);
           if (_disposed) return;
         }
@@ -164,7 +316,9 @@ final class DirectNotificationDisplayRetryCoordinator<T> {
       try {
         if (!_disposed && inspectDeferred) {
           final nextAttemptAt = await loadEarliestNextAttemptAt?.call();
-          if (nextAttemptAt != null) {
+          if (_pendingDurableSettlements.isNotEmpty) {
+            retryDelay = durableSettlementRetryDelay;
+          } else if (nextAttemptAt != null) {
             final untilDue = nextAttemptAt.toUtc().difference(nowUtc().toUtc());
             retryDelay = untilDue.isNegative ? Duration.zero : untilDue;
           } else if (needsLaterRetry) {
@@ -181,10 +335,45 @@ final class DirectNotificationDisplayRetryCoordinator<T> {
 
   Object? _identityOf(T entry) => entryIdentity?.call(entry) ?? entry;
 
+  void _rememberPendingDurableSettlement({
+    required T entry,
+    required NotificationCompletedOutcomeCandidate? outcomeCandidate,
+    required DirectNotificationDurableEffectAuthority authority,
+  }) {
+    _pendingDurableSettlements.removeWhere(
+      (pending) =>
+          _identityOf(pending.entry) == _identityOf(entry) &&
+          pending.authority.receipt.eventCorrelation ==
+              authority.receipt.eventCorrelation &&
+          pending.authority.receipt.recordRevision ==
+              authority.receipt.recordRevision,
+    );
+    _pendingDurableSettlements.add(
+      _PendingDirectNotificationDurableSettlement<T>(
+        entry: entry,
+        outcomeCandidate: outcomeCandidate,
+        authority: authority,
+      ),
+    );
+  }
+
   void dispose() {
     _disposed = true;
     _dirty = false;
+    _pendingDurableSettlements.clear();
   }
+}
+
+final class _PendingDirectNotificationDurableSettlement<T> {
+  const _PendingDirectNotificationDurableSettlement({
+    required this.entry,
+    required this.outcomeCandidate,
+    required this.authority,
+  });
+
+  final T entry;
+  final NotificationCompletedOutcomeCandidate? outcomeCandidate;
+  final DirectNotificationDurableEffectAuthority authority;
 }
 
 final class DirectNotificationDisplayRetryableException implements Exception {

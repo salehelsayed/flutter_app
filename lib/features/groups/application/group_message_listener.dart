@@ -6,12 +6,15 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/group_notification_canonical_reconciler.dart';
@@ -20,6 +23,7 @@ import 'package:flutter_app/core/notifications/group_notification_reconciliation
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
@@ -67,6 +71,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/domain/repositories/group_notification_display_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_notification_reconciliation_outbox_repository.dart';
 import 'package:flutter_app/features/push/application/group_notification_display_policy.dart';
+import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/group_reaction_notification_copy.dart';
 import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
@@ -124,6 +129,8 @@ typedef GroupNotificationEventAcknowledgedResolver =
       required ConversationNotificationContentKind contentKind,
       required String eventIdentity,
     });
+typedef ResolveCurrentGroupNotificationOpaqueBinding =
+    Future<String?> Function();
 
 /// Identifier-only canonical reaction attention used to rebuild the shared
 /// group card. Target text and raw emoji are intentionally not represented.
@@ -139,6 +146,28 @@ final class GroupNotificationCanonicalReaction {
   final String actorPeerId;
   final String eventIdentity;
   final DateTime timestamp;
+}
+
+final class _GroupDurableNotificationAuthority {
+  const _GroupDurableNotificationAuthority({
+    required this.currentOpaqueBinding,
+    required this.eventCorrelation,
+    required this.conversationIdentity,
+    required this.ledgerProducerKind,
+    required this.outcomeProducerKind,
+    required this.physicalPeerId,
+    required this.eventKey,
+    required this.registry,
+  });
+
+  final String currentOpaqueBinding;
+  final String eventCorrelation;
+  final AppVisibilityConversationIdentity conversationIdentity;
+  final LocalNotificationProducerKind ledgerProducerKind;
+  final NotificationCompletedOutcomeProducerKind outcomeProducerKind;
+  final String? physicalPeerId;
+  final String? eventKey;
+  final DurableLocalNotificationEffectRegistry registry;
 }
 
 /// Opaque ownership of one participant in the listener's shared group-media
@@ -218,6 +247,10 @@ class GroupMessageListener {
   final GroupNotificationEventAcknowledgedResolver?
   _isGroupNotificationEventAcknowledged;
   final Future<String?> Function()? _resolveCompletedOutcomePhysicalPeerId;
+  final ResolveCurrentGroupNotificationOpaqueBinding?
+  _resolveCurrentOpaqueBinding;
+  final DurableLocalNotificationEffectRegistry?
+  _durableLocalNotificationEffectRegistry;
   final bool _completedOutcomeProducerEnabled;
   late final GroupNotificationCanonicalReconciler?
   _notificationCanonicalReconciler;
@@ -312,6 +345,9 @@ class GroupMessageListener {
     GroupNotificationEventAcknowledgedResolver?
     isGroupNotificationEventAcknowledged,
     Future<String?> Function()? resolveCompletedOutcomePhysicalPeerId,
+    ResolveCurrentGroupNotificationOpaqueBinding? resolveCurrentOpaqueBinding,
+    DurableLocalNotificationEffectRegistry?
+    durableLocalNotificationEffectRegistry,
     bool completedOutcomeProducerEnabled = false,
     BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask,
     EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask,
@@ -357,6 +393,9 @@ class GroupMessageListener {
            isGroupNotificationEventAcknowledged,
        _resolveCompletedOutcomePhysicalPeerId =
            resolveCompletedOutcomePhysicalPeerId,
+       _resolveCurrentOpaqueBinding = resolveCurrentOpaqueBinding,
+       _durableLocalNotificationEffectRegistry =
+           durableLocalNotificationEffectRegistry,
        _completedOutcomeProducerEnabled = completedOutcomeProducerEnabled {
     final readSource = msgRepo is GroupConversationReadEventSource
         ? msgRepo as GroupConversationReadEventSource
@@ -671,16 +710,50 @@ class GroupMessageListener {
     )) {
       return GroupNotificationCanonicalContentDecision.retire;
     }
+    final durableCorrelation =
+        durableLocalNotificationContentGeneration(eventIdentity) ==
+            metadata.generation?.trim()
+        ? eventIdentity
+        : null;
     return switch (metadata.kind) {
       ConversationNotificationContentKind.message => () async {
-        final message = await _msgRepo.getMessage(eventIdentity);
+        final message = durableCorrelation == null
+            ? await _msgRepo.getMessage(eventIdentity)
+            : await _loadLatestUnreadNotificationMessage?.call(groupId);
         if (message == null) {
+          if (durableCorrelation != null) {
+            return GroupNotificationCanonicalContentDecision.unknown;
+          }
           final deletionGroup = await _msgRepo.getLocalDeletionGroupId(
             eventIdentity,
           );
           return deletionGroup == groupId
               ? GroupNotificationCanonicalContentDecision.retire
               : GroupNotificationCanonicalContentDecision.unknown;
+        }
+        if (durableCorrelation != null) {
+          final physicalPeerId = await _resolveCompletedOutcomePhysicalPeerId
+              ?.call();
+          final eventKey = trySelectNotificationCompletedOutcomeEventKey(
+            producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+            authenticatedEnvelope: <String, Object?>{
+              'messageId': message.id,
+              if (message.logicalDeliveryId != null)
+                'logicalDeliveryId': message.logicalDeliveryId,
+            },
+          );
+          if (physicalPeerId == null ||
+              eventKey == null ||
+              tryComputeNotificationCompletedOutcomeCorrelation(
+                    physicalPeerId: physicalPeerId,
+                    producerKind:
+                        NotificationCompletedOutcomeProducerKind.groupMessage,
+                    eventKey: eventKey,
+                  ) !=
+                  durableCorrelation) {
+            // A different newest canonical event owns the one group card.
+            return GroupNotificationCanonicalContentDecision.retire;
+          }
         }
         return message.groupId == groupId &&
                 message.isIncoming &&
@@ -692,6 +765,9 @@ class GroupMessageListener {
             : GroupNotificationCanonicalContentDecision.retire;
       }(),
       ConversationNotificationContentKind.reaction =>
+        // Durable Plan-372 SQL commits the correlation into the canonical
+        // reaction terminal marker. Legacy rows retain their bounded alias;
+        // the same exact resolver supports both without inverting a digest.
         await _isActiveGroupNotificationReaction!(
           groupId: groupId,
           selfPeerId: selfPeerId,
@@ -1216,11 +1292,16 @@ class GroupMessageListener {
   ) async {
     final message = await _msgRepo.getMessage(entry.messageId);
     if (message == null) {
+      if (isGroupNotificationDisplayCanonicalRetiredMarker(
+        entry.lastAttemptAt,
+      )) {
+        return _projectCanonicalRetiredMessageNotificationDisplay(entry);
+      }
       final deletionGroup = await _msgRepo.getLocalDeletionGroupId(
         entry.messageId,
       );
       if (deletionGroup == entry.groupId) {
-        return const GroupNotificationDisplayProjectionResult.retired();
+        return _projectCanonicalRetiredMessageNotificationDisplay(entry);
       }
       throw const GroupNotificationDisplayStateUnavailableException();
     }
@@ -1228,34 +1309,59 @@ class GroupMessageListener {
         message.senderPeerId != entry.actorPeerId ||
         !_sameNotificationEventTime(message.timestamp, entry.eventTimestamp) ||
         !message.isIncoming) {
+      if (groupNotificationDisplayDurableCorrelationFromMarker(
+            entry.lastAttemptAt,
+          ) !=
+          null) {
+        return _projectCanonicalRetiredMessageNotificationDisplay(entry);
+      }
       return const GroupNotificationDisplayProjectionResult.retired();
     }
-    if (message.readAt != null ||
-        !_privateMediaAvailability.allowsMediaDerivatives(
-          message.privateMediaPolicy,
-        )) {
-      return const GroupNotificationDisplayProjectionResult.completed();
+    final eventKey =
+        message.logicalDeliveryId == null &&
+            message.id.startsWith(kUnauthenticatedIncomingGroupMessageIdPrefix)
+        ? null
+        : trySelectNotificationCompletedOutcomeEventKey(
+            producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+            authenticatedEnvelope: <String, Object?>{
+              'messageId': message.id,
+              if (message.logicalDeliveryId != null)
+                'logicalDeliveryId': message.logicalDeliveryId,
+            },
+          );
+    if (eventKey == null) {
+      // Locally synthesized pre-authentication IDs have no stable producer
+      // key and must not mint a ledger correlation. Drain them through the
+      // incumbent exact-SQL compatibility path.
+      return _projectLegacyMessageNotificationDisplay(entry, message);
     }
-    final selfPeerId = await _resolveSelfPeerId();
-    if (selfPeerId == null || selfPeerId.isEmpty) {
-      throw const GroupNotificationDisplayStateUnavailableException();
+    final displayOutbox = _notificationDisplayOutbox;
+    if (displayOutbox == null) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
     }
-    final eligibility = await _resolveGroupNotificationDisplayEligibility(
-      entry.groupId,
-      selfPeerId,
+    final authority = await _resolveDurableGroupNotificationAuthority(
+      groupId: entry.groupId,
+      producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+      ledgerProducerKind: LocalNotificationProducerKind.groupMessage,
+      eventKey: eventKey,
     );
-    if (!eligibility.shouldDisplay) {
-      return const GroupNotificationDisplayProjectionResult.completed();
+    if (authority == null) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
     }
+    final boundEntry = await displayOutbox.bindDurableCorrelationIfExact(
+      entry,
+      durableEventCorrelation: authority.eventCorrelation,
+    );
+    if (boundEntry == null) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
+    }
+    entry = boundEntry;
     final service = _notificationService;
     final visibility = _appVisibility;
     if (service == null || visibility == null) {
       return const GroupNotificationDisplayProjectionResult.retryLater();
     }
     final group = await _groupRepo.getGroup(entry.groupId);
-    if (group == null) {
-      return const GroupNotificationDisplayProjectionResult.completed();
-    }
     final isPrivate = message.privateMediaPolicy.isPrivate;
     final attachments = isPrivate || _mediaAttachmentRepo == null
         ? const <MediaAttachment>[]
@@ -1263,13 +1369,54 @@ class GroupMessageListener {
             message.id,
             owner: MediaOwnerLane.group,
           );
-    if (await _isNotificationEventAcknowledged(
-      groupId: entry.groupId,
-      contentKind: ConversationNotificationContentKind.message,
-      eventIdentity: message.id,
-    )) {
-      return const GroupNotificationDisplayProjectionResult.completed();
-    }
+    var sqlHandoffCompleted = false;
+    var terminalEntry = entry;
+    NotificationCompletedOutcomeCandidate? terminalOutcome;
+    final durableContext = DurableLocalNotificationEffectContext(
+      currentOpaqueBinding: authority.currentOpaqueBinding,
+      eventCorrelation: authority.eventCorrelation,
+      conversationDigest: authority.conversationIdentity.digest,
+      producerKind: LocalNotificationProducerKind.groupMessage,
+      sourceCustody: LocalNotificationSourceCustody.sqlReady,
+      presentationOwner: LocalNotificationPresentationOwner.mainApp,
+      terminalObserverCompletesSqlHandoff: true,
+      readFinalCanonicalDisposition: () =>
+          _readFinalMessageNotificationDisposition(
+            entry,
+            acknowledgementEventIdentity: authority.eventCorrelation,
+            onExactReady: (current) => terminalEntry = current,
+          ),
+      onEffectTerminal: (receipt) async {
+        terminalOutcome = _outcomeForTerminalReceipt(
+          authority: authority,
+          receipt: receipt,
+        );
+        final handoff = await displayOutbox.completeOrVerifyIfExact(
+          terminalEntry,
+          outcome: terminalOutcome,
+          durableEventCorrelation: authority.eventCorrelation,
+        );
+        if (handoff ==
+            DurableLocalNotificationSqlHandoffResult.retryableMismatch) {
+          throw const GroupNotificationDisplayRetryableException();
+        }
+        final settled = await authority.registry.settleSqlReadyEffect(
+          currentOpaqueBinding: authority.currentOpaqueBinding,
+          eventCorrelation: receipt.eventCorrelation,
+          expectedRevision: receipt.recordRevision,
+        );
+        if (settled == null) {
+          throw const GroupNotificationDisplayRetryableException();
+        }
+        if (!await displayOutbox.retireAfterDurableSettlementIfExact(
+          terminalEntry,
+          durableEventCorrelation: authority.eventCorrelation,
+        )) {
+          throw const GroupNotificationDisplayRetryableException();
+        }
+        sqlHandoffCompleted = true;
+      },
+    );
     final result = await maybeShowNotification(
       notificationService: service,
       appVisibility: visibility,
@@ -1278,7 +1425,80 @@ class GroupMessageListener {
         entry.groupId,
         messageId: message.id,
       ).toPayload(),
-      senderUsername: isPrivate ? 'Mknoon' : group.name,
+      senderUsername: isPrivate ? 'Mknoon' : (group?.name ?? 'Mknoon'),
+      messageText: isPrivate
+          ? localizedGroupPrivateMediaNotificationBody()
+          : '${message.senderUsername ?? ''}: '
+                '${notificationBodyForMessage(message.text, attachments)}',
+      messageId: message.id,
+      notificationEventIdentity: entry.eventId,
+      toneTracker: _notificationToneTracker,
+      durableNotificationCoordinatorResolver:
+          _resolveDurableNotificationCoordinator,
+      loadConversationNotificationSnapshot: () =>
+          _loadGroupConversationNotificationSnapshot(entry.groupId),
+      notificationEventType: 'group_message',
+      consumeRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) =>
+              _remoteNotificationGate.consumeIfRecentAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
+      markRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) => _remoteNotificationGate
+              .markAnnouncement(payload: payload, messageId: messageId),
+      backgroundDuplicateGuardDelay: Duration.zero,
+      durableEffectContext: durableContext,
+    );
+    return _projectionForDurablePresentation(
+      result: result,
+      sqlHandoffCompleted: sqlHandoffCompleted,
+      outcomeCandidate: terminalOutcome,
+      expectedReady: terminalEntry,
+    );
+  }
+
+  /// Drains pre-authentication compatibility custody without inventing a
+  /// durable event identity.
+  Future<GroupNotificationDisplayProjectionResult>
+  _projectLegacyMessageNotificationDisplay(
+    GroupNotificationDisplayOutboxEntry entry,
+    GroupMessage message,
+  ) async {
+    final disposition = await _readFinalMessageNotificationDisposition(
+      entry,
+      acknowledgementEventIdentity: message.id,
+      onExactReady: (_) {},
+    );
+    if (disposition ==
+        DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
+    }
+    if (disposition != DurableLocalNotificationCanonicalDisposition.eligible) {
+      return const GroupNotificationDisplayProjectionResult.completed();
+    }
+    final service = _notificationService;
+    final visibility = _appVisibility;
+    if (service == null || visibility == null) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
+    }
+    final group = await _groupRepo.getGroup(entry.groupId);
+    final isPrivate = message.privateMediaPolicy.isPrivate;
+    final attachments = isPrivate || _mediaAttachmentRepo == null
+        ? const <MediaAttachment>[]
+        : await _mediaAttachmentRepo.getAttachmentsForMessage(
+            message.id,
+            owner: MediaOwnerLane.group,
+          );
+    final result = await maybeShowNotification(
+      notificationService: service,
+      appVisibility: visibility,
+      contactPeerId: 'group:${entry.groupId}',
+      routePayload: NotificationRouteTarget.group(
+        entry.groupId,
+        messageId: message.id,
+      ).toPayload(),
+      senderUsername: isPrivate ? 'Mknoon' : (group?.name ?? 'Mknoon'),
       messageText: isPrivate
           ? localizedGroupPrivateMediaNotificationBody()
           : '${message.senderUsername ?? ''}: '
@@ -1301,24 +1521,125 @@ class GroupMessageListener {
               .markAnnouncement(payload: payload, messageId: messageId),
       backgroundDuplicateGuardDelay: Duration.zero,
     );
-    return _projectionForPresentation(
+    return result == NotificationPresentationResult.contendedRetryable
+        ? const GroupNotificationDisplayProjectionResult.retryLater()
+        : const GroupNotificationDisplayProjectionResult.completed();
+  }
+
+  /// Re-enters the one final-effect boundary after canonical message removal.
+  /// The opaque correlation was bound to READY before the original attempt,
+  /// so deleted logical-delivery facts never need to be reconstructed here.
+  Future<GroupNotificationDisplayProjectionResult>
+  _projectCanonicalRetiredMessageNotificationDisplay(
+    GroupNotificationDisplayOutboxEntry entry,
+  ) async {
+    final marker = entry.lastAttemptAt;
+    if (!isGroupNotificationDisplayCanonicalRetiredMarker(marker)) {
+      return groupNotificationDisplayDurableCorrelationFromMarker(marker) ==
+              null
+          ? const GroupNotificationDisplayProjectionResult.retired()
+          : const GroupNotificationDisplayProjectionResult.retryLater();
+    }
+    final correlation = groupNotificationDisplayDurableCorrelationFromMarker(
+      marker,
+    );
+    if (correlation == null) {
+      // Canonical retirement won the race before correlation binding, so no
+      // Plan372 ledger attempt could have started for this exact READY row.
+      return const GroupNotificationDisplayProjectionResult.retired();
+    }
+    final authority =
+        await _resolveDurableGroupNotificationAuthorityFromCorrelation(
+          groupId: entry.groupId,
+          producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+          ledgerProducerKind: LocalNotificationProducerKind.groupMessage,
+          eventCorrelation: correlation,
+        );
+    final service = _notificationService;
+    final visibility = _appVisibility;
+    final displayOutbox = _notificationDisplayOutbox;
+    if (authority == null ||
+        service == null ||
+        visibility == null ||
+        displayOutbox == null) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
+    }
+
+    var sqlHandoffCompleted = false;
+    var terminalEntry = entry;
+    final durableContext = DurableLocalNotificationEffectContext(
+      currentOpaqueBinding: authority.currentOpaqueBinding,
+      eventCorrelation: authority.eventCorrelation,
+      conversationDigest: authority.conversationIdentity.digest,
+      producerKind: LocalNotificationProducerKind.groupMessage,
+      sourceCustody: LocalNotificationSourceCustody.sqlReady,
+      presentationOwner: LocalNotificationPresentationOwner.mainApp,
+      terminalObserverCompletesSqlHandoff: true,
+      readFinalCanonicalDisposition: () =>
+          _readFinalMessageNotificationDisposition(
+            entry,
+            acknowledgementEventIdentity: authority.eventCorrelation,
+            onExactReady: (current) => terminalEntry = current,
+          ),
+      onEffectTerminal: (receipt) async {
+        final handoff = await displayOutbox.completeOrVerifyIfExact(
+          terminalEntry,
+          durableEventCorrelation: authority.eventCorrelation,
+        );
+        if (handoff ==
+            DurableLocalNotificationSqlHandoffResult.retryableMismatch) {
+          throw const GroupNotificationDisplayRetryableException();
+        }
+        final settled = await authority.registry.settleSqlReadyEffect(
+          currentOpaqueBinding: authority.currentOpaqueBinding,
+          eventCorrelation: receipt.eventCorrelation,
+          expectedRevision: receipt.recordRevision,
+        );
+        if (settled == null ||
+            !await displayOutbox.retireAfterDurableSettlementIfExact(
+              terminalEntry,
+              durableEventCorrelation: authority.eventCorrelation,
+            )) {
+          throw const GroupNotificationDisplayRetryableException();
+        }
+        sqlHandoffCompleted = true;
+      },
+    );
+    final result = await maybeShowNotification(
+      notificationService: service,
+      appVisibility: visibility,
+      contactPeerId: 'group:${entry.groupId}',
+      routePayload: NotificationRouteTarget.group(
+        entry.groupId,
+        messageId: entry.messageId,
+      ).toPayload(),
+      senderUsername: 'Mknoon',
+      messageText: 'Mknoon',
+      messageId: entry.messageId,
+      notificationEventIdentity: entry.eventId,
+      toneTracker: _notificationToneTracker,
+      durableNotificationCoordinatorResolver:
+          _resolveDurableNotificationCoordinator,
+      loadConversationNotificationSnapshot: () =>
+          _loadGroupConversationNotificationSnapshot(entry.groupId),
+      notificationEventType: 'group_message',
+      consumeRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) =>
+              _remoteNotificationGate.consumeIfRecentAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
+      markRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) => _remoteNotificationGate
+              .markAnnouncement(payload: payload, messageId: messageId),
+      backgroundDuplicateGuardDelay: Duration.zero,
+      durableEffectContext: durableContext,
+    );
+    return _projectionForDurablePresentation(
       result: result,
-      producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
-      eventKey:
-          message.logicalDeliveryId == null &&
-              message.id.startsWith(
-                kUnauthenticatedIncomingGroupMessageIdPrefix,
-              )
-          ? null
-          : trySelectNotificationCompletedOutcomeEventKey(
-              producerKind:
-                  NotificationCompletedOutcomeProducerKind.groupMessage,
-              authenticatedEnvelope: <String, Object?>{
-                'messageId': message.id,
-                if (message.logicalDeliveryId != null)
-                  'logicalDeliveryId': message.logicalDeliveryId,
-              },
-            ),
+      sqlHandoffCompleted: sqlHandoffCompleted,
+      outcomeCandidate: null,
+      expectedReady: terminalEntry,
     );
   }
 
@@ -1332,61 +1653,71 @@ class GroupMessageListener {
       return const GroupNotificationDisplayProjectionResult.retired();
     }
     final target = await _msgRepo.getMessage(entry.messageId);
-    if (target == null) {
-      final deletionGroup = await _msgRepo.getLocalDeletionGroupId(
-        entry.messageId,
-      );
-      if (deletionGroup == entry.groupId) {
+    final deletionGroup = target == null
+        ? await _msgRepo.getLocalDeletionGroupId(entry.messageId)
+        : null;
+    if (target == null && deletionGroup != entry.groupId) {
+      final marker = entry.lastAttemptAt;
+      if (!isGroupNotificationDisplayCanonicalRetiredMarker(marker)) {
+        throw const GroupNotificationDisplayStateUnavailableException();
+      }
+      if (groupNotificationDisplayDurableCorrelationFromMarker(marker) ==
+          null) {
+        // Pre-bind compatibility custody has no ledger attempt to settle.
         return const GroupNotificationDisplayProjectionResult.retired();
       }
-      throw const GroupNotificationDisplayStateUnavailableException();
     }
-    if (target.groupId != entry.groupId) {
+    if (target != null && target.groupId != entry.groupId) {
+      if (groupNotificationDisplayDurableCorrelationFromMarker(
+            entry.lastAttemptAt,
+          ) !=
+          null) {
+        return const GroupNotificationDisplayProjectionResult.retryLater();
+      }
       return const GroupNotificationDisplayProjectionResult.retired();
     }
-    if (!target.privateMediaPolicy.isOrdinary) {
-      return const GroupNotificationDisplayProjectionResult.completed();
+    final eventKey = entry.eventId.startsWith('legacy-reaction:')
+        ? null
+        : trySelectNotificationCompletedOutcomeEventKey(
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.groupReaction,
+            authenticatedEnvelope: <String, Object?>{
+              'notificationTransitionId': entry.eventId,
+            },
+          );
+    if (eventKey == null) {
+      // Pre-372 bounded legacy transitions have no authenticated raw producer
+      // key and must not mint a ledger correlation. Keep their incumbent
+      // exact-SQL projection path until custody drains naturally.
+      return _projectLegacyReactionNotificationDisplay(entry, target);
     }
-    final selfPeerId = await _resolveSelfPeerId();
-    if (selfPeerId == null || selfPeerId.isEmpty) {
-      throw const GroupNotificationDisplayStateUnavailableException();
-    }
-    if (target.senderPeerId != selfPeerId || target.isIncoming) {
-      return const GroupNotificationDisplayProjectionResult.retired();
-    }
-    final reactionRepo = _reactionRepo;
-    if (reactionRepo == null) {
+    final displayOutbox = _notificationDisplayOutbox;
+    if (displayOutbox == null) {
       return const GroupNotificationDisplayProjectionResult.retryLater();
     }
-    final reaction = await reactionRepo.getReactionForSenderIncludingRemoved(
-      messageId: entry.messageId,
-      senderPeerId: entry.actorPeerId,
+    final authority = await _resolveDurableGroupNotificationAuthority(
+      groupId: entry.groupId,
+      producerKind: NotificationCompletedOutcomeProducerKind.groupReaction,
+      ledgerProducerKind: LocalNotificationProducerKind.groupReaction,
+      eventKey: eventKey,
     );
-    if (reaction == null ||
-        reaction.id != entry.reactionId ||
-        reaction.isRemoved ||
-        reaction.timestamp != entry.eventTimestamp) {
-      return const GroupNotificationDisplayProjectionResult.retired();
+    if (authority == null) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
     }
-    if (reaction.notificationAcknowledgedAt != null) {
-      return const GroupNotificationDisplayProjectionResult.completed();
-    }
-    final eligibility = await _resolveGroupNotificationDisplayEligibility(
-      entry.groupId,
-      selfPeerId,
+    final boundEntry = await displayOutbox.bindDurableCorrelationIfExact(
+      entry,
+      durableEventCorrelation: authority.eventCorrelation,
     );
-    if (!eligibility.shouldDisplay) {
-      return const GroupNotificationDisplayProjectionResult.completed();
+    if (boundEntry == null) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
     }
+    entry = boundEntry;
     final service = _notificationService;
     final visibility = _appVisibility;
     if (service == null || visibility == null) {
       return const GroupNotificationDisplayProjectionResult.retryLater();
     }
     final group = await _groupRepo.getGroup(entry.groupId);
-    if (group == null) {
-      return const GroupNotificationDisplayProjectionResult.completed();
-    }
     var actorName = '';
     try {
       final actor = await _groupRepo.getMember(
@@ -1397,17 +1728,60 @@ class GroupMessageListener {
     } catch (_) {}
     final attachments = _mediaAttachmentRepo == null
         ? const <MediaAttachment>[]
+        : target == null || !target.privateMediaPolicy.isOrdinary
+        ? const <MediaAttachment>[]
         : await _mediaAttachmentRepo.getAttachmentsForMessage(
             target.id,
             owner: MediaOwnerLane.group,
           );
-    if (await _isNotificationEventAcknowledged(
-      groupId: entry.groupId,
-      contentKind: ConversationNotificationContentKind.reaction,
-      eventIdentity: boundedReactionEventIdentity(entry.eventId),
-    )) {
-      return const GroupNotificationDisplayProjectionResult.completed();
-    }
+    var sqlHandoffCompleted = false;
+    var terminalEntry = entry;
+    NotificationCompletedOutcomeCandidate? terminalOutcome;
+    final durableContext = DurableLocalNotificationEffectContext(
+      currentOpaqueBinding: authority.currentOpaqueBinding,
+      eventCorrelation: authority.eventCorrelation,
+      conversationDigest: authority.conversationIdentity.digest,
+      producerKind: LocalNotificationProducerKind.groupReaction,
+      sourceCustody: LocalNotificationSourceCustody.sqlReady,
+      presentationOwner: LocalNotificationPresentationOwner.mainApp,
+      terminalObserverCompletesSqlHandoff: true,
+      readFinalCanonicalDisposition: () =>
+          _readFinalReactionNotificationDisposition(
+            entry,
+            acknowledgementEventIdentity: authority.eventCorrelation,
+            onExactReady: (current) => terminalEntry = current,
+          ),
+      onEffectTerminal: (receipt) async {
+        terminalOutcome = _outcomeForTerminalReceipt(
+          authority: authority,
+          receipt: receipt,
+        );
+        final handoff = await displayOutbox.completeOrVerifyIfExact(
+          terminalEntry,
+          outcome: terminalOutcome,
+          durableEventCorrelation: authority.eventCorrelation,
+        );
+        if (handoff ==
+            DurableLocalNotificationSqlHandoffResult.retryableMismatch) {
+          throw const GroupNotificationDisplayRetryableException();
+        }
+        final settled = await authority.registry.settleSqlReadyEffect(
+          currentOpaqueBinding: authority.currentOpaqueBinding,
+          eventCorrelation: receipt.eventCorrelation,
+          expectedRevision: receipt.recordRevision,
+        );
+        if (settled == null) {
+          throw const GroupNotificationDisplayRetryableException();
+        }
+        if (!await displayOutbox.retireAfterDurableSettlementIfExact(
+          terminalEntry,
+          durableEventCorrelation: authority.eventCorrelation,
+        )) {
+          throw const GroupNotificationDisplayRetryableException();
+        }
+        sqlHandoffCompleted = true;
+      },
+    );
     final result = await maybeShowNotification(
       notificationService: service,
       appVisibility: visibility,
@@ -1416,7 +1790,82 @@ class GroupMessageListener {
         entry.groupId,
         messageId: entry.messageId,
       ).toPayload(),
-      senderUsername: group.name,
+      senderUsername: group?.name ?? 'Mknoon',
+      messageText: localizedGroupReactionNotificationBody(
+        actorName: actorName,
+        targetAttachments: attachments,
+      ),
+      messageId: entry.eventId,
+      notificationEventIdentity: boundedReactionEventIdentity(entry.eventId),
+      notificationEventType: 'message_reaction',
+      toneTracker: _notificationToneTracker,
+      durableNotificationCoordinatorResolver:
+          _resolveDurableNotificationCoordinator,
+      loadConversationNotificationSnapshot: () =>
+          _loadGroupConversationNotificationSnapshot(entry.groupId),
+      consumeRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) =>
+              _remoteNotificationGate.consumeIfRecentAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
+      durableEffectContext: durableContext,
+    );
+    return _projectionForDurablePresentation(
+      result: result,
+      sqlHandoffCompleted: sqlHandoffCompleted,
+      outcomeCandidate: terminalOutcome,
+      expectedReady: terminalEntry,
+    );
+  }
+
+  Future<GroupNotificationDisplayProjectionResult>
+  _projectLegacyReactionNotificationDisplay(
+    GroupNotificationDisplayOutboxEntry entry,
+    GroupMessage? target,
+  ) async {
+    final disposition = await _readFinalReactionNotificationDisposition(
+      entry,
+      acknowledgementEventIdentity: boundedReactionEventIdentity(entry.eventId),
+      onExactReady: (_) {},
+    );
+    if (disposition ==
+        DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
+    }
+    if (disposition != DurableLocalNotificationCanonicalDisposition.eligible) {
+      return const GroupNotificationDisplayProjectionResult.completed();
+    }
+    final service = _notificationService;
+    final visibility = _appVisibility;
+    if (service == null || visibility == null || target == null) {
+      return const GroupNotificationDisplayProjectionResult.retryLater();
+    }
+    final group = await _groupRepo.getGroup(entry.groupId);
+    var actorName = '';
+    try {
+      final actor = await _groupRepo.getMember(
+        entry.groupId,
+        entry.actorPeerId,
+      );
+      actorName = actor?.username?.trim() ?? '';
+    } catch (_) {}
+    final attachments =
+        _mediaAttachmentRepo == null || !target.privateMediaPolicy.isOrdinary
+        ? const <MediaAttachment>[]
+        : await _mediaAttachmentRepo.getAttachmentsForMessage(
+            target.id,
+            owner: MediaOwnerLane.group,
+          );
+    final result = await maybeShowNotification(
+      notificationService: service,
+      appVisibility: visibility,
+      contactPeerId: 'group:${entry.groupId}',
+      routePayload: NotificationRouteTarget.group(
+        entry.groupId,
+        messageId: entry.messageId,
+      ).toPayload(),
+      senderUsername: group?.name ?? 'Mknoon',
       messageText: localizedGroupReactionNotificationBody(
         actorName: actorName,
         targetAttachments: attachments,
@@ -1436,50 +1885,406 @@ class GroupMessageListener {
                 messageId: messageId,
               ),
     );
-    return _projectionForPresentation(
-      result: result,
-      producerKind: NotificationCompletedOutcomeProducerKind.groupReaction,
-      eventKey: entry.eventId.startsWith('legacy-reaction:')
-          ? null
-          : trySelectNotificationCompletedOutcomeEventKey(
-              producerKind:
-                  NotificationCompletedOutcomeProducerKind.groupReaction,
-              authenticatedEnvelope: <String, Object?>{
-                'notificationTransitionId': entry.eventId,
-              },
-            ),
+    return result == NotificationPresentationResult.contendedRetryable
+        ? const GroupNotificationDisplayProjectionResult.retryLater()
+        : const GroupNotificationDisplayProjectionResult.completed();
+  }
+
+  Future<_GroupDurableNotificationAuthority?>
+  _resolveDurableGroupNotificationAuthority({
+    required String groupId,
+    required NotificationCompletedOutcomeProducerKind producerKind,
+    required LocalNotificationProducerKind ledgerProducerKind,
+    required String eventKey,
+  }) async {
+    final resolveBinding = _resolveCurrentOpaqueBinding;
+    final resolvePhysicalPeer = _resolveCompletedOutcomePhysicalPeerId;
+    final registry = _durableLocalNotificationEffectRegistry;
+    if (resolveBinding == null ||
+        resolvePhysicalPeer == null ||
+        registry == null) {
+      return null;
+    }
+    final binding = await resolveBinding();
+    final physicalPeerId = await resolvePhysicalPeer();
+    if (!isCanonicalRuntimeOpaqueBinding(binding) || physicalPeerId == null) {
+      return null;
+    }
+    final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
+      physicalPeerId: physicalPeerId,
+      producerKind: producerKind,
+      eventKey: eventKey,
+    );
+    final identity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.group,
+      value: 'group:$groupId',
+    );
+    if (correlation == null || identity == null) return null;
+    return _GroupDurableNotificationAuthority(
+      currentOpaqueBinding: binding!,
+      eventCorrelation: correlation,
+      conversationIdentity: identity,
+      ledgerProducerKind: ledgerProducerKind,
+      outcomeProducerKind: producerKind,
+      physicalPeerId: physicalPeerId,
+      eventKey: eventKey,
+      registry: registry,
     );
   }
 
-  Future<GroupNotificationDisplayProjectionResult> _projectionForPresentation({
-    required NotificationPresentationResult result,
+  Future<_GroupDurableNotificationAuthority?>
+  _resolveDurableGroupNotificationAuthorityFromCorrelation({
+    required String groupId,
     required NotificationCompletedOutcomeProducerKind producerKind,
-    required String? eventKey,
+    required LocalNotificationProducerKind ledgerProducerKind,
+    required String eventCorrelation,
+  }) async {
+    final resolveBinding = _resolveCurrentOpaqueBinding;
+    final registry = _durableLocalNotificationEffectRegistry;
+    if (resolveBinding == null ||
+        registry == null ||
+        durableLocalNotificationContentGeneration(eventCorrelation) == null) {
+      return null;
+    }
+    final binding = await resolveBinding();
+    final identity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.group,
+      value: 'group:$groupId',
+    );
+    if (!isCanonicalRuntimeOpaqueBinding(binding) || identity == null) {
+      return null;
+    }
+    return _GroupDurableNotificationAuthority(
+      currentOpaqueBinding: binding!,
+      eventCorrelation: eventCorrelation,
+      conversationIdentity: identity,
+      ledgerProducerKind: ledgerProducerKind,
+      outcomeProducerKind: producerKind,
+      physicalPeerId: null,
+      eventKey: null,
+      registry: registry,
+    );
+  }
+
+  Future<DurableLocalNotificationCanonicalDisposition>
+  _readFinalMessageNotificationDisposition(
+    GroupNotificationDisplayOutboxEntry entry, {
+    required String acknowledgementEventIdentity,
+    required void Function(GroupNotificationDisplayOutboxEntry) onExactReady,
+  }) async {
+    try {
+      final selfPeerId = await _resolveSelfPeerId();
+      if (selfPeerId == null || selfPeerId.isEmpty) {
+        return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+      }
+      final group = await _groupRepo.getGroup(entry.groupId);
+      final selfMember = group == null
+          ? null
+          : await _groupRepo.getMember(entry.groupId, selfPeerId);
+      final message = await _msgRepo.getMessage(entry.messageId);
+      final deletionGroup = message == null
+          ? await _msgRepo.getLocalDeletionGroupId(entry.messageId)
+          : null;
+      final acknowledged = await _isNotificationEventAcknowledged(
+        groupId: entry.groupId,
+        contentKind: ConversationNotificationContentKind.message,
+        eventIdentity: acknowledgementEventIdentity,
+      );
+      final policy = _evaluateCurrentGroupPolicy(
+        group: group,
+        hasCurrentLocalMembership: selfMember != null,
+      );
+      if (!policy.shouldDisplay ||
+          (message != null &&
+              !_privateMediaAvailability.allowsMediaDerivatives(
+                message.privateMediaPolicy,
+              ))) {
+        return _finalDispositionForExactReady(
+          entry,
+          DurableLocalNotificationCanonicalDisposition.suppressedPolicy,
+          onExactReady: onExactReady,
+        );
+      }
+      final decisionWithoutAcknowledgement =
+          evaluateBackgroundGroupNotificationPostShowState(
+            comparand: BackgroundGroupMessageNotificationComparand(
+              groupId: entry.groupId,
+              messageId: entry.messageId,
+              senderPeerId: entry.actorPeerId,
+            ),
+            localPeerId: selfPeerId,
+            groupRow: group == null
+                ? null
+                : Map<String, Object?>.from(group.toMap()),
+            localMemberRow: selfMember == null
+                ? null
+                : Map<String, Object?>.from(selfMember.toMap()),
+            messageRow: message == null
+                ? null
+                : Map<String, Object?>.from(message.toMap()),
+            messageDeletionRow: deletionGroup == entry.groupId
+                ? <String, Object?>{
+                    'group_id': entry.groupId,
+                    'message_id': entry.messageId,
+                  }
+                : null,
+            readAcknowledgementRow: null,
+          );
+      final disposition =
+          decisionWithoutAcknowledgement ==
+              BackgroundGroupNotificationPostShowDecision.retire
+          ? DurableLocalNotificationCanonicalDisposition.cancelled
+          : acknowledged
+          ? DurableLocalNotificationCanonicalDisposition.read
+          : _durableDisposition(decisionWithoutAcknowledgement);
+      return _finalDispositionForExactReady(
+        entry,
+        disposition,
+        onExactReady: onExactReady,
+      );
+    } on Object {
+      return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+    }
+  }
+
+  Future<DurableLocalNotificationCanonicalDisposition>
+  _readFinalReactionNotificationDisposition(
+    GroupNotificationDisplayOutboxEntry entry, {
+    required String acknowledgementEventIdentity,
+    required void Function(GroupNotificationDisplayOutboxEntry) onExactReady,
+  }) async {
+    try {
+      final selfPeerId = await _resolveSelfPeerId();
+      if (selfPeerId == null || selfPeerId.isEmpty) {
+        return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+      }
+      final group = await _groupRepo.getGroup(entry.groupId);
+      final selfMember = group == null
+          ? null
+          : await _groupRepo.getMember(entry.groupId, selfPeerId);
+      final target = await _msgRepo.getMessage(entry.messageId);
+      final deletionGroup = target == null
+          ? await _msgRepo.getLocalDeletionGroupId(entry.messageId)
+          : null;
+      final reaction = await _reactionRepo
+          ?.getReactionForSenderIncludingRemoved(
+            messageId: entry.messageId,
+            senderPeerId: entry.actorPeerId,
+          );
+      final eventIdentity = boundedReactionEventIdentity(entry.eventId);
+      final acknowledged = await _isNotificationEventAcknowledged(
+        groupId: entry.groupId,
+        contentKind: ConversationNotificationContentKind.reaction,
+        eventIdentity: acknowledgementEventIdentity,
+      );
+      final policy = _evaluateCurrentGroupPolicy(
+        group: group,
+        hasCurrentLocalMembership: selfMember != null,
+      );
+      if (!policy.shouldDisplay ||
+          (target != null && !target.privateMediaPolicy.isOrdinary)) {
+        return _finalDispositionForExactReady(
+          entry,
+          DurableLocalNotificationCanonicalDisposition.suppressedPolicy,
+          onExactReady: onExactReady,
+        );
+      }
+      final reactionRow = reaction == null
+          ? null
+          : <String, Object?>{
+              ...reaction.toMap(),
+              'notification_acknowledged_at':
+                  reaction.notificationAcknowledgedAt,
+            };
+      final decisionWithoutAcknowledgement =
+          evaluateBackgroundGroupNotificationPostShowState(
+            comparand: BackgroundGroupReactionNotificationComparand(
+              groupId: entry.groupId,
+              reactionId: entry.reactionId!,
+              messageId: entry.messageId,
+              senderPeerId: entry.actorPeerId,
+              timestamp: entry.eventTimestamp,
+              notificationEventIdentity: eventIdentity,
+            ),
+            localPeerId: selfPeerId,
+            groupRow: group == null
+                ? null
+                : Map<String, Object?>.from(group.toMap()),
+            localMemberRow: selfMember == null
+                ? null
+                : Map<String, Object?>.from(selfMember.toMap()),
+            reactionRow: reactionRow,
+            targetMessageRow: target == null
+                ? null
+                : Map<String, Object?>.from(target.toMap()),
+            targetDeletionRow: deletionGroup == entry.groupId
+                ? <String, Object?>{
+                    'group_id': entry.groupId,
+                    'message_id': entry.messageId,
+                  }
+                : null,
+            readAcknowledgementRow: null,
+          );
+      final disposition =
+          decisionWithoutAcknowledgement ==
+              BackgroundGroupNotificationPostShowDecision.retire
+          ? DurableLocalNotificationCanonicalDisposition.cancelled
+          : acknowledged
+          ? DurableLocalNotificationCanonicalDisposition.read
+          : _durableDisposition(decisionWithoutAcknowledgement);
+      return _finalDispositionForExactReady(
+        entry,
+        disposition,
+        onExactReady: onExactReady,
+      );
+    } on Object {
+      return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+    }
+  }
+
+  GroupMessageNotificationDisplayEligibility _evaluateCurrentGroupPolicy({
+    required GroupModel? group,
+    required bool hasCurrentLocalMembership,
+  }) => evaluateGroupNotificationDisplayPolicy(
+    GroupNotificationDisplayPolicyInput(
+      groupExists: group != null,
+      hasCurrentLocalMembership: hasCurrentLocalMembership,
+      groupType: group?.type.name,
+      isMuted: group?.isMuted ?? false,
+      isArchived: group?.isArchived ?? false,
+      isDissolved: group?.isDissolved ?? false,
+      hasDissolvedAt: group?.dissolvedAt != null,
+      hasSelfRemovedAt: group?.selfRemovedAt != null,
+    ),
+  );
+
+  DurableLocalNotificationCanonicalDisposition _durableDisposition(
+    BackgroundGroupNotificationPostShowDecision decision,
+  ) => switch (decision) {
+    BackgroundGroupNotificationPostShowDecision.keep =>
+      DurableLocalNotificationCanonicalDisposition.eligible,
+    BackgroundGroupNotificationPostShowDecision.retire =>
+      DurableLocalNotificationCanonicalDisposition.cancelled,
+    BackgroundGroupNotificationPostShowDecision.read =>
+      DurableLocalNotificationCanonicalDisposition.read,
+    BackgroundGroupNotificationPostShowDecision.unknown =>
+      DurableLocalNotificationCanonicalDisposition.retryableUnknown,
+  };
+
+  Future<DurableLocalNotificationCanonicalDisposition>
+  _finalDispositionForExactReady(
+    GroupNotificationDisplayOutboxEntry expected,
+    DurableLocalNotificationCanonicalDisposition disposition, {
+    required void Function(GroupNotificationDisplayOutboxEntry) onExactReady,
+  }) async {
+    final current = await _notificationDisplayOutbox?.loadByEventId(
+      expected.eventId,
+    );
+    if (current == null ||
+        !current.isReady ||
+        current.eventKind != expected.eventKind ||
+        current.groupId != expected.groupId ||
+        current.messageId != expected.messageId ||
+        current.actorPeerId != expected.actorPeerId ||
+        current.eventTimestamp != expected.eventTimestamp ||
+        current.reactionId != expected.reactionId ||
+        current.reactionAction != expected.reactionAction ||
+        current.reactionTombstone != expected.reactionTombstone) {
+      return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+    }
+    if (isGroupNotificationDisplayCanonicalRetiredMarker(
+      current.lastAttemptAt,
+    )) {
+      onExactReady(current);
+      return DurableLocalNotificationCanonicalDisposition.cancelled;
+    }
+    if (current.revision != expected.revision) {
+      return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
+    }
+    onExactReady(current);
+    return disposition;
+  }
+
+  NotificationCompletedOutcomeCandidate? _outcomeForTerminalReceipt({
+    required _GroupDurableNotificationAuthority authority,
+    required DurableLocalNotificationEffectReceipt receipt,
+  }) {
+    if (receipt.eventCorrelation != authority.eventCorrelation) {
+      throw const GroupNotificationDisplayRetryableException();
+    }
+    final category = switch (receipt.presentationState) {
+      LocalNotificationPresentationState.osPosted =>
+        NotificationCompletedOutcomeCategory.osPosted,
+      LocalNotificationPresentationState.inChat =>
+        NotificationCompletedOutcomeCategory.inChat,
+      LocalNotificationPresentationState.notEvaluated ||
+      LocalNotificationPresentationState.suppressedPolicy ||
+      LocalNotificationPresentationState.cancelled => null,
+    };
+    final physicalPeerId = authority.physicalPeerId;
+    final eventKey = authority.eventKey;
+    if (!_completedOutcomeProducerEnabled ||
+        category == null ||
+        physicalPeerId == null ||
+        eventKey == null) {
+      return null;
+    }
+    return NotificationCompletedOutcomeCandidate(
+      physicalPeerId: physicalPeerId,
+      producerKind: authority.outcomeProducerKind,
+      eventKey: eventKey,
+      outcome: category,
+      completedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  Future<GroupNotificationDisplayProjectionResult>
+  _projectionForDurablePresentation({
+    required NotificationPresentationResult result,
+    required bool sqlHandoffCompleted,
+    required NotificationCompletedOutcomeCandidate? outcomeCandidate,
+    required GroupNotificationDisplayOutboxEntry expectedReady,
   }) async {
     if (result == NotificationPresentationResult.contendedRetryable) {
       return const GroupNotificationDisplayProjectionResult.retryLater();
     }
-    NotificationCompletedOutcomeCandidate? outcome;
-    if (_completedOutcomeProducerEnabled &&
-        result == NotificationPresentationResult.osPosted) {
-      final physicalPeerId = await _resolveCompletedOutcomePhysicalPeerId
-          ?.call();
-      if (physicalPeerId != null &&
-          physicalPeerId.isNotEmpty &&
-          eventKey != null &&
-          eventKey.isNotEmpty) {
-        outcome = NotificationCompletedOutcomeCandidate(
-          physicalPeerId: physicalPeerId,
-          producerKind: producerKind,
-          eventKey: eventKey,
-          outcome: NotificationCompletedOutcomeCategory.osPosted,
-          completedAt: DateTime.now().toUtc(),
-        );
-      }
+    if (!sqlHandoffCompleted) {
+      // The durable boundary returned a terminal receipt, but exact SQL B did
+      // not finish. Preserve the raw revision so SETTLED replay can retry the
+      // same transaction-B CAS without manufacturing a new producer attempt.
+      return GroupNotificationDisplayProjectionResult.retryLater(
+        preserveReadyRevision: await _isStillExactReadyRevision(expectedReady),
+      );
     }
     return GroupNotificationDisplayProjectionResult.completed(
-      outcomeCandidate: outcome,
+      outcomeCandidate: outcomeCandidate,
+      sqlHandoffCompleted: true,
     );
+  }
+
+  Future<bool> _isStillExactReadyRevision(
+    GroupNotificationDisplayOutboxEntry expected,
+  ) async {
+    try {
+      final current = await _notificationDisplayOutbox?.loadByEventId(
+        expected.eventId,
+      );
+      return current != null &&
+          current.isReady &&
+          current.revision == expected.revision &&
+          current.eventKind == expected.eventKind &&
+          current.groupId == expected.groupId &&
+          current.messageId == expected.messageId &&
+          current.actorPeerId == expected.actorPeerId &&
+          current.eventTimestamp == expected.eventTimestamp &&
+          current.reactionId == expected.reactionId &&
+          current.reactionAction == expected.reactionAction &&
+          current.reactionTombstone == expected.reactionTombstone;
+    } on Object {
+      // Unknown storage state is not authority to rewrite READY. A later
+      // lifecycle/reconciliation trigger will repeat the exact comparison.
+      return true;
+    }
   }
 
   Future<bool> _isNotificationEventAcknowledged({

@@ -154,12 +154,28 @@ void main() {
     );
 
     test('classifies iOS shared access-group identity and group mirrors', () {
-      final sharedFixed = MigrationSecureStorageRegistry.fixedKeys.where(
-        (key) => key.scope == MigrationSecureStoreScope.iosSharedAccessGroup,
-      );
+      final sharedFixed = {
+        for (final key in MigrationSecureStorageRegistry.fixedKeys.where(
+          (key) => key.scope == MigrationSecureStoreScope.iosSharedAccessGroup,
+        ))
+          key.activeKey: key,
+      };
 
-      expect(sharedFixed.single.activeKey, 'identity_ml_kem_secret_key');
-      expect(sharedFixed.single.appleAccessGroup, mknoonSharedAppleAccessGroup);
+      expect(sharedFixed.keys, {
+        'identity_ml_kem_secret_key',
+        canonicalRuntimeSharedAccountBindingStorageKey,
+      });
+      expect(
+        sharedFixed['identity_ml_kem_secret_key']!.appleAccessGroup,
+        mknoonSharedAppleAccessGroup,
+      );
+      final sharedBinding =
+          sharedFixed[canonicalRuntimeSharedAccountBindingStorageKey]!;
+      expect(
+        sharedBinding.policy,
+        MigrationSecureStorageKeyPolicy.clearRegenerate,
+      );
+      expect(sharedBinding.includeInExportPayload, isFalse);
 
       final groupMirror = MigrationSecureStorageRegistry.sharedGroupMirror(
         groupId: 'group/raw:1',

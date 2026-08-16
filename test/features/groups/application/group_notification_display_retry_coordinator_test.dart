@@ -364,6 +364,30 @@ void main() {
     },
   );
 
+  test('settled SQL-B retry preserves the loaded READY revision', () async {
+    final rows = <int>[14];
+    final recordedFailures = <int>[];
+    final scheduled = <Duration>[];
+    final coordinator = GroupNotificationDisplayRetryCoordinator<int>(
+      loadReady: ({required limit}) async => rows.take(limit).toList(),
+      loadEarliestNextAttemptAt: () async => null,
+      project: (_) async =>
+          const GroupNotificationDisplayProjectionResult.retryLater(
+            preserveReadyRevision: true,
+          ),
+      completeWithOutcome: (_, _) async => fail('must remain retryable'),
+      retire: (_) async => fail('must remain retryable'),
+      recordFailure: (row, _) async => recordedFailures.add(row),
+      scheduleRetry: scheduled.add,
+    );
+
+    await coordinator.retryNow();
+
+    expect(rows, [14]);
+    expect(recordedFailures, isEmpty);
+    expect(scheduled, [const Duration(seconds: 65)]);
+  });
+
   test(
     'typed completion preserves outcomes while retired custody uses its own callback',
     () async {

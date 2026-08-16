@@ -8,7 +8,9 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
@@ -271,6 +273,187 @@ void main() {
             expect(service.shown, hasLength(1), reason: testCase.label);
           }
         }
+      },
+    );
+
+    test(
+      'TC-372-03b early visibility is preparation only and final gate owns the result',
+      () async {
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.direct,
+          value: 'peer-final-visibility',
+        )!;
+        final cases = <({bool earlyVisible, bool finalVisible})>[
+          (earlyVisible: true, finalVisible: false),
+          (earlyVisible: false, finalVisible: true),
+        ];
+
+        for (final testCase in cases) {
+          final ownerDirectory = await Directory.systemTemp.createTemp(
+            'final-barrier-owner-order-',
+          );
+          addTearDown(() => ownerDirectory.delete(recursive: true));
+          final ownerCoordinator = DurableNotificationToneLease(
+            directory: ownerDirectory,
+            pendingClaimWait: Duration.zero,
+            pendingToneReservationWait: Duration.zero,
+          );
+          final log = <String>[];
+          var observedArmedOwners = false;
+          final service = _DurableBoundaryNotificationService(
+            log: log,
+            beforeAuthorize: () async {
+              final publishingFiles = ownerDirectory
+                  .listSync(recursive: true)
+                  .whereType<File>()
+                  .where(
+                    (file) => file.readAsStringSync().contains(
+                      '"state":"publishing"',
+                    ),
+                  )
+                  .length;
+              observedArmedOwners = publishingFiles >= 2;
+            },
+          );
+          final visibility = _SequencedVisibility(<AppVisibilityEvaluation>[
+            testCase.earlyVisible
+                ? _exactForegroundEvaluation(maySuppress: true, revision: 1)
+                : _exactBackgroundEvaluation(revision: 1),
+            testCase.finalVisible
+                ? _exactForegroundEvaluation(maySuppress: true, revision: 2)
+                : _exactBackgroundEvaluation(revision: 2),
+          ]);
+          final context = DurableLocalNotificationEffectContext(
+            currentOpaqueBinding: 'v1:${'a' * 64}',
+            eventCorrelation: testCase.earlyVisible ? 'b' * 64 : 'c' * 64,
+            conversationDigest: identity.digest,
+            producerKind: LocalNotificationProducerKind.directMessage,
+            sourceCustody: LocalNotificationSourceCustody.sqlReady,
+            presentationOwner: LocalNotificationPresentationOwner.mainApp,
+            readFinalCanonicalDisposition: () async =>
+                DurableLocalNotificationCanonicalDisposition.eligible,
+            onEffectTerminal: (receipt) async {
+              log.add('observer:${receipt.presentationState.wireName}');
+            },
+            terminalObserverCompletesSqlHandoff: true,
+          );
+          var legacyRemoteConsumes = 0;
+
+          final result = await subject.maybeShowNotification(
+            notificationService: service,
+            appVisibility: visibility,
+            contactPeerId: 'peer-final-visibility',
+            senderUsername: 'Alice',
+            messageText: 'Hello',
+            notificationEventIdentity: context.eventCorrelation,
+            durableEffectContext: context,
+            durableNotificationCoordinatorResolver: () async =>
+                ownerCoordinator,
+            consumeRecentRemoteNotificationAnnouncement:
+                ({required String payload, String? messageId}) async {
+                  legacyRemoteConsumes += 1;
+                  return true;
+                },
+            backgroundDuplicateGuardDelay: Duration.zero,
+          );
+
+          expect(visibility.evaluations, 2);
+          expect(
+            observedArmedOwners,
+            isTrue,
+            reason:
+                'event and tone owners must arm before the final visibility read',
+          );
+          expect(legacyRemoteConsumes, 1);
+          expect(
+            result,
+            testCase.finalVisible
+                ? NotificationPresentationResult.inChat
+                : NotificationPresentationResult.osPosted,
+          );
+          expect(service.nativeCalls, testCase.finalVisible ? 0 : 1);
+          expect(
+            log.sublist(log.length - 3),
+            <String>[
+              'service_return',
+              'observer:${testCase.finalVisible ? 'IN_CHAT' : 'OS_POSTED'}',
+              'reconcile',
+            ],
+            reason:
+                'reconciliation runs only after the out-of-lock SQL observer',
+          );
+        }
+      },
+    );
+
+    test(
+      'terminal OS replay after tone horizon releases provisional owners without native bookkeeping',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'terminal-os-replay-owners-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        var now = DateTime.utc(2026, 8, 16, 12);
+        final coordinator = DurableNotificationToneLease(
+          directory: directory,
+          now: () => now,
+          pendingClaimWait: Duration.zero,
+          pendingToneReservationWait: Duration.zero,
+        );
+        final priorTone = await coordinator.reserveTone('peer-terminal-replay');
+        expect(priorTone, isNotNull);
+        expect(await priorTone!.commit(), isTrue);
+        now = now.add(const Duration(seconds: 61));
+
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.direct,
+          value: 'peer-terminal-replay',
+        )!;
+        final context = DurableLocalNotificationEffectContext(
+          currentOpaqueBinding: 'v1:${'d' * 64}',
+          eventCorrelation: 'e' * 64,
+          conversationDigest: identity.digest,
+          producerKind: LocalNotificationProducerKind.directMessage,
+          sourceCustody: LocalNotificationSourceCustody.sqlReady,
+          presentationOwner: LocalNotificationPresentationOwner.mainApp,
+          readFinalCanonicalDisposition: () async =>
+              DurableLocalNotificationCanonicalDisposition.eligible,
+          onEffectTerminal: (_) async {},
+        );
+        final service = _DurableBoundaryNotificationService(
+          log: <String>[],
+          terminalReplay: true,
+        );
+        var recentMarks = 0;
+
+        final result = await subject.maybeShowNotification(
+          notificationService: service,
+          appVisibility: _SequencedVisibility(<AppVisibilityEvaluation>[
+            _exactBackgroundEvaluation(revision: 1),
+          ]),
+          contactPeerId: 'peer-terminal-replay',
+          senderUsername: 'Alice',
+          messageText: 'Hello',
+          messageId: 'message-terminal-replay',
+          notificationEventIdentity: context.eventCorrelation,
+          durableNotificationCoordinatorResolver: () async => coordinator,
+          durableEffectContext: context,
+          markRecentRemoteNotificationAnnouncement:
+              ({required String payload, String? messageId}) async {
+                recentMarks += 1;
+              },
+          backgroundDuplicateGuardDelay: Duration.zero,
+        );
+
+        expect(result, NotificationPresentationResult.osPosted);
+        expect(service.nativeCalls, 0);
+        expect(recentMarks, 0);
+        expect(_pendingToneFiles(directory), isEmpty);
+        expect(
+          await coordinator.reserveTone('peer-terminal-replay'),
+          isNotNull,
+          reason: 'the replay-only provisional tone owner must be released',
+        );
       },
     );
 
@@ -1920,6 +2103,124 @@ void main() {
     });
   });
 }
+
+final class _DurableBoundaryNotificationService extends FakeNotificationService
+    implements
+        MessageNotificationDurableFinalEffectBoundary,
+        MessageNotificationDurablePostHandoffReconciliation {
+  _DurableBoundaryNotificationService({
+    required this.log,
+    this.terminalReplay = false,
+    this.beforeAuthorize,
+  });
+
+  final List<String> log;
+  final bool terminalReplay;
+  final Future<void> Function()? beforeAuthorize;
+  int nativeCalls = 0;
+
+  @override
+  Future<void> notifyDurableEffectHandoffComplete(
+    DurableLocalNotificationEffectReceipt receipt,
+  ) async {
+    log.add('reconcile');
+  }
+
+  @override
+  Future<DurableLocalNotificationEffectResult>
+  showMessageNotificationWithDurableFinalEffect({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    required ConversationNotificationContentKind contentKind,
+    required String contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+    required DurableLocalNotificationEffectContext durableEffectContext,
+    required AppVisibilitySuppressionReader finalVisibility,
+    required AppVisibilityConversationIdentity conversationIdentity,
+    required PublishNativeMessageNotificationAtDurableBarrier publishNative,
+  }) async {
+    if (terminalReplay) {
+      log.add('service_return');
+      return DurableLocalNotificationEffectResult(
+        disposition: DurableLocalNotificationEffectDisposition.osPosted,
+        receipt: DurableLocalNotificationEffectReceipt(
+          eventCorrelation: durableEffectContext.eventCorrelation,
+          recordRevision: 4,
+          presentationState: LocalNotificationPresentationState.osPosted,
+        ),
+      );
+    }
+    late AppVisibilityEvaluation finalEvaluation;
+    late final LocalNotificationPresentationState presentation;
+    late final DurableLocalNotificationEffectDisposition disposition;
+    final entered = await publishNative(
+      ({required bool silent}) async {
+        nativeCalls += 1;
+        log.add('native');
+      },
+      () async {
+        await beforeAuthorize?.call();
+        finalEvaluation = await finalVisibility.evaluate(conversationIdentity);
+        return !finalEvaluation.maySuppress;
+      },
+    );
+    if (!entered && finalEvaluation.maySuppress) {
+      presentation = LocalNotificationPresentationState.inChat;
+      disposition = DurableLocalNotificationEffectDisposition.inChat;
+    } else {
+      presentation = LocalNotificationPresentationState.osPosted;
+      disposition = DurableLocalNotificationEffectDisposition.osPosted;
+    }
+    log.add('service_return');
+    return DurableLocalNotificationEffectResult(
+      disposition: disposition,
+      currentNativeEntryAttempted: entered,
+      receipt: DurableLocalNotificationEffectReceipt(
+        eventCorrelation: durableEffectContext.eventCorrelation,
+        recordRevision: 4,
+        presentationState: presentation,
+      ),
+    );
+  }
+}
+
+final class _SequencedVisibility extends AppVisibilitySuppressionReader {
+  _SequencedVisibility(this._evaluations);
+
+  final List<AppVisibilityEvaluation> _evaluations;
+  int evaluations = 0;
+
+  @override
+  Future<AppVisibilityEvaluation> evaluate(
+    AppVisibilityConversationIdentity? identity,
+  ) async {
+    final index = evaluations++;
+    return _evaluations[index];
+  }
+}
+
+AppVisibilityEvaluation _exactForegroundEvaluation({
+  required bool maySuppress,
+  required int revision,
+}) => AppVisibilityEvaluation(
+  isForegroundActive: true,
+  maySuppress: maySuppress,
+  lifecycle: AppVisibilityLifecycle.foregroundActive,
+  revision: revision,
+  lifecycleGeneration: revision,
+);
+
+AppVisibilityEvaluation _exactBackgroundEvaluation({required int revision}) =>
+    AppVisibilityEvaluation(
+      isForegroundActive: false,
+      maySuppress: false,
+      lifecycle: AppVisibilityLifecycle.background,
+      revision: revision,
+      lifecycleGeneration: revision,
+    );
 
 class _HookedNotificationService extends FakeNotificationService {
   _HookedNotificationService(this._beforeShow);

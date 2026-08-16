@@ -6,7 +6,7 @@ import 'package:flutter_app/features/push/application/group_notification_display
 ///
 /// [unknown] is deliberately distinct from [keep]. Read/open failures and a
 /// push that arrived before its inbox row must never cause a blind cancel.
-enum BackgroundGroupNotificationPostShowDecision { keep, retire, unknown }
+enum BackgroundGroupNotificationPostShowDecision { keep, read, retire, unknown }
 
 sealed class BackgroundManagedGroupNotificationComparand {
   const BackgroundManagedGroupNotificationComparand({required this.groupId});
@@ -147,7 +147,7 @@ BackgroundGroupNotificationPostShowDecision _evaluateMessage(
     contentKind: 'message',
     eventIdentity: comparand.messageId,
   )) {
-    return BackgroundGroupNotificationPostShowDecision.retire;
+    return BackgroundGroupNotificationPostShowDecision.read;
   }
   if (_isExactDeletion(
     deletionRow,
@@ -171,10 +171,12 @@ BackgroundGroupNotificationPostShowDecision _evaluateMessage(
       _trimToNull(messageRow['group_id']) != comparand.groupId ||
       _trimToNull(messageRow['sender_peer_id']) != comparand.senderPeerId ||
       (messageRow['is_incoming'] as num?)?.toInt() != 1 ||
-      messageRow['read_at'] != null ||
       comparand.messageId.startsWith('sys-') ||
       messagePolicy.isUnsupported) {
     return BackgroundGroupNotificationPostShowDecision.retire;
+  }
+  if (messageRow['read_at'] != null) {
+    return BackgroundGroupNotificationPostShowDecision.read;
   }
   return BackgroundGroupNotificationPostShowDecision.keep;
 }
@@ -193,7 +195,7 @@ BackgroundGroupNotificationPostShowDecision _evaluateReaction(
     contentKind: 'reaction',
     eventIdentity: comparand.notificationEventIdentity,
   )) {
-    return BackgroundGroupNotificationPostShowDecision.retire;
+    return BackgroundGroupNotificationPostShowDecision.read;
   }
   if (_isExactDeletion(
     targetDeletionRow,
@@ -265,7 +267,7 @@ BackgroundGroupNotificationPostShowDecision _evaluateReaction(
     return BackgroundGroupNotificationPostShowDecision.retire;
   }
   if (reactionRow['notification_acknowledged_at'] != null) {
-    return BackgroundGroupNotificationPostShowDecision.retire;
+    return BackgroundGroupNotificationPostShowDecision.read;
   }
   return BackgroundGroupNotificationPostShowDecision.keep;
 }
@@ -284,7 +286,7 @@ BackgroundGroupNotificationPostShowDecision _evaluateProvisionalReaction(
     contentKind: 'reaction',
     eventIdentity: comparand.notificationEventIdentity,
   )) {
-    return BackgroundGroupNotificationPostShowDecision.retire;
+    return BackgroundGroupNotificationPostShowDecision.read;
   }
   if (_isExactDeletion(
     targetDeletionRow,
@@ -355,7 +357,7 @@ BackgroundGroupNotificationPostShowDecision _evaluateProvisionalReaction(
     return BackgroundGroupNotificationPostShowDecision.unknown;
   }
   if (reactionRow['notification_acknowledged_at'] != null) {
-    return BackgroundGroupNotificationPostShowDecision.retire;
+    return BackgroundGroupNotificationPostShowDecision.read;
   }
 
   final rawRemovedAt = reactionRow['removed_at'];

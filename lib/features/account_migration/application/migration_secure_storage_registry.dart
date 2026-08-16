@@ -137,6 +137,15 @@ class MigrationSecureStorageRegistry {
       includeInExportPayload: false,
     ),
     MigrationSecureStorageKey(
+      scope: MigrationSecureStoreScope.iosSharedAccessGroup,
+      activeKey: canonicalRuntimeSharedAccountBindingStorageKey,
+      category:
+          MigrationSecureStorageKeyCategory.canonicalRuntimeAccountBinding,
+      policy: MigrationSecureStorageKeyPolicy.clearRegenerate,
+      criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
+      includeInExportPayload: false,
+    ),
+    MigrationSecureStorageKey(
       scope: MigrationSecureStoreScope.primary,
       activeKey: SecureKeyStoreAccountMigrationAuthorityRepository.storageKey,
       category: MigrationSecureStorageKeyCategory.accountMigrationAuthority,

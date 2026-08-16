@@ -6,12 +6,15 @@ import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_read_acknowledgement_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/protected_group_content_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/106_group_notification_display_outbox.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_schema_inventory.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_notification_display_outbox_repository_impl.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_notification_display_outbox_entry.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -813,6 +816,296 @@ void main() {
   );
 
   test(
+    'terminal alias reconciliation retains canonical READY until durable settlement',
+    () async {
+      final db = await databaseFactoryFfi.openDatabase(
+        path,
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        ),
+      );
+      addTearDown(db.close);
+      const canonicalId = 'canonical-terminal-ready';
+      const aliasId = 'alias-after-terminal-ready';
+      const correlation =
+          'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+      await db.insert('group_messages', <String, Object?>{
+        'id': canonicalId,
+        'group_id': 'group-a',
+        'sender_peer_id': 'peer-sender',
+        'text': 'terminal retained raw custody',
+        'timestamp': _t0,
+        'created_at': _t0,
+        'notification_display_terminal_event_id': canonicalId,
+      });
+      final ready = _message(canonicalId, messageId: canonicalId);
+      await dbStageGroupNotificationDisplayOutboxEntry(db, ready.toMap());
+      await dbPromoteGroupNotificationDisplayOutboxReadyIfExact(
+        db,
+        eventId: canonicalId,
+        expectedRevision: 1,
+        updatedAt: _t1,
+      );
+      final bound =
+          await dbBindGroupNotificationDisplayOutboxDurableCorrelationIfExact(
+            db,
+            eventId: canonicalId,
+            expectedRevision: 2,
+            expectedEventKind: ready.eventKind,
+            expectedGroupId: ready.groupId,
+            expectedMessageId: ready.messageId,
+            expectedActorPeerId: ready.actorPeerId,
+            expectedEventTimestamp: ready.eventTimestamp,
+            expectedReactionId: null,
+            expectedReactionAction: null,
+            expectedReactionTombstone: null,
+            durableEventCorrelation: correlation,
+            updatedAt: _t1,
+          );
+      expect(bound, isNotNull);
+      await dbStageGroupNotificationDisplayOutboxEntry(
+        db,
+        _message(aliasId, messageId: aliasId).toMap(),
+      );
+
+      expect(
+        await dbReconcileGroupNotificationDisplayOutboxMessageAliasReady(
+          db,
+          aliasEventId: aliasId,
+          canonicalEventId: canonicalId,
+          groupId: 'group-a',
+          actorPeerId: 'peer-sender',
+          eventTimestamp: _t0,
+          updatedAt: _t2,
+        ),
+        isTrue,
+      );
+
+      expect(
+        await dbLoadGroupNotificationDisplayOutboxEntry(db, aliasId),
+        isNull,
+      );
+      final retained = await dbLoadGroupNotificationDisplayOutboxEntry(
+        db,
+        canonicalId,
+      );
+      expect(retained, containsPair('readiness', 'ready'));
+      expect(
+        groupNotificationDisplayDurableCorrelationFromMarker(
+          retained?['last_attempt_at'] as String?,
+        ),
+        correlation,
+      );
+    },
+  );
+
+  test(
+    'protected exact-terminal duplicate branches retain correlation-bound READY',
+    () async {
+      final db = await databaseFactoryFfi.openDatabase(
+        path,
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        ),
+      );
+      addTearDown(db.close);
+      const groupId = 'group-protected-terminal';
+      const messageId = 'message-protected-terminal';
+      const reactionId = 'reaction-protected-terminal';
+      const actorPeerId = 'peer-protected-actor';
+      const timestamp = '2026-08-02T20:00:00.000000Z';
+      const correlation =
+          'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+      await db.insert('groups', const <String, Object?>{
+        'id': groupId,
+        'name': 'Protected terminal group',
+        'type': 'chat',
+        'topic_name': 'protected-terminal-topic',
+        'created_at': timestamp,
+        'created_by': 'peer-self',
+        'my_role': 'admin',
+      });
+      await db.insert('group_messages', const <String, Object?>{
+        'id': messageId,
+        'group_id': groupId,
+        'sender_peer_id': 'peer-self',
+        'text': 'protected reaction target',
+        'timestamp': timestamp,
+        'created_at': timestamp,
+      });
+      final transitionId = buildGroupReactionTransitionId(
+        groupId: groupId,
+        messageId: messageId,
+        logicalActorPeerId: actorPeerId,
+        action: 'add',
+        emoji: '👍',
+        timestamp: DateTime.parse(timestamp),
+      );
+      final reactionRow = <String, Object?>{
+        'id': reactionId,
+        'message_id': messageId,
+        'emoji': '👍',
+        'sender_peer_id': actorPeerId,
+        'timestamp': timestamp,
+        'created_at': timestamp,
+      };
+      final eventPayload = <String, Object?>{
+        'custodyKind': 'group_content_v1',
+        'groupId': groupId,
+        'payloadType': 'group_reaction',
+        'contentEventId': transitionId,
+        'logicalSenderPeerId': actorPeerId,
+        'payload': <String, Object?>{
+          'id': reactionId,
+          'eventId': transitionId,
+          'messageId': messageId,
+          'senderPeerId': actorPeerId,
+          'action': 'add',
+          'timestamp': timestamp,
+        },
+      };
+      final ready = GroupNotificationDisplayOutboxEntry.reaction(
+        eventId: transitionId,
+        groupId: groupId,
+        messageId: messageId,
+        actorPeerId: actorPeerId,
+        eventTimestamp: timestamp,
+        reactionId: reactionId,
+        reactionAction: 'add',
+        reactionTombstone: false,
+        readiness: GroupNotificationDisplayOutboxReadiness.ready,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      );
+
+      expect(
+        await dbCommitProtectedGroupReaction(
+          db,
+          groupId: groupId,
+          sourcePeerId: actorPeerId,
+          sourceEventId: 'pr1:$transitionId',
+          sourceTimestamp: timestamp,
+          eventPayload: eventPayload,
+          reactionRow: reactionRow,
+          transitionId: transitionId,
+          action: 'add',
+          readyDisplayOutboxRow: ready.toMap(),
+        ),
+        DbProtectedGroupContentCommitResult.applied,
+      );
+      expect(
+        await dbBindGroupNotificationDisplayOutboxDurableCorrelationIfExact(
+          db,
+          eventId: ready.eventId,
+          expectedRevision: ready.revision,
+          expectedEventKind: ready.eventKind,
+          expectedGroupId: ready.groupId,
+          expectedMessageId: ready.messageId,
+          expectedActorPeerId: ready.actorPeerId,
+          expectedEventTimestamp: ready.eventTimestamp,
+          expectedReactionId: ready.reactionId,
+          expectedReactionAction: ready.reactionAction,
+          expectedReactionTombstone: ready.reactionTombstone,
+          durableEventCorrelation: correlation,
+          updatedAt: timestamp,
+        ),
+        isNotNull,
+      );
+      expect(
+        await dbCompleteOrVerifyGroupNotificationDisplayOutboxEntryIfExact(
+          db,
+          eventId: ready.eventId,
+          expectedRevision: ready.revision,
+          expectedEventKind: ready.eventKind,
+          expectedGroupId: ready.groupId,
+          expectedMessageId: ready.messageId,
+          expectedActorPeerId: ready.actorPeerId,
+          expectedEventTimestamp: ready.eventTimestamp,
+          expectedReactionId: ready.reactionId,
+          expectedReactionAction: ready.reactionAction,
+          expectedReactionTombstone: ready.reactionTombstone,
+          completedAt: timestamp,
+          durableEventCorrelation: correlation,
+        ),
+        DurableLocalNotificationSqlHandoffResult.committed,
+      );
+
+      expect(
+        await dbCommitProtectedGroupReaction(
+          db,
+          groupId: groupId,
+          sourcePeerId: actorPeerId,
+          sourceEventId: 'pr1:$transitionId',
+          sourceTimestamp: timestamp,
+          eventPayload: eventPayload,
+          reactionRow: reactionRow,
+          transitionId: transitionId,
+          action: 'add',
+          readyDisplayOutboxRow: ready.toMap(),
+        ),
+        DbProtectedGroupContentCommitResult.exactDuplicate,
+      );
+      var retained = await dbLoadGroupNotificationDisplayOutboxEntry(
+        db,
+        transitionId,
+      );
+      expect(retained, containsPair('readiness', 'ready'));
+      expect(
+        groupNotificationDisplayDurableCorrelationFromMarker(
+          retained?['last_attempt_at'] as String?,
+        ),
+        correlation,
+      );
+
+      await db.delete(
+        'message_reactions',
+        where: 'id = ?',
+        whereArgs: const <Object?>[reactionId],
+      );
+      expect(
+        await dbCommitProtectedGroupReaction(
+          db,
+          groupId: groupId,
+          sourcePeerId: actorPeerId,
+          sourceEventId: 'pr1:$transitionId',
+          sourceTimestamp: timestamp,
+          eventPayload: eventPayload,
+          reactionRow: reactionRow,
+          transitionId: transitionId,
+          action: 'add',
+          readyDisplayOutboxRow: ready.toMap(),
+        ),
+        DbProtectedGroupContentCommitResult.applied,
+      );
+      retained = await dbLoadGroupNotificationDisplayOutboxEntry(
+        db,
+        transitionId,
+      );
+      expect(retained, containsPair('readiness', 'ready'));
+      expect(
+        groupNotificationDisplayDurableCorrelationFromMarker(
+          retained?['last_attempt_at'] as String?,
+        ),
+        correlation,
+      );
+      expect(
+        await db.query(
+          'group_notification_reconciliation_outbox',
+          where: 'group_id = ?',
+          whereArgs: const <Object?>[groupId],
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
     'message terminal marker and exact custody completion roll back together',
     () async {
       final db = await databaseFactoryFfi.openDatabase(
@@ -1047,6 +1340,153 @@ void main() {
       expect(
         await dbLoadGroupNotificationDisplayOutboxEntry(db, crashEventId),
         containsPair('readiness', 'not_ready'),
+      );
+    },
+  );
+
+  test(
+    'exact reaction terminal replay preserves correlation-bound READY until settlement',
+    () async {
+      final db = await databaseFactoryFfi.openDatabase(
+        path,
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        ),
+      );
+      addTearDown(db.close);
+      const eventId = 'durable-reaction-terminal-replay';
+      const reactionId = 'durable-reaction-id';
+      const correlation =
+          'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+      const siblingEventId = 'durable-reaction-sibling';
+      await db.insert('group_messages', <String, Object?>{
+        'id': 'message-a',
+        'group_id': 'group-a',
+        'sender_peer_id': 'peer-self',
+        'text': 'reaction terminal target',
+        'timestamp': _t0,
+        'created_at': _t0,
+      });
+      final reactionRow = <String, Object?>{
+        'id': reactionId,
+        'message_id': 'message-a',
+        'emoji': '\u{1F44D}',
+        'sender_peer_id': 'peer-reactor',
+        'timestamp': _t0,
+        'created_at': _t0,
+      };
+      await dbInsertReaction(db, reactionRow);
+      final custody = _reaction(eventId, reactionId: reactionId);
+      await dbStageGroupNotificationDisplayOutboxEntry(db, custody.toMap());
+      await dbPromoteGroupNotificationDisplayOutboxReadyIfExact(
+        db,
+        eventId: eventId,
+        expectedRevision: 1,
+        updatedAt: _t1,
+      );
+      final bound =
+          await dbBindGroupNotificationDisplayOutboxDurableCorrelationIfExact(
+            db,
+            eventId: eventId,
+            expectedRevision: 2,
+            expectedEventKind: custody.eventKind,
+            expectedGroupId: custody.groupId,
+            expectedMessageId: custody.messageId,
+            expectedActorPeerId: custody.actorPeerId,
+            expectedEventTimestamp: custody.eventTimestamp,
+            expectedReactionId: custody.reactionId,
+            expectedReactionAction: custody.reactionAction,
+            expectedReactionTombstone: custody.reactionTombstone,
+            durableEventCorrelation: correlation,
+            updatedAt: _t1,
+          );
+      expect(bound, isNotNull);
+      final sibling = _reaction(
+        siblingEventId,
+        reactionId: 'durable-reaction-sibling-id',
+        timestamp: _t1,
+      ).copyWith(actorPeerId: 'peer-sibling');
+      await dbStageGroupNotificationDisplayOutboxEntry(db, sibling.toMap());
+      await dbPromoteGroupNotificationDisplayOutboxReadyIfExact(
+        db,
+        eventId: siblingEventId,
+        expectedRevision: 1,
+        updatedAt: _t1,
+      );
+
+      expect(
+        await dbCompleteOrVerifyGroupNotificationDisplayOutboxEntryIfExact(
+          db,
+          eventId: eventId,
+          expectedRevision: 2,
+          expectedEventKind: custody.eventKind,
+          expectedGroupId: custody.groupId,
+          expectedMessageId: custody.messageId,
+          expectedActorPeerId: custody.actorPeerId,
+          expectedEventTimestamp: custody.eventTimestamp,
+          expectedReactionId: custody.reactionId,
+          expectedReactionAction: custody.reactionAction,
+          expectedReactionTombstone: custody.reactionTombstone,
+          completedAt: _t1,
+          durableEventCorrelation: correlation,
+        ),
+        DurableLocalNotificationSqlHandoffResult.committed,
+      );
+      expect(
+        await dbApplyIncomingReactionMutation(
+          db,
+          reactionRow,
+          mutation: DbIncomingReactionMutation.add,
+          groupIdForNotificationCleanup: 'group-a',
+          notificationEventIdForStaleAddCleanup: eventId,
+        ),
+        DbIncomingReactionApplyResult.exactReplay,
+      );
+
+      final retained = await dbLoadGroupNotificationDisplayOutboxEntry(
+        db,
+        eventId,
+      );
+      expect(retained, containsPair('readiness', 'ready'));
+      expect(retained, containsPair('revision', 3));
+      expect(
+        groupNotificationDisplayDurableCorrelationFromMarker(
+          retained?['last_attempt_at'] as String?,
+        ),
+        correlation,
+      );
+      expect(
+        await dbLoadGroupNotificationDisplayOutboxEntry(db, siblingEventId),
+        isNotNull,
+      );
+      expect(
+        await dbCompleteOrVerifyGroupNotificationDisplayOutboxEntryIfExact(
+          db,
+          eventId: eventId,
+          expectedRevision: 3,
+          expectedEventKind: custody.eventKind,
+          expectedGroupId: custody.groupId,
+          expectedMessageId: custody.messageId,
+          expectedActorPeerId: custody.actorPeerId,
+          expectedEventTimestamp: custody.eventTimestamp,
+          expectedReactionId: custody.reactionId,
+          expectedReactionAction: custody.reactionAction,
+          expectedReactionTombstone: custody.reactionTombstone,
+          completedAt: _t2,
+          durableEventCorrelation: correlation,
+        ),
+        DurableLocalNotificationSqlHandoffResult.alreadyCommitted,
+      );
+      expect(
+        await db.query(
+          'group_notification_reconciliation_outbox',
+          where: 'group_id = ?',
+          whereArgs: const <Object?>['group-a'],
+        ),
+        hasLength(1),
       );
     },
   );

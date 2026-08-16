@@ -1,6 +1,6 @@
 # 372 - GAP-N05 + GAP-N06 Final-Effect Gate And Local Notification Ledger
 
-Status: **EXECUTION_READY / CONTRACT_READY / INDEPENDENTLY REVIEWED / ONE COMBINED N05+N06 SLICE / DEFAULT-OFF OUTCOME ADMISSION / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
+Status: **POST_EXECUTION_AUDIT_CLOSED / N05_N06_FINAL_EFFECT_LEDGER_MECHANISM_CODE_COMPLETE / ONE COMBINED N05+N06 SLICE / CURRENT-DART+SHARED-MECHANISM ONLY / ONE N03-N06 HOST WAVE VERIFIED / DEFAULT-OFF OUTCOME ADMISSION / CROSS-NATIVE ADOPTION OPEN / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
 Type: Modification
 Spec inputs: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` §§6, 8 and 9; GAP-N05, GAP-N06 and WP-03 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`
 Classification: execution-ready combined final-effect/ledger implementation slice
@@ -317,9 +317,9 @@ settledAtUtc: null before SETTLED, required at SETTLED
 
 | Starting authority | Final current facts | Effect/state |
 |---|---|---|
-| `NOT_EVALUATED`/retry and exact fresh foreground A | exact conversation A, unread/not deleted, current generation/revision | no native post; durably `IN_CHAT/EFFECT_TERMINAL`, complete SQL, then `SETTLED`; return approved `inChat` only to the already-default-off producer |
-| Initial A visible, then background before final gate | fresh final snapshot is background | native post/update once; `OS_POSTED/EFFECT_TERMINAL`, then SQL and `SETTLED` |
-| Initial background, then exact A visible before final gate | fresh final snapshot is exact A | zero native effect; `IN_CHAT/EFFECT_TERMINAL`, then SQL and `SETTLED` |
+| `NOT_EVALUATED`/retry and exact fresh foreground A | exact conversation A, unread/not deleted, current generation/revision | no native post; durably `IN_CHAT/EFFECT_TERMINAL`; SQL A records the terminal while retaining READY, ledger becomes `SETTLED`, then SQL B retires READY; return approved `inChat` only to the already-default-off producer |
+| Initial A visible, then background before final gate | fresh final snapshot is background | native post/update once; `OS_POSTED/EFFECT_TERMINAL`, SQL A, `SETTLED`, then exact SQL B retirement |
+| Initial background, then exact A visible before final gate | fresh final snapshot is exact A | zero native effect; `IN_CHAT/EFFECT_TERMINAL`, SQL A, `SETTLED`, then exact SQL B retirement |
 | Canonical read, deleted, expired or exact incumbent policy suppresses | proof is current at the final gate | zero post; `CANCELLED` or `SUPPRESSED_POLICY` effect-terminal; policy outcome remains unadvertised until N11 |
 | Missing/stale/corrupt visibility | no safe suppression proof | treat as notification-eligible; never infer `IN_CHAT` |
 | Stale record revision, effect token, notification ID or content generation | newer authority exists | zero effect and retry/consume the newer state |
@@ -329,7 +329,7 @@ settledAtUtc: null before SETTLED, required at SETTLED
 | Main/outbox/reconciler canonical lookup is unknown | no materialized authority | zero effect and retry; never turn absence/read failure into suppression |
 | Authenticated push arrives before inbox materialization without an exact content-authenticated event/correlation | push/provider ownership is confirmed but event authority is unknown | retain staged push/provider custody and retry; do not create a ledger result or synthetic event |
 | Plan-373/N08 adapter has an exact content-authenticated relay row, physical binding and event correlation but no SQL row | source custody is `RELAY_VERIFIED_UNACKED`; relay row remains pending | the native adapter may CAS `READY -> CLAIMED -> PUBLISHING -> EFFECT_TERMINAL` under the shared revision/effect lock, using current binding/visibility and its strict projected policy. It cannot mark `SETTLED`, emit v116 or delete/ACK source custody |
-| Main app later materializes the same exact relay correlation in v106/v107 | existing non-settled ledger row is `RELAY_VERIFIED_UNACKED` at any effect phase | first commit the matching v106/v107 row outside the file lock; then under `.coordination.lock` exact-CAS only `sourceCustody` and revisions to `SQL_READY`, preserving phase, owner, attempt/token, presentation, notification ID/generation and terminal timestamps. `READY` may claim normally; `CLAIMED` keeps its owner/60-second recovery; `PUBLISHING` remains ambiguous and cannot delete SQL, emit v116 or settle; only `EFFECT_TERMINAL` replays SQL/v116 without another effect and may become `SETTLED`. Reverse custody transition or mismatch is refused |
+| Main app later materializes the same exact relay correlation in v106/v107 | existing non-settled ledger row is `RELAY_VERIFIED_UNACKED` at any effect phase | first commit the matching v106/v107 row outside the file lock; then under `.coordination.lock` exact-CAS only `sourceCustody` and revisions to `SQL_READY`, preserving phase, owner, attempt/token, presentation, notification ID/generation and terminal timestamps. `READY` may claim normally; `CLAIMED` keeps its owner/60-second recovery; `PUBLISHING` remains ambiguous and cannot delete SQL, emit v116 or settle; only `EFFECT_TERMINAL` may run SQL A and become `SETTLED`, after which SQL B retires exact READY without another effect. Reverse custody transition or mismatch is refused |
 
 Owner values are not inferred from producer kind: current foreground/main
 projection writes `MAIN_APP`; the authenticated Android FlutterFire background
@@ -350,11 +350,16 @@ There is no SQL/file distributed transaction. The current Dart sequence is:
    effect, invoke the native callback immediately with no intervening await;
 5. persist `EFFECT_TERMINAL` or retain the honest ambiguous attempt, then
    release the file lock;
-6. run the existing exact SQL transaction that writes any enabled v116 outcome
-   and deletes READY custody;
-7. reacquire the lock and CAS the same record to `SETTLED` only after SQL
-   success. Replay of `EFFECT_TERMINAL` repeats only the idempotent SQL handoff,
-   never the OS effect.
+6. run exact SQL transaction A, which writes/verifies the typed canonical
+   terminal and any enabled v116 outcome while retaining the exact READY row;
+7. reacquire the lock and CAS the same record to `SETTLED` only after SQL A
+   succeeds;
+8. run exact SQL transaction B, which deletes that unchanged READY custody and
+   atomically enqueues the incumbent reconciliation trigger. Replay from either
+   `EFFECT_TERMINAL` or `SETTLED` repeats only the missing idempotent SQL
+   handoff/retirement step, never the OS effect. This two-step SQL custody is
+   required because group reaction correlations are non-invertible after v106
+   deletion and because a process may stop after ledger settlement.
 
 The language-neutral downstream-native variant begins from an exactly verified
 `RELAY_VERIFIED_UNACKED` row rather than step 1. It uses the same revision/
@@ -367,7 +372,7 @@ first commit matching v106/v107 custody outside the file lock and then CAS
 every effect field and phase: `READY` may be claimed normally, `CLAIMED`
 respects the incumbent owner and recovery horizon, `PUBLISHING` remains
 ambiguous on its existing owner-specific repair path, and only
-`EFFECT_TERMINAL` executes steps 6--7 without another audible effect and
+`EFFECT_TERMINAL` executes steps 6--8 without another audible effect and
 settles. The reverse transition is illegal. Plan 372 supplies the transition
 vectors/API but no NSE/FCM caller.
 
@@ -501,7 +506,7 @@ extra N06 plan.
 | TC-372-03 | The last visibility decision occurs after durable publication arming and immediately before effect for direct/group message/reaction | `test/core/notifications/local_notification_final_effect_test.dart::TC-372-03 final visibility barrier chooses exactly one in-chat or OS-posted effect`; `show_notification_use_case_test.dart::TC-372-03b early visibility is preparation only and final gate owns the result` | Host Flutter / parameterized four producers, Plan-371 fake reader, post-`PUBLISHING` native-call barrier | Current early snapshot can terminally suppress/go stale -> mutate at the final barrier: A-visible then background posts once; background then A-visible posts zero; no intervening await/post-then-cancel | Decide before barrier, omit one producer, retain early terminal return, accept stale/unknown as in-chat, or await after final read -> red | New shared core test in both curated arrays/host inventory; show-use-case integration in both lanes |
 | TC-372-04 | Shared direct/group tri-state evaluators reread read/delete/expiry/current-policy plus record/content generation at the post-`PUBLISHING` barrier | same file `::TC-372-04 final canonical facts and revision CAS prevent resurrection and stale cancellation` | Host Flutter + real SQLite v106/v107 helpers, two controlled owners | Current paths diverge and validate after show -> commit mutation at final barrier: zero show, exact terminal/retry, later sibling/generation survives; unknown retries | Cache SQL facts, omit hidden/private target rule, drop expected ledger/content revision, cancel by conversation only, or map unknown to suppression -> red | Shared test plus exact direct/group read/reconciler sentinels |
 | TC-372-05 | Main isolate, Android background isolate and reconciler converge through one lock/owner, including platform-realistic ambiguity | `test/core/notifications/local_notification_projection_convergence_test.dart::TC-372-05 one claim owner and deterministic publishing recovery across isolate arrival orders`; `durable_conversation_notification_id_registry_test.dart::TC-372-05b one coordination lock rejects reentrant and inverse acquisition` | Host Dart / real temp files/flock, spawned isolate, Android-style active-ID inventory plus on-disk marker | Separate stores can disagree -> exactly one normal effect; crash cuts before call/old cancel/marker activation/native return/effect terminal converge; materialization racing a native claim upgrades custody but preserves phase/owner and one effect winner; repeated inventory failure becomes silent same-ID repair/exact cancel through an existing trigger, never fake generation or audible replay | Remove flock/CAS, trust active ID without marker, change phase/owner during custody upgrade, retain inventory-unavailable `PUBLISHING` forever, reenter a public method, invert lock order, or let stale reconciler overwrite g2 -> red | Shared core/convergence tests; serial because process-global/plugin fixtures |
-| TC-372-06 | `EFFECT_TERMINAL` replays exact SQL/v116 handoff and becomes `SETTLED` without repeating an OS effect | `local_notification_projection_convergence_test.dart::TC-372-06 effect-terminal replay settles direct and group custody once and emits only approved enabled outcome` | Host Flutter + real SQLite direct/group rows, producer flag on/off, four-phase relay-only-to-SQL upgrade vectors | Existing mapping recognizes mainly `osPosted` -> `IN_CHAT`/`OS_POSTED` map exactly when enabled; policy stays reserved; both crash sides of SQL commit and exact effect-terminal relay upgrade settle idempotently; upgraded `READY`/`CLAIMED` continue normally and upgraded `PUBLISHING` remains ambiguous with no SQL delete/v116/settle | Delete READY before effect terminal, prune before settled, emit/settle upgraded `PUBLISHING` or relay-only custody, duplicate v116, ignore flag, or re-alert replay -> red | Shared test plus current direct/group outbox wiring suites; both curated lanes |
+| TC-372-06 | `EFFECT_TERMINAL` replays exact SQL/v116 handoff and becomes `SETTLED` without repeating an OS effect | `local_notification_projection_convergence_test.dart::TC-372-06 effect-terminal replay settles direct and group custody once and emits only approved enabled outcome` | Host Flutter + real SQLite direct/group rows, producer flag on/off, four-phase relay-only-to-SQL upgrade vectors | Existing mapping recognizes mainly `osPosted` -> `IN_CHAT`/`OS_POSTED` map exactly when enabled; policy stays reserved; crashes before/after SQL A, ledger settlement and SQL B converge idempotently with READY revision unchanged; exact effect-terminal relay upgrade settles; upgraded `READY`/`CLAIMED` continue normally and upgraded `PUBLISHING` remains ambiguous with no SQL delete/v116/settle | Delete READY before effect terminal or before settlement, revise retained READY after settlement, prune before settled, emit/settle upgraded `PUBLISHING` or relay-only custody, duplicate v116, ignore flag, or re-alert replay -> red | Shared test plus current direct/group outbox wiring suites; both curated lanes |
 | TC-372-07 | Every adopted authenticated production effect resolves the raw correlation and uses the final coordinator with exact owner; exceptions remain explicit | `test/core/notifications/local_notification_ledger_wiring_test.dart::TC-372-07a adopted direct group main background and reconciler effects have one gateway owner and correlation`; `background_message_handler_test.dart::TC-372-07b authenticated background effect authorizes before native entry` | Host source-AST plus composition fakes and real background SQL reader; literal post-Plan-371 census | Current background/raw paths show then validate -> one allowlisted gateway; owner mapping exact; generic/unanchored/tap/activation/global-clear/N07/N08 exceptions cannot synthesize identity | Restore one post-show-only effect, use bounded card/message alias, omit owner, or route an explicit exception into ledger -> red | Shared wiring in both arrays; exact background test in affected lanes |
 | TC-372-08 | Legacy generation/tone/recent/recovery projections, lazy re-upgrade and lane/installation isolation survive additive adoption | `local_notification_ledger_test.dart::TC-372-08 legacy projection lazy adoption rebind and future rollback remain safe`; exact preservation bundle | Host real temp files/SQLite/plugin fakes | Old build may overwrite v1 marker without ledger -> new build detects generation mismatch, preserves legacy claim/content files, lazily readopts only exact authority; account rebind empty; no cross-device/lane damage | Remove legacy mirror, treat old marker as current ledger, share correlation across physical devices, cancelAll, or reuse sibling generation -> red | Focused test plus exact 12-test bundle and one N03-N06 wave `host-all` |
 
@@ -564,12 +569,13 @@ extra N06 plan.
    conditionally cancel the exact generation. Leave unanchored generic/social,
    tap/activation and global-clear paths explicitly classified and
    outcome-ineligible.
-8. Sequence custody honestly: `EFFECT_TERMINAL` first, then the existing
-   direct/group exact SQL completion/optional v116 insert, then `SETTLED`. Add
-   replay repair on both sides of the SQL commit, the exact relay-only-to-SQL
-   upgrade vector, and platform-realistic `PUBLISHING` recovery. Relay-only
-   custody can reach effect terminal but never ACK/v116/settle before upgrade;
-   ambiguous cancel retains prior `OS_POSTED` until the exact cancel succeeds.
+8. Sequence custody honestly: `EFFECT_TERMINAL`, SQL transaction A
+   (terminal/v116 while retaining READY), `SETTLED`, then SQL transaction B
+   (exact READY retirement plus reconciliation). Add replay repair at every
+   process cut, the exact relay-only-to-SQL upgrade vector, and
+   platform-realistic `PUBLISHING` recovery. Relay-only custody can reach effect
+   terminal but never ACK/v116/settle before upgrade; ambiguous cancel retains
+   prior `OS_POSTED` until the exact cancel succeeds.
 9. Preserve legacy ID/content/tone/claim/recovery mirrors, lazy re-upgrade and
    binding-mismatch rollback behavior through the explicit WP-07/N12 retirement
    gate. Add no global backfill, native renderer or activation.
@@ -655,52 +661,52 @@ red_status=$?
 set -e
 test "$red_status" -ne 0
 red_name='TC-372-01 v1 codec and state machine accept only legal monotonic transitions'
-test "$(jq -s --arg name "$red_name" '[.[] | select(.type == "testStart" and (.test.name | contains($name)))] | length' "$plan372_gate_dir/red.json")" -eq 1
-red_id="$(jq -r -s --arg name "$red_name" '[.[] | select(.type == "testStart" and (.test.name | contains($name)))][0].test.id' "$plan372_gate_dir/red.json")"
-test "$(jq -s --argjson id "$red_id" '[.[] | select(.type == "testDone" and .testID == $id and .result == "failure" and .skipped == false)] | length' "$plan372_gate_dir/red.json")" -eq 1
+test "$(jq -s --arg name "$red_name" '[.[] | objects | select(.type == "testStart" and (.test.name | contains($name)))] | length' "$plan372_gate_dir/red.json")" -eq 1
+red_id="$(jq -r -s --arg name "$red_name" '[.[] | objects | select(.type == "testStart" and (.test.name | contains($name)))][0].test.id' "$plan372_gate_dir/red.json")"
+test "$(jq -s --argjson id "$red_id" '[.[] | objects | select(.type == "testDone" and .testID == $id and .result == "failure" and .skipped == false)] | length' "$plan372_gate_dir/red.json")" -eq 1
 
-# 3. Focused isolated tests. Seven exact named owners must each select once and
-# finish success/non-skipped; TC-372-05/06 stay in the serial bundle below.
+# 3. Focused isolated tests. Six exact named owners must each select once and
+# finish success/non-skipped; TC-372-04/05/06 stay in the serial bundle below.
 flutter test --concurrency=4 --machine \
   test/core/notifications/local_notification_ledger_test.dart \
   test/core/notifications/local_notification_final_effect_test.dart \
   test/core/notifications/local_notification_ledger_wiring_test.dart \
   test/features/push/application/show_notification_use_case_test.dart \
-  --name 'TC-372-(01|02|03|04|07a|08)' \
+  --name 'TC-372-(01|02|03|07a|08)' \
   >"$plan372_gate_dir/focused.json"
 focused_names=(
   'TC-372-01 v1 codec and state machine accept only legal monotonic transitions'
   'TC-372-02 atomic store binding rebind and bounds preserve current authority and future bytes'
   'TC-372-03 final visibility barrier chooses exactly one in-chat or OS-posted effect'
   'TC-372-03b early visibility is preparation only and final gate owns the result'
-  'TC-372-04 final canonical facts and revision CAS prevent resurrection and stale cancellation'
   'TC-372-07a adopted direct group main background and reconciler effects have one gateway owner and correlation'
   'TC-372-08 legacy projection lazy adoption rebind and future rollback remain safe'
 )
 for name in "${focused_names[@]}"; do
-  test "$(jq -s --arg name "$name" '[.[] | select(.type == "testStart" and (.test.name | contains($name)))] | length' "$plan372_gate_dir/focused.json")" -eq 1
+  test "$(jq -s --arg name "$name" '[.[] | objects | select(.type == "testStart" and (.test.name | contains($name)))] | length' "$plan372_gate_dir/focused.json")" -eq 1
 done
-test "$(jq -s '([.[] | select(.type == "testStart" and (.test.name | contains("TC-372-"))) | .test.id]) as $ids | [$ids[] as $id | if ([.[] | select(.type == "testDone" and .testID == $id and .result == "success" and .skipped == false)] | length) == 1 then empty else $id end] | length' "$plan372_gate_dir/focused.json")" -eq 0
-test "$(jq -s '[.[] | select(.type == "testStart" and (.test.name | contains("TC-372-")))] | length' "$plan372_gate_dir/focused.json")" -eq 7
+test "$(jq -s '([.[] | objects | select(.type == "testStart" and (.test.name | contains("TC-372-"))) | .test.id]) as $ids | [$ids[] as $id | if ([.[] | objects | select(.type == "testDone" and .testID == $id and .result == "success" and .skipped == false)] | length) == 1 then empty else $id end] | length' "$plan372_gate_dir/focused.json")" -eq 0
+test "$(jq -s '[.[] | objects | select(.type == "testStart" and (.test.name | contains("TC-372-")))] | length' "$plan372_gate_dir/focused.json")" -eq 6
 
 # 4. Process-global/plugin/flock/SQLite convergence stays serial.
 flutter test --concurrency=1 --machine \
   test/core/notifications/local_notification_projection_convergence_test.dart \
   test/core/notifications/durable_conversation_notification_id_registry_test.dart \
   test/features/push/application/background_message_handler_test.dart \
-  --name 'TC-372-(05|06|07b)' \
+  --name 'TC-372-(04|05|06|07b)' \
   >"$plan372_gate_dir/serial.json"
 serial_names=(
+  'TC-372-04 final canonical facts and revision CAS prevent resurrection and stale cancellation'
   'TC-372-05 one claim owner and deterministic publishing recovery across isolate arrival orders'
   'TC-372-05b one coordination lock rejects reentrant and inverse acquisition'
   'TC-372-06 effect-terminal replay settles direct and group custody once and emits only approved enabled outcome'
   'TC-372-07b authenticated background effect authorizes before native entry'
 )
 for name in "${serial_names[@]}"; do
-  test "$(jq -s --arg name "$name" '[.[] | select(.type == "testStart" and (.test.name | contains($name)))] | length' "$plan372_gate_dir/serial.json")" -eq 1
+  test "$(jq -s --arg name "$name" '[.[] | objects | select(.type == "testStart" and (.test.name | contains($name)))] | length' "$plan372_gate_dir/serial.json")" -eq 1
 done
-test "$(jq -s '([.[] | select(.type == "testStart" and (.test.name | contains("TC-372-"))) | .test.id]) as $ids | [$ids[] as $id | if ([.[] | select(.type == "testDone" and .testID == $id and .result == "success" and .skipped == false)] | length) == 1 then empty else $id end] | length' "$plan372_gate_dir/serial.json")" -eq 0
-test "$(jq -s '[.[] | select(.type == "testStart" and (.test.name | contains("TC-372-")))] | length' "$plan372_gate_dir/serial.json")" -eq 4
+test "$(jq -s '([.[] | objects | select(.type == "testStart" and (.test.name | contains("TC-372-"))) | .test.id]) as $ids | [$ids[] as $id | if ([.[] | objects | select(.type == "testDone" and .testID == $id and .result == "success" and .skipped == false)] | length) == 1 then empty else $id end] | length' "$plan372_gate_dir/serial.json")" -eq 0
+test "$(jq -s '[.[] | objects | select(.type == "testStart" and (.test.name | contains("TC-372-")))] | length' "$plan372_gate_dir/serial.json")" -eq 5
 
 # 5. Exact preservation bundle; twelve selected IDs, twelve matched successes,
 # zero skips. Registry/plugin/SQLite owners make this intentionally serial.
@@ -714,9 +720,9 @@ flutter test --concurrency=1 --machine \
   test/core/database/migrations/116_notification_completed_outcome_outbox_test.dart \
   --name 'Android native boundary runs after registry retirement and directly wraps show|message-read cancellation cannot overtake a concurrent reaction replacement|exact conversation cancellation uses the existing id without cancelAll or allocation|TC-331-10 read acknowledges exact generation and preserves later sibling|new presentation racing read zero is cancelled after show and preserves siblings|startup zero-unread cannot cancel a headless event not yet canonical|TC-369-03 only an approved completed effect carries an outcome|reaction native-attempt error preserves fail-closed exact ownership|shows notification when app is backgrounded|same ids remain notification kind and peer scoped|TC-369-04 wake correlation byte contract is canonical and installation local|TC-369-01 v116 outcome outbox is additive bounded and empty' \
   >"$plan372_gate_dir/preservation.json"
-test "$(jq -s '[.[] | select(.type == "testStart" and .test.url != null)] | length' "$plan372_gate_dir/preservation.json")" -eq 12
-test "$(jq -s '([.[] | select(.type == "testStart" and .test.url != null) | .test.id]) as $ids | [.[] | select(.type == "testDone" and (.testID as $id | ($ids | index($id)) != null) and .result == "success" and .skipped == false)] | length' "$plan372_gate_dir/preservation.json")" -eq 12
-test "$(jq -s '[.[] | select(.type == "testDone" and .skipped == true)] | length' "$plan372_gate_dir/preservation.json")" -eq 0
+test "$(jq -s '[.[] | objects | select(.type == "testStart" and .test.url != null)] | length' "$plan372_gate_dir/preservation.json")" -eq 12
+test "$(jq -s '([.[] | objects | select(.type == "testStart" and .test.url != null) | .test.id]) as $ids | [.[] | objects | select(.type == "testDone" and (.testID as $id | ($ids | index($id)) != null) and .result == "success" and .skipped == false)] | length' "$plan372_gate_dir/preservation.json")" -eq 12
+test "$(jq -s '[.[] | objects | select(.type == "testDone" and .skipped == true)] | length' "$plan372_gate_dir/preservation.json")" -eq 0
 
 # 6. New shared owners appear exactly once in all three required inventories.
 shared_tests=(
@@ -728,10 +734,10 @@ shared_tests=(
 one_to_one="$(sed -n '/^readonly ONE_TO_ONE_TESTS=(/,/^)/p' scripts/run_test_gates.sh)"
 groups="$(sed -n '/^readonly GROUP_TESTS=(/,/^)/p' scripts/run_test_gates.sh)"
 host_one_to_one="$(sed -n '/^readonly ONE_TO_ONE_HOST_TESTS=(/,/^)/p' scripts/run_host_test_gates.sh)"
-for path in "${shared_tests[@]}"; do
-  test "$(printf '%s\n' "$one_to_one" | grep -Fxc "  \"$path\"")" -eq 1
-  test "$(printf '%s\n' "$groups" | grep -Fxc "  \"$path\"")" -eq 1
-  test "$(printf '%s\n' "$host_one_to_one" | grep -Fxc "  \"$path\"")" -eq 1
+for test_path in "${shared_tests[@]}"; do
+  test "$(printf '%s\n' "$one_to_one" | grep -Fxc "  \"$test_path\"")" -eq 1
+  test "$(printf '%s\n' "$groups" | grep -Fxc "  \"$test_path\"")" -eq 1
+  test "$(printf '%s\n' "$host_one_to_one" | grep -Fxc "  \"$test_path\"")" -eq 1
 done
 
 # 7. Affected curated lanes run serially.
@@ -780,24 +786,25 @@ files may use concurrency four; the serial bundle deliberately does not.
   renderer, synthetic generic event identity, activation or failure to preserve
   legacy projections stops execution for review.
 
-- [ ] TC-372-00 validates the exact Plan-371 receipt/tree and default-off seam.
-- [ ] Every TC-372-01 through TC-372-08 behavior has a named causal proof.
-- [ ] One semantic RED and representative mutation re-reds are recorded and
+- [x] TC-372-00 validates the exact Plan-371 receipt/tree and default-off seam.
+- [x] Every TC-372-01 through TC-372-08 behavior has a named causal proof.
+- [x] One semantic RED and representative mutation re-reds are recorded and
       reverted.
-- [ ] Final visibility and canonical-state mutations produce the exact effect/
+- [x] Final visibility and canonical-state mutations produce the exact effect/
       ledger result for all four producer kinds.
-- [ ] Crash/replay tests never conflate `PUBLISHING`, `EFFECT_TERMINAL` and
+- [x] Crash/replay tests never conflate `PUBLISHING`, `EFFECT_TERMINAL` and
       `SETTLED`; Android proof never invents an OS generation field.
-- [ ] SQL custody remains until effect terminal; effect-terminal replay
-      completes SQL/v116 and settles without another effect.
-- [ ] Exact relay-verified unacknowledged custody may reach effect terminal but
+- [x] SQL custody remains through effect terminal and ledger settlement; SQL A
+      records/verifies terminal/v116, and idempotent SQL B retires exact READY
+      without another effect or revision drift.
+- [x] Exact relay-verified unacknowledged custody may reach effect terminal but
       cannot ACK/v116/settle until same-correlation SQL materialization upgrades
       it; replay then performs zero second audible effect.
-- [ ] New shared tests are registered exactly once in all required arrays.
-- [ ] Both curated lanes and the single N03-N06 wave host-all pass.
-- [ ] Analyzer, changed-Dart format, diff hygiene and refreshed Graphify are
+- [x] New shared tests are registered exactly once in all required arrays.
+- [x] Both curated lanes and the single N03-N06 wave host-all pass.
+- [x] Analyzer, changed-Dart format, diff hygiene and refreshed Graphify are
       clean.
-- [ ] No device/live/native-adapter/release or full PRD completion is claimed.
+- [x] No device/live/native-adapter/release or full PRD completion is claimed.
 
 ## Handoff
 
@@ -908,3 +915,9 @@ admission still default-off and no live/PRD/release claim.
 |---|---|---|---|---|---|---|
 | 2026-08-15 | planning | plan only | Plan-371 receipt lookup -> absent while implementation is active | Current dirty Plan-371 tree is not accepted dependency evidence | **PREREQUISITE_BLOCKED** | Wait for Plan-371 execution/audit receipt, then run TC-372-00 |
 | 2026-08-16 | dependency re-grounding | plan only | TC-372-00 checksum/identity/ancestry/drift proof plus three exact Plan-370 default-off sentinels -> PASS; Graphify TDD query -> current/anchored `a1554310fab6234f` | Committed receipt `3c7e704e77f9240d62332750db4a6ecd26894b1d`, SHA-256 `dad09eb0e708629d64c0ddd3b82cb3a051509b0ff2f8750a3a46cc4b1441a11f`, frozen tree and machine-readable identities all pinned | **EXECUTION_READY**; no environment blocker | Commit reviewed planning baseline, confirm clean worktree, rerun TC-372-00, then author the minimal inert API shell and causal TC-372-01 RED |
+| 2026-08-16 | causal RED and current-Dart implementation | Ledger codec/store/state machine; incumbent registry lock; final-effect coordinator; direct/group/background/reconciler adopters | Exact TC-372-01 selected once and assertion-failed (JSON `06baef9305459af29a41e5177c023f144873f734f5f260a58709868fab8fe9a9`); focused 6/6, serial 5/5, preservation 12/12 and exact shared registration then passed | One strict identifier-only v1 file, one incumbent flock, fresh final barrier, phase-aware crash recovery and current exact-correlation adoption | None | Execute serial counterexample mutations and curated lanes |
+| 2026-08-16 | counterexample proof | Revision CAS; PUBLISHING recovery; SETTLED terminal enumeration | Three isolated mutations semantically re-RED TC-372-01/05/06, were reverted, and each exact owner returned GREEN | Stale revision, audible ambiguity replay and lost SQL-B recovery are causally rejected | None | Run affected curated lanes and aggregate wave gate |
+| 2026-08-16 | curated preservation | Current 1to1/group notification owners, projections and gate inventories | `1to1` 3,330 PASS / 10 declared skips plus tails; `groups` 4,334 PASS / 0 skips plus tails | All four adopted producer kinds converge through one final gateway; generic/activation/global-clear exceptions remain classified and outcome-ineligible | None | Run the one N03-N06 aggregate `host-all` |
+| 2026-08-16 | aggregate diagnostic and bounded repair | Account migration compatibility; ignored vendor inventory; DTR-18 hashes; route/flock/group harness sentinels | First full sweep's 19 failures were fully classified; one real Android/no-shared-store promotion regression was repaired at `supportsScope`; deterministic hygiene/sentinel issues passed 41/41, 58/58, 42/42 and exact group harness 2/2 | No failure was waived. Semantic flock bounds stayed unchanged; the two group repairs only interleave real async filesystem work with bounded pumps | None | Rerun the complete aggregate gate on the repaired final tree |
+| 2026-08-16 | N03-N06 host wave and hygiene | 1,362 Flutter paths plus host items 1363-1376; 72 changed Dart files; full analyzer; graph | Final `host-all` 14,288 PASS / 11 declared skips / 0 failures and every tail PASS (SHA-256 `3c453e6d6cddce70ba787475e52fe0f0568944a975299ff5c000635f15df1895`); show owner 56/56; format/analyzer/static hygiene clean; Graphify current/anchored `8c428eb87b960e70` | **ONE N03-N06 HOST WAVE VERIFIED**; no redundant core/feature sweep or device/native-adopter claim | None | Freeze the exact tested tree and bind closure evidence |
+| 2026-08-16 | post-execution audit closed | 78-path frozen implementation plus checksum receipt and successor-verifiable provenance archive | Frozen tree `71ab5f0ddcfa5e682f50f1bc36ebb891567b78b2`; workspace SHA-256 `45e68aab0c0a79750102ccbccd1e010f663dea20a50ea5221cffa1e9278357ed`; receipt SHA-256 `9da08053f6a6034b002376ccc348834ca2576b0761e77be72386e5ec1dec4a62` | **N05_N06_FINAL_EFFECT_LEDGER_MECHANISM_CODE_COMPLETE** for the current Dart/shared mechanism; SQL A -> SETTLED -> SQL B and relay-to-SQL phase preservation are bound | iOS NSE/Android native adoption, live/activation/full PRD/release remain downstream | Commit Plan 372 only, validate its receipt from clean HEAD, then execute Plan 373 |

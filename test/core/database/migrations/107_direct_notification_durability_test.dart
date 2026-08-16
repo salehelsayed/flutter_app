@@ -11,6 +11,7 @@ import 'package:flutter_app/core/database/helpers/direct_notification_reaction_t
 import 'package:flutter_app/core/database/helpers/direct_notification_reconciliation_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/107_direct_notification_durability.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/features/conversation/data/repositories/direct_notification_display_outbox_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/direct_notification_reaction_terminal_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/direct_notification_read_acknowledgement_repository_impl.dart';
@@ -269,8 +270,14 @@ void main() {
       });
       await _insertContact(db, 'peer-a');
       await _insertMessage(db, peerId: 'peer-a', messageId: 'same-id');
+      await db.update(
+        'messages',
+        const <String, Object?>{'is_incoming': 0},
+        where: 'id = ?',
+        whereArgs: const <Object?>['same-id'],
+      );
       await db.insert('message_reactions', <String, Object?>{
-        'id': 'shared-group-reaction',
+        'id': 'direct-reaction',
         'message_id': 'same-id',
         'emoji': '\u{1f44d}',
         'sender_peer_id': 'same-actor',
@@ -333,7 +340,7 @@ void main() {
         (await db.query(
           'message_reactions',
           where: 'id = ?',
-          whereArgs: const <Object?>['shared-group-reaction'],
+          whereArgs: const <Object?>['direct-reaction'],
         )).single['notification_display_terminal_event_id'],
         'group-event',
       );
@@ -439,6 +446,224 @@ void main() {
       final current = (await reconciliation.loadEligible()).single;
       expect(current.revision, greaterThan(queued.revision));
       expect(await reconciliation.completeIfExact(current), isTrue);
+    },
+  );
+
+  test(
+    'TC-372-04a existing-v116 trigger repair preserves and terminalizes exact READY custody',
+    () async {
+      final db = await _openCurrent(path);
+      addTearDown(() async {
+        if (db.isOpen) await db.close();
+      });
+      await _installHistoricalBroadDeleteTriggers(db);
+      final historical =
+          (await db.query(
+                'sqlite_master',
+                columns: const <String>['sql'],
+                where: 'type = ? AND name = ?',
+                whereArgs: const <Object?>[
+                  'trigger',
+                  'trg_direct_notification_reconcile_message_delete',
+                ],
+              )).single['sql']
+              as String;
+      expect(historical, isNot(contains('canonical_retired')));
+
+      await repairDirectNotificationDurabilityDeleteTriggers(db);
+      await repairDirectNotificationDurabilityDeleteTriggers(db);
+      final repaired =
+          (await db.query(
+                'sqlite_master',
+                columns: const <String>['sql'],
+                where: 'type = ? AND name = ?',
+                whereArgs: const <Object?>[
+                  'trigger',
+                  'trg_direct_notification_reconcile_message_delete',
+                ],
+              )).single['sql']
+              as String;
+      expect(repaired, contains("last_attempt_at = 'canonical_retired'"));
+      expect(repaired, contains("readiness = 'not_ready'"));
+
+      await _insertContact(db, 'peer-trigger-message');
+      await _insertMessage(
+        db,
+        peerId: 'peer-trigger-message',
+        messageId: 'message-trigger-delete',
+      );
+      const ready = DirectNotificationDisplayOutboxEntry.message(
+        eventId: 'message-trigger-delete',
+        peerId: 'peer-trigger-message',
+        messageId: 'message-trigger-delete',
+        actorPeerId: 'peer-trigger-message',
+        eventTimestamp: _t0,
+        readiness: DirectNotificationDisplayOutboxReadiness.ready,
+        createdAt: _t0,
+        updatedAt: _t0,
+      );
+      const unarmed = DirectNotificationDisplayOutboxEntry.reaction(
+        eventId: 'unarmed-same-parent',
+        peerId: 'peer-trigger-message',
+        messageId: 'message-trigger-delete',
+        actorPeerId: 'peer-trigger-message',
+        eventTimestamp: _t1,
+        reactionId: 'unarmed-reaction',
+        reactionAction: 'add',
+        reactionTombstone: false,
+        createdAt: _t1,
+        updatedAt: _t1,
+      );
+      await db.insert('direct_notification_display_outbox', ready.toMap());
+      await db.insert('direct_notification_display_outbox', unarmed.toMap());
+
+      expect(
+        await db.delete(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['message-trigger-delete'],
+        ),
+        1,
+      );
+      var marked = DirectNotificationDisplayOutboxEntry.fromMap(
+        (await db.query(
+          'direct_notification_display_outbox',
+          where: 'peer_id = ? AND event_kind = ? AND event_id = ?',
+          whereArgs: const <Object?>[
+            'peer-trigger-message',
+            'message',
+            'message-trigger-delete',
+          ],
+        )).single,
+      );
+      expect(marked.revision, 2);
+      expect(marked.hasCanonicalRetirementProof, isTrue);
+      expect(
+        await dbRecordDirectNotificationDisplayOutboxRetryIfExact(
+          db,
+          peerId: marked.peerId,
+          eventKind: marked.eventKind,
+          eventId: marked.eventId,
+          expectedRevision: marked.revision,
+          lastErrorCode: DirectNotificationDisplayOutboxErrorCode.displayFailed,
+          lastAttemptAt: _t2,
+          nextAttemptAt: '2026-08-03T10:01:02.000Z',
+          updatedAt: _t2,
+        ),
+        isTrue,
+        reason: 'a failed first recovery must not erase trigger custody proof',
+      );
+      marked = DirectNotificationDisplayOutboxEntry.fromMap(
+        (await db.query(
+          'direct_notification_display_outbox',
+          where: 'peer_id = ? AND event_kind = ? AND event_id = ?',
+          whereArgs: const <Object?>[
+            'peer-trigger-message',
+            'message',
+            'message-trigger-delete',
+          ],
+        )).single,
+      );
+      expect(marked.revision, 3);
+      expect(marked.retryCount, 1);
+      expect(marked.hasCanonicalRetirementProof, isTrue);
+      expect(marked.nextAttemptAt, '2026-08-03T10:01:02.000Z');
+      expect(
+        await db.query(
+          'direct_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>['unarmed-same-parent'],
+        ),
+        isEmpty,
+      );
+      expect(
+        await dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(
+          db,
+          eventId: ready.eventId,
+          expectedRevision: 1,
+          expectedEventKind: ready.eventKind,
+          expectedPeerId: ready.peerId,
+          expectedMessageId: ready.messageId,
+          expectedActorPeerId: ready.actorPeerId,
+          expectedEventTimestamp: ready.eventTimestamp,
+          expectedReactionId: null,
+          expectedReactionAction: null,
+          expectedReactionTombstone: null,
+        ),
+        isFalse,
+        reason: 'the trigger revision fences a pre-delete loaded owner',
+      );
+      expect(
+        await dbHandoffDirectNotificationDisplayOutboxEntryIfExact(
+          db,
+          eventId: marked.eventId,
+          expectedRevision: marked.revision,
+          expectedEventKind: marked.eventKind,
+          expectedPeerId: marked.peerId,
+          expectedMessageId: marked.messageId,
+          expectedActorPeerId: marked.actorPeerId,
+          expectedEventTimestamp: marked.eventTimestamp,
+          expectedReactionId: null,
+          expectedReactionAction: null,
+          expectedReactionTombstone: null,
+          completedAt: _t2,
+        ),
+        DurableLocalNotificationSqlHandoffResult.alreadyCommitted,
+      );
+      expect(
+        await dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(
+          db,
+          eventId: marked.eventId,
+          expectedRevision: marked.revision,
+          expectedEventKind: marked.eventKind,
+          expectedPeerId: marked.peerId,
+          expectedMessageId: marked.messageId,
+          expectedActorPeerId: marked.actorPeerId,
+          expectedEventTimestamp: marked.eventTimestamp,
+          expectedReactionId: null,
+          expectedReactionAction: null,
+          expectedReactionTombstone: null,
+        ),
+        isTrue,
+      );
+
+      await _insertContact(db, 'peer-trigger-contact');
+      await _insertMessage(
+        db,
+        peerId: 'peer-trigger-contact',
+        messageId: 'message-contact-delete',
+      );
+      const contactReady = DirectNotificationDisplayOutboxEntry.message(
+        eventId: 'message-contact-delete',
+        peerId: 'peer-trigger-contact',
+        messageId: 'message-contact-delete',
+        actorPeerId: 'peer-trigger-contact',
+        eventTimestamp: _t0,
+        readiness: DirectNotificationDisplayOutboxReadiness.ready,
+        createdAt: _t0,
+        updatedAt: _t0,
+      );
+      await db.insert(
+        'direct_notification_display_outbox',
+        contactReady.toMap(),
+      );
+      expect(
+        await db.delete(
+          'contacts',
+          where: 'peer_id = ?',
+          whereArgs: const <Object?>['peer-trigger-contact'],
+        ),
+        1,
+      );
+      final contactMarked = DirectNotificationDisplayOutboxEntry.fromMap(
+        (await db.query(
+          'direct_notification_display_outbox',
+          where: 'peer_id = ?',
+          whereArgs: const <Object?>['peer-trigger-contact'],
+        )).single,
+      );
+      expect(contactMarked.revision, 2);
+      expect(contactMarked.hasCanonicalRetirementProof, isTrue);
     },
   );
 
@@ -889,18 +1114,67 @@ void main() {
         );
       }
 
-      expect(
-        await dbLoadDirectNotificationDisplayOutboxEntry(
-          db,
-          peerId: peerId,
-          eventKind: DirectNotificationDisplayOutboxKind.message,
-          eventId: messageId,
-        ),
-        isNull,
-        reason:
-            'a ${scenario.readiness} message marker must not outlive its '
-            'terminal private parent (${scenario.suffix})',
+      final terminalCustody = await dbLoadDirectNotificationDisplayOutboxEntry(
+        db,
+        peerId: peerId,
+        eventKind: DirectNotificationDisplayOutboxKind.message,
+        eventId: messageId,
       );
+      if (scenario.readiness == 'not_ready') {
+        expect(
+          terminalCustody,
+          isNull,
+          reason:
+              'unarmed custody retires atomically with the private terminal '
+              '(${scenario.suffix})',
+        );
+      } else {
+        expect(
+          terminalCustody,
+          isNotNull,
+          reason:
+              'READY custody may already be PUBLISHING and must survive until '
+              'its durable terminal settles (${scenario.suffix})',
+        );
+        final terminalEntry = DirectNotificationDisplayOutboxEntry.fromMap(
+          terminalCustody!,
+        );
+        expect(
+          await dbHandoffDirectNotificationDisplayOutboxEntryIfExact(
+            db,
+            eventId: terminalEntry.eventId,
+            expectedRevision: terminalEntry.revision,
+            expectedEventKind: terminalEntry.eventKind,
+            expectedPeerId: terminalEntry.peerId,
+            expectedMessageId: terminalEntry.messageId,
+            expectedActorPeerId: terminalEntry.actorPeerId,
+            expectedEventTimestamp: terminalEntry.eventTimestamp,
+            expectedReactionId: terminalEntry.reactionId,
+            expectedReactionAction: terminalEntry.reactionAction,
+            expectedReactionTombstone: terminalEntry.reactionTombstone,
+            completedAt: _t2,
+          ),
+          DurableLocalNotificationSqlHandoffResult.alreadyCommitted,
+          reason:
+              'the exact READY tuple plus canonical private terminal is SQL proof',
+        );
+        expect(
+          await dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(
+            db,
+            eventId: terminalEntry.eventId,
+            expectedRevision: terminalEntry.revision,
+            expectedEventKind: terminalEntry.eventKind,
+            expectedPeerId: terminalEntry.peerId,
+            expectedMessageId: terminalEntry.messageId,
+            expectedActorPeerId: terminalEntry.actorPeerId,
+            expectedEventTimestamp: terminalEntry.eventTimestamp,
+            expectedReactionId: terminalEntry.reactionId,
+            expectedReactionAction: terminalEntry.reactionAction,
+            expectedReactionTombstone: terminalEntry.reactionTombstone,
+          ),
+          isTrue,
+        );
+      }
       expect(
         await dbLoadDirectNotificationDisplayOutboxEntry(
           db,
@@ -960,6 +1234,69 @@ Future<void> _insertMessage(
   'is_incoming': 1,
   'created_at': _t0,
 });
+
+Future<void> _installHistoricalBroadDeleteTriggers(Database db) async {
+  await db.execute(
+    'DROP TRIGGER IF EXISTS '
+    'trg_direct_notification_reconcile_contact_delete',
+  );
+  await db.execute(
+    'DROP TRIGGER IF EXISTS '
+    'trg_direct_notification_reconcile_message_delete',
+  );
+  await db.execute('''
+    CREATE TRIGGER trg_direct_notification_reconcile_contact_delete
+    AFTER DELETE ON contacts
+    BEGIN
+      INSERT INTO direct_notification_reconciliation_outbox (
+        peer_id, incarnation_id, revision, retry_count,
+        last_attempt_at, next_attempt_at, created_at, updated_at
+      ) VALUES (
+        OLD.peer_id, lower(hex(randomblob(16))), 1, 0, NULL, NULL,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      )
+      ON CONFLICT(peer_id) DO UPDATE SET
+        revision = revision + 1,
+        retry_count = 0,
+        last_attempt_at = NULL,
+        next_attempt_at = NULL,
+        updated_at = excluded.updated_at;
+      DELETE FROM direct_notification_display_outbox
+      WHERE peer_id = OLD.peer_id;
+      DELETE FROM direct_notification_read_acknowledgements
+      WHERE peer_id = OLD.peer_id;
+      DELETE FROM direct_notification_reaction_terminal_events
+      WHERE peer_id = OLD.peer_id;
+    END
+  ''');
+  await db.execute('''
+    CREATE TRIGGER trg_direct_notification_reconcile_message_delete
+    AFTER DELETE ON messages
+    BEGIN
+      INSERT INTO direct_notification_reconciliation_outbox (
+        peer_id, incarnation_id, revision, retry_count,
+        last_attempt_at, next_attempt_at, created_at, updated_at
+      ) VALUES (
+        OLD.contact_peer_id, lower(hex(randomblob(16))), 1, 0, NULL, NULL,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      )
+      ON CONFLICT(peer_id) DO UPDATE SET
+        revision = revision + 1,
+        retry_count = 0,
+        last_attempt_at = NULL,
+        next_attempt_at = NULL,
+        updated_at = excluded.updated_at;
+      DELETE FROM direct_notification_display_outbox
+      WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id;
+      DELETE FROM direct_notification_read_acknowledgements
+      WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id;
+      DELETE FROM direct_notification_reaction_terminal_events
+      WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id;
+    END
+  ''');
+}
 
 DirectNotificationDisplayOutboxRepositoryImpl _displayRepository(
   Database db, {
@@ -1046,6 +1383,32 @@ DirectNotificationDisplayOutboxRepositoryImpl _displayRepository(
         completedAt: completedAt,
         outcome: outcome,
       ),
+  dbRetireAfterDurableSettlementIfExact:
+      ({
+        required eventId,
+        required expectedRevision,
+        required expectedEventKind,
+        required expectedPeerId,
+        required expectedMessageId,
+        required expectedActorPeerId,
+        required expectedEventTimestamp,
+        required expectedReactionId,
+        required expectedReactionAction,
+        required expectedReactionTombstone,
+      }) =>
+          dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(
+            db,
+            eventId: eventId,
+            expectedRevision: expectedRevision,
+            expectedEventKind: expectedEventKind,
+            expectedPeerId: expectedPeerId,
+            expectedMessageId: expectedMessageId,
+            expectedActorPeerId: expectedActorPeerId,
+            expectedEventTimestamp: expectedEventTimestamp,
+            expectedReactionId: expectedReactionId,
+            expectedReactionAction: expectedReactionAction,
+            expectedReactionTombstone: expectedReactionTombstone,
+          ),
   dbRetireIfExact:
       ({
         required eventId,

@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -26,6 +29,8 @@ class FlutterNotificationService
     implements
         NotificationService,
         MessageNotificationNativePublicationBoundary,
+        MessageNotificationDurableFinalEffectBoundary,
+        MessageNotificationDurablePostHandoffReconciliation,
         ConversationNotificationCancellation,
         ConversationNotificationGenerationCancellation,
         ConversationNotificationGenerationReplacement {
@@ -266,17 +271,19 @@ class FlutterNotificationService
     ConversationNotificationContentKind? contentKind,
     String? contentEventIdentity,
     ConversationNotificationSnapshot? snapshot,
-  }) => _showMessageNotificationAtNativeBoundary(
-    contactPeerId: contactPeerId,
-    senderUsername: senderUsername,
-    messageText: messageText,
-    payload: payload,
-    silent: silent,
-    contentKind: contentKind,
-    contentEventIdentity: contentEventIdentity,
-    snapshot: snapshot,
-    publishNative: (showNative) => showNative(silent: silent),
-  );
+  }) async {
+    await _showMessageNotificationAtNativeBoundary(
+      contactPeerId: contactPeerId,
+      senderUsername: senderUsername,
+      messageText: messageText,
+      payload: payload,
+      silent: silent,
+      contentKind: contentKind,
+      contentEventIdentity: contentEventIdentity,
+      snapshot: snapshot,
+      publishNative: (showNative) => showNative(silent: silent),
+    );
+  }
 
   @override
   Future<void> showMessageNotificationAtNativeBoundary({
@@ -290,19 +297,66 @@ class FlutterNotificationService
     ConversationNotificationSnapshot? snapshot,
     required Future<void> Function(NativeMessageNotificationShow showNative)
     publishNative,
-  }) => _showMessageNotificationAtNativeBoundary(
-    contactPeerId: contactPeerId,
-    senderUsername: senderUsername,
-    messageText: messageText,
-    payload: payload,
-    silent: silent,
-    contentKind: contentKind,
-    contentEventIdentity: contentEventIdentity,
-    snapshot: snapshot,
-    publishNative: publishNative,
-  );
+  }) async {
+    await _showMessageNotificationAtNativeBoundary(
+      contactPeerId: contactPeerId,
+      senderUsername: senderUsername,
+      messageText: messageText,
+      payload: payload,
+      silent: silent,
+      contentKind: contentKind,
+      contentEventIdentity: contentEventIdentity,
+      snapshot: snapshot,
+      publishNative: publishNative,
+    );
+  }
 
-  Future<void> _showMessageNotificationAtNativeBoundary({
+  @override
+  Future<DurableLocalNotificationEffectResult>
+  showMessageNotificationWithDurableFinalEffect({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    required ConversationNotificationContentKind contentKind,
+    required String contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+    required DurableLocalNotificationEffectContext durableEffectContext,
+    required AppVisibilitySuppressionReader finalVisibility,
+    required AppVisibilityConversationIdentity conversationIdentity,
+    required PublishNativeMessageNotificationAtDurableBarrier publishNative,
+  }) async {
+    return await _showMessageNotificationAtNativeBoundary(
+          contactPeerId: contactPeerId,
+          senderUsername: senderUsername,
+          messageText: messageText,
+          payload: payload,
+          silent: silent,
+          contentKind: contentKind,
+          contentEventIdentity: contentEventIdentity,
+          snapshot: snapshot,
+          publishNative: (showNative) async {
+            final entered = await publishNative(showNative, () async => true);
+            if (!entered) {
+              throw StateError('durable native entry was not authorized');
+            }
+          },
+          durablePublishNativeAtFinalBarrier: publishNative,
+          durableEffectContext: durableEffectContext,
+          finalVisibility: finalVisibility,
+          conversationIdentity: conversationIdentity,
+        ) ??
+        const DurableLocalNotificationEffectResult.retryable();
+  }
+
+  @override
+  Future<void> notifyDurableEffectHandoffComplete(
+    DurableLocalNotificationEffectReceipt receipt,
+  ) => _notifyNotificationUpdated();
+
+  Future<DurableLocalNotificationEffectResult?>
+  _showMessageNotificationAtNativeBoundary({
     required String contactPeerId,
     required String senderUsername,
     required String messageText,
@@ -313,6 +367,11 @@ class FlutterNotificationService
     required ConversationNotificationSnapshot? snapshot,
     required Future<void> Function(NativeMessageNotificationShow showNative)
     publishNative,
+    PublishNativeMessageNotificationAtDurableBarrier?
+    durablePublishNativeAtFinalBarrier,
+    DurableLocalNotificationEffectContext? durableEffectContext,
+    AppVisibilitySuppressionReader? finalVisibility,
+    AppVisibilityConversationIdentity? conversationIdentity,
   }) async {
     // One notification per conversation — updates on new messages. The id is
     // keyed off the conversation (NOT the per-message payload) so a burst
@@ -325,10 +384,17 @@ class FlutterNotificationService
           ? null
           : ConversationNotificationContentMetadata(
               kind: contentKind,
-              eventIdentity: contentEventIdentity?.trim().isEmpty == true
-                  ? null
-                  : contentEventIdentity?.trim(),
-              generation: _notificationGenerationFactory(),
+              eventIdentity:
+                  durableEffectContext?.eventCorrelation ??
+                  (contentEventIdentity?.trim().isEmpty == true
+                      ? null
+                      : contentEventIdentity?.trim()),
+              generation: durableEffectContext == null
+                  ? _notificationGenerationFactory()
+                  : durableLocalNotificationContentGeneration(
+                          durableEffectContext.eventCorrelation,
+                        ) ??
+                        _notificationGenerationFactory(),
             );
       final nativePayload = metadata == null
           ? resolvedPayload
@@ -354,7 +420,40 @@ class FlutterNotificationService
         );
       }
 
-      if (metadata == null) {
+      DurableLocalNotificationEffectResult? durableResult;
+      if (durableEffectContext != null) {
+        final contentRegistry = await _resolveNotificationContentRegistry();
+        if (metadata == null ||
+            finalVisibility == null ||
+            conversationIdentity == null ||
+            contentRegistry is! DurableLocalNotificationEffectRegistry) {
+          return const DurableLocalNotificationEffectResult.retryable();
+        }
+        final durableRegistry =
+            contentRegistry as DurableLocalNotificationEffectRegistry;
+        durableResult = await durableRegistry.runFinalEffect(
+          context: durableEffectContext,
+          appVisibility: finalVisibility,
+          conversationIdentity: conversationIdentity,
+          conversationKey: contactPeerId,
+          notificationId: notificationId,
+          metadata: metadata,
+          retireCurrent: () => _plugin.cancel(notificationId),
+          publishNative: () => publishNative(show),
+          // Recovery must bypass expired provisional event/tone owners and
+          // force a same-ID silent repair at the plugin boundary.
+          publishNativeSilently: () => show(silent: true),
+          publishNativeAtFinalBarrier:
+              durablePublishNativeAtFinalBarrier == null
+              ? null
+              : (authorize) =>
+                    durablePublishNativeAtFinalBarrier(show, authorize),
+          activeNotificationIds: () async =>
+              (await _plugin.getActiveNotifications()).map(
+                (notification) => notification.id,
+              ),
+        );
+      } else if (metadata == null) {
         await publishNative(show);
       } else {
         final contentRegistry = await _resolveNotificationContentRegistry();
@@ -367,20 +466,39 @@ class FlutterNotificationService
         );
       }
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'NOTIFICATION_SHOWN',
-        details: {
-          'contactPeerId': contactPeerId.length > 10
-              ? contactPeerId.substring(0, 10)
-              : contactPeerId,
-          'sender': senderUsername,
-          'payload': resolvedPayload,
-          'silent': publishedSilently,
-        },
-      );
+      if (durableResult == null ||
+          (durableResult.disposition ==
+                  DurableLocalNotificationEffectDisposition.osPosted &&
+              durableResult.currentNativeEntryAttempted)) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'NOTIFICATION_SHOWN',
+          details: durableResult == null
+              ? <String, Object?>{
+                  'contactPeerId': contactPeerId.length > 10
+                      ? contactPeerId.substring(0, 10)
+                      : contactPeerId,
+                  'sender': senderUsername,
+                  'payload': resolvedPayload,
+                  'silent': publishedSilently,
+                }
+              : <String, Object?>{
+                  'durable': true,
+                  'producer': durableEffectContext!.producerKind.wireName,
+                  'disposition': durableResult.disposition.name,
+                  'nativeEntry': durableResult.currentNativeEntryAttempted,
+                  'silent': publishedSilently,
+                },
+        );
+      }
+      return durableResult;
     } finally {
-      await _notifyNotificationUpdated();
+      // The durable caller must run its effect-terminal SQL/v116 handoff
+      // immediately after this method releases the registry lock. Scheduling
+      // reconciliation here would insert unrelated work between those steps.
+      if (durableEffectContext == null) {
+        await _notifyNotificationUpdated();
+      }
     }
   }
 

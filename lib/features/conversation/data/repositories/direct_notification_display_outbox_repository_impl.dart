@@ -63,6 +63,19 @@ class DirectNotificationDisplayOutboxRepositoryImpl
     required String? expectedReactionId,
     required String? expectedReactionAction,
     required bool? expectedReactionTombstone,
+  })?
+  dbRetireAfterDurableSettlementIfExact;
+  final Future<bool> Function({
+    required String eventId,
+    required int expectedRevision,
+    required String expectedEventKind,
+    required String expectedPeerId,
+    required String expectedMessageId,
+    required String expectedActorPeerId,
+    required String expectedEventTimestamp,
+    required String? expectedReactionId,
+    required String? expectedReactionAction,
+    required bool? expectedReactionTombstone,
   })
   dbRetireIfExact;
   final Future<int> Function(String peerId) dbDeleteForPeer;
@@ -87,6 +100,7 @@ class DirectNotificationDisplayOutboxRepositoryImpl
     required this.dbLoadEarliestNextAttemptAt,
     required this.dbRecordRetryIfExact,
     required this.dbCompleteIfExact,
+    this.dbRetireAfterDurableSettlementIfExact,
     required this.dbRetireIfExact,
     required this.dbDeleteForPeer,
     required this.dbDeleteForMessage,
@@ -182,6 +196,26 @@ class DirectNotificationDisplayOutboxRepositoryImpl
     completedAt: now().toUtc().toIso8601String(),
     outcome: outcome,
   );
+
+  @override
+  Future<bool> retireAfterDurableSettlementIfExact(
+    DirectNotificationDisplayOutboxEntry expected,
+  ) {
+    final retireAfterSettlement = dbRetireAfterDurableSettlementIfExact;
+    if (retireAfterSettlement == null) return Future<bool>.value(false);
+    return retireAfterSettlement(
+      eventId: expected.eventId,
+      expectedRevision: expected.revision,
+      expectedEventKind: expected.eventKind,
+      expectedPeerId: expected.peerId,
+      expectedMessageId: expected.messageId,
+      expectedActorPeerId: expected.actorPeerId,
+      expectedEventTimestamp: expected.eventTimestamp,
+      expectedReactionId: expected.reactionId,
+      expectedReactionAction: expected.reactionAction,
+      expectedReactionTombstone: expected.reactionTombstone,
+    );
+  }
 
   @override
   Future<bool> retireIfExact(DirectNotificationDisplayOutboxEntry expected) =>

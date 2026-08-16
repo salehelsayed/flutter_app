@@ -23,6 +23,12 @@ readonly BASELINE_TESTS=(
 )
 
 readonly ONE_TO_ONE_TESTS=(
+  # 372: shared final-effect ledger, barrier, convergence and production
+  # ownership census are exercised by both notification families.
+  "test/core/notifications/local_notification_ledger_test.dart"
+  "test/core/notifications/local_notification_final_effect_test.dart"
+  "test/core/notifications/local_notification_projection_convergence_test.dart"
+  "test/core/notifications/local_notification_ledger_wiring_test.dart"
   "test/features/conversation/integration/two_user_message_exchange_test.dart"
   "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"
   # FDC-02: staggered relay proof race — e2e dedup-masking discriminator
@@ -449,6 +455,12 @@ readonly INTRO_TESTS=(
 )
 
 readonly GROUP_TESTS=(
+  # 372: shared final-effect ledger, barrier, convergence and production
+  # ownership census are exercised by both notification families.
+  "test/core/notifications/local_notification_ledger_test.dart"
+  "test/core/notifications/local_notification_final_effect_test.dart"
+  "test/core/notifications/local_notification_projection_convergence_test.dart"
+  "test/core/notifications/local_notification_ledger_wiring_test.dart"
   "test/features/groups/integration/group_messaging_smoke_test.dart"
   # 370: one default-off authenticated completed-outcome drain is shared by
   # bridge admission, persisted custody, retry lifecycle, resume and bootstrap.

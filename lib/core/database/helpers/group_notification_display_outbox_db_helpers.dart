@@ -3,15 +3,69 @@ import 'dart:math' as math;
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../notifications/deterministic_notification_id.dart';
+import '../../notifications/durable_local_notification_effect_coordinator.dart';
 import '../../notifications/notification_completed_outcome.dart';
+import '../../notifications/notification_completed_outcome_correlation.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
 import 'notification_completed_outcome_outbox_db_helpers.dart';
+import 'group_notification_reconciliation_outbox_db_helpers.dart';
 import 'protected_group_reaction_display_terminal_db_helpers.dart';
 
 const String _table = 'group_notification_display_outbox';
 const int kGroupNotificationDisplayOutboxCapacity = 512;
 const int kGroupNotificationDisplayOutboxMaxLoadBatch = 50;
+const String kGroupNotificationDisplayCanonicalRetiredMarker =
+    'terminal:canonical_retired';
+const String _groupNotificationDisplayDurableCorrelationMarkerPrefix =
+    'effect:';
+const String _groupNotificationDisplayCanonicalRetiredCorrelationMarkerPrefix =
+    '$kGroupNotificationDisplayCanonicalRetiredMarker:';
+final RegExp _durableEventCorrelationPattern = RegExp(r'^[0-9a-f]{64}$');
+
+/// Privacy-safe SQL custody marker written before entering the file-ledger
+/// final-effect boundary. It preserves the raw event correlation even if a
+/// concurrent canonical mutation removes the message row that derived it.
+String groupNotificationDisplayDurableCorrelationMarker(
+  String durableEventCorrelation,
+) {
+  if (!_durableEventCorrelationPattern.hasMatch(durableEventCorrelation)) {
+    throw ArgumentError.value(
+      durableEventCorrelation,
+      'durableEventCorrelation',
+      'must be a lowercase 64-hex digest',
+    );
+  }
+  return '$_groupNotificationDisplayDurableCorrelationMarkerPrefix'
+      '$durableEventCorrelation';
+}
+
+String? groupNotificationDisplayDurableCorrelationFromMarker(String? marker) {
+  if (marker == null) return null;
+  final prefix =
+      marker.startsWith(
+        _groupNotificationDisplayCanonicalRetiredCorrelationMarkerPrefix,
+      )
+      ? _groupNotificationDisplayCanonicalRetiredCorrelationMarkerPrefix
+      : marker.startsWith(
+          _groupNotificationDisplayDurableCorrelationMarkerPrefix,
+        )
+      ? _groupNotificationDisplayDurableCorrelationMarkerPrefix
+      : null;
+  if (prefix == null) return null;
+  final correlation = marker.substring(prefix.length);
+  return _durableEventCorrelationPattern.hasMatch(correlation)
+      ? correlation
+      : null;
+}
+
+bool isGroupNotificationDisplayCanonicalRetiredMarker(String? marker) =>
+    marker == kGroupNotificationDisplayCanonicalRetiredMarker ||
+    (marker?.startsWith(
+              _groupNotificationDisplayCanonicalRetiredCorrelationMarkerPrefix,
+            ) ==
+            true &&
+        groupNotificationDisplayDurableCorrelationFromMarker(marker) != null);
 
 const List<String> _authorityFields = <String>[
   'event_id',
@@ -94,6 +148,86 @@ Future<Map<String, Object?>?> dbLoadGroupNotificationDisplayOutboxEntry(
   return rows.isEmpty ? null : rows.single;
 }
 
+/// Binds one exact READY row to its opaque file-ledger correlation before any
+/// final effect can start. Replays return the already-bound row without
+/// advancing its revision; a different correlation or canonical-retired row
+/// is never rebound.
+Future<Map<String, Object?>?>
+dbBindGroupNotificationDisplayOutboxDurableCorrelationIfExact(
+  Database db, {
+  required String eventId,
+  required int expectedRevision,
+  required String expectedEventKind,
+  required String expectedGroupId,
+  required String expectedMessageId,
+  required String expectedActorPeerId,
+  required String expectedEventTimestamp,
+  required String? expectedReactionId,
+  required String? expectedReactionAction,
+  required bool? expectedReactionTombstone,
+  required String durableEventCorrelation,
+  required String updatedAt,
+}) => dbWriteTransaction(db, (txn) async {
+  if (!_durableEventCorrelationPattern.hasMatch(durableEventCorrelation) ||
+      !await _tableExists(txn)) {
+    return null;
+  }
+  final rows = await txn.query(
+    _table,
+    where: 'event_id = ?',
+    whereArgs: <Object?>[eventId],
+    limit: 1,
+  );
+  if (rows.isEmpty) return null;
+  final current = rows.single;
+  final expectedAuthority = <String, Object?>{
+    'event_id': eventId,
+    'event_kind': expectedEventKind,
+    'group_id': expectedGroupId,
+    'message_id': expectedMessageId,
+    'actor_peer_id': expectedActorPeerId,
+    'event_timestamp': expectedEventTimestamp,
+    'reaction_id': expectedReactionId,
+    'reaction_action': expectedReactionAction,
+    'reaction_tombstone': expectedReactionTombstone == null
+        ? null
+        : (expectedReactionTombstone ? 1 : 0),
+  };
+  if (current['revision'] != expectedRevision ||
+      current['readiness'] != 'ready' ||
+      !_sameAuthority(current, expectedAuthority)) {
+    return null;
+  }
+  final marker = current['last_attempt_at'] as String?;
+  final existingCorrelation =
+      groupNotificationDisplayDurableCorrelationFromMarker(marker);
+  if (existingCorrelation != null) {
+    return existingCorrelation == durableEventCorrelation ? current : null;
+  }
+  if (isGroupNotificationDisplayCanonicalRetiredMarker(marker)) return null;
+
+  final updated = await txn.rawUpdate(
+    'UPDATE $_table SET last_attempt_at = ?, next_attempt_at = NULL, '
+    'updated_at = ? '
+    'WHERE event_id = ? AND revision = ? AND readiness = ?',
+    <Object?>[
+      groupNotificationDisplayDurableCorrelationMarker(durableEventCorrelation),
+      updatedAt,
+      eventId,
+      expectedRevision,
+      'ready',
+    ],
+  );
+  if (updated != 1) return null;
+  final rebound = await txn.query(
+    _table,
+    where: 'event_id = ?',
+    whereArgs: <Object?>[eventId],
+    limit: 1,
+  );
+  return rebound.isEmpty ? null : rebound.single;
+}, exclusive: true);
+
 Future<bool> dbPromoteGroupNotificationDisplayOutboxReadyIfExact(
   DatabaseExecutor db, {
   required String eventId,
@@ -157,11 +291,17 @@ Future<bool> dbRecordGroupNotificationDisplayOutboxRetryIfExact(
   if (!await _tableExists(db)) return false;
   final updated = await db.rawUpdate(
     'UPDATE $_table SET retry_count = retry_count + 1, '
-    'last_error_code = ?, last_attempt_at = ?, next_attempt_at = ?, '
+    'last_error_code = ?, '
+    'last_attempt_at = CASE WHEN last_attempt_at = ? '
+    'OR last_attempt_at LIKE ? OR last_attempt_at LIKE ? '
+    'THEN last_attempt_at ELSE ? END, next_attempt_at = ?, '
     'updated_at = ?, revision = revision + 1 '
     'WHERE event_id = ? AND revision = ? AND readiness = ?',
     <Object?>[
       lastErrorCode,
+      kGroupNotificationDisplayCanonicalRetiredMarker,
+      '$_groupNotificationDisplayDurableCorrelationMarkerPrefix%',
+      '$_groupNotificationDisplayCanonicalRetiredCorrelationMarkerPrefix%',
       lastAttemptAt,
       nextAttemptAt,
       updatedAt,
@@ -187,8 +327,73 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
   required bool? expectedReactionTombstone,
   required String completedAt,
   NotificationCompletedOutcomeCandidate? outcome,
+}) async {
+  final handoff =
+      await dbCompleteOrVerifyGroupNotificationDisplayOutboxEntryIfExact(
+        db,
+        eventId: eventId,
+        expectedRevision: expectedRevision,
+        expectedEventKind: expectedEventKind,
+        expectedGroupId: expectedGroupId,
+        expectedMessageId: expectedMessageId,
+        expectedActorPeerId: expectedActorPeerId,
+        expectedEventTimestamp: expectedEventTimestamp,
+        expectedReactionId: expectedReactionId,
+        expectedReactionAction: expectedReactionAction,
+        expectedReactionTombstone: expectedReactionTombstone,
+        completedAt: completedAt,
+        outcome: outcome,
+        allowExistingDifferentOutcome: true,
+        durableEventCorrelation: null,
+        retireReadyWithinTransaction: true,
+      );
+  return handoff == DurableLocalNotificationSqlHandoffResult.committed;
+}
+
+/// Commits/verifies the exact group terminal while retaining READY custody.
+///
+/// Group reaction SQL retains only a bounded event alias, so deleting READY
+/// before file-ledger settlement would lose the raw authenticated transition
+/// needed by a fresh process. The caller must settle the ledger and only then
+/// call [dbRetireGroupNotificationDisplayOutboxAfterDurableSettlementIfExact].
+/// A missing READY row remains supported for exact replay of databases written
+/// by an earlier completion path, but requires the typed terminal and v116 fact.
+Future<DurableLocalNotificationSqlHandoffResult>
+dbCompleteOrVerifyGroupNotificationDisplayOutboxEntryIfExact(
+  Database db, {
+  required String eventId,
+  required int expectedRevision,
+  required String expectedEventKind,
+  required String expectedGroupId,
+  required String expectedMessageId,
+  required String expectedActorPeerId,
+  required String expectedEventTimestamp,
+  required String? expectedReactionId,
+  required String? expectedReactionAction,
+  required bool? expectedReactionTombstone,
+  required String completedAt,
+  NotificationCompletedOutcomeCandidate? outcome,
+  bool allowExistingDifferentOutcome = false,
+  String? durableEventCorrelation,
+  bool retireReadyWithinTransaction = false,
 }) => dbWriteTransaction(db, (txn) async {
-  if (!await _tableExists(txn)) return false;
+  if (!await _tableExists(txn)) {
+    return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+  }
+  if (durableEventCorrelation != null &&
+      !_durableEventCorrelationPattern.hasMatch(durableEventCorrelation)) {
+    return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+  }
+  if (outcome != null &&
+      durableEventCorrelation != null &&
+      tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: outcome.physicalPeerId,
+            producerKind: outcome.producerKind,
+            eventKey: outcome.eventKey,
+          ) !=
+          durableEventCorrelation) {
+    return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+  }
   final where = StringBuffer(
     'event_id = ? AND revision = ? AND readiness = ? '
     'AND event_kind = ? AND group_id = ? AND message_id = ? '
@@ -204,37 +409,109 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
     expectedActorPeerId,
     expectedEventTimestamp,
   ];
-  if (expectedReactionId == null) {
-    where.write(' AND reaction_id IS NULL');
-  } else {
-    where.write(' AND reaction_id = ?');
-    whereArgs.add(expectedReactionId);
-  }
-  if (expectedReactionAction == null) {
-    where.write(' AND reaction_action IS NULL');
-  } else {
-    where.write(' AND reaction_action = ?');
-    whereArgs.add(expectedReactionAction);
-  }
-  if (expectedReactionTombstone == null) {
-    where.write(' AND reaction_tombstone IS NULL');
-  } else {
-    where.write(' AND reaction_tombstone = ?');
-    whereArgs.add(expectedReactionTombstone ? 1 : 0);
-  }
+  _appendNullableAuthorityComparand(
+    where,
+    whereArgs,
+    column: 'reaction_id',
+    value: expectedReactionId,
+  );
+  _appendNullableAuthorityComparand(
+    where,
+    whereArgs,
+    column: 'reaction_action',
+    value: expectedReactionAction,
+  );
+  _appendNullableAuthorityComparand(
+    where,
+    whereArgs,
+    column: 'reaction_tombstone',
+    value: expectedReactionTombstone == null
+        ? null
+        : (expectedReactionTombstone ? 1 : 0),
+  );
+
   final exactCustody = await txn.query(
     _table,
-    columns: const <String>['event_id'],
+    columns: const <String>['event_id', 'last_attempt_at'],
     where: where.toString(),
     whereArgs: whereArgs,
     limit: 1,
   );
-  if (exactCustody.isEmpty) return false;
+  if (exactCustody.isEmpty) {
+    final sameEvent = await txn.query(
+      _table,
+      columns: const <String>['event_id'],
+      where: 'event_id = ?',
+      whereArgs: <Object?>[eventId],
+      limit: 1,
+    );
+    if (sameEvent.isNotEmpty ||
+        !await _hasExactCompletedGroupTerminal(
+          txn,
+          eventId: eventId,
+          eventKind: expectedEventKind,
+          groupId: expectedGroupId,
+          messageId: expectedMessageId,
+          actorPeerId: expectedActorPeerId,
+          eventTimestamp: expectedEventTimestamp,
+          reactionId: expectedReactionId,
+          reactionAction: expectedReactionAction,
+          reactionTombstone: expectedReactionTombstone,
+          durableEventCorrelation: durableEventCorrelation,
+        ) ||
+        !await _hasExactGroupOutcome(txn, outcome)) {
+      return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+    }
+    return DurableLocalNotificationSqlHandoffResult.alreadyCommitted;
+  }
 
-  // Record the terminal canonical generation before retiring ready custody.
-  // Both writes share this transaction, so a failed CAS/delete cannot leave a
-  // false terminal fact and a successful delete cannot lose dedupe authority.
-  if (expectedEventKind == 'message') {
+  final canonicalRetirementTerminal =
+      durableEventCorrelation != null &&
+      isGroupNotificationDisplayCanonicalRetiredMarker(
+        exactCustody.single['last_attempt_at'] as String?,
+      ) &&
+      groupNotificationDisplayDurableCorrelationFromMarker(
+            exactCustody.single['last_attempt_at'] as String?,
+          ) ==
+          durableEventCorrelation &&
+      await _hasExactCanonicalGroupRetirementTerminal(
+        txn,
+        eventKind: expectedEventKind,
+        groupId: expectedGroupId,
+        messageId: expectedMessageId,
+        actorPeerId: expectedActorPeerId,
+        eventTimestamp: expectedEventTimestamp,
+        reactionId: expectedReactionId,
+        reactionAction: expectedReactionAction,
+        reactionTombstone: expectedReactionTombstone,
+      );
+  final terminalAlreadyCommitted =
+      canonicalRetirementTerminal ||
+      await _hasExactCompletedGroupTerminal(
+        txn,
+        eventId: eventId,
+        eventKind: expectedEventKind,
+        groupId: expectedGroupId,
+        messageId: expectedMessageId,
+        actorPeerId: expectedActorPeerId,
+        eventTimestamp: expectedEventTimestamp,
+        reactionId: expectedReactionId,
+        reactionAction: expectedReactionAction,
+        reactionTombstone: expectedReactionTombstone,
+        durableEventCorrelation: durableEventCorrelation,
+      );
+  if (!retireReadyWithinTransaction &&
+      terminalAlreadyCommitted &&
+      await _hasExactGroupOutcome(txn, outcome)) {
+    return DurableLocalNotificationSqlHandoffResult.alreadyCommitted;
+  }
+
+  if (canonicalRetirementTerminal) {
+    // A canonical delete/remove transaction deliberately retains this exact
+    // raw READY row. Together they are the typed SQL terminal: the tombstone
+    // or newer reaction state proves retirement while READY preserves every
+    // immutable producer comparand until the file-ledger record settles.
+  } else if (expectedEventKind == 'message') {
     final updated = await txn.rawUpdate(
       'UPDATE group_messages '
       'SET notification_display_terminal_event_id = ? '
@@ -243,20 +520,23 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
       'AND (notification_display_terminal_event_id IS NULL '
       'OR notification_display_terminal_event_id = ?)',
       <Object?>[
-        eventId,
+        durableEventCorrelation ?? eventId,
         expectedMessageId,
         expectedGroupId,
         expectedActorPeerId,
         expectedEventTimestamp,
-        eventId,
+        durableEventCorrelation ?? eventId,
       ],
     );
-    if (updated != 1) return false;
+    if (updated != 1) {
+      return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+    }
   } else if (expectedEventKind == 'reaction' &&
       expectedReactionId != null &&
       expectedReactionAction == 'add' &&
       expectedReactionTombstone == false) {
-    final terminalIdentity = boundedReactionEventIdentity(eventId);
+    final terminalIdentity =
+        durableEventCorrelation ?? boundedReactionEventIdentity(eventId);
     final updated = await txn.rawUpdate(
       'UPDATE message_reactions '
       'SET notification_display_terminal_event_id = ? '
@@ -277,7 +557,9 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
         expectedGroupId,
       ],
     );
-    if (updated != 1) return false;
+    if (updated != 1) {
+      return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+    }
     await dbAppendProtectedGroupReactionDisplayTerminalIfExact(
       txn,
       groupId: expectedGroupId,
@@ -287,6 +569,8 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
       reactionId: expectedReactionId,
       eventTimestamp: expectedEventTimestamp,
     );
+  } else {
+    return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
   }
 
   if (outcome != null) {
@@ -303,19 +587,368 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
         event: 'NOTIFICATION_OUTCOME_CATEGORY_REPLAY',
         details: const <String, Object?>{'reason': 'outcome_category_replay'},
       );
+      if (!allowExistingDifferentOutcome) {
+        return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+      }
     }
   }
 
-  final deleted = await txn.delete(
-    _table,
-    where: where.toString(),
-    whereArgs: whereArgs,
-  );
-  if (deleted != 1) {
-    throw StateError('group notification display completion CAS failed');
+  if (retireReadyWithinTransaction) {
+    final deleted = await txn.delete(
+      _table,
+      where: where.toString(),
+      whereArgs: whereArgs,
+    );
+    if (deleted != 1) {
+      throw StateError('group notification display completion CAS failed');
+    }
   }
+
+  return DurableLocalNotificationSqlHandoffResult.committed;
+}, exclusive: true);
+
+/// Deletes the exact raw READY row only after its ledger record settled.
+///
+/// The reconciliation trigger is committed in the same transaction, so a
+/// crash after deletion cannot strand a canonical card cleanup. Missing-row
+/// replay is accepted only with the same typed SQL terminal evidence.
+Future<bool>
+dbRetireGroupNotificationDisplayOutboxAfterDurableSettlementIfExact(
+  Database db, {
+  required String eventId,
+  required int expectedRevision,
+  required String expectedEventKind,
+  required String expectedGroupId,
+  required String expectedMessageId,
+  required String expectedActorPeerId,
+  required String expectedEventTimestamp,
+  required String? expectedReactionId,
+  required String? expectedReactionAction,
+  required bool? expectedReactionTombstone,
+  String? durableEventCorrelation,
+}) => dbWriteTransaction(db, (txn) async {
+  if ((durableEventCorrelation != null &&
+          !_durableEventCorrelationPattern.hasMatch(durableEventCorrelation)) ||
+      !await _tableExists(txn)) {
+    return false;
+  }
+  final where = StringBuffer(
+    'event_id = ? AND revision = ? AND readiness = ? '
+    'AND event_kind = ? AND group_id = ? AND message_id = ? '
+    'AND actor_peer_id = ? AND event_timestamp = ?',
+  );
+  final whereArgs = <Object?>[
+    eventId,
+    expectedRevision,
+    'ready',
+    expectedEventKind,
+    expectedGroupId,
+    expectedMessageId,
+    expectedActorPeerId,
+    expectedEventTimestamp,
+  ];
+  _appendNullableAuthorityComparand(
+    where,
+    whereArgs,
+    column: 'reaction_id',
+    value: expectedReactionId,
+  );
+  _appendNullableAuthorityComparand(
+    where,
+    whereArgs,
+    column: 'reaction_action',
+    value: expectedReactionAction,
+  );
+  _appendNullableAuthorityComparand(
+    where,
+    whereArgs,
+    column: 'reaction_tombstone',
+    value: expectedReactionTombstone == null
+        ? null
+        : (expectedReactionTombstone ? 1 : 0),
+  );
+  final sameEvent = await txn.query(
+    _table,
+    columns: const <String>['event_id'],
+    where: 'event_id = ?',
+    whereArgs: <Object?>[eventId],
+    limit: 1,
+  );
+  final exactCustody = sameEvent.isEmpty
+      ? const <Map<String, Object?>>[]
+      : await txn.query(
+          _table,
+          columns: const <String>['event_id', 'last_attempt_at'],
+          where: where.toString(),
+          whereArgs: whereArgs,
+          limit: 1,
+        );
+  final hasTypedTerminal = await _hasExactCompletedGroupTerminal(
+    txn,
+    eventId: eventId,
+    eventKind: expectedEventKind,
+    groupId: expectedGroupId,
+    messageId: expectedMessageId,
+    actorPeerId: expectedActorPeerId,
+    eventTimestamp: expectedEventTimestamp,
+    reactionId: expectedReactionId,
+    reactionAction: expectedReactionAction,
+    reactionTombstone: expectedReactionTombstone,
+    durableEventCorrelation: durableEventCorrelation,
+  );
+  final hasCanonicalRetirementTerminal =
+      exactCustody.isNotEmpty &&
+      durableEventCorrelation != null &&
+      isGroupNotificationDisplayCanonicalRetiredMarker(
+        exactCustody.single['last_attempt_at'] as String?,
+      ) &&
+      groupNotificationDisplayDurableCorrelationFromMarker(
+            exactCustody.single['last_attempt_at'] as String?,
+          ) ==
+          durableEventCorrelation &&
+      await _hasExactCanonicalGroupRetirementTerminal(
+        txn,
+        eventKind: expectedEventKind,
+        groupId: expectedGroupId,
+        messageId: expectedMessageId,
+        actorPeerId: expectedActorPeerId,
+        eventTimestamp: expectedEventTimestamp,
+        reactionId: expectedReactionId,
+        reactionAction: expectedReactionAction,
+        reactionTombstone: expectedReactionTombstone,
+      );
+  if (!hasTypedTerminal && !hasCanonicalRetirementTerminal) return false;
+  if (sameEvent.isNotEmpty) {
+    if (exactCustody.isEmpty) return false;
+    final deleted = await txn.delete(
+      _table,
+      where: where.toString(),
+      whereArgs: whereArgs,
+    );
+    if (deleted != 1) return false;
+  }
+  await dbEnqueueGroupNotificationReconciliationOutbox(
+    txn,
+    groupId: expectedGroupId,
+  );
   return true;
 }, exclusive: true);
+
+void _appendNullableAuthorityComparand(
+  StringBuffer where,
+  List<Object?> whereArgs, {
+  required String column,
+  required Object? value,
+}) {
+  if (value == null) {
+    where.write(' AND $column IS NULL');
+  } else {
+    where.write(' AND $column = ?');
+    whereArgs.add(value);
+  }
+}
+
+Future<bool> _hasExactCompletedGroupTerminal(
+  DatabaseExecutor db, {
+  required String eventId,
+  required String eventKind,
+  required String groupId,
+  required String messageId,
+  required String actorPeerId,
+  required String eventTimestamp,
+  required String? reactionId,
+  required String? reactionAction,
+  required bool? reactionTombstone,
+  required String? durableEventCorrelation,
+}) => switch (eventKind) {
+  'message' => _hasExactCompletedGroupMessageTerminal(
+    db,
+    groupId: groupId,
+    messageId: messageId,
+    actorPeerId: actorPeerId,
+    eventTimestamp: eventTimestamp,
+    terminalEventIdentity: durableEventCorrelation ?? eventId,
+  ),
+  'reaction'
+      when reactionId != null &&
+          reactionAction == 'add' &&
+          reactionTombstone == false =>
+    _hasExactCompletedGroupReactionTerminal(
+      db,
+      eventId: eventId,
+      groupId: groupId,
+      messageId: messageId,
+      actorPeerId: actorPeerId,
+      eventTimestamp: eventTimestamp,
+      reactionId: reactionId,
+      terminalEventIdentity:
+          durableEventCorrelation ?? boundedReactionEventIdentity(eventId),
+      allowProtectedTerminalFallback: durableEventCorrelation == null,
+    ),
+  _ => Future<bool>.value(false),
+};
+
+Future<bool> _hasExactGroupOutcome(
+  DatabaseExecutor db,
+  NotificationCompletedOutcomeCandidate? outcome,
+) async {
+  if (outcome == null) return true;
+  final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
+    physicalPeerId: outcome.physicalPeerId,
+    producerKind: outcome.producerKind,
+    eventKey: outcome.eventKey,
+  );
+  if (correlation == null) return false;
+  final row = await dbLoadExactNotificationCompletedOutcomeOutboxEntry(
+    db,
+    wakeCorrelation: correlation,
+  );
+  return row != null && row['outcome'] == outcome.outcome.wireValue;
+}
+
+Future<bool> _hasExactCompletedGroupMessageTerminal(
+  DatabaseExecutor db, {
+  required String groupId,
+  required String messageId,
+  required String actorPeerId,
+  required String eventTimestamp,
+  required String terminalEventIdentity,
+}) async {
+  final rows = await db.query(
+    'group_messages',
+    columns: const <String>['id'],
+    where:
+        'id = ? AND group_id = ? AND sender_peer_id = ? AND timestamp = ? '
+        'AND notification_display_terminal_event_id = ?',
+    whereArgs: <Object?>[
+      messageId,
+      groupId,
+      actorPeerId,
+      eventTimestamp,
+      terminalEventIdentity,
+    ],
+    limit: 1,
+  );
+  return rows.isNotEmpty;
+}
+
+Future<bool> _hasExactCompletedGroupReactionTerminal(
+  DatabaseExecutor db, {
+  required String eventId,
+  required String groupId,
+  required String messageId,
+  required String actorPeerId,
+  required String eventTimestamp,
+  required String reactionId,
+  required String terminalEventIdentity,
+  required bool allowProtectedTerminalFallback,
+}) async {
+  final rows = await db.rawQuery(
+    'SELECT r.id FROM message_reactions r '
+    'INNER JOIN group_messages m ON m.id = r.message_id '
+    'WHERE r.id = ? AND r.message_id = ? AND r.sender_peer_id = ? '
+    'AND r.timestamp = ? AND r.removed_at IS NULL '
+    'AND r.notification_display_terminal_event_id = ? AND m.group_id = ? '
+    'LIMIT 1',
+    <Object?>[
+      reactionId,
+      messageId,
+      actorPeerId,
+      eventTimestamp,
+      terminalEventIdentity,
+      groupId,
+    ],
+  );
+  if (rows.isNotEmpty) return true;
+  if (!allowProtectedTerminalFallback) return false;
+  return dbHasProtectedGroupReactionDisplayTerminalExact(
+    db,
+    groupId: groupId,
+    transitionId: eventId,
+    messageId: messageId,
+    actorPeerId: actorPeerId,
+    reactionId: reactionId,
+    eventTimestamp: eventTimestamp,
+  );
+}
+
+/// Proves a canonical delete/remove terminal while exact raw READY custody is
+/// still present in the caller's transaction.
+///
+/// Absence alone is never sufficient: callers have already verified the exact
+/// correlation-bound canonical-retired READY marker written in the same
+/// mutation transaction. A message tombstone is preferred; membership repair
+/// uses the marker itself as a monotonic terminal even if buffered canonical
+/// content is later restored. Reactions require a deleted target, an absent
+/// group, or a materialized remove/newer transition for the same target and
+/// actor.
+Future<bool> _hasExactCanonicalGroupRetirementTerminal(
+  DatabaseExecutor db, {
+  required String eventKind,
+  required String groupId,
+  required String messageId,
+  required String actorPeerId,
+  required String eventTimestamp,
+  required String? reactionId,
+  required String? reactionAction,
+  required bool? reactionTombstone,
+}) async {
+  final groupRows = await db.query(
+    'groups',
+    columns: const <String>['id'],
+    where: 'id = ?',
+    whereArgs: <Object?>[groupId],
+    limit: 1,
+  );
+  if (groupRows.isEmpty) return true;
+
+  final deletionRows = await db.query(
+    'group_message_local_deletions',
+    columns: const <String>['message_id'],
+    where: 'message_id = ? AND group_id = ?',
+    whereArgs: <Object?>[messageId, groupId],
+    limit: 1,
+  );
+  if (deletionRows.isNotEmpty) return true;
+  // The caller already matched immutable READY comparands and the exact
+  // correlation-bearing retirement marker. Restoring the same message must
+  // not reopen this old notification attempt.
+  if (eventKind == 'message') return true;
+  if (eventKind != 'reaction' ||
+      reactionId == null ||
+      reactionAction != 'add' ||
+      reactionTombstone != false) {
+    return false;
+  }
+
+  final targetRows = await db.query(
+    'group_messages',
+    columns: const <String>['id'],
+    where: 'id = ? AND group_id = ?',
+    whereArgs: <Object?>[messageId, groupId],
+    limit: 1,
+  );
+  if (targetRows.isEmpty) return false;
+  final reactionRows = await db.query(
+    'message_reactions',
+    columns: const <String>['id', 'timestamp', 'removed_at'],
+    where: 'message_id = ? AND sender_peer_id = ?',
+    whereArgs: <Object?>[messageId, actorPeerId],
+    limit: 1,
+  );
+  if (reactionRows.isEmpty) return false;
+  final current = reactionRows.single;
+  final expectedAt = DateTime.tryParse(eventTimestamp)?.toUtc();
+  final currentAt = DateTime.tryParse(
+    current['timestamp'] as String? ?? '',
+  )?.toUtc();
+  final removedAt = DateTime.tryParse(
+    current['removed_at'] as String? ?? '',
+  )?.toUtc();
+  if (expectedAt == null || currentAt == null) return false;
+  return currentAt.isAfter(expectedAt) ||
+      (removedAt != null && !removedAt.isBefore(expectedAt));
+}
 
 /// Retires stale or ineligible custody without recording display authority.
 ///
@@ -468,17 +1101,27 @@ Future<bool> dbReconcileGroupNotificationDisplayOutboxMessageAliasReady(
     }
 
     if (canonicalAlreadyTerminal) {
-      if (canonical != null) {
+      if (canonical != null && canonical['readiness'] == 'not_ready') {
         final deleted = await txn.delete(
           _table,
-          where: 'event_id = ? AND revision = ?',
-          whereArgs: <Object?>[canonicalEventId, canonical['revision']],
+          where: 'event_id = ? AND revision = ? AND readiness = ?',
+          whereArgs: <Object?>[
+            canonicalEventId,
+            canonical['revision'],
+            'not_ready',
+          ],
         );
         if (deleted != 1) {
           throw StateError('terminal canonical custody retire failed');
         }
       }
+      // A canonical READY row may already own CLAIMED/PUBLISHING or an
+      // EFFECT_TERMINAL awaiting settlement. The typed message terminal
+      // authorizes replay, but only exact transaction B may delete READY.
       if (aliasEventId != canonicalEventId && alias != null) {
+        // Alias reconciliation runs synchronously before a duplicate delivery
+        // can enter notification projection; this non-canonical marker cannot
+        // own a durable effect and would otherwise be permanently stranded.
         final deleted = await txn.delete(
           _table,
           where: 'event_id = ? AND revision = ?',
@@ -564,13 +1207,15 @@ bool _sameMessageAuthority(
 
 Future<int> dbDeleteGroupNotificationDisplayOutboxForGroup(
   DatabaseExecutor db,
-  String groupId,
-) async {
+  String groupId, {
+  bool preserveReadyCustody = false,
+}) async {
   if (!await _tableExists(db)) return 0;
-  return db.delete(
-    _table,
+  return _deleteOrMarkCanonicalRetired(
+    db,
     where: 'group_id = ?',
     whereArgs: <Object?>[groupId],
+    preserveReadyCustody: preserveReadyCustody,
   );
 }
 
@@ -593,12 +1238,14 @@ Future<int> dbDeleteGroupNotificationDisplayOutboxForMessage(
   DatabaseExecutor db, {
   required String groupId,
   required String messageId,
+  bool preserveReadyCustody = false,
 }) async {
   if (!await _tableExists(db)) return 0;
-  return db.delete(
-    _table,
+  return _deleteOrMarkCanonicalRetired(
+    db,
     where: 'group_id = ? AND message_id = ?',
     whereArgs: <Object?>[groupId, messageId],
+    preserveReadyCustody: preserveReadyCustody,
   );
 }
 
@@ -607,13 +1254,53 @@ Future<int> dbDeleteGroupNotificationDisplayOutboxForReaction(
   required String groupId,
   required String messageId,
   required String reactionId,
+  bool preserveReadyCustody = false,
 }) async {
   if (!await _tableExists(db)) return 0;
-  return db.delete(
-    _table,
+  return _deleteOrMarkCanonicalRetired(
+    db,
     where:
-        'group_id = ? AND message_id = ? AND event_kind = ? AND reaction_id = ?',
+        'group_id = ? AND message_id = ? AND event_kind = ? '
+        'AND reaction_id = ?',
     whereArgs: <Object?>[groupId, messageId, 'reaction', reactionId],
+    preserveReadyCustody: preserveReadyCustody,
+  );
+}
+
+/// Retires one authority-exact reaction transition without consuming READY
+/// custody that may already be represented by a PUBLISHING/EFFECT_TERMINAL
+/// ledger record.
+Future<int> dbRetireExactGroupNotificationDisplayOutboxReactionTransition(
+  DatabaseExecutor db, {
+  required String eventId,
+  required String groupId,
+  required String messageId,
+  required String actorPeerId,
+  required String eventTimestamp,
+  required String reactionId,
+  required String reactionAction,
+  required bool reactionTombstone,
+}) async {
+  if (!await _tableExists(db)) return 0;
+  return _deleteOrMarkCanonicalRetired(
+    db,
+    where:
+        'event_id = ? AND event_kind = ? AND group_id = ? '
+        'AND message_id = ? AND actor_peer_id = ? AND event_timestamp = ? '
+        'AND reaction_id = ? AND reaction_action = ? '
+        'AND reaction_tombstone = ?',
+    whereArgs: <Object?>[
+      eventId,
+      'reaction',
+      groupId,
+      messageId,
+      actorPeerId,
+      eventTimestamp,
+      reactionId,
+      reactionAction,
+      reactionTombstone ? 1 : 0,
+    ],
+    preserveReadyCustody: true,
   );
 }
 
@@ -629,14 +1316,56 @@ Future<int> dbDeleteGroupNotificationDisplayOutboxForReactionActor(
   required String groupId,
   required String messageId,
   required String actorPeerId,
+  bool preserveReadyCustody = false,
 }) async {
   if (!await _tableExists(db)) return 0;
-  return db.delete(
-    _table,
+  return _deleteOrMarkCanonicalRetired(
+    db,
     where:
         'group_id = ? AND message_id = ? AND event_kind = ? '
         'AND actor_peer_id = ?',
     whereArgs: <Object?>[groupId, messageId, 'reaction', actorPeerId],
+    preserveReadyCustody: preserveReadyCustody,
+  );
+}
+
+/// Canonical mutation owns a two-part terminal when READY may already be in a
+/// final-effect attempt: immutable READY comparands plus this marker. A row
+/// already bound to a durable correlation carries that digest into the
+/// retirement marker so recovery never has to reconstruct deleted raw facts.
+/// NOT_READY has never entered the effect boundary and remains safe to delete.
+Future<int> _deleteOrMarkCanonicalRetired(
+  DatabaseExecutor db, {
+  required String where,
+  required List<Object?> whereArgs,
+  required bool preserveReadyCustody,
+}) async {
+  if (!preserveReadyCustody) {
+    return db.delete(_table, where: where, whereArgs: whereArgs);
+  }
+  await db.rawUpdate(
+    'UPDATE $_table SET revision = revision + 1, '
+    'last_error_code = ?, last_attempt_at = CASE '
+    'WHEN last_attempt_at LIKE ? THEN ? || '
+    'substr(last_attempt_at, ${_groupNotificationDisplayDurableCorrelationMarkerPrefix.length + 1}) '
+    'WHEN last_attempt_at LIKE ? THEN last_attempt_at ELSE ? END, '
+    'next_attempt_at = NULL, '
+    "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+    'WHERE ($where) AND readiness = ?',
+    <Object?>[
+      'state_unavailable',
+      '$_groupNotificationDisplayDurableCorrelationMarkerPrefix%',
+      _groupNotificationDisplayCanonicalRetiredCorrelationMarkerPrefix,
+      '$_groupNotificationDisplayCanonicalRetiredCorrelationMarkerPrefix%',
+      kGroupNotificationDisplayCanonicalRetiredMarker,
+      ...whereArgs,
+      'ready',
+    ],
+  );
+  return db.delete(
+    _table,
+    where: '($where) AND readiness != ?',
+    whereArgs: <Object?>[...whereArgs, 'ready'],
   );
 }
 

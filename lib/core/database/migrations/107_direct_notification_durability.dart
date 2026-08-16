@@ -273,36 +273,7 @@ Future<void> runDirectNotificationDurabilityMigration(Database db) async {
       END
     ''');
 
-    // Reconciliation survives contact deletion; all other peer-owned custody
-    // is terminally ineligible and is cleaned in the same SQLite statement.
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS
-        trg_direct_notification_reconcile_contact_delete
-      AFTER DELETE ON contacts
-      BEGIN
-        INSERT INTO direct_notification_reconciliation_outbox (
-          peer_id, incarnation_id, revision, retry_count,
-          last_attempt_at, next_attempt_at, created_at, updated_at
-        ) VALUES (
-          OLD.peer_id, lower(hex(randomblob(16))), 1, 0, NULL, NULL,
-          strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        )
-        ON CONFLICT(peer_id) DO UPDATE SET
-          revision = revision + 1,
-          retry_count = 0,
-          last_attempt_at = NULL,
-          next_attempt_at = NULL,
-          updated_at = excluded.updated_at;
-
-        DELETE FROM direct_notification_display_outbox
-        WHERE peer_id = OLD.peer_id;
-        DELETE FROM direct_notification_read_acknowledgements
-        WHERE peer_id = OLD.peer_id;
-        DELETE FROM direct_notification_reaction_terminal_events
-        WHERE peer_id = OLD.peer_id;
-      END
-    ''');
+    await _installDirectNotificationContactDeleteTrigger(db);
 
     await db.execute('''
       CREATE TRIGGER IF NOT EXISTS
@@ -327,34 +298,7 @@ Future<void> runDirectNotificationDurabilityMigration(Database db) async {
       END
     ''');
 
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS
-        trg_direct_notification_reconcile_message_delete
-      AFTER DELETE ON messages
-      BEGIN
-        INSERT INTO direct_notification_reconciliation_outbox (
-          peer_id, incarnation_id, revision, retry_count,
-          last_attempt_at, next_attempt_at, created_at, updated_at
-        ) VALUES (
-          OLD.contact_peer_id, lower(hex(randomblob(16))), 1, 0, NULL, NULL,
-          strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        )
-        ON CONFLICT(peer_id) DO UPDATE SET
-          revision = revision + 1,
-          retry_count = 0,
-          last_attempt_at = NULL,
-          next_attempt_at = NULL,
-          updated_at = excluded.updated_at;
-
-        DELETE FROM direct_notification_display_outbox
-        WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id;
-        DELETE FROM direct_notification_read_acknowledgements
-        WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id;
-        DELETE FROM direct_notification_reaction_terminal_events
-        WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id;
-      END
-    ''');
+    await _installDirectNotificationMessageDeleteTrigger(db);
 
     // Direct private delete-for-me and logical deletion are UPDATEs, not
     // physical DELETEs. Both remove the row from notification eligibility and
@@ -397,6 +341,107 @@ Future<void> runDirectNotificationDurabilityMigration(Database db) async {
     rethrow;
   }
 }
+
+/// Replaces the historical v107 delete triggers on an already-current DB.
+///
+/// Editing an already-completed migration cannot repair installations whose
+/// `user_version` already advanced past it. Production invokes this idempotent
+/// transaction immediately after opening the writable database. Exact READY
+/// custody is revisioned and stamped as canonical retirement evidence; only
+/// unarmed rows are physically removed.
+Future<void> repairDirectNotificationDurabilityDeleteTriggers(Database db) =>
+    db.transaction<void>((txn) async {
+      await txn.execute(
+        'DROP TRIGGER IF EXISTS '
+        'trg_direct_notification_reconcile_contact_delete',
+      );
+      await txn.execute(
+        'DROP TRIGGER IF EXISTS '
+        'trg_direct_notification_reconcile_message_delete',
+      );
+      await _installDirectNotificationContactDeleteTrigger(txn);
+      await _installDirectNotificationMessageDeleteTrigger(txn);
+    });
+
+Future<void> _installDirectNotificationContactDeleteTrigger(
+  DatabaseExecutor db,
+) => db.execute('''
+  CREATE TRIGGER IF NOT EXISTS
+    trg_direct_notification_reconcile_contact_delete
+  AFTER DELETE ON contacts
+  BEGIN
+    INSERT INTO direct_notification_reconciliation_outbox (
+      peer_id, incarnation_id, revision, retry_count,
+      last_attempt_at, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      OLD.peer_id, lower(hex(randomblob(16))), 1, 0, NULL, NULL,
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    )
+    ON CONFLICT(peer_id) DO UPDATE SET
+      revision = revision + 1,
+      retry_count = 0,
+      last_attempt_at = NULL,
+      next_attempt_at = NULL,
+      updated_at = excluded.updated_at;
+
+    UPDATE direct_notification_display_outbox
+    SET revision = revision + 1,
+        retry_count = 0,
+        last_error_code = 'state_unavailable',
+        last_attempt_at = 'canonical_retired',
+        next_attempt_at = NULL,
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE peer_id = OLD.peer_id AND readiness = 'ready';
+    DELETE FROM direct_notification_display_outbox
+    WHERE peer_id = OLD.peer_id AND readiness = 'not_ready';
+    DELETE FROM direct_notification_read_acknowledgements
+    WHERE peer_id = OLD.peer_id;
+    DELETE FROM direct_notification_reaction_terminal_events
+    WHERE peer_id = OLD.peer_id;
+  END
+''');
+
+Future<void> _installDirectNotificationMessageDeleteTrigger(
+  DatabaseExecutor db,
+) => db.execute('''
+  CREATE TRIGGER IF NOT EXISTS
+    trg_direct_notification_reconcile_message_delete
+  AFTER DELETE ON messages
+  BEGIN
+    INSERT INTO direct_notification_reconciliation_outbox (
+      peer_id, incarnation_id, revision, retry_count,
+      last_attempt_at, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      OLD.contact_peer_id, lower(hex(randomblob(16))), 1, 0, NULL, NULL,
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    )
+    ON CONFLICT(peer_id) DO UPDATE SET
+      revision = revision + 1,
+      retry_count = 0,
+      last_attempt_at = NULL,
+      next_attempt_at = NULL,
+      updated_at = excluded.updated_at;
+
+    UPDATE direct_notification_display_outbox
+    SET revision = revision + 1,
+        retry_count = 0,
+        last_error_code = 'state_unavailable',
+        last_attempt_at = 'canonical_retired',
+        next_attempt_at = NULL,
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id
+      AND readiness = 'ready';
+    DELETE FROM direct_notification_display_outbox
+    WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id
+      AND readiness = 'not_ready';
+    DELETE FROM direct_notification_read_acknowledgements
+    WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id;
+    DELETE FROM direct_notification_reaction_terminal_events
+    WHERE peer_id = OLD.contact_peer_id AND message_id = OLD.id;
+  END
+''');
 
 Future<void> _addNullableTextColumnIfMissing(
   Database db,

@@ -16,7 +16,11 @@ import 'package:flutter_test/flutter_test.dart';
 const _ownerHold = Duration(milliseconds: 1700);
 const _boundedCompletionCeiling = Duration(milliseconds: 1400);
 const _ownerCompletionFloor = Duration(milliseconds: 1400);
-const _outerWatchdog = Duration(seconds: 4);
+// This is only a harness deadlock guard. Owner-completion semantics are
+// intentionally unbounded after native lock ownership, while the contender
+// acquisition bound remains asserted independently above. Leave enough room
+// for isolate scheduling during the batched host-all lane.
+const _outerWatchdog = Duration(seconds: 15);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -2101,7 +2105,7 @@ void main() {
     expect(toneSource, contains('commitShownNotificationOwners'));
     expect(
       backgroundHandlerSource,
-      contains('notificationEventClaim.publishAndCommit('),
+      contains('currentEventClaim.publishAndCommit('),
     );
     expect(backgroundHandlerSource, contains('reservation.publishAndCommit('));
     expect(

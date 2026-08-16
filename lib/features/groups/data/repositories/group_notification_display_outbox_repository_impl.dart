@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 
 import '../../domain/models/group_message.dart';
 import '../../domain/models/group_notification_display_outbox_entry.dart';
@@ -8,6 +9,21 @@ class GroupNotificationDisplayOutboxRepositoryImpl
     implements GroupNotificationDisplayOutboxRepository {
   final Future<void> Function(Map<String, Object?> row) dbStage;
   final Future<Map<String, Object?>?> Function(String eventId) dbLoadByEventId;
+  final Future<Map<String, Object?>?> Function({
+    required String eventId,
+    required int expectedRevision,
+    required String expectedEventKind,
+    required String expectedGroupId,
+    required String expectedMessageId,
+    required String expectedActorPeerId,
+    required String expectedEventTimestamp,
+    required String? expectedReactionId,
+    required String? expectedReactionAction,
+    required bool? expectedReactionTombstone,
+    required String durableEventCorrelation,
+    required String updatedAt,
+  })?
+  dbBindDurableCorrelationIfExact;
   final Future<bool> Function({
     required String eventId,
     required int expectedRevision,
@@ -44,6 +60,36 @@ class GroupNotificationDisplayOutboxRepositoryImpl
     NotificationCompletedOutcomeCandidate? outcome,
   })
   dbCompleteIfExact;
+  final Future<DurableLocalNotificationSqlHandoffResult> Function({
+    required String eventId,
+    required int expectedRevision,
+    required String expectedEventKind,
+    required String expectedGroupId,
+    required String expectedMessageId,
+    required String expectedActorPeerId,
+    required String expectedEventTimestamp,
+    required String? expectedReactionId,
+    required String? expectedReactionAction,
+    required bool? expectedReactionTombstone,
+    required String completedAt,
+    NotificationCompletedOutcomeCandidate? outcome,
+    String? durableEventCorrelation,
+  })?
+  dbCompleteOrVerifyIfExact;
+  final Future<bool> Function({
+    required String eventId,
+    required int expectedRevision,
+    required String expectedEventKind,
+    required String expectedGroupId,
+    required String expectedMessageId,
+    required String expectedActorPeerId,
+    required String expectedEventTimestamp,
+    required String? expectedReactionId,
+    required String? expectedReactionAction,
+    required bool? expectedReactionTombstone,
+    String? durableEventCorrelation,
+  })?
+  dbRetireAfterDurableSettlementIfExact;
   final Future<bool> Function({
     required String eventId,
     required int expectedRevision,
@@ -89,11 +135,14 @@ class GroupNotificationDisplayOutboxRepositoryImpl
   GroupNotificationDisplayOutboxRepositoryImpl({
     required this.dbStage,
     required this.dbLoadByEventId,
+    this.dbBindDurableCorrelationIfExact,
     required this.dbPromoteReadyIfExact,
     required this.dbLoadReady,
     required this.dbLoadEarliestNextAttemptAt,
     required this.dbRecordRetryIfExact,
     required this.dbCompleteIfExact,
+    this.dbCompleteOrVerifyIfExact,
+    this.dbRetireAfterDurableSettlementIfExact,
     required this.dbRetireIfExact,
     required this.dbReconcileMessageAliasReady,
     required this.dbDeleteForGroup,
@@ -106,6 +155,58 @@ class GroupNotificationDisplayOutboxRepositoryImpl
   @override
   Future<void> stage(GroupNotificationDisplayOutboxEntry entry) {
     return dbStage(entry.toMap());
+  }
+
+  @override
+  Future<GroupNotificationDisplayOutboxEntry?> bindDurableCorrelationIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    required String durableEventCorrelation,
+  }) async {
+    final bind = dbBindDurableCorrelationIfExact;
+    if (bind == null) return null;
+    final row = await bind(
+      eventId: expected.eventId,
+      expectedRevision: expected.revision,
+      expectedEventKind: expected.eventKind,
+      expectedGroupId: expected.groupId,
+      expectedMessageId: expected.messageId,
+      expectedActorPeerId: expected.actorPeerId,
+      expectedEventTimestamp: expected.eventTimestamp,
+      expectedReactionId: expected.reactionId,
+      expectedReactionAction: expected.reactionAction,
+      expectedReactionTombstone: expected.reactionTombstone,
+      durableEventCorrelation: durableEventCorrelation,
+      updatedAt: now().toUtc().toIso8601String(),
+    );
+    return row == null
+        ? null
+        : GroupNotificationDisplayOutboxEntry.fromMap(row);
+  }
+
+  @override
+  Future<bool> retireAfterDurableSettlementIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    String? durableEventCorrelation,
+  }) {
+    final retireAfterSettlement = dbRetireAfterDurableSettlementIfExact;
+    if (retireAfterSettlement == null) {
+      return durableEventCorrelation == null
+          ? retireIfExact(expected)
+          : Future<bool>.value(false);
+    }
+    return retireAfterSettlement(
+      eventId: expected.eventId,
+      expectedRevision: expected.revision,
+      expectedEventKind: expected.eventKind,
+      expectedGroupId: expected.groupId,
+      expectedMessageId: expected.messageId,
+      expectedActorPeerId: expected.actorPeerId,
+      expectedEventTimestamp: expected.eventTimestamp,
+      expectedReactionId: expected.reactionId,
+      expectedReactionAction: expected.reactionAction,
+      expectedReactionTombstone: expected.reactionTombstone,
+      durableEventCorrelation: durableEventCorrelation,
+    );
   }
 
   @override
@@ -185,6 +286,38 @@ class GroupNotificationDisplayOutboxRepositoryImpl
       expectedReactionTombstone: expected.reactionTombstone,
       completedAt: now().toUtc().toIso8601String(),
       outcome: outcome,
+    );
+  }
+
+  @override
+  Future<DurableLocalNotificationSqlHandoffResult> completeOrVerifyIfExact(
+    GroupNotificationDisplayOutboxEntry expected, {
+    NotificationCompletedOutcomeCandidate? outcome,
+    String? durableEventCorrelation,
+  }) async {
+    final completeOrVerify = dbCompleteOrVerifyIfExact;
+    if (completeOrVerify == null) {
+      if (durableEventCorrelation != null) {
+        return DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+      }
+      return await completeIfExact(expected, outcome: outcome)
+          ? DurableLocalNotificationSqlHandoffResult.committed
+          : DurableLocalNotificationSqlHandoffResult.retryableMismatch;
+    }
+    return completeOrVerify(
+      eventId: expected.eventId,
+      expectedRevision: expected.revision,
+      expectedEventKind: expected.eventKind,
+      expectedGroupId: expected.groupId,
+      expectedMessageId: expected.messageId,
+      expectedActorPeerId: expected.actorPeerId,
+      expectedEventTimestamp: expected.eventTimestamp,
+      expectedReactionId: expected.reactionId,
+      expectedReactionAction: expected.reactionAction,
+      expectedReactionTombstone: expected.reactionTombstone,
+      completedAt: now().toUtc().toIso8601String(),
+      outcome: outcome,
+      durableEventCorrelation: durableEventCorrelation,
     );
   }
 

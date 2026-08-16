@@ -131,7 +131,10 @@ void main() {
       blockedRoute.release.complete();
       expect(await staleRoute, isFalse);
       final afterPause = await authority.evaluate(_directA);
-      expect(afterPause, AppVisibilityEvaluation.failNotify);
+      expect(afterPause.isForegroundActive, isFalse);
+      expect(afterPause.maySuppress, isFalse);
+      expect(afterPause.lifecycle, AppVisibilityLifecycle.background);
+      expect(afterPause.hasExactSnapshotMetadata, isTrue);
       expect(bridge.snapshot.lifecycle, AppVisibilityLifecycle.background);
       expect(bridge.snapshot.visibleConversationDigest, isNull);
 

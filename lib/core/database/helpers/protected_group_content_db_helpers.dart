@@ -672,11 +672,19 @@ dbCommitProtectedGroupReactionInTransaction(
               eventTimestamp: timestamp,
             );
         if (displayed) {
+          // The typed terminal can race the file-ledger settle. Preserve any
+          // READY row until the exact A/settle/C handoff retires it; NOT_READY
+          // never entered the final-effect boundary and remains disposable.
           await dbDeleteGroupNotificationDisplayOutboxForReactionActor(
             txn,
             groupId: groupId,
             messageId: messageId,
             actorPeerId: senderPeerId,
+            preserveReadyCustody: true,
+          );
+          await dbEnqueueGroupNotificationReconciliationOutbox(
+            txn,
+            groupId: groupId,
           );
         } else {
           await _insertReadyDisplayOutboxExact(txn, readyDisplayOutboxRow);
@@ -717,11 +725,18 @@ dbCommitProtectedGroupReactionInTransaction(
   );
   if (action == 'add') {
     if (displayed) {
+      // See the exact protected terminal check above. It authorizes a
+      // no-effect terminal, but transaction B still owns READY deletion.
       await dbDeleteGroupNotificationDisplayOutboxForReactionActor(
         txn,
         groupId: groupId,
         messageId: messageId,
         actorPeerId: senderPeerId,
+        preserveReadyCustody: true,
+      );
+      await dbEnqueueGroupNotificationReconciliationOutbox(
+        txn,
+        groupId: groupId,
       );
     } else if (readyDisplayOutboxRow != null) {
       await _insertReadyDisplayOutboxExact(txn, readyDisplayOutboxRow);
@@ -732,6 +747,7 @@ dbCommitProtectedGroupReactionInTransaction(
       groupId: groupId,
       messageId: messageId,
       actorPeerId: senderPeerId,
+      preserveReadyCustody: true,
     );
     await dbEnqueueGroupNotificationReconciliationOutbox(txn, groupId: groupId);
   }

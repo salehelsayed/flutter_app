@@ -1645,7 +1645,9 @@ class AccountMigrationProductionBundleReceiver
       stageTracker.begin('authorityRecord');
       session.verifiedImport = _VerifiedBundleImport(
         staged: staged,
-        promotionKeys: _promotionKeysForSecureEntries(stageableEntries),
+        promotionKeys: _promotionKeysForSecureEntries(stageableEntries)
+            .where((key) => secureStorageStaging.supportsScope(key.scope))
+            .toList(growable: false),
         stagedKeys: stageableEntries
             .map((entry) => entry.key)
             .toList(growable: false),

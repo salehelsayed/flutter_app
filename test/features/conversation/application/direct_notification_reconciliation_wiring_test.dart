@@ -153,6 +153,46 @@ void main() {
   });
 
   test(
+    'TC-372-06 fresh owner repairs committed SQL before reconciliation without projection',
+    () async {
+      final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+      addTearDown(db.close);
+      await _createV106Minimum(db);
+      await runDirectNotificationDurabilityMigration(db);
+      await dbEnqueueDirectNotificationReconciliationOutbox(
+        db,
+        peerId: 'peer-fresh-durable-repair',
+      );
+      final recoveredPeers = <String>[];
+      var displayProjections = 0;
+      final owner = _owner(
+        reconciliationOutbox: _realOutbox(db),
+        service: _GenerationService(null),
+        decision: DirectNotificationCanonicalContentDecision.unknown,
+        recoverCommittedDurableEffects: (peerId) async {
+          recoveredPeers.add(peerId);
+        },
+        projectDisplay: (_) async {
+          displayProjections++;
+          return const DirectNotificationDisplayProjection(
+            presentation: NotificationPresentationResult.osPosted,
+          );
+        },
+      );
+      addTearDown(owner.dispose);
+
+      await owner.retryNow();
+
+      expect(recoveredPeers, const <String>['peer-fresh-durable-repair']);
+      expect(displayProjections, 0);
+      expect(
+        await db.query('direct_notification_reconciliation_outbox'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
     'generation race resnapshots and never overwrites newer sibling',
     () async {
       final service = _GenerationService(
@@ -204,9 +244,77 @@ void main() {
       'promoteNotificationDisplayCustody:',
       'commitNotificationRemove:',
       'retryDirectNotificationProjection:',
+      'recoverCommittedDirectNotificationDurableEffects',
+      'listSqlReadyEffectTerminals(',
+      'LocalNotificationEffectPhase.settled',
+      'dbLoadAllReadyDirectNotificationDisplayOutboxEntriesForPeer(',
+      'dbLoadDirectNotificationCommittedSqlTerminalsForPeer(',
+      'dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(',
+      'repairDirectNotificationDurabilityDeleteTriggers(db)',
+      'LocalNotificationPresentationOwner.mainApp',
+      'durableEffectContext: durableAttempt?.context',
+      'entry.hasCanonicalRetirementProof',
+      'DurableLocalNotificationCanonicalDisposition.read',
+      'withSqlReadyRevision(sqlReadyRevision)',
+      'afterDurableSettlement:',
+      'notifyDirectDurablePostHandoff(',
+      'MessageNotificationDurablePostHandoffReconciliation',
     ]) {
       expect(source, contains(anchor), reason: 'missing production $anchor');
     }
+    final missingContentRecovery = source.indexOf(
+      'if (entry.hasCanonicalRetirementProof)',
+    );
+    expect(missingContentRecovery, greaterThanOrEqualTo(0));
+    expect(
+      source.indexOf(
+        'final contact = await contactRepository.getContact(entry.peerId)',
+        missingContentRecovery,
+      ),
+      greaterThan(missingContentRecovery),
+      reason:
+          'exact trigger-stamped READY must reach the final ledger barrier before content/contact lookup',
+    );
+    final finalReader = source.indexOf(
+      'readFinalDirectNotificationDisposition(',
+    );
+    final canonicalFacts = source.indexOf(
+      'final canonicalDisposition = await readCanonicalFacts();',
+      finalReader,
+    );
+    final finalReadyReload = source.indexOf(
+      'final current = await directNotificationDisplayOutboxRepository.loadExact(',
+      canonicalFacts,
+    );
+    final markerOverride = source.indexOf(
+      'if (current.hasCanonicalRetirementProof)',
+      finalReadyReload,
+    );
+    final revisionFence = source.indexOf(
+      'if (current.revision != entry.revision)',
+      markerOverride,
+    );
+    expect(canonicalFacts, greaterThan(finalReader));
+    expect(finalReadyReload, greaterThan(canonicalFacts));
+    expect(markerOverride, greaterThan(finalReadyReload));
+    expect(revisionFence, greaterThan(markerOverride));
+    final durableRecovery = source.indexOf(
+      'recoverCommittedDirectNotificationDurableEffects',
+    );
+    final settledRecovery = source.indexOf(
+      'LocalNotificationEffectPhase.settled',
+      durableRecovery,
+    );
+    final exactSqlB = source.indexOf(
+      'dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(',
+      settledRecovery,
+    );
+    expect(settledRecovery, greaterThan(durableRecovery));
+    expect(
+      exactSqlB,
+      greaterThan(settledRecovery),
+      reason: 'SETTLED direct custody must enter exact transaction B recovery',
+    );
   });
 }
 
@@ -215,6 +323,9 @@ DirectNotificationProjectionOwner _owner({
   reconciliationOutbox,
   required _GenerationService service,
   required DirectNotificationCanonicalContentDecision decision,
+  RecoverCommittedDirectNotificationDurableEffects?
+  recoverCommittedDurableEffects,
+  ProjectDirectNotificationDisplayEntry? projectDisplay,
 }) {
   final coordinator = DirectNotificationPresentationCoordinator();
   return DirectNotificationProjectionOwner(
@@ -222,7 +333,11 @@ DirectNotificationProjectionOwner _owner({
     reconciliationOutbox: reconciliationOutbox,
     reactionTerminal: _EmptyReactionTerminal(),
     coordinator: coordinator,
-    projectDisplay: (_) async => NotificationPresentationResult.shown,
+    projectDisplay:
+        projectDisplay ??
+        (_) async => const DirectNotificationDisplayProjection(
+          presentation: NotificationPresentationResult.osPosted,
+        ),
     canonicalReconciler: DirectNotificationCanonicalReconciler(
       coordinator: coordinator,
       generationCancellation: service,
@@ -231,6 +346,7 @@ DirectNotificationProjectionOwner _owner({
       loadReplacement: (_, _) async => null,
     ),
     enqueueReconciliation: (_) async {},
+    recoverCommittedDurableEffects: recoverCommittedDurableEffects,
     nowUtc: () => DateTime.utc(2026, 8, 3, 12),
     retryDelay: const Duration(hours: 1),
   );
@@ -397,6 +513,11 @@ final class _EmptyDisplayOutbox
     DirectNotificationDisplayOutboxEntry _, {
     Object? outcome,
   }) async => false;
+
+  @override
+  Future<bool> retireAfterDurableSettlementIfExact(
+    DirectNotificationDisplayOutboxEntry _,
+  ) async => false;
 
   @override
   Future<bool> retireIfExact(DirectNotificationDisplayOutboxEntry _) async =>

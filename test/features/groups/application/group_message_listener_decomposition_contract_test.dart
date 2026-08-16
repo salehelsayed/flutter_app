@@ -319,6 +319,9 @@ const _expectedConstructorParameters = <String>[
   'GroupNotificationEventAcknowledgedResolver? '
       'isGroupNotificationEventAcknowledged',
   'Future<String?> Function()? resolveCompletedOutcomePhysicalPeerId',
+  'ResolveCurrentGroupNotificationOpaqueBinding? resolveCurrentOpaqueBinding',
+  'DurableLocalNotificationEffectRegistry? '
+      'durableLocalNotificationEffectRegistry',
   'bool completedOutcomeProducerEnabled = false',
   'BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask',
   'EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask',

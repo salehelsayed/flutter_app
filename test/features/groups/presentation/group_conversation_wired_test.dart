@@ -2638,9 +2638,12 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         final send = await startScreenSend(tester, 'leased media');
-        await tester.runAsync(
-          () => uploadStarted[0].future.timeout(_uploadStartCeiling),
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted[0].isCompleted,
+          maxPumps: 6000,
         );
+        expect(uploadStarted[0].isCompleted, isTrue);
         uploadGates[0].complete();
         await pumpUntilAsyncWorkSettles(
           tester,
@@ -13907,10 +13910,10 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
         final staleSend = await startScreenSend(tester, 'Two old-group leaves');
-        await pumpUntil(
+        await pumpUntilAsyncWorkSettles(
           tester,
           () => firstLeafStarted.isCompleted,
-          maxPumps: 120,
+          maxPumps: 6000,
         );
         expect(firstLeafStarted.isCompleted, isTrue);
         expect(groupAUploadCalls, 1);

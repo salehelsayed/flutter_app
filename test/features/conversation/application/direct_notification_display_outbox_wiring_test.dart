@@ -2,10 +2,15 @@ import 'dart:io';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_reconciliation_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/direct_notification_canonical_reconciler.dart';
 import 'package:flutter_app/core/notifications/direct_notification_presentation_coordinator.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
@@ -24,6 +29,98 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
+
+  test(
+    'TC-372-05 direct durable attempt uses raw reaction correlation and exact authority',
+    () async {
+      const rawReactionId =
+          'authenticated-reaction-id-that-must-not-be-replaced-by-display-alias';
+      final boundedAlias = boundedReactionEventIdentity(rawReactionId);
+      final entry = DirectNotificationDisplayOutboxEntry.reaction(
+        eventId: boundedAlias,
+        peerId: 'peer-direct-authority',
+        messageId: 'target-message',
+        actorPeerId: 'peer-direct-authority',
+        eventTimestamp: '2026-08-16T10:00:00.000Z',
+        reactionId: rawReactionId,
+        reactionAction: ReactionPayload.addAction,
+        reactionTombstone: false,
+        createdAt: '2026-08-16T10:00:00.000Z',
+        updatedAt: '2026-08-16T10:00:00.000Z',
+      );
+      final attempt = DirectNotificationDurableEffectAttempt.tryCreate(
+        entry: entry,
+        currentOpaqueBinding:
+            'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        physicalPeerId: '12D3KooWphysical-direct-authority',
+        presentationOwner: LocalNotificationPresentationOwner.inboxReconciler,
+        readFinalCanonicalDisposition: () async =>
+            DurableLocalNotificationCanonicalDisposition.eligible,
+      );
+
+      expect(attempt, isNotNull);
+      final expectedCorrelation =
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: '12D3KooWphysical-direct-authority',
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.directReaction,
+            eventKey: rawReactionId,
+          );
+      expect(attempt!.context.eventCorrelation, expectedCorrelation);
+      expect(
+        attempt.context.eventCorrelation,
+        isNot(
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: '12D3KooWphysical-direct-authority',
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.directReaction,
+            eventKey: boundedAlias,
+          ),
+        ),
+      );
+      expect(
+        attempt.context.conversationDigest,
+        AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.direct,
+          value: entry.peerId,
+        )!.digest,
+      );
+      expect(
+        attempt.context.sourceCustody,
+        LocalNotificationSourceCustody.sqlReady,
+      );
+      expect(
+        attempt.context.presentationOwner,
+        LocalNotificationPresentationOwner.inboxReconciler,
+      );
+      expect(attempt.context.terminalObserverCompletesSqlHandoff, isFalse);
+
+      await attempt.context.onEffectTerminal!(
+        DurableLocalNotificationEffectReceipt(
+          eventCorrelation: expectedCorrelation!,
+          recordRevision: 9,
+          presentationState: LocalNotificationPresentationState.inChat,
+        ),
+      );
+      final completed = attempt.completedAuthority;
+      expect(completed, isNotNull);
+      expect(completed!.eventKey, rawReactionId);
+      expect(completed.receipt.recordRevision, 9);
+      expect(
+        DirectNotificationDurableEffectAttempt.tryCreate(
+          entry: entry,
+          currentOpaqueBinding:
+              ' v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          physicalPeerId: '12D3KooWphysical-direct-authority',
+          presentationOwner: LocalNotificationPresentationOwner.inboxReconciler,
+          readFinalCanonicalDisposition: () async =>
+              DurableLocalNotificationCanonicalDisposition.eligible,
+        ),
+        isNull,
+        reason: 'the canonical secure binding must match byte-for-byte',
+      );
+    },
+  );
 
   test(
     'TC-369-02 exact display completion and outcome are one transaction',
@@ -223,6 +320,203 @@ void main() {
           whereArgs: <Object?>[faultCorrelation],
         ),
         isEmpty,
+      );
+    },
+  );
+
+  test(
+    'TC-372-06 direct SQL handoff verifies an already committed exact terminal',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'direct_durable_handoff_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+      final db = await databaseFactoryFfi.openDatabase(
+        '${tempDir.path}/identity.db',
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: onDatabaseVersionChangeError,
+        ),
+      );
+      addTearDown(() async {
+        if (db.isOpen) await db.close();
+      });
+      const timestamp = '2026-08-16T11:00:00.000Z';
+      const peerId = 'peer-direct-durable';
+      const messageId = 'message-direct-durable';
+      await db.insert('contacts', <String, Object?>{
+        'peer_id': peerId,
+        'public_key': 'public-direct-durable',
+        'rendezvous': 'relay-direct-durable',
+        'username': 'Direct Durable',
+        'signature': 'signature-direct-durable',
+        'scanned_at': timestamp,
+      });
+      await db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': peerId,
+        'sender_peer_id': peerId,
+        'text': 'durable direct content',
+        'timestamp': timestamp,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': timestamp,
+      });
+      final entry = DirectNotificationDisplayOutboxEntry.message(
+        eventId: messageId,
+        peerId: peerId,
+        messageId: messageId,
+        actorPeerId: peerId,
+        eventTimestamp: timestamp,
+        readiness: DirectNotificationDisplayOutboxReadiness.ready,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      );
+      await db.insert('direct_notification_display_outbox', entry.toMap());
+      await db.delete(
+        'direct_notification_reconciliation_outbox',
+        where: 'peer_id = ?',
+        whereArgs: const <Object?>[peerId],
+      );
+      final outcome = NotificationCompletedOutcomeCandidate(
+        physicalPeerId: '12D3KooWdirect-durable-physical',
+        producerKind: NotificationCompletedOutcomeProducerKind.directMessage,
+        eventKey: messageId,
+        outcome: NotificationCompletedOutcomeCategory.inChat,
+        completedAt: DateTime.parse(timestamp),
+      );
+
+      Future<DurableLocalNotificationSqlHandoffResult> handoff({
+        String actorPeerId = peerId,
+      }) => dbHandoffDirectNotificationDisplayOutboxEntryIfExact(
+        db,
+        eventId: entry.eventId,
+        expectedRevision: entry.revision,
+        expectedEventKind: entry.eventKind,
+        expectedPeerId: entry.peerId,
+        expectedMessageId: entry.messageId,
+        expectedActorPeerId: actorPeerId,
+        expectedEventTimestamp: entry.eventTimestamp,
+        expectedReactionId: entry.reactionId,
+        expectedReactionAction: entry.reactionAction,
+        expectedReactionTombstone: entry.reactionTombstone,
+        completedAt: timestamp,
+        outcome: outcome,
+      );
+
+      expect(
+        await handoff(),
+        DurableLocalNotificationSqlHandoffResult.committed,
+      );
+      expect(
+        await handoff(),
+        DurableLocalNotificationSqlHandoffResult.alreadyCommitted,
+      );
+      expect(
+        await handoff(actorPeerId: 'stale-actor'),
+        DurableLocalNotificationSqlHandoffResult.retryableMismatch,
+      );
+      expect(
+        await db.query(
+          'direct_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[messageId],
+        ),
+        hasLength(1),
+        reason:
+            'transaction A retains the exact raw READY tuple through ledger settlement',
+      );
+      final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
+        physicalPeerId: outcome.physicalPeerId,
+        producerKind: outcome.producerKind,
+        eventKey: outcome.eventKey,
+      );
+      expect(
+        await db.query(
+          'notification_completed_outcome_outbox',
+          where: 'wake_correlation = ?',
+          whereArgs: <Object?>[correlation],
+        ),
+        hasLength(1),
+      );
+      expect(
+        await dbLoadDirectNotificationReconciliationOutboxEntry(db, peerId),
+        isNull,
+        reason:
+            'the reconciliation trigger belongs to post-settlement transaction B',
+      );
+      final terminals =
+          await dbLoadDirectNotificationCommittedSqlTerminalsForPeer(
+            db,
+            peerId: peerId,
+          );
+      expect(terminals, hasLength(1));
+      expect(terminals.single.eventId, messageId);
+      expect(terminals.single.messageId, messageId);
+
+      expect(
+        await dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(
+          db,
+          eventId: entry.eventId,
+          expectedRevision: entry.revision,
+          expectedEventKind: entry.eventKind,
+          expectedPeerId: entry.peerId,
+          expectedMessageId: entry.messageId,
+          expectedActorPeerId: entry.actorPeerId,
+          expectedEventTimestamp: entry.eventTimestamp,
+          expectedReactionId: entry.reactionId,
+          expectedReactionAction: entry.reactionAction,
+          expectedReactionTombstone: entry.reactionTombstone,
+        ),
+        isTrue,
+      );
+      expect(
+        await db.query(
+          'direct_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[messageId],
+        ),
+        isEmpty,
+      );
+      expect(
+        await dbLoadDirectNotificationReconciliationOutboxEntry(db, peerId),
+        isNotNull,
+      );
+
+      final newerRevision = entry.copyWith(revision: entry.revision + 1);
+      await db.insert(
+        'direct_notification_display_outbox',
+        newerRevision.toMap(),
+      );
+      expect(
+        await dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(
+          db,
+          eventId: entry.eventId,
+          expectedRevision: entry.revision,
+          expectedEventKind: entry.eventKind,
+          expectedPeerId: entry.peerId,
+          expectedMessageId: entry.messageId,
+          expectedActorPeerId: entry.actorPeerId,
+          expectedEventTimestamp: entry.eventTimestamp,
+          expectedReactionId: entry.reactionId,
+          expectedReactionAction: entry.reactionAction,
+          expectedReactionTombstone: entry.reactionTombstone,
+        ),
+        isFalse,
+        reason: 'transaction B must not consume a same-event newer revision',
+      );
+      expect(
+        (await db.query(
+          'direct_notification_display_outbox',
+          where: 'event_id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single['revision'],
+        newerRevision.revision,
       );
     },
   );
@@ -672,7 +966,10 @@ DirectNotificationProjectionOwner _owner({
   required _DisplayOutbox display,
   required _GenerationService service,
   required DateTime Function() now,
-  required ProjectDirectNotificationDisplayEntry project,
+  required Future<NotificationPresentationResult?> Function(
+    DirectNotificationDisplayOutboxEntry entry,
+  )
+  project,
   Future<String?> Function()? resolveCompletedOutcomePhysicalPeerId,
   bool completedOutcomeProducerEnabled = false,
 }) {
@@ -690,7 +987,12 @@ DirectNotificationProjectionOwner _owner({
     reconciliationOutbox: _EmptyReconciliationOutbox(),
     reactionTerminal: _EmptyReactionTerminal(),
     coordinator: coordinator,
-    projectDisplay: project,
+    projectDisplay: (entry) async {
+      final presentation = await project(entry);
+      return presentation == null
+          ? null
+          : DirectNotificationDisplayProjection(presentation: presentation);
+    },
     canonicalReconciler: reconciler,
     enqueueReconciliation: (_) async {},
     resolveCompletedOutcomePhysicalPeerId:
@@ -826,6 +1128,11 @@ final class _DisplayOutbox
     completedOutcomes.add(outcome);
     return true;
   }
+
+  @override
+  Future<bool> retireAfterDurableSettlementIfExact(
+    DirectNotificationDisplayOutboxEntry expected,
+  ) => retireIfExact(expected);
 
   @override
   Future<bool> retireIfExact(

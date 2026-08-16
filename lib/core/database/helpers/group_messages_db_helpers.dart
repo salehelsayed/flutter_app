@@ -1119,7 +1119,11 @@ Future<int> dbDeleteGroupMessagesForGroup(
 
   try {
     final count = await _runGroupMessageCleanupTransaction(db, (txn) async {
-      await dbDeleteGroupNotificationDisplayOutboxForGroup(txn, groupId);
+      await dbDeleteGroupNotificationDisplayOutboxForGroup(
+        txn,
+        groupId,
+        preserveReadyCustody: true,
+      );
       final existingRows = await txn.query(
         'group_messages',
         columns: ['id', 'group_id'],
@@ -1137,11 +1141,16 @@ Future<int> dbDeleteGroupMessagesForGroup(
         );
       }
 
-      return txn.delete(
+      final deleted = await txn.delete(
         'group_messages',
         where: 'group_id = ?',
         whereArgs: [groupId],
       );
+      await dbEnqueueGroupNotificationReconciliationOutbox(
+        txn,
+        groupId: groupId,
+      );
+      return deleted;
     });
 
     emitFlowEvent(
@@ -1185,6 +1194,7 @@ Future<void> dbDeleteGroupMessage(DatabaseExecutor db, String id) async {
             txn,
             groupId: groupId,
             messageId: id,
+            preserveReadyCustody: true,
           );
           await dbUpsertGroupMessageLocalDeletion(
             txn,
@@ -1194,6 +1204,15 @@ Future<void> dbDeleteGroupMessage(DatabaseExecutor db, String id) async {
         }
       }
       await txn.delete('group_messages', where: 'id = ?', whereArgs: [id]);
+      if (existingRows.isNotEmpty) {
+        final groupId = existingRows.first['group_id'] as String?;
+        if (groupId != null && groupId.isNotEmpty) {
+          await dbEnqueueGroupNotificationReconciliationOutbox(
+            txn,
+            groupId: groupId,
+          );
+        }
+      }
     });
 
     emitFlowEvent(
@@ -1239,6 +1258,14 @@ Future<void> dbDeleteGroupMessageForMembershipRepair(
             txn,
             groupId: groupId,
             messageId: id,
+            // Membership repair has no permanent deletion tombstone. The
+            // fixed READY sentinel is its exact terminal proof until the
+            // buffered message is restored or the ledger attempt settles.
+            preserveReadyCustody: true,
+          );
+          await dbEnqueueGroupNotificationReconciliationOutbox(
+            txn,
+            groupId: groupId,
           );
         }
       }

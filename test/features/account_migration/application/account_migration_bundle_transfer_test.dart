@@ -1694,7 +1694,8 @@ void main() {
                 ...MigrationSecureStorageRegistry.fixedKeys.where(
                   (key) =>
                       key.policy ==
-                      MigrationSecureStorageKeyPolicy.clearRegenerate,
+                          MigrationSecureStorageKeyPolicy.clearRegenerate &&
+                      staging.supportsScope(key.scope),
                 ),
               ]);
           final expectedPromotedKeys = expectedPromotionInput

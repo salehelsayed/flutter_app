@@ -106,6 +106,9 @@ final class GroupNotificationCanonicalReconciler {
           replacement == null) {
         throw const GroupNotificationCanonicalReconciliationRetryable();
       }
+      // Plan 372 TC-07 classifies this delivered-card generation CAS as an
+      // approved N11 compatibility path. It neither mints an authenticated
+      // event correlation nor reopens a SETTLED/OS_POSTED ledger record.
       final mutated = replacement == null
           ? await _generationCancellation
                 .cancelConversationNotificationGeneration(

@@ -195,7 +195,7 @@ void main() {
           'read_at': '2026-08-03T01:00:01.000Z',
         },
       ),
-      BackgroundGroupNotificationPostShowDecision.retire,
+      BackgroundGroupNotificationPostShowDecision.read,
     );
   });
 
@@ -217,7 +217,7 @@ void main() {
           'acknowledged_at': '2026-08-03T01:00:01.000Z',
         },
       ),
-      BackgroundGroupNotificationPostShowDecision.retire,
+      BackgroundGroupNotificationPostShowDecision.read,
     );
     expect(
       evaluateMessage(
@@ -313,7 +313,7 @@ void main() {
             'notification_acknowledged_at': '2026-08-03T01:00:01.000Z',
           },
         ),
-        BackgroundGroupNotificationPostShowDecision.retire,
+        BackgroundGroupNotificationPostShowDecision.read,
       );
       expect(
         evaluateReaction(
@@ -325,7 +325,7 @@ void main() {
             'acknowledged_at': '2026-08-03T01:00:01.000Z',
           },
         ),
-        BackgroundGroupNotificationPostShowDecision.retire,
+        BackgroundGroupNotificationPostShowDecision.read,
       );
       expect(
         evaluateReaction(
@@ -488,7 +488,7 @@ void main() {
             'notification_acknowledged_at': '2026-08-03T01:00:01.000Z',
           },
         ),
-        BackgroundGroupNotificationPostShowDecision.retire,
+        BackgroundGroupNotificationPostShowDecision.read,
       );
       expect(
         evaluateProvisionalReaction(
@@ -498,7 +498,7 @@ void main() {
             'event_identity': 'bounded-event-a',
           },
         ),
-        BackgroundGroupNotificationPostShowDecision.retire,
+        BackgroundGroupNotificationPostShowDecision.read,
       );
     },
   );

@@ -11,6 +11,17 @@ const canonicalRuntimeInstallationIdStorageKey =
     'canonical_runtime_installation_id_v1';
 const canonicalRuntimeAccountBindingStorageKey =
     'canonical_runtime_account_binding_v1';
+const canonicalRuntimeSharedAccountBindingStorageKey =
+    'canonical_runtime_shared_account_binding_v1';
+
+final RegExp _canonicalRuntimeOpaqueBindingPattern = RegExp(
+  r'^v1:[0-9a-f]{64}$',
+);
+
+bool isCanonicalRuntimeOpaqueBinding(Object? value) =>
+    value is String &&
+    value == value.trim() &&
+    _canonicalRuntimeOpaqueBindingPattern.hasMatch(value);
 
 enum CanonicalRuntimeLeaseState { active, draining, released }
 
@@ -291,26 +302,43 @@ final class CanonicalRuntimeStartupBinding {
 
 typedef CanonicalRuntimeOverlayRebind =
     Future<void> Function(String? opaqueBinding);
+typedef CanonicalRuntimeLedgerRebind =
+    Future<void> Function(String? opaqueBinding);
+typedef CanonicalRuntimeLedgerClaimsSuspend =
+    Future<void> Function(String? opaqueBinding);
+typedef CanonicalRuntimeSharedBindingPublish =
+    Future<void> Function(String? opaqueBinding);
 
 /// Owns the device-local installation secret and opaque account digest.
 /// Publishing never activates Plan 331's worker; H0 only establishes fencing.
 final class CanonicalRuntimeBindingCoordinator {
   CanonicalRuntimeBindingCoordinator({
     required SecureKeyStore secureKeyStore,
-    required CanonicalRuntimeLeaseGateway leaseGateway,
-    required DroppedPushRecoveryBindingPublisher droppedPushBindingPublisher,
+    CanonicalRuntimeLeaseGateway? leaseGateway,
+    DroppedPushRecoveryBindingPublisher? droppedPushBindingPublisher,
     CanonicalRuntimeOverlayRebind? rebindPendingNotificationOverlay,
+    CanonicalRuntimeLedgerRebind? rebindLocalNotificationLedger,
+    CanonicalRuntimeLedgerClaimsSuspend? suspendLocalNotificationLedgerClaims,
+    CanonicalRuntimeSharedBindingPublish? publishSharedBinding,
     String Function()? createInstallationId,
   }) : _secureKeyStore = secureKeyStore,
        _leaseGateway = leaseGateway,
        _droppedPushBindingPublisher = droppedPushBindingPublisher,
        _rebindPendingNotificationOverlay = rebindPendingNotificationOverlay,
+       _rebindLocalNotificationLedger = rebindLocalNotificationLedger,
+       _suspendLocalNotificationLedgerClaims =
+           suspendLocalNotificationLedgerClaims,
+       _publishSharedBinding = publishSharedBinding,
        _createInstallationId = createInstallationId ?? const Uuid().v4;
 
   final SecureKeyStore _secureKeyStore;
-  final CanonicalRuntimeLeaseGateway _leaseGateway;
-  final DroppedPushRecoveryBindingPublisher _droppedPushBindingPublisher;
+  final CanonicalRuntimeLeaseGateway? _leaseGateway;
+  final DroppedPushRecoveryBindingPublisher? _droppedPushBindingPublisher;
   final CanonicalRuntimeOverlayRebind? _rebindPendingNotificationOverlay;
+  final CanonicalRuntimeLedgerRebind? _rebindLocalNotificationLedger;
+  final CanonicalRuntimeLedgerClaimsSuspend?
+  _suspendLocalNotificationLedgerClaims;
+  final CanonicalRuntimeSharedBindingPublish? _publishSharedBinding;
   final String Function() _createInstallationId;
 
   Future<CanonicalRuntimeStartupBinding> loadStartupBinding() async {
@@ -318,7 +346,9 @@ final class CanonicalRuntimeBindingCoordinator {
     final persisted = (await _secureKeyStore.read(
       canonicalRuntimeAccountBindingStorageKey,
     ))?.trim();
-    if (_isOpaqueBinding(persisted)) {
+    if (isCanonicalRuntimeOpaqueBinding(persisted)) {
+      await _publishSharedBinding?.call(persisted);
+      await _rebindLocalNotificationLedger?.call(persisted);
       await _rebindDerivedOverlayBestEffort(
         persisted,
         operation: 'startup_bind',
@@ -331,9 +361,15 @@ final class CanonicalRuntimeBindingCoordinator {
     if (persisted != null) {
       await _secureKeyStore.delete(canonicalRuntimeAccountBindingStorageKey);
     }
+    final provisional = _derive(installationId, accountPeerId: null);
+    await _publishSharedBinding?.call(null);
+    // A no-account binding is still an opaque, installation-local fence. It
+    // clears old account records without teaching the ledger about raw account
+    // identity, and closes a crash after secure logout but before cleanup.
+    await _rebindLocalNotificationLedger?.call(provisional);
     await _rebindDerivedOverlayBestEffort(null, operation: 'startup_retire');
     return CanonicalRuntimeStartupBinding(
-      leaseBinding: _derive(installationId, accountPeerId: null),
+      leaseBinding: provisional,
       hasAccount: false,
     );
   }
@@ -351,14 +387,20 @@ final class CanonicalRuntimeBindingCoordinator {
       await _installationId(),
       accountPeerId: normalizedPeerId,
     );
+    final previous = await readCurrentAccountBinding();
+    await _suspendLocalNotificationLedgerClaims?.call(previous);
     await _writeAndVerify(canonicalRuntimeAccountBindingStorageKey, binding);
-    if (!await _droppedPushBindingPublisher.setCurrentBinding(
-      binding,
-      activateRecoveryWork: false,
-    )) {
+    final droppedPushBindingPublisher = _droppedPushBindingPublisher;
+    if (droppedPushBindingPublisher != null &&
+        !await droppedPushBindingPublisher.setCurrentBinding(
+          binding,
+          activateRecoveryWork: false,
+        )) {
       throw StateError('native recovery binding publication was rejected');
     }
-    await _leaseGateway.rebind(binding);
+    await _leaseGateway?.rebind(binding);
+    await _publishSharedBinding?.call(binding);
+    await _rebindLocalNotificationLedger?.call(binding);
     // The overlay is derived cache, never account authority. Commit secure,
     // native, and lease bindings first. A stale overlay is independently
     // unreadable because every operation compares the canonical secure binding.
@@ -371,21 +413,34 @@ final class CanonicalRuntimeBindingCoordinator {
 
   Future<String> retireAccount() async {
     final installationId = await _installationId();
+    final previous = await readCurrentAccountBinding();
+    await _suspendLocalNotificationLedgerClaims?.call(previous);
     await _secureKeyStore.delete(canonicalRuntimeAccountBindingStorageKey);
     if (await _secureKeyStore.read(canonicalRuntimeAccountBindingStorageKey) !=
         null) {
       throw StateError('canonical account binding deletion was not durable');
     }
-    if (!await _droppedPushBindingPublisher.setCurrentBinding(
-      null,
-      activateRecoveryWork: false,
-    )) {
+    final droppedPushBindingPublisher = _droppedPushBindingPublisher;
+    if (droppedPushBindingPublisher != null &&
+        !await droppedPushBindingPublisher.setCurrentBinding(
+          null,
+          activateRecoveryWork: false,
+        )) {
       throw StateError('native recovery binding retirement was rejected');
     }
     final provisional = _derive(installationId, accountPeerId: null);
-    await _leaseGateway.rebind(provisional);
+    await _leaseGateway?.rebind(provisional);
+    await _publishSharedBinding?.call(null);
+    await _rebindLocalNotificationLedger?.call(provisional);
     await _rebindDerivedOverlayBestEffort(null, operation: 'retire_account');
     return provisional;
+  }
+
+  Future<String?> readCurrentAccountBinding() async {
+    final value = await _secureKeyStore.read(
+      canonicalRuntimeAccountBindingStorageKey,
+    );
+    return isCanonicalRuntimeOpaqueBinding(value) ? value : null;
   }
 
   Future<void> _rebindDerivedOverlayBestEffort(
@@ -436,7 +491,37 @@ final class CanonicalRuntimeBindingCoordinator {
     );
     return 'v1:${sha256.convert(bytes)}';
   }
+}
 
-  bool _isOpaqueBinding(String? value) =>
-      value != null && RegExp(r'^v1:[0-9a-f]{64}$').hasMatch(value);
+/// Publishes the exact opaque account binding to the iOS shared Keychain and
+/// verifies the projection before a native notification consumer may use it.
+/// A null value retires the projection and requires a read-back miss.
+Future<void> publishCanonicalRuntimeSharedBinding({
+  required SecureKeyStore sharedKeyStore,
+  required String? opaqueBinding,
+}) async {
+  if (opaqueBinding != null &&
+      !isCanonicalRuntimeOpaqueBinding(opaqueBinding)) {
+    throw const FormatException('invalid canonical runtime binding');
+  }
+  if (opaqueBinding == null) {
+    await sharedKeyStore.delete(canonicalRuntimeSharedAccountBindingStorageKey);
+    if (await sharedKeyStore.read(
+          canonicalRuntimeSharedAccountBindingStorageKey,
+        ) !=
+        null) {
+      throw StateError('shared canonical binding retirement was not durable');
+    }
+    return;
+  }
+  await sharedKeyStore.write(
+    canonicalRuntimeSharedAccountBindingStorageKey,
+    opaqueBinding,
+  );
+  if (await sharedKeyStore.read(
+        canonicalRuntimeSharedAccountBindingStorageKey,
+      ) !=
+      opaqueBinding) {
+    throw StateError('shared canonical binding publication was not durable');
+  }
 }

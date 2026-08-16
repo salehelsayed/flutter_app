@@ -259,11 +259,25 @@ void main() {
       where: 'id = ?',
       whereArgs: const ['same-message-id'],
     );
-    expect(await db.query('direct_notification_display_outbox'), hasLength(1));
-    expect(
-      (await db.query('direct_notification_display_outbox')).single['peer_id'],
-      'second-direct-peer',
+    final directDisplayRows = await db.query(
+      'direct_notification_display_outbox',
+      orderBy: 'peer_id ASC',
     );
+    expect(directDisplayRows, hasLength(2));
+    final retainedDeletedPeer = directDisplayRows.singleWhere(
+      (row) => row['peer_id'] == 'same-owner-id',
+    );
+    expect(retainedDeletedPeer['readiness'], 'ready');
+    expect(retainedDeletedPeer['revision'], 2);
+    expect(retainedDeletedPeer['last_error_code'], 'state_unavailable');
+    expect(retainedDeletedPeer['last_attempt_at'], 'canonical_retired');
+    final untouchedOtherPeer = directDisplayRows.singleWhere(
+      (row) => row['peer_id'] == 'second-direct-peer',
+    );
+    expect(untouchedOtherPeer['readiness'], 'ready');
+    expect(untouchedOtherPeer['revision'], 1);
+    expect(untouchedOtherPeer['last_error_code'], isNull);
+    expect(untouchedOtherPeer['last_attempt_at'], isNull);
     expect(
       await db.query('direct_notification_reaction_terminal_events'),
       hasLength(1),

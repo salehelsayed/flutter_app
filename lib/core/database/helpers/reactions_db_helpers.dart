@@ -227,6 +227,7 @@ Future<DbIncomingReactionApplyResult> dbApplyIncomingReactionMutation(
             groupId: normalizedGroupId,
             messageId: messageId,
             actorPeerId: senderPeerId,
+            preserveReadyCustody: true,
           );
           await dbEnqueueGroupNotificationReconciliationOutbox(
             txn,
@@ -311,6 +312,7 @@ Future<DbIncomingReactionApplyResult> dbApplyIncomingReactionMutation(
             groupId: normalizedGroupId,
             messageId: messageId,
             actorPeerId: senderPeerId,
+            preserveReadyCustody: true,
           );
           await dbEnqueueGroupNotificationReconciliationOutbox(
             txn,
@@ -400,11 +402,20 @@ Future<int> _deleteExactStaleAddNotificationCustody(
     "OR TRIM(notification_display_terminal_event_id) = '')",
     <Object?>[boundedReactionEventIdentity(eventId), messageId, actorPeerId],
   );
-  return db.delete(
-    'group_notification_display_outbox',
-    where: where,
-    whereArgs: whereArgs,
-  );
+  final retired =
+      await dbRetireExactGroupNotificationDisplayOutboxReactionTransition(
+        db,
+        eventId: eventId,
+        groupId: groupId,
+        messageId: messageId,
+        actorPeerId: actorPeerId,
+        eventTimestamp: eventTimestamp,
+        reactionId: reactionId,
+        reactionAction: 'add',
+        reactionTombstone: false,
+      );
+  await dbEnqueueGroupNotificationReconciliationOutbox(db, groupId: groupId);
+  return retired;
 }
 
 Future<String?> _loadExactCurrentAddCustodyTerminalIdentity(

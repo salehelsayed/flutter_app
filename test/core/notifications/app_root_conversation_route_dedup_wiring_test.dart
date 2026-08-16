@@ -6,7 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 ///
 /// The 1:1 conversation case in `_handleNotificationRouteTarget`
 /// (`lib/app/application_root.dart`) must consult the shared already-active guard — passing
-/// the 1:1 `conversationTracker` — and emit the dedicated skip event before
+/// the process-local `appVisibilityRouteRegistry` — and emit the dedicated
+/// skip event before
 /// pushing a new conversation route, mirroring the group case's existing
 /// `GROUP_NOTIFICATION_ROUTE_ALREADY_ACTIVE` guard.
 ///
@@ -48,9 +49,11 @@ void main() {
       reason: 'conversation case must call the already-active guard',
     );
     expect(
-      convCase.contains('conversationTracker:'),
+      convCase.contains(
+        'appVisibilityRouteRegistry: _appVisibilityRouteRegistry,',
+      ),
       isTrue,
-      reason: 'guard call must pass the 1:1 conversationTracker',
+      reason: 'guard call must pass the process-local top-route registry',
     );
     expect(
       convCase.contains("'CONVERSATION_NOTIFICATION_ROUTE_ALREADY_ACTIVE'"),

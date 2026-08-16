@@ -38,6 +38,12 @@ abstract class DirectNotificationDisplayOutboxRepository {
     NotificationCompletedOutcomeCandidate? outcome,
   });
 
+  /// Transaction B for a durable terminal: exact READY deletion only after
+  /// the file-ledger record settled.
+  Future<bool> retireAfterDurableSettlementIfExact(
+    DirectNotificationDisplayOutboxEntry expected,
+  );
+
   Future<bool> retireIfExact(DirectNotificationDisplayOutboxEntry expected);
 
   Future<int> deleteForPeer(String peerId);

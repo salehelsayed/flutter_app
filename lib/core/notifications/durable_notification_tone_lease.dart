@@ -97,6 +97,14 @@ final class DurableNotificationPublicationAttemptedException
       'errorType: $errorType)';
 }
 
+/// The final durable canonical/visibility barrier denied native entry after
+/// provisional event/tone owners had been armed. Owners must roll back their
+/// exact publishing residue because no platform callback was invoked.
+final class DurableNotificationPublicationNotAuthorizedException
+    implements Exception {
+  const DurableNotificationPublicationNotAuthorizedException();
+}
+
 /// Typed ownership outcome for an exact notification event.
 enum DurableNotificationClaimDisposition {
   /// This caller owns a new provisional claim and may attempt OS publication.
@@ -644,6 +652,10 @@ class DurableNotificationToneLease {
     try {
       await publish();
     } catch (error, stackTrace) {
+      if (error is DurableNotificationPublicationNotAuthorizedException) {
+        await _abortPublishedMessageClaim(claim);
+        Error.throwWithStackTrace(error, stackTrace);
+      }
       if (error is DurableNotificationPublicationAttemptedException) {
         Error.throwWithStackTrace(error, stackTrace);
       }
@@ -677,6 +689,14 @@ class DurableNotificationToneLease {
       ),
     );
   }
+
+  Future<bool> _abortPublishedMessageClaim(
+    DurableNotificationEventClaim claim,
+  ) => _mutateOwnedMessageClaim(
+    claim,
+    (file) => file.delete(),
+    allowedStates: const <String>{'publishing'},
+  );
 
   Future<bool> _beginMessageClaimPublication(
     DurableNotificationEventClaim claim,
@@ -1096,6 +1116,10 @@ class DurableNotificationToneLease {
           await publishAudibly();
           nativePublicationCompleted = true;
         } catch (error, stackTrace) {
+          if (error is DurableNotificationPublicationNotAuthorizedException) {
+            await _abortTonePublicationExactOwner(reservation);
+            Error.throwWithStackTrace(error, stackTrace);
+          }
           if (error is DurableNotificationPublicationAttemptedException) {
             Error.throwWithStackTrace(error, stackTrace);
           }
@@ -1123,6 +1147,9 @@ class DurableNotificationToneLease {
         }
       });
     } catch (error, stackTrace) {
+      if (error is DurableNotificationPublicationNotAuthorizedException) {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
       if (error is DurableNotificationPublicationAttemptedException) {
         Error.throwWithStackTrace(error, stackTrace);
       }
@@ -1182,6 +1209,19 @@ class DurableNotificationToneLease {
       protecting: reservation._leaseFile,
     );
     return true;
+  }
+
+  Future<void> _abortTonePublicationExactOwner(
+    DurableNotificationToneReservation reservation,
+  ) async {
+    final record = await _readToneReservationRecord(reservation._pendingFile);
+    if (!_toneReservationIsOwnedBy(record, reservation)) return;
+    final leaseMatches = await _toneLeaseMatches(
+      reservation._leaseFile,
+      reservation._reservedAtMs,
+    );
+    await _deleteIfExists(reservation._pendingFile);
+    if (leaseMatches) await _deleteIfExists(reservation._leaseFile);
   }
 
   Future<bool> _releaseToneReservation(

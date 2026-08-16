@@ -1,0 +1,389 @@
+{
+  "fixtureVersion": 1,
+  "recordTemplate": {
+    "eventCorrelation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "conversationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "producerKind": "direct_message",
+    "sourceCustody": "SQL_READY",
+    "readState": "UNREAD",
+    "presentationState": "NOT_EVALUATED",
+    "presentationOwner": "MAIN_APP",
+    "notificationId": 1042,
+    "contentGeneration": "generation-7",
+    "lastEvaluatedLifecycle": "BACKGROUND",
+    "visibilityRevision": 7,
+    "lifecycleGeneration": 11,
+    "effectPhase": "READY",
+    "attemptKind": null,
+    "effectToken": null,
+    "revision": 1,
+    "createdAtUtc": "2026-08-16T10:00:00.000Z",
+    "updatedAtUtc": "2026-08-16T10:00:00.000Z",
+    "terminalAtUtc": null,
+    "settledAtUtc": null
+  },
+  "validEnvelope": {
+    "schemaVersion": 1,
+    "storeRevision": 9223372036854775807,
+    "opaqueBinding": "v1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "claimsSuspended": false,
+    "records": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        "eventCorrelation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "conversationDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "producerKind": "direct_message",
+        "sourceCustody": "SQL_READY",
+        "readState": "UNREAD",
+        "presentationState": "NOT_EVALUATED",
+        "presentationOwner": "MAIN_APP",
+        "notificationId": 1042,
+        "contentGeneration": "generation-7",
+        "lastEvaluatedLifecycle": "BACKGROUND",
+        "visibilityRevision": 7,
+        "lifecycleGeneration": 11,
+        "effectPhase": "READY",
+        "attemptKind": null,
+        "effectToken": null,
+        "revision": 1,
+        "createdAtUtc": "2026-08-16T10:00:00.000Z",
+        "updatedAtUtc": "2026-08-16T10:00:00.000Z",
+        "terminalAtUtc": null,
+        "settledAtUtc": null
+      }
+    }
+  },
+  "acceptedTransitions": [
+    {
+      "name": "sql-ready-claims",
+      "expectedRevision": 1,
+      "before": {},
+      "after": {
+        "effectPhase": "CLAIMED",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 2,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      }
+    },
+    {
+      "name": "sql-claimed-arms-publishing",
+      "expectedRevision": 2,
+      "before": {
+        "effectPhase": "CLAIMED",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 2,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      },
+      "after": {
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:02.000Z"
+      }
+    },
+    {
+      "name": "sql-publishing-reaches-effect-terminal",
+      "expectedRevision": 3,
+      "before": {
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:02.000Z"
+      },
+      "after": {
+        "presentationState": "OS_POSTED",
+        "effectPhase": "EFFECT_TERMINAL",
+        "attemptKind": null,
+        "effectToken": null,
+        "revision": 4,
+        "updatedAtUtc": "2026-08-16T10:00:03.000Z",
+        "terminalAtUtc": "2026-08-16T10:00:03.000Z"
+      }
+    },
+    {
+      "name": "sql-publishing-arms-exact-cancel",
+      "expectedRevision": 3,
+      "before": {
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:02.000Z"
+      },
+      "after": {
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "CANCEL",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 4,
+        "updatedAtUtc": "2026-08-16T10:00:03.000Z"
+      }
+    },
+    {
+      "name": "sql-publishing-resumes-post-after-content-activation",
+      "expectedRevision": 4,
+      "before": {
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "CANCEL",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 4,
+        "updatedAtUtc": "2026-08-16T10:00:03.000Z"
+      },
+      "after": {
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 5,
+        "updatedAtUtc": "2026-08-16T10:00:04.000Z"
+      }
+    },
+    {
+      "name": "sql-effect-terminal-settles-after-handoff",
+      "expectedRevision": 4,
+      "before": {
+        "presentationState": "OS_POSTED",
+        "effectPhase": "EFFECT_TERMINAL",
+        "revision": 4,
+        "updatedAtUtc": "2026-08-16T10:00:03.000Z",
+        "terminalAtUtc": "2026-08-16T10:00:03.000Z"
+      },
+      "after": {
+        "presentationState": "OS_POSTED",
+        "effectPhase": "SETTLED",
+        "revision": 5,
+        "updatedAtUtc": "2026-08-16T10:00:04.000Z",
+        "terminalAtUtc": "2026-08-16T10:00:03.000Z",
+        "settledAtUtc": "2026-08-16T10:00:04.000Z"
+      }
+    },
+    {
+      "name": "relay-ready-claims",
+      "expectedRevision": 1,
+      "before": {"sourceCustody": "RELAY_VERIFIED_UNACKED"},
+      "after": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "effectPhase": "CLAIMED",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revision": 2,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      }
+    },
+    {
+      "name": "relay-claimed-arms-publishing",
+      "expectedRevision": 2,
+      "before": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "effectPhase": "CLAIMED",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revision": 2,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      },
+      "after": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:02.000Z"
+      }
+    },
+    {
+      "name": "relay-publishing-reaches-effect-terminal",
+      "expectedRevision": 3,
+      "before": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:02.000Z"
+      },
+      "after": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "presentationState": "OS_POSTED",
+        "effectPhase": "EFFECT_TERMINAL",
+        "attemptKind": null,
+        "effectToken": null,
+        "revision": 4,
+        "updatedAtUtc": "2026-08-16T10:00:03.000Z",
+        "terminalAtUtc": "2026-08-16T10:00:03.000Z"
+      }
+    },
+    {
+      "name": "relay-ready-upgrades-to-sql-phase-preserving",
+      "expectedRevision": 1,
+      "before": {"sourceCustody": "RELAY_VERIFIED_UNACKED"},
+      "after": {
+        "sourceCustody": "SQL_READY",
+        "revision": 2,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      }
+    },
+    {
+      "name": "relay-claimed-upgrades-to-sql-phase-preserving",
+      "expectedRevision": 2,
+      "before": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "effectPhase": "CLAIMED",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revision": 2,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      },
+      "after": {
+        "sourceCustody": "SQL_READY",
+        "effectPhase": "CLAIMED",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:02.000Z"
+      }
+    },
+    {
+      "name": "relay-publishing-upgrades-to-sql-phase-preserving",
+      "expectedRevision": 3,
+      "before": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:02.000Z"
+      },
+      "after": {
+        "sourceCustody": "SQL_READY",
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revision": 4,
+        "updatedAtUtc": "2026-08-16T10:00:03.000Z"
+      }
+    },
+    {
+      "name": "relay-effect-terminal-upgrades-to-sql-phase-preserving",
+      "expectedRevision": 4,
+      "before": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "presentationState": "OS_POSTED",
+        "effectPhase": "EFFECT_TERMINAL",
+        "revision": 4,
+        "updatedAtUtc": "2026-08-16T10:00:03.000Z",
+        "terminalAtUtc": "2026-08-16T10:00:03.000Z"
+      },
+      "after": {
+        "sourceCustody": "SQL_READY",
+        "presentationState": "OS_POSTED",
+        "effectPhase": "EFFECT_TERMINAL",
+        "revision": 5,
+        "updatedAtUtc": "2026-08-16T10:00:04.000Z",
+        "terminalAtUtc": "2026-08-16T10:00:03.000Z"
+      }
+    },
+    {
+      "name": "read-state-is-monotonic",
+      "expectedRevision": 1,
+      "before": {},
+      "after": {
+        "readState": "READ",
+        "revision": 2,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      }
+    }
+  ],
+  "rejectedTransitions": [
+    {
+      "name": "stale-record-revision",
+      "expectedRevision": 2,
+      "before": {},
+      "after": {"revision": 2, "updatedAtUtc": "2026-08-16T10:00:01.000Z"}
+    },
+    {
+      "name": "effect-phase-skip",
+      "expectedRevision": 1,
+      "before": {},
+      "after": {
+        "effectPhase": "PUBLISHING",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 2,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      }
+    },
+    {
+      "name": "relay-custody-cannot-downgrade",
+      "expectedRevision": 2,
+      "before": {"sourceCustody": "SQL_READY", "revision": 2},
+      "after": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      }
+    },
+    {
+      "name": "relay-only-custody-cannot-settle",
+      "expectedRevision": 4,
+      "before": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "presentationState": "OS_POSTED",
+        "effectPhase": "EFFECT_TERMINAL",
+        "revision": 4,
+        "updatedAtUtc": "2026-08-16T10:00:03.000Z",
+        "terminalAtUtc": "2026-08-16T10:00:03.000Z"
+      },
+      "after": {
+        "sourceCustody": "RELAY_VERIFIED_UNACKED",
+        "presentationState": "OS_POSTED",
+        "effectPhase": "SETTLED",
+        "revision": 5,
+        "updatedAtUtc": "2026-08-16T10:00:04.000Z",
+        "terminalAtUtc": "2026-08-16T10:00:03.000Z",
+        "settledAtUtc": "2026-08-16T10:00:04.000Z"
+      }
+    },
+    {
+      "name": "claimed-effect-token-cannot-be-replaced",
+      "expectedRevision": 2,
+      "before": {
+        "effectPhase": "CLAIMED",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "revision": 2,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      },
+      "after": {
+        "effectPhase": "CLAIMED",
+        "attemptKind": "POST_OR_UPDATE",
+        "effectToken": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:02.000Z"
+      }
+    },
+    {
+      "name": "read-state-cannot-regress",
+      "expectedRevision": 2,
+      "before": {"readState": "READ", "revision": 2},
+      "after": {
+        "readState": "UNREAD",
+        "revision": 3,
+        "updatedAtUtc": "2026-08-16T10:00:01.000Z"
+      }
+    }
+  ],
+  "invalidEnvelopeMutations": [
+    {"name": "future-schema", "path": "schemaVersion", "value": 2},
+    {"name": "signed-int64-overflow", "path": "storeRevision", "value": "9223372036854775808"},
+    {"name": "nonpositive-store-revision", "path": "storeRevision", "value": 0},
+    {"name": "noncanonical-binding", "path": "opaqueBinding", "value": "v1:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"},
+    {"name": "noncanonical-event-digest", "path": "records.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.eventCorrelation", "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+    {"name": "notification-id-overflow", "path": "records.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.notificationId", "value": 2147483648},
+    {"name": "control-bearing-generation", "path": "records.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.contentGeneration", "value": "private\ncontrol"},
+    {"name": "noncanonical-utc", "path": "records.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.updatedAtUtc", "value": "2026-08-16T10:00:00Z"},
+    {"name": "unknown-envelope-key", "path": "rawPeerId", "value": "privacy-bearing"},
+    {"name": "unknown-record-key", "path": "records.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.messageBody", "value": "private"},
+    {"name": "unknown-enum", "path": "records.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.effectPhase", "value": "FUTURE_PHASE"}
+  ]
+}

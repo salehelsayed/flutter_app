@@ -790,6 +790,9 @@ Future<void> _reconcileInvalidCandidate(
         txn,
         groupId: authority.groupId,
         messageId: fact.contentEventId,
+        // The protected terminal fact is appended below, but READY must also
+        // survive this transaction for an already-PUBLISHING ledger attempt.
+        preserveReadyCustody: true,
       );
       await txn.delete(
         'message_reactions',
@@ -904,6 +907,7 @@ Future<void> _restoreReactionPrefix(
     groupId: authority.groupId,
     messageId: messageId,
     actorPeerId: senderPeerId,
+    preserveReadyCustody: true,
   );
   if (prior == null) {
     await txn.delete(
