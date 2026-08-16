@@ -50,6 +50,7 @@ void main() {
     expect(gateway.trace, [
       'beginDrain',
       'stopRuntime',
+      'quiesceRuntime',
       'closeDatabase',
       'release:true',
     ]);
@@ -79,6 +80,7 @@ void main() {
     expect(gateway.trace, [
       'beginDrain',
       'stopRuntime',
+      'quiesceRuntime',
       'closeDatabase',
       'release:false',
     ]);
@@ -192,6 +194,7 @@ void main() {
         'openDatabase',
         'attachRuntime',
         'beginDrain',
+        'quiesceRuntime',
         'closeDatabase:database',
         'release:true',
       ]);
@@ -200,7 +203,43 @@ void main() {
   );
 
   test(
-    'opaque install account binding is stable rotates and never enables work',
+    'runtime attach failure never closes SQLCipher before Go quiesces',
+    () async {
+      final gateway = _FakeLeaseGateway()
+        ..attachSucceeds = false
+        ..quiesceSucceeds = false;
+      final session = CanonicalWritableRuntimeSession(gateway: gateway);
+
+      await expectLater(
+        session.acquireThenOpen<String>(
+          binding: 'v1:account-a',
+          openDatabase: () async {
+            gateway.trace.add('openDatabase');
+            return 'database';
+          },
+          closeDatabaseOnRuntimeAttachFailure: (database) async {
+            gateway.trace.add('closeDatabase:$database');
+            return true;
+          },
+        ),
+        throwsStateError,
+      );
+
+      expect(gateway.trace, [
+        'acquire:v1:account-a',
+        'openDatabase',
+        'attachRuntime',
+        'beginDrain',
+        'quiesceRuntime',
+        'release:false',
+      ]);
+      expect(session.hasWritableLease, isTrue);
+      expect(session.state, CanonicalRuntimeLeaseState.draining);
+    },
+  );
+
+  test(
+    'TC-374-05 code-ready publication requires exact echo and keeps rollback distinct from rotation',
     () async {
       final secureStore = _MemorySecureKeyStore();
       final lease = _FakeLeaseGateway();
@@ -214,6 +253,7 @@ void main() {
           overlayBindings.add(binding);
         },
         createInstallationId: () => 'installation-secret-123',
+        recoveryGraphRegistered: true,
       );
 
       final startupA = await bindings.loadStartupBinding();
@@ -222,6 +262,57 @@ void main() {
       expect(startupA.hasAccount, isFalse);
       expect(startupA.leaseBinding, startsWith('v1:'));
       expect(startupA.leaseBinding, isNot(contains('installation-secret-123')));
+
+      final noAccountPublisher = _FakeDroppedPushBindingPublisher();
+      final noAccountBindings = CanonicalRuntimeBindingCoordinator(
+        secureKeyStore: _MemorySecureKeyStore(),
+        droppedPushBindingPublisher: noAccountPublisher,
+        createInstallationId: () => 'no-account-installation',
+        recoveryGraphRegistered: true,
+      );
+      final noAccountStartup = await noAccountBindings.loadStartupBinding();
+      expect(noAccountStartup.hasAccount, isFalse);
+      expect(
+        await noAccountBindings.reconcileCurrentAccountRecoveryReadiness(),
+        isNull,
+      );
+      expect(
+        noAccountPublisher.publications,
+        <({String? binding, bool activateRecoveryWork})>[
+          (binding: null, activateRecoveryWork: false),
+        ],
+      );
+      expect(noAccountPublisher.recoverStaleAuthorityMutations, <bool>[true]);
+
+      final rejectedNoAccountPublisher = _FakeDroppedPushBindingPublisher()
+        ..echoBindingOverride = 'v1:${'e' * 64}';
+      final rejectedNoAccountBindings = CanonicalRuntimeBindingCoordinator(
+        secureKeyStore: _MemorySecureKeyStore(),
+        droppedPushBindingPublisher: rejectedNoAccountPublisher,
+        createInstallationId: () => 'rejected-no-account-installation',
+        recoveryGraphRegistered: true,
+      );
+      expect(
+        (await rejectedNoAccountBindings.loadStartupBinding()).hasAccount,
+        isFalse,
+      );
+      await expectLater(
+        rejectedNoAccountBindings.reconcileCurrentAccountRecoveryReadiness(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('retirement reconciliation was rejected'),
+          ),
+        ),
+      );
+      expect(rejectedNoAccountPublisher.publications.single, (
+        binding: null,
+        activateRecoveryWork: false,
+      ));
+      expect(rejectedNoAccountPublisher.recoverStaleAuthorityMutations, <bool>[
+        true,
+      ]);
 
       await lease.acquire(startupA.leaseBinding);
       lease.trace.clear();
@@ -234,12 +325,47 @@ void main() {
         await secureStore.read(canonicalRuntimeAccountBindingStorageKey),
         accountB,
       );
+      expect(
+        await bindings.reconcileCurrentAccountRecoveryReadiness(),
+        accountB,
+      );
       expect(publisher.publications, [
-        (binding: accountA, activateRecoveryWork: false),
-        (binding: accountB, activateRecoveryWork: false),
+        (binding: accountA, activateRecoveryWork: true),
+        (binding: accountB, activateRecoveryWork: true),
+        (binding: accountB, activateRecoveryWork: true),
       ]);
+      expect(
+        publisher.recoverStaleAuthorityMutations,
+        <bool>[false, false, true],
+        reason:
+            'ordinary publication cannot clear a crash-stale mutation token; '
+            'the one-shot bootstrap reconciliation can',
+      );
 
-      final provisional = await bindings.retireAccount();
+      publisher
+        ..pendingMarker = 17
+        ..pendingCustody = 4
+        ..liveOwner = true;
+      final rollback = CanonicalRuntimeBindingCoordinator(
+        secureKeyStore: secureStore,
+        leaseGateway: lease,
+        droppedPushBindingPublisher: publisher,
+        createInstallationId: () => 'must-not-mint',
+        recoveryGraphRegistered: false,
+      );
+      expect(await rollback.publishAccount('raw-peer-B'), accountB);
+      expect(publisher.publications.last, (
+        binding: accountB,
+        activateRecoveryWork: false,
+      ));
+      expect(publisher.currentBinding, accountB);
+      expect(publisher.recoveryWorkEnabled, isFalse);
+      expect(publisher.workCancelled, isTrue);
+      expect(publisher.liveOwner, isFalse);
+      expect(publisher.pendingMarker, 17);
+      expect(publisher.pendingCustody, 4);
+
+      final provisional = await rollback.retireAccount();
       expect(provisional, startsWith('v1:'));
       expect(provisional, isNot(accountB));
       expect(
@@ -250,12 +376,69 @@ void main() {
         binding: null,
         activateRecoveryWork: false,
       ));
-      expect(overlayBindings, [null, null, accountA, accountB, null]);
+      expect(publisher.currentBinding, isNull);
+      expect(publisher.pendingMarker, isNull);
+      expect(publisher.pendingCustody, 0);
+      expect(overlayBindings, [null, null, accountA, accountB]);
       expect(lease.trace.where((entry) => entry.startsWith('rebind:')), [
         'rebind:$accountA',
         'rebind:$accountB',
+        'rebind:$accountB',
         'rebind:$provisional',
       ]);
+
+      final rejectedStore = _MemorySecureKeyStore();
+      final rejectedLease = _FakeLeaseGateway();
+      final wrongEcho = _FakeDroppedPushBindingPublisher()
+        ..echoBindingOverride = 'v1:${'f' * 64}';
+      final rejected = CanonicalRuntimeBindingCoordinator(
+        secureKeyStore: rejectedStore,
+        leaseGateway: rejectedLease,
+        droppedPushBindingPublisher: wrongEcho,
+        createInstallationId: () => 'rejected-installation',
+        recoveryGraphRegistered: true,
+      );
+      final rejectedStartup = await rejected.loadStartupBinding();
+      await rejectedLease.acquire(rejectedStartup.leaseBinding);
+      await expectLater(
+        rejected.publishAccount('raw-peer-C'),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('publication was rejected'),
+          ),
+        ),
+      );
+      expect(
+        rejectedLease.trace.where((entry) => entry.startsWith('rebind:')),
+        isEmpty,
+        reason: 'a mismatched typed echo cannot activate the runtime binding',
+      );
+
+      final productionBootstrap = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      expect(
+        'recoveryGraphRegistered: true,'.allMatches(productionBootstrap),
+        hasLength(1),
+        reason:
+            'the supported account bootstrap enables work only after graph registration',
+      );
+      expect(
+        '.reconcileCurrentAccountRecoveryReadiness()'.allMatches(
+          productionBootstrap,
+        ),
+        hasLength(1),
+        reason:
+            'foreground bootstrap performs one stale-token recovery after its '
+            'writable runtime is ready',
+      );
+      expect(
+        productionBootstrap,
+        isNot(contains('MKNOON_ENABLE_WAKE_OUTCOME_COORDINATOR')),
+        reason: 'recovery readiness is independent of fixed-wake admission',
+      );
     },
   );
 
@@ -564,6 +747,7 @@ class _FakeLeaseGateway implements CanonicalRuntimeLeaseGateway {
   int generation = 0;
   String? binding;
   bool attachSucceeds = true;
+  bool quiesceSucceeds = true;
 
   @override
   Future<bool> attachRuntime() async {
@@ -603,7 +787,7 @@ class _FakeLeaseGateway implements CanonicalRuntimeLeaseGateway {
   @override
   Future<bool> quiesceRuntime() async {
     trace.add('quiesceRuntime');
-    return true;
+    return quiesceSucceeds;
   }
 
   @override
@@ -635,17 +819,47 @@ class _FakeLeaseGateway implements CanonicalRuntimeLeaseGateway {
 class _FakeDroppedPushBindingPublisher
     implements DroppedPushRecoveryBindingPublisher {
   final List<({String? binding, bool activateRecoveryWork})> publications = [];
+  final List<bool> recoverStaleAuthorityMutations = [];
+  String? currentBinding;
+  bool recoveryWorkEnabled = false;
+  bool workCancelled = false;
+  bool liveOwner = false;
+  int? pendingMarker;
+  int pendingCustody = 0;
+  String? echoBindingOverride;
+  bool? echoEnabledOverride;
+  bool committed = true;
 
   @override
-  Future<bool> setCurrentBinding(
+  Future<DroppedPushRecoveryBindingPublication> setCurrentBinding(
     String? binding, {
     required bool activateRecoveryWork,
+    bool recoverStaleAuthorityMutations = false,
   }) async {
+    this.recoverStaleAuthorityMutations.add(recoverStaleAuthorityMutations);
     publications.add((
       binding: binding,
       activateRecoveryWork: activateRecoveryWork,
     ));
-    return true;
+    final changed =
+        currentBinding != binding ||
+        recoveryWorkEnabled != activateRecoveryWork;
+    if (binding == null) {
+      pendingMarker = null;
+      pendingCustody = 0;
+    }
+    if (!activateRecoveryWork) {
+      workCancelled = true;
+      liveOwner = false;
+    }
+    currentBinding = binding;
+    recoveryWorkEnabled = activateRecoveryWork;
+    return DroppedPushRecoveryBindingPublication(
+      changed: changed,
+      committed: committed,
+      currentBinding: echoBindingOverride ?? binding,
+      recoveryWorkEnabled: echoEnabledOverride ?? activateRecoveryWork,
+    );
   }
 }
 

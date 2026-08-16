@@ -1340,7 +1340,7 @@ void main() {
         saveStart,
       );
       final saveSecret = identitySource.indexOf(
-        'await _secureKeyStore.write(_kPrivateKey',
+        'await _secureKeyStore.write(\n      identityPrivateKeyStorageKey,',
         saveStart,
       );
       final saveDatabase = identitySource.indexOf(
@@ -1477,8 +1477,10 @@ void main() {
       // Publish-precedes-drain observable: at each drain call, snapshot
       // whether the store already holds the COMPLETE (epoch-bearing) context.
       final drainSnapshots = <bool>[];
-      setDeferredDistributionDrainSink((
-          {required String groupId, required String peerId}) async {
+      setDeferredDistributionDrainSink(({
+        required String groupId,
+        required String peerId,
+      }) async {
         var complete = false;
         final raw = store.values[sharedGroupReactionContextsKey];
         if (raw != null) {
@@ -1532,8 +1534,10 @@ void main() {
         ),
       );
 
-      final (result, materializedGroupId) =
-          await materializeAcceptedGroupInvitePayload(
+      final (
+        result,
+        materializedGroupId,
+      ) = await materializeAcceptedGroupInvitePayload(
         payload: payload,
         groupRepo: repo,
         bridge: bridge,
@@ -1545,7 +1549,8 @@ void main() {
       expect(
         result,
         HandleGroupInviteResult.success,
-        reason: 'fixture guard: the fresh join itself must succeed — a red via '
+        reason:
+            'fixture guard: the fresh join itself must succeed — a red via '
             'invalidPayload means the fixture is wrong, not the window proven',
       );
       expect(materializedGroupId, freshGroupId);
@@ -1554,9 +1559,10 @@ void main() {
           .where((entry) => entry.$1 == sharedGroupReactionContextsKey)
           .map((entry) => jsonDecode(entry.$2) as Map<String, dynamic>)
           .where((doc) {
-        final groups = doc['groups'] as Map<String, dynamic>? ?? const {};
-        return groups.containsKey(freshGroupId);
-      }).toList();
+            final groups = doc['groups'] as Map<String, dynamic>? ?? const {};
+            return groups.containsKey(freshGroupId);
+          })
+          .toList();
 
       expect(
         groupBearing,
@@ -1564,12 +1570,14 @@ void main() {
         reason: 'the join must project the group',
       );
       for (final doc in groupBearing) {
-        final entry = (doc['groups'] as Map<String, dynamic>)[freshGroupId]
-            as Map<String, dynamic>;
+        final entry =
+            (doc['groups'] as Map<String, dynamic>)[freshGroupId]
+                as Map<String, dynamic>;
         expect(
           entry['keyEpoch'],
           isA<int>(),
-          reason: 'TC-321-01: no captured contexts document may carry the '
+          reason:
+              'TC-321-01: no captured contexts document may carry the '
               'group without keyEpoch (HEAD publishes the first doc '
               'epoch-less for the whole roster loop)',
         );
@@ -1577,12 +1585,14 @@ void main() {
       expect(
         groupBearing.length,
         1,
-        reason: 'TC-321-01: exactly one COMPLETE publish (HEAD writes the '
+        reason:
+            'TC-321-01: exactly one COMPLETE publish (HEAD writes the '
             'group across N+2 incremental documents)',
       );
 
-      final only = (groupBearing.single['groups']
-          as Map<String, dynamic>)[freshGroupId] as Map<String, dynamic>;
+      final only =
+          (groupBearing.single['groups'] as Map<String, dynamic>)[freshGroupId]
+              as Map<String, dynamic>;
       expect(only['name'], 'Fresh Join 321');
       expect(only['type'], 'chat');
       expect(only['muted'], false);
@@ -1728,14 +1738,16 @@ void main() {
       expect(
         docs.length,
         1,
-        reason: 'TC-321-02: the mid-join updateGroup must publish NOTHING for '
+        reason:
+            'TC-321-02: the mid-join updateGroup must publish NOTHING for '
             'the joining group (HEAD publishes an epoch-less members-less doc)',
       );
       expect(docs.single['keyEpoch'], 1);
       expect(
         docs.single['muted'],
         true,
-        reason: 'the suppressed mirror must not LOSE the mute — the publish '
+        reason:
+            'the suppressed mirror must not LOSE the mute — the publish '
             'read-back carries the committed row',
       );
     },
@@ -1793,7 +1805,8 @@ void main() {
       expect(
         docs.last['keyEpoch'],
         2,
-        reason: 'TC-321-03: the publish must read the LATEST committed '
+        reason:
+            'TC-321-03: the publish must read the LATEST committed '
             'generation — pinning the join generation would downgrade the '
             'mid-scope rotation',
       );
@@ -1871,7 +1884,8 @@ void main() {
       expect(
         groups.containsKey(freshGroupId),
         isFalse,
-        reason: 'TC-321-03 race: the deletion must win — a resurrected doc '
+        reason:
+            'TC-321-03 race: the deletion must win — a resurrected doc '
             'means the publish ran outside _runGroupMutation',
       );
     },
@@ -1912,8 +1926,12 @@ void main() {
       // sees a removed shell and the failure branch must remove the doc even
       // though the suppression scope is active.
       persistence.onGroupKeyInsert = () {
-        persistence.groups[freshGroupId]?['self_removed_at'] =
-            DateTime.utc(2026, 8, 1, 2).toIso8601String();
+        persistence.groups[freshGroupId]?['self_removed_at'] = DateTime.utc(
+          2026,
+          8,
+          1,
+          2,
+        ).toIso8601String();
       };
 
       await expectLater(
@@ -1935,7 +1953,8 @@ void main() {
       expect(
         groups.containsKey(freshGroupId),
         isFalse,
-        reason: 'TC-321-04: the authority-flip removal must fire under '
+        reason:
+            'TC-321-04: the authority-flip removal must fire under '
             'suppression — a surviving seeded doc means removals were '
             'suppressed',
       );
@@ -1977,7 +1996,8 @@ void main() {
               e['event'] == 'GROUP_FRESH_JOIN_PROJECTION_DEFERRED',
         ),
         isEmpty,
-        reason: 'TC-321-05: a qa join is a clean no-op — PUBLISHED would be a '
+        reason:
+            'TC-321-05: a qa join is a clean no-op — PUBLISHED would be a '
             'false signal and DEFERRED means the ArgumentError fired',
       );
     },
@@ -2084,8 +2104,7 @@ void main() {
       final healedGroups =
           (jsonDecode(healedRaw!) as Map<String, dynamic>)['groups']
               as Map<String, dynamic>;
-      final healedDoc =
-          healedGroups[freshGroupId] as Map<String, dynamic>?;
+      final healedDoc = healedGroups[freshGroupId] as Map<String, dynamic>?;
       expect(healedDoc, isNotNull, reason: 'launch heal must restore the doc');
       expect(
         healedDoc!['keyEpoch'],
@@ -2268,12 +2287,8 @@ class _MemoryGroupPersistence {
     dbDeleteAllGroupMembers: (groupId) async =>
         members.removeWhere((_, row) => row['group_id'] == groupId),
     dbInsertGroupKey: (row) async {
-      keys[_keyKey(
-        row['group_id']! as String,
-        row['key_generation']! as int,
-      )] = Map<String, Object?>.from(
-        row,
-      );
+      keys[_keyKey(row['group_id']! as String, row['key_generation']! as int)] =
+          Map<String, Object?>.from(row);
       onGroupKeyInsert?.call();
     },
     dbLoadLatestGroupKey: (groupId) async {

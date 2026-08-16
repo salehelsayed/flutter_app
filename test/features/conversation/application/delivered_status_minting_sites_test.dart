@@ -68,6 +68,10 @@ void main() {
         // (`is_incoming: 1`). It moved here verbatim from the deletion handler
         // and is receiver-side, so G4's outgoing-truthfulness bar is untouched.
         'lib/core/database/helpers/messages_db_helpers.dart': 2,
+        // Debug-only Plan-374 device proof seeds one incoming direct row and
+        // one incoming group row before invoking the real headless owner. It
+        // is a bounded fixture writer, not a live sender-side minting path.
+        'lib/core/debug/android_headless_recovery_374_fixture.dart': 2,
         // (a) the delivery-receipt apply — receiver-confirmed by definition
         // (the receipt is emitted after the receiver's durable persist).
         // One typed ordinary settlement handles inboxed/sent/failed without a

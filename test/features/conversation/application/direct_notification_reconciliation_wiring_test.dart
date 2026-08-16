@@ -230,8 +230,11 @@ void main() {
   );
 
   test('production bootstrap composes every direct durability owner', () {
-    final source = File(
+    final bootstrapSource = File(
       'lib/app/bootstrap/production_application_bootstrap.dart',
+    ).readAsStringSync();
+    final compositionSource = File(
+      'lib/app/bootstrap/production_canonical_direct_projection_composition.dart',
     ).readAsStringSync();
     for (final anchor in const <String>[
       'DirectNotificationDisplayOutboxRepositoryImpl(',
@@ -239,58 +242,110 @@ void main() {
       'DirectNotificationReactionTerminalRepositoryImpl(',
       'DirectNotificationReconciliationOutboxRepositoryImpl(',
       'projectConversationRead:',
-      'DirectNotificationProjectionOwner(',
       'stageNotificationDisplayCustody:',
       'promoteNotificationDisplayCustody:',
       'commitNotificationRemove:',
       'retryDirectNotificationProjection:',
+      'repairDirectNotificationDurabilityDeleteTriggers(db)',
+      'LocalNotificationPresentationOwner.mainApp',
+    ]) {
+      expect(
+        bootstrapSource,
+        contains(anchor),
+        reason: 'missing foreground production $anchor',
+      );
+    }
+    for (final anchor in const <String>[
+      'DirectNotificationProjectionOwner(',
       'recoverCommittedDirectNotificationDurableEffects',
       'listSqlReadyEffectTerminals(',
       'LocalNotificationEffectPhase.settled',
       'dbLoadAllReadyDirectNotificationDisplayOutboxEntriesForPeer(',
       'dbLoadDirectNotificationCommittedSqlTerminalsForPeer(',
       'dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(',
-      'repairDirectNotificationDurabilityDeleteTriggers(db)',
-      'LocalNotificationPresentationOwner.mainApp',
       'durableEffectContext: durableAttempt?.context',
       'entry.hasCanonicalRetirementProof',
       'DurableLocalNotificationCanonicalDisposition.read',
-      'withSqlReadyRevision(sqlReadyRevision)',
+      'withSqlReadyRevision(',
       'afterDurableSettlement:',
       'notifyDirectDurablePostHandoff(',
       'MessageNotificationDurablePostHandoffReconciliation',
     ]) {
-      expect(source, contains(anchor), reason: 'missing production $anchor');
+      expect(
+        compositionSource,
+        contains(anchor),
+        reason: 'missing shared production $anchor',
+      );
     }
-    final missingContentRecovery = source.indexOf(
+    expect(
+      RegExp(
+        r'\bbuildProductionCanonicalDirectProjectionComposition\(',
+      ).allMatches(bootstrapSource),
+      hasLength(1),
+      reason:
+          'foreground must delegate exactly once to the shared projection composition',
+    );
+    expect(
+      RegExp(
+        r'\bDirectNotificationProjectionOwner\(',
+      ).allMatches(compositionSource),
+      hasLength(1),
+      reason: 'the shared composition must construct exactly one direct owner',
+    );
+    expect(
+      bootstrapSource,
+      allOf(
+        contains('displayOutbox: directNotificationDisplayOutboxRepository'),
+        contains(
+          'reconciliationOutbox:\n'
+          '                directNotificationReconciliationOutboxRepository',
+        ),
+        contains(
+          'reactionTerminal: directNotificationReactionTerminalRepository',
+        ),
+        contains(
+          'readAcknowledgement:\n'
+          '                directNotificationReadAcknowledgementRepository',
+        ),
+        contains(
+          'directNotificationOwner = directProjectionComposition.owner;',
+        ),
+        contains(
+          'directProjectionComposition.readProjector.markConversationRead',
+        ),
+      ),
+      reason:
+          'foreground must reuse its exact repositories and both shared owner outputs',
+    );
+    final missingContentRecovery = compositionSource.indexOf(
       'if (entry.hasCanonicalRetirementProof)',
     );
     expect(missingContentRecovery, greaterThanOrEqualTo(0));
     expect(
-      source.indexOf(
-        'final contact = await contactRepository.getContact(entry.peerId)',
+      compositionSource.indexOf(
+        'final contact = await dependencies.contactRepository.getContact(',
         missingContentRecovery,
       ),
       greaterThan(missingContentRecovery),
       reason:
           'exact trigger-stamped READY must reach the final ledger barrier before content/contact lookup',
     );
-    final finalReader = source.indexOf(
+    final finalReader = compositionSource.indexOf(
       'readFinalDirectNotificationDisposition(',
     );
-    final canonicalFacts = source.indexOf(
+    final canonicalFacts = compositionSource.indexOf(
       'final canonicalDisposition = await readCanonicalFacts();',
       finalReader,
     );
-    final finalReadyReload = source.indexOf(
-      'final current = await directNotificationDisplayOutboxRepository.loadExact(',
+    final finalReadyReload = compositionSource.indexOf(
+      'final current = await dependencies.displayOutbox.loadExact(',
       canonicalFacts,
     );
-    final markerOverride = source.indexOf(
+    final markerOverride = compositionSource.indexOf(
       'if (current.hasCanonicalRetirementProof)',
       finalReadyReload,
     );
-    final revisionFence = source.indexOf(
+    final revisionFence = compositionSource.indexOf(
       'if (current.revision != entry.revision)',
       markerOverride,
     );
@@ -298,14 +353,14 @@ void main() {
     expect(finalReadyReload, greaterThan(canonicalFacts));
     expect(markerOverride, greaterThan(finalReadyReload));
     expect(revisionFence, greaterThan(markerOverride));
-    final durableRecovery = source.indexOf(
+    final durableRecovery = compositionSource.indexOf(
       'recoverCommittedDirectNotificationDurableEffects',
     );
-    final settledRecovery = source.indexOf(
+    final settledRecovery = compositionSource.indexOf(
       'LocalNotificationEffectPhase.settled',
       durableRecovery,
     );
-    final exactSqlB = source.indexOf(
+    final exactSqlB = compositionSource.indexOf(
       'dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(',
       settledRecovery,
     );

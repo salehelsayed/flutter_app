@@ -6,6 +6,8 @@ import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _bootstrap = 'lib/app/bootstrap/production_application_bootstrap.dart';
+const _directComposition =
+    'lib/app/bootstrap/production_canonical_direct_projection_composition.dart';
 const _background =
     'lib/features/push/application/background_message_handler.dart';
 const _directOwner =
@@ -34,7 +36,7 @@ void main() {
           for (final path in adopted.map((call) => call.path).toSet())
             path: adopted.where((call) => call.path == path).length,
         },
-        <String, int>{_bootstrap: 3, _groupOwner: 3},
+        <String, int>{_directComposition: 3, _groupOwner: 3},
       );
       for (final call in adopted) {
         expect(
@@ -75,6 +77,23 @@ void main() {
 
       final bootstrapSource = File(_bootstrap).readAsStringSync();
       expect(
+        RegExp(
+          r'\bbuildProductionCanonicalDirectProjectionComposition\(',
+        ).allMatches(bootstrapSource),
+        hasLength(1),
+        reason:
+            'foreground must delegate once to the canonical direct projection owner',
+      );
+      expect(
+        bootstrapSource,
+        allOf(
+          contains('durableRegistry: durableNotificationIdRegistry'),
+          contains('appVisibility: appVisibilityAuthority'),
+        ),
+        reason:
+            'the delegated owner must reuse foreground ledger and visibility authority',
+      );
+      expect(
         _creations(_unit(_bootstrap), 'LocalNotificationLedgerStore'),
         hasLength(1),
       );
@@ -114,9 +133,29 @@ void main() {
       );
       expect(
         RegExp(
-          r'presentationOwner:\s*LocalNotificationPresentationOwner\.mainApp',
+          r'presentationOwner:\s*_notificationPresentationOwner',
         ).allMatches(groupSource),
         hasLength(3),
+      );
+      expect(
+        groupSource,
+        contains(
+          'LocalNotificationPresentationOwner notificationPresentationOwner =\n'
+          '        LocalNotificationPresentationOwner.mainApp',
+        ),
+        reason:
+            'the reusable group owner must keep main-app presentation as its foreground default',
+      );
+      final foregroundGroupOwners = _creations(
+        _unit(_bootstrap),
+        'GroupMessageListener',
+      );
+      expect(foregroundGroupOwners, hasLength(1));
+      expect(
+        foregroundGroupOwners.single.toSource(),
+        isNot(contains('notificationPresentationOwner:')),
+        reason:
+            'foreground must reuse the shared listener default instead of selecting a second owner',
       );
       expect(
         groupSource,

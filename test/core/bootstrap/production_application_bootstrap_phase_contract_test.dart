@@ -29,6 +29,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _productionPath =
     'lib/app/bootstrap/production_application_bootstrap.dart';
+const _canonicalDirectProjectionPath =
+    'lib/app/bootstrap/production_canonical_direct_projection_composition.dart';
+const _canonicalDirectReplayPath =
+    'lib/app/bootstrap/production_canonical_direct_replay_composition.dart';
 const _applicationRootPath = 'lib/app/application_root.dart';
 const _handlerPath =
     'lib/features/push/application/background_message_handler.dart';
@@ -1204,19 +1208,32 @@ void main() {
   test('TC-355-04e production notification policies exclude terminal private '
       'media', () {
     final production = File(_productionPath).readAsStringSync();
+    final canonicalDirectProjection = File(
+      _canonicalDirectProjectionPath,
+    ).readAsStringSync();
+
+    expect(
+      'buildProductionCanonicalDirectProjectionComposition('.allMatches(
+        production,
+      ),
+      hasLength(1),
+      reason:
+          'foreground must delegate to the one canonical direct projection '
+          'composition shared with headless recovery',
+    );
 
     // 1. Canonical KEEP: a consumed/expired private parent must be retired
     //    from canonical notification history like a deleted one.
-    final keep = production.indexOf(
+    final keep = canonicalDirectProjection.indexOf(
       'DirectNotificationCanonicalContentDecision.keep',
     );
     expect(keep, greaterThan(-1));
-    final keepStart = production.lastIndexOf(
+    final keepStart = canonicalDirectProjection.lastIndexOf(
       'return message.contactPeerId',
       keep,
     );
     expect(keepStart, greaterThan(-1));
-    final keepBody = production.substring(keepStart, keep);
+    final keepBody = canonicalDirectProjection.substring(keepStart, keep);
     for (final guard in const <String>[
       'message.isIncoming',
       'message.readAt == null',
@@ -1232,16 +1249,18 @@ void main() {
     }
 
     // 2. Display PROJECTION: the same terminal states suppress the card.
-    final projection = production.indexOf('projectDisplay: (entry) async {');
+    final projection = canonicalDirectProjection.indexOf(
+      'projectDisplay: (entry) async {',
+    );
     expect(projection, greaterThan(-1));
-    final messageProjection = production.indexOf(
+    final messageProjection = canonicalDirectProjection.indexOf(
       'case DirectNotificationDisplayOutboxKind.message:',
       projection,
     );
     expect(messageProjection, greaterThan(projection));
-    final projectionBody = production.substring(
+    final projectionBody = canonicalDirectProjection.substring(
       messageProjection,
-      production.indexOf(
+      canonicalDirectProjection.indexOf(
         'final presentation = await maybeShowNotification(',
         messageProjection,
       ),
@@ -2100,6 +2119,10 @@ void main() {
       );
 
       final production = File(_productionPath).readAsStringSync();
+      final sharedProtectedReplay = File(
+        'lib/app/bootstrap/'
+        'production_canonical_group_replay_composition.dart',
+      ).readAsStringSync();
       final root = File(_applicationRootPath).readAsStringSync();
       final restrictedRuntime = File(
         'lib/app/bootstrap/direct_blob_free_linked_services.dart',
@@ -2319,9 +2342,16 @@ void main() {
         expect(narrow, isNot(contains(forbidden)));
       }
       expect(
-        production,
+        sharedProtectedReplay,
         contains('reconcileProtectedGroupContentForAuthority('),
         reason: 'later authority must reconcile before COMPLETE/UI exposure',
+      );
+      expect(
+        production,
+        contains(
+          'protectedGroupAuthoritySupport.reconcileCompletedContentAuthority(',
+        ),
+        reason: 'foreground reconciliation must reuse the canonical support',
       );
       expect(
         production,
@@ -2330,6 +2360,14 @@ void main() {
       );
       expect(
         production,
+        contains(
+          'protectedGroupAuthoritySupport.hasUnfinishedContentAuthority('
+          'groupId)',
+        ),
+        reason: 'foreground pending checks must reuse the canonical support',
+      );
+      expect(
+        sharedProtectedReplay,
         contains("reasonCode: 'authority_reconciliation_pending'"),
         reason: 'strict ingress waits without consuming a retry attempt',
       );
@@ -2770,9 +2808,12 @@ void main() {
       'production composes one reverse transport authority, one restricted '
       'linked service set and the exact route-push fanout seams', () {
     final production = File(_productionPath).readAsStringSync();
+    final canonicalDirectReplay = File(
+      _canonicalDirectReplayPath,
+    ).readAsStringSync();
 
     // ONE shared physical->logical reverse authority, wired into all four
-    // direct event listeners plus the two recovered-inbox replay closures.
+    // direct event listeners plus the shared recovered-inbox replay owner.
     expect(
       'final directTransportAuthority = DatabaseDirectTransportAuthority('
           .allMatches(production),
@@ -2781,10 +2822,24 @@ void main() {
     );
     expect(
       'transportAuthority: directTransportAuthority,'.allMatches(production),
-      hasLength(6),
+      hasLength(5),
       reason:
-          'chat/reaction/deletion/receipt listeners plus the reaction and '
-          'deletion replay closures all share the ONE authority',
+          'chat/reaction/deletion/receipt listeners and the canonical replay '
+          'owner all share the ONE authority',
+    );
+    expect(
+      'ProductionCanonicalDirectReplayComposition('.allMatches(production),
+      hasLength(1),
+      reason: 'foreground constructs the shared direct replay owner once',
+    );
+    expect(
+      'transportAuthority: transportAuthority,'.allMatches(
+        canonicalDirectReplay,
+      ),
+      hasLength(2),
+      reason:
+          'the shared owner delegates that same authority to reaction and '
+          'deletion replay',
     );
 
     // ONE restricted linked composition and ONE exact blob-free drain.
@@ -2853,6 +2908,9 @@ void main() {
       final bridgeClient = File(
         'lib/core/bridge/p2p_bridge_client.dart',
       ).readAsStringSync();
+      final canonicalDirectProjection = File(
+        _canonicalDirectProjectionPath,
+      ).readAsStringSync();
 
       expect(
         bridgeClient,
@@ -2915,8 +2973,28 @@ void main() {
         'completedOutcomeProducerEnabled: '
                 'kWakeOutcomeCoordinatorAdmissionEnabled,'
             .allMatches(production),
-        hasLength(2),
-        reason: 'direct and group producers share the combined admission',
+        hasLength(1),
+        reason: 'the group producer uses the combined admission directly',
+      );
+      expect(
+        production,
+        contains(
+          'completedOutcomeProducerEnabled:\n'
+          '                kWakeOutcomeCoordinatorAdmissionEnabled,',
+        ),
+        reason:
+            'foreground delegates the same combined admission into the '
+            'canonical direct projection composition',
+      );
+      expect(
+        canonicalDirectProjection,
+        contains(
+          'completedOutcomeProducerEnabled:\n'
+          '        dependencies.completedOutcomeProducerEnabled,',
+        ),
+        reason:
+            'the shared composition reuses the delegated admission for the '
+            'direct producer',
       );
       expect(
         'if (completed && outcome != null) {'.allMatches(production),

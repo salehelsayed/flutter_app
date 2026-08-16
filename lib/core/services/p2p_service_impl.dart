@@ -58,6 +58,36 @@ enum ProtectedGroupReplayDisposition {
   prerequisiteWaiting,
 }
 
+/// Terminal reason a recovery-only protected-group fixed-point pass stopped.
+///
+/// Foreground callers retain the legacy integer pass-count API. Headless
+/// canonical recovery uses this disposition to retain its marker unless the
+/// protected replay actually reached a successful no-more-work boundary.
+enum ProtectedGroupRecoveryFixedPointDisposition {
+  reachedFixedPoint,
+  stalled,
+  failed,
+  maxPassesReached,
+}
+
+class ProtectedGroupRecoveryFixedPointOutcome {
+  const ProtectedGroupRecoveryFixedPointOutcome({
+    required this.disposition,
+    required this.passes,
+    this.failureReason,
+  });
+
+  final ProtectedGroupRecoveryFixedPointDisposition disposition;
+  final int passes;
+  final String? failureReason;
+
+  bool get isSuccessful =>
+      disposition ==
+      ProtectedGroupRecoveryFixedPointDisposition.reachedFixedPoint;
+
+  bool get hasMore => !isSuccessful;
+}
+
 typedef ProtectedGroupReplayOutcome = ({
   ProtectedGroupReplayDisposition disposition,
   String reasonCode,
@@ -151,6 +181,7 @@ class P2PServiceImpl
   /// silently undo that eviction on the next reconnect.
   final Future<String?> Function()? _liveFcmTokenReader;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
+  final bool _recoveryOnly;
   late final _P2PInboxCoordinator _inboxCoordinator;
   late final _P2PPeerTransportCoordinator _peerTransportCoordinator;
   final Duration? _keyRotationGracePeriodOverride;
@@ -369,10 +400,16 @@ class P2PServiceImpl
     readOpaqueWakePlatformConsumerReadiness,
     BeginIosInboxDrainGeneration? beginIosInboxDrainGeneration,
     EndIosInboxDrainGeneration? endIosInboxDrainGeneration,
+    // Headless canonical recovery has a deliberately smaller transport
+    // lifecycle: no push restore, warm body, LAN discovery or periodic health
+    // owner. Callers must opt in at construction before using
+    // [startRecoveryOnlyNode].
+    bool recoveryOnly = false,
   }) : _bridge = bridge,
        _pushTokenStore = pushTokenStore,
        _liveFcmTokenReader = liveFcmTokenReader,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
+       _recoveryOnly = recoveryOnly,
        _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride,
        _networkChangeSignal = networkChangeSignal,
        _requiredTransportPeerId = requiredTransportPeerId,
@@ -435,7 +472,9 @@ class P2PServiceImpl
         },
         recordSuccessfulInboxProof:
             ({required String source, required String trigger}) {
-              _recordSuccessfulInboxProof(source: source, trigger: trigger);
+              if (!recoveryOnly) {
+                _recordSuccessfulInboxProof(source: source, trigger: trigger);
+              }
             },
         recordInboxProofFailure:
             ({
@@ -443,12 +482,14 @@ class P2PServiceImpl
               required String trigger,
               String? failureReason,
             }) {
-              _recordCapabilityProofFailure(
-                capability: 'inbox',
-                source: source,
-                trigger: trigger,
-                failureReason: failureReason,
-              );
+              if (!recoveryOnly) {
+                _recordCapabilityProofFailure(
+                  capability: 'inbox',
+                  source: source,
+                  trigger: trigger,
+                  failureReason: failureReason,
+                );
+              }
             },
       ),
       inboxStagingRepository: inboxStagingRepository,
@@ -471,6 +512,7 @@ class P2PServiceImpl
       foregroundInboxTimeout: foregroundInboxTimeout,
       beginIosInboxDrainGeneration: _beginIosInboxDrainGeneration,
       endIosInboxDrainGeneration: _endIosInboxDrainGeneration,
+      recoveryOnly: recoveryOnly,
     );
 
     _peerTransportCoordinator = _P2PPeerTransportCoordinator(
@@ -541,6 +583,7 @@ class P2PServiceImpl
 
     // Register event handlers on the bridge
     _bridge.onMessageReceived = (msg) {
+      if (_inboxCoordinator.refuseRecoveryCallbackIfSealed('direct')) return;
       final transport =
           msg.transport ??
           _peerTransportCoordinator._inferTransportForPeer(msg.from) ??
@@ -571,17 +614,19 @@ class P2PServiceImpl
     // NET-REL-02 Option A: observe DCUtR hole-punch / relay->direct telemetry
     // emitted by the Go tracer to drive TransportMetrics counters and the
     // upgraded-peer set used to keep _inferTransportForPeer honest.
-    _transportDiagnosticSub = transportDiagnosticEventStream.listen((event) {
-      final eventName = event['event'] as String?;
-      if (eventName == null) return;
-      _peerTransportCoordinator.onTransportDiagnostic(
-        _PeerTransportDiagnostic(
-          eventName: eventName,
-          step: event['step'],
-          remotePeerShort: event['remotePeerShort'],
-        ),
-      );
-    });
+    if (!recoveryOnly) {
+      _transportDiagnosticSub = transportDiagnosticEventStream.listen((event) {
+        final eventName = event['event'] as String?;
+        if (eventName == null) return;
+        _peerTransportCoordinator.onTransportDiagnostic(
+          _PeerTransportDiagnostic(
+            eventName: eventName,
+            step: event['step'],
+            remotePeerShort: event['remotePeerShort'],
+          ),
+        );
+      });
+    }
 
     localP2PService?.configureInboundChatCommitHandler(
       _inboxCoordinator._commitInboundLanChatMessage,
@@ -629,11 +674,15 @@ class P2PServiceImpl
     // FDC-04 (RC4): re-warm the active peer on a WiFi<->cellular change. Default
     // null signal ⇒ no subscription (tests + until the OS source lands).
     // onNetworkChanged is total/never-throws.
-    _networkChangeSub = _networkChangeSignal?.listen(
-      (_) => _peerTransportCoordinator.onNetworkChanged(),
-    );
+    if (!recoveryOnly) {
+      _networkChangeSub = _networkChangeSignal?.listen(
+        (_) => _peerTransportCoordinator.onNetworkChanged(),
+      );
+    }
 
-    unawaited(_restorePersistedPushTokenIfNeeded());
+    if (!recoveryOnly) {
+      unawaited(_restorePersistedPushTokenIfNeeded());
+    }
   }
 
   /// Installs the group bootstrap/authority handler after group services have
@@ -693,6 +742,7 @@ class P2PServiceImpl
 
   @override
   Future<bool> startNode(String privateKeyBase64, String peerId) async {
+    if (_recoveryOnly) return false;
     if (!await _allowsAccountNetworkSideEffects(
       'p2p_start_node',
       peerId: peerId,
@@ -836,7 +886,78 @@ class P2PServiceImpl
   }
 
   @override
-  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) {
+    if (_recoveryOnly) return Future<bool>.value(false);
+    return _startNodeCore(
+      privateKeyBase64,
+      peerId,
+      autoRegister: true,
+      recordForegroundReadiness: true,
+    );
+  }
+
+  /// Starts the existing Go host for a bounded canonical-recovery session.
+  ///
+  /// The recovery graph must opt in through the constructor. That makes the
+  /// no-push/no-network-listener boundary effective before this first async
+  /// call. Unlike foreground start this command does not rendezvous-register,
+  /// publish push state, open a readiness window, warm peers, discover LAN
+  /// nodes, drain implicitly, or install a health timer.
+  Future<bool> startRecoveryOnlyNode(
+    String privateKeyBase64,
+    String expectedPeerId,
+  ) async {
+    if (!_recoveryOnly ||
+        !await _allowsAccountNetworkSideEffects(
+          'p2p_start_recovery_only_node',
+          peerId: expectedPeerId,
+        )) {
+      return false;
+    }
+    final started = await _startNodeCore(
+      privateKeyBase64,
+      expectedPeerId,
+      autoRegister: false,
+      recordForegroundReadiness: false,
+    );
+    if (!started || !_currentState.isStarted) return false;
+
+    if (!await _qualifyLinkedTransportPeer()) return false;
+    final actualPeerId = _currentState.peerId?.trim();
+    if (actualPeerId == null || actualPeerId != expectedPeerId.trim()) {
+      try {
+        await stopNode();
+      } on Object {
+        // The caller receives a hard qualification refusal either way.
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /// Performs exactly one local `node:status` read for a recovery owner.
+  ///
+  /// This deliberately does not run [_performHealthCheck]: there is no relay
+  /// reconnect, push re-registration, inbox drain, readiness projection,
+  /// timer, or state-stream mutation hidden behind this health predicate.
+  Future<bool> checkRecoveryNodeHealth({required String expectedPeerId}) async {
+    if (!_recoveryOnly) return false;
+    try {
+      final response = await callP2PNodeStatus(_bridge);
+      if (response['ok'] != true) return false;
+      final state = NodeState.fromJson(response);
+      return state.isStarted && state.peerId?.trim() == expectedPeerId.trim();
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<bool> _startNodeCore(
+    String privateKeyBase64,
+    String peerId, {
+    required bool autoRegister,
+    required bool recordForegroundReadiness,
+  }) async {
     if (!await _allowsAccountNetworkSideEffects(
       'p2p_start_node_core',
       peerId: peerId,
@@ -879,7 +1000,7 @@ class P2PServiceImpl
         _bridge,
         privateKeyHex: privateKeyHex,
         relayAddresses: relayMultiaddrs,
-        autoRegister: true,
+        autoRegister: autoRegister,
         namespace: namespace,
         keyRotationGracePeriod: _keyRotationGracePeriodOverride,
         // FDC-S1 (observation-only): thread the canonical process-start epoch
@@ -891,24 +1012,27 @@ class P2PServiceImpl
         _stopped = false;
         // FDC-S1 (a): process-start → node:start returns (Dart-clock view; Go
         // emits its own host_ready sinceProcessStartMs on the same anchor).
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'FDC_COLDSTART_NODE_START_RETURN_TIMING',
-          details: {
-            'sinceProcessStartMs':
-                StartupTiming.instance.sinceProcessStartMs() ?? -1,
-          },
-        );
-        // FDC-S1 (d): node is ready on the main isolate — the floor a warm dial
-        // on a cold notif-tap must respect. Emits the correlation event iff this
-        // launch was also a notification tap (see ColdStartNotifAnchor).
-        ColdStartNotifAnchor.instance.recordNodeReady();
+        if (recordForegroundReadiness) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'FDC_COLDSTART_NODE_START_RETURN_TIMING',
+            details: {
+              'sinceProcessStartMs':
+                  StartupTiming.instance.sinceProcessStartMs() ?? -1,
+            },
+          );
+          // FDC-S1 (d): node is ready on the main isolate — the floor a warm
+          // dial on a cold notification tap must respect.
+          ColdStartNotifAnchor.instance.recordNodeReady();
+        }
         _emitState(NodeState.fromJson(response), source: 'start_response');
-        _beginReadinessProofWindow(
-          phase: 'cold_start',
-          trigger: 'start_response',
-          startedAt: _nodeStartRequestedAt ?? DateTime.now(),
-        );
+        if (recordForegroundReadiness) {
+          _beginReadinessProofWindow(
+            phase: 'cold_start',
+            trigger: 'start_response',
+            startedAt: _nodeStartRequestedAt ?? DateTime.now(),
+          );
+        }
 
         if (_stateHasHealthyRelay(_currentState)) {
           _hasEverBeenOnline = true;
@@ -941,11 +1065,13 @@ class P2PServiceImpl
             NodeState.fromJson(statusResponse),
             source: 'start_response',
           );
-          _beginReadinessProofWindow(
-            phase: 'hot_restart',
-            trigger: 'already_started_resync',
-            startedAt: _nodeStartRequestedAt ?? DateTime.now(),
-          );
+          if (recordForegroundReadiness) {
+            _beginReadinessProofWindow(
+              phase: 'hot_restart',
+              trigger: 'already_started_resync',
+              startedAt: _nodeStartRequestedAt ?? DateTime.now(),
+            );
+          }
 
           if (_stateHasHealthyRelay(_currentState)) {
             _hasEverBeenOnline = true;
@@ -984,6 +1110,7 @@ class P2PServiceImpl
 
   @override
   Future<void> warmBackground() async {
+    if (_recoveryOnly) return;
     if (!_currentState.isStarted) return;
     if (!await _allowsAccountNetworkSideEffects('p2p_warm_background')) {
       return;
@@ -1074,8 +1201,9 @@ class P2PServiceImpl
   /// send/relay race. Re-asserts the account-move network gate that
   /// warmBackground used to provide transitively (hoisting out of that body must
   /// not leak a wire op during an account move).
-  Future<void> startEarlyLocalDiscovery() =>
-      _peerTransportCoordinator.startEarlyLocalDiscovery();
+  Future<void> startEarlyLocalDiscovery() => _recoveryOnly
+      ? Future<void>.value()
+      : _peerTransportCoordinator.startEarlyLocalDiscovery();
 
   @visibleForTesting
   static int? debugLibp2pListenPort(
@@ -1422,10 +1550,13 @@ class P2PServiceImpl
 
   @override
   Future<void> warmPeer(String peerId, {bool preferQuic = false}) =>
-      _peerTransportCoordinator.warmPeer(peerId, preferQuic: preferQuic);
+      _recoveryOnly
+      ? Future<void>.value()
+      : _peerTransportCoordinator.warmPeer(peerId, preferQuic: preferQuic);
 
   @visibleForTesting
   void onNetworkChanged() {
+    if (_recoveryOnly) return;
     _peerTransportCoordinator.onNetworkChanged();
   }
 
@@ -3015,6 +3146,7 @@ class P2PServiceImpl
 
   @override
   Future<bool> registerPushToken(String token, String platform) async {
+    if (_recoveryOnly) return false;
     if (!await _allowsAccountNetworkSideEffects('p2p_register_push_token')) {
       return false;
     }
@@ -3083,6 +3215,7 @@ class P2PServiceImpl
 
   @override
   Future<void> performImmediateHealthCheck() async {
+    if (_recoveryOnly) return;
     if (!await _allowsAccountNetworkSideEffects('p2p_immediate_health_check')) {
       return;
     }
@@ -3151,6 +3284,19 @@ class P2PServiceImpl
   Future<DirectInboxDrainOutcome> drainOfflineInboxFully() =>
       _inboxCoordinator.drainOfflineInboxFully();
 
+  /// Atomically refuses every later recovery ingress/drain admission and waits
+  /// for all work admitted before the fence, including unawaited direct/LAN
+  /// staged handlers and paged background continuation.
+  Future<void> sealRecoveryAdmissionAndAwaitInFlight() =>
+      _inboxCoordinator.sealRecoveryAdmissionAndAwaitInFlight();
+
+  /// True once any callback or operation attempted to cross the recovery
+  /// admission fence after it was synchronously sealed. The latch never clears
+  /// for this service instance, so the lifecycle owner can fail quiescence
+  /// closed even when the refused caller itself had no awaitable result.
+  bool get recoveryAdmissionRefusedAfterSeal =>
+      _inboxCoordinator.recoveryAdmissionRefusedAfterSeal;
+
   /// Stops new protected group-content applies and waits for the current apply
   /// callback to leave its durable transaction. Staged and relay-owned bytes
   /// remain untouched for the next resume pass.
@@ -3166,6 +3312,15 @@ class P2PServiceImpl
   /// bounded so a hostile relay cannot spin the lifecycle owner forever.
   Future<int> drainProtectedGroupContentFixedPoint({int maxPasses = 8}) =>
       _inboxCoordinator.drainProtectedGroupContentFixedPoint(
+        maxPasses: maxPasses,
+      );
+
+  /// Recovery-only typed variant of [drainProtectedGroupContentFixedPoint].
+  /// Only [ProtectedGroupRecoveryFixedPointDisposition.reachedFixedPoint]
+  /// proves a successful no-more-work boundary.
+  Future<ProtectedGroupRecoveryFixedPointOutcome>
+  drainProtectedGroupContentRecoveryFixedPoint({int maxPasses = 8}) =>
+      _inboxCoordinator.drainProtectedGroupContentRecoveryFixedPoint(
         maxPasses: maxPasses,
       );
 

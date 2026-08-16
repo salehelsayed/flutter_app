@@ -309,6 +309,21 @@ class HeadlessCanonicalRecoveryWorkerTest {
         assertTrue(source.contains("FlutterLocalNotificationsPlugin()"))
         assertTrue(source.contains("FlutterFirebaseCorePlugin()"))
         assertTrue(source.contains("FlutterFirebaseMessagingPlugin()"))
+        assertTrue(source.contains("PathProviderPlugin()"))
+        assertTrue(source.contains("internal object Plan374ProcessDeathBarrier"))
+        assertTrue(source.contains("!BuildConfig.DEBUG"))
+        assertTrue(source.contains("if (!barrier.delete()) return false"))
+        assertTrue(source.contains("process_death_barrier_consumed"))
+        assertTrue(source.contains("plan374_headless_engine"))
+        assertTrue(source.contains("dart_completion"))
+        assertTrue(source.contains("retained_after_cleanup_deadline"))
+        assertTrue(source.contains("nativeLeaseState"))
+        assertTrue(source.contains("nativeGoState"))
+        assertTrue(source.contains("failureReason"))
+        assertTrue(
+            source.indexOf("process_death_barrier_consumed") <
+                source.indexOf("execution.execute(inputData)"),
+        )
         assertFalse(source.contains("GeneratedPluginRegistrant"))
         assertTrue(onStopped.contains("execution.requestStop()"))
         assertFalse(onStopped.contains("destroy"))

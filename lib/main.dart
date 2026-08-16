@@ -1,6 +1,8 @@
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart';
+import 'package:flutter_app/app/bootstrap/production_headless_canonical_recovery.dart';
 import 'package:flutter_app/core/debug/android_canonical_runtime_h0_probe.dart';
+import 'package:flutter_app/core/debug/android_headless_recovery_374_fixture.dart';
 import 'package:flutter_app/core/notifications/headless_canonical_recovery_entrypoint.dart';
 
 export 'package:flutter_app/app/application_root.dart'
@@ -20,13 +22,18 @@ void main() async {
 Future<void> androidCanonicalRuntimeH0ProbeMain(List<String> arguments) =>
     runAndroidCanonicalRuntimeH0Probe(arguments);
 
-/// Dormant and fail-closed until the non-UI production recovery composition is
-/// extracted and passes its real SQLCipher/device gates. Production binding
-/// publication keeps recovery work disabled.
+/// Debug-only Plan-374 seed/inspection entrypoint. WorkManager still enters
+/// [androidHeadlessCanonicalRecoveryMain] for the measured recovery run.
+@pragma('vm:entry-point')
+Future<void> androidHeadlessRecovery374FixtureMain(List<String> arguments) =>
+    runAndroidHeadlessRecovery374Fixture(arguments);
+
+/// Dedicated production headless recovery entrypoint. The invoked graph owns
+/// no widget tree, Activity, foreground bootstrap, or Firebase listener.
 @pragma('vm:entry-point')
 Future<void> androidHeadlessCanonicalRecoveryMain(List<String> arguments) =>
     runAndroidHeadlessCanonicalRecovery(
       arguments,
-      runRecovery: runUnavailableHeadlessCanonicalRecovery,
-      emergencyShutdown: cleanupUnavailableHeadlessCanonicalRecovery,
+      runRecovery: runProductionHeadlessCanonicalRecovery,
+      emergencyShutdown: cleanupProductionHeadlessCanonicalRecovery,
     );

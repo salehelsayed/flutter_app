@@ -1,22 +1,21 @@
 import 'dart:convert';
 
-import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
+import 'package:flutter_app/core/notifications/canonical_recovery_authority_storage_keys.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/key_conversion.dart';
+
+export 'package:flutter_app/core/notifications/canonical_recovery_authority_storage_keys.dart'
+    show
+        linkedInstallationRoleStorageKey,
+        linkedInstallationTransportCredentialStorageKey;
 
 /// Secure-storage key holding the expected installation role marker.
 ///
 /// Written FIRST during linked setup, so a crash between this write and the
 /// credential write leaves a state that is recognizably "linked setup began"
 /// rather than an installation that silently keeps primary behavior.
-const String linkedInstallationRoleStorageKey =
-    'direct_linked_device_expected_role_v1';
-
 /// Secure-storage key holding the versioned transport credential.
-const String linkedInstallationTransportCredentialStorageKey =
-    'direct_linked_device_transport_credential_v1';
-
 /// Marker value for an installation that expects to be a linked secondary.
 const String linkedInstallationRoleMarkerValue = 'linked_secondary';
 

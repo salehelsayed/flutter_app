@@ -13,6 +13,12 @@ class CanonicalRuntimeH0ProbeSourceTest {
         val receiver = repoFile(
             "android/app/src/debug/kotlin/com/mknoon/app/CanonicalRuntimeH0ProbeReceiver.kt",
         ).readText()
+        val worker = repoFile(
+            "android/app/src/main/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorker.kt",
+        ).readText()
+        val fixture = repoFile(
+            "lib/core/debug/android_headless_recovery_374_fixture.dart",
+        ).readText()
 
         assertTrue(manifest.contains(".CanonicalRuntimeH0ProbeReceiver"))
         assertTrue(manifest.contains("android.permission.DUMP"))
@@ -31,6 +37,43 @@ class CanonicalRuntimeH0ProbeSourceTest {
         assertTrue(receiver.contains("runFlutterFireReadOnlyPeer("))
         assertTrue(receiver.contains("registeredWritableLeaseBridge\", false"))
         assertTrue(receiver.contains("registeredGoBridge\", false"))
+        assertTrue(receiver.contains("EXTRA_PLAN374_PHASE = \"plan374Phase\""))
+        assertTrue(receiver.contains("class Plan374FixtureRunner"))
+        assertTrue(receiver.contains("ProductionDeletedBatchRecovery("))
+        assertTrue(receiver.contains("Plan374ProcessDeathBarrier.arm("))
+        assertTrue(
+            receiver.indexOf("Plan374ProcessDeathBarrier.arm(") <
+                receiver.indexOf("ProductionDeletedBatchRecovery("),
+        )
+        assertTrue(receiver.contains("val exactSettledLedger = ledgerRecords.size == 2"))
+        // The exact-card invariant excludes only system-created autogroup
+        // summaries (FLAG_AUTOGROUP_SUMMARY); app-posted extras still fail.
+        assertTrue(receiver.contains("FLAG_AUTOGROUP_SUMMARY = 0x00000400"))
+        assertTrue(receiver.contains("appPostedCards.size == 2"))
+        assertTrue(receiver.contains("unexpectedAppPostedCards.isEmpty()"))
+        assertFalse(receiver.contains("active.size == 2"))
+        assertFalse(receiver.contains("store.recordDeletion"))
+        assertFalse(receiver.contains("WorkManager.getInstance"))
+        assertTrue(receiver.contains("PathProviderPlugin()"))
+        assertTrue(worker.contains("PathProviderPlugin()"))
+        assertTrue(worker.contains("PLAN374_DIAGNOSTIC_TAG = \"MknoonPlan374Recovery\""))
+        assertTrue(worker.contains("internal object Plan374ProcessDeathBarrier"))
+        assertTrue(worker.contains("if (!BuildConfig.DEBUG || runNonce.isBlank())"))
+        assertTrue(worker.contains("barrier.delete()"))
+        assertTrue(worker.contains("process_death_barrier_consumed"))
+        assertTrue(worker.contains("execution.execute(inputData)"))
+        assertTrue(
+            worker.indexOf("process_death_barrier_consumed") <
+                worker.indexOf("execution.execute(inputData)"),
+        )
+        assertTrue(fixture.contains("runAndroidHeadlessRecovery374Fixture"))
+        assertTrue(fixture.contains("direct_notification_display_outbox"))
+        assertTrue(fixture.contains("direct_notification_reconciliation_outbox"))
+        assertTrue(fixture.contains("group_notification_display_outbox"))
+        assertTrue(fixture.contains("group_notification_reconciliation_outbox"))
+        assertTrue(fixture.contains("LocalNotificationLedgerStore("))
+        assertFalse(fixture.contains("runApp("))
+        assertFalse(fixture.contains("ApplicationRoot"))
     }
 
     @Test
@@ -194,6 +237,9 @@ class CanonicalRuntimeH0ProbeSourceTest {
         val script = repoFile(
             "scripts/run_android_canonical_runtime_h0_probe.sh",
         ).readText()
+        val plan374 = repoFile(
+            "scripts/run_android_headless_recovery_374.sh",
+        ).readText()
 
         assertTrue(script.contains("device-id"))
         assertTrue(script.contains("--handoff"))
@@ -227,6 +273,60 @@ class CanonicalRuntimeH0ProbeSourceTest {
         assertTrue(script.contains("flutterFireReadOnlyPeerPassed"))
         assertTrue(script.contains("uninstall \"\$APP_ID\""))
         assertFalse(script.contains("force-stop"))
+        assertTrue(plan374.contains("--device-id"))
+        assertTrue(plan374.contains("--build-only"))
+        assertTrue(plan374.contains("--skip-build"))
+        assertTrue(plan374.contains("--production-deleted-batch-seam"))
+        assertTrue(plan374.contains("--no-activity"))
+        assertTrue(plan374.contains("--process-death"))
+        assertTrue(plan374.contains("adb -s \"\$DEVICE_ID\""))
+        assertTrue(
+            plan374.contains(
+                "shell am set-standby-bucket \"\$APP_ID\" active",
+            ),
+        )
+        assertTrue(plan374.contains("ProductionDeletedBatchRecovery"))
+        assertTrue(plan374.contains("androidHeadlessCanonicalRecoveryMain"))
+        assertTrue(plan374.contains("existingSqlCipherVersion\": 116"))
+        assertTrue(plan374.contains("process_death_barrier_consumed"))
+        assertTrue(
+            plan374.contains(
+                "WORK_MANAGER_JOB_NAMESPACE=androidx.work.systemjobscheduler",
+            ),
+        )
+        assertTrue(plan374.contains("WORKER_JOB_TAG='#HeadlessCanonicalRecoveryWorker#'"))
+        assertTrue(plan374.contains("Registered jobs:"))
+        assertTrue(
+            plan374.contains(
+                "androidx.work.impl.background.systemjob.SystemJobService",
+            ),
+        )
+        assertTrue(plan374.contains("jobscheduler-baseline-worker-ids.txt"))
+        assertTrue(plan374.contains("cmd jobscheduler get-job-state -n"))
+        assertTrue(plan374.contains("cmd jobscheduler run -f -n"))
+        assertTrue(plan374.contains("LATEST_RETRY_RUN_ATTEMPT:\$JOB_ID"))
+        assertTrue(plan374.contains("runAttemptCount"))
+        assertTrue(plan374.contains("workmanager-resume.txt"))
+        assertTrue(
+            plan374.contains(
+                "production_canonical_direct_projection_composition.dart",
+            ),
+        )
+        assertTrue(plan374.contains("direct_notification_projection_owner.dart"))
+        assertTrue(plan374.contains("scripts/run_android_headless_recovery_374.sh"))
+        assertTrue(
+            plan374.contains(
+                "shell run-as \"\$APP_ID\" kill -9 \"\$FIRST_PID\"",
+            ),
+        )
+        assertTrue(plan374.contains("kinds == {\"direct_message\", \"group_message\"}"))
+        assertTrue(plan374.contains("manualTapCount\": 0"))
+        assertTrue(plan374.contains("skipCount\": 0"))
+        assertTrue(plan374.contains("uninstall \"\$APP_ID\""))
+        assertFalse(plan374.contains("cmd jobscheduler schedule"))
+        assertFalse(plan374.contains("cmd jobscheduler cancel"))
+        assertFalse(plan374.contains("am startservice"))
+        assertFalse(plan374.contains("force-stop"))
     }
 
     private fun repoFile(relativePath: String): File = sequenceOf(

@@ -312,7 +312,12 @@ final class DirectNotificationProjectionOwner {
               throw const DirectNotificationDisplayRetryableException();
             }
           },
-          recordFailure: (entry, _) async {
+          recordFailure: (entry, error) async {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'DIRECT_NOTIFICATION_RECONCILIATION_RETRY',
+              details: {'errorType': error.runtimeType.toString()},
+            );
             await _reconciliationOutbox.recordFailureIfExact(
               expected: entry,
               nextAttemptAt: _nowUtc().toUtc().add(retryDelay),

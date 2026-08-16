@@ -22,7 +22,7 @@ void main() {
           trace.add('acquire:$binding:${reason.name}');
           return session;
         },
-        acknowledgeMarker: (marker) async {
+        acknowledgeMarker: (marker, {authorityRevision}) async {
           trace.add('ack:${marker.generation}:${marker.binding}');
           currentMarker = marker;
           return true;
@@ -40,6 +40,10 @@ void main() {
         'direct',
         'group',
         'projection',
+        'seal',
+        'stopGroup',
+        'projection',
+        'dispose',
         'quiesce',
         'close',
         'release:true',
@@ -47,6 +51,69 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'coherent authority snapshot is resampled and its revision fences exact ACK',
+    () async {
+      var authorityReads = 0;
+      int? acknowledgedRevision;
+      final runtime = CanonicalRecoveryRuntime(
+        loadCurrentBinding: () async => throw StateError('split binding read'),
+        loadPendingMarker: () async => throw StateError('split marker read'),
+        loadAuthorityFence: () async {
+          authorityReads++;
+          return CanonicalRecoveryAuthorityFence(
+            binding: markerA.binding,
+            marker: markerA,
+            authorityFingerprint: 'authority-fingerprint-a',
+            recoveryWorkEnabled: true,
+            authorityRevision: 29,
+          );
+        },
+        acquireSession: ({required binding, required reason}) async =>
+            _FakeSession(<String>[]),
+        acknowledgeMarker: (marker, {authorityRevision}) async {
+          acknowledgedRevision = authorityRevision;
+          return true;
+        },
+      );
+
+      final result = await runtime.run(CanonicalRecoveryReason.deletedBatch);
+
+      expect(result.disposition, CanonicalRecoveryDisposition.succeeded);
+      expect(authorityReads, 2);
+      expect(acknowledgedRevision, 29);
+    },
+  );
+
+  test('authority revision change before ACK retains the marker', () async {
+    var authorityReads = 0;
+    var ackCount = 0;
+    final runtime = CanonicalRecoveryRuntime(
+      loadCurrentBinding: () async => markerA.binding,
+      loadPendingMarker: () async => markerA,
+      loadAuthorityFence: () async => CanonicalRecoveryAuthorityFence(
+        binding: markerA.binding,
+        marker: markerA,
+        authorityFingerprint: 'authority-fingerprint-a',
+        recoveryWorkEnabled: true,
+        authorityRevision: authorityReads++ == 0 ? 29 : 30,
+      ),
+      acquireSession: ({required binding, required reason}) async =>
+          _FakeSession(<String>[]),
+      acknowledgeMarker: (_, {authorityRevision}) async {
+        ackCount++;
+        return true;
+      },
+    );
+
+    final result = await runtime.run(CanonicalRecoveryReason.deletedBatch);
+
+    expect(result.disposition, CanonicalRecoveryDisposition.stale);
+    expect(result.failureReason, 'authority_revision_changed_before_ack');
+    expect(authorityReads, 2);
+    expect(ackCount, 0);
+  });
 
   test(
     'non-converged drain retains marker and still releases cleanly',
@@ -64,7 +131,7 @@ void main() {
         loadCurrentBinding: () async => markerA.binding,
         loadPendingMarker: () async => markerA,
         acquireSession: ({required binding, required reason}) async => session,
-        acknowledgeMarker: (_) async {
+        acknowledgeMarker: (_, {authorityRevision}) async {
           ackCount++;
           return true;
         },
@@ -78,10 +145,17 @@ void main() {
       expect(ackCount, 0);
       expect(
         trace,
-        containsAllInOrder(<String>['direct', 'close', 'release:true']),
+        containsAllInOrder(<String>[
+          'direct',
+          'seal',
+          'stopGroup',
+          'projection',
+          'dispose',
+          'close',
+          'release:true',
+        ]),
       );
       expect(trace, isNot(contains('group')));
-      expect(trace, isNot(contains('projection')));
     },
   );
 
@@ -105,7 +179,7 @@ void main() {
         loadCurrentBinding: () async => markerA.binding,
         loadPendingMarker: () async => currentMarker,
         acquireSession: ({required binding, required reason}) async => session,
-        acknowledgeMarker: (marker) async {
+        acknowledgeMarker: (marker, {authorityRevision}) async {
           trace.add('ack:${marker.generation}');
           currentMarker = marker;
           return true;
@@ -123,6 +197,10 @@ void main() {
           'group:1',
           'group:2',
           'projection',
+          'seal',
+          'stopGroup',
+          'projection',
+          'dispose',
           'quiesce',
           'close',
           'release:true',
@@ -148,7 +226,7 @@ void main() {
                 hasPendingWork: true,
               ),
             ),
-        acknowledgeMarker: (_) async {
+        acknowledgeMarker: (_, {authorityRevision}) async {
           ackCount++;
           return true;
         },
@@ -157,7 +235,7 @@ void main() {
       final result = await runtime.run(CanonicalRecoveryReason.deletedBatch);
 
       expect(result.disposition, CanonicalRecoveryDisposition.retry);
-      expect(result.failureReason, 'projection_not_converged');
+      expect(result.failureReason, 'post_seal_projection_not_converged');
       expect(ackCount, 0);
       expect(
         trace,
@@ -165,6 +243,10 @@ void main() {
           'direct',
           'group',
           'projection',
+          'seal',
+          'stopGroup',
+          'projection',
+          'dispose',
           'quiesce',
           'close',
           'release:true',
@@ -188,7 +270,7 @@ void main() {
               failureReason: 'projection_settlement_failed',
             ),
           ),
-      acknowledgeMarker: (_) async {
+      acknowledgeMarker: (_, {authorityRevision}) async {
         ackCount++;
         return true;
       },
@@ -216,7 +298,7 @@ void main() {
               CanonicalRecoveryDrainOutcome(isSuccessful: true, hasMore: false),
             ],
           ),
-      acknowledgeMarker: (_) async {
+      acknowledgeMarker: (_, {authorityRevision}) async {
         ackCount++;
         return true;
       },
@@ -234,6 +316,10 @@ void main() {
       trace,
       containsAllInOrder(<String>[
         'direct:1',
+        'seal',
+        'stopGroup',
+        'projection',
+        'dispose',
         'quiesce',
         'close',
         'release:true',
@@ -256,7 +342,7 @@ void main() {
         loadPendingMarker: () async => markerReads++ == 0 ? markerA : markerB,
         acquireSession: ({required binding, required reason}) async =>
             _FakeSession(trace),
-        acknowledgeMarker: (_) async {
+        acknowledgeMarker: (_, {authorityRevision}) async {
           ackCount++;
           return true;
         },
@@ -287,7 +373,7 @@ void main() {
           acquired = true;
           return _FakeSession(<String>[]);
         },
-        acknowledgeMarker: (_) async => true,
+        acknowledgeMarker: (_, {authorityRevision}) async => true,
       );
 
       final result = await runtime.run(CanonicalRecoveryReason.deletedBatch);
@@ -306,7 +392,7 @@ void main() {
       loadPendingMarker: () async => markerA,
       acquireSession: ({required binding, required reason}) async =>
           _FakeSession(trace, databaseClosed: false),
-      acknowledgeMarker: (_) async {
+      acknowledgeMarker: (_, {authorityRevision}) async {
         ackCount++;
         return true;
       },
@@ -330,7 +416,7 @@ void main() {
         loadPendingMarker: () async => markerA,
         acquireSession: ({required binding, required reason}) async =>
             _FakeSession(trace, runtimeQuiesced: false),
-        acknowledgeMarker: (_) async {
+        acknowledgeMarker: (_, {authorityRevision}) async {
           ackCount++;
           return true;
         },
@@ -362,7 +448,7 @@ void main() {
         loadPendingMarker: () async => markerA,
         acquireSession: ({required binding, required reason}) async =>
             _FakeSession(trace),
-        acknowledgeMarker: (_) async {
+        acknowledgeMarker: (_, {authorityRevision}) async {
           ackCount++;
           return true;
         },
@@ -378,13 +464,44 @@ void main() {
         trace,
         containsAllInOrder(<String>[
           'direct',
+          'seal',
+          'stopGroup',
+          'projection',
+          'dispose',
           'quiesce',
           'close',
           'release:true',
         ]),
       );
       expect(trace, isNot(contains('group')));
-      expect(trace, isNot(contains('projection')));
+    },
+  );
+
+  test(
+    'failed Dart owner quiescence retains the database and writable lease',
+    () async {
+      for (final failure in <String>['seal', 'stopGroup', 'dispose']) {
+        final trace = <String>[];
+        var ackCount = 0;
+        final runtime = CanonicalRecoveryRuntime(
+          loadCurrentBinding: () async => markerA.binding,
+          loadPendingMarker: () async => markerA,
+          acquireSession: ({required binding, required reason}) async =>
+              _FakeSession(trace, failAt: failure),
+          acknowledgeMarker: (_, {authorityRevision}) async {
+            ackCount++;
+            return true;
+          },
+        );
+
+        final result = await runtime.run(CanonicalRecoveryReason.deletedBatch);
+
+        expect(result.disposition, CanonicalRecoveryDisposition.retry);
+        expect(result.failureReason, 'dart_owner_quiescence_failed');
+        expect(ackCount, 0);
+        expect(trace, containsAllInOrder(<String>['quiesce', 'release:false']));
+        expect(trace, isNot(contains('close')));
+      }
     },
   );
 
@@ -400,7 +517,7 @@ void main() {
           expect(reason, CanonicalRecoveryReason.periodicSweep);
           return _FakeSession(trace);
         },
-        acknowledgeMarker: (_) async {
+        acknowledgeMarker: (_, {authorityRevision}) async {
           ackCount++;
           return true;
         },
@@ -434,7 +551,7 @@ void main() {
           expect(reason, CanonicalRecoveryReason.periodicSweep);
           return _FakeSession(trace);
         },
-        acknowledgeMarker: (_) async {
+        acknowledgeMarker: (_, {authorityRevision}) async {
           ackCount++;
           return true;
         },
@@ -478,7 +595,7 @@ void main() {
         await release.future;
         return _FakeSession(<String>[]);
       },
-      acknowledgeMarker: (_) async => true,
+      acknowledgeMarker: (_, {authorityRevision}) async => true,
     );
 
     final first = runtime.run(CanonicalRecoveryReason.deletedBatch);
@@ -507,6 +624,7 @@ final class _FakeSession implements CanonicalRecoverySession {
     ),
     List<CanonicalRecoveryDrainOutcome>? directOutcomes,
     List<CanonicalRecoveryDrainOutcome>? groupOutcomes,
+    this.failAt,
   }) : _directOutcomes = directOutcomes,
        _groupOutcomes = groupOutcomes;
 
@@ -521,6 +639,7 @@ final class _FakeSession implements CanonicalRecoverySession {
   final CanonicalRecoveryProjectionOutcome projection;
   final List<CanonicalRecoveryDrainOutcome>? _directOutcomes;
   final List<CanonicalRecoveryDrainOutcome>? _groupOutcomes;
+  final String? failAt;
   var _directIndex = 0;
   var _groupIndex = 0;
 
@@ -559,6 +678,24 @@ final class _FakeSession implements CanonicalRecoverySession {
   settleNotificationProjection() async {
     trace.add('projection');
     return projection;
+  }
+
+  @override
+  Future<void> sealAdmissionAndAwaitInFlight() async {
+    trace.add('seal');
+    if (failAt == 'seal') throw StateError('seal failed');
+  }
+
+  @override
+  Future<void> stopGroupMessageListener() async {
+    trace.add('stopGroup');
+    if (failAt == 'stopGroup') throw StateError('group stop failed');
+  }
+
+  @override
+  Future<void> disposeProjectionOwners() async {
+    trace.add('dispose');
+    if (failAt == 'dispose') throw StateError('projection dispose failed');
   }
 
   @override

@@ -37,8 +37,10 @@ trap 'rm -rf "$tmp_dir"' EXIT
 fake_bin="$tmp_dir/bin"
 flutter_log="$tmp_dir/flutter.log"
 go_log="$tmp_dir/go.log"
+native_log="$tmp_dir/native.log"
+real_bash="$(command -v bash)"
 mkdir -p "$fake_bin"
-touch "$flutter_log" "$go_log"
+touch "$flutter_log" "$go_log" "$native_log"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -134,11 +136,25 @@ printf '%s\n' \
   'exit "${FAKE_GO_STATUS:-0}"' \
   >"$fake_bin/go"
 
-chmod +x "$fake_bin/flutter" "$fake_bin/go"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'set -u' \
+  'case "${1:-}" in' \
+  '  scripts/test/run_app_visibility_native_371.sh|scripts/test/run_ios_nse_native_373.sh|scripts/test/run_android_headless_recovery_native_374.sh)' \
+  '    printf "%s\n" "$1" >>"${FAKE_NATIVE_LOG:?}"' \
+  '    exit "${FAKE_NATIVE_STATUS:-0}"' \
+  '    ;;' \
+  '  *) exec "${REAL_BASH:?}" "$@" ;;' \
+  'esac' \
+  >"$fake_bin/bash"
+
+chmod +x "$fake_bin/flutter" "$fake_bin/go" "$fake_bin/bash"
 
 export PATH="$fake_bin:$PATH"
 export FAKE_FLUTTER_LOG="$flutter_log"
 export FAKE_GO_LOG="$go_log"
+export FAKE_NATIVE_LOG="$native_log"
+export REAL_BASH="$real_bash"
 
 expected_dart_paths="$({
   rg --files test -g '*_test.dart' |
@@ -176,9 +192,9 @@ dry_synthetic_count="$(
 )"
 [ "$dry_dart_count" -eq "$expected_dart_count" ] ||
   fail "batch dry-run listed $dry_dart_count Dart paths instead of $expected_dart_count"
-[ "$dry_synthetic_count" -eq 13 ] ||
-  fail "batch dry-run listed $dry_synthetic_count synthetic rows instead of 13"
-[ $((dry_dart_count + dry_synthetic_count)) -eq $((expected_dart_count + 13)) ] ||
+[ "$dry_synthetic_count" -eq 16 ] ||
+  fail "batch dry-run listed $dry_synthetic_count synthetic rows instead of 16"
+[ $((dry_dart_count + dry_synthetic_count)) -eq $((expected_dart_count + 16)) ] ||
   fail 'batch dry-run did not preserve every indexed planned item'
 grep -Fq 'Host test planned-item inventory: host-all' <<<"$dry_output" ||
   fail 'batch dry-run mislabeled the indexed inventory as serial commands'
@@ -186,8 +202,8 @@ grep -Fq \
   "Batch execution shape: 1 Flutter invocation for $expected_dart_count exact Dart path(s)" \
   <<<"$dry_output" ||
   fail 'batch dry-run omitted the truthful Flutter aggregate shape'
-grep -Fq '13 separate non-Flutter invocation(s)' <<<"$dry_output" ||
-  fail 'batch dry-run omitted the thirteen separate synthetic inventory rows'
+grep -Fq '16 separate non-Flutter invocation(s)' <<<"$dry_output" ||
+  fail 'batch dry-run omitted the sixteen separate synthetic inventory rows'
 grep -Fq \
   "go test -tags integration . -list '^TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff$'" \
   <<<"$dry_output" ||
@@ -240,9 +256,10 @@ grep -Fq 'planned items, not serial execution commands' <<<"$dry_output" ||
   fail 'batch dry-run did not distinguish inventory rows from execution'
 [ ! -s "$flutter_log" ] || fail 'batch dry-run invoked Flutter'
 [ ! -s "$go_log" ] || fail 'batch dry-run invoked Go'
+[ ! -s "$native_log" ] || fail 'batch dry-run invoked a native script'
 
 # RED/GREEN 1b: major sims composes the exact Dart host inventory with its own
-# full-Go lane. --dart-only must therefore remove all thirteen synthetic non-Dart tails
+# full-Go lane. --dart-only must therefore remove all sixteen synthetic non-Dart tails
 # without changing a single Dart path or the one-invocation batch shape.
 dart_only_dry_output="$(
   ./scripts/run_test_gates.sh host-all \
@@ -291,8 +308,8 @@ actual_unit_paths="$(
   fail 'core-host-all omitted or duplicated test/unit paths'
 
 # RED/GREEN 2: the full batch is one exact-path Flutter command followed by the
-# thirteen synthetic rows: nine one-call legs plus four exact-test rows'
-# discovery and execution pairs (seventeen Go calls in total).
+# sixteen synthetic rows: nine one-call Go legs, four exact-test Go rows'
+# discovery/execution pairs, and three native scripts (seventeen Go calls in total).
 batch_output="$(
   ./scripts/run_test_gates.sh host-all \
     --batch-flutter \
@@ -305,6 +322,13 @@ go_call_count="$(grep -c '^CALL$' "$go_log" || true)"
   fail "batch mode invoked Flutter $flutter_call_count times instead of once"
 [ "$go_call_count" -eq 17 ] ||
   fail "batch mode invoked Go $go_call_count times instead of seventeen"
+expected_native_paths="$(printf '%s\n' \
+  scripts/test/run_android_headless_recovery_native_374.sh \
+  scripts/test/run_app_visibility_native_371.sh \
+  scripts/test/run_ios_nse_native_373.sh)"
+actual_native_paths="$(sort "$native_log")"
+[ "$actual_native_paths" = "$expected_native_paths" ] ||
+  fail 'batch mode did not execute the exact three native synthetic rows once each'
 
 actual_dart_paths="$({
   awk -F '\t' '$1 == "ARG" && $2 ~ /^test\// { print $2 }' "$flutter_log"
@@ -329,7 +353,7 @@ grep -Fxq $'ARG\t--reporter=failures-only' "$flutter_log" ||
 [ "$(grep -c $'^ENV\tgo1.25.0$' "$go_log" || true)" -eq 17 ] ||
   fail 'one or more Go legs lost the pinned GOTOOLCHAIN'
 [ "$(grep -c $'^ARG\ttest$' "$go_log" || true)" -eq 17 ] ||
-  fail 'the thirteen synthetic rows did not retain their seventeen separate go test invocations'
+  fail 'the thirteen Go-backed synthetic rows did not retain their seventeen separate go test invocations'
 [ "$(grep -c $'^ARG\t-run$' "$go_log" || true)" -eq 12 ] ||
   fail 'one or more separate Go legs lost its -run selector'
 [ "$(grep -c $'^ARG\t-count=1$' "$go_log" || true)" -eq 13 ] ||
@@ -436,7 +460,7 @@ start_paths="$(
 [ "$start_paths" = "$last_dart_path" ] ||
   fail 'batch --start-at did not filter before the Flutter batch'
 [ "$(grep -c '^CALL$' "$go_log" || true)" -eq 17 ] ||
-  fail 'batch --start-at did not retain the thirteen trailing rows and seventeen Go calls'
+  fail 'batch --start-at did not retain the sixteen trailing rows and seventeen Go calls'
 
 : >"$flutter_log"
 : >"$go_log"
@@ -470,6 +494,7 @@ actual_relay_all_args="$(awk -F '\t' '$1 == "ARG" { print $2 }' "$go_log")"
 # --continue-on-failure still runs every trailing Go leg before returning 1.
 : >"$flutter_log"
 : >"$go_log"
+: >"$native_log"
 set +e
 FAKE_FLUTTER_STATUS=7 ./scripts/run_host_test_gates.sh host-all \
   --batch-flutter \
@@ -483,9 +508,12 @@ grep -Fxq $'ARG\t--concurrency=1' "$flutter_log" ||
   fail 'batch mode without --concurrency did not use the safe default of 1'
 [ ! -s "$go_log" ] ||
   fail 'batch fail-fast continued into Go without --continue-on-failure'
+[ ! -s "$native_log" ] ||
+  fail 'batch fail-fast continued into native scripts without --continue-on-failure'
 
 : >"$flutter_log"
 : >"$go_log"
+: >"$native_log"
 set +e
 FAKE_FLUTTER_STATUS=7 ./scripts/run_host_test_gates.sh host-all \
   --batch-flutter \
@@ -497,7 +525,9 @@ set -e
 [ "$continue_status" -eq 1 ] ||
   fail "batch continue returned $continue_status instead of aggregate status 1"
 [ "$(grep -c '^CALL$' "$go_log" || true)" -eq 17 ] ||
-  fail 'batch continue did not execute all thirteen synthetic rows and seventeen Go calls'
+  fail 'batch continue did not execute all sixteen synthetic rows and seventeen Go calls'
+[ "$(count_lines <"$native_log")" -eq 3 ] ||
+  fail 'batch continue did not execute all three native synthetic rows'
 grep -Fq 'Flutter batch exited with 7' "$tmp_dir/continue.stderr" ||
   fail 'batch continue failure summary omitted the Flutter status'
 

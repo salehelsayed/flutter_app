@@ -50,20 +50,14 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
     override fun onDeletedMessages() {
         super.onDeletedMessages()
 
-        // commit() is intentional: the recovery marker must reach durable
-        // storage before any notification API (including permission checks).
-        val store = DroppedPushRecoveryStore(this)
-        store.recordDeletion { generation ->
-            val snapshot = store.pendingRecovery()
-            if (snapshot == null || snapshot.generation != generation) {
-                return@recordDeletion
-            }
-            // The marker is already committed. Notification failure or denied
-            // permission can therefore never erase or suppress the work request.
-            if (store.recoveryWorkEnabled()) {
-                runCatching { scheduleRecovery(snapshot) }
-            }
-            runCatching { postRecoveryNotification(generation) }
+        // The shared seam keeps scheduling and notification publication inside
+        // the store's serialized afterCommit boundary. The marker is therefore
+        // durable before either side effect and cannot race an acknowledgement.
+        ProductionDeletedBatchRecovery(
+            context = this,
+            scheduleRecovery = ::scheduleRecovery,
+        ).commitAndSchedule { generation ->
+            postRecoveryNotification(generation)
         }
     }
 

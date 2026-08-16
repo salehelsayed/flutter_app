@@ -1729,7 +1729,7 @@ void main() {
         ),
       );
 
-      await Future.delayed(const Duration(milliseconds: 200));
+      await _waitUntil(() => emitted.length >= 2);
 
       expect(emitted.length, 2);
       // Re-emitted message should have failed status from catch

@@ -49,7 +49,10 @@ class DroppedPushRecoveryBridge internal constructor(
                     )
                 },
             )
+            "recoveryAuthority" -> result.success(recoveryAuthorityMap())
             "setCurrentBinding" -> setCurrentBinding(call, result)
+            "beginRecoveryAuthorityMutation" -> beginAuthorityMutation(result)
+            "finishRecoveryAuthorityMutation" -> finishAuthorityMutation(call, result)
             "acknowledgeGeneration" -> {
                 val arguments = call.arguments as? Map<*, *>
                 val generation = positiveIntegralGeneration(arguments?.get("generation"))
@@ -85,8 +88,46 @@ class DroppedPushRecoveryBridge internal constructor(
                     )
                 }
             }
+            "headlessAcknowledgeRecovery" -> {
+                val arguments = call.arguments as? Map<*, *>
+                val generation = positiveIntegralGeneration(arguments?.get("generation"))
+                val binding = (arguments?.get("binding") as? String)
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                val authorityRevision = nonNegativeIntegralLong(
+                    arguments?.get("authorityRevision"),
+                )
+                if (generation == null || binding == null || authorityRevision == null) {
+                    result.error(
+                        "bad_args",
+                        "generation, binding and authorityRevision are required",
+                        null,
+                    )
+                } else {
+                    result.success(
+                        store.acknowledgeHeadlessRecovery(
+                            generation,
+                            binding,
+                            authorityRevision,
+                            cancelRecoveryCard,
+                        ),
+                    )
+                }
+            }
             else -> result.notImplemented()
         }
+    }
+
+    private fun recoveryAuthorityMap(): Map<String, Any?> {
+        val authority = store.recoveryAuthority()
+        return mapOf(
+            "currentBinding" to authority.currentBinding,
+            "recoveryWorkEnabled" to authority.recoveryWorkEnabled,
+            "pendingGeneration" to authority.pendingRecovery?.generation,
+            "pendingBinding" to authority.pendingRecovery?.binding,
+            "authorityRevision" to authority.authorityRevision,
+            "authorityMutationInProgress" to authority.authorityMutationInProgress,
+        )
     }
 
     private fun setCurrentBinding(call: MethodCall, result: MethodChannel.Result) {
@@ -100,10 +141,34 @@ class DroppedPushRecoveryBridge internal constructor(
             result.error("bad_args", "binding must be a string or null", null)
             return
         }
-        val activateRecoveryWork = arguments["activateRecoveryWork"] as? Boolean ?: false
+        val activateRecoveryWork = arguments["activateRecoveryWork"] as? Boolean
+        if (activateRecoveryWork == null) {
+            result.error(
+                "bad_args",
+                "activateRecoveryWork must be a boolean",
+                null,
+            )
+            return
+        }
+        val rawRecoverStaleAuthorityMutations =
+            arguments["recoverStaleAuthorityMutations"]
+        if (
+            rawRecoverStaleAuthorityMutations != null &&
+            rawRecoverStaleAuthorityMutations !is Boolean
+        ) {
+            result.error(
+                "bad_args",
+                "recoverStaleAuthorityMutations must be a boolean",
+                null,
+            )
+            return
+        }
+        val recoverStaleAuthorityMutations =
+            rawRecoverStaleAuthorityMutations as? Boolean ?: false
         val rotation = store.setCurrentBinding(
             rawBinding as? String,
             recoveryWorkEnabled = activateRecoveryWork,
+            recoverStaleAuthorityMutations = recoverStaleAuthorityMutations,
         )
         if (!rotation.committed) {
             result.error("persistence_failed", "binding rotation was not committed", null)
@@ -123,6 +188,73 @@ class DroppedPushRecoveryBridge internal constructor(
             ),
         )
     }
+
+    private fun beginAuthorityMutation(result: MethodChannel.Result) {
+        val before = store.recoveryAuthority()
+        val publication = store.beginAuthorityMutation()
+        publishAuthoritySchedulingTransition(before, publication)
+        if (!publication.committed || publication.token == null) {
+            result.error(
+                "persistence_failed",
+                "authority mutation fence was not committed",
+                authorityMutationPublicationMap(publication),
+            )
+            return
+        }
+        result.success(authorityMutationPublicationMap(publication))
+    }
+
+    private fun finishAuthorityMutation(call: MethodCall, result: MethodChannel.Result) {
+        val arguments = call.arguments as? Map<*, *>
+        val token = (arguments?.get("token") as? String)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (token == null) {
+            result.error("bad_args", "token is required", null)
+            return
+        }
+        val before = store.recoveryAuthority()
+        val publication = store.finishAuthorityMutation(token)
+        publishAuthoritySchedulingTransition(before, publication)
+        if (!publication.committed) {
+            result.error(
+                "persistence_failed",
+                "authority mutation completion was not committed",
+                authorityMutationPublicationMap(publication),
+            )
+            return
+        }
+        result.success(authorityMutationPublicationMap(publication))
+    }
+
+    private fun publishAuthoritySchedulingTransition(
+        before: DroppedPushRecoveryStore.RecoveryAuthority,
+        publication: DroppedPushRecoveryStore.AuthorityMutationPublication,
+    ) {
+        if (!publication.committed) return
+        bindingScheduler.onBindingRotated(
+            DroppedPushRecoveryStore.BindingRotation(
+                changed = publication.changed,
+                previousBinding = before.currentBinding,
+                currentBinding = publication.currentBinding,
+                retiredRecovery = null,
+                committed = true,
+                recoveryWorkEnabled = publication.recoveryWorkEnabled,
+            ),
+        )
+    }
+
+    private fun authorityMutationPublicationMap(
+        publication: DroppedPushRecoveryStore.AuthorityMutationPublication,
+    ): Map<String, Any?> = mapOf(
+        "changed" to publication.changed,
+        "committed" to publication.committed,
+        "token" to publication.token,
+        "currentBinding" to publication.currentBinding,
+        "recoveryWorkEnabled" to publication.recoveryWorkEnabled,
+        "authorityRevision" to publication.authorityRevision,
+        "authorityMutationInProgress" to publication.authorityMutationInProgress,
+    )
 
     fun acknowledgeGeneration(generation: Long): Boolean =
         store.acknowledgeGeneration(generation, cancelRecoveryCard)
@@ -156,6 +288,17 @@ class DroppedPushRecoveryBridge internal constructor(
             else -> return null
         }
         return generation.takeIf { it > 0L }
+    }
+
+    private fun nonNegativeIntegralLong(value: Any?): Long? {
+        val parsed = when (value) {
+            is Byte -> value.toLong()
+            is Short -> value.toLong()
+            is Int -> value.toLong()
+            is Long -> value
+            else -> return null
+        }
+        return parsed.takeIf { it >= 0L }
     }
 
     fun dispose() {

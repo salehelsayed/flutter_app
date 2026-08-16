@@ -6,6 +6,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.work.Data
 import androidx.work.ForegroundInfo
 import androidx.work.Worker
@@ -21,6 +22,8 @@ import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugins.firebase.core.FlutterFirebaseCorePlugin
 import io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingPlugin
+import io.flutter.plugins.pathprovider.PathProviderPlugin
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
@@ -30,6 +33,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.json.JSONObject
 
 internal data class HeadlessCanonicalRecoveryStartSnapshot(
     val reason: String,
@@ -320,6 +324,62 @@ internal class HeadlessCanonicalRecoveryExecution(
     }
 }
 
+/**
+ * Debug-only, one-shot cut point for TC-374-08.
+ *
+ * The debug receiver arms a private file before invoking the shared production
+ * deleted-batch seam. The first matching worker atomically consumes that file
+ * and waits, so the device runner can kill its process before any recovery
+ * work executes. The restarted worker sees no file and enters production
+ * recovery normally. Release builds and unarmed debug work never wait.
+ */
+internal object Plan374ProcessDeathBarrier {
+    internal const val DIRECTORY = "plan374-headless-recovery"
+    internal const val FILE_NAME = "first-attempt-barrier"
+    internal const val MAX_WAIT_MILLIS = 120_000L
+
+    fun arm(context: Context, runNonce: String): Boolean {
+        if (!BuildConfig.DEBUG || runNonce.isBlank()) return false
+        val directory = File(context.filesDir, DIRECTORY)
+        if (!directory.exists() && !directory.mkdirs()) return false
+        return runCatching {
+            File(directory, FILE_NAME).apply { writeText(runNonce) }.isFile
+        }.getOrDefault(false)
+    }
+
+    fun disarm(context: Context) {
+        if (!BuildConfig.DEBUG) return
+        runCatching { File(File(context.filesDir, DIRECTORY), FILE_NAME).delete() }
+    }
+
+    fun consumeAndAwaitProcessDeath(
+        context: Context,
+        reason: String?,
+        isStopped: () -> Boolean,
+        onConsumed: () -> Unit,
+    ): Boolean {
+        if (
+            !BuildConfig.DEBUG ||
+            reason != DroppedPushRecoveryWorkScheduler.REASON_DELETED_BATCH
+        ) {
+            return false
+        }
+        val barrier = File(File(context.filesDir, DIRECTORY), FILE_NAME)
+        if (!barrier.delete()) return false
+        onConsumed()
+        val deadline = SystemClock.elapsedRealtime() + MAX_WAIT_MILLIS
+        while (!isStopped() && SystemClock.elapsedRealtime() < deadline) {
+            try {
+                Thread.sleep(100L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                break
+            }
+        }
+        return true
+    }
+}
+
 /** WorkManager's production boundary. `onStopped` signals only. */
 internal class HeadlessCanonicalRecoveryWorker(
     appContext: Context,
@@ -327,6 +387,7 @@ internal class HeadlessCanonicalRecoveryWorker(
 ) : Worker(appContext, params) {
     companion object {
         internal const val FOREGROUND_NOTIFICATION_ID = 330
+        internal const val PLAN374_DIAGNOSTIC_TAG = "MknoonPlan374Recovery"
         private const val WORK_TIMEOUT_MILLIS = 8 * 60 * 1000L
 
         internal fun resolveStartSnapshot(
@@ -389,15 +450,65 @@ internal class HeadlessCanonicalRecoveryWorker(
         Futures.immediateFuture(createForegroundInfo(applicationContext))
 
     override fun doWork(): Result = runBlocking {
+        emitPlan374Diagnostic("start")
+        val barrierConsumed = Plan374ProcessDeathBarrier.consumeAndAwaitProcessDeath(
+            context = applicationContext,
+            reason = inputData.getString(
+                DroppedPushRecoveryWorkScheduler.INPUT_REASON,
+            ),
+            isStopped = { isStopped },
+            onConsumed = {
+                emitPlan374Diagnostic("process_death_barrier_consumed")
+            },
+        )
+        if (barrierConsumed && isStopped) return@runBlocking Result.retry()
         when (execution.execute(inputData)) {
-            HeadlessCanonicalRecoveryWorkOutcome.SUCCESS -> Result.success()
-            HeadlessCanonicalRecoveryWorkOutcome.RETRY -> Result.retry()
+            HeadlessCanonicalRecoveryWorkOutcome.SUCCESS -> {
+                emitPlan374Diagnostic("completion", "SUCCESS")
+                Result.success()
+            }
+            HeadlessCanonicalRecoveryWorkOutcome.RETRY -> {
+                emitPlan374Diagnostic("completion", "RETRY")
+                Result.retry()
+            }
         }
     }
 
     override fun onStopped() {
+        emitPlan374Diagnostic("stopped")
         execution.requestStop()
         super.onStopped()
+    }
+
+    /** Privacy-safe device-proof diagnostic; no binding or conversation ID. */
+    private fun emitPlan374Diagnostic(phase: String, outcome: String? = null) {
+        if (
+            (
+                applicationContext.applicationInfo.flags and
+                    android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE
+            ) == 0
+        ) {
+            return
+        }
+        val generation = inputData.getLong(
+            DroppedPushRecoveryWorkScheduler.INPUT_WAKE_GENERATION,
+            -1L,
+        ).takeIf { it > 0L }
+        android.util.Log.i(
+            PLAN374_DIAGNOSTIC_TAG,
+            JSONObject()
+                .put("event", "plan374_headless_worker")
+                .put("phase", phase)
+                .put("pid", android.os.Process.myPid())
+                .put(
+                    "reason",
+                    inputData.getString(DroppedPushRecoveryWorkScheduler.INPUT_REASON),
+                )
+                .put("generation", generation)
+                .put("runAttemptCount", runAttemptCount)
+                .put("outcome", outcome)
+                .toString(),
+        )
     }
 }
 
@@ -418,7 +529,13 @@ private object ProcessHeadlessCanonicalRecoveryEngine {
             if (owner === candidate) owner = null
         }
     }
+
+    fun isRetained(): Boolean = synchronized(lock) { owner != null }
 }
+
+/** Read-only rollback diagnostic; it never claims or releases an engine. */
+internal fun isHeadlessCanonicalRecoveryEngineRetained(): Boolean =
+    ProcessHeadlessCanonicalRecoveryEngine.isRetained()
 
 /** Minimal, non-UI Flutter engine. All engine lifecycle work stays on main. */
 private class FlutterHeadlessCanonicalRecoveryEngineRunner(
@@ -517,6 +634,7 @@ private class FlutterHeadlessCanonicalRecoveryEngineRunner(
                             )
                         } else {
                             lastCompletion = parsed
+                            emitPlan374DartCompletionDiagnostic(parsed)
                             completion.complete(parsed)
                             result.success(null)
                             maybeCleanupRetainedOnMain()
@@ -595,6 +713,15 @@ private class FlutterHeadlessCanonicalRecoveryEngineRunner(
             cleanupPollAttempts += 1
             cleanupPollScheduled = true
             mainHandler.postDelayed(cleanupPoll, CLEANUP_POLL_DELAY_MILLIS)
+        } else if (
+            reported != null &&
+            !cleanupPollScheduled &&
+            cleanupPollAttempts >= MAX_CLEANUP_POLLS
+        ) {
+            emitPlan374EngineDiagnostic(
+                phase = "retained_after_cleanup_deadline",
+                completion = reported,
+            )
         }
     }
 
@@ -618,6 +745,42 @@ private class FlutterHeadlessCanonicalRecoveryEngineRunner(
             claimed = false
             ProcessHeadlessCanonicalRecoveryEngine.release(this)
         }
+        emitPlan374EngineDiagnostic(
+            phase = "engine_released",
+            completion = lastCompletion,
+        )
+    }
+
+    /** Privacy-safe debug proof of the exact Dart/native destruction fence. */
+    private fun emitPlan374DartCompletionDiagnostic(
+        completion: HeadlessCanonicalRecoveryCompletion,
+    ) = emitPlan374EngineDiagnostic(
+        phase = "dart_completion",
+        completion = completion,
+    )
+
+    private fun emitPlan374EngineDiagnostic(
+        phase: String,
+        completion: HeadlessCanonicalRecoveryCompletion?,
+    ) {
+        if (!BuildConfig.DEBUG) return
+        val leaseState = ProcessCanonicalRuntimeLease.broker.snapshot().state
+        val goState = ProcessGoRuntimeHost.instance.snapshot().state
+        android.util.Log.i(
+            HeadlessCanonicalRecoveryWorker.PLAN374_DIAGNOSTIC_TAG,
+            JSONObject()
+                .put("event", "plan374_headless_engine")
+                .put("phase", phase)
+                .put("pid", android.os.Process.myPid())
+                .put("disposition", completion?.disposition?.name)
+                .put("databaseClosed", completion?.databaseClosed)
+                .put("leaseReleased", completion?.leaseReleased)
+                .put("failureReason", completion?.failureReason)
+                .put("nativeLeaseState", leaseState.name)
+                .put("nativeGoState", goState.name)
+                .put("claimed", claimed)
+                .toString(),
+        )
     }
 
     private fun registerAllowlistedPlugins(engine: FlutterEngine) {
@@ -626,6 +789,7 @@ private class FlutterHeadlessCanonicalRecoveryEngineRunner(
         engine.plugins.add(FlutterLocalNotificationsPlugin())
         engine.plugins.add(FlutterFirebaseCorePlugin())
         engine.plugins.add(FlutterFirebaseMessagingPlugin())
+        engine.plugins.add(PathProviderPlugin())
     }
 
 }

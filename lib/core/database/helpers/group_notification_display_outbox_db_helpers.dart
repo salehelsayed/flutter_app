@@ -23,6 +23,17 @@ const String _groupNotificationDisplayCanonicalRetiredCorrelationMarkerPrefix =
     '$kGroupNotificationDisplayCanonicalRetiredMarker:';
 final RegExp _durableEventCorrelationPattern = RegExp(r'^[0-9a-f]{64}$');
 
+/// Total durable custody, including NOT_READY and deferred/backoff rows.
+Future<int> dbCountAllGroupNotificationDisplayOutboxEntries(
+  DatabaseExecutor db,
+) async {
+  if (!await _tableExists(db)) return 0;
+  return Sqflite.firstIntValue(
+        await db.rawQuery('SELECT COUNT(*) FROM $_table'),
+      ) ??
+      0;
+}
+
 /// Privacy-safe SQL custody marker written before entering the file-ledger
 /// final-effect boundary. It preserves the raw event correlation even if a
 /// concurrent canonical mutation removes the message row that derived it.

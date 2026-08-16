@@ -10,6 +10,12 @@ readonly BASELINE_TESTS=(
   "test/core/bootstrap/main_bootstrap_boundary_test.dart"
   "test/core/bootstrap/application_bootstrap_test.dart"
   "test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart"
+  "test/core/bootstrap/production_headless_canonical_recovery_test.dart"
+  # 374: shared direct projection composition census + stale-correlation
+  # regression owner surfaced by the Plan-374 device proof.
+  "test/core/bootstrap/production_canonical_direct_projection_composition_test.dart"
+  # 374: every secure authority writer must hold the native revision fence.
+  "test/core/secure_storage/flutter_secure_key_store_test.dart"
   "test/features/identity/presentation/screens/startup_router_recovery_test.dart"
   "test/features/qr_code/presentation/screens/qr_scanner_wired_test.dart"
   "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"

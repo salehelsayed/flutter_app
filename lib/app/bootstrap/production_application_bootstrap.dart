@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,11 +7,13 @@ import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome_drainer.dart';
 import 'package:flutter_app/core/notifications/ios_mailbox_alert_silent_replay_context.dart';
-import 'package:flutter_app/core/services/protected_group_content_contract.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
+import 'package:flutter_app/app/bootstrap/production_canonical_direct_replay_composition.dart';
+import 'package:flutter_app/app/bootstrap/production_canonical_direct_projection_composition.dart';
+import 'package:flutter_app/app/bootstrap/production_canonical_group_replay_composition.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
@@ -37,7 +38,6 @@ import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_reaction_terminal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_read_acknowledgement_db_helpers.dart';
-import 'package:flutter_app/core/database/helpers/direct_notification_read_projection_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_reconciliation_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
@@ -105,7 +105,6 @@ import 'package:flutter_app/features/introduction/data/repositories/introduction
 import 'package:flutter_app/features/introduction/data/repositories/intro_review_seen_repository_impl.dart';
 import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
-import 'package:flutter_app/features/introduction/application/resolve_unknown_inbox_sender_use_case.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
@@ -164,9 +163,6 @@ import 'package:flutter_app/features/contacts/domain/repositories/direct_contact
 import 'package:flutter_app/features/conversation/application/drain_direct_blob_free_linked_event_fanout_use_case.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/direct_notification_projection_owner.dart';
-import 'package:flutter_app/features/conversation/application/direct_notification_display_retry_coordinator.dart';
-import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
-import 'package:flutter_app/features/conversation/domain/models/direct_notification_read_acknowledgement.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/application/direct_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
@@ -176,20 +172,9 @@ import 'package:flutter_app/features/conversation/application/private_media_expi
 import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
     show sendDeliveryReceipt;
-import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart'
-    show predecryptStagedInboxChatEntry;
-import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
-import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
-import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
-import 'package:flutter_app/features/conversation/application/recovered_inbox_sibling_dispositions.dart';
 import 'package:flutter_app/features/conversation/application/link_incoming_local_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
-import 'package:flutter_app/core/notifications/direct_notification_canonical_reconciler.dart';
-import 'package:flutter_app/core/notifications/direct_notification_presentation_coordinator.dart';
-import 'package:flutter_app/core/notifications/direct_notification_read_projector.dart';
-import 'package:flutter_app/core/notifications/notification_route_target.dart';
-import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_direct_private_committed_pending_cleanup.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
@@ -199,7 +184,6 @@ import 'package:flutter_app/features/conversation/application/strict_direct_medi
 import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
-import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
@@ -306,7 +290,6 @@ import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
-import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
@@ -324,8 +307,6 @@ import 'package:flutter_app/core/notifications/durable_local_notification_effect
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
-import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
-import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/diagnostics/app_build_info.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -658,6 +639,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         ? null
         : CanonicalRuntimeBindingCoordinator(
             secureKeyStore: secureKeyStore,
+            recoveryGraphRegistered: true,
             leaseGateway: canonicalRuntimeLeaseGateway,
             droppedPushBindingPublisher: Platform.isAndroid
                 ? droppedPushRecoveryBridge
@@ -870,6 +852,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       db: db,
       secureKeyStore: secureKeyStore,
     );
+    // A crash between the native authority fence and its secure-storage write
+    // deliberately leaves recovery disabled.  Only this supported production
+    // graph may retire those stale mutation tokens, and it does so after the
+    // foreground process owns the writable lease and the existing database has
+    // completed every post-open migration.  Any work scheduled by the
+    // reconciliation therefore still loses admission to this foreground owner.
+    await canonicalRuntimeBindingCoordinator
+        ?.reconcileCurrentAccountRecoveryReadiness();
     StartupTiming.instance.mark('identity_store_ready');
 
     final groupExitDiagnosticRepository = GroupExitDiagnosticRepositoryImpl(
@@ -5663,59 +5653,18 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       );
     }
 
+    late final ProductionCanonicalDirectReplayComposition
+    productionDirectReplayComposition;
+
     Future<RecoveredInboxReplayOutcome> replayInboxChatMessage(
       ChatMessage message, {
       required bool suppressNotification,
       String? stagedEntryId,
-    }) async {
-      var outcome = await chatMessageListener.processIncomingMessage(
-        message,
-        suppressNotification: suppressNotification,
-        forceSilentNotification: isIosMailboxAlertSilentReplayContext,
-        stagedEntryId: stagedEntryId,
-      );
-      if (outcome.state == ChatMessageProcessState.unknownSender) {
-        final ownPeerId = message.to;
-        if (ownPeerId.isNotEmpty) {
-          final resolution = await resolveUnknownInboxSender(
-            introRepo: introductionRepository,
-            contactRepo: contactRepository,
-            ownPeerId: ownPeerId,
-            senderPeerId: message.from,
-          );
-          if (resolution == UnknownInboxSenderResolution.contactRecovered) {
-            outcome = await chatMessageListener.processIncomingMessage(
-              message,
-              suppressNotification: suppressNotification,
-              forceSilentNotification: isIosMailboxAlertSilentReplayContext,
-              stagedEntryId: stagedEntryId,
-            );
-          }
-          if (outcome.state == ChatMessageProcessState.unknownSender) {
-            // 172: a resolver-CONFIRMED stranger (no introduction in any
-            // recoverable state) stays a terminal content-safe drop; everyone
-            // else stays recoverable. The mapper's own unknownSender default is
-            // now retryable (unknown_sender_recoverable), so the terminal
-            // stranger verdict must be returned explicitly here — the one place
-            // with resolver context.
-            if (resolution == UnknownInboxSenderResolution.rejected) {
-              return (
-                disposition: RecoveredInboxChatDisposition.rejected,
-                reasonCode: 'unknown_sender_stranger',
-                reasonDetail: null,
-              );
-            }
-            return (
-              disposition: RecoveredInboxChatDisposition.retryable,
-              reasonCode: 'unknown_sender_intro_pending',
-              reasonDetail: null,
-            );
-          }
-        }
-      }
-
-      return mapChatReplayOutcomeToDisposition(outcome);
-    }
+    }) => productionDirectReplayComposition.replayChatMessage(
+      message,
+      suppressNotification: suppressNotification,
+      stagedEntryId: stagedEntryId,
+    );
 
     final pushEnvelopeStagingStore = FilePushEnvelopeStagingStore(
       directory: await resolvePushEnvelopeStagingDirectory(),
@@ -5766,6 +5715,40 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     DirectNotificationProjectionOwner? directNotificationOwner;
     void Function(ReactionChange change)? publishPersistedReactionChange;
 
+    productionDirectReplayComposition =
+        ProductionCanonicalDirectReplayComposition(
+          loadIdentity: repository.loadIdentity,
+          chatMessageListener: () => chatMessageListener,
+          introductionListener: () => introductionListener,
+          contactRequestListener: () => contactRequestListener,
+          introductionRepository: introductionRepository,
+          contactRepository: contactRepository,
+          messageRepository: messageRepository,
+          reactionRepository: reactionRepository,
+          mediaAttachmentRepository: mediaAttachmentRepository,
+          transportAuthority: directTransportAuthority,
+          bridge: bridge,
+          secureKeyStore: secureKeyStore,
+          mediaFileManager: mediaFileManager,
+          sendDeliveryReceipt: sendDeliveryReceiptForPeer,
+          notificationOwner: () => directNotificationOwner,
+          reactionNotificationDependencies: () {
+            final notify = reactionNotifyDeps;
+            return notify == null
+                ? null
+                : ProductionDirectReactionNotificationDependencies(
+                    service: notify.service,
+                    appVisibility: notify.appVisibility,
+                    toneTracker: notify.toneTracker,
+                    durableCoordinator: notify.durableCoordinator,
+                  );
+          },
+          pendingNotificationOverlay:
+              pendingNotificationOverlayBindingPublisher,
+          forceSilentNotification: isIosMailboxAlertSilentReplayContext,
+          publishPersistedReactionChange: () => publishPersistedReactionChange,
+        );
+
     // F7: reactions/deletions get the same stage-before-ack/commit durability as
     // chat. These replay closures call the use cases DIRECTLY (the listeners are
     // constructed later and aren't needed here) and resolve the SAME deps + the
@@ -5773,61 +5756,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     Future<RecoveredInboxReplayOutcome> replayInboxReaction(
       ChatMessage message, {
       String? stagedEntryId,
-    }) async {
-      final identity = await repository.loadIdentity();
-      final notify = reactionNotifyDeps;
-      final (result, change) = await handleIncomingReaction(
-        message: message,
-        transportAuthority: directTransportAuthority,
-        messageRepo: messageRepository,
-        reactionRepo: reactionRepository,
-        contactRepo: contactRepository,
-        bridge: bridge,
-        ownMlKemSecretKey: identity?.mlKemSecretKey,
-        forceSilentReactionNotification: isIosMailboxAlertSilentReplayContext,
-        // 127-Bug-C: notify the recipient that a contact reacted to their 1:1
-        // message (no-op until the holder below is populated). The use case fires
-        // only on a fresh ADD upsert and respects the standard suppression gates.
-        notificationService: notify?.service,
-        appVisibility: notify?.appVisibility,
-        notificationToneTracker: notify?.toneTracker,
-        durableNotificationCoordinatorResolver: notify == null
-            ? null
-            : () async => notify.durableCoordinator,
-        loadConversationNotificationSnapshot: () =>
-            loadDirectConversationNotificationSnapshot(
-              messageRepository: messageRepository,
-              contactPeerId: message.from,
-              mediaAttachmentRepository: mediaAttachmentRepository,
-              pendingNotificationOverlay:
-                  pendingNotificationOverlayBindingPublisher,
-            ),
-        consumeRecentRemoteNotificationAnnouncement:
-            ({required payload, String? messageId}) =>
-                recentRemoteNotificationGate.consumeIfRecentAnnouncement(
-                  payload: payload,
-                  messageId: messageId,
-                ),
-        markRecentRemoteNotificationAnnouncement:
-            ({required payload, String? messageId}) =>
-                recentRemoteNotificationGate.markAnnouncement(
-                  payload: payload,
-                  messageId: messageId,
-                ),
-        stageNotificationDisplayCustody: directNotificationOwner?.stageReaction,
-        promoteNotificationDisplayCustody:
-            directNotificationOwner?.promoteReactionReadyIfExact,
-        commitNotificationRemove:
-            directNotificationOwner?.onReactionRemoveCommitted,
-        retryNotificationDisplays: directNotificationOwner?.retryNow,
-      );
-      if (result == HandleReactionResult.success && change != null) {
-        publishPersistedReactionChange?.call(change);
-      }
-      // 172 TC-11: the recoverable-vs-terminal split lives in the extracted,
-      // test-locked sibling mapper (recovered_inbox_sibling_dispositions.dart).
-      return mapReactionReplayResultToDisposition(result);
-    }
+    }) => productionDirectReplayComposition.replayReaction(
+      message,
+      stagedEntryId: stagedEntryId,
+    );
 
     ingestStagedPushEnvelopesUseCase.replayReactionMessage =
         (message, {String? stagedEntryId}) =>
@@ -5836,34 +5768,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     Future<RecoveredInboxReplayOutcome> replayInboxMessageDeletion(
       ChatMessage message, {
       String? stagedEntryId,
-    }) async {
-      final identity = await repository.loadIdentity();
-      final (result, _) = await handleIncomingMessageDeletion(
-        message: message,
-        transportAuthority: directTransportAuthority,
-        messageRepo: messageRepository,
-        contactRepo: contactRepository,
-        reactionRepo: reactionRepository,
-        mediaAttachmentRepo: mediaAttachmentRepository,
-        mediaFileManager: mediaFileManager,
-        bridge: bridge,
-        ownMlKemSecretKey: identity?.mlKemSecretKey,
-        sendDeliveryReceipt: (messageId) => sendDeliveryReceiptForPeer(
-          contactPeerId: message.from,
-          messageIds: [messageId],
-        ),
-        sendMutationDeliveryReceipt: (messageId, {required mutationEventId}) =>
-            sendDeliveryReceiptForPeer(
-              contactPeerId: message.from,
-              messageIds: [messageId],
-              mutationEventIds: <String, String>{messageId: mutationEventId},
-            ),
-        stagedEntryId: stagedEntryId,
-      );
-      // 172 TC-11: the recoverable-vs-terminal split lives in the extracted,
-      // test-locked sibling mapper (recovered_inbox_sibling_dispositions.dart).
-      return mapMessageDeletionReplayResultToDisposition(result);
-    }
+    }) => productionDirectReplayComposition.replayMessageDeletion(
+      message,
+      stagedEntryId: stagedEntryId,
+    );
 
     // CV-26 (FDC-04 DESIGN-3): the 1:1 active-conversation tracker is a
     // zero-dependency object; construct it HERE (ahead of the P2PServiceImpl
@@ -6053,36 +5961,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             stagedEntryId: stagedEntryId,
           ),
       replayRecoveredInboxIntroductionMessage: (message) async {
-        final outcome = await introductionListener.processIncomingMessage(
-          message,
-        );
-        switch (outcome.state) {
-          case IntroductionMessageProcessState.stored:
-            return (
-              disposition: RecoveredInboxChatDisposition.committed,
-              reasonCode: outcome.reasonCode,
-              reasonDetail: outcome.reasonDetail,
-            );
-          case IntroductionMessageProcessState.deferred:
-            return (
-              disposition: RecoveredInboxChatDisposition.committed,
-              reasonCode: outcome.reasonCode,
-              reasonDetail: outcome.reasonDetail,
-            );
-          case IntroductionMessageProcessState.retryableError:
-            return (
-              disposition: RecoveredInboxChatDisposition.retryable,
-              reasonCode: outcome.reasonCode,
-              reasonDetail: outcome.reasonDetail,
-            );
-          case IntroductionMessageProcessState.blockedSender:
-          case IntroductionMessageProcessState.rejected:
-            return (
-              disposition: RecoveredInboxChatDisposition.rejected,
-              reasonCode: outcome.reasonCode,
-              reasonDetail: outcome.reasonDetail,
-            );
-        }
+        return productionDirectReplayComposition.replayIntroduction(message);
       },
       // 171: relay-inbox replay of a cold-receiver contact_request runs the SAME
       // listener processing (auto-add + reciprocal + confirm) as the live
@@ -6091,20 +5970,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       // terminal (committed -> delete the staged row); only a thrown error
       // retries (so a transient failure re-stages instead of being lost).
       replayRecoveredInboxContactRequest: (message) async {
-        try {
-          await contactRequestListener.processIncomingMessage(message);
-          return (
-            disposition: RecoveredInboxChatDisposition.committed,
-            reasonCode: 'contact_request_processed',
-            reasonDetail: null,
-          );
-        } catch (e) {
-          return (
-            disposition: RecoveredInboxChatDisposition.retryable,
-            reasonCode: 'contact_request_processing_error',
-            reasonDetail: e.toString(),
-          );
-        }
+        return productionDirectReplayComposition.replayContactRequest(message);
       },
       // F7: stage-before-ack/commit durability for reactions/deletions across all
       // 3 receive paths (relay-inbox, live-direct, LAN).
@@ -6120,14 +5986,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       // material as the chat path (loadIdentity + the ML-KEM ring), and runs the
       // SAME bridge decrypt + fallback ring. A null result (blocked / not v2 / key
       // unavailable / decrypt failed) is harmless — that entry decrypts in-handler.
-      predecryptInboxChatEntry: (message) => predecryptStagedInboxChatEntry(
-        message: message,
-        contactRepo: contactRepository,
-        bridge: bridge,
-        loadOwnMlKemSecretKey: () async =>
-            (await repository.loadIdentity())?.mlKemSecretKey,
-        loadOwnMlKemSecretKeyRing: () => loadMlKemSecretKeyRing(secureKeyStore),
-      ),
+      predecryptInboxChatEntry:
+          productionDirectReplayComposition.predecryptChatMessage,
     );
     if (iosNseTransportAdmissionActive) {
       refreshIosNseTransportAfterIdentityCommit = (identity) async {
@@ -6329,832 +6189,41 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     final notificationToneTracker = NotificationToneTracker();
     final durableReactionNotificationCoordinator =
         await DurableNotificationToneLease.openDefault();
-    final directNotificationPresentationCoordinator =
-        DirectNotificationPresentationCoordinator();
-    final directNotificationReadProjector = DirectNotificationReadProjector(
-      coordinator: directNotificationPresentationCoordinator,
-      cancellation: notificationService,
-      commitRead: (peerId, metadata) =>
-          dbMarkDirectConversationReadAndAcknowledge(
-            db,
-            peerId: peerId,
-            metadata: metadata,
-          ),
-    );
-    projectDirectConversationRead =
-        directNotificationReadProjector.markConversationRead;
-
-    Future<bool> directPeerAllowsNotification(String peerId) async {
-      final contact = await contactRepository.getContact(peerId);
-      return contact != null && !contact.isBlocked && !contact.isArchived;
-    }
-
-    Future<DurableLocalNotificationCanonicalDisposition>
-    readFinalDirectNotificationDisposition(
-      DirectNotificationDisplayOutboxEntry entry, {
-      required void Function(DirectNotificationDisplayOutboxEntry current)
-      onExactReady,
-      String? durableEventCorrelation,
-    }) async {
-      Future<DurableLocalNotificationCanonicalDisposition>
-      readCanonicalFacts() async {
-        final contact = await contactRepository.getContact(entry.peerId);
-        if (contact == null) {
-          return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
-        }
-        if (contact.isBlocked || contact.isArchived) {
-          return DurableLocalNotificationCanonicalDisposition.suppressedPolicy;
-        }
-        switch (entry.eventKind) {
-          case DirectNotificationDisplayOutboxKind.message:
-            final message = await messageRepository.getMessage(entry.messageId);
-            if (message == null) {
-              return DurableLocalNotificationCanonicalDisposition
-                  .retryableUnknown;
-            }
-            if (message.contactPeerId != entry.peerId ||
-                message.senderPeerId != entry.actorPeerId ||
-                message.timestamp != entry.eventTimestamp ||
-                !message.isIncoming) {
-              return DurableLocalNotificationCanonicalDisposition
-                  .retryableUnknown;
-            }
-            if (message.isDeleted ||
-                message.hiddenAt != null ||
-                message.privateMediaState.isTerminal) {
-              return DurableLocalNotificationCanonicalDisposition.cancelled;
-            }
-            return message.readAt != null
-                ? DurableLocalNotificationCanonicalDisposition.read
-                : DurableLocalNotificationCanonicalDisposition.eligible;
-          case DirectNotificationDisplayOutboxKind.reaction:
-            final target = await messageRepository.getMessage(entry.messageId);
-            final reaction = await reactionRepository
-                .getReactionForSenderIncludingRemoved(
-                  messageId: entry.messageId,
-                  senderPeerId: entry.actorPeerId,
-                );
-            if (target == null || reaction == null) {
-              return DurableLocalNotificationCanonicalDisposition
-                  .retryableUnknown;
-            }
-            if (target.contactPeerId != entry.peerId || target.isIncoming) {
-              return DurableLocalNotificationCanonicalDisposition
-                  .retryableUnknown;
-            }
-            if (target.isDeleted ||
-                target.isHidden ||
-                target.privateMediaState.isTerminal ||
-                reaction.isRemoved ||
-                reaction.id != entry.reactionId ||
-                reaction.timestamp != entry.eventTimestamp) {
-              return DurableLocalNotificationCanonicalDisposition.cancelled;
-            }
-            if (durableEventCorrelation != null) {
-              final acknowledgement =
-                  await directNotificationReadAcknowledgementRepository
-                      .loadExact(
-                        peerId: entry.peerId,
-                        contentKind:
-                            DirectNotificationReadAcknowledgementKind.reaction,
-                        eventIdentity: durableEventCorrelation,
-                        generation: durableLocalNotificationContentGeneration(
-                          durableEventCorrelation,
-                        ),
-                      );
-              if (acknowledgement != null &&
-                  acknowledgement.messageId == entry.messageId &&
-                  acknowledgement.actorPeerId == entry.actorPeerId) {
-                return DurableLocalNotificationCanonicalDisposition.read;
-              }
-            }
-            return DurableLocalNotificationCanonicalDisposition.eligible;
-          default:
-            return DurableLocalNotificationCanonicalDisposition
-                .retryableUnknown;
-        }
-      }
-
-      final canonicalDisposition = await readCanonicalFacts();
-      final current = await directNotificationDisplayOutboxRepository.loadExact(
-        peerId: entry.peerId,
-        eventKind: entry.eventKind,
-        eventId: entry.eventId,
-      );
-      if (current == null ||
-          !current.isReady ||
-          current.eventKind != entry.eventKind ||
-          current.peerId != entry.peerId ||
-          current.messageId != entry.messageId ||
-          current.actorPeerId != entry.actorPeerId ||
-          current.eventTimestamp != entry.eventTimestamp ||
-          current.reactionId != entry.reactionId ||
-          current.reactionAction != entry.reactionAction ||
-          current.reactionTombstone != entry.reactionTombstone) {
-        return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
-      }
-      if (current.hasCanonicalRetirementProof) {
-        onExactReady(current);
-        return DurableLocalNotificationCanonicalDisposition.cancelled;
-      }
-      if (current.revision != entry.revision) {
-        return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
-      }
-      onExactReady(current);
-      return canonicalDisposition;
-    }
-
-    DirectNotificationDisplayProjection finishDirectNotificationProjection({
-      required NotificationPresentationResult presentation,
-      required DirectNotificationDurableEffectAttempt? durableAttempt,
-      required int sqlReadyRevision,
-    }) {
-      final authority = durableAttempt?.completedAuthority
-          ?.withSqlReadyRevision(sqlReadyRevision);
-      if (durableAttempt != null &&
-          presentation.isTerminal &&
-          authority == null) {
-        // A legacy gate may have terminalized before the durable final effect.
-        // It is not proof for SQL deletion: retain READY custody for repair.
-        return const DirectNotificationDisplayProjection(
-          presentation: NotificationPresentationResult.contendedRetryable,
-        );
-      }
-      return DirectNotificationDisplayProjection(
-        presentation: presentation,
-        durableEffectAuthority: authority,
-      );
-    }
-
-    Future<void> notifyDirectDurablePostHandoff(
-      DurableLocalNotificationEffectReceipt receipt,
-    ) async {
-      final Object service = notificationService;
-      if (service is MessageNotificationDurablePostHandoffReconciliation) {
-        try {
-          await service.notifyDurableEffectHandoffComplete(receipt);
-        } catch (error) {
-          // SQL B and ledger settlement are already durable. A UI refresh
-          // failure must not replay their finalization after READY is gone.
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'DIRECT_NOTIFICATION_POST_HANDOFF_REFRESH_FAILED',
-            details: {'errorType': error.runtimeType.toString()},
-          );
-        }
-      }
-    }
-
-    Future<void> recoverCommittedDirectNotificationDurableEffects(
-      String peerId,
-    ) async {
-      final registry = durableNotificationIdRegistry;
-      if (registry == null) return;
-      final binding = await canonicalRuntimeBindingCoordinator
-          ?.readCurrentAccountBinding();
-      final physicalPeerId = await resolveCompletedOutcomePhysicalPeerId();
-      final identity = AppVisibilityConversationIdentity.tryParse(
-        lane: AppVisibilityConversationLane.direct,
-        value: peerId,
-      );
-      if (binding == null || physicalPeerId == null || identity == null) {
-        throw const DirectNotificationDisplayStateUnavailableException();
-      }
-      final listed = await registry.listSqlReadyEffectTerminals(
-        currentOpaqueBinding: binding,
-      );
-      final pending = listed
-          .where(
-            (record) =>
-                record.sourceCustody ==
-                    LocalNotificationSourceCustody.sqlReady &&
-                (record.effectPhase ==
-                        LocalNotificationEffectPhase.effectTerminal ||
-                    record.effectPhase ==
-                        LocalNotificationEffectPhase.settled) &&
-                record.conversationDigest == identity.digest &&
-                (record.producerKind ==
-                        LocalNotificationProducerKind.directMessage ||
-                    record.producerKind ==
-                        LocalNotificationProducerKind.directReaction),
-          )
-          .toList(growable: false);
-      if (pending.isEmpty) return;
-      final readyEntries =
-          (await dbLoadAllReadyDirectNotificationDisplayOutboxEntriesForPeer(
-                db,
-                peerId: peerId,
-              ))
-              .map(DirectNotificationDisplayOutboxEntry.fromMap)
-              .toList(growable: false);
-      final terminals =
-          await dbLoadDirectNotificationCommittedSqlTerminalsForPeer(
-            db,
-            peerId: peerId,
-          );
-      for (final record in pending) {
-        DirectNotificationDisplayOutboxEntry? exactReady;
-        DirectNotificationCommittedSqlTerminal? exactTerminal;
-        NotificationCompletedOutcomeProducerKind? outcomeProducerKind;
-        String? eventKey;
-        for (final ready in readyEntries) {
-          late final NotificationCompletedOutcomeProducerKind
-          candidateProducerKind;
-          late final String candidateEventKey;
-          if (record.producerKind ==
-                  LocalNotificationProducerKind.directMessage &&
-              ready.eventKind == DirectNotificationDisplayOutboxKind.message) {
-            candidateProducerKind =
-                NotificationCompletedOutcomeProducerKind.directMessage;
-            candidateEventKey = ready.messageId;
-          } else if (record.producerKind ==
-                  LocalNotificationProducerKind.directReaction &&
-              ready.eventKind == DirectNotificationDisplayOutboxKind.reaction &&
-              ready.reactionId != null) {
-            candidateProducerKind =
-                NotificationCompletedOutcomeProducerKind.directReaction;
-            candidateEventKey = ready.reactionId!;
-          } else {
-            continue;
-          }
-          final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
-            physicalPeerId: physicalPeerId,
-            producerKind: candidateProducerKind,
-            eventKey: candidateEventKey,
-          );
-          if (correlation != record.eventCorrelation) continue;
-          if (exactReady != null) {
-            throw const DirectNotificationDisplayStateUnavailableException();
-          }
-          exactReady = ready;
-          outcomeProducerKind = candidateProducerKind;
-          eventKey = candidateEventKey;
-        }
-        for (final terminal
-            in exactReady == null &&
-                    record.effectPhase ==
-                        LocalNotificationEffectPhase.effectTerminal
-                ? terminals
-                : const <DirectNotificationCommittedSqlTerminal>[]) {
-          late final NotificationCompletedOutcomeProducerKind
-          candidateProducerKind;
-          late final String candidateEventKey;
-          if (record.producerKind ==
-                  LocalNotificationProducerKind.directMessage &&
-              terminal.eventKind ==
-                  DirectNotificationDisplayOutboxKind.message) {
-            candidateProducerKind =
-                NotificationCompletedOutcomeProducerKind.directMessage;
-            candidateEventKey = terminal.messageId;
-          } else if (record.producerKind ==
-                  LocalNotificationProducerKind.directReaction &&
-              terminal.eventKind ==
-                  DirectNotificationDisplayOutboxKind.reaction &&
-              terminal.reactionId != null) {
-            candidateProducerKind =
-                NotificationCompletedOutcomeProducerKind.directReaction;
-            candidateEventKey = terminal.reactionId!;
-          } else {
-            continue;
-          }
-          final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
-            physicalPeerId: physicalPeerId,
-            producerKind: candidateProducerKind,
-            eventKey: candidateEventKey,
-          );
-          if (correlation == record.eventCorrelation) {
-            exactTerminal = terminal;
-            outcomeProducerKind = candidateProducerKind;
-            eventKey = candidateEventKey;
-            break;
-          }
-        }
-        if (record.effectPhase == LocalNotificationEffectPhase.settled &&
-            exactReady == null) {
-          // SQL transaction B already retired this custody. SETTLED rows stay
-          // durable for audit/pruning, so their bare absence is not work and
-          // must not fall back to a mutable typed reaction terminal.
-          continue;
-        }
-        if ((exactReady == null && exactTerminal == null) ||
-            outcomeProducerKind == null ||
-            eventKey == null) {
-          throw const DirectNotificationDisplayStateUnavailableException();
-        }
-        final eventId = exactReady != null
-            ? exactReady.eventId
-            : exactTerminal!.eventId;
-        final eventKind = exactReady != null
-            ? exactReady.eventKind
-            : exactTerminal!.eventKind;
-        final expectedRevision = exactReady?.revision;
-        final expectedPeerId = exactReady != null
-            ? exactReady.peerId
-            : exactTerminal!.peerId;
-        final expectedMessageId = exactReady != null
-            ? exactReady.messageId
-            : exactTerminal!.messageId;
-        final expectedActorPeerId = exactReady != null
-            ? exactReady.actorPeerId
-            : exactTerminal!.actorPeerId;
-        final expectedEventTimestamp = exactReady != null
-            ? exactReady.eventTimestamp
-            : exactTerminal!.eventTimestamp;
-        final expectedReactionId = exactReady != null
-            ? exactReady.reactionId
-            : exactTerminal!.reactionId;
-        final expectedReactionAction = exactReady != null
-            ? exactReady.reactionAction
-            : exactTerminal!.reactionAction;
-        final expectedReactionTombstone = exactReady != null
-            ? exactReady.reactionTombstone
-            : exactTerminal!.reactionTombstone;
-        if (record.effectPhase == LocalNotificationEffectPhase.effectTerminal) {
-          final outcomeCategory = switch (record.presentationState) {
-            LocalNotificationPresentationState.osPosted =>
-              NotificationCompletedOutcomeCategory.osPosted,
-            LocalNotificationPresentationState.inChat =>
-              NotificationCompletedOutcomeCategory.inChat,
-            LocalNotificationPresentationState.notEvaluated ||
-            LocalNotificationPresentationState.suppressedPolicy ||
-            LocalNotificationPresentationState.cancelled => null,
-          };
-          final outcome =
-              !kWakeOutcomeCoordinatorAdmissionEnabled ||
-                  outcomeCategory == null
-              ? null
-              : NotificationCompletedOutcomeCandidate(
-                  physicalPeerId: physicalPeerId,
-                  producerKind: outcomeProducerKind,
-                  eventKey: eventKey,
-                  outcome: outcomeCategory,
-                  completedAt: DateTime.parse(record.terminalAtUtc!).toUtc(),
-                );
-          final handoff =
-              await dbHandoffDirectNotificationDisplayOutboxEntryIfExact(
-                db,
-                eventId: eventId,
-                expectedRevision: expectedRevision,
-                expectedEventKind: eventKind,
-                expectedPeerId: expectedPeerId,
-                expectedMessageId: expectedMessageId,
-                expectedActorPeerId: expectedActorPeerId,
-                expectedEventTimestamp: expectedEventTimestamp,
-                expectedReactionId: expectedReactionId,
-                expectedReactionAction: expectedReactionAction,
-                expectedReactionTombstone: expectedReactionTombstone,
-                completedAt: record.terminalAtUtc!,
-                outcome: outcome,
-              );
-          if (handoff ==
-              DurableLocalNotificationSqlHandoffResult.retryableMismatch) {
-            throw const DirectNotificationDisplayRetryableException();
-          }
-          final settled = await registry.settleSqlReadyEffect(
-            currentOpaqueBinding: binding,
-            eventCorrelation: record.eventCorrelation,
-            expectedRevision: record.revision,
-          );
-          if (settled == null) {
-            throw const DirectNotificationDisplayRetryableException();
-          }
-        }
-        if (!await dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(
-          db,
-          eventId: eventId,
-          expectedRevision: expectedRevision,
-          expectedEventKind: eventKind,
-          expectedPeerId: expectedPeerId,
-          expectedMessageId: expectedMessageId,
-          expectedActorPeerId: expectedActorPeerId,
-          expectedEventTimestamp: expectedEventTimestamp,
-          expectedReactionId: expectedReactionId,
-          expectedReactionAction: expectedReactionAction,
-          expectedReactionTombstone: expectedReactionTombstone,
-        )) {
-          throw const DirectNotificationDisplayRetryableException();
-        }
-        await notifyDirectDurablePostHandoff(
-          DurableLocalNotificationEffectReceipt(
-            eventCorrelation: record.eventCorrelation,
-            recordRevision: record.revision,
-            presentationState: record.presentationState,
-          ),
-        );
-      }
-    }
-
-    Future<DirectNotificationCanonicalContentDecision>
-    resolveDirectCanonicalContent(
-      String peerId,
-      ConversationNotificationContentMetadata metadata,
-    ) async {
-      final eventIdentity = metadata.eventIdentity?.trim();
-      if (eventIdentity == null || eventIdentity.isEmpty) {
-        return DirectNotificationCanonicalContentDecision.unknown;
-      }
-      if (!await directPeerAllowsNotification(peerId)) {
-        return DirectNotificationCanonicalContentDecision.retire;
-      }
-      switch (metadata.kind) {
-        case ConversationNotificationContentKind.message:
-          final message = await messageRepository.getMessage(eventIdentity);
-          if (message == null) {
-            final acknowledgement =
-                await directNotificationReadAcknowledgementRepository.loadExact(
-                  peerId: peerId,
-                  contentKind: 'message',
-                  eventIdentity: eventIdentity,
-                  generation: metadata.generation,
-                );
-            return acknowledgement == null
-                ? DirectNotificationCanonicalContentDecision.unknown
-                : DirectNotificationCanonicalContentDecision.retire;
-          }
-          return message.contactPeerId == peerId &&
-                  message.isIncoming &&
-                  message.readAt == null &&
-                  !message.isDeleted &&
-                  message.hiddenAt == null &&
-                  // 355: a consumed or expired private parent is terminal, so
-                  // its canonical card must be retired like a deleted one.
-                  !message.privateMediaState.isTerminal
-              ? DirectNotificationCanonicalContentDecision.keep
-              : DirectNotificationCanonicalContentDecision.retire;
-        case ConversationNotificationContentKind.reaction:
-          final terminal = await directNotificationReactionTerminalRepository
-              .loadByTerminalEvent(
-                peerId: peerId,
-                terminalEventId: eventIdentity,
-              );
-          if (terminal == null) {
-            final acknowledgement =
-                await directNotificationReadAcknowledgementRepository.loadExact(
-                  peerId: peerId,
-                  contentKind: 'reaction',
-                  eventIdentity: eventIdentity,
-                  generation: metadata.generation,
-                );
-            return acknowledgement == null
-                ? DirectNotificationCanonicalContentDecision.unknown
-                : DirectNotificationCanonicalContentDecision.retire;
-          }
-          if (terminal.notificationAcknowledgedAt != null) {
-            return DirectNotificationCanonicalContentDecision.retire;
-          }
-          final target = await messageRepository.getMessage(terminal.messageId);
-          final reaction = await reactionRepository
-              .getReactionForSenderIncludingRemoved(
-                messageId: terminal.messageId,
-                senderPeerId: terminal.actorPeerId,
-              );
-          return target != null &&
-                  target.contactPeerId == peerId &&
-                  !target.isIncoming &&
-                  !target.isDeleted &&
-                  reaction != null &&
-                  !reaction.isRemoved &&
-                  reaction.id == terminal.reactionId
-              ? DirectNotificationCanonicalContentDecision.keep
-              : DirectNotificationCanonicalContentDecision.retire;
-      }
-    }
-
-    Future<CanonicalConversationNotificationReplacement?>
-    loadDirectCanonicalReplacement(
-      String peerId,
-      ConversationNotificationContentMetadata currentMetadata,
-    ) async {
-      final contact = await contactRepository.getContact(peerId);
-      if (contact == null || contact.isBlocked || contact.isArchived) {
-        return null;
-      }
-      final messages = await messageRepository.getMessagesForContact(peerId);
-      final unread =
-          messages
-              .where(
-                (message) =>
-                    message.isIncoming &&
-                    message.readAt == null &&
-                    !message.isDeleted &&
-                    message.hiddenAt == null,
-              )
-              .toList(growable: false)
-            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      if (unread.isNotEmpty) {
-        final message = unread.first;
-        return CanonicalConversationNotificationReplacement(
-          senderUsername: contact.username,
-          messageText: notificationBodyForMessage(
-            message.text,
-            message.media,
-            privateMediaPolicy: message.privateMediaPolicy,
-          ),
-          routePayload: NotificationRouteTarget.conversation(
-            peerId,
-            messageId: message.id,
-          ).toPayload(),
-          contentKind: ConversationNotificationContentKind.message,
-          eventIdentity: message.id,
-          snapshot: await loadDirectConversationNotificationSnapshot(
-            messageRepository: messageRepository,
-            contactPeerId: peerId,
-            mediaAttachmentRepository: mediaAttachmentRepository,
-            pendingNotificationOverlay:
-                pendingNotificationOverlayBindingPublisher,
-          ),
-        );
-      }
-      if (currentMetadata.kind ==
-          ConversationNotificationContentKind.reaction) {
-        final eventIdentity = currentMetadata.eventIdentity?.trim();
-        if (eventIdentity == null || eventIdentity.isEmpty) return null;
-        final terminal = await directNotificationReactionTerminalRepository
-            .loadByTerminalEvent(
-              peerId: peerId,
-              terminalEventId: eventIdentity,
-            );
-        if (terminal == null || terminal.notificationAcknowledgedAt != null) {
-          return null;
-        }
-        final reaction = await reactionRepository
-            .getReactionForSenderIncludingRemoved(
-              messageId: terminal.messageId,
-              senderPeerId: terminal.actorPeerId,
-            );
-        if (reaction == null ||
-            reaction.isRemoved ||
-            reaction.id != terminal.reactionId) {
-          return null;
-        }
-        return CanonicalConversationNotificationReplacement(
-          senderUsername: contact.username,
-          messageText: 'Reacted ${reaction.emoji} to your message',
-          routePayload: NotificationRouteTarget.conversation(
-            peerId,
-            messageId: terminal.messageId,
-          ).toPayload(),
-          contentKind: ConversationNotificationContentKind.reaction,
-          eventIdentity: terminal.terminalEventId,
-          snapshot: await loadDirectConversationNotificationSnapshot(
-            messageRepository: messageRepository,
-            contactPeerId: peerId,
-            mediaAttachmentRepository: mediaAttachmentRepository,
-            pendingNotificationOverlay:
-                pendingNotificationOverlayBindingPublisher,
-          ),
-        );
-      }
-      return null;
-    }
-
-    final directCanonicalReconciler = DirectNotificationCanonicalReconciler(
-      coordinator: directNotificationPresentationCoordinator,
-      generationCancellation: notificationService,
-      generationReplacement: notificationService,
-      isCurrentContentCanonical: resolveDirectCanonicalContent,
-      loadReplacement: loadDirectCanonicalReplacement,
-    );
-    directNotificationOwner = DirectNotificationProjectionOwner(
-      displayOutbox: directNotificationDisplayOutboxRepository,
-      reconciliationOutbox: directNotificationReconciliationOutboxRepository,
-      reactionTerminal: directNotificationReactionTerminalRepository,
-      coordinator: directNotificationPresentationCoordinator,
-      canonicalReconciler: directCanonicalReconciler,
-      resolveCompletedOutcomePhysicalPeerId:
-          resolveCompletedOutcomePhysicalPeerId,
-      completedOutcomeProducerEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
-      durableLocalNotificationEffectRegistry: durableNotificationIdRegistry,
-      completeDurableSqlHandoff: (entry, outcome, _) async {
-        final handoff =
-            await dbHandoffDirectNotificationDisplayOutboxEntryIfExact(
-              db,
-              eventId: entry.eventId,
-              expectedRevision: entry.revision,
-              expectedEventKind: entry.eventKind,
-              expectedPeerId: entry.peerId,
-              expectedMessageId: entry.messageId,
-              expectedActorPeerId: entry.actorPeerId,
-              expectedEventTimestamp: entry.eventTimestamp,
-              expectedReactionId: entry.reactionId,
-              expectedReactionAction: entry.reactionAction,
-              expectedReactionTombstone: entry.reactionTombstone,
-              completedAt: DateTime.now().toUtc().toIso8601String(),
-              outcome: outcome,
-            );
-        if (handoff !=
-                DurableLocalNotificationSqlHandoffResult.retryableMismatch &&
-            outcome != null) {
-          kickNotificationCompletedOutcomeDrain();
-        }
-        return handoff;
-      },
-      afterDurableSettlement: (_, authority) =>
-          notifyDirectDurablePostHandoff(authority.receipt),
-      enqueueReconciliation: (peerId) =>
-          dbEnqueueDirectNotificationReconciliationOutbox(db, peerId: peerId),
-      recoverCommittedDurableEffects:
-          recoverCommittedDirectNotificationDurableEffects,
-      projectDisplay: (entry) async {
-        var terminalEntry = entry;
-        DirectNotificationDurableEffectAttempt? durableAttempt;
-        if (durableNotificationIdRegistry != null) {
-          late final DirectNotificationDurableEffectAttempt? attempt;
-          attempt = DirectNotificationDurableEffectAttempt.tryCreate(
-            entry: entry,
-            currentOpaqueBinding: await canonicalRuntimeBindingCoordinator
-                ?.readCurrentAccountBinding(),
-            physicalPeerId: await resolveCompletedOutcomePhysicalPeerId(),
-            presentationOwner: LocalNotificationPresentationOwner.mainApp,
-            readFinalCanonicalDisposition: () =>
-                readFinalDirectNotificationDisposition(
-                  entry,
-                  onExactReady: (current) => terminalEntry = current,
-                  durableEventCorrelation: attempt?.context.eventCorrelation,
-                ),
-          );
-          durableAttempt = attempt;
-        }
-        if (durableNotificationIdRegistry != null && durableAttempt == null) {
-          throw const DirectNotificationDisplayStateUnavailableException();
-        }
-        if (entry.hasCanonicalRetirementProof) {
-          if (durableAttempt == null) return null;
-          // A repaired v107 delete trigger can outlive both the contact and
-          // canonical content row. Re-enter only the durable final barrier
-          // with identifier-only copy. The final evaluator must re-read the
-          // exact marked READY revision; if the marker changed, this is
-          // retryable and the dummy copy can never reach native publication.
-          final presentation = await maybeShowNotification(
+    final directProjectionComposition =
+        buildProductionCanonicalDirectProjectionComposition(
+          ProductionCanonicalDirectProjectionDependencies(
+            database: db,
             notificationService: notificationService,
             appVisibility: appVisibilityAuthority,
-            contactPeerId: entry.peerId,
-            routePayload: NotificationRouteTarget.conversation(
-              entry.peerId,
-              messageId: entry.messageId,
-            ).toPayload(),
-            senderUsername: '',
-            messageText: '',
-            messageId: entry.messageId,
-            notificationEventIdentity: entry.eventId,
-            notificationEventType:
-                entry.eventKind == DirectNotificationDisplayOutboxKind.reaction
-                ? 'message_reaction'
-                : 'new_message',
-            backgroundDuplicateGuardDelay: Duration.zero,
-            durableEffectContext: durableAttempt.context,
-          );
-          return finishDirectNotificationProjection(
-            presentation: presentation,
-            durableAttempt: durableAttempt,
-            sqlReadyRevision: terminalEntry.revision,
-          );
-        }
-        final contact = await contactRepository.getContact(entry.peerId);
-        if (contact == null) {
-          throw const DirectNotificationDisplayStateUnavailableException();
-        }
-        if (durableAttempt == null &&
-            (contact.isBlocked || contact.isArchived)) {
-          return null;
-        }
-        switch (entry.eventKind) {
-          case DirectNotificationDisplayOutboxKind.message:
-            final message = await messageRepository.getMessage(entry.messageId);
-            if (message == null) {
-              throw const DirectNotificationDisplayStateUnavailableException();
-            }
-            final messageIsIneligible =
-                message.contactPeerId != entry.peerId ||
-                message.senderPeerId != entry.actorPeerId ||
-                message.timestamp != entry.eventTimestamp ||
-                !message.isIncoming ||
-                message.readAt != null ||
-                message.isDeleted ||
-                message.hiddenAt != null ||
-                // 355: consumption and expiry are terminal too. Showing a card
-                // for private media the user can no longer open is the same
-                // defect as showing one for deleted or hidden content.
-                message.privateMediaState.isTerminal;
-            if (messageIsIneligible && durableAttempt == null) {
-              return null;
-            }
-            final presentation = await maybeShowNotification(
-              notificationService: notificationService,
-              appVisibility: appVisibilityAuthority,
-              contactPeerId: entry.peerId,
-              routePayload: NotificationRouteTarget.conversation(
-                entry.peerId,
-                messageId: entry.messageId,
-              ).toPayload(),
-              senderUsername: contact.username,
-              messageText: notificationBodyForMessage(
-                message.text,
-                message.media,
-                privateMediaPolicy: message.privateMediaPolicy,
-              ),
-              messageId: entry.messageId,
-              notificationEventIdentity: entry.eventId,
-              notificationEventType: 'new_message',
-              toneTracker: notificationToneTracker,
-              durableNotificationCoordinatorResolver: () async =>
-                  durableReactionNotificationCoordinator,
-              loadConversationNotificationSnapshot: () =>
-                  loadDirectConversationNotificationSnapshot(
-                    messageRepository: messageRepository,
-                    contactPeerId: entry.peerId,
-                    mediaAttachmentRepository: mediaAttachmentRepository,
-                    pendingNotificationOverlay:
-                        pendingNotificationOverlayBindingPublisher,
-                  ),
-              consumeRecentRemoteNotificationAnnouncement:
-                  ({required payload, String? messageId}) =>
-                      recentRemoteNotificationGate.consumeIfRecentAnnouncement(
-                        payload: payload,
-                        messageId: messageId,
-                      ),
-              markRecentRemoteNotificationAnnouncement:
-                  ({required payload, String? messageId}) =>
-                      recentRemoteNotificationGate.markAnnouncement(
-                        payload: payload,
-                        messageId: messageId,
-                      ),
-              durableEffectContext: durableAttempt?.context,
-            );
-            return finishDirectNotificationProjection(
-              presentation: presentation,
-              durableAttempt: durableAttempt,
-              sqlReadyRevision: terminalEntry.revision,
-            );
-          case DirectNotificationDisplayOutboxKind.reaction:
-            final target = await messageRepository.getMessage(entry.messageId);
-            final reaction = await reactionRepository
-                .getReactionForSenderIncludingRemoved(
-                  messageId: entry.messageId,
-                  senderPeerId: entry.actorPeerId,
-                );
-            if (target == null || reaction == null) {
-              throw const DirectNotificationDisplayStateUnavailableException();
-            }
-            final reactionIsIneligible =
-                !directReactionTargetAllowsNotificationDisplay(
-                  target: target,
-                  expectedContactPeerId: entry.peerId,
-                ) ||
-                reaction.isRemoved ||
-                reaction.id != entry.reactionId ||
-                reaction.timestamp != entry.eventTimestamp;
-            if (reactionIsIneligible && durableAttempt == null) {
-              return null;
-            }
-            final presentation = await maybeShowNotification(
-              notificationService: notificationService,
-              appVisibility: appVisibilityAuthority,
-              contactPeerId: entry.peerId,
-              routePayload: NotificationRouteTarget.conversation(
-                entry.peerId,
-                messageId: entry.messageId,
-              ).toPayload(),
-              senderUsername: contact.username,
-              messageText: 'Reacted ${reaction.emoji} to your message',
-              messageId: entry.reactionId,
-              notificationEventIdentity: entry.eventId,
-              notificationEventType: 'message_reaction',
-              toneTracker: notificationToneTracker,
-              durableNotificationCoordinatorResolver: () async =>
-                  durableReactionNotificationCoordinator,
-              loadConversationNotificationSnapshot: () =>
-                  loadDirectConversationNotificationSnapshot(
-                    messageRepository: messageRepository,
-                    contactPeerId: entry.peerId,
-                    mediaAttachmentRepository: mediaAttachmentRepository,
-                    pendingNotificationOverlay:
-                        pendingNotificationOverlayBindingPublisher,
-                  ),
-              consumeRecentRemoteNotificationAnnouncement:
-                  ({required payload, String? messageId}) =>
-                      recentRemoteNotificationGate.consumeIfRecentAnnouncement(
-                        payload: payload,
-                        messageId: messageId,
-                      ),
-              markRecentRemoteNotificationAnnouncement:
-                  ({required payload, String? messageId}) =>
-                      recentRemoteNotificationGate.markAnnouncement(
-                        payload: payload,
-                        messageId: messageId,
-                      ),
-              durableEffectContext: durableAttempt?.context,
-            );
-            return finishDirectNotificationProjection(
-              presentation: presentation,
-              durableAttempt: durableAttempt,
-              sqlReadyRevision: terminalEntry.revision,
-            );
-          default:
-            return null;
-        }
-      },
-    );
+            contactRepository: contactRepository,
+            messageRepository: messageRepository,
+            reactionRepository: reactionRepository,
+            mediaAttachmentRepository: mediaAttachmentRepository,
+            displayOutbox: directNotificationDisplayOutboxRepository,
+            reconciliationOutbox:
+                directNotificationReconciliationOutboxRepository,
+            reactionTerminal: directNotificationReactionTerminalRepository,
+            readAcknowledgement:
+                directNotificationReadAcknowledgementRepository,
+            durableRegistry: durableNotificationIdRegistry,
+            readCurrentOpaqueBinding: () async =>
+                canonicalRuntimeBindingCoordinator?.readCurrentAccountBinding(),
+            resolvePhysicalPeerId: resolveCompletedOutcomePhysicalPeerId,
+            presentationOwner: LocalNotificationPresentationOwner.mainApp,
+            completedOutcomeProducerEnabled:
+                kWakeOutcomeCoordinatorAdmissionEnabled,
+            notificationToneTracker: notificationToneTracker,
+            durableNotificationCoordinatorResolver: () async =>
+                durableReactionNotificationCoordinator,
+            pendingNotificationOverlay:
+                pendingNotificationOverlayBindingPublisher,
+            kickCompletedOutcomeDrain: kickNotificationCompletedOutcomeDrain,
+          ),
+        );
+    directNotificationOwner = directProjectionComposition.owner;
+    projectDirectConversationRead =
+        directProjectionComposition.readProjector.markConversationRead;
+
     final appShellController = AppShellController();
     final pendingPostTargetStore = PendingPostTargetStore();
 
@@ -9000,173 +8069,19 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           ),
     );
 
-    Future<ProtectedGroupContentAuthority?> loadProtectedContentAuthority(
-      String groupId,
-      GroupContentAuthorityVersion version,
-    ) {
-      return loadProtectedGroupContentAuthorityFromHistory(
-        groupId: groupId,
-        version: version,
-        loadExact: ({required groupId, required phase, required eventId}) =>
-            loadAuthenticatedGroupAuthorityProofFromEventLog(
-              loadRow: ({required groupId, required sourceEventId}) =>
-                  dbLoadGroupEventLogEntryExact(
-                    db,
-                    groupId: groupId,
-                    sourceEventId: sourceEventId,
-                  ),
-              groupId: groupId,
-              phase: phase,
-              eventId: eventId,
-              verify:
-                  ({required publicKey, required data, required signature}) =>
-                      callVerifyPayload(
-                        bridge: bridge,
-                        publicKey: publicKey,
-                        data: data,
-                        signature: signature,
-                      ),
-            ),
-        loadCompleteRows:
-            ({
-              required groupId,
-              required eventType,
-              afterSourceTimestamp,
-              afterSourceEventId,
-              throughSourceTimestamp,
-              required limit,
-            }) => dbLoadGroupEventLogTypePage(
-              db,
-              groupId: groupId,
-              eventType: eventType,
-              afterSourceTimestamp: afterSourceTimestamp,
-              afterSourceEventId: afterSourceEventId,
-              throughSourceTimestamp: throughSourceTimestamp,
-              newestFirst: true,
-              limit: limit,
-            ),
-        loadGenesisRows:
-            ({
-              required groupId,
-              required eventType,
-              afterSourceTimestamp,
-              afterSourceEventId,
-              throughSourceTimestamp,
-              required limit,
-            }) => dbLoadGroupEventLogTypePage(
-              db,
-              groupId: groupId,
-              eventType: eventType,
-              afterSourceTimestamp: afterSourceTimestamp,
-              afterSourceEventId: afterSourceEventId,
-              throughSourceTimestamp: throughSourceTimestamp,
-              newestFirst: true,
-              limit: limit,
-            ),
-        verify: ({required publicKey, required data, required signature}) =>
-            callVerifyPayload(
-              bridge: bridge,
-              publicKey: publicKey,
-              data: data,
-              signature: signature,
-            ),
-      );
-    }
+    final protectedGroupAuthoritySupport =
+        ProductionCanonicalProtectedGroupAuthoritySupport(
+          database: db,
+          bridge: bridge,
+          groupRepository: groupRepository,
+        );
 
     Future<bool> reconcileCompletedContentAuthority(
       AuthenticatedGroupAuthorityProof authority, {
       bool allowDominatingProjection = false,
-    }) => runGroupAuthorityPhaseIfNeeded(
-      groupId: authority.groupId,
-      authorityPhaseHeld: isGroupAuthorityPhaseHeld(authority.groupId),
-      action: () => reconcileProtectedGroupContentForAuthority(
-        db: db,
-        groupRepository: groupRepository,
-        authority: authority,
-        allowDominatingProjection: allowDominatingProjection,
-        terminalizePreparedContent:
-            ({
-              required txn,
-              required groupId,
-              required payloadType,
-              required contentEventId,
-              required ownerKind,
-              required ownerId,
-              required eventPayload,
-              required terminalSourcePeerId,
-              required terminalSourceEventId,
-              required terminalSourceTimestamp,
-              required terminalEventPayload,
-            }) async {
-              if (ownerId != contentEventId) return false;
-              if (payloadType == groupOfflineReplayPayloadTypeMessage &&
-                  ownerKind == 'group_message') {
-                final rows = await txn.query(
-                  'group_messages',
-                  where: 'id = ? AND group_id = ?',
-                  whereArgs: <Object?>[ownerId, groupId],
-                  limit: 1,
-                );
-                return rows.isNotEmpty &&
-                    await dbTerminalizePreparedLocalGroupContentMessageIfExactInTransaction(
-                      txn,
-                      expected: rows.single,
-                      preparedEventPayload: eventPayload,
-                      terminalSourcePeerId: terminalSourcePeerId,
-                      terminalSourceEventId: terminalSourceEventId,
-                      terminalSourceTimestamp: terminalSourceTimestamp,
-                      terminalEventPayload: terminalEventPayload,
-                    );
-              }
-              if (payloadType == groupOfflineReplayPayloadTypeReaction &&
-                  ownerKind == 'group_reaction') {
-                final rows = await txn.query(
-                  'group_reaction_replay_outbox',
-                  where: 'reaction_id = ? AND group_id = ?',
-                  whereArgs: <Object?>[ownerId, groupId],
-                  limit: 1,
-                );
-                return rows.isNotEmpty &&
-                    await dbTerminalizePreparedLocalGroupReactionIfExactInTransaction(
-                      txn,
-                      expected: rows.single,
-                      preparedEventPayload: eventPayload,
-                      terminalSourcePeerId: terminalSourcePeerId,
-                      terminalSourceEventId: terminalSourceEventId,
-                      terminalSourceTimestamp: terminalSourceTimestamp,
-                      terminalEventPayload: terminalEventPayload,
-                    );
-              }
-              return false;
-            },
-        validateHistoricalAuthority:
-            ({
-              required groupId,
-              required payloadType,
-              required contentEventId,
-              required eventAt,
-              required authorityVersion,
-              required logicalSenderPeerId,
-              required senderDeviceId,
-              required senderTransportPeerId,
-              required senderPublicKey,
-            }) async {
-              final historical = await loadProtectedContentAuthority(
-                groupId,
-                authorityVersion,
-              );
-              return historical?.authorizesHistoricalContent(
-                    payloadType: payloadType,
-                    contentEventId: contentEventId,
-                    eventAt: eventAt,
-                    logicalSenderPeerId: logicalSenderPeerId,
-                    senderDeviceId: senderDeviceId,
-                    senderTransportPeerId: senderTransportPeerId,
-                    senderPublicKey: senderPublicKey,
-                  ) ==
-                  true;
-            },
-      ),
+    }) => protectedGroupAuthoritySupport.reconcileCompletedContentAuthority(
+      authority,
+      allowDominatingProjection: allowDominatingProjection,
     );
 
     // Local producers may commit authority COMPLETE atomically with their
@@ -9178,83 +8093,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       reconcileCompletedContentAuthority,
     );
 
-    Future<bool> hasUnfinishedProtectedContentAuthority(String groupId) async {
-      return hasPendingProtectedGroupContentAuthority(
-        groupId: groupId,
-        loadPreparedPage:
-            ({afterSourceTimestamp, afterSourceEventId, required limit}) =>
-                loadAuthenticatedGroupAuthorityProofPage(
-                  loadRows:
-                      ({
-                        required groupId,
-                        required eventType,
-                        afterSourceTimestamp,
-                        afterSourceEventId,
-                        throughSourceTimestamp,
-                        required limit,
-                      }) => dbLoadGroupEventLogTypePage(
-                        db,
-                        groupId: groupId,
-                        eventType: eventType,
-                        afterSourceTimestamp: afterSourceTimestamp,
-                        afterSourceEventId: afterSourceEventId,
-                        throughSourceTimestamp: throughSourceTimestamp,
-                        newestFirst: true,
-                        limit: limit,
-                      ),
-                  groupId: groupId,
-                  phase: AuthenticatedGroupAuthorityPhase.prepared,
-                  verify:
-                      ({
-                        required publicKey,
-                        required data,
-                        required signature,
-                      }) => callVerifyPayload(
-                        bridge: bridge,
-                        publicKey: publicKey,
-                        data: data,
-                        signature: signature,
-                      ),
-                  afterSourceTimestamp: afterSourceTimestamp,
-                  afterSourceEventId: afterSourceEventId,
-                  limit: limit,
-                ),
-        loadExactPhase: ({required phase, required eventId}) =>
-            loadAuthenticatedGroupAuthorityProofFromEventLog(
-              loadRow: ({required groupId, required sourceEventId}) =>
-                  dbLoadGroupEventLogEntryExact(
-                    db,
-                    groupId: groupId,
-                    sourceEventId: sourceEventId,
-                  ),
-              groupId: groupId,
-              phase: phase,
-              eventId: eventId,
-              verify:
-                  ({required publicKey, required data, required signature}) =>
-                      callVerifyPayload(
-                        bridge: bridge,
-                        publicKey: publicKey,
-                        data: data,
-                        signature: signature,
-                      ),
-            ),
-        loadReconciliationRow: (authorityEventId) =>
-            dbLoadGroupEventLogEntryExact(
-              db,
-              groupId: groupId,
-              sourceEventId:
-                  protectedGroupContentReconciliationCompleteSourceEventId(
-                    authorityEventId,
-                  ),
-            ),
-        repairCompletedAuthority: (authority) =>
-            reconcileCompletedContentAuthority(
-              authority,
-              allowDominatingProjection: true,
-            ),
-      );
-    }
+    Future<bool> hasUnfinishedProtectedContentAuthority(String groupId) =>
+        protectedGroupAuthoritySupport.hasUnfinishedContentAuthority(groupId);
 
     Future<ProtectedGroupContentRetryAuthorityDisposition>
     classifyStrictGroupContentRetryAuthority({
@@ -9506,448 +8346,24 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // 363/364: the protected P2P coordinator owns stage-before-handler and
     // handler-before-ACK. Installing this callback does not start group topic,
     // history, invite, notification, or content listeners on a linked role.
-    p2pService.setProtectedGroupReplayHandler((message) async {
-      final identity = await repository.loadIdentity();
-      if (identity == null ||
-          identity.mlKemPublicKey == null ||
-          identity.mlKemSecretKey == null) {
-        return (
-          disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
-          reasonCode: 'linked_identity_unavailable',
-          reasonDetail: null,
-        );
-      }
-      final authority = await linkedInstallationAuthority.load(
-        expectedAccountPeerId: identity.peerId,
-      );
-      Map<String, dynamic>? contentOuter;
-      try {
-        final decoded = jsonDecode(message.content);
-        if (decoded is Map) {
-          contentOuter = Map<String, dynamic>.from(decoded);
-        }
-      } catch (_) {
-        contentOuter = null;
-      }
-      final contentWireClassification = classifyProtectedGroupContentWire(
-        message.content,
-      );
-      if (contentWireClassification !=
-          ProtectedGroupContentWireClassification.unrelated) {
-        final contentGroupId = contentOuter?['groupId'];
-        if (contentGroupId is String &&
-            contentGroupId.isNotEmpty &&
-            await hasUnfinishedProtectedContentAuthority(contentGroupId)) {
-          return (
-            disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
-            reasonCode: 'authority_reconciliation_pending',
-            reasonDetail: null,
-          );
-        }
-        final localTransportPeerId = authority.isActiveLinkedSecondary
-            ? authority.credential!.transportPeerId
-            : identity.peerId;
-        final result = await handleProtectedGroupContentReplay(
+    final protectedGroupReplay =
+        ProductionCanonicalProtectedGroupReplayComposition(
+          database: db,
           bridge: bridge,
           groupRepository: groupRepository,
-          message: message,
-          localLogicalPeerId: identity.peerId,
-          localTransportPeerId: localTransportPeerId,
-          loadAuthority: loadProtectedContentAuthority,
-          hasPendingAuthority: hasUnfinishedProtectedContentAuthority,
-          hasTerminal:
-              ({
-                required groupId,
-                required payloadType,
-                required contentEventId,
-              }) => hasProtectedGroupContentTerminalEvidence(
-                groupId: groupId,
-                payloadType: payloadType,
-                contentEventId: contentEventId,
-                loadRows:
-                    ({
-                      required groupId,
-                      required eventType,
-                      afterSourceTimestamp,
-                      afterSourceEventId,
-                      throughSourceTimestamp,
-                      required limit,
-                    }) => dbLoadGroupEventLogTypePage(
-                      db,
-                      groupId: groupId,
-                      eventType: eventType,
-                      afterSourceTimestamp: afterSourceTimestamp,
-                      afterSourceEventId: afterSourceEventId,
-                      throughSourceTimestamp: throughSourceTimestamp,
-                      newestFirst: true,
-                      limit: limit,
-                    ),
+          groupMessageListener: groupMessageListener,
+          groupKeyUpdateListener: groupKeyUpdateListener,
+          authoritySupport: protectedGroupAuthoritySupport,
+          loadIdentity: repository.loadIdentity,
+          loadLinkedAuthority: (expectedAccountPeerId) =>
+              linkedInstallationAuthority.load(
+                expectedAccountPeerId: expectedAccountPeerId,
               ),
-          commitMessage:
-              ({
-                required groupId,
-                required sourcePeerId,
-                required sourceEventId,
-                required sourceTimestamp,
-                required eventPayload,
-                required messageRow,
-                required mediaAttachmentRows,
-                required incomingMediaCustodyRows,
-                readyDisplayOutboxRow,
-              }) => dbCommitProtectedGroupMessage(
-                db,
-                groupId: groupId,
-                sourcePeerId: sourcePeerId,
-                sourceEventId: sourceEventId,
-                sourceTimestamp: sourceTimestamp,
-                eventPayload: eventPayload,
-                messageRow: messageRow,
-                mediaAttachmentRows: mediaAttachmentRows,
-                incomingMediaCustodyRows: incomingMediaCustodyRows,
-                readyDisplayOutboxRow: readyDisplayOutboxRow,
-              ),
-          commitReaction:
-              ({
-                required groupId,
-                required sourcePeerId,
-                required sourceEventId,
-                required sourceTimestamp,
-                required eventPayload,
-                required reactionRow,
-                required transitionId,
-                required action,
-                readyDisplayOutboxRow,
-              }) => dbCommitProtectedGroupReaction(
-                db,
-                groupId: groupId,
-                sourcePeerId: sourcePeerId,
-                sourceEventId: sourceEventId,
-                sourceTimestamp: sourceTimestamp,
-                eventPayload: eventPayload,
-                reactionRow: reactionRow,
-                transitionId: transitionId,
-                action: action,
-                readyDisplayOutboxRow: readyDisplayOutboxRow,
-              ),
-          commitTerminal:
-              ({
-                required groupId,
-                required sourcePeerId,
-                required sourceEventId,
-                required sourceTimestamp,
-                required eventPayload,
-              }) => dbCommitProtectedGroupContentTerminal(
-                db,
-                groupId: groupId,
-                sourcePeerId: sourcePeerId,
-                sourceEventId: sourceEventId,
-                sourceTimestamp: sourceTimestamp,
-                eventPayload: eventPayload,
-              ),
-          resolveReactionTarget: (groupId, messageId) =>
-              dbClassifyProtectedGroupReactionTargetWithEvidence(
-                db,
-                groupId: groupId,
-                messageId: messageId,
-              ),
-          buildMessageDisplayRow:
-              groupMessageListener.buildProtectedMessageDisplayReadyRow,
-          buildReactionDisplayRow:
-              groupMessageListener.buildProtectedReactionDisplayReadyRow,
-          publishMessage: groupMessageListener.publishProtectedGroupMessage,
-          publishReaction:
-              groupMessageListener.publishProtectedGroupReactionChange,
+          applySystemAuthorityReplay: applyLocalProtectedSystemAuthorityReplay,
+          retryPendingKeyRepairs:
+              groupPendingKeyRepairRunner.retryPendingRepairsForRequest,
         );
-        return switch (result.disposition) {
-          ProtectedGroupContentApplyDisposition.applied => (
-            disposition: ProtectedGroupReplayDisposition.applied,
-            reasonCode: result.reasonCode,
-            reasonDetail: result.reasonDetail,
-          ),
-          ProtectedGroupContentApplyDisposition.exactDuplicate => (
-            disposition: ProtectedGroupReplayDisposition.duplicate,
-            reasonCode: result.reasonCode,
-            reasonDetail: result.reasonDetail,
-          ),
-          ProtectedGroupContentApplyDisposition.terminalReject => (
-            disposition: ProtectedGroupReplayDisposition.terminalRejected,
-            reasonCode: result.reasonCode,
-            reasonDetail: result.reasonDetail,
-          ),
-          ProtectedGroupContentApplyDisposition.unverifiedReject => (
-            disposition: ProtectedGroupReplayDisposition.unverifiedRejected,
-            reasonCode: result.reasonCode,
-            reasonDetail: result.reasonDetail,
-          ),
-          ProtectedGroupContentApplyDisposition.prerequisiteWaiting => (
-            disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
-            reasonCode: result.reasonCode,
-            reasonDetail: result.reasonDetail,
-          ),
-          ProtectedGroupContentApplyDisposition.retryableFailure => (
-            disposition: ProtectedGroupReplayDisposition.retryable,
-            reasonCode: result.reasonCode,
-            reasonDetail: result.reasonDetail,
-          ),
-        };
-      }
-      final envelope = ProtectedGroupEnvelope.tryParse(message.content);
-      if (envelope?.type == linkedGroupBootstrapEnvelopeType) {
-        final result = await handleLinkedGroupBootstrapEnvelope(
-          message: message,
-          linkedAuthority: authority,
-          ownMlKemPublicKey: identity.mlKemPublicKey!,
-          ownMlKemSecretKey: identity.mlKemSecretKey!,
-          groupRepository: groupRepository,
-          callDecrypt:
-              ({
-                required ownMlKemSecretKey,
-                required kem,
-                required ciphertext,
-                required nonce,
-              }) => callDecryptMessage(
-                bridge: bridge,
-                ownMlKemSecretKey: ownMlKemSecretKey,
-                kem: kem,
-                ciphertext: ciphertext,
-                nonce: nonce,
-              ),
-          callVerify:
-              ({required publicKey, required data, required signature}) =>
-                  callVerifyPayload(
-                    bridge: bridge,
-                    publicKey: publicKey,
-                    data: data,
-                    signature: signature,
-                  ),
-        );
-        return switch (result) {
-          HandleLinkedGroupBootstrapResult.applied => (
-            disposition: ProtectedGroupReplayDisposition.applied,
-            reasonCode: 'bootstrap_applied',
-            reasonDetail: null,
-          ),
-          HandleLinkedGroupBootstrapResult.duplicate => (
-            disposition: ProtectedGroupReplayDisposition.duplicate,
-            reasonCode: 'bootstrap_duplicate',
-            reasonDetail: null,
-          ),
-          HandleLinkedGroupBootstrapResult.terminalRejected => (
-            disposition: ProtectedGroupReplayDisposition.terminalRejected,
-            reasonCode: 'bootstrap_rejected',
-            reasonDetail: null,
-          ),
-          HandleLinkedGroupBootstrapResult.retryable => (
-            disposition: ProtectedGroupReplayDisposition.retryable,
-            reasonCode: 'bootstrap_retryable',
-            reasonDetail: null,
-          ),
-        };
-      }
-      if (envelope?.type != protectedGroupAuthorityEnvelopeType) {
-        return (
-          disposition: ProtectedGroupReplayDisposition.terminalRejected,
-          reasonCode: 'unknown_protected_group_type',
-          reasonDetail: null,
-        );
-      }
-      GroupPendingKeyRepairRetryRequest? deferredKeyRepair;
-      final result = await handleProtectedGroupAuthority(
-        message: message,
-        ownTransportPeerId: authority.isActiveLinkedSecondary
-            ? authority.credential!.transportPeerId
-            : identity.peerId,
-        ownMlKemSecretKey: identity.mlKemSecretKey!,
-        groupRepository: groupRepository,
-        callDecrypt:
-            ({
-              required ownMlKemSecretKey,
-              required kem,
-              required ciphertext,
-              required nonce,
-            }) => callDecryptMessage(
-              bridge: bridge,
-              ownMlKemSecretKey: ownMlKemSecretKey,
-              kem: kem,
-              ciphertext: ciphertext,
-              nonce: nonce,
-            ),
-        callVerify: ({required publicKey, required data, required signature}) =>
-            callVerifyPayload(
-              bridge: bridge,
-              publicKey: publicKey,
-              data: data,
-              signature: signature,
-            ),
-        loadAuthorityProof:
-            ({required groupId, required phase, required eventId}) =>
-                loadAuthenticatedGroupAuthorityProofFromEventLog(
-                  loadRow: ({required groupId, required sourceEventId}) =>
-                      dbLoadGroupEventLogEntryExact(
-                        db,
-                        groupId: groupId,
-                        sourceEventId: sourceEventId,
-                      ),
-                  groupId: groupId,
-                  phase: phase,
-                  eventId: eventId,
-                  verify:
-                      ({
-                        required publicKey,
-                        required data,
-                        required signature,
-                      }) => callVerifyPayload(
-                        bridge: bridge,
-                        publicKey: publicKey,
-                        data: data,
-                        signature: signature,
-                      ),
-                ),
-        appendAuthorityProof: ({required phase, required proof}) async {
-          await dbAppendGroupEventLogEntry(
-            db,
-            groupId: proof.groupId,
-            eventType: phase.eventType,
-            sourcePeerId: proof.actorAccountPeerId,
-            sourceEventId: authenticatedGroupAuthoritySourceEventId(
-              phase,
-              proof.eventId,
-            ),
-            sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
-            payload: authenticatedGroupAuthorityFactPayload(proof),
-          );
-        },
-        applyReplay: (control, replayData, authority) async {
-          try {
-            final strictMembershipReplay =
-                control == ProtectedGroupAuthorityControl.memberAdd ||
-                control == ProtectedGroupAuthorityControl.memberRole ||
-                control == ProtectedGroupAuthorityControl.memberRemove;
-            final before = await protectedGroupAuthorityReplayConverged(
-              control: control,
-              replayData: replayData,
-              groupRepository: groupRepository,
-              requireMembershipVersion: strictMembershipReplay,
-            );
-            if (before == null) {
-              return ProtectedGroupAuthorityApplyResult.rejected;
-            }
-            if (before &&
-                control != ProtectedGroupAuthorityControl.memberConfig) {
-              return ProtectedGroupAuthorityApplyResult.duplicate;
-            }
-            if (control == ProtectedGroupAuthorityControl.groupKeyUpdate) {
-              if (!authority.authorizesKeyReplay(replayData)) {
-                return ProtectedGroupAuthorityApplyResult.rejected;
-              }
-              final content = replayData['content'];
-              final from = replayData['from'];
-              final to = replayData['to'];
-              final timestamp = replayData['timestamp'];
-              if (content is! String ||
-                  from is! String ||
-                  to is! String ||
-                  timestamp is! String) {
-                return ProtectedGroupAuthorityApplyResult.rejected;
-              }
-              await groupKeyUpdateListener.handleAuthenticatedAuthorityEnvelope(
-                ChatMessage(
-                  from: from,
-                  to: to,
-                  content: content,
-                  timestamp: timestamp,
-                  isIncoming: true,
-                ),
-                authority: authority,
-                authorityPhaseHeld: true,
-                deferPendingRepair: (request) {
-                  deferredKeyRepair = request;
-                },
-              );
-            } else if (strictMembershipReplay) {
-              return applyLocalProtectedSystemAuthorityReplay(
-                control,
-                replayData,
-                authority,
-              );
-            } else {
-              await groupMessageListener
-                  .handleAuthenticatedAuthorityReplayEnvelope(
-                    replayData,
-                    authority: authority,
-                    rethrowOnError: true,
-                    membershipPhaseHeld: true,
-                  );
-            }
-            final after = await protectedGroupAuthorityReplayConverged(
-              control: control,
-              replayData: replayData,
-              groupRepository: groupRepository,
-              requireMembershipVersion: strictMembershipReplay,
-              allowDominatingMembershipVersion: strictMembershipReplay,
-            );
-            if (after != true) {
-              return ProtectedGroupAuthorityApplyResult.retryable;
-            }
-            return ProtectedGroupAuthorityApplyResult.applied;
-          } on ProtectedGroupAuthorityReplaySuperseded {
-            return ProtectedGroupAuthorityApplyResult.superseded;
-          } catch (_) {
-            return ProtectedGroupAuthorityApplyResult.retryable;
-          }
-        },
-        reconcileContent: (control, replayData, authority) =>
-            reconcileCompletedContentAuthority(authority.proof),
-      );
-      final pendingRepair = deferredKeyRepair;
-      if (pendingRepair != null &&
-          result == ProtectedGroupAuthorityHandleResult.applied) {
-        try {
-          await groupPendingKeyRepairRunner.retryPendingRepairsForRequest(
-            pendingRepair,
-          );
-        } catch (error) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'PROTECTED_GROUP_KEY_REPAIR_RETRY_ERROR',
-            details: {
-              'groupId': pendingRepair.groupId.length > 8
-                  ? pendingRepair.groupId.substring(0, 8)
-                  : pendingRepair.groupId,
-              'keyEpoch': pendingRepair.keyEpoch,
-              'error': error.toString(),
-            },
-          );
-        }
-      }
-      return switch (result) {
-        ProtectedGroupAuthorityHandleResult.applied => (
-          disposition: ProtectedGroupReplayDisposition.applied,
-          reasonCode: 'authority_applied',
-          reasonDetail: null,
-        ),
-        ProtectedGroupAuthorityHandleResult.duplicate => (
-          disposition: ProtectedGroupReplayDisposition.duplicate,
-          reasonCode: 'authority_duplicate',
-          reasonDetail: null,
-        ),
-        ProtectedGroupAuthorityHandleResult.terminalRejected => (
-          disposition: ProtectedGroupReplayDisposition.terminalRejected,
-          reasonCode: 'authority_rejected',
-          reasonDetail: null,
-        ),
-        ProtectedGroupAuthorityHandleResult.retryable => (
-          disposition: ProtectedGroupReplayDisposition.retryable,
-          reasonCode: 'authority_retryable',
-          reasonDetail: null,
-        ),
-        ProtectedGroupAuthorityHandleResult.prerequisiteWaiting => (
-          disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
-          reasonCode: 'bootstrap_required',
-          reasonDetail: null,
-        ),
-      };
-    });
+    p2pService.setProtectedGroupReplayHandler(protectedGroupReplay.replay);
 
     // Slice 2 / UDM-G — admin-side responder for the active key-pull. Re-delivers
     // the EXACT requested epoch (never mints a new one), gated by signed-request

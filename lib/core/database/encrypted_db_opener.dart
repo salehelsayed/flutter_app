@@ -8,7 +8,19 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../secure_storage/secure_key_store.dart';
 import '../utils/flow_event_emitter.dart';
 
-const String _kDbEncryptionKey = 'db_encryption_key';
+const String dbEncryptionKeyStorageKey = 'db_encryption_key';
+
+/// A headless recovery may migrate an existing database, but it must never
+/// synthesize account storage after key or file loss.
+final class ExistingEncryptedDatabaseRequiredException implements Exception {
+  const ExistingEncryptedDatabaseRequiredException(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() =>
+      'ExistingEncryptedDatabaseRequiredException(reason: $reason)';
+}
 
 /// 218 Phase B — the cipher-mode marker is a PREFIX on the `db_encryption_key`
 /// record, domain {absent, raw} (§G1/SC-6):
@@ -90,6 +102,63 @@ class EncryptedReadOnlyOpenDebugHooks {
   final EncryptedReadOnlyDeadlineWaiter waitForDeadline;
   final Duration deadline;
   final bool enforceAndroidLiveness;
+}
+
+@visibleForTesting
+typedef EncryptedWritableDatabaseOpener =
+    Future<Database> Function(
+      String path, {
+      required int version,
+      required String password,
+      required OnDatabaseConfigureFn onConfigure,
+      required OnDatabaseCreateFn onCreate,
+      required OnDatabaseVersionChangeFn onUpgrade,
+      required OnDatabaseVersionChangeFn onDowngrade,
+    });
+
+@visibleForTesting
+typedef EncryptedDatabaseRawKeyProbe =
+    Future<bool> Function(String path, String key, String dbName);
+
+@visibleForTesting
+typedef EncryptedDatabaseExistingVersionReader =
+    Future<int> Function(String path, String password);
+
+/// Deterministic seams for the writable opener's ownership boundaries.
+/// Production callers never provide this object.
+@visibleForTesting
+class EncryptedDatabaseOpenDebugHooks {
+  const EncryptedDatabaseOpenDebugHooks({
+    required this.resolveDatabasesPath,
+    required this.isRawKeyDatabase,
+    this.readExistingUserVersion,
+    required this.openDatabase,
+  });
+
+  final Future<String> Function() resolveDatabasesPath;
+  final EncryptedDatabaseRawKeyProbe isRawKeyDatabase;
+  final EncryptedDatabaseExistingVersionReader? readExistingUserVersion;
+  final EncryptedWritableDatabaseOpener openDatabase;
+}
+
+/// Both the open/finalization failure and the failed compensating cleanup are
+/// retained when the opener cannot prove that it released its partial state.
+final class EncryptedDatabaseOpenCleanupException implements Exception {
+  const EncryptedDatabaseOpenCleanupException({
+    required this.phase,
+    required this.openFailure,
+    required this.cleanupFailure,
+  });
+
+  final String phase;
+  final Object openFailure;
+  final Object cleanupFailure;
+
+  @override
+  String toString() =>
+      'EncryptedDatabaseOpenCleanupException('
+      'phase: $phase, openFailure: $openFailure, '
+      'cleanupFailure: $cleanupFailure)';
 }
 
 class _EncryptedReadOnlyDeadlineExpired implements Exception {
@@ -310,6 +379,9 @@ Future<Database> openEncryptedDatabase({
   required int version,
   required OnDatabaseCreateFn onCreate,
   required OnDatabaseVersionChangeFn onUpgrade,
+  bool requireExisting = false,
+  FutureOr<void> Function(Database database)? onOpened,
+  EncryptedDatabaseOpenDebugHooks? debugHooks,
 }) async {
   emitFlowEvent(
     layer: 'DB',
@@ -319,7 +391,12 @@ Future<Database> openEncryptedDatabase({
 
   // 1. Load the stored key record + its cipher-mode marker (§G1). A bare hex
   //    value is the legacy `absent` (passphrase) state; `raw:<hex>` is raw mode.
-  final storedValue = await secureKeyStore.read(_kDbEncryptionKey);
+  final storedValue = await secureKeyStore.read(dbEncryptionKeyStorageKey);
+  if (requireExisting && storedValue == null) {
+    throw const ExistingEncryptedDatabaseRequiredException(
+      'missing_encryption_key',
+    );
+  }
   final isNewKey = storedValue == null;
   final String key;
   var mode = CipherKeyMode.absent;
@@ -351,14 +428,20 @@ Future<Database> openEncryptedDatabase({
   }
 
   // 2. Resolve full path
-  final dbPath = await getDatabasesPath();
+  final dbPath =
+      await (debugHooks?.resolveDatabasesPath() ?? getDatabasesPath());
   final fullPath = '$dbPath/$dbName';
   if (kDebugMode) print('[EAR] DB path: $fullPath');
 
   // 2b. Recover any interrupted rekey (leftover .rekey-tmp / .pre-raw.bak)
   //     BEFORE any existence checks so the decision below sees a consistent
-  //     on-disk file (§F4).
+  //     on-disk file (§F4). Restoring an incumbent backup is permitted in
+  //     existing-only mode; creating a new account database is not.
   await _recoverInterruptedRekey(fullPath, dbName, keyPersisted: !isNewKey);
+
+  if (requireExisting && !await databaseExists(fullPath)) {
+    throw const ExistingEncryptedDatabaseRequiredException('missing_database');
+  }
 
   // 3. Key persistence + legacy plaintext migration (isNewKey only).
   if (isNewKey) {
@@ -377,7 +460,7 @@ Future<Database> openEncryptedDatabase({
       );
       await _exportToRawAtomic(fullPath, key, dbName, sourcePassword: null);
       await secureKeyStore.write(
-        _kDbEncryptionKey,
+        dbEncryptionKeyStorageKey,
         formatCipherKeyRecord(CipherKeyMode.raw, key),
       );
       mode = CipherKeyMode.raw;
@@ -392,7 +475,7 @@ Future<Database> openEncryptedDatabase({
       // FIRST so a crash between persist and create recovers via
       // (raw, dbAbsent)→createRaw rather than being mistaken for a plaintext DB.
       await secureKeyStore.write(
-        _kDbEncryptionKey,
+        dbEncryptionKeyStorageKey,
         formatCipherKeyRecord(CipherKeyMode.raw, key),
       );
       mode = CipherKeyMode.raw;
@@ -424,7 +507,9 @@ Future<Database> openEncryptedDatabase({
       // marker=absent + DB exists. Either a legacy PASSPHRASE DB (rekey it) or
       // already RAW (a Phase-B crash-before-marker / rollback return → self-heal
       // via the marker write in step 6). §E2/§F4.
-      final alreadyRaw = await _isRawKeyDatabase(fullPath, key, dbName);
+      final alreadyRaw =
+          await (debugHooks?.isRawKeyDatabase(fullPath, key, dbName) ??
+              _isRawKeyDatabase(fullPath, key, dbName));
       if (alreadyRaw) {
         openPassword = "x'$key'"; // RAW_KEY
         openedRaw = true;
@@ -451,7 +536,9 @@ Future<Database> openEncryptedDatabase({
             dbName,
             keyPersisted: !isNewKey,
           );
-          final nowRaw = await _isRawKeyDatabase(fullPath, key, dbName);
+          final nowRaw =
+              await (debugHooks?.isRawKeyDatabase(fullPath, key, dbName) ??
+                  _isRawKeyDatabase(fullPath, key, dbName));
           openPassword = nowRaw
               ? "x'$key'"
               : key; // RAW_KEY / LEGACY_PASSPHRASE_FALLBACK
@@ -461,71 +548,167 @@ Future<Database> openEncryptedDatabase({
       break;
   }
 
+  // A normal writable sqflite open carries CREATE_IF_NECESSARY, and onCreate
+  // is also invoked for a pre-existing user_version=0 file. In existing-only
+  // mode, prove through a no-create read-only SQLCipher handle that the exact
+  // pre-open path is a real (>0) account database. This preserves an incumbent
+  // v0/corrupt file without ever entering the ambiguous writable onCreate path.
+  // If onCreate still runs after this immediate probe, the validated path was
+  // removed/replaced in the remaining TOCTOU window and only that replacement
+  // artifact may be deleted.
+  if (requireExisting) {
+    final existingUserVersion =
+        await (debugHooks?.readExistingUserVersion?.call(
+              fullPath,
+              openPassword,
+            ) ??
+            _readExistingEncryptedDatabaseUserVersion(fullPath, openPassword));
+    if (existingUserVersion <= 0) {
+      throw const ExistingEncryptedDatabaseRequiredException(
+        'database_user_version_not_positive',
+      );
+    }
+  }
+
   // 218 Step 0a — bracket ONLY the real openDatabase call (probe excluded) so
   // the passphrase baseline (denominator) and the raw-key fix (numerator) read
   // the SAME `elapsedMs` field on ENCRYPTED_DB_OPEN_SUCCESS. Mirrors
   // posts_db_helpers.dart:6-19.
   final openStopwatch = Stopwatch()..start();
-  final db = await openDatabase(
-    fullPath,
-    version: version,
-    password: openPassword, // RAW_KEY / LEGACY_PASSPHRASE_FALLBACK
-    onConfigure: _configureDbBusyTimeout,
-    onCreate: onCreate,
-    onUpgrade: onUpgrade,
-    // 228: DB v96 is a one-way supported release floor. Without this callback
-    // the pinned sqflite_common would LOWER user_version on a downgrade open
-    // even though no migration ran, letting an older model's INSERT OR REPLACE
-    // silently reset newer local-state columns. Fail closed instead: a
-    // requested version below the on-disk user_version throws and leaves the
-    // database untouched. A manually sideloaded pre-v96 binary is unsupported
-    // and requires profile reset/restore — it is never a compatible rollback.
-    onDowngrade: onDatabaseVersionChangeError,
-  );
-  openStopwatch.stop();
+  var refusedCreation = false;
+  Future<void> guardedOnCreate(Database db, int createdVersion) async {
+    if (requireExisting) {
+      refusedCreation = true;
+      throw const ExistingEncryptedDatabaseRequiredException(
+        'database_disappeared_during_open',
+      );
+    }
+    await onCreate(db, createdVersion);
+  }
 
-  // 6. Persist the raw marker once, after a successful raw open, if not already
-  //    recorded — makes the mode durable so the next launch takes the fast
-  //    openRaw path (SC-4) and self-heals an absent record over a raw DB.
-  if (openedRaw && mode != CipherKeyMode.raw) {
-    await secureKeyStore.write(
-      _kDbEncryptionKey,
-      formatCipherKeyRecord(CipherKeyMode.raw, key),
-    );
+  late final Database db;
+  try {
+    final injectedOpen = debugHooks?.openDatabase;
+    db = injectedOpen != null
+        ? await injectedOpen(
+            fullPath,
+            version: version,
+            password: openPassword,
+            onConfigure: _configureDbBusyTimeout,
+            onCreate: guardedOnCreate,
+            onUpgrade: onUpgrade,
+            onDowngrade: onDatabaseVersionChangeError,
+          )
+        : await openDatabase(
+            fullPath,
+            version: version,
+            password: openPassword, // RAW_KEY / LEGACY_PASSPHRASE_FALLBACK
+            onConfigure: _configureDbBusyTimeout,
+            onCreate: guardedOnCreate,
+            onUpgrade: onUpgrade,
+            // 228: DB v96 is a one-way supported release floor. Without this
+            // callback the pinned sqflite_common would LOWER user_version on a
+            // downgrade open even though no migration ran, letting an older
+            // model's INSERT OR REPLACE silently reset newer local-state
+            // columns. Fail closed instead: a requested version below the
+            // on-disk user_version throws and leaves the database untouched. A
+            // manually sideloaded pre-v96 binary is unsupported and requires
+            // profile reset/restore — it is never a compatible rollback.
+            onDowngrade: onDatabaseVersionChangeError,
+          );
+  } catch (error, stackTrace) {
+    // The immediately preceding read-only probe proved this path had a positive
+    // user_version without creation. onCreate therefore proves the validated
+    // file disappeared/replaced before writable open; remove only that refused
+    // zero-version artifact. An incumbent v0 file never reaches this branch.
+    if (refusedCreation) {
+      try {
+        await _deleteDbAndSidecars(fullPath);
+      } catch (cleanupFailure, cleanupStackTrace) {
+        Error.throwWithStackTrace(
+          EncryptedDatabaseOpenCleanupException(
+            phase: 'refused_creation_delete',
+            openFailure: error,
+            cleanupFailure: cleanupFailure,
+          ),
+          cleanupStackTrace,
+        );
+      }
+    }
+    Error.throwWithStackTrace(error, stackTrace);
+  }
+  try {
+    // Publish the exact handle immediately after openDatabase returns. The
+    // owner must be able to retain and quiesce it if any later marker or
+    // finalization step fails before this function transfers ownership via its
+    // return value. Future.sync invokes synchronous callbacks on this line;
+    // asynchronous publication is awaited before finalization proceeds.
+    final openedPublication = Future<void>.sync(() => onOpened?.call(db));
+    openStopwatch.stop();
+    await openedPublication;
+
+    // 6. Persist the raw marker once, after a successful raw open, if not
+    // already recorded — makes the mode durable so the next launch takes the
+    // fast openRaw path (SC-4) and self-heals an absent record over a raw DB.
+    if (openedRaw && mode != CipherKeyMode.raw) {
+      await secureKeyStore.write(
+        dbEncryptionKeyStorageKey,
+        formatCipherKeyRecord(CipherKeyMode.raw, key),
+      );
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'ENCRYPTED_DB_CIPHER_MARKER_RAW',
+        details: {'dbName': dbName},
+      );
+      if (kDebugMode) print('[EAR] Cipher-mode marker persisted: raw');
+    }
+
+    // Post-commit cleanup: the key/marker is now durable, so drop the rekey
+    // backup (a no-op unless a rekey/migration ran this launch). Recovery
+    // cleans up any lingering .bak across launches.
+    await _deleteDbAndSidecars(_preRawBakPath(fullPath));
+
+    // 5. Validate encryption is active.
+    try {
+      final cipherResult = await db.rawQuery("PRAGMA cipher_version");
+      final cipherVersion = cipherResult.isNotEmpty
+          ? cipherResult.first.values.first
+          : 'UNKNOWN';
+      if (kDebugMode) print('[EAR] SQLCipher version: $cipherVersion');
+      if (kDebugMode) print('[EAR] DATABASE IS ENCRYPTED');
+    } catch (e) {
+      if (kDebugMode) {
+        print('[EAR] WARNING: Could not verify cipher_version — $e');
+      }
+    }
+
     emitFlowEvent(
       layer: 'DB',
-      event: 'ENCRYPTED_DB_CIPHER_MARKER_RAW',
-      details: {'dbName': dbName},
+      event: 'ENCRYPTED_DB_OPEN_SUCCESS',
+      details: {
+        'dbName': dbName,
+        'elapsedMs': openStopwatch.elapsedMilliseconds,
+      },
     );
-    if (kDebugMode) print('[EAR] Cipher-mode marker persisted: raw');
-  }
 
-  // Post-commit cleanup: the key/marker is now durable, so drop the rekey
-  // backup (a no-op unless a rekey/migration ran this launch). Recovery cleans
-  // up any lingering .bak across launches.
-  await _deleteDbAndSidecars(_preRawBakPath(fullPath));
-
-  // 5. Validate encryption is active
-  try {
-    final cipherResult = await db.rawQuery("PRAGMA cipher_version");
-    final cipherVersion = cipherResult.isNotEmpty
-        ? cipherResult.first.values.first
-        : 'UNKNOWN';
-    if (kDebugMode) print('[EAR] SQLCipher version: $cipherVersion');
-    if (kDebugMode) print('[EAR] DATABASE IS ENCRYPTED');
-  } catch (e) {
-    if (kDebugMode) {
-      print('[EAR] WARNING: Could not verify cipher_version — $e');
+    return db;
+  } catch (error, stackTrace) {
+    // Ownership transfers to the caller only at the return above. Until then,
+    // this opener must close the exact handle it acquired on every failure.
+    try {
+      await db.close();
+    } catch (cleanupFailure, cleanupStackTrace) {
+      Error.throwWithStackTrace(
+        EncryptedDatabaseOpenCleanupException(
+          phase: 'post_open_close',
+          openFailure: error,
+          cleanupFailure: cleanupFailure,
+        ),
+        cleanupStackTrace,
+      );
     }
+    Error.throwWithStackTrace(error, stackTrace);
   }
-
-  emitFlowEvent(
-    layer: 'DB',
-    event: 'ENCRYPTED_DB_OPEN_SUCCESS',
-    details: {'dbName': dbName, 'elapsedMs': openStopwatch.elapsedMilliseconds},
-  );
-
-  return db;
 }
 
 /// Fail fast instead of hanging forever if the DB file is momentarily locked
@@ -660,6 +843,26 @@ Future<int> _readUserVersion(Database db) async {
   final r = await db.rawQuery('PRAGMA user_version');
   final v = r.isNotEmpty ? r.first.values.first : null;
   return v is int ? v : 0;
+}
+
+/// No-create validation immediately before an existing-only writable open.
+/// Both Android SQLCipher and Darwin FMDB map readOnly to SQLITE_OPEN_READONLY,
+/// so a missing path fails instead of synthesizing an empty database.
+Future<int> _readExistingEncryptedDatabaseUserVersion(
+  String fullPath,
+  String password,
+) async {
+  final probe = await openDatabase(
+    fullPath,
+    password: password,
+    readOnly: true,
+    singleInstance: false,
+  );
+  try {
+    return await _readUserVersion(probe);
+  } finally {
+    await probe.close();
+  }
 }
 
 /// §E2 — atomic export of the identity.db at [fullPath] to raw-key mode via a

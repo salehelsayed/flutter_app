@@ -1,11 +1,12 @@
+import 'package:flutter_app/core/notifications/canonical_recovery_authority_storage_keys.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_app/features/account_migration/domain/repositories/account_migration_authority_repository.dart';
 
 class SecureKeyStoreAccountMigrationAuthorityRepository
     implements AccountMigrationAuthorityRepository {
-  static const storageKeyPrefix = 'account_migration_authority';
-  static const storageKey = '$storageKeyPrefix:v1';
+  static const storageKeyPrefix = accountMigrationAuthorityStorageKeyPrefix;
+  static const storageKey = accountMigrationAuthorityStorageKey;
 
   final SecureKeyStore _secureKeyStore;
 

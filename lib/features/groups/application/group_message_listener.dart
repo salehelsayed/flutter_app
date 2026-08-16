@@ -252,6 +252,7 @@ class GroupMessageListener {
   _resolveCurrentOpaqueBinding;
   final DurableLocalNotificationEffectRegistry?
   _durableLocalNotificationEffectRegistry;
+  final LocalNotificationPresentationOwner _notificationPresentationOwner;
   final bool _completedOutcomeProducerEnabled;
   late final GroupNotificationCanonicalReconciler?
   _notificationCanonicalReconciler;
@@ -349,6 +350,8 @@ class GroupMessageListener {
     ResolveCurrentGroupNotificationOpaqueBinding? resolveCurrentOpaqueBinding,
     DurableLocalNotificationEffectRegistry?
     durableLocalNotificationEffectRegistry,
+    LocalNotificationPresentationOwner notificationPresentationOwner =
+        LocalNotificationPresentationOwner.mainApp,
     bool completedOutcomeProducerEnabled = false,
     BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask,
     EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask,
@@ -397,6 +400,7 @@ class GroupMessageListener {
        _resolveCurrentOpaqueBinding = resolveCurrentOpaqueBinding,
        _durableLocalNotificationEffectRegistry =
            durableLocalNotificationEffectRegistry,
+       _notificationPresentationOwner = notificationPresentationOwner,
        _completedOutcomeProducerEnabled = completedOutcomeProducerEnabled {
     final readSource = msgRepo is GroupConversationReadEventSource
         ? msgRepo as GroupConversationReadEventSource
@@ -1379,7 +1383,7 @@ class GroupMessageListener {
       conversationDigest: authority.conversationIdentity.digest,
       producerKind: LocalNotificationProducerKind.groupMessage,
       sourceCustody: LocalNotificationSourceCustody.sqlReady,
-      presentationOwner: LocalNotificationPresentationOwner.mainApp,
+      presentationOwner: _notificationPresentationOwner,
       terminalObserverCompletesSqlHandoff: true,
       readFinalCanonicalDisposition: () =>
           _readFinalMessageNotificationDisposition(
@@ -1576,7 +1580,7 @@ class GroupMessageListener {
       conversationDigest: authority.conversationIdentity.digest,
       producerKind: LocalNotificationProducerKind.groupMessage,
       sourceCustody: LocalNotificationSourceCustody.sqlReady,
-      presentationOwner: LocalNotificationPresentationOwner.mainApp,
+      presentationOwner: _notificationPresentationOwner,
       terminalObserverCompletesSqlHandoff: true,
       readFinalCanonicalDisposition: () =>
           _readFinalMessageNotificationDisposition(
@@ -1747,7 +1751,7 @@ class GroupMessageListener {
       conversationDigest: authority.conversationIdentity.digest,
       producerKind: LocalNotificationProducerKind.groupReaction,
       sourceCustody: LocalNotificationSourceCustody.sqlReady,
-      presentationOwner: LocalNotificationPresentationOwner.mainApp,
+      presentationOwner: _notificationPresentationOwner,
       terminalObserverCompletesSqlHandoff: true,
       readFinalCanonicalDisposition: () =>
           _readFinalReactionNotificationDisposition(

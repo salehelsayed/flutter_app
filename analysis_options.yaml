@@ -11,6 +11,11 @@ include: package:flutter_lints/flutter.yaml
 
 analyzer:
   exclude:
+    # Android unit-test resource processing copies Dart fixtures beneath build/.
+    # They are generated artifacts with paths relative to their source location,
+    # so analyzing the copies produces false missing-import failures after the
+    # required native gate. Source files remain covered in their real location.
+    - build/**
     # This is the upstream plugin's standalone demo package. Its own example
     # dependencies are deliberately not part of the app workspace; the
     # vendored plugin library and tests remain in the root analysis scope.

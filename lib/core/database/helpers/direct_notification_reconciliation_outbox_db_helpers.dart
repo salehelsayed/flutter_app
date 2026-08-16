@@ -5,6 +5,17 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 const String _table = 'direct_notification_reconciliation_outbox';
 const int kDirectNotificationReconciliationOutboxMaxLoadBatch = 50;
 
+/// Total durable custody, including deferred/backoff rows.
+Future<int> dbCountAllDirectNotificationReconciliationOutboxEntries(
+  DatabaseExecutor db,
+) async {
+  if (!await _tableExists(db)) return 0;
+  return Sqflite.firstIntValue(
+        await db.rawQuery('SELECT COUNT(*) FROM $_table'),
+      ) ??
+      0;
+}
+
 Future<void> dbEnqueueDirectNotificationReconciliationOutbox(
   DatabaseExecutor db, {
   required String peerId,

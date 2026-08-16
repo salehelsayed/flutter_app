@@ -1,6 +1,7 @@
 package com.mknoon.app
 
 import android.content.Context
+import java.util.UUID
 
 /**
  * Credential-protected, crash-safe marker for FCM batches deleted by Play services.
@@ -16,12 +17,36 @@ class DroppedPushRecoveryStore(context: Context) {
         private const val PENDING_BINDING_KEY = "pending_binding"
         private const val CURRENT_BINDING_KEY = "current_binding"
         private const val RECOVERY_WORK_ENABLED_KEY = "recovery_work_enabled"
+        private const val DESIRED_RECOVERY_WORK_ENABLED_KEY =
+            "desired_recovery_work_enabled"
+        private const val AUTHORITY_REVISION_KEY = "authority_revision"
+        private const val AUTHORITY_MUTATION_TOKENS_KEY =
+            "authority_mutation_tokens"
         private val transactionLock = Any()
     }
 
     data class PendingRecovery(
         val generation: Long,
         val binding: String,
+    )
+
+    /** One transaction-locked view used by headless final authority checks. */
+    data class RecoveryAuthority(
+        val currentBinding: String?,
+        val recoveryWorkEnabled: Boolean,
+        val pendingRecovery: PendingRecovery?,
+        val authorityRevision: Long,
+        val authorityMutationInProgress: Boolean,
+    )
+
+    data class AuthorityMutationPublication(
+        val changed: Boolean,
+        val committed: Boolean,
+        val token: String?,
+        val currentBinding: String?,
+        val recoveryWorkEnabled: Boolean,
+        val authorityRevision: Long,
+        val authorityMutationInProgress: Boolean,
     )
 
     data class BindingRotation(
@@ -46,16 +71,51 @@ class DroppedPushRecoveryStore(context: Context) {
     fun setCurrentBinding(
         binding: String?,
         recoveryWorkEnabled: Boolean = false,
+        recoverStaleAuthorityMutations: Boolean = false,
     ): BindingRotation = synchronized(transactionLock) {
         val normalized = binding?.trim()?.takeIf { it.isNotEmpty() }
         val desiredRecoveryWorkEnabled = normalized != null && recoveryWorkEnabled
         val previous = preferences.getString(CURRENT_BINDING_KEY, null)
-        val previousRecoveryWorkEnabled = preferences.getBoolean(
-            RECOVERY_WORK_ENABLED_KEY,
-            false,
-        )
+        val previousRecoveryWorkEnabled = recoveryAuthorityLocked().recoveryWorkEnabled
         val bindingChanged = previous != normalized
-        if (previous == normalized && previousRecoveryWorkEnabled == desiredRecoveryWorkEnabled) {
+        val previousTokens = authorityMutationTokensLocked()
+        // A binding change can legitimately overlap another secure authority
+        // write. Never retire that live token implicitly: doing so would
+        // re-enable recovery while the other write is still in flight. Only
+        // the explicit, startup-only reconciliation path may retire tokens
+        // left durable by a dead process.
+        val remainingTokens = if (recoverStaleAuthorityMutations) {
+            emptySet()
+        } else {
+            previousTokens
+        }
+        val effectiveRecoveryWorkEnabled =
+            desiredRecoveryWorkEnabled && remainingTokens.isEmpty()
+        val previousDesiredRecoveryWorkEnabled = preferences.getBoolean(
+            DESIRED_RECOVERY_WORK_ENABLED_KEY,
+            previousRecoveryWorkEnabled,
+        )
+        val revision = preferences.getLong(AUTHORITY_REVISION_KEY, 0L)
+        val nextRevision = if (bindingChanged) {
+            revision.takeIf { it < Long.MAX_VALUE }?.plus(1L)
+                ?: return@synchronized BindingRotation(
+                    changed = false,
+                    previousBinding = previous,
+                    currentBinding = previous,
+                    retiredRecovery = null,
+                    committed = false,
+                    recoveryWorkEnabled = previousRecoveryWorkEnabled,
+                )
+        } else {
+            revision
+        }
+        if (
+            previous == normalized &&
+            preferences.contains(DESIRED_RECOVERY_WORK_ENABLED_KEY) &&
+            previousDesiredRecoveryWorkEnabled == desiredRecoveryWorkEnabled &&
+            previousRecoveryWorkEnabled == effectiveRecoveryWorkEnabled &&
+            previousTokens == remainingTokens
+        ) {
             return@synchronized BindingRotation(
                 changed = false,
                 previousBinding = previous,
@@ -76,7 +136,20 @@ class DroppedPushRecoveryStore(context: Context) {
         } else {
             editor.putString(CURRENT_BINDING_KEY, normalized)
         }
-        editor.putBoolean(RECOVERY_WORK_ENABLED_KEY, desiredRecoveryWorkEnabled)
+        editor.putBoolean(
+            DESIRED_RECOVERY_WORK_ENABLED_KEY,
+            desiredRecoveryWorkEnabled,
+        )
+        editor.putBoolean(
+            RECOVERY_WORK_ENABLED_KEY,
+            effectiveRecoveryWorkEnabled,
+        )
+        editor.putLong(AUTHORITY_REVISION_KEY, nextRevision)
+        if (remainingTokens.isEmpty()) {
+            editor.remove(AUTHORITY_MUTATION_TOKENS_KEY)
+        } else {
+            editor.putStringSet(AUTHORITY_MUTATION_TOKENS_KEY, remainingTokens)
+        }
         // Rotation is also the repair boundary for an interrupted/corrupt
         // legacy marker whose generation or binding half is missing. Such a
         // marker has no safe owner and must not survive account cutover.
@@ -92,12 +165,87 @@ class DroppedPushRecoveryStore(context: Context) {
             retiredRecovery = if (committed) retired else null,
             committed = committed,
             recoveryWorkEnabled = if (committed) {
-                desiredRecoveryWorkEnabled
+                effectiveRecoveryWorkEnabled
             } else {
                 previousRecoveryWorkEnabled
             },
         )
     }
+
+    /**
+     * Durably fences a secure authority mutation before its first write.
+     * Recovery is disabled until every overlapping token finishes. The
+     * revision advances at begin, so a worker that already performed its final
+     * Dart read can no longer acknowledge under the old authority.
+     */
+    fun beginAuthorityMutation(): AuthorityMutationPublication =
+        synchronized(transactionLock) {
+            val authority = recoveryAuthorityLocked()
+            if (authority.authorityRevision == Long.MAX_VALUE) {
+                val disabledCommitted = preferences.edit()
+                    .putBoolean(RECOVERY_WORK_ENABLED_KEY, false)
+                    .commit()
+                return@synchronized authorityMutationPublicationLocked(
+                    changed = disabledCommitted,
+                    committed = disabledCommitted,
+                    token = null,
+                )
+            }
+            val token = UUID.randomUUID().toString()
+            val tokens = authorityMutationTokensLocked().toMutableSet()
+            tokens.add(token)
+            val editor = preferences.edit()
+                .putLong(AUTHORITY_REVISION_KEY, authority.authorityRevision + 1L)
+                .putStringSet(AUTHORITY_MUTATION_TOKENS_KEY, tokens)
+                .putBoolean(RECOVERY_WORK_ENABLED_KEY, false)
+            if (!preferences.contains(DESIRED_RECOVERY_WORK_ENABLED_KEY)) {
+                editor.putBoolean(
+                    DESIRED_RECOVERY_WORK_ENABLED_KEY,
+                    authority.recoveryWorkEnabled,
+                )
+            }
+            val committed = editor.commit()
+            authorityMutationPublicationLocked(
+                changed = committed,
+                committed = committed,
+                token = token.takeIf { committed },
+            )
+        }
+
+    /** Completes exactly one mutation token; wrong/stale tokens fail closed. */
+    fun finishAuthorityMutation(token: String): AuthorityMutationPublication =
+        synchronized(transactionLock) {
+            val normalized = token.trim()
+            val tokens = authorityMutationTokensLocked().toMutableSet()
+            if (normalized.isEmpty() || !tokens.remove(normalized)) {
+                return@synchronized authorityMutationPublicationLocked(
+                    changed = false,
+                    committed = false,
+                    token = null,
+                )
+            }
+            val binding = preferences.getString(CURRENT_BINDING_KEY, null)
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+            val desired = binding != null && preferences.getBoolean(
+                DESIRED_RECOVERY_WORK_ENABLED_KEY,
+                preferences.getBoolean(RECOVERY_WORK_ENABLED_KEY, false),
+            )
+            val effective = desired && tokens.isEmpty()
+            val editor = preferences.edit()
+                .putBoolean(RECOVERY_WORK_ENABLED_KEY, effective)
+            if (tokens.isEmpty()) {
+                editor.remove(AUTHORITY_MUTATION_TOKENS_KEY)
+            } else {
+                editor.putStringSet(AUTHORITY_MUTATION_TOKENS_KEY, tokens)
+            }
+            val committed = editor.commit()
+            authorityMutationPublicationLocked(
+                changed = committed,
+                committed = committed,
+                token = null,
+            )
+        }
 
     fun currentBinding(): String? = synchronized(transactionLock) {
         preferences.getString(CURRENT_BINDING_KEY, null)
@@ -106,10 +254,12 @@ class DroppedPushRecoveryStore(context: Context) {
     }
 
     fun recoveryWorkEnabled(): Boolean = synchronized(transactionLock) {
-        preferences.getBoolean(RECOVERY_WORK_ENABLED_KEY, false) &&
-            preferences.getString(CURRENT_BINDING_KEY, null)
-                ?.trim()
-                ?.isNotEmpty() == true
+        recoveryAuthorityLocked().recoveryWorkEnabled
+    }
+
+    /** Atomically snapshots binding, readiness, and the account-bound marker. */
+    fun recoveryAuthority(): RecoveryAuthority = synchronized(transactionLock) {
+        recoveryAuthorityLocked()
     }
 
     /**
@@ -181,6 +331,35 @@ class DroppedPushRecoveryStore(context: Context) {
         acknowledgeRecoveryLocked(expectedGeneration, expectedBinding, onAcknowledged)
     }
 
+    /**
+     * Headless-only compare-and-acknowledgement.
+     *
+     * Unlike the warm-app API above, this additionally requires recovery work
+     * to remain enabled in the same transaction as the exact marker clear. A
+     * committed same-binding rollback therefore fences a late worker ACK while
+     * retaining the marker for warm-app recovery.
+     */
+    fun acknowledgeHeadlessRecovery(
+        expectedGeneration: Long,
+        expectedBinding: String,
+        expectedAuthorityRevision: Long,
+        onAcknowledged: () -> Unit = {},
+    ): Boolean = synchronized(transactionLock) {
+        val authority = recoveryAuthorityLocked()
+        val pending = authority.pendingRecovery ?: return@synchronized false
+        if (
+            !authority.recoveryWorkEnabled ||
+            authority.authorityMutationInProgress ||
+            authority.authorityRevision != expectedAuthorityRevision ||
+            authority.currentBinding != expectedBinding ||
+            pending.generation != expectedGeneration ||
+            pending.binding != expectedBinding
+        ) {
+            return@synchronized false
+        }
+        acknowledgeRecoveryLocked(expectedGeneration, expectedBinding, onAcknowledged)
+    }
+
     private fun acknowledgeRecoveryLocked(
         expectedGeneration: Long,
         expectedBinding: String,
@@ -223,5 +402,43 @@ class DroppedPushRecoveryStore(context: Context) {
             return null
         }
         return PendingRecovery(generation, binding)
+    }
+
+    private fun recoveryAuthorityLocked(): RecoveryAuthority {
+        val binding = preferences.getString(CURRENT_BINDING_KEY, null)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        return RecoveryAuthority(
+            currentBinding = binding,
+            recoveryWorkEnabled = binding != null &&
+                preferences.getBoolean(RECOVERY_WORK_ENABLED_KEY, false) &&
+                authorityMutationTokensLocked().isEmpty(),
+            pendingRecovery = pendingRecoveryLocked(requireCurrentBinding = true),
+            authorityRevision = preferences.getLong(AUTHORITY_REVISION_KEY, 0L),
+            authorityMutationInProgress = authorityMutationTokensLocked().isNotEmpty(),
+        )
+    }
+
+    private fun authorityMutationTokensLocked(): Set<String> =
+        preferences.getStringSet(AUTHORITY_MUTATION_TOKENS_KEY, emptySet())
+            ?.mapNotNull { value -> value.trim().takeIf { it.isNotEmpty() } }
+            ?.toSet()
+            ?: emptySet()
+
+    private fun authorityMutationPublicationLocked(
+        changed: Boolean,
+        committed: Boolean,
+        token: String?,
+    ): AuthorityMutationPublication {
+        val authority = recoveryAuthorityLocked()
+        return AuthorityMutationPublication(
+            changed = changed,
+            committed = committed,
+            token = token,
+            currentBinding = authority.currentBinding,
+            recoveryWorkEnabled = authority.recoveryWorkEnabled,
+            authorityRevision = authority.authorityRevision,
+            authorityMutationInProgress = authority.authorityMutationInProgress,
+        )
     }
 }

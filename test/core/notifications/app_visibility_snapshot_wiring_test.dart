@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _bootstrapPath =
     'lib/app/bootstrap/production_application_bootstrap.dart';
+const _directCompositionPath =
+    'lib/app/bootstrap/production_canonical_direct_projection_composition.dart';
 const _appRootPath = 'lib/app/application_root.dart';
 const _startupRouterPath =
     'lib/features/identity/presentation/startup_router.dart';
@@ -40,10 +42,10 @@ void main() {
                   ..sort(),
         },
         <String, List<String>>{
-          _bootstrapPath: <String>[
-            'appVisibilityAuthority',
-            'appVisibilityAuthority',
-            'appVisibilityAuthority',
+          _directCompositionPath: <String>[
+            'dependencies.appVisibility',
+            'dependencies.appVisibility',
+            'dependencies.appVisibility',
           ],
           _foregroundFallbackPath: <String>['visibility', 'visibility'],
           _directMessagePath: <String>['appVisibility!'],
@@ -91,6 +93,21 @@ void main() {
       expect(_namedInvocations(showFunction, 'isViewing'), isEmpty);
 
       final bootstrap = _unit(_bootstrapPath);
+      final bootstrapSource = File(_bootstrapPath).readAsStringSync();
+      expect(
+        RegExp(
+          r'\bbuildProductionCanonicalDirectProjectionComposition\(',
+        ).allMatches(bootstrapSource),
+        hasLength(1),
+        reason:
+            'foreground must delegate once to the canonical direct projection owner',
+      );
+      expect(
+        bootstrapSource,
+        contains('appVisibility: appVisibilityAuthority'),
+        reason:
+            'the shared direct owner must reuse the one foreground suppression authority',
+      );
       final authorityCreations = _creationsNamed(
         bootstrap,
         'AppVisibilityAuthority',

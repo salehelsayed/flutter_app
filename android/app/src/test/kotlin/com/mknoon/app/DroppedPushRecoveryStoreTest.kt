@@ -152,10 +152,20 @@ class DroppedPushRecoveryStoreTest {
     }
 
     @Test
-    fun `binding publication keeps recovery work disabled until Plan 331 activates it`() {
+    fun `TC-374-05 binding publication toggles recovery work only for exact committed binding`() {
         val store = DroppedPushRecoveryStore(context)
 
         assertFalse(store.recoveryWorkEnabled())
+        assertEquals(
+            DroppedPushRecoveryStore.RecoveryAuthority(
+                currentBinding = "installation-a/account-a",
+                recoveryWorkEnabled = false,
+                pendingRecovery = null,
+                authorityRevision = 1L,
+                authorityMutationInProgress = false,
+            ),
+            store.recoveryAuthority(),
+        )
         val enabled = store.setCurrentBinding(
             "installation-a/account-a",
             recoveryWorkEnabled = true,
@@ -164,13 +174,75 @@ class DroppedPushRecoveryStoreTest {
         assertTrue(enabled.recoveryWorkEnabled)
         assertTrue(store.recoveryWorkEnabled())
 
-        val disabled = store.setCurrentBinding(
-            "installation-a/account-a",
-            recoveryWorkEnabled = false,
-        )
-        assertTrue(disabled.changed)
-        assertFalse(disabled.recoveryWorkEnabled)
+        // Simulate an upgrade from the pre-fence preference shape. The first
+        // mutation must preserve the effective enabled state as the desired
+        // state before it durably disables headless work.
+        context.getSharedPreferences(
+            DroppedPushRecoveryStore.PREFERENCES_NAME,
+            Context.MODE_PRIVATE,
+        ).edit().remove("desired_recovery_work_enabled").commit()
+
+        val firstMutation = store.beginAuthorityMutation()
+        val firstToken = requireNotNull(firstMutation.token)
+        assertTrue(firstMutation.changed)
+        assertTrue(firstMutation.committed)
+        assertFalse(firstMutation.recoveryWorkEnabled)
+        assertEquals(2L, firstMutation.authorityRevision)
+        assertTrue(firstMutation.authorityMutationInProgress)
+
+        val overlappingMutation = store.beginAuthorityMutation()
+        val overlappingToken = requireNotNull(overlappingMutation.token)
+        assertTrue(firstToken != overlappingToken)
+        assertFalse(overlappingMutation.recoveryWorkEnabled)
+        assertEquals(3L, overlappingMutation.authorityRevision)
+        assertTrue(overlappingMutation.authorityMutationInProgress)
+
+        val firstFinished = store.finishAuthorityMutation(firstToken)
+        assertTrue(firstFinished.changed)
+        assertTrue(firstFinished.committed)
+        assertFalse(firstFinished.recoveryWorkEnabled)
+        assertEquals(3L, firstFinished.authorityRevision)
+        assertTrue(firstFinished.authorityMutationInProgress)
+
+        val finalFinished = store.finishAuthorityMutation(overlappingToken)
+        assertTrue(finalFinished.changed)
+        assertTrue(finalFinished.committed)
+        assertTrue(finalFinished.recoveryWorkEnabled)
+        assertEquals(3L, finalFinished.authorityRevision)
+        assertFalse(finalFinished.authorityMutationInProgress)
+        assertTrue(store.recoveryWorkEnabled())
+
+        val staleFinish = store.finishAuthorityMutation(firstToken)
+        assertFalse(staleFinish.changed)
+        assertFalse(staleFinish.committed)
+        assertTrue(staleFinish.recoveryWorkEnabled)
+        assertEquals(3L, staleFinish.authorityRevision)
+        assertFalse(staleFinish.authorityMutationInProgress)
+
+        val crashMutation = store.beginAuthorityMutation()
+        val crashToken = requireNotNull(crashMutation.token)
         assertFalse(store.recoveryWorkEnabled())
+        assertEquals(4L, store.recoveryAuthority().authorityRevision)
+        assertTrue(store.recoveryAuthority().authorityMutationInProgress)
+
+        val reopenedStore = DroppedPushRecoveryStore(context)
+        val recovered = reopenedStore.setCurrentBinding(
+            "installation-a/account-a",
+            recoveryWorkEnabled = true,
+            recoverStaleAuthorityMutations = true,
+        )
+        assertTrue(recovered.changed)
+        assertTrue(recovered.committed)
+        assertTrue(recovered.recoveryWorkEnabled)
+        assertEquals(4L, reopenedStore.recoveryAuthority().authorityRevision)
+        assertFalse(reopenedStore.recoveryAuthority().authorityMutationInProgress)
+
+        val recoveredStaleFinish = reopenedStore.finishAuthorityMutation(crashToken)
+        assertFalse(recoveredStaleFinish.changed)
+        assertFalse(recoveredStaleFinish.committed)
+        assertTrue(recoveredStaleFinish.recoveryWorkEnabled)
+        assertEquals(4L, recoveredStaleFinish.authorityRevision)
+        assertFalse(recoveredStaleFinish.authorityMutationInProgress)
     }
 
     @Test

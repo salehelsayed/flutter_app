@@ -15,6 +15,17 @@ const int kDirectNotificationDisplayOutboxCapacity = 512;
 const int kDirectNotificationDisplayOutboxMaxLoadBatch = 50;
 const int kDirectNotificationCommittedSqlTerminalMaxLoadBatch = 512;
 
+/// Total durable custody, including NOT_READY and deferred/backoff rows.
+Future<int> dbCountAllDirectNotificationDisplayOutboxEntries(
+  DatabaseExecutor db,
+) async {
+  if (!await _tableExists(db)) return 0;
+  return Sqflite.firstIntValue(
+        await db.rawQuery('SELECT COUNT(*) FROM $_table'),
+      ) ??
+      0;
+}
+
 const List<String> _authorityFields = <String>[
   'event_id',
   'event_kind',
@@ -926,6 +937,78 @@ dbLoadDirectNotificationCommittedSqlTerminalsForPeer(
         reactionTombstone: false,
       ),
   ];
+}
+
+/// Resolves one durable direct-reaction correlation against the complete typed
+/// terminal set for [peerId]. Pages stay bounded in Dart, while one database
+/// transaction freezes the global set so a duplicate beyond an earlier page
+/// cannot be missed by concurrent inserts or updates.
+///
+/// `null` deliberately covers missing, malformed and ambiguous matches. The
+/// caller must retain reconciliation custody for every one of those cases.
+Future<DirectNotificationCommittedSqlTerminal?>
+dbLoadUniqueDirectNotificationCommittedReactionTerminalByCorrelation(
+  Database db, {
+  required String peerId,
+  required String physicalPeerId,
+  required String eventCorrelation,
+  int pageSize = kDirectNotificationCommittedSqlTerminalMaxLoadBatch,
+}) {
+  if (pageSize <= 0) return Future.value(null);
+  final boundedPageSize = math.min(
+    pageSize,
+    kDirectNotificationCommittedSqlTerminalMaxLoadBatch,
+  );
+  return dbWriteTransaction(db, (txn) async {
+    DirectNotificationCommittedSqlTerminal? matched;
+    var offset = 0;
+    while (true) {
+      final rows = await txn.rawQuery(
+        '''
+        SELECT peer_id, message_id, actor_peer_id, reaction_id,
+               terminal_event_id, updated_at
+        FROM direct_notification_reaction_terminal_events
+        WHERE peer_id = ?
+        ORDER BY updated_at DESC, terminal_event_id DESC,
+                 message_id DESC, actor_peer_id DESC
+        LIMIT ? OFFSET ?
+        ''',
+        <Object?>[peerId, boundedPageSize, offset],
+      );
+      for (final row in rows) {
+        final reactionId = row['reaction_id'] as String?;
+        if (reactionId == null) continue;
+        final eventKey = trySelectNotificationCompletedOutcomeEventKey(
+          producerKind: NotificationCompletedOutcomeProducerKind.directReaction,
+          authenticatedEnvelope: <String, Object?>{'reactionId': reactionId},
+        );
+        if (eventKey == null ||
+            tryComputeNotificationCompletedOutcomeCorrelation(
+                  physicalPeerId: physicalPeerId,
+                  producerKind:
+                      NotificationCompletedOutcomeProducerKind.directReaction,
+                  eventKey: eventKey,
+                ) !=
+                eventCorrelation) {
+          continue;
+        }
+        if (matched != null) return null;
+        matched = DirectNotificationCommittedSqlTerminal(
+          eventKind: 'reaction',
+          eventId: row['terminal_event_id']! as String,
+          peerId: row['peer_id']! as String,
+          messageId: row['message_id']! as String,
+          actorPeerId: row['actor_peer_id']! as String,
+          eventTimestamp: row['updated_at']! as String,
+          reactionId: reactionId,
+          reactionAction: 'add',
+          reactionTombstone: false,
+        );
+      }
+      if (rows.length < boundedPageSize) return matched;
+      offset += rows.length;
+    }
+  }, exclusive: false);
 }
 
 /// Retires stale/ineligible custody without recording a display terminal.

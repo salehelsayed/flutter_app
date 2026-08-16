@@ -119,7 +119,7 @@ class MknoonFirebaseMessagingServiceTest {
 
     @Test
     @Config(sdk = [33])
-    fun `prerequisite binding records marker but does not activate recovery worker`() {
+    fun `disabled recovery readiness records marker without scheduling work`() {
         shadowOf(context as android.app.Application).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
         val observed = mutableListOf<DroppedPushRecoveryStore.PendingRecovery>()
         val service = recordingService(observed)

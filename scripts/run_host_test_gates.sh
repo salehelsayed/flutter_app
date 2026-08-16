@@ -285,6 +285,9 @@ readonly APP_VISIBILITY_NATIVE_371="scripts/test/run_app_visibility_native_371.s
 # Plan 373 (GAP-N07): the fixed-wake NSE Go/Swift/build/privacy contract is
 # one synthetic later-wave host item and is always invoked through bash.
 readonly IOS_NSE_NATIVE_373="scripts/test/run_ios_nse_native_373.sh"
+# Plan 374 (GAP-N08): the Android headless recovery native/build contract is
+# one synthetic later-wave host item and is always invoked through bash.
+readonly ANDROID_HEADLESS_RECOVERY_NATIVE_374="scripts/test/run_android_headless_recovery_native_374.sh"
 # Exact Android build-boundary proof. Keep it as one synthetic core-host item:
 # the auto-discovered Dart contract stays fast, while this leg performs the
 # profile/release manifest preparation only once per core-host-all invocation.
@@ -299,9 +302,9 @@ Usage:
 Options:
   --list, --dry-run          Discover host tests and print the command plan only.
   --batch-flutter            Run the selected Dart paths in one exact-path
-                             Flutter invocation; Go legs remain separate.
+                             Flutter invocation; non-Flutter legs remain separate.
   --dart-only                Omit non-Dart plan items. For host-all this removes
-                             the fifteen non-Dart tails so a composed gate can run its
+                             the sixteen non-Dart tails so a composed gate can run its
                              full Go lane exactly once.
   --concurrency <N>          Flutter batch process count from 1 through 64
                              (default: 1).
@@ -490,6 +493,7 @@ case "$scope" in
         printf '%s\n' "$GO_RELAY_ALL_SCRIPT"
         printf '%s\n' "$APP_VISIBILITY_NATIVE_371"
         printf '%s\n' "$IOS_NSE_NATIVE_373"
+        printf '%s\n' "$ANDROID_HEADLESS_RECOVERY_NATIVE_374"
       fi
     } >"$plan_file"
     ;;
@@ -625,6 +629,10 @@ is_ios_nse_native_373() {
   [ "$1" = "$IOS_NSE_NATIVE_373" ]
 }
 
+is_android_headless_recovery_native_374() {
+  [ "$1" = "$ANDROID_HEADLESS_RECOVERY_NATIVE_374" ]
+}
+
 is_android_renderer_manifest_contract() {
   [ "$1" = "$ANDROID_RENDERER_MANIFEST_CONTRACT" ]
 }
@@ -748,6 +756,10 @@ print_command_for_path() {
     printf 'bash %s' "$IOS_NSE_NATIVE_373"
     return
   fi
+  if is_android_headless_recovery_native_374 "$path"; then
+    printf 'bash %s' "$ANDROID_HEADLESS_RECOVERY_NATIVE_374"
+    return
+  fi
   if is_android_renderer_manifest_contract "$path"; then
     print_android_contract_command "$ANDROID_RENDERER_MANIFEST_CONTRACT"
     return
@@ -867,6 +879,10 @@ run_path() {
   fi
   if is_ios_nse_native_373 "$path"; then
     bash "$IOS_NSE_NATIVE_373"
+    return
+  fi
+  if is_android_headless_recovery_native_374 "$path"; then
+    bash "$ANDROID_HEADLESS_RECOVERY_NATIVE_374"
     return
   fi
   if is_android_renderer_manifest_contract "$path"; then

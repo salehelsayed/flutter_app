@@ -322,6 +322,8 @@ const _expectedConstructorParameters = <String>[
   'ResolveCurrentGroupNotificationOpaqueBinding? resolveCurrentOpaqueBinding',
   'DurableLocalNotificationEffectRegistry? '
       'durableLocalNotificationEffectRegistry',
+  'LocalNotificationPresentationOwner notificationPresentationOwner = '
+      'LocalNotificationPresentationOwner.mainApp',
   'bool completedOutcomeProducerEnabled = false',
   'BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask',
   'EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask',

@@ -5,6 +5,17 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 const String _table = 'group_notification_reconciliation_outbox';
 const int kGroupNotificationReconciliationOutboxMaxLoadBatch = 50;
 
+/// Total durable custody, including deferred/backoff rows.
+Future<int> dbCountAllGroupNotificationReconciliationOutboxEntries(
+  DatabaseExecutor db,
+) async {
+  if (!await _tableExists(db)) return 0;
+  return Sqflite.firstIntValue(
+        await db.rawQuery('SELECT COUNT(*) FROM $_table'),
+      ) ??
+      0;
+}
+
 /// Enqueues a canonical group-notification reconciliation pass.
 ///
 /// The opaque incarnation token distinguishes a later row created for the

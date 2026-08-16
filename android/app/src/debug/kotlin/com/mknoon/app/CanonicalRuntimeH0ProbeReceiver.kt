@@ -1,6 +1,8 @@
 package com.mknoon.app
 
 import android.app.Activity
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -16,6 +18,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.plugins.firebase.core.FlutterFirebaseCorePlugin
 import io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingPlugin
+import io.flutter.plugins.pathprovider.PathProviderPlugin
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -30,12 +33,21 @@ class CanonicalRuntimeH0ProbeReceiver : BroadcastReceiver() {
         const val EXTRA_HANDOFF = "handoff"
         const val EXTRA_QUEUE_INVERSION = "queueInversion"
         const val EXTRA_RUN_NONCE = "runNonce"
+        const val EXTRA_PLAN374_PHASE = "plan374Phase"
         private const val RESULT_CHANNEL = "mknoon/canonical_runtime_h0_probe"
+        private const val PLAN374_RESULT_CHANNEL =
+            "mknoon/headless_recovery_374_fixture"
         private const val RESULT_DIRECTORY = "h0-probe"
+        private const val PLAN374_RESULT_DIRECTORY = "plan374-headless-recovery"
         private const val RESULT_FILE = "latest.json"
         private const val PHASE_TIMEOUT_MS = 40_000L
         private const val QUEUE_INVERSION_HARD_TIMEOUT_MS = 8_000L
         private const val QUEUE_INVERSION_WATCHDOG_MS = 4_000L
+
+        // Hidden platform Notification flag with a stable AOSP/CTS value. The
+        // system sets it on autogroup summaries it creates itself, including
+        // the API 36+ silent-section aggregate summary.
+        private const val FLAG_AUTOGROUP_SUMMARY = 0x00000400
         private val running = AtomicBoolean(false)
 
         private val pluginAllowlist = listOf(
@@ -82,6 +94,90 @@ class CanonicalRuntimeH0ProbeReceiver : BroadcastReceiver() {
             running.set(false)
             pending.finish()
         }
+        val plan374Phase = intent.getStringExtra(EXTRA_PLAN374_PHASE)?.trim()
+        if (!plan374Phase.isNullOrEmpty()) {
+            val runNonce = intent.getStringExtra(EXTRA_RUN_NONCE).orEmpty()
+            val finishPlan374 = { artifact: JSONObject, passed: Boolean ->
+                val directory = File(
+                    applicationContext.filesDir,
+                    PLAN374_RESULT_DIRECTORY,
+                )
+                directory.mkdirs()
+                File(directory, "$plan374Phase-latest.json")
+                    .writeText(artifact.toString())
+                pending.resultCode = if (passed) {
+                    Activity.RESULT_OK
+                } else {
+                    Activity.RESULT_CANCELED
+                }
+                pending.resultData = artifact.toString()
+                running.set(false)
+                pending.finish()
+            }
+            if (runNonce.isBlank()) {
+                finishPlan374(
+                    JSONObject()
+                        .put("status", "FAIL")
+                        .put("phase", plan374Phase)
+                        .put("failure", "missing runNonce broadcast extra"),
+                    false,
+                )
+                return
+            }
+            if (plan374Phase == "deleted-batch") {
+                val store = DroppedPushRecoveryStore(applicationContext)
+                val before = store.recoveryAuthority()
+                val processDeathBarrierArmed = Plan374ProcessDeathBarrier.arm(
+                    applicationContext,
+                    runNonce,
+                )
+                val committed = ProductionDeletedBatchRecovery(
+                    applicationContext,
+                ).commitAndSchedule()
+                if (committed == null) {
+                    Plan374ProcessDeathBarrier.disarm(applicationContext)
+                }
+                val after = store.recoveryAuthority()
+                val passed = before.currentBinding != null &&
+                    before.recoveryWorkEnabled &&
+                    processDeathBarrierArmed &&
+                    committed != null &&
+                    committed == after.pendingRecovery
+                finishPlan374(
+                    JSONObject()
+                        .put("status", if (passed) "PASS" else "FAIL")
+                        .put("phase", plan374Phase)
+                        .put("runNonce", runNonce)
+                        .put("productionDeletedBatchSeam", true)
+                        .put("processDeathBarrierArmed", processDeathBarrierArmed)
+                        .put("recoveryWorkEnabledBefore", before.recoveryWorkEnabled)
+                        .put("bindingBefore", before.currentBinding)
+                        .put("committedGeneration", committed?.generation)
+                        .put("committedBinding", committed?.binding)
+                        .put("pendingGenerationAfter", after.pendingRecovery?.generation)
+                        .put("pendingBindingAfter", after.pendingRecovery?.binding)
+                        .put(
+                            "immediateUniqueWorkName",
+                            committed?.binding?.let(
+                                DroppedPushRecoveryWorkScheduler::immediateUniqueName,
+                            ),
+                        )
+                        .put("mainActivityLaunchCount", 0)
+                        .put("pid", Process.myPid()),
+                    passed,
+                )
+                return
+            }
+            val runner = Plan374FixtureRunner(
+                applicationContext = applicationContext,
+                mainHandler = mainHandler,
+                phase = plan374Phase,
+                runNonce = runNonce,
+                finish = finishPlan374,
+            )
+            mainHandler.post(runner::start)
+            return
+        }
         if (intent.getBooleanExtra(EXTRA_QUEUE_INVERSION, false)) {
             val runner = QueueInversionRunner(
                 applicationContext = applicationContext,
@@ -105,6 +201,267 @@ class CanonicalRuntimeH0ProbeReceiver : BroadcastReceiver() {
             finish = finishProbe,
         )
         mainHandler.post(runner::start)
+    }
+
+    /** Seed/inspect only; the recovery phase itself is owned by WorkManager. */
+    private class Plan374FixtureRunner(
+        private val applicationContext: Context,
+        private val mainHandler: Handler,
+        private val phase: String,
+        private val runNonce: String,
+        private val finish: (JSONObject, Boolean) -> Unit,
+    ) {
+        private var completed = false
+        private var engine: FlutterEngine? = null
+        private var resultChannel: MethodChannel? = null
+        private var leaseBridge: CanonicalRuntimeLeaseBridge? = null
+        private var droppedPushBridge: DroppedPushRecoveryBridge? = null
+        private var goBridge: GoBridge? = null
+
+        fun start() {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            if (phase != "seed" && phase != "inspect") {
+                finishTerminal(emptyMap<Any?, Any?>(), false, "unsupported phase")
+                return
+            }
+            val created = FlutterEngine(applicationContext, null, false)
+            engine = created
+            created.plugins.add(FlutterSecureStoragePlugin())
+            created.plugins.add(SqfliteSqlCipherPlugin())
+            created.plugins.add(FlutterLocalNotificationsPlugin())
+            created.plugins.add(PathProviderPlugin())
+            leaseBridge = CanonicalRuntimeLeaseBridge(
+                messenger = created.dartExecutor.binaryMessenger,
+                ownerId = "plan374-$phase-${System.identityHashCode(created)}",
+                role = CanonicalRuntimeLeaseBroker.Role.FOREGROUND,
+                attachRuntimeOwner = {
+                    if (goBridge == null) {
+                        goBridge = runCatching {
+                            GoBridge(created, applicationContext)
+                        }.getOrNull()
+                    }
+                    goBridge != null
+                },
+                beginRuntimeDrain = { goBridge?.requestRuntimeDrain() ?: true },
+                isRuntimeReleased = { goBridge?.isRuntimeReleased() ?: true },
+            )
+            droppedPushBridge = DroppedPushRecoveryBridge(
+                applicationContext,
+                created.dartExecutor.binaryMessenger,
+            )
+            resultChannel = MethodChannel(
+                created.dartExecutor.binaryMessenger,
+                PLAN374_RESULT_CHANNEL,
+            ).also { channel ->
+                channel.setMethodCallHandler { call, result ->
+                    val payload = call.arguments as? Map<*, *> ?: emptyMap<Any?, Any?>()
+                    when (call.method) {
+                        "complete" -> {
+                            result.success(null)
+                            finishTerminal(payload, true, null)
+                        }
+                        "failed" -> {
+                            result.success(null)
+                            finishTerminal(payload, false, "Dart fixture failed")
+                        }
+                        else -> result.notImplemented()
+                    }
+                }
+            }
+            val loader = FlutterInjector.instance().flutterLoader()
+            created.dartExecutor.executeDartEntrypoint(
+                DartExecutor.DartEntrypoint(
+                    loader.findAppBundlePath(),
+                    "androidHeadlessRecovery374FixtureMain",
+                ),
+                listOf(phase, runNonce),
+            )
+            mainHandler.postDelayed({
+                if (!completed) {
+                    finishTerminal(
+                        emptyMap<Any?, Any?>(),
+                        false,
+                        "fixture phase exceeded $PHASE_TIMEOUT_MS ms",
+                    )
+                }
+            }, PHASE_TIMEOUT_MS)
+        }
+
+        private fun finishTerminal(
+            payload: Map<*, *>,
+            dartSucceeded: Boolean,
+            failure: String?,
+        ) {
+            if (completed) return
+            completed = true
+            check(Looper.myLooper() == Looper.getMainLooper())
+            resultChannel?.setMethodCallHandler(null)
+            resultChannel = null
+            droppedPushBridge?.dispose()
+            droppedPushBridge = null
+            leaseBridge?.dispose()
+            leaseBridge = null
+            goBridge?.dispose()
+            goBridge = null
+            engine?.destroy()
+            engine = null
+
+            val store = DroppedPushRecoveryStore(applicationContext)
+            val authority = store.recoveryAuthority()
+            val lease = ProcessCanonicalRuntimeLease.broker.snapshot()
+            val go = ProcessGoRuntimeHost.instance.snapshot()
+            val active = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                applicationContext.getSystemService(NotificationManager::class.java)
+                    .activeNotifications
+            } else {
+                emptyArray()
+            }
+            val activeCards = JSONArray().also { cards ->
+                active.forEach { notification ->
+                    cards.put(
+                        JSONObject()
+                            .put("id", notification.id)
+                            .put("tag", notification.tag)
+                            .put("category", notification.notification.category)
+                            .put("visibility", notification.notification.visibility)
+                            .put("flags", notification.notification.flags)
+                            .put(
+                                "systemAutogroupSummary",
+                                (notification.notification.flags and FLAG_AUTOGROUP_SUMMARY) != 0,
+                            )
+                            .put(
+                                "channelId",
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    notification.notification.channelId
+                                } else {
+                                    null
+                                },
+                            ),
+                    )
+                }
+            }
+            val expectedCardIds = mutableSetOf<Int>()
+            val ledgerRecords = (payload["ledgerRecords"] as? Iterable<*>)
+                ?.mapNotNull { it as? Map<*, *> }
+                ?: emptyList()
+            ledgerRecords.forEach { record ->
+                if (
+                    record["presentationState"] == "OS_POSTED" &&
+                    (
+                        record["producerKind"] == "direct_message" ||
+                            record["producerKind"] == "group_message"
+                    )
+                ) {
+                    (record["notificationId"] as? Number)?.toInt()?.let(expectedCardIds::add)
+                }
+            }
+            val exactSettledLedger = ledgerRecords.size == 2 &&
+                ledgerRecords.map { it["producerKind"] }.toSet() ==
+                setOf("direct_message", "group_message") &&
+                ledgerRecords.all {
+                    it["sourceCustody"] == "SQL_READY" &&
+                        it["presentationOwner"] == "INBOX_RECONCILER" &&
+                        it["presentationState"] == "OS_POSTED" &&
+                        it["effectPhase"] == "SETTLED"
+                }
+            // Newer Android images bundle silent app cards under a
+            // system-created autogroup summary (FLAG_AUTOGROUP_SUMMARY, e.g.
+            // the API 36+ Aggregate_SilentSection row). That summary is
+            // system-owned presentation, not an app-posted card, so the exact
+            // invariant is: both expected app cards present and zero
+            // unexpected app-posted extras.
+            val systemAutogroupSummaries = active.filter {
+                (it.notification.flags and FLAG_AUTOGROUP_SUMMARY) != 0
+            }
+            val appPostedCards = active.filterNot {
+                (it.notification.flags and FLAG_AUTOGROUP_SUMMARY) != 0
+            }
+            val unexpectedAppPostedCards =
+                appPostedCards.filter { it.id !in expectedCardIds }
+            val matchingCards = appPostedCards.filter { it.id in expectedCardIds }
+            val privateMessageCards = matchingCards.count {
+                it.notification.visibility == Notification.VISIBILITY_PRIVATE &&
+                    it.notification.category == Notification.CATEGORY_MESSAGE
+            }
+            val custody = payload[if (phase == "seed") "custodyBefore" else "custodyAfter"]
+                as? Map<*, *>
+            val custodyValues = custody?.values?.mapNotNull { (it as? Number)?.toInt() }
+                ?: emptyList()
+            val basePassed = dartSucceeded &&
+                payload["runNonce"] == runNonce &&
+                payload["phase"] == phase &&
+                payload["databaseUserVersion"] == 116 &&
+                payload["cipherVersion"]?.toString()?.isNotBlank() == true &&
+                lease.state == CanonicalRuntimeLeaseBroker.State.RELEASED &&
+                go.state == GoRuntimeHost.State.RELEASED &&
+                !isHeadlessCanonicalRecoveryEngineRetained()
+            val phasePassed = when (phase) {
+                "seed" -> basePassed &&
+                    payload["databaseClosed"] == true &&
+                    custodyValues.size == 4 && custodyValues.all { it > 0 } &&
+                    authority.currentBinding == payload["binding"] &&
+                    authority.recoveryWorkEnabled &&
+                    authority.pendingRecovery == null
+                "inspect" -> basePassed &&
+                    payload["databaseClosed"] == true &&
+                    payload["quickCheck"]?.toString()?.equals("ok", true) == true &&
+                    payload["identityPresent"] == true &&
+                    custodyValues.size == 4 && custodyValues.all { it == 0 } &&
+                    (payload["settledSqlReadyInboxReconcilerCount"] as? Number)
+                        ?.toInt() == 2 &&
+                    exactSettledLedger &&
+                    expectedCardIds.size == 2 &&
+                    matchingCards.size == 2 &&
+                    privateMessageCards == 2 &&
+                    appPostedCards.size == 2 &&
+                    unexpectedAppPostedCards.isEmpty() &&
+                    authority.pendingRecovery == null
+                else -> false
+            }
+            val artifact = JSONObject()
+                .put("status", if (phasePassed) "PASS" else "FAIL")
+                .put("phase", phase)
+                .put("runNonce", runNonce)
+                .put("entrypoint", "androidHeadlessRecovery374FixtureMain")
+                .put("dartSucceeded", dartSucceeded)
+                .put("dart", jsonValue(payload))
+                .put("failure", failure)
+                .put("pid", Process.myPid())
+                .put("sdkInt", Build.VERSION.SDK_INT)
+                .put("device", "${Build.MANUFACTURER} ${Build.MODEL}".trim())
+                .put("mainActivityLaunchCount", 0)
+                .put("applicationRootConstructed", false)
+                .put("fixtureEngineDestroyed", engine == null)
+                .put("finalLeaseState", lease.state.name)
+                .put("finalGoState", go.state.name)
+                .put("headlessRecoveryEngineRetained", isHeadlessCanonicalRecoveryEngineRetained())
+                .put("recoveryWorkEnabled", authority.recoveryWorkEnabled)
+                .put("currentBinding", authority.currentBinding)
+                .put("pendingGeneration", authority.pendingRecovery?.generation)
+                .put("pendingBinding", authority.pendingRecovery?.binding)
+                .put("expectedCardIds", JSONArray(expectedCardIds.toList().sorted()))
+                .put("matchingCardCount", matchingCards.size)
+                .put("privateMessageCardCount", privateMessageCards)
+                .put("appPostedCardCount", appPostedCards.size)
+                .put("unexpectedAppPostedCardCount", unexpectedAppPostedCards.size)
+                .put("systemAutogroupSummaryCount", systemAutogroupSummaries.size)
+                .put("exactSettledLedger", exactSettledLedger)
+                .put("activeNotifications", activeCards)
+            finish(artifact, phasePassed)
+        }
+
+        private fun jsonValue(value: Any?): Any? = when (value) {
+            null -> JSONObject.NULL
+            is Map<*, *> -> JSONObject().also { target ->
+                value.forEach { (key, nested) ->
+                    target.put(key.toString(), jsonValue(nested))
+                }
+            }
+            is Iterable<*> -> JSONArray().also { target ->
+                value.forEach { nested -> target.put(jsonValue(nested)) }
+            }
+            else -> value
+        }
     }
 
     /**

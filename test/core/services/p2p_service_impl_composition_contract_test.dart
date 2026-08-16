@@ -12,6 +12,8 @@ const _peerPartPath =
     'lib/core/services/p2p_impl/p2p_peer_transport_coordinator.dart';
 const _bootstrapPath =
     'lib/app/bootstrap/production_application_bootstrap.dart';
+const _headlessCanonicalCompositionPath =
+    'lib/app/bootstrap/production_canonical_inbox_projection_composition.dart';
 const _applicationRootPath = 'lib/app/application_root.dart';
 const _contractPath =
     'test/core/services/p2p_service_impl_composition_contract_test.dart';
@@ -76,6 +78,7 @@ const _constructorParameters = <String>[
       'readOpaqueWakePlatformConsumerReadiness',
   'BeginIosInboxDrainGeneration? beginIosInboxDrainGeneration',
   'EndIosInboxDrainGeneration? endIosInboxDrainGeneration',
+  'bool recoveryOnly = false',
 ];
 
 const _publicFields = <String>{
@@ -103,6 +106,8 @@ const _publicMethods = <String>{
   'refreshQualifiedIosNseTransportProjection',
   'startNode',
   'startNodeCore',
+  'startRecoveryOnlyNode',
+  'checkRecoveryNodeHealth',
   'warmBackground',
   'startEarlyLocalDiscovery',
   'debugLibp2pListenPort',
@@ -134,9 +139,12 @@ const _publicMethods = <String>{
   // remains the sole owner of the lease context and paged-drain lifetime.
   'armIosMailboxAlertDrainContext',
   'drainOfflineInboxFully',
+  'sealRecoveryAdmissionAndAwaitInFlight',
+  'recoveryAdmissionRefusedAfterSeal',
   'pauseProtectedGroupContentAdmission',
   'resumeProtectedGroupContentAdmission',
   'drainProtectedGroupContentFixedPoint',
+  'drainProtectedGroupContentRecoveryFixedPoint',
   'probeRelay',
   'lookupRelayPresence',
   'setPresence',
@@ -185,6 +193,7 @@ const _inboxFields = <String>{
   '_pendingStartupDrainWaitForAllPages',
   '_protectedGroupContentAdmissionPaused',
   '_protectedGroupContentReplayInFlight',
+  '_recoveryAdmissionRefusedAfterSeal',
 };
 
 const _inboxMethods = <String>{
@@ -222,6 +231,7 @@ const _inboxMethods = <String>{
   'pauseProtectedGroupContentAdmission',
   'resumeProtectedGroupContentAdmission',
   'drainProtectedGroupContentFixedPoint',
+  'drainProtectedGroupContentRecoveryFixedPoint',
   '_scheduleStartupDrain',
   'countNeedsAttentionInboxEntries',
   'onNodeStateTransition',
@@ -240,6 +250,7 @@ const _inboxDelegates = <String>{
   'pauseProtectedGroupContentAdmission',
   'resumeProtectedGroupContentAdmission',
   'drainProtectedGroupContentFixedPoint',
+  'drainProtectedGroupContentRecoveryFixedPoint',
   'countNeedsAttentionInboxEntries',
 };
 
@@ -645,7 +656,11 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // 373: repinned for four optional constructor-owned iOS NSE ports plus the two
 // concrete composition methods above. The P2PService interface and every
 // existing public member remain unchanged.
-const _expectedFacadeApiFingerprint = 'b36cfbe9';
+//
+// 374: repinned for the opt-in recovery-only construction flag, exact node
+// start/status methods, global admission seal/await boundary, typed protected
+// fixed-point result and the latched post-seal-refusal proof.
+const _expectedFacadeApiFingerprint = '1bff8ef1';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
@@ -889,7 +904,7 @@ void main() {
             .toList(growable: false),
         _constructorParameters,
       );
-      expect(constructor.parameters.parameters, hasLength(27));
+      expect(constructor.parameters.parameters, hasLength(28));
       expect(
         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
         _publicFields,
@@ -916,10 +931,16 @@ void main() {
       _expectCallbackOwnership(facade, facadeSource);
 
       final creations = _productionCreations();
-      expect(creations, hasLength(1));
+      expect(creations, hasLength(2));
       expect(
-        File(creations.single.path).absolute.path,
-        File(_bootstrapPath).absolute.path,
+        creations.map((creation) => File(creation.path).absolute.path).toSet(),
+        <String>{
+          File(_bootstrapPath).absolute.path,
+          File(_headlessCanonicalCompositionPath).absolute.path,
+        },
+        reason:
+            '374 permits one foreground and one recovery-only P2P lifetime; '
+            'no other production construction site may appear',
       );
 
       final rootSource = _compact(

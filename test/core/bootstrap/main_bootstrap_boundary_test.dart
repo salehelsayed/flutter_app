@@ -9,8 +9,12 @@ const _mainPath = 'lib/main.dart';
 const _runnerPath = 'lib/app/bootstrap/application_bootstrap.dart';
 const _productionPath =
     'lib/app/bootstrap/production_application_bootstrap.dart';
+const _productionHeadlessPath =
+    'lib/app/bootstrap/production_headless_canonical_recovery.dart';
 const _rootPath = 'lib/app/application_root.dart';
 const _h0ProbePath = 'lib/core/debug/android_canonical_runtime_h0_probe.dart';
+const _plan374FixturePath =
+    'lib/core/debug/android_headless_recovery_374_fixture.dart';
 const _headlessRecoveryPath =
     'lib/core/notifications/headless_canonical_recovery_entrypoint.dart';
 
@@ -71,10 +75,11 @@ void main() {
       orderedEquals(const [
         'main',
         'androidCanonicalRuntimeH0ProbeMain',
+        'androidHeadlessRecovery374FixtureMain',
         'androidHeadlessCanonicalRecoveryMain',
       ]),
       reason:
-          'main.dart may expose only main plus the two native AOT entrypoints',
+          'main.dart may expose only main plus the three native AOT entrypoints',
     );
     for (final nativeEntrypoint in functions.where(
       (declaration) => declaration.name.lexeme != 'main',
@@ -101,7 +106,9 @@ void main() {
       equals({
         _runnerPath,
         _productionPath,
+        _productionHeadlessPath,
         _h0ProbePath,
+        _plan374FixturePath,
         _headlessRecoveryPath,
       }),
       reason:
@@ -153,4 +160,96 @@ void main() {
     expect(source, isNot(contains('class MyApp ')));
     expect(source, isNot(contains('openIntroNotificationOrbitRoute(')));
   });
+
+  test(
+    'TC-374-07 production AOT recovery delegates one UI-neutral graph and same runner cleanup',
+    () {
+      final mainSource = File(_mainPath).readAsStringSync();
+      expect(
+        _occurrences(
+          mainSource,
+          'runRecovery: runProductionHeadlessCanonicalRecovery,',
+        ),
+        1,
+      );
+      expect(
+        _occurrences(
+          mainSource,
+          'emergencyShutdown: cleanupProductionHeadlessCanonicalRecovery,',
+        ),
+        1,
+      );
+      expect(
+        _occurrences(mainSource, 'runUnavailableHeadlessCanonicalRecovery'),
+        0,
+      );
+      expect(
+        _occurrences(mainSource, 'cleanupUnavailableHeadlessCanonicalRecovery'),
+        0,
+      );
+
+      final recoveryFile = File(_productionHeadlessPath);
+      expect(recoveryFile.existsSync(), isTrue);
+      final recoverySource = recoveryFile.readAsStringSync();
+      final parsed = parseString(
+        content: recoverySource,
+        path: _productionHeadlessPath,
+      );
+      expect(parsed.errors, isEmpty);
+      final functions = parsed.unit.declarations
+          .whereType<FunctionDeclaration>()
+          .toList(growable: false);
+      final run = functions.singleWhere(
+        (declaration) =>
+            declaration.name.lexeme == 'runProductionHeadlessCanonicalRecovery',
+      );
+      final cleanup = functions.singleWhere(
+        (declaration) =>
+            declaration.name.lexeme ==
+            'cleanupProductionHeadlessCanonicalRecovery',
+      );
+      final runOwner = RegExp(
+        r'([A-Za-z_$][A-Za-z0-9_$]*)\.run\(',
+      ).firstMatch(run.functionExpression.body.toSource())?.group(1);
+      final cleanupOwner = RegExp(
+        r'([A-Za-z_$][A-Za-z0-9_$]*)\.emergencyCleanup\(',
+      ).firstMatch(cleanup.functionExpression.body.toSource())?.group(1);
+      expect(runOwner, isNotNull);
+      expect(cleanupOwner, runOwner);
+      expect(
+        _occurrences(
+          recoverySource,
+          'ProductionHeadlessCanonicalRecoveryAcquisitionOwner',
+        ),
+        greaterThanOrEqualTo(1),
+      );
+      expect(
+        _occurrences(
+          recoverySource,
+          'AndroidProductionHeadlessCanonicalRecoveryBackend()',
+        ),
+        1,
+        reason: 'production owns one UI-neutral backend instance',
+      );
+      expect(recoverySource, contains('CanonicalRecoveryReason.deletedBatch'));
+      expect(recoverySource, contains('CanonicalRecoveryReason.periodicSweep'));
+
+      for (final forbidden in const <String>[
+        'runApp(',
+        'ApplicationRoot',
+        'ProductionApplicationBootstrap(',
+        'production_application_bootstrap.dart',
+        'FirebaseMessaging.onMessage',
+        'onMessageOpenedApp',
+        'GeneratedPluginRegistrant',
+        'Timer.periodic',
+      ]) {
+        expect(
+          recoverySource,
+          isNot(contains(forbidden)),
+          reason: 'headless recovery must not compose $forbidden',
+        );
+      }
+    },
+  );
 }

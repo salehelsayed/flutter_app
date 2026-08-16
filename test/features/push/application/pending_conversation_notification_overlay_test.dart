@@ -355,6 +355,14 @@ void main() {
       final bootstrap = File(
         'lib/app/bootstrap/production_application_bootstrap.dart',
       ).readAsStringSync();
+      final directProjection = File(
+        'lib/app/bootstrap/'
+        'production_canonical_direct_projection_composition.dart',
+      ).readAsStringSync();
+      final directReplay = File(
+        'lib/app/bootstrap/'
+        'production_canonical_direct_replay_composition.dart',
+      ).readAsStringSync();
       final groupListener = File(
         'lib/features/groups/application/group_message_listener.dart',
       ).readAsStringSync();
@@ -386,7 +394,62 @@ void main() {
           r'pendingNotificationOverlay:\s*'
           r'pendingNotificationOverlayBindingPublisher',
         ).allMatches(bootstrap),
-        hasLength(6),
+        hasLength(3),
+        reason:
+            'foreground must pass one overlay instance to each remaining owner',
+      );
+      // The stale-correlation repair consolidated the durable-materialization
+      // and canonical-replacement snapshot paths behind one canonical-state
+      // helper that projects the overlay exactly once; the two live paths
+      // still pass the shared overlay directly. Coverage stays four paths.
+      expect(
+        RegExp(
+          r'pendingNotificationOverlay:\s*'
+          r'dependencies\.pendingNotificationOverlay',
+        ).allMatches(directProjection),
+        hasLength(2),
+        reason:
+            'both live snapshot paths must pass the shared overlay directly',
+      );
+      expect(
+        RegExp(
+          r'final overlay = dependencies\.pendingNotificationOverlay;',
+        ).allMatches(directProjection),
+        hasLength(1),
+        reason: 'the canonical-state helper must read the one shared overlay',
+      );
+      expect(
+        RegExp(r'await overlay\.project\(').allMatches(directProjection),
+        hasLength(1),
+        reason: 'the canonical-state helper projects the overlay exactly once',
+      );
+      expect(
+        RegExp(
+          r'await loadDirectCanonicalMessageState\(',
+        ).allMatches(directProjection),
+        hasLength(2),
+        reason:
+            'durable materialization and canonical replacement must both '
+            'consume the overlay-projected canonical state',
+      );
+      expect(
+        RegExp(
+          r'pendingNotificationOverlay:\s*pendingNotificationOverlay',
+        ).allMatches(directReplay),
+        hasLength(1),
+        reason: 'the shared direct replay owner must project reaction replay',
+      );
+      expect(
+        RegExp(
+          r'\bbuildProductionCanonicalDirectProjectionComposition\(',
+        ).allMatches(bootstrap),
+        hasLength(1),
+      );
+      expect(
+        RegExp(
+          r'\bProductionCanonicalDirectReplayComposition\(',
+        ).allMatches(bootstrap),
+        hasLength(1),
       );
       expect(
         bootstrap,

@@ -104,6 +104,7 @@ class _P2PInboxCoordinator {
   final Duration _foregroundInboxTimeout;
   final BeginIosInboxDrainGeneration? _beginIosInboxDrainGeneration;
   final EndIosInboxDrainGeneration? _endIosInboxDrainGeneration;
+  final bool _recoveryOnly;
 
   Completer<DirectInboxDrainOutcome>? _drainInProgress;
   bool _drainInProgressWaitsAllPages = false;
@@ -113,6 +114,11 @@ class _P2PInboxCoordinator {
   bool _protectedGroupContentAdmissionPaused = false;
   Future<void>? _protectedGroupContentReplayInFlight;
   IosMailboxAlertDrainContext? _mailboxAlertDrainContext;
+  bool _recoveryAdmissionSealed = false;
+  bool _recoveryAdmissionRefusedAfterSeal = false;
+  final Set<Future<void>> _recoveryInFlight = <Future<void>>{};
+  Object? _firstRecoveryAdmissionError;
+  StackTrace? _firstRecoveryAdmissionStackTrace;
 
   _P2PInboxCoordinator({
     required _P2PInboxPort port,
@@ -137,6 +143,7 @@ class _P2PInboxCoordinator {
     required Duration foregroundInboxTimeout,
     BeginIosInboxDrainGeneration? beginIosInboxDrainGeneration,
     EndIosInboxDrainGeneration? endIosInboxDrainGeneration,
+    bool recoveryOnly = false,
   }) : _port = port,
        _inboxStagingRepository = inboxStagingRepository,
        _receivedWakeTokenStore = receivedWakeTokenStore,
@@ -158,7 +165,106 @@ class _P2PInboxCoordinator {
        _maxConcurrentInboxDecrypts = maxConcurrentInboxDecrypts,
        _foregroundInboxTimeout = foregroundInboxTimeout,
        _beginIosInboxDrainGeneration = beginIosInboxDrainGeneration,
-       _endIosInboxDrainGeneration = endIosInboxDrainGeneration;
+       _endIosInboxDrainGeneration = endIosInboxDrainGeneration,
+       _recoveryOnly = recoveryOnly;
+
+  Future<T>? _admitRecoveryOperation<T>(Future<T> Function() action) {
+    if (_recoveryOnly && _recoveryAdmissionSealed) {
+      _recoveryAdmissionRefusedAfterSeal = true;
+      return null;
+    }
+    final result = Future<T>.sync(action);
+    if (_recoveryOnly) _trackAdmittedRecoveryFuture(result);
+    return result;
+  }
+
+  void _trackAdmittedRecoveryFuture<T>(Future<T> future) {
+    if (!_recoveryOnly) return;
+    final completion = future.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {
+        _firstRecoveryAdmissionError ??= error;
+        _firstRecoveryAdmissionStackTrace ??= stackTrace;
+      },
+    );
+    _recoveryInFlight.add(completion);
+    unawaited(
+      completion.whenComplete(() {
+        _recoveryInFlight.remove(completion);
+      }),
+    );
+  }
+
+  void _emitRecoveryAdmissionRefused(String family) {
+    if (_recoveryOnly && _recoveryAdmissionSealed) {
+      _recoveryAdmissionRefusedAfterSeal = true;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_RECOVERY_ADMISSION_REFUSED',
+      details: {'family': family},
+    );
+  }
+
+  bool refuseRecoveryCallbackIfSealed(String family) {
+    if (!_recoveryOnly || !_recoveryAdmissionSealed) return false;
+    _emitRecoveryAdmissionRefused(family);
+    return true;
+  }
+
+  bool get recoveryAdmissionRefusedAfterSeal =>
+      _recoveryAdmissionRefusedAfterSeal;
+
+  /// The assignment happens before this method returns its Future, so a caller
+  /// can publish the fence and know that every later synchronous callback sees
+  /// the refusal even before awaiting admitted work.
+  Future<void> sealRecoveryAdmissionAndAwaitInFlight() {
+    if (!_recoveryOnly) {
+      return Future<void>.error(
+        StateError('recovery admission is available only in recovery mode'),
+      );
+    }
+    _recoveryAdmissionSealed = true;
+    return _awaitRecoveryFixedPoint();
+  }
+
+  Future<void> _awaitRecoveryFixedPoint() async {
+    while (true) {
+      final pending = <Future<void>>{..._recoveryInFlight};
+      final drain = _drainInProgress?.future;
+      if (drain != null) pending.add(_ignoreRecoveryOutcome(drain));
+      final background = _backgroundDrainInProgress;
+      if (background != null) {
+        pending.add(_ignoreRecoveryOutcome(background));
+      }
+      final protected = _protectedGroupContentReplayInFlight;
+      if (protected != null) pending.add(_ignoreRecoveryOutcome(protected));
+      if (pending.isEmpty) {
+        final error = _firstRecoveryAdmissionError;
+        if (error != null) {
+          Error.throwWithStackTrace(
+            error,
+            _firstRecoveryAdmissionStackTrace ?? StackTrace.current,
+          );
+        }
+        return;
+      }
+      await Future.wait(pending);
+      // A previously admitted operation may have installed a child/background
+      // continuation in its final microtask. Observe that publication before
+      // declaring the fence quiescent.
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  Future<void> _ignoreRecoveryOutcome(Future<dynamic> future) async {
+    try {
+      await future;
+    } on Object {
+      // The owning operation reports its typed failure. The admission fence
+      // only guarantees lifetime completion.
+    }
+  }
 
   void armIosMailboxAlertDrainContext(IosMailboxAlertDrainContext? context) {
     final current = _mailboxAlertDrainContext;
@@ -261,20 +367,103 @@ class _P2PInboxCoordinator {
     if (inFlight != null) await inFlight;
   }
 
-  Future<int> drainProtectedGroupContentFixedPoint({int maxPasses = 8}) async {
-    if (maxPasses < 1) return 0;
+  Future<int> drainProtectedGroupContentFixedPoint({int maxPasses = 8}) {
+    final admitted = _admitRecoveryOperation(
+      () async => (await _drainProtectedGroupContentFixedPointAdmitted(
+        maxPasses: maxPasses,
+      )).passes,
+    );
+    if (admitted != null) return admitted;
+    _emitRecoveryAdmissionRefused('protected_drain');
+    return Future<int>.value(0);
+  }
+
+  Future<ProtectedGroupRecoveryFixedPointOutcome>
+  drainProtectedGroupContentRecoveryFixedPoint({int maxPasses = 8}) {
+    if (!_recoveryOnly) {
+      return Future<ProtectedGroupRecoveryFixedPointOutcome>.error(
+        StateError(
+          'typed protected-group recovery drain is available only in '
+          'recovery mode',
+        ),
+      );
+    }
+    final admitted = _admitRecoveryOperation(() async {
+      try {
+        return await _drainProtectedGroupContentFixedPointAdmitted(
+          maxPasses: maxPasses,
+        );
+      } on Object catch (error) {
+        return ProtectedGroupRecoveryFixedPointOutcome(
+          disposition: ProtectedGroupRecoveryFixedPointDisposition.failed,
+          passes: 0,
+          failureReason:
+              'protected_group_recovery_exception:${error.runtimeType}',
+        );
+      }
+    });
+    if (admitted != null) return admitted;
+    _emitRecoveryAdmissionRefused('protected_recovery_drain');
+    return Future<ProtectedGroupRecoveryFixedPointOutcome>.value(
+      const ProtectedGroupRecoveryFixedPointOutcome(
+        disposition: ProtectedGroupRecoveryFixedPointDisposition.failed,
+        passes: 0,
+        failureReason: 'recovery_admission_sealed',
+      ),
+    );
+  }
+
+  Future<ProtectedGroupRecoveryFixedPointOutcome>
+  _drainProtectedGroupContentFixedPointAdmitted({
+    required int maxPasses,
+  }) async {
+    if (maxPasses < 1) {
+      return const ProtectedGroupRecoveryFixedPointOutcome(
+        disposition:
+            ProtectedGroupRecoveryFixedPointDisposition.maxPassesReached,
+        passes: 0,
+        failureReason: 'protected_group_recovery_max_passes_reached',
+      );
+    }
     var passes = 0;
     for (; passes < maxPasses; passes++) {
       final before = await _recoverableProtectedGroupFingerprint();
       final outcome = await _drainOfflineInbox(waitForAllPages: true);
       final after = await _recoverableProtectedGroupFingerprint();
-      if (outcome.isSuccessful && !outcome.hasMore) return passes + 1;
+      final completedPasses = passes + 1;
+      if (outcome.isSuccessful && !outcome.hasMore) {
+        return ProtectedGroupRecoveryFixedPointOutcome(
+          disposition:
+              ProtectedGroupRecoveryFixedPointDisposition.reachedFixedPoint,
+          passes: completedPasses,
+        );
+      }
       // A prerequisite commit removes or changes at least one recoverable row.
       // An unchanged durable fingerprint means another immediate pass would
       // only spin on relay-owned bytes.
-      if (before == after) return passes + 1;
+      if (before == after) {
+        final isLocallyStalled =
+            after.isNotEmpty &&
+            (outcome.failureReason == 'staged_replay_pending' ||
+                outcome.failureReason ==
+                    'protected_group_handler_not_terminal');
+        return ProtectedGroupRecoveryFixedPointOutcome(
+          disposition: isLocallyStalled
+              ? ProtectedGroupRecoveryFixedPointDisposition.stalled
+              : ProtectedGroupRecoveryFixedPointDisposition.failed,
+          passes: completedPasses,
+          failureReason: isLocallyStalled
+              ? 'protected_group_recovery_stalled'
+              : outcome.failureReason ??
+                    'protected_group_recovery_drain_failed',
+        );
+      }
     }
-    return passes;
+    return ProtectedGroupRecoveryFixedPointOutcome(
+      disposition: ProtectedGroupRecoveryFixedPointDisposition.maxPassesReached,
+      passes: passes,
+      failureReason: 'protected_group_recovery_max_passes_reached',
+    );
   }
 
   Future<String> _recoverableProtectedGroupFingerprint() async {
@@ -449,11 +638,15 @@ class _P2PInboxCoordinator {
     }
     switch (envelopeType) {
       case 'chat_message':
-        return _replayRecoveredInboxChatMessage != null;
+        return _recoveryOnly || _replayRecoveredInboxChatMessage != null;
+      case 'introduction':
+        return _recoveryOnly;
+      case 'contact_request':
+        return _recoveryOnly;
       case 'message_reaction':
-        return _replayRecoveredInboxReaction != null;
+        return _recoveryOnly || _replayRecoveredInboxReaction != null;
       case 'message_deletion':
-        return _replayRecoveredInboxMessageDeletion != null;
+        return _recoveryOnly || _replayRecoveredInboxMessageDeletion != null;
       default:
         return false;
     }
@@ -505,25 +698,54 @@ class _P2PInboxCoordinator {
     final repo = _inboxStagingRepository;
     final ReplayRecoveredInboxChatMessage? selectedReplay;
     final String eventSuffix;
+    final bool hasTypedReplay;
     switch (entry.messageType) {
+      case 'introduction':
+        selectedReplay = null;
+        eventSuffix = 'INTRODUCTION';
+        hasTypedReplay = _replayRecoveredInboxIntroductionMessage != null;
+        break;
+      case 'contact_request':
+        selectedReplay = null;
+        eventSuffix = 'CONTACT_REQUEST';
+        hasTypedReplay = _replayRecoveredInboxContactRequest != null;
+        break;
       case 'message_reaction':
         selectedReplay = _replayRecoveredInboxReaction;
         eventSuffix = 'REACTION';
+        hasTypedReplay = selectedReplay != null;
         break;
       case 'message_deletion':
         selectedReplay = _replayRecoveredInboxMessageDeletion;
         eventSuffix = 'DELETION';
+        hasTypedReplay = selectedReplay != null;
         break;
       default:
-        selectedReplay = _replayLiveDirectChatMessage;
+        selectedReplay = _recoveryOnly
+            ? _replayLiveDirectChatMessage ?? _replayRecoveredInboxChatMessage
+            : _replayLiveDirectChatMessage;
         eventSuffix = 'CHAT';
+        hasTypedReplay = selectedReplay != null;
         break;
     }
-    final replayLiveDirectChatMessage = selectedReplay;
-    if (replayLiveDirectChatMessage == null) {
+    if (!hasTypedReplay) {
+      if (_recoveryOnly) {
+        try {
+          await repo.stageEntries([entry]);
+          await repo.markRetryable(
+            entry.entryId,
+            reasonCode: 'typed_handler_unavailable',
+            reasonDetail: entry.messageType,
+          );
+        } on Object {
+          // The direct sender retains custody because no confirmation is sent.
+        }
+        return;
+      }
       _port.emitIncomingMessage(message);
       return;
     }
+    final replayLiveDirectChatMessage = selectedReplay;
 
     try {
       await repo.stageEntries([entry]);
@@ -538,9 +760,10 @@ class _P2PInboxCoordinator {
           'error': e.toString(),
         },
       );
+      if (_recoveryOnly) return;
       if (entry.messageType == 'message_reaction') {
         try {
-          final outcome = await replayLiveDirectChatMessage(
+          final outcome = await replayLiveDirectChatMessage!(
             _messageWithoutConfirmNonce(message),
           );
           final isTerminal =
@@ -600,10 +823,19 @@ class _P2PInboxCoordinator {
 
     final replayMessage = _messageWithoutConfirmNonce(message);
     try {
-      final outcome = await replayLiveDirectChatMessage(
-        replayMessage,
-        stagedEntryId: entry.entryId,
-      );
+      final RecoveredInboxReplayOutcome outcome;
+      if (entry.messageType == 'introduction') {
+        outcome = await _replayRecoveredInboxIntroductionMessage!(
+          replayMessage,
+        );
+      } else if (entry.messageType == 'contact_request') {
+        outcome = await _replayRecoveredInboxContactRequest!(replayMessage);
+      } else {
+        outcome = await replayLiveDirectChatMessage!(
+          replayMessage,
+          stagedEntryId: entry.entryId,
+        );
+      }
       await _applyRecoveredInboxOutcome(
         repo: repo,
         entry: entry,
@@ -772,11 +1004,19 @@ class _P2PInboxCoordinator {
           }
           final replay = _replayRecoveredProtectedGroupEnvelope;
           if (replay == null) {
-            await _markProtectedGroupPrerequisiteWaiting(
-              repo,
-              entry,
-              reasonCode: 'protected_group_handler_unavailable',
-            );
+            if (_recoveryOnly) {
+              await repo.markRetryable(
+                entry.entryId,
+                reasonCode: 'typed_handler_unavailable',
+                reasonDetail: entry.messageType,
+              );
+            } else {
+              await _markProtectedGroupPrerequisiteWaiting(
+                repo,
+                entry,
+                reasonCode: 'protected_group_handler_unavailable',
+              );
+            }
             continue;
           }
           final replayFuture = replay(message);
@@ -1015,6 +1255,15 @@ class _P2PInboxCoordinator {
               },
             );
           }
+          continue;
+        }
+
+        if (_recoveryOnly) {
+          await repo.markRetryable(
+            entry.entryId,
+            reasonCode: 'typed_handler_unavailable',
+            reasonDetail: entry.messageType,
+          );
           continue;
         }
 
@@ -1649,6 +1898,7 @@ class _P2PInboxCoordinator {
 
   void _trackBackgroundDrain(Future<DirectInboxDrainOutcome> drain) {
     _backgroundDrainInProgress = drain;
+    _trackAdmittedRecoveryFuture(drain);
     unawaited(
       drain.whenComplete(() {
         if (identical(_backgroundDrainInProgress, drain)) {
@@ -1858,6 +2108,20 @@ class _P2PInboxCoordinator {
   Future<LanInboundDecision> _commitInboundLanChatMessage(
     LocalChatMessage localMsg, {
     required String? nonce,
+  }) {
+    final admitted = _admitRecoveryOperation(
+      () => _commitInboundLanChatMessageAdmitted(localMsg, nonce: nonce),
+    );
+    if (admitted != null) return admitted;
+    _emitRecoveryAdmissionRefused('lan');
+    return Future<LanInboundDecision>.value(
+      LanInboundDecision.rejected('recovery_admission_sealed'),
+    );
+  }
+
+  Future<LanInboundDecision> _commitInboundLanChatMessageAdmitted(
+    LocalChatMessage localMsg, {
+    required String? nonce,
   }) async {
     _port.recordTransport('wifi');
     emitFlowEvent(
@@ -1927,10 +2191,16 @@ class _P2PInboxCoordinator {
         break;
     }
     if (lanReplay == null) {
+      if (_recoveryOnly) {
+        return LanInboundDecision.rejected('typed_handler_unavailable');
+      }
       _port.emitIncomingMessage(message);
       return const LanInboundDecision.accepted();
     }
     if (safeNonce == null || safeNonce.isEmpty) {
+      if (_recoveryOnly) {
+        return LanInboundDecision.rejected('durable_nonce_unavailable');
+      }
       if (envelopeType == 'message_reaction') {
         final outcome = await _replayUnstagedReaction(
           message,
@@ -1985,6 +2255,9 @@ class _P2PInboxCoordinator {
           'error': e.toString(),
         },
       );
+      if (_recoveryOnly) {
+        return LanInboundDecision.rejected('staging_error');
+      }
       if (envelopeType == 'message_reaction') {
         final outcome = await _replayUnstagedReaction(
           message,
@@ -2005,11 +2278,22 @@ class _P2PInboxCoordinator {
       return LanInboundDecision.rejected('staging_error');
     }
 
-    unawaited(_replayDurablyStagedLanChat(message, entry: entry));
+    final replay = _replayDurablyStagedLanChat(message, entry: entry);
+    _trackAdmittedRecoveryFuture(replay);
+    unawaited(replay);
     return const LanInboundDecision.committed();
   }
 
-  Future<bool> _handleMessageReceived(ChatMessage message) async {
+  Future<bool> _handleMessageReceived(ChatMessage message) {
+    final admitted = _admitRecoveryOperation(
+      () => _handleMessageReceivedAdmitted(message),
+    );
+    if (admitted != null) return admitted;
+    _emitRecoveryAdmissionRefused('direct');
+    return Future<bool>.value(false);
+  }
+
+  Future<bool> _handleMessageReceivedAdmitted(ChatMessage message) async {
     String? envelopeType;
     try {
       final decoded = jsonDecode(message.content);
@@ -2067,7 +2351,9 @@ class _P2PInboxCoordinator {
         messageType: envelopeType,
       );
       if (entry != null) {
-        unawaited(_processDurablyStagedDirectChat(message, entry: entry));
+        final replay = _processDurablyStagedDirectChat(message, entry: entry);
+        _trackAdmittedRecoveryFuture(replay);
+        unawaited(replay);
         return true;
       }
     }
@@ -2075,10 +2361,12 @@ class _P2PInboxCoordinator {
     if (message.isIncoming &&
         envelopeType == 'message_reaction' &&
         _replayRecoveredInboxReaction != null) {
+      if (_recoveryOnly) return false;
       await _replayUnstagedReaction(message, reason: 'direct_missing_nonce');
       return true;
     }
 
+    if (_recoveryOnly) return false;
     _port.emitIncomingMessage(message);
     return true;
   }
@@ -2380,9 +2668,18 @@ class _P2PInboxCoordinator {
     }
   }
 
-  Future<void> drainOfflineInbox() async {
+  Future<void> drainOfflineInbox() {
+    final admitted = _admitRecoveryOperation(_drainOfflineInboxAdmitted);
+    if (admitted != null) return admitted;
+    _emitRecoveryAdmissionRefused('direct_drain');
+    return Future<void>.value();
+  }
+
+  Future<void> _drainOfflineInboxAdmitted() async {
     if (!_port.readNodeState().isStarted) {
-      _scheduleStartupDrain(waitForAllPages: false);
+      if (!_recoveryOnly) {
+        _scheduleStartupDrain(waitForAllPages: false);
+      }
       return;
     }
     if (!await _port.allowsAccountNetworkSideEffects(
@@ -2399,9 +2696,24 @@ class _P2PInboxCoordinator {
     await _drainOfflineInbox();
   }
 
-  Future<DirectInboxDrainOutcome> drainOfflineInboxFully() async {
+  Future<DirectInboxDrainOutcome> drainOfflineInboxFully() {
+    final admitted = _admitRecoveryOperation(_drainOfflineInboxFullyAdmitted);
+    if (admitted != null) return admitted;
+    _emitRecoveryAdmissionRefused('direct_full_drain');
+    return Future<DirectInboxDrainOutcome>.value(
+      const DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
+        failureReason: 'recovery_admission_sealed',
+      ),
+    );
+  }
+
+  Future<DirectInboxDrainOutcome> _drainOfflineInboxFullyAdmitted() async {
     if (!_port.readNodeState().isStarted) {
-      _scheduleStartupDrain(waitForAllPages: true);
+      if (!_recoveryOnly) {
+        _scheduleStartupDrain(waitForAllPages: true);
+      }
       return const DirectInboxDrainOutcome(
         isSuccessful: false,
         hasMore: true,

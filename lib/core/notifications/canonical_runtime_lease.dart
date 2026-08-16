@@ -2,17 +2,17 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/core/notifications/canonical_recovery_authority_storage_keys.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_bridge.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:uuid/uuid.dart';
 
-const canonicalRuntimeInstallationIdStorageKey =
-    'canonical_runtime_installation_id_v1';
-const canonicalRuntimeAccountBindingStorageKey =
-    'canonical_runtime_account_binding_v1';
-const canonicalRuntimeSharedAccountBindingStorageKey =
-    'canonical_runtime_shared_account_binding_v1';
+export 'canonical_recovery_authority_storage_keys.dart'
+    show
+        canonicalRuntimeAccountBindingStorageKey,
+        canonicalRuntimeInstallationIdStorageKey,
+        canonicalRuntimeSharedAccountBindingStorageKey;
 
 final RegExp _canonicalRuntimeOpaqueBindingPattern = RegExp(
   r'^v1:[0-9a-f]{64}$',
@@ -220,7 +220,13 @@ final class CanonicalWritableRuntimeSession {
       if (draining) {
         _state = CanonicalRuntimeLeaseState.draining;
         var databaseClosed = false;
-        if (closeDatabaseOnRuntimeAttachFailure != null) {
+        var runtimeQuiescent = false;
+        try {
+          runtimeQuiescent = await _gateway.quiesceRuntime();
+        } catch (_) {
+          runtimeQuiescent = false;
+        }
+        if (runtimeQuiescent && closeDatabaseOnRuntimeAttachFailure != null) {
           try {
             databaseClosed = await closeDatabaseOnRuntimeAttachFailure(
               database,
@@ -247,6 +253,41 @@ final class CanonicalWritableRuntimeSession {
     return _gateway.rebind(binding);
   }
 
+  /// Seals native Go admission for this exact owner and enters DRAINING.
+  ///
+  /// Headless recovery separates this cut from SQLCipher close so its Dart
+  /// admission/listener fence and authoritative projection settlement can be
+  /// proven before the process-wide runtime is stopped.
+  Future<bool> beginDrain() async {
+    if (!_hasWritableLease) return true;
+    if (_state == CanonicalRuntimeLeaseState.draining) return true;
+    if (_state != CanonicalRuntimeLeaseState.active) return false;
+    final draining = await _gateway.beginDrain();
+    if (draining) _state = CanonicalRuntimeLeaseState.draining;
+    return draining;
+  }
+
+  /// Waits until the native Go owner reports fully quiescent after
+  /// [beginDrain]. A false result deliberately keeps DRAINING ownership.
+  Future<bool> awaitRuntimeQuiescence() async {
+    if (!_hasWritableLease) return true;
+    if (_state != CanonicalRuntimeLeaseState.draining) return false;
+    return _gateway.quiesceRuntime();
+  }
+
+  /// Releases only after the caller has closed the exact SQLCipher handle.
+  /// Passing false is an explicit fail-closed retention request.
+  Future<bool> releaseAfterDatabaseClose({required bool databaseClosed}) async {
+    if (!_hasWritableLease) return true;
+    if (_state != CanonicalRuntimeLeaseState.draining) return false;
+    final released = await _gateway.release(databaseClosed: databaseClosed);
+    if (released) {
+      _hasWritableLease = false;
+      _state = CanonicalRuntimeLeaseState.released;
+    }
+    return released;
+  }
+
   /// Ordered detach: reject new work, quiesce Go, close SQLCipher, then release.
   /// Any quiescence/close failure deliberately retains DRAINING ownership.
   Future<void> drainCloseRelease({
@@ -254,16 +295,20 @@ final class CanonicalWritableRuntimeSession {
     required Future<void> Function() closeDatabase,
   }) async {
     if (!_hasWritableLease) return;
-    if (!await _gateway.beginDrain()) {
+    if (!await beginDrain()) {
       throw StateError('canonical writable owner could not begin draining');
     }
-    _state = CanonicalRuntimeLeaseState.draining;
 
     try {
       await stopRuntime();
     } catch (error, stackTrace) {
-      await _gateway.release(databaseClosed: false);
+      await releaseAfterDatabaseClose(databaseClosed: false);
       Error.throwWithStackTrace(error, stackTrace);
+    }
+
+    if (!await awaitRuntimeQuiescence()) {
+      await releaseAfterDatabaseClose(databaseClosed: false);
+      throw StateError('canonical runtime did not quiesce');
     }
 
     var databaseClosed = false;
@@ -271,15 +316,15 @@ final class CanonicalWritableRuntimeSession {
       await closeDatabase();
       databaseClosed = true;
     } catch (error, stackTrace) {
-      await _gateway.release(databaseClosed: false);
+      await releaseAfterDatabaseClose(databaseClosed: false);
       Error.throwWithStackTrace(error, stackTrace);
     }
-    final released = await _gateway.release(databaseClosed: databaseClosed);
+    final released = await releaseAfterDatabaseClose(
+      databaseClosed: databaseClosed,
+    );
     if (!released) {
       throw StateError('canonical writable lease release was rejected');
     }
-    _hasWritableLease = false;
-    _state = CanonicalRuntimeLeaseState.released;
   }
 }
 
@@ -310,7 +355,8 @@ typedef CanonicalRuntimeSharedBindingPublish =
     Future<void> Function(String? opaqueBinding);
 
 /// Owns the device-local installation secret and opaque account digest.
-/// Publishing never activates Plan 331's worker; H0 only establishes fencing.
+/// Recovery work remains disabled by default and is enabled only by a caller
+/// that explicitly declares the production headless graph registered.
 final class CanonicalRuntimeBindingCoordinator {
   CanonicalRuntimeBindingCoordinator({
     required SecureKeyStore secureKeyStore,
@@ -321,6 +367,7 @@ final class CanonicalRuntimeBindingCoordinator {
     CanonicalRuntimeLedgerClaimsSuspend? suspendLocalNotificationLedgerClaims,
     CanonicalRuntimeSharedBindingPublish? publishSharedBinding,
     String Function()? createInstallationId,
+    bool recoveryGraphRegistered = false,
   }) : _secureKeyStore = secureKeyStore,
        _leaseGateway = leaseGateway,
        _droppedPushBindingPublisher = droppedPushBindingPublisher,
@@ -329,7 +376,8 @@ final class CanonicalRuntimeBindingCoordinator {
        _suspendLocalNotificationLedgerClaims =
            suspendLocalNotificationLedgerClaims,
        _publishSharedBinding = publishSharedBinding,
-       _createInstallationId = createInstallationId ?? const Uuid().v4;
+       _createInstallationId = createInstallationId ?? const Uuid().v4,
+       _recoveryGraphRegistered = recoveryGraphRegistered;
 
   final SecureKeyStore _secureKeyStore;
   final CanonicalRuntimeLeaseGateway? _leaseGateway;
@@ -340,6 +388,7 @@ final class CanonicalRuntimeBindingCoordinator {
   _suspendLocalNotificationLedgerClaims;
   final CanonicalRuntimeSharedBindingPublish? _publishSharedBinding;
   final String Function() _createInstallationId;
+  final bool _recoveryGraphRegistered;
 
   Future<CanonicalRuntimeStartupBinding> loadStartupBinding() async {
     final installationId = await _installationId();
@@ -390,14 +439,7 @@ final class CanonicalRuntimeBindingCoordinator {
     final previous = await readCurrentAccountBinding();
     await _suspendLocalNotificationLedgerClaims?.call(previous);
     await _writeAndVerify(canonicalRuntimeAccountBindingStorageKey, binding);
-    final droppedPushBindingPublisher = _droppedPushBindingPublisher;
-    if (droppedPushBindingPublisher != null &&
-        !await droppedPushBindingPublisher.setCurrentBinding(
-          binding,
-          activateRecoveryWork: false,
-        )) {
-      throw StateError('native recovery binding publication was rejected');
-    }
+    await _publishCurrentRecoveryReadiness(binding);
     await _leaseGateway?.rebind(binding);
     await _publishSharedBinding?.call(binding);
     await _rebindLocalNotificationLedger?.call(binding);
@@ -407,6 +449,37 @@ final class CanonicalRuntimeBindingCoordinator {
     await _rebindDerivedOverlayBestEffort(
       binding,
       operation: 'publish_account',
+    );
+    return binding;
+  }
+
+  /// Idempotently reconciles the native worker readiness for the already
+  /// committed account binding. This is intentionally a one-shot bootstrap
+  /// operation, not a health monitor or retry timer.
+  Future<String?> reconcileCurrentAccountRecoveryReadiness() async {
+    final binding = await readCurrentAccountBinding();
+    if (binding == null) {
+      final publisher = _droppedPushBindingPublisher;
+      if (publisher != null) {
+        final publication = await publisher.setCurrentBinding(
+          null,
+          activateRecoveryWork: false,
+          recoverStaleAuthorityMutations: true,
+        );
+        if (!publication.exactlyMatches(
+          binding: null,
+          recoveryWorkEnabled: false,
+        )) {
+          throw StateError(
+            'native recovery binding retirement reconciliation was rejected',
+          );
+        }
+      }
+      return null;
+    }
+    await _publishCurrentRecoveryReadiness(
+      binding,
+      recoverStaleAuthorityMutations: true,
     );
     return binding;
   }
@@ -421,12 +494,17 @@ final class CanonicalRuntimeBindingCoordinator {
       throw StateError('canonical account binding deletion was not durable');
     }
     final droppedPushBindingPublisher = _droppedPushBindingPublisher;
-    if (droppedPushBindingPublisher != null &&
-        !await droppedPushBindingPublisher.setCurrentBinding(
-          null,
-          activateRecoveryWork: false,
-        )) {
-      throw StateError('native recovery binding retirement was rejected');
+    if (droppedPushBindingPublisher != null) {
+      final publication = await droppedPushBindingPublisher.setCurrentBinding(
+        null,
+        activateRecoveryWork: false,
+      );
+      if (!publication.exactlyMatches(
+        binding: null,
+        recoveryWorkEnabled: false,
+      )) {
+        throw StateError('native recovery binding retirement was rejected');
+      }
     }
     final provisional = _derive(installationId, accountPeerId: null);
     await _leaseGateway?.rebind(provisional);
@@ -441,6 +519,41 @@ final class CanonicalRuntimeBindingCoordinator {
       canonicalRuntimeAccountBindingStorageKey,
     );
     return isCanonicalRuntimeOpaqueBinding(value) ? value : null;
+  }
+
+  Future<void> _publishCurrentRecoveryReadiness(
+    String binding, {
+    bool recoverStaleAuthorityMutations = false,
+  }) async {
+    final droppedPushBindingPublisher = _droppedPushBindingPublisher;
+    if (droppedPushBindingPublisher == null) return;
+    final recoveryWorkEnabled = _recoveryGraphRegistered;
+    final publication = await droppedPushBindingPublisher.setCurrentBinding(
+      binding,
+      activateRecoveryWork: recoveryWorkEnabled,
+      recoverStaleAuthorityMutations: recoverStaleAuthorityMutations,
+    );
+    if (!publication.exactlyMatches(
+      binding: binding,
+      recoveryWorkEnabled: recoveryWorkEnabled,
+    )) {
+      throw StateError('native recovery binding publication was rejected');
+    }
+  }
+
+  /// Derives the binding for a committed database identity without minting an
+  /// installation ID or publishing any authority.
+  ///
+  /// Headless recovery uses this after its passive SQL identity read so a
+  /// stale secure binding cannot authorize the wrong account database.
+  Future<String?> deriveExistingAccountBinding(String accountPeerId) async {
+    final normalizedPeerId = accountPeerId.trim();
+    if (normalizedPeerId.isEmpty) return null;
+    final installationId = (await _secureKeyStore.read(
+      canonicalRuntimeInstallationIdStorageKey,
+    ))?.trim();
+    if (installationId == null || installationId.isEmpty) return null;
+    return _derive(installationId, accountPeerId: normalizedPeerId);
   }
 
   Future<void> _rebindDerivedOverlayBestEffort(
