@@ -1,6 +1,6 @@
 # 374 - GAP-N08 Production Headless Canonical Recovery Completion
 
-Status: **PREREQUISITE_BLOCKED / CONTRACT_READY / INDEPENDENTLY_REVIEWED / N08 SLICE 1 OF 2 / RECOVERY-WORK DEFAULT-OFF UNTIL READY / FIXED-WAKE ADMISSION DEFAULT-OFF / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
+Status: **CONTRACT_READY / PLAN-372 RECEIPT VALIDATED / CLEAN EXECUTION BASELINE REQUIRED / N08 SLICE 1 OF 2 / RECOVERY-WORK DEFAULT-OFF UNTIL READY / FIXED-WAKE ADMISSION DEFAULT-OFF / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
 Type: Modification
 Spec inputs: GAP-N08, WP-05 and sequencing guidance in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; the unfinished safety-gated tail of Plan 331
 Classification: production headless composition and crash-safety completion
@@ -15,6 +15,7 @@ Closure tier: host, focused Android native, and availability-bounded Android mec
 | 2026-08-16 | Dependency/gate reviewers | Plan-372 receipt contract; Plan-331A/H0 proofs; curated arrays; Android device policy | Plan 372 is unfinished and no checksum receipt exists. Focused host/native plus one narrow no-Activity Android proof are sufficient; the old credential-dependent 6x2 Plan-331 campaign is not. | Keep execution blocked; freeze proportional gates and defer live FCM/relay/Doze/OEM evidence to WP-07. |
 | 2026-08-16 | Independent reviewers using `$tdd-review` | Full draft; identity/DB opener; all typed inbox handlers; Plan-372 state; Dart/native teardown; literal gates/device commands | First review was NOT READY: pre-DB identity claims were impossible, late admitted callbacks could escape settlement, production-store proof was vacuous, and device/gate commands were not causal or portable. | Correct the existing plan in place; do not add another N08 plan or durable owner. |
 | 2026-08-16 | Planner/arbiter | Revised authority order, post-fence settlement, exact runner/readiness/rollback, per-selector gates and one-target proof | Three-lens recheck passes the behavioral and executable boundaries. One reviewer requested both available Android classes, but no two-peer/platform-parity claim exists; project cadence favors one pinned target, with the second optional. | Mark contract-ready/prerequisite-blocked and hand the frozen boundary to Plan 375. |
+| 2026-08-16 | Independent dependency/contract audit | Committed Plan-372 receipt and public Dart API; Plan-371/370 sentinels; current Graphify/source anchors; test-owner commands; gate inventories; closure outputs | Plan 372 is now committed at `650f8cbe68dfed52a5c66fc53da35915bca53f02`; receipt SHA-256 `9da08053f6a6034b002376ccc348834ca2576b0761e77be72386e5ec1dec4a62` validates. The draft still needed exact API/identity pins, a baseline registration, coherent TC-374-03/04 ownership, honest RED/mutation claims, both gate-runner syntax checks and explicit closure outputs. | Apply those bounded corrections in this file. Keep the plan contract-ready, not execution-ready; execution begins only from a later clean committed planning baseline whose ancestry contains the receipt commit. |
 
 ## Problem And Evidence
 
@@ -46,25 +47,33 @@ Closure tier: host, focused Android native, and availability-bounded Android mec
 
 ## Dependency Contract
 
-Execution is blocked until Plan 372 has executed and produced a committed,
-checksum-bound receipt. Plan 372 transitively binds Plan 371 and the earlier
-N01-N03 mechanism receipts; do not replay those full preflights unless the
-Plan-372 receipt fails to bind them. Plan 373 is a sibling iOS adapter, not a
-Plan-374 dependency.
+Plan 372 has executed and its checksum-bound receipt is committed at
+`650f8cbe68dfed52a5c66fc53da35915bca53f02` (commit tree
+`9d4b46d37a205ea7da1a858dcde8c6f365b29917`; receipt SHA-256
+`9da08053f6a6034b002376ccc348834ca2576b0761e77be72386e5ec1dec4a62`).
+That receipt transitively binds Plan 371 and the earlier N01-N03 mechanism
+receipts; do not replay those full preflights unless the Plan-372 receipt fails
+to bind them. Plan 373 is a sibling iOS adapter, not a Plan-374 dependency.
+Plan 374 remains contract-ready rather than execution-ready until these
+planning bytes are committed and the exact preflight below passes from a clean
+worktree.
 
 Before the first TC-374 RED, require:
 
 - `Test-Flight-Improv/evidence/372/README.md` and `README.md.sha256`;
 - standalone marker `N05_N06_FINAL_EFFECT_LEDGER_MECHANISM_CODE_COMPLETE` and
   transitive marker `N04_APP_VISIBILITY_AUTHORITY_FOUNDATION_CODE_COMPLETE`;
-- valid Base HEAD, Frozen tested tree, Dirty snapshot SHA-256 and Graphify
+- exact Plan-372 receipt commit/tree/SHA plus its Base HEAD, Frozen tested tree,
+  Dirty snapshot SHA-256 and Graphify
   fingerprint identities, with committed receipt bytes plus independently
   rehashable dirty-snapshot and Graphify-fingerprint artifacts;
 - DB current version still `116`;
 - exactly one Dart production store for `local_notification_ledger_v1.json`
   using the accepted `NotificationConversationIds/.coordination.lock`, plus
-  the exact Plan-372 codec/transition API and both `INBOX_RECONCILER` and
-  `ANDROID_PUSH_SERVICE` owner values;
+  `LocalNotificationRecordV1` and the exact public registry methods
+  `runFinalEffect`, `settleSqlReadyEffect`,
+  `listSqlReadyEffectTerminals`, and `upgradeRelayCustodyToSqlReady`, and both
+  `INBOX_RECONCILER` and `ANDROID_PUSH_SERVICE` owner values;
 - accepted `SQL_READY` acquisition/settlement and phase-preserving
   `RELAY_VERIFIED_UNACKED` upgrade semantics;
 - Plan-371 freshness reader/fixture and Plan-370 paired opaque/outcome admission
@@ -75,11 +84,19 @@ Before the first TC-374 RED, require:
   set -euo pipefail
   receipt='Test-Flight-Improv/evidence/372/README.md'
   checksum='Test-Flight-Improv/evidence/372/README.md.sha256'
+  expected_receipt_commit='650f8cbe68dfed52a5c66fc53da35915bca53f02'
+  expected_receipt_tree='9d4b46d37a205ea7da1a858dcde8c6f365b29917'
+  expected_receipt_sha='9da08053f6a6034b002376ccc348834ca2576b0761e77be72386e5ec1dec4a62'
+  expected_base='434d31d16efc506b3a57b1cdec4ebb2f15fcf66a'
+  expected_frozen='71ab5f0ddcfa5e682f50f1bc36ebb891567b78b2'
+  expected_dirty='45e68aab0c0a79750102ccbccd1e010f663dea20a50ea5221cffa1e9278357ed'
+  expected_graph='8c428eb87b960e70'
   test -f "$receipt"
   test -f "$checksum"
   (cd Test-Flight-Improv/evidence/372 && shasum -a 256 -c README.md.sha256)
-  rg -Fqx 'N05_N06_FINAL_EFFECT_LEDGER_MECHANISM_CODE_COMPLETE' "$receipt"
-  rg -Fq 'N04_APP_VISIBILITY_AUTHORITY_FOUNDATION_CODE_COMPLETE' "$receipt"
+  test "$(shasum -a 256 "$receipt" | awk '{print $1}')" = "$expected_receipt_sha"
+  test "$(rg -Fxc 'N05_N06_FINAL_EFFECT_LEDGER_MECHANISM_CODE_COMPLETE' "$receipt")" -eq 1
+  test "$(rg -Fxc 'N04_APP_VISIBILITY_AUTHORITY_FOUNDATION_CODE_COMPLETE' "$receipt")" -eq 1
 
   base="$(awk -F'`' '/\| (Base( and unchanged)? HEAD|Base HEAD) \|/ {print $2; exit}' "$receipt")"
   frozen="$(awk -F'`' '/\| Frozen tested tree \|/ {print $2; exit}' "$receipt")"
@@ -89,11 +106,16 @@ Before the first TC-374 RED, require:
   [[ "$frozen" =~ ^[0-9a-f]{40}$ ]]
   [[ "$dirty" =~ ^[0-9a-f]{64}$ ]]
   [[ "$graph" =~ ^[0-9a-f]{16}$ ]]
+  test "$base" = "$expected_base"
+  test "$frozen" = "$expected_frozen"
+  test "$dirty" = "$expected_dirty"
+  test "$graph" = "$expected_graph"
   git cat-file -e "${base}^{commit}"
   git cat-file -e "${frozen}^{tree}"
 
   receipt_commit="$(git log -n 1 --format=%H -- "$receipt")"
-  test -n "$receipt_commit"
+  test "$receipt_commit" = "$expected_receipt_commit"
+  test "$(git rev-parse "${receipt_commit}^{tree}")" = "$expected_receipt_tree"
   git merge-base --is-ancestor "$base" "$receipt_commit"
   cmp -s <(git show "${receipt_commit}:${receipt}") "$receipt"
   cmp -s <(git show "${receipt_commit}:${checksum}") "$checksum"
@@ -111,57 +133,100 @@ Before the first TC-374 RED, require:
   rg -Fqx 'const int currentIdentityDatabaseVersion = 116;' \
     lib/core/database/app_database_version.dart
 
-  # Test fixtures and planning prose cannot satisfy the production-authority
-  # check. Plan 372's receipt must pin the accepted Dart source/API names.
-  mapfile_path="$(rg -l 'local_notification_ledger_v1\.json' lib | head -n 2)"
-  test "$(printf '%s\n' "$mapfile_path" | sed '/^$/d' | wc -l | tr -d ' ')" -eq 1
-  ledger_source="$(printf '%s\n' "$mapfile_path" | sed -n '1p')"
-  rg -Fq 'NotificationConversationIds/.coordination.lock' "$ledger_source"
-  test "$(rg -l 'INBOX_RECONCILER' lib/core/notifications | wc -l | tr -d ' ')" -eq 1
-  test "$(rg -l 'ANDROID_PUSH_SERVICE' lib/core/notifications | wc -l | tr -d ' ')" -eq 1
+  # Test fixtures and planning prose cannot satisfy production authority. Pin
+  # Plan 372's accepted concrete source and public registry transition surface.
+  ledger_model='lib/core/notifications/local_notification_ledger.dart'
+  ledger_store='lib/core/notifications/local_notification_ledger_store.dart'
+  registry='lib/core/notifications/durable_conversation_notification_id_registry.dart'
+  test "$(rg -l 'local_notification_ledger_v1\.json' lib | wc -l | tr -d ' ')" -eq 1
+  rg -Fqx "  static const String fileName = 'local_notification_ledger_v1.json';" "$ledger_store"
+  rg -Fqx '/// shared lock is exactly `NotificationConversationIds/.coordination.lock`.' "$ledger_store"
+  rg -Fqx 'final class LocalNotificationRecordV1 {' "$ledger_model"
+  rg -Fqx "  relayVerifiedUnacked('RELAY_VERIFIED_UNACKED');" "$ledger_model"
+  rg -Fqx "  androidPushService('ANDROID_PUSH_SERVICE')," "$ledger_model"
+  rg -Fqx "  inboxReconciler('INBOX_RECONCILER');" "$ledger_model"
+  test "$(rg -Fxc '  Future<DurableLocalNotificationEffectResult> runFinalEffect({' "$registry")" -eq 1
+  test "$(rg -Fxc '  Future<LocalNotificationRecordV1?> settleSqlReadyEffect({' "$registry")" -eq 1
+  test "$(rg -Fxc '  Future<List<LocalNotificationRecordV1>> listSqlReadyEffectTerminals({' "$registry")" -eq 1
+  test "$(rg -Fxc '  Future<LocalNotificationRecordV1?> upgradeRelayCustodyToSqlReady({' "$registry")" -eq 1
 
   flutter test --no-pub \
     test/core/notifications/local_notification_ledger_test.dart \
     --plain-name 'TC-372-01 v1 codec and state machine accept only legal monotonic transitions'
   flutter test --no-pub --concurrency=1 \
     test/core/notifications/local_notification_projection_convergence_test.dart \
-    --name 'TC-372-05 |TC-372-06 '
+    --plain-name 'TC-372-05 one claim owner and deterministic publishing recovery across isolate arrival orders'
+  flutter test --no-pub --concurrency=1 \
+    test/core/notifications/local_notification_projection_convergence_test.dart \
+    --plain-name 'TC-372-06 effect-terminal replay settles direct and group custody once and emits only approved enabled outcome'
+
+  flutter test --no-pub \
+    test/core/notifications/app_visibility_snapshot_test.dart \
+    --plain-name 'TC-371-01 v1 codec and fresh exact predicate fail toward notification'
 
   flutter test --no-pub \
     test/core/bridge/p2p_bridge_client_wake_outcome_test.dart \
     --plain-name 'TC-370-05 opaque outcome uses strict all-relay completion'
+  flutter test --no-pub \
+    test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart \
+    --plain-name 'TC-370-07 production composes one default-off outcome admission and one shared drain callback'
+  admission_block="$(
+    sed -n \
+      '/^const bool kWakeOutcomeCoordinatorAdmissionEnabled = bool.fromEnvironment(/,/^);$/p' \
+      lib/core/bridge/p2p_bridge_client.dart
+  )"
+  test "$(printf '%s\n' "$admission_block" | rg -Fxc 'const bool kWakeOutcomeCoordinatorAdmissionEnabled = bool.fromEnvironment(')" -eq 1
+  test "$(printf '%s\n' "$admission_block" | rg -Fxc "  'MKNOON_ENABLE_WAKE_OUTCOME_COORDINATOR',")" -eq 1
+  test "$(printf '%s\n' "$admission_block" | rg -Fxc '  defaultValue: false,')" -eq 1
 
-  # Execution starts from a committed product tree. Planning against the
-  # current dirty Plan-371 implementation is explicitly not evidence.
+  # Execution starts from a clean committed product tree. The historical
+  # Plan-372 dirty snapshot is provenance, not permission for current drift.
   test -z "$(git status --porcelain=v1)"
 )
 ```
 
-Plan 372's receipt must record the exact production ledger source and public
-API names used by the checks above. If its implementation chooses a different
-file layout, mechanically re-pin those literal names and independently review
-the replacement; never weaken the check to a fixture or planning-document
-search. After this preflight, require a clean committed product baseline and a
-fresh review-profile Graphify query. Receipt tree/dirty/graph identities are
-provenance for Plan 372, not permission to execute against later overlapping
-uncommitted product drift.
+Plan 372's accepted receipt records the production ledger source and the four
+public API names used by the checks above. Their current declarations are in
+`durable_conversation_notification_id_registry.dart`; the receipt's
+implementation commit and tested tree remain immutable even if a later sibling
+plan changes line numbers. If any literal source/API pin changes, independently
+review and re-pin the replacement rather than weakening the check to a fixture
+or planning-document search. After this preflight, require a clean committed
+product baseline and a fresh review-profile Graphify query. Receipt
+tree/dirty/graph identities are provenance for Plan 372, not permission to
+execute against later overlapping uncommitted product drift.
 
 ## Graph Grounding Snapshot
 
-- Query/profile:
-  `python3 graphify-arch/tdd_context.py query "Plan 374 production headless canonical recovery completion runUnavailableHeadlessCanonicalRecovery ProductionCanonicalRecoveryGraphFactory HeadlessCanonicalRecoveryWorker DroppedPushRecoveryStore CanonicalRecoveryRuntime Plan 372 local notification ledger" --profile tdd --budget 700`
-- Result: `confidence=anchored`; fingerprint `3c1aa59babe873f4`;
-  freshness reported one stale group-listener input because Plan 371 is being
-  implemented concurrently.
-- Exact anchors: `runUnavailableHeadlessCanonicalRecovery` in
-  `lib/core/notifications/headless_canonical_recovery_entrypoint.dart` and
-  `CanonicalRecoveryRuntime` in
-  `lib/core/notifications/canonical_recovery_runtime.dart`.
+- Query/profile, rerun from committed Plan-372 HEAD
+  `650f8cbe68dfed52a5c66fc53da35915bca53f02`:
+  `python3 graphify-arch/tdd_context.py query "runUnavailableHeadlessCanonicalRecovery CanonicalRecoveryRuntime ProductionApplicationBootstrap HeadlessCanonicalRecoveryWorker DroppedPushRecoveryStore LocalNotificationRecordV1 DurableConversationNotificationIdRegistry runFinalEffect settleSqlReadyEffect listSqlReadyEffectTerminals upgradeRelayCustodyToSqlReady" --profile review --budget 800 --ensure-fresh`
+- Result: `confidence=anchored`, `freshness=current`, fingerprint
+  `8c428eb87b960e70`.
+- Exact graph anchors: `LocalNotificationRecordV1` at
+  `lib/core/notifications/local_notification_ledger.dart:127`,
+  `runUnavailableHeadlessCanonicalRecovery` at
+  `lib/core/notifications/headless_canonical_recovery_entrypoint.dart:212`, and
+  `CanonicalRecoveryRuntime` at
+  `lib/core/notifications/canonical_recovery_runtime.dart:117`.
+- Exact current production-call marker:
+  `lib/main.dart:30` is
+  `runRecovery: runUnavailableHeadlessCanonicalRecovery,`. TC-374-07 replaces
+  that one line with
+  `runRecovery: runProductionHeadlessCanonicalRecovery,`, replaces
+  `emergencyShutdown: cleanupUnavailableHeadlessCanonicalRecovery,` with
+  `emergencyShutdown: cleanupProductionHeadlessCanonicalRecovery,`, requires
+  both old markers zero times and both new markers once, and keeps both
+  functions backed by the same
+  `ProductionHeadlessCanonicalRecoveryRunner` instance so emergency shutdown
+  cannot query or clean a fresh owner.
 - Source verification added `lib/main.dart`, production bootstrap direct/group
   drain composition, `CanonicalRuntimeBindingCoordinator`, the Android worker,
   runtime host, lease, recovery store/scheduler and all exact tests below.
-- Re-run this query with `--ensure-fresh` after Plan 372 closes. An unanchored or
-  materially different graph is a stop-and-replan condition.
+- Re-run the review query with `--ensure-fresh` at execution start and after the
+  coherent implementation refresh. An unanchored or materially different graph
+  is a stop-and-replan condition; a changed fingerprint alone is expected when
+  a committed sibling plan legitimately changes the graph.
 
 ## Delivery Structure Decision
 
@@ -312,6 +377,8 @@ In scope:
   Firebase service and the debug-only device probe;
 - activation of existing deleted-batch/periodic work only after graph readiness;
 - exact teardown, retry, role, account-cutover and foreground-handoff behavior;
+- exact once-only registration of the new production-bootstrap test owner in
+  `BASELINE_TESTS`; the file remains selected directly for focused proof too;
 - a registered Android-native host row and one narrow automated no-Activity
   device proof.
 
@@ -334,22 +401,25 @@ both direct and group custody through the one accepted Plan-372 API.
 
 ## Test Contract
 
-| ID | Behavior under test | RED owner and fixture | Expected GREEN | Required mutation/counterexample | Gate |
+| ID | Behavior under test | Exact test owner and fixture | Expected GREEN | Counterexample locked by GREEN | Gate |
 |---|---|---|---|---|---|
-| TC-374-00 | Plan-372 receipt and finalized ledger/visibility/default-off contracts are durable prerequisites | dependency command above; no new product test | Missing/uncommitted/invalid receipt stops before RED; valid receipt re-grounds exact APIs | accept planning prose, uncommitted receipt, DB-version drift or enabled paired cap -> stop | preflight |
+| TC-374-00 | Plan-372 receipt and finalized ledger/visibility/default-off contracts are durable prerequisites | dependency command above; no new product test | The exact committed receipt/API identities, TC-371-01, TC-370-05, TC-370-07 and default-false source seam pass; any drift stops before RED | accept planning prose, uncommitted receipt, DB-version drift or enabled paired cap -> stop | preflight |
 | TC-374-01 | One UI-neutral factory uses only an existing DB/key, then passively qualifies primary or active-linked physical identity before Go/network/effect | new `test/core/bootstrap/production_headless_canonical_recovery_test.dart` with temp encrypted-opener/role fixtures | pre-open malformed secure state opens nothing; missing key/DB never creates; old schema uses incumbent migration; post-open missing/mismatched identity closes/releases with zero Go/network/effect; exact primary/linked reaches one session | create DB/key, call side-effecting `IdentityRepositoryImpl.loadIdentity`, linked fallback, UI bootstrap, or leak a post-open refusal -> red | focused serial |
 | TC-374-02 | Every typed direct/group family converges through real adapters; four custody stores and Plan-372 ledger are empty before ACK | same file plus real SQLite/outbox fixture; parameterized current handler census | direct message/reaction/introduction/contact request/mutation and legacy/protected group bootstrap/authority/content all use canonical handlers; direct/group display+reconciliation totals reach zero; SQL work uses `INBOX_RECONCILER`; no duplicate effect | remove any typed handler, allow generic destructive fallback, check ready-only rather than total, skip a store/lane, originate `ANDROID_PUSH_SERVICE`/relay custody, or ACK pending work -> red | focused serial SQLite |
-| TC-374-03 | Invocation binding/generation plus migration/role/physical credential are checked before acquisition where possible and again after teardown | extend entrypoint/runtime tests with barriers | stale input performs zero acquisition; post-open authority mismatch cleans up before Go; same-binding linked credential/role mutation or new generation/account cutover refuses ACK; periodic never consumes a marker | trust WorkRequest input, compare only opaque binding, stale-ACK success, or fabricate periodic marker -> red | focused Dart |
-| TC-374-04 | Admission sealing, construction/cancellation crash cuts and exact runner-owned emergency cleanup preserve one owner | new real-process test plus runtime/lease barriers after partial graph, first settlement, callback before/after seal, listener stop, Go quiesce and DB close | seal -> await all admitted work -> final four-store/ledger settlement -> dispose owners -> Go/DB/lease; pre-seal late custody blocks ACK until settled; post-seal offer is synchronously refused to durable retry with no handler/effect/direct-confirm/relay-ACK and retains marker; emergency report comes from same partial instance | accept a post-seal callback, omit final settlement/`GroupMessageListener.stop`, query a new lease in emergency cleanup, release before close, ACK on `finally`, or permit successor behind retained engine -> red | focused serial/process |
+| TC-374-03 | Invocation binding/generation plus migration/role/physical credential are checked before acquisition where possible and again after teardown | exactly one named owner in `test/core/notifications/headless_canonical_recovery_entrypoint_test.dart`; injected runner/authority/teardown barriers | stale input performs zero acquisition; post-open authority mismatch cleans up before Go; same-binding linked credential/role mutation or new generation/account cutover refuses ACK; periodic never consumes a marker | trust WorkRequest input, compare only opaque binding, stale-ACK success, or fabricate periodic marker -> red | focused Dart |
+| TC-374-04 | Admission sealing, construction/cancellation crash cuts and exact runner-owned emergency cleanup preserve one owner | exactly one named subprocess/barrier owner in `test/core/bootstrap/production_headless_canonical_recovery_test.dart`; the same test process owns the partial graph, first settlement, callback before/after seal, listener stop, Go quiesce and DB close | seal -> await all admitted work -> final four-store/ledger settlement -> dispose owners -> Go/DB/lease; pre-seal late custody blocks ACK until settled; post-seal offer is synchronously refused to durable retry with no handler/effect/direct-confirm/relay-ACK and retains marker; emergency report comes from same partial instance | accept a post-seal callback, omit final settlement/`GroupMessageListener.stop`, query a new lease in emergency cleanup, release before close, ACK on `finally`, or permit successor behind retained engine -> red | focused serial/process |
 | TC-374-05 | Code-ready recovery publication and two distinct retirement modes are exact | update `canonical_runtime_lease_test.dart`; new Kotlin readiness tests | typed native result must echo binding+enabled; same-binding rollback disables/cancels while preserving marker/custody and proves no live owner; logout/switch rotates binding and retires old marker | keep always-false behavior, trust bool-only/wrong binding or flag, add health monitor, preserve old-account marker, delete same-binding marker, or couple opaque cap -> red | focused Dart/Kotlin |
-| TC-374-06 | Foreground and headless contenders use one runtime/SQL owner and hand off without loss | production graph test plus `GoRuntimeHostTest`, `CanonicalRuntimeLeaseTest` and worker barriers | exactly one owner/effect; foreground request stops headless at a safe boundary; newer work reruns | two engines/DB writers, force-dispose live owner, or strand new generation behind KEEP -> red | focused Dart/Kotlin race |
-| TC-374-07 | The production AOT entrypoint calls the real factory and remains UI/plugin neutral; every recovery path is classified | update `main_bootstrap_boundary_test.dart`, entrypoint test and source-census test | no call to unavailable runner; one factory; no `runApp`/ApplicationRoot/generic listener; incumbent foreground recovery remains | leave dormant call, construct UI bootstrap, add second scheduler, or omit one reason -> red | focused/source guard |
+| TC-374-06 | Foreground and headless contenders use one runtime/SQL owner and hand off without loss | exactly one Dart owner in `production_headless_canonical_recovery_test.dart`, plus `GoRuntimeHostTest`, `CanonicalRuntimeLeaseTest` and worker barriers in the native script | exactly one owner/effect; foreground request stops headless at a safe boundary; newer work reruns | two engines/DB writers, force-dispose live owner, or strand new generation behind KEEP -> red | focused Dart/Kotlin race |
+| TC-374-07 | The production AOT entrypoint calls the real factory and remains UI/plugin neutral; every recovery path is classified | exactly one named source owner in `test/core/bootstrap/main_bootstrap_boundary_test.dart`; incumbent entrypoint tests remain full-file preservation | `lib/main.dart` contains the exact production run/cleanup lines once each and both unavailable run/cleanup lines zero times; both delegate to the same runner instance; one factory; no `runApp`/ApplicationRoot/generic listener; incumbent foreground recovery remains | leave either dormant callback, construct UI bootstrap, add second scheduler, or omit one reason -> red | focused/source guard |
 | TC-374-08 | Real deleted-batch service commit/schedule seam runs WorkManager -> headless Dart -> existing SQLCipher v116 -> ledger/effect -> exact marker settlement without an Activity | extend the debug-only H0 broadcast receiver with a small Dart fixture and one pinned runner; do not use an Activity-backed `integration_test` driver | production service and probe call the same commit/schedule owner; eligible direct/group conversations each converge to their exact private card state; process-death retry resumes; marker exact-ACKs; Activity launch count stays zero | seed store/enqueue directly, fake/create DB, launch Activity/manual tap, ACK before reopen, omit a lane/retry, unpinned target or skip -> red | availability-bounded device |
 
 ### Test notes
 
-- First create only the compiling API/type skeleton needed to select a semantic
-  TC-374 assertion; a compile/load/tool failure is not an accepted RED.
+- First create only the compiling API/type skeleton needed to select the exact
+  TC-374-01 semantic assertion. TC-374-01 is the one required initial RED; a
+  compile/load/tool/teardown failure is not accepted. Do not later claim eight
+  independent assertion REDs unless eight machine-counted artifacts were
+  actually captured.
 - Parameterize lane and event kind inside TC-374-02 rather than creating four
   modality suites.
 - Existing-only DB, SQLite/registry/plugin-global and ownership-race cases run
@@ -357,16 +427,49 @@ both direct and group custody through the one accepted Plan-372 API.
 - Replace, rather than preserve unchanged, the current dormant-entrypoint test
   and the lease test named `opaque install account binding is stable rotates
   and never enables work`; they encode the intentional pre-Plan-374 state.
+- Keep the Dart owner map literal: TC-374-01/02/04/06 live once each in
+  `production_headless_canonical_recovery_test.dart`; TC-374-03 lives once in
+  `headless_canonical_recovery_entrypoint_test.dart`; TC-374-05 lives once in
+  `canonical_runtime_lease_test.dart`; and TC-374-07 lives once in
+  `main_bootstrap_boundary_test.dart`. The focused commands below count this
+  mapping exactly.
+- Register `test/core/bootstrap/production_headless_canonical_recovery_test.dart`
+  exactly once in `BASELINE_TESTS`. Do not rely on a core-family glob that this
+  plan intentionally does not run.
 - The device fixture seeds canonical test custody, then invokes a debug-only
   receiver that calls the same production deleted-batch commit/schedule seam as
   Firebase. It must not write the marker or enqueue WorkManager directly. It
   does not require or claim live FCM/relay delivery.
 
+### Required mutation protocol
+
+The table's counterexample column is a design census, not a claim that every
+alternative was executed. Execute exactly these five causal mutations, one at
+a time, on the otherwise-green implementation; require the named exact owner to
+fail semantically; revert; and require its exact GREEN before the next mutation:
+
+1. permit missing-key/database creation -> TC-374-01;
+2. remove one parameterized typed group-content handler or replace a four-store
+   total with ready-only status -> TC-374-02;
+3. trust the initial generation after the post-teardown generation changes ->
+   TC-374-03;
+4. omit the authoritative post-seal settlement -> TC-374-04;
+5. accept recovery readiness by bool without the exact echoed binding ->
+   TC-374-05.
+
+Record command, changed line, selected/failure count, non-retained RED hash,
+revert identity and restored-GREEN hash for all five. TC-374-06/07/08 remain
+causal GREEN/race/source/device proofs and must not be reported as mutation
+re-REDs unless additional mutations are genuinely executed.
+
 ## Implementation Steps
 
-1. Validate Plan 372 and re-run current Graphify/source grounding. Record the
-   exact execution HEAD/tree separately from the Plan-372 tested tree.
-2. Add the TC-374-01/03/07 compiling skeleton and record assertion-owned REDs.
+1. Validate the exact Plan-372 receipt/API identities above and re-run current
+   Graphify/source grounding. Record the exact clean execution HEAD/tree
+   separately from the Plan-372 tested tree.
+2. Add the minimum compiling TC-374-01 skeleton and record the one required
+   assertion-owned semantic RED. Author the remaining exact owners before their
+   production behavior; do not call compile failures or uncaptured cases REDs.
 3. Add the existing-only encrypted-open option and a side-effect-free identity/
    secret snapshot loader shared with the incumbent repositories. Do not create
    a key/DB/account or call the side-effecting identity load path.
@@ -388,11 +491,16 @@ both direct and group custody through the one accepted Plan-372 API.
    paired opaque/outcome admission remains false and uninjected.
 10. Extract the production deleted-batch commit/schedule seam used by
     `MknoonFirebaseMessagingService` and the debug-only proof receiver.
-11. Add/register the exact Android-native host script and no-Activity scenario;
+11. Register the new Dart bootstrap owner exactly once in `BASELINE_TESTS`.
+    Add/register the exact Android-native host script and no-Activity scenario;
     extend the existing H0 harness rather than create a second orchestrator.
-12. Run focused, preservation, curated, device and hygiene gates; record a
+12. Execute the five isolated mutation re-REDs, then run focused,
+    preservation, curated, device and hygiene gates; record a
     checksum-bound receipt with marker
     `N08_PRODUCTION_HEADLESS_CANONICAL_RECOVERY_CODE_COMPLETE`.
+13. Close the plan, append-only status, index and coverage outputs described
+    below without changing production/test bytes after the frozen tested-tree
+    capture.
 
 ## Risks And Blind Spots
 
@@ -443,17 +551,21 @@ both direct and group custody through the one accepted Plan-372 API.
 Run in this order:
 
 1. prerequisite and default-off preflight;
-2. assertion-owned RED, then pure Dart parser/readiness/source tests at
-   concurrency 4 and existing-DB/SQLite/process ownership tests serially;
-3. focused Kotlin worker/store/scheduler/runtime tests and the registered native
+2. the one assertion-owned TC-374-01 RED, then pure Dart
+   parser/readiness/source tests at concurrency 4 and
+   existing-DB/SQLite/process ownership tests serially;
+3. the five isolated required mutations with an exact semantic failure and
+   restored GREEN after each;
+4. focused Kotlin worker/store/scheduler/runtime tests and the registered native
    script; the pure-Dart and Gradle legs may run concurrently, but neither may
    overlap a process-global Dart ledger/registry run;
-4. exact preservation sentinels;
-5. `completeness-check`, then affected `baseline`, `1to1` and `groups` lanes
+5. exact preservation sentinels;
+6. `completeness-check`, then affected `baseline`, `1to1` and `groups` lanes
    serially because they share Flutter/native/relay resources;
-6. one disposable build followed by one explicitly discovered Android target;
+7. one disposable build followed by one explicitly discovered Android target;
    a second target is optional parity, not a closure obligation;
-7. analyzer, formatting, diff hygiene and one incremental Graphify refresh.
+8. analyzer, formatting, diff hygiene and one incremental Graphify refresh;
+9. freeze evidence, then write closure documentation only.
 
 Do not run `core-host-all`, `feature-host-all` or full `host-all` in Plan 374.
 Plan 375 owns the single N07+N08 adapter-wave `host-all` after both adapters are
@@ -531,6 +643,24 @@ complete. WP-07 runs the next full host gate at rollout/release closure.
 
 The Plan-372 file names/selectors are re-pinned from its accepted receipt; do
 not silently keep placeholders if the finalized API names differ.
+
+### 2a. Exact baseline registration
+
+The production bootstrap owner is manually curated because Plan 374 does not
+run a broad core family. The direct focused selection above and this baseline
+registration are both required.
+
+```bash
+(
+  set -euo pipefail
+  owner='test/core/bootstrap/production_headless_canonical_recovery_test.dart'
+  baseline_block="$(
+    sed -n '/^readonly BASELINE_TESTS=(/,/^)/p' scripts/run_test_gates.sh
+  )"
+  test "$(printf '%s\n' "$baseline_block" | rg -Fxc "  \"$owner\"")" -eq 1
+  test "$(rg -Fxc "  \"$owner\"" scripts/run_test_gates.sh)" -eq 1
+)
+```
 
 ### 3. Focused Android native registration and execution
 
@@ -680,6 +810,8 @@ Activity launch count zero, zero manual taps/skips and cleanup.
 $dart_paths
 EOF
   git diff --check
+  bash -n scripts/run_test_gates.sh
+  bash -n scripts/run_host_test_gates.sh
   bash -n scripts/test/run_android_headless_recovery_native_374.sh
   bash -n scripts/run_android_headless_recovery_374.sh
   flutter analyze
@@ -693,10 +825,13 @@ EOF
 ## Execution Interpretation And Done Criteria
 
 - [ ] Plan-372 committed receipt and finalized APIs validate; current execution
-      baseline is recorded without treating this moving Plan-371 worktree as
-      evidence.
-- [ ] TC-374-01 through TC-374-08 each have an assertion-owned RED and causal
-      GREEN; every listed mutation independently re-reds and is reverted.
+      baseline is clean, committed and recorded without treating the Plan-372
+      historical dirty snapshot as current execution evidence.
+- [ ] TC-374-01 has the one required semantic assertion RED. TC-374-01 through
+      TC-374-08 each have their exact causal GREEN, and the five mutations in
+      the required mutation protocol independently re-red, are reverted and
+      return their exact owners to GREEN. No additional RED/mutation count is
+      claimed without a corresponding artifact.
 - [ ] One UI-neutral production graph owns direct, group and ledger settlement;
       no second service/store/worker/scheduler/lock/DB migration exists.
 - [ ] Every current typed direct/group replay handler is present; all four SQL
@@ -714,6 +849,8 @@ EOF
       distinct from same-binding rollback.
 - [ ] Focused Dart/native and exact preservation pass with exact selected/pass
       counts and zero undeclared skips.
+- [ ] The new production-bootstrap test owner occurs exactly once in
+      `BASELINE_TESTS` and exactly once in the full test-runner source.
 - [ ] Baseline, `1to1` and `groups` curated lanes pass serially.
 - [ ] One explicitly discovered Android target runs the bounded automated proof
       from one immutable APK; no available target is policy N/A and a second
@@ -721,10 +858,14 @@ EOF
 - [ ] No Plan-374 full host/family sweep or credential-dependent real-FCM
       campaign was run or implied.
 - [ ] Analyzer, changed+untracked Dart formatting, shell syntax, diff hygiene
-      and current Graphify review pass.
+      (including both gate runners) and current Graphify review pass.
 - [ ] A checksum-bound receipt records marker
       `N08_PRODUCTION_HEADLESS_CANONICAL_RECOVERY_CODE_COMPLETE`, base/frozen
       tree/dirty/Graphify identities, exact logs and device disposition.
+- [ ] Plan, append-only `STATUS.md`, index receipt row and coverage/GAP-N08
+      disposition are closed after the frozen tested-tree capture, without a
+      post-freeze production/test/native/script change or an activation,
+      full-GAP, A-control-compliance, live, PRD or release overclaim.
 
 The receipt directory also commits `workspace-porcelain-v2.txt.gz` and
 `graphify-fingerprint.txt`; the recorded dirty SHA is the decompressed archive
@@ -732,6 +873,41 @@ SHA-256 and the fingerprint file contains the exact 16-lowercase-hex value.
 Write `N08_PRODUCTION_HEADLESS_CANONICAL_RECOVERY_CODE_COMPLETE` once as a
 standalone raw receipt line. Plan 375 validates those committed bytes and exact
 marker rather than trusting receipt prose.
+
+## Closure Outputs
+
+Capture the frozen tested tree, porcelain-v2 snapshot and current Graphify
+fingerprint before editing closure-only documents. The closure transaction then
+owns these exact outputs:
+
+- `Test-Flight-Improv/evidence/374/README.md`, its canonical
+  `README.md.sha256`, `workspace-porcelain-v2.txt.gz` and
+  `graphify-fingerprint.txt`. The README records the one initial RED, five
+  mutation re-RED/restored-GREEN pairs, every final gate identity, Android
+  target or policy-N/A disposition, source/APK identity, and the standalone raw
+  marker exactly once.
+- this plan's final status becomes
+  `POST_EXECUTION_AUDIT_CLOSED / N08_PRODUCTION_HEADLESS_CANONICAL_RECOVERY_CODE_COMPLETE / N08 SLICE 1 OF 2 / RECOVERY-WORK CODE-READY / FIXED-WAKE ADMISSION DEFAULT-OFF / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE` only after all done criteria pass.
+- append, never rewrite, one Plan-374 implementation-closure line and one
+  receipt-bound provenance line in `STATUS.md`; both preserve fixed-wake
+  default-off, Plan-375 remaining work and the live/PRD/release exclusions.
+- replace the existing Plan-374 row in `Test-Flight-Improv/00-INDEX.md` with the
+  bounded code-closure disposition and add one `evidence/374/README.md` row
+  containing the exact receipt SHA, frozen tree, dirty snapshot, Graphify
+  fingerprint and marker.
+- update
+  `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`
+  at the top implementation refresh/baseline, GAP-N08 disposition, affected
+  A-12/A-13/A-15/A-20/A-27/A-28 rows, WP-05 and closing supersession notes.
+  A-14 stays unadvanced because MessagingStyle remains GAP-N09 scope. Keep all
+  affected composite controls `Partial` and the paired admission default-off
+  unless the completed evidence independently justifies and documents a score
+  change; mechanism code-readiness alone is not PRD compliance.
+
+The closure-only plan/status/index/coverage/receipt bytes may postdate the
+frozen tree, but the receipt must say so explicitly and prove that they add no
+production, test, native, fixture, gate-runner, device-runner or Graphify-source
+change.
 
 Meeting these criteria closes the production headless recovery safety gate and
 the unfinished Plan-331 mechanism tail. It does not close all GAP-N08, activate
@@ -755,7 +931,9 @@ Plan-373 receipt exists.
 
 ## Reviewer Findings
 
-Independent `$tdd-review` result: **PASS after material in-place corrections**.
+Independent review record: **PASS AS A CONTRACT after material in-place
+corrections and the committed-dependency audit; this is not an execution-start
+attestation for a dirty worktree**.
 
 - Claims and boundary: PASS. The seven Plan-331 seams form one
   acquisition-to-ACK rollback unit. Plan 374 owns only incumbent
@@ -770,10 +948,16 @@ Independent `$tdd-review` result: **PASS after material in-place corrections**.
   handler; nullable fallthrough cannot destructively consume custody. UI/live
   bootstrap, rich/fixed ingress, N09/N11 and rollout paths are explicit
   exclusions.
-- Gate integrity: PASS. Pure and process-global tests are split; every planned
-  selector is counted individually; ten exact preservation tests are real;
-  Kotlin includes the Firebase service; shell fences parse under macOS Bash
-  3.2; one immutable APK drives the no-Activity proof.
+- Gate integrity: PASS after the 2026-08-16 dependency audit. Pure and
+  process-global tests are split; TC-374-03/04 have one concrete owner each;
+  every planned selector is counted individually; the new bootstrap owner is
+  pinned once in `BASELINE_TESTS`; ten exact preservation tests are real;
+  Kotlin includes the Firebase service; both gate runners and both new runner
+  scripts are syntax-checked; one immutable APK drives the no-Activity proof.
+- Evidence honesty: PASS after correction. TC-374-01 alone owns the required
+  initial assertion RED; five explicitly enumerated mutations, not every table
+  counterexample, own the mutation claim. Closure requires receipt, append-only
+  status, index and bounded coverage outputs after the frozen tested tree.
 - Operability/economy: PASS. Same-binding rollback differs from account
   rotation, readiness uses typed native read-back, and one Android target is
   sufficient for this non-peer mechanism. Full host is deferred exactly once
@@ -781,15 +965,22 @@ Independent `$tdd-review` result: **PASS after material in-place corrections**.
 
 ## Arbiter Decision
 
-**READY AS A CONTRACT, EXECUTION BLOCKED ON PLAN 372.** Do not create another
+**CONTRACT READY; PLAN-372 RECEIPT VALIDATED; NOT YET LABELED
+EXECUTION-READY.** The accepted dependency is commit
+`650f8cbe68dfed52a5c66fc53da35915bca53f02`, receipt SHA-256
+`9da08053f6a6034b002376ccc348834ca2576b0761e77be72386e5ec1dec4a62`,
+and Graphify fingerprint `8c428eb87b960e70`. Commit this corrected planning
+contract with the successor-doc freeze, require a clean worktree, and rerun the
+exact TC-374-00 preflight before the first RED. Do not create another
 headless-foundation plan. Do not expand the device leg to both available
 Android classes unless implementation introduces a concrete device-class
 counterexample; availability permits targets but does not require redundant
-parity. Re-review only if Plan 372 changes the ledger/lock/owner API or current
-source grounding is no longer anchored.
+parity. Re-review if the committed intervening tree changes the
+ledger/lock/owner API or current source grounding is no longer anchored.
 
 ## Execution Progress
 
 | Time | Step | RED evidence | GREEN evidence | Refactor / regression | Evidence path |
 |---|---|---|---|---|---|
-| pending | TC-374-00 prerequisite | Plan-372 receipt absent while Plan 371 is in progress | pending | No production execution authorized | pending |
+| 2026-08-16 historical draft | TC-374-00 prerequisite | Plan-372 receipt absent while Plan 371 was in progress | pending at that time | No production execution authorized | Wait for Plan 372 |
+| 2026-08-16 dependency/contract re-ground | Plan-372 receipt/API pins; TC-371-01; TC-370-05/07; Graphify/source; gate and closure contract | No product RED; planning audit only | Commit `650f8cbe68dfed52a5c66fc53da35915bca53f02`, tree `9d4b46d37a205ea7da1a858dcde8c6f365b29917`, receipt SHA `9da08053f6a6034b002376ccc348834ca2576b0761e77be72386e5ec1dec4a62`, frozen tree `71ab5f0ddcfa5e682f50f1bc36ebb891567b78b2`, Graphify current/anchored `8c428eb87b960e70`; receipt/API/default-off literal audit PASS; TC-372-01/05/06, TC-371-01, TC-370-05 and TC-370-07 each selected 1/1 and passed | **CONTRACT_READY / DEPENDENCY_VALIDATED**; shared worktree still contains successor planning edits, so no RED is authorized yet | Commit docs-only freeze, prove clean worktree, rerun TC-374-00, then capture the one TC-374-01 semantic RED |

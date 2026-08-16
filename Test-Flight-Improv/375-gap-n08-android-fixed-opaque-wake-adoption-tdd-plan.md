@@ -1,6 +1,6 @@
 # 375 - GAP-N08 Android Fixed Opaque Wake Adoption And Mechanism Closure
 
-Status: **PREREQUISITE_BLOCKED / CONTRACT_READY / REVIEW_PENDING / N08 SLICE 2 OF 2 / PAIRED ADMISSION DEFAULT-OFF / ADAPTER-WAVE HOST DEPENDS ON PLAN 373 / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
+Status: **PREREQUISITE_BLOCKED / CONTRACT_READY / INDEPENDENTLY_REVIEWED / N08 SLICE 2 OF 2 / PAIRED ADMISSION DEFAULT-OFF / ADAPTER-WAVE HOST REQUIRED / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
 Type: Modification
 Spec inputs: GAP-N08, WP-05 and sequencing guidance in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; Plans 368, 370, 372, 373 and 374
 Classification: Android fixed-wake ingress and existing headless-recovery adoption
@@ -10,17 +10,21 @@ Closure tier: focused host/native, affected curated lanes, one availability-boun
 
 | Time | Role | Files inspected | Decision/blocker | Next action |
 |---|---|---|---|---|
-| 2026-08-16 | Planner using `$tdd-plan` | GAP-N08; Plans 368/370/372/373/374; Android Firebase service, recovery store/scheduler/worker/bridge; registration coordinator and capability seam | The fixed wake, audible disposition, WorkManager continuation and paired readiness have one rollback/capability boundary. A second service, worker or store would duplicate landed Plan-331/374 ownership. | Keep one final N08 slice over the incumbent native recovery family. |
+| 2026-08-16 | Planner using `$tdd-plan` | GAP-N08; Plans 368/370/372/373/374; Android Firebase service, recovery store/scheduler/worker/bridge; registration coordinator and capability seam | The fixed wake, sound disposition, WorkManager continuation and paired readiness have one rollback/capability boundary. A second service, worker or store would duplicate landed Plan-331/374 ownership. | Keep one final N08 slice over the incumbent native recovery family. |
 | 2026-08-16 | Graph/source grounding | `buildOpaqueWakeMessage`, `MknoonFirebaseMessagingService.onDeletedMessages`, `DroppedPushRecoveryStore`, `HeadlessCanonicalRecoveryWorker` | Graphify anchored the provider grammar but native Kotlin needed direct verification. The app owns the only `MESSAGING_EVENT` service and it currently lacks `onMessageReceived`. | Add one strict branch and delegate every nonfixed message to FlutterFire exactly once. |
 | 2026-08-16 | Authority reviewers | Plan-372 native-source states; Plan-374 materialization/ACK order; identity-free fixed payload | `{v,w}` contains no authenticated event identity. It cannot create correlation, ledger, SQL, v116 or relay-ACK authority. | Treat it only as a durable mailbox signal with a silent generic disposition; Plan 374 remains the `INBOX_RECONCILER`. |
 | 2026-08-16 | Gate/device reviewers | existing Kotlin/Dart tests, host runner, Plan-374 device harness, live target matrix | Extend the one Plan-374 native row and one device runner. Focused Dart/Kotlin/Go plus baseline/1to1/groups are sufficient; one full host belongs at the N07+N08 wave boundary. | Reuse artifacts, run independent focused legs concurrently, serialize shared-state and curated gates. |
+| 2026-08-16 | Independent `$tdd-review` | full Plan-375 contract plus Plan-373/374 handoffs, source owners and literal Bash fences | Review exposed event-authority overreach, reverse-order double-sound risk, stale registration cutover, raw relay-health re-registration bypasses, periodic liveness and several non-vacuous gate defects. All were corrected in place without another delivery slice. | PASS; execution remains blocked on committed Plans 373 and 374 receipts. |
 
 ## Problem And Evidence
 
 - The relay already emits an exact Android data-only provider request:
   `{"v":"1","w":"1"}`, high priority, TTL 300 seconds and collapse key
   `mailbox`. `TestRelayNotificationClosure_OpaqueWakeAndroidProviderRequest`
-  proves those real Firebase Admin SDK bytes.
+  captures the decoded request emitted by the real Firebase Admin SDK for all
+  22 source-eligible producer fixtures and proves the real-store zero-wake
+  controls emit no request. It proves that exact provider shape, not live FCM
+  delivery or a byte-for-byte JSON serialization order.
 - Android replaces FlutterFire's manifest service with the app-owned
   `MknoonFirebaseMessagingService`, but that class overrides only
   `onDeletedMessages`. Normal messages still enter FlutterFire's rich
@@ -50,7 +54,8 @@ Closure tier: focused host/native, affected curated lanes, one availability-boun
 No TC-375 RED may run until Plans 373 and 374 have committed checksum-bound
 receipts whose source/API contracts still match this plan. Require:
 
-- `Test-Flight-Improv/evidence/374/README.md` and `README.md.sha256`;
+- `Test-Flight-Improv/evidence/374/README.md`, `README.md.sha256`,
+  `workspace-porcelain-v2.txt.gz` and `graphify-fingerprint.txt`;
 - marker `N08_PRODUCTION_HEADLESS_CANONICAL_RECOVERY_CODE_COMPLETE`;
 - valid Base HEAD, Frozen tested tree, Dirty snapshot SHA-256 and Graphify
   fingerprint, plus committed receipt/checksum/artifact bytes;
@@ -64,12 +69,17 @@ receipts whose source/API contracts still match this plan. Require:
   one paired outcome seam remains default false.
 
 Plan 374 transitively binds Plans 371/372. Plan 368 is a direct wire
-prerequisite, so preserve its checksum receipt and exact Android provider test.
-Plan 373 is a narrow composition prerequisite: its committed receipt must bind
-the single `OpaqueWakePlatformConsumerReadiness` owner with iOS supplied and a
-missing Android reader returning false. Plan 375 extends that owner; it does not
-reimplement iOS readiness. This is not a transport/ledger dependency, but it is
-required before TC-375-06/07, plan closure and the one N07+N08 wave `host-all`.
+prerequisite, so preserve its checksum receipt, committed provenance and exact
+Android provider API/test. Plan 373 is a narrow composition prerequisite: its
+four committed receipt artifacts must bind the single
+`OpaqueWakePlatformConsumerReadiness` owner with iOS supplied and a missing
+Android reader returning false. Plan 375 extends that owner; it does not
+reimplement iOS readiness. Both receipts are hard prerequisites before any RED,
+so the one N07+N08 wave `host-all` is an unconditional Plan-375 closure gate.
+Plan 368 predates the four-artifact receipt convention: its accepted evidence
+directory contains the README and sibling checksum, while the frozen-tree,
+workspace and Graphify identities live inside that README. Validate those two
+committed bytes and identities exactly; do not fabricate retroactive artifacts.
 
 ```bash
 (
@@ -92,37 +102,104 @@ required before TC-375-06/07, plan closure and the one N07+N08 wave `host-all`.
   git cat-file -e "${base}^{commit}"
   git cat-file -e "${frozen}^{tree}"
 
-  receipt_commit="$(git log -n 1 --format=%H -- "$receipt")"
-  test -n "$receipt_commit"
-  git merge-base --is-ancestor "$base" "$receipt_commit"
-  git merge-base --is-ancestor "$receipt_commit" HEAD
-  cmp -s <(git show "${receipt_commit}:${receipt}") "$receipt"
-  cmp -s <(git show "${receipt_commit}:${checksum}") "$checksum"
+  receipt_commit374="$(git log -n 1 --format=%H -- "$receipt")"
+  test -n "$receipt_commit374"
+  git merge-base --is-ancestor "$base" "$receipt_commit374"
+  git merge-base --is-ancestor "$receipt_commit374" HEAD
+  cmp -s <(git show "${receipt_commit374}:${receipt}") "$receipt"
+  cmp -s <(git show "${receipt_commit374}:${checksum}") "$checksum"
 
   dirty_archive='Test-Flight-Improv/evidence/374/workspace-porcelain-v2.txt.gz'
   graph_file='Test-Flight-Improv/evidence/374/graphify-fingerprint.txt'
   test -f "$dirty_archive"
   test -f "$graph_file"
-  cmp -s <(git show "${receipt_commit}:${dirty_archive}") "$dirty_archive"
-  cmp -s <(git show "${receipt_commit}:${graph_file}") "$graph_file"
+  cmp -s <(git show "${receipt_commit374}:${dirty_archive}") "$dirty_archive"
+  cmp -s <(git show "${receipt_commit374}:${graph_file}") "$graph_file"
   test "$(gzip -dc "$dirty_archive" | shasum -a 256 | awk '{print $1}')" = "$dirty"
   test "$(tr -d '[:space:]' <"$graph_file")" = "$graph"
 
+  # The frozen Plan-374 product/test tree may differ from its receipt commit
+  # only by the declared closure artifacts. Re-pin if the accepted receipt
+  # uses a narrower layout; never admit product source here.
+  while IFS= read -r changed; do
+    test -z "$changed" && continue
+    case "$changed" in
+      STATUS.md|\
+      Test-Flight-Improv/00-INDEX.md|\
+      Test-Flight-Improv/374-gap-n08-*|\
+      Test-Flight-Improv/375-gap-n08-*|\
+      Test-Flight-Improv/evidence/374/*|\
+      UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md) ;;
+      *) printf 'Unexpected Plan-374 post-freeze drift: %s\n' "$changed" >&2; exit 1 ;;
+    esac
+  done < <(git diff --name-only "$frozen" "$receipt_commit374")
+
+  # After the committed Plan-374 receipt, only the already-authored Plan-375
+  # contract/index may move before RED. Any product, test, script, Graphify or
+  # other closure drift requires a new prerequisite review.
+  while IFS= read -r changed; do
+    test -z "$changed" && continue
+    case "$changed" in
+      Test-Flight-Improv/00-INDEX.md|\
+      Test-Flight-Improv/375-gap-n08-*) ;;
+      *) printf 'Unexpected post-Plan-374 product drift: %s\n' "$changed" >&2; exit 1 ;;
+    esac
+  done < <(git diff --name-only "$receipt_commit374" HEAD)
+
   receipt373='Test-Flight-Improv/evidence/373/README.md'
   checksum373='Test-Flight-Improv/evidence/373/README.md.sha256'
+  dirty_archive373='Test-Flight-Improv/evidence/373/workspace-porcelain-v2.txt.gz'
+  graph_file373='Test-Flight-Improv/evidence/373/graphify-fingerprint.txt'
   test -f "$receipt373"
   test -f "$checksum373"
+  test -f "$dirty_archive373"
+  test -f "$graph_file373"
   (cd Test-Flight-Improv/evidence/373 && shasum -a 256 -c README.md.sha256)
   rg -Fqx 'N07_IOS_NSE_OPAQUE_WAKE_ADAPTER_CODE_COMPLETE_IOS_EVIDENCE_DEFERRED' "$receipt373"
   rg -Fq 'OpaqueWakePlatformConsumerReadiness' "$receipt373"
-  receipt_commit373="$(git log -n 1 --format=%H -- "$receipt373")"
   base373="$(awk -F'`' '/\| (Base( and unchanged)? HEAD|Base HEAD) \|/ {print $2; exit}' "$receipt373")"
+  frozen373="$(awk -F'`' '/\| Frozen tested tree \|/ {print $2; exit}' "$receipt373")"
+  dirty373="$(awk -F'`' '/\| (Porcelain-v2 workspace snapshot|Dirty snapshot) SHA-256 \|/ {print $2; exit}' "$receipt373")"
+  graph373="$(awk -F'`' '/\| (Graphify )?[Ff]ingerprint \|/ {print $2; exit}' "$receipt373")"
   [[ "$base373" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$frozen373" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$dirty373" =~ ^[0-9a-f]{64}$ ]]
+  [[ "$graph373" =~ ^[0-9a-f]{16}$ ]]
+  git cat-file -e "${base373}^{commit}"
+  git cat-file -e "${frozen373}^{tree}"
+  receipt_commit373="$(git log -n 1 --format=%H -- "$receipt373")"
   test -n "$receipt_commit373"
   git merge-base --is-ancestor "$base373" "$receipt_commit373"
+  git merge-base --is-ancestor "$receipt_commit373" "$receipt_commit374"
   git merge-base --is-ancestor "$receipt_commit373" HEAD
   cmp -s <(git show "${receipt_commit373}:${receipt373}") "$receipt373"
   cmp -s <(git show "${receipt_commit373}:${checksum373}") "$checksum373"
+  cmp -s <(git show "${receipt_commit373}:${dirty_archive373}") "$dirty_archive373"
+  cmp -s <(git show "${receipt_commit373}:${graph_file373}") "$graph_file373"
+  test "$(gzip -dc "$dirty_archive373" | shasum -a 256 | awk '{print $1}')" = "$dirty373"
+  test "$(tr -d '[:space:]' <"$graph_file373")" = "$graph373"
+
+  while IFS= read -r changed; do
+    test -z "$changed" && continue
+    case "$changed" in
+      STATUS.md|\
+      Test-Flight-Improv/00-INDEX.md|\
+      Test-Flight-Improv/373-gap-n07-*|\
+      Test-Flight-Improv/374-gap-n08-*|\
+      Test-Flight-Improv/375-gap-n08-*|\
+      Test-Flight-Improv/evidence/373/*|\
+      UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md) ;;
+      *) printf 'Unexpected Plan-373 post-freeze drift: %s\n' "$changed" >&2; exit 1 ;;
+    esac
+  done < <(git diff --name-only "$frozen373" "$receipt_commit373")
+
+  readiness_sources="$(rg -l 'class OpaqueWakePlatformConsumerReadiness' lib --glob '*.dart')"
+  test "$(printf '%s\n' "$readiness_sources" | sed '/^$/d' | wc -l | tr -d ' ')" -eq 1
+  readiness_source="$(printf '%s\n' "$readiness_sources" | sed -n '1p')"
+  rg -Fq 'OpaqueWakePlatformConsumerReadiness' "$readiness_source"
+  test -f ios/NotificationService/IosLocalNotificationFinalEffect.swift
+  rg -Fq 'IosLocalNotificationFinalEffect' \
+    ios/NotificationService/IosLocalNotificationFinalEffect.swift
 
   rg -Fqx 'const int currentIdentityDatabaseVersion = 116;' \
     lib/core/database/app_database_version.dart
@@ -135,9 +212,47 @@ required before TC-375-06/07, plan closure and the one N07+N08 wave `host-all`.
   test "$(rg -c 'android:name="\.MknoonFirebaseMessagingService"' "$manifest")" -eq 1
   test "$(rg -c 'tools:node="remove"' "$manifest")" -ge 1
 
+  receipt368='Test-Flight-Improv/evidence/368/README.md'
+  checksum368='Test-Flight-Improv/evidence/368/README.md.sha256'
+  test -f "$receipt368"
+  test -f "$checksum368"
   (cd Test-Flight-Improv/evidence/368 && shasum -a 256 -c README.md.sha256)
-  rg -Fqx 'N02_OPAQUE_WAKE_MECHANISM_CODE_COMPLETE' \
-    Test-Flight-Improv/evidence/368/README.md
+  rg -Fqx 'N02_OPAQUE_WAKE_MECHANISM_CODE_COMPLETE' "$receipt368"
+  base368="$(rg -F '| Base and unchanged `HEAD` |' "$receipt368" | rg -o '[0-9a-f]{40}' | tail -n 1)"
+  frozen368="$(awk -F'`' '/\| Frozen tested tree \|/ {value=$2} END {print value}' "$receipt368")"
+  dirty368="$(awk -F'`' '/\| Porcelain-v2 workspace snapshot SHA-256 \|/ {value=$2} END {print value}' "$receipt368")"
+  graph368="$(awk -F'`' '/\| (Graphify fingerprint|Fingerprint) \|/ {value=$2} END {print value}' "$receipt368")"
+  [[ "$base368" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$frozen368" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$dirty368" =~ ^[0-9a-f]{64}$ ]]
+  [[ "$graph368" =~ ^[0-9a-f]{16}$ ]]
+  git cat-file -e "${base368}^{commit}"
+  git cat-file -e "${frozen368}^{tree}"
+  receipt_commit368="$(git log -n 1 --format=%H -- "$receipt368")"
+  test -n "$receipt_commit368"
+  git merge-base --is-ancestor "$base368" "$receipt_commit368"
+  git merge-base --is-ancestor "$receipt_commit368" "$receipt_commit373"
+  git merge-base --is-ancestor "$receipt_commit368" HEAD
+  cmp -s <(git show "${receipt_commit368}:${receipt368}") "$receipt368"
+  cmp -s <(git show "${receipt_commit368}:${checksum368}") "$checksum368"
+  rg -Fq 'opaqueWakeCapability = "opaque_wake_v1"' \
+    go-relay-server/opaque_wake.go
+  rg -Fq 'func buildOpaqueWakeMessage(platform string, now time.Time) (*messaging.Message, error)' \
+    go-relay-server/opaque_wake.go
+  rg -Fq 'func (ps *PushService) mailboxDirty(ctx context.Context, route pushRouteLease) error' \
+    go-relay-server/opaque_wake.go
+
+  provider368="$(mktemp /tmp/plan375-provider368.XXXXXX)"
+  trap 'rm -f "$provider368"' EXIT
+  (cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test . \
+    -run '^TestRelayNotificationClosure_OpaqueWakeAndroidProviderRequest$' \
+    -count=1 -v) | tee "$provider368"
+  test "$(rg -c '^--- PASS: TestRelayNotificationClosure_OpaqueWakeAndroidProviderRequest ' "$provider368")" -eq 1
+  ! rg -q '^[[:space:]]*--- SKIP:' "$provider368"
+
+  flutter test --no-pub \
+    test/core/notifications/ios_nse_inbox_projection_test.dart \
+    --plain-name 'TC-373-07 one default-off projection and native adapter own fixed wakes'
 
   flutter test --no-pub \
     test/core/bridge/p2p_bridge_client_wake_outcome_test.dart \
@@ -146,15 +261,15 @@ required before TC-375-06/07, plan closure and the one N07+N08 wave `host-all`.
     test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart \
     --plain-name 'TC-370-07 production composes one default-off outcome admission and one shared drain callback'
 
-  # Execution starts from a committed product tree, never the moving Plan-371
-  # implementation workspace used while this contract was drafted.
+  # Execution starts from the committed, receipt-bound Plan-374 product tree.
+  # Allowed successor planning bytes above must also be committed before RED.
   test -z "$(git status --porcelain=v1)"
 )
 ```
 
-Re-pin exact Plan-374 source/test names from its accepted receipt before the
-first RED. A changed graph/owner/API is a stop-and-review condition, not a
-reason to weaken the preflight.
+Re-pin exact Plan-373/374 source/test/API names from their accepted receipts
+before the first RED. A changed graph/owner/API or non-allowlisted post-receipt
+drift is a stop-and-review condition, not a reason to weaken the preflight.
 
 ## Graph Grounding Snapshot
 
@@ -177,7 +292,7 @@ N08 needs exactly two implementation plans:
 
 1. Plan 374 completes and safely enables the incumbent deleted-batch/periodic
    headless graph without advertising fixed wakes.
-2. Plan 375 adds fixed-wake ingress/audible disposition and Android paired-consumer
+2. Plan 375 adds fixed-wake ingress/sound disposition and Android paired-consumer
    readiness over that frozen graph.
 
 The split is load-bearing: recovery work can roll back independently while
@@ -370,8 +485,12 @@ Reuse exactly one `PushRegistrationCoordinator`:
   transitions must emit at most one current-policy frame;
 - do not call the raw registration closure beside the coordinator, add another
   token listener, register a half-capability set or cache a pre-token readiness
-  decision. A binding/role/readiness change while token retrieval or send is
-  blocked aborts the stale frame;
+  decision. Before committing any binding/role/readiness epoch mutation, the
+  coordinator fences new triggers and joins the in-flight token/retry/send
+  attempt. A bridge future held across the cutover may not be treated as
+  cancellable after dispatch: if acceptance is ambiguous or already succeeded,
+  withdraw or replace that exact old-authority route and verify the current
+  capability set/selection before the new epoch reports healthy;
 - active-linked reaction wakes remain ineligible until a later accepted
   linked-rich/producer-capability proof. Do not silently advertise reaction
   capability merely to widen fixed selection.
@@ -412,8 +531,7 @@ In scope:
 - one exact Android data-only fixed classifier in the incumbent service;
 - one trigger-kind/audible-disposition extension of the incumbent marker;
 - one `fixedWake` reason on the incumbent scheduler/worker/runtime;
-- one lock-held canonical/fallback audible arbiter and exact generic-card
-  retirement;
+- one fixed-silent/deletion-disposition rule and exact generic-card retirement;
 - Android effective consumer read-back and paired capability registration;
 - one narrowly role-gated active-linked Android registration hook through the
   incumbent coordinator;
@@ -433,29 +551,35 @@ Explicitly out of scope:
 - new relay action/protocol/provider bytes, group enumeration or rich-path
   retirement;
 - live FCM, provider/Redis, Doze/OEM, token rotation deployment, cohort,
-  telemetry, A-control, PRD or release acceptance;
-- a second Android device unless implementation creates a concrete device-class
-  counterexample.
+  telemetry, A-control, PRD or release acceptance.
 
 ## Test Contract
 
-| ID | Behavior invariant | Primary test owner | Test level / causal fixture | HEAD failure -> target proof | Mutation that must re-RED | Gate |
+| ID | Behavior invariant | Primary test owner | Test level / causal fixture | Pre-implementation deficit -> target proof | Mutation family / mandatory counterexample | Gate |
 |---|---|---|---|---|---|---|
 | TC-375-01 | Exact string data-only `{v:1,w:1}` enters fixed ingress once; every other/rich shape delegates once; invalid binding consumes fixed fail-closed | `android/app/src/test/kotlin/com/mknoon/app/MknoonFirebaseMessagingServiceTest.kt::testTC37501ExactFixedWakeInterceptsAndAllOtherShapesDelegateOnce` | Robolectric real service/RemoteMessage/binding table | HEAD has no `onMessageReceived` override -> exact branch; no fixed payload reaches rich staging; missing/cross-binding does zero marker/card/schedule and zero super | subset match, numeric coercion, accept notification/extra key, call super on fixed or twice on rich, recover under wrong binding -> red | focused native |
 | TC-375-02 | One binding/generation trigger/disposition record is atomic, backward compatible and exact-CAS | `DroppedPushRecoveryStoreTest::testTC37502FixedAndDeletedTriggersShareOneCrashSafeAudibleDisposition` | Robolectric SharedPreferences reopen/concurrency/crash cuts | HEAD marker has no kind/disposition -> missing means legacy deletion/may-have-alerted; fixed-only is false; fixed coalescing never downgrades true; unknown kind stays unsupported-pending; newer/account-cutover exact | split edits, reuse generation, decode legacy false, drop unknown, downgrade true, clear fields separately or evict newer/binding-B -> red | focused native |
 | TC-375-03 | Fixed wake reuses the exact expedited unique chain and every worker resnapshots/adopts the newest marker | `DroppedPushRecoveryWorkSchedulerTest::testTC37503FixedWakeUsesExistingUniqueExpeditedChain`; `HeadlessCanonicalRecoveryWorkerTest::testTC37503WorkerAdoptsCurrentTriggerAcrossRetryProcessDeathAndPeriodicContinuation` | WorkManager fake clock/process reopen/enqueue failure | no fixed reason -> one reason/current marker; stale fixed/deleted/periodic input processes newer durable work; enqueue failure later converges through periodic | second unique name/worker, trust WorkRequest, periodic ignores/consumes without convergence, failure reports success -> red | focused native |
 | TC-375-04 | Identity-free FCM creates no event authority; authenticated SQL materialization remains `INBOX_RECONCILER` | `test/core/bootstrap/production_headless_canonical_recovery_test.dart::TC-375-04 fixed wake carries no event authority and canonical drain remains inbox reconciler`; Plan-372 convergence test | serial real SQLite v116 + real ledger/registry | tempting synthetic event/owner -> marker only; direct/group message/reaction materialize through canonical custody | hash FCM/generation, create `RELAY_VERIFIED_UNACKED`/`ANDROID_PUSH_SERVICE`, ACK before SQL, settle ambiguous -> red | focused serial Dart |
 | TC-375-05 | Fixed generic requests are always silent, fixed-only work leaves canonical tone arbitration intact, and exact fixed-point ACK retires only the current card | `test/core/notifications/local_notification_projection_convergence_test.dart::TC-375-05 fixed generic stays silent in both orders while deletion ambiguity is never downgraded`; service/store/worker crash table | serial real ledger/native fake + SQLite; fixed-before-canonical, canonical-before-fixed, overlap, callback ambiguity, coalesced deletion, multi-page/periodic continuation/new generation | audible identity-free fixed can double-sound -> silent generic plus normal exact canonical tone yields at most one requested sound; true deletion disposition persists; exact later retirement | make fixed audible, force canonical silent for fixed-only, downgrade deletion true, synthesize correlation/recent horizon, ACK/cancel before fixed point, periodic strands enqueue failure -> red | focused serial Dart/native |
-| TC-375-06 | One live binding/role-epoch readiness resolver gates capabilities, producer and drainer; pair is indivisible/default false | `test/core/notifications/android_opaque_wake_readiness_test.dart::TC-375-06 live Android readback enables and retires one paired admission epoch`; extend TC-370-05/07 and the Go capability matrix with `same-token pair withdrawal invalidates opaque selection without generation advance` | host Dart native-readback fake plus Redis route fixture; construct unready, qualify A, block token/send, rotate/read-fail B | constructor bool can half-configure -> producer event, drain kick and last registration-send read one current epoch and change together; current cap set wins stale lease | platform/build-only, cached bool, stale A send, half pair, producer/drainer divergence, second flag or require generation advance on cap refresh -> red | focused pure Dart + exact Go |
-| TC-375-07 | Primary and active-linked use exact capability sets and one coordinator for startup/token-refresh/persisted-token/three health retries | same file `::TC-375-07 primary and linked Android serialize one qualified physical route through every retry`; `test/core/services/p2p_service_impl_test.dart::TC-375-07b persisted token and every relay health retry use the one coordinator`; bootstrap/start-node sentinels | host Dart fake coordinator/role/migration/cached token plus each relay-health transition and cutover barrier | raw re-registration and default linked caps bypass policy -> primary direct+group+pair, linked pair-only, one frame/current epoch; off/partial zero | primary-key fallback, wrong logical authority, linked reaction caps, raw health register, parallel refresh/retry, stale send, off-mode side effect -> red | focused pure Dart + 1to1 |
+| TC-375-06 | One live binding/role-epoch readiness resolver gates capabilities, producer and drainer; pair is indivisible/default false | `test/core/notifications/android_opaque_wake_readiness_test.dart::TC-375-06 live Android readback enables and retires one paired admission epoch`; extend TC-370-05/07 and the Go capability matrix with `same-token pair withdrawal invalidates opaque selection without generation advance` | host Dart native-readback fake plus Redis route fixture; construct unready, qualify A, hold bridge send, rotate/read-fail B | constructor bool can half-configure -> producer event, drain kick and last registration-send read one current epoch; mutation fences+joins the held send, and an accepted/ambiguous A frame is withdrawn before B reports healthy | platform/build-only, cached bool, stale A route survives, half pair, producer/drainer divergence, second flag or require generation advance on cap refresh -> red | focused pure Dart + exact Go |
+| TC-375-07 | Primary and active-linked use exact capability sets and one coordinator for startup/token-refresh/persisted-token/three health retries | same file `::TC-375-07 primary and linked Android serialize one qualified physical route through every retry`; `test/core/services/p2p_service_impl_test.dart::TC-375-07b persisted token and every relay health retry use the one coordinator`; bootstrap/start-node sentinels | host Dart fake coordinator/role/migration/cached token plus each relay-health transition, held bridge future and cutover barrier | raw re-registration and default linked caps bypass policy -> primary direct+group+pair, linked pair-only, one frame/current epoch; cutover joins or withdraws an accepted stale frame; off/partial zero | primary-key fallback, wrong logical authority, linked reaction caps, raw health register, parallel refresh/retry, stale route, off-mode side effect -> red | focused pure Dart + 1to1 |
 | TC-375-08 | One production service/store/scheduler/worker/card path preserves rich behavior and closes on a real no-Activity process | extend Plan-374 native script/runner and manifest contract | source/merged manifest + each available USB/emulator class from one APK, real WorkManager/SQLCipher/ledger | fixed injection currently falls through/unavailable -> exact service seam through process death and marker/card settlement | debug writes store directly, second component/card, Activity/manual tap, fake DB, skip or live-provider claim -> red | native host + device |
 
 Keep this matrix parameterized. Do not create separate direct/group,
 message/reaction, API-level or permission-state plans/suites.
 
+Gate 1 owns the sole required pre-implementation assertion RED. During GREEN,
+execute and revert one representative mutation for each of the six
+load-bearing families named in the done criteria; `-> red` in the table states
+the expected result if a listed variant is applied. The remaining variants are
+mandatory review counterexamples, not a requirement to manufacture a separate
+RED run for every phrase.
+
 ## TDD Implementation Sequence
 
-1. Run the dependency/default-off preflight and re-ground exact Plan-374 APIs.
+1. Run the dependency/default-off preflight and re-ground the exact Plan-373/
+   374 APIs plus the frozen Plan-368 provider boundary.
 2. Add only a minimal compiling classifier/test seam, write TC-375-01, and
    capture its assertion-owned RED. A missing class/compile/tool error is not a
    behavioral RED.
@@ -482,9 +606,11 @@ message/reaction, API-level or permission-state plans/suites.
 8. Extend the existing native host row and device harness; add no second row or
    runner. Register any new shared Dart test exactly once in `ONE_TO_ONE_TESTS`,
    `GROUP_TESTS` and `ONE_TO_ONE_HOST_TESTS` as appropriate.
-9. Run focused/preservation/curated/device gates, then the one adapter-wave
-   host gate only after Plan 373's receipt validates. Record a checksum-bound
-   receipt and marker `N08_ANDROID_FIXED_WAKE_MECHANISM_CODE_COMPLETE`.
+9. Run focused/preservation/curated/device gates, then the unconditional one
+   adapter-wave host gate. Freeze the tested tree and create all four closure
+   artifacts with standalone markers
+   `N08_ANDROID_FIXED_WAKE_MECHANISM_CODE_COMPLETE` and
+   `N07_N08_ADAPTER_WAVE_HOST_ALL_GREEN`.
 
 ## Risks And Stop Conditions
 
@@ -522,14 +648,15 @@ message/reaction, API-level or permission-state plans/suites.
   available USB-Android and emulator class from one immutable APK; an absent
   class records policy N/A.
 - Planning-time matrix: USB Pixel 6 `21071FDF600CSC` (API 36) and emulator
-  `emulator-5554` (API 37). Execution must rediscover and pin one available
-  target; emulator is preferred for deterministic process death, USB physical
-  is the fallback.
+  `emulator-5554` (API 37). Execution must rediscover and pin each available
+  USB/emulator class; each absent class records policy N/A. Both classes reuse
+  the same immutable APK and isolated per-target evidence directory.
 - Extend `scripts/run_android_headless_recovery_374.sh` with `--fixed-wake`.
   The debug receiver must invoke the same production classifier/commit seam;
   direct preference writes or direct WorkManager enqueue do not count.
-- Required proof: exact fixed ingress commits/schedules without notifying, one
-  WorkManager chain, no Activity, Plan-374 headless direct/group drain, real
+- Required proof: exact fixed ingress commits/schedules and requests the one
+  existing generic notification without sound, one WorkManager chain, no
+  Activity, Plan-374 headless direct/group drain, real
   SQLCipher v116, Plan-372 ledger/stable cards, explicitly silent fixed generic
   plus normal canonical-tone behavior in both orders, process-death/periodic
   continuation, exact generic retirement, rich delegation, zero taps/skips and
@@ -546,7 +673,7 @@ message/reaction, API-level or permission-state plans/suites.
 
 Run in this order:
 
-1. Plan-374/368 dependency and default-off sentinels;
+1. Plan-373/374/368 dependency, provenance and default-off sentinels;
 2. assertion-owned RED;
 3. pure Dart, selected Gradle and exact Go provider tests may run concurrently
    because they use distinct artifact roots; never run two Flutter processes
@@ -554,7 +681,8 @@ Run in this order:
 4. process-global SQLite/ledger/registry Dart tests serially;
 5. exact preservation, then `completeness-check`, `baseline`, `1to1` and
    `groups` serially;
-6. one immutable APK and one explicitly discovered Android target;
+6. one immutable APK and each explicitly rediscovered available USB/emulator
+   class, with exact policy N/A for an absent class;
 7. after both prerequisite receipts validate, one normal full-host adapter
    wave; no separate core/feature sweep;
 8. analyzer, formatting, shell/diff hygiene and incremental Graphify refresh.
@@ -701,8 +829,12 @@ EOF
 )
 ```
 
-The relay/provider implementation is unchanged; do not add relay-all or a Go
-family sweep.
+The Android provider root is Plan 368's real Firebase Admin SDK HTTP-capture
+table: it compares the decoded exact request map for all 22 source-eligible
+producer fixtures and exercises real-store zero-request controls. It is not a
+single builder-only assertion, raw-JSON ordering claim or live FCM delivery
+proof. The relay/provider implementation is unchanged; do not add relay-all or
+a Go family sweep.
 
 ### 5. Exact Dart and Kotlin preservation
 
@@ -807,26 +939,29 @@ ledger. Do not add feed/transport or unsupported batching flags.
 ```bash
 (
   set -euo pipefail
-  mkdir -p build/plan375/device build/plan375/apk
-  flutter devices --machine >build/plan375/flutter-devices.json
-  adb devices -l >build/plan375/adb-devices.txt
+  mkdir -p build
+  run_root="$(mktemp -d build/plan375.XXXXXX)"
+  mkdir -p "$run_root/device" "$run_root/apk"
+  printf '%s\n' "$run_root" >build/plan375-latest-run.txt
+  flutter devices --machine >"$run_root/flutter-devices.json"
+  adb devices -l >"$run_root/adb-devices.txt"
 
-  emulator_id="$(awk '$2=="device" && $1 ~ /^emulator-/ {print $1; exit}' build/plan375/adb-devices.txt)"
-  usb_id="$(awk '$2=="device" && $1 !~ /^emulator-/ && $0 ~ /(^|[[:space:]])usb:/ {print $1; exit}' build/plan375/adb-devices.txt)"
-  : >build/plan375/targets.tsv
-  if test -n "$emulator_id"; then printf 'emulator\t%s\n' "$emulator_id" >>build/plan375/targets.tsv; else printf 'N/A (emulator unavailable by project policy)\n' >build/plan375/emulator-disposition.txt; fi
-  if test -n "$usb_id"; then printf 'usb\t%s\n' "$usb_id" >>build/plan375/targets.tsv; else printf 'N/A (USB Android unavailable by project policy)\n' >build/plan375/usb-disposition.txt; fi
-  if ! test -s build/plan375/targets.tsv; then
-    printf 'N/A (no Android target available by project policy)\n' >build/plan375/device-disposition.txt
+  emulator_id="$(awk '$2=="device" && $1 ~ /^emulator-/ {print $1; exit}' "$run_root/adb-devices.txt")"
+  usb_id="$(awk '$2=="device" && $1 !~ /^emulator-/ && $0 ~ /(^|[[:space:]])usb:/ {print $1; exit}' "$run_root/adb-devices.txt")"
+  : >"$run_root/targets.tsv"
+  if test -n "$emulator_id"; then printf 'emulator\t%s\n' "$emulator_id" >>"$run_root/targets.tsv"; else printf 'N/A (emulator unavailable by project policy)\n' >"$run_root/emulator-disposition.txt"; fi
+  if test -n "$usb_id"; then printf 'usb\t%s\n' "$usb_id" >>"$run_root/targets.tsv"; else printf 'N/A (USB Android unavailable by project policy)\n' >"$run_root/usb-disposition.txt"; fi
+  if ! test -s "$run_root/targets.tsv"; then
+    printf 'N/A (no Android target available by project policy)\n' >"$run_root/device-disposition.txt"
     exit 0
   fi
 
-  apk='build/plan375/apk/app-plan375-fixed-wake-debug.apk'
+  apk="$run_root/apk/app-plan375-fixed-wake-debug.apk"
   scripts/run_android_headless_recovery_374.sh \
     --build-only --fixed-wake --apk-output "$apk" \
-    --output build/plan375/build
+    --output "$run_root/build"
   test -f "$apk"
-  shasum -a 256 "$apk" >build/plan375/apk.sha256
+  shasum -a 256 "$apk" >"$run_root/apk.sha256"
 
   pids=''
   while IFS="$(printf '\t')" read -r target_class target_id; do
@@ -834,10 +969,10 @@ ledger. Do not add feed/transport or unsupported batching flags.
       ANDROID_SERIAL="$target_id" scripts/run_android_headless_recovery_374.sh \
         --device-id "$target_id" --apk "$apk" --skip-build --fixed-wake \
         --production-fixed-ingress-seam --no-activity --process-death \
-        --output "build/plan375/device/$target_class"
+        --output "$run_root/device/$target_class"
     ) &
     pids="$pids $!"
-  done <build/plan375/targets.tsv
+  done <"$run_root/targets.tsv"
   device_status=0
   for pid in $pids; do
     if ! wait "$pid"; then device_status=1; fi
@@ -891,19 +1026,21 @@ This is mandatory for the combined adapter-wave marker, but only after Plan
 )
 ```
 
-If Plan 373 is not yet complete, Plan-375 focused/device work may be recorded,
-but neither this aggregate nor `N07_N08_ADAPTER_WAVE_HOST_ALL_GREEN` may be
-claimed. Do not substitute `--dart-only`; the purpose is to rediscover both
-registered native adapters once.
+Both prerequisite receipts are mandatory before Plan-375 RED, so this aggregate
+must run once at closure. Do not substitute `--dart-only`; the purpose is to
+rediscover both registered native adapters once.
 
 ### 9. Hygiene and graph
 
 ```bash
 (
   set -euo pipefail
+  gofmt_diff="$(mktemp /tmp/plan375-gofmt.XXXXXX)"
+  trap 'rm -f "$gofmt_diff"' EXIT
   dart_paths="$(
     {
       git diff --name-only --diff-filter=ACMRT -- '*.dart'
+      git diff --cached --name-only --diff-filter=ACMRT -- '*.dart'
       git ls-files --others --exclude-standard -- '*.dart'
     } | sort -u
   )"
@@ -913,7 +1050,23 @@ registered native adapters once.
   done <<EOF
 $dart_paths
 EOF
+  go_paths="$(
+    {
+      git diff --name-only --diff-filter=ACMRT -- '*.go'
+      git diff --cached --name-only --diff-filter=ACMRT -- '*.go'
+      git ls-files --others --exclude-standard -- '*.go'
+    } | sort -u
+  )"
+  while IFS= read -r go_path; do
+    test -z "$go_path" && continue
+    gofmt -d "$go_path"
+  done <<EOF >"$gofmt_diff"
+$go_paths
+EOF
+  test ! -s "$gofmt_diff"
   git diff --check
+  git diff --cached --check
+  bash -n scripts/run_host_test_gates.sh scripts/run_test_gates.sh
   bash -n scripts/test/run_android_headless_recovery_native_374.sh
   bash -n scripts/run_android_headless_recovery_374.sh
   flutter analyze
@@ -924,16 +1077,57 @@ EOF
 )
 ```
 
+### 10. Closure provenance and repository bookkeeping
+
+After every accepted gate and the final Graphify refresh, freeze the exact
+tested product/test/script/fixture/Graphify bytes with an alternate Git index
+before changing closure-only documents. Capture the current base `HEAD`, its
+tree, the frozen tested tree, the complete porcelain-v2 workspace snapshot and
+SHA-256, shared/alternate-index identities, Graphify fingerprint and graph
+artifact hashes. The freeze must exclude the later receipt, status, index and
+coverage edits; no product/test byte may change after it.
+
+Create and commit all four provenance artifacts:
+
+- `Test-Flight-Improv/evidence/375/README.md`;
+- `Test-Flight-Improv/evidence/375/README.md.sha256`;
+- `Test-Flight-Improv/evidence/375/workspace-porcelain-v2.txt.gz`, produced
+  deterministically with `gzip -n` from the exact captured snapshot;
+- `Test-Flight-Improv/evidence/375/graphify-fingerprint.txt`, containing only
+  the exact 16-lowercase-hex fingerprint and newline.
+
+The receipt must independently bind and rehash those artifacts, the dependency
+receipt commits, the RED XML, every focused/preservation/curated/native/device
+result and the unconditional adapter-wave `host-all`. It must record these two
+success markers as separate exact standalone raw lines:
+
+```text
+N08_ANDROID_FIXED_WAKE_MECHANISM_CODE_COMPLETE
+N07_N08_ADAPTER_WAVE_HOST_ALL_GREEN
+```
+
+Only after the frozen identities are captured, check the Plan-375 done boxes
+and append its execution-progress rows; append the Plan-375 closure lines to
+`STATUS.md`; update its plan and evidence rows in
+`Test-Flight-Improv/00-INDEX.md`; and update the GAP-N08 implementation status,
+counts and percentages in
+`UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`.
+Rehash the final README, re-run diff/shell hygiene over the closure bytes, stage
+only Plan-375 scope, commit it as one plan-specific commit, and require a clean
+worktree before looking for the next sequential plan.
+
 ## Execution Interpretation And Done Criteria
 
-- [ ] Plan-374 committed receipt validates and its finalized source/test/API
-      names are re-pinned; Plan-368 wire and Plan-370 default-off sentinels pass.
-- [ ] TC-375-01 through TC-375-08 each has an assertion-owned RED and causal
-      GREEN. Representative mutations re-red the six load-bearing seams: exact
+- [ ] Plan-373/374 committed receipts, artifacts, ancestry and finalized
+      source/test/API names validate; post-Plan-374 product drift is empty.
+      Plan-368 receipt/provider API/test and Plan-370 default-off sentinels pass.
+- [ ] TC-375-01 has the one assertion-owned pre-implementation RED described by
+      Gate 1. TC-375-01 through TC-375-08 then have causal GREEN evidence.
+      Representative mutations re-red the six load-bearing seams: exact
       classifier, current-marker resnapshot, no synthetic authority, cross-path
       sound policy, paired readiness and linked logical/physical identity. The
-      other table mutations remain mandatory review counterexamples, not dozens
-      of duplicate mutation executions.
+      other table mutations remain mandatory review counterexamples, not
+      duplicate mutation executions.
 - [ ] Exactly one app-owned FCM service intercepts only exact fixed data and
       delegates every nonfixed/rich message to FlutterFire once.
 - [ ] One existing binding/generation store owns both trigger kinds and one
@@ -942,7 +1136,7 @@ EOF
       family exists.
 - [ ] Fixed/deleted/periodic work uses one scheduler/worker/engine/runtime;
       current state wins stale WorkRequest input and failures preserve work.
-- [ ] Fixed provider bytes mint no event identity, ledger/SQL/outcome or relay
+- [ ] Fixed provider fields mint no event identity, ledger/SQL/outcome or relay
       ACK. Plan-374 canonical SQL materialization remains `INBOX_RECONCILER`.
 - [ ] Fixed generic requests are visibly present but explicitly silent in both
       arrival orders; fixed-only work retains normal exact canonical tone
@@ -957,20 +1151,25 @@ EOF
 - [ ] Each rediscovered available USB-Android/emulator class passes the same
       immutable-APK, no-Activity, process-death fixed-wake proof in isolated
       parallel output; each absent class records exact policy N/A.
-- [ ] After valid Plan-373/374 receipts, one and only one N07+N08 adapter-wave
-      full host gate passes and rediscovers both synthetic native items once.
+- [ ] The unconditional Plan-375 closure run contains one and only one N07+N08
+      adapter-wave full host gate and rediscovers both synthetic native items
+      once.
 - [ ] No core/feature/performance sweep, broad Plan-331 campaign, live FCM/Doze/
       OEM claim, activation or release action is performed.
-- [ ] Analyzer, changed+untracked Dart formatting, shell/diff hygiene and fresh
-      Graphify review pass.
-- [ ] A checksum-bound receipt records
-      `N08_ANDROID_FIXED_WAKE_MECHANISM_CODE_COMPLETE`; if the adapter-wave gate
-      ran, it also records `N07_N08_ADAPTER_WAVE_HOST_ALL_GREEN` separately.
+- [ ] Analyzer, changed+untracked Dart formatting, changed-Go `gofmt` zero-diff,
+      both main gate-runner and both Android-runner `bash -n` checks, staged and
+      unstaged diff hygiene, and fresh Graphify review pass.
+- [ ] The four checksum-bound evidence artifacts exist and rehash. The receipt
+      records `N08_ANDROID_FIXED_WAKE_MECHANISM_CODE_COMPLETE` and
+      `N07_N08_ADAPTER_WAVE_HOST_ALL_GREEN` as separate standalone raw lines.
+- [ ] Plan/progress, `STATUS.md`, `00-INDEX.md` and GAP-N08 coverage/counts are
+      updated only after the tested-tree freeze; one Plan-375 commit contains
+      exactly the reviewed scope and leaves a clean worktree.
 
-Meeting these criteria closes the GAP-N08 Android fixed-wake mechanism and the
-remaining safety-gated Plan-331 production tail. It does not by itself enable
-the paired capability, prove live FCM/provider/Doze/OEM delivery, close N09 or
-N11, accept PRD controls, or make a release eligible.
+Meeting these criteria completes the second and final GAP-N08 mechanism slice
+over Plan 374's already-closed Plan-331 production tail. It does not by itself
+enable the paired capability, prove live FCM/provider/Doze/OEM delivery, close
+N09 or N11, accept PRD controls, or make a release eligible.
 
 ## Handoff
 
@@ -980,15 +1179,53 @@ N11, accept PRD controls, or make a release eligible.
 - WP-07 owns cohort activation, same-token route replacement/revoke, live
   provider/Redis/FCM/Doze/OEM evidence, rich retirement, telemetry, rollback
   drill, A-control acceptance and release closure.
-- N12 retains consolidated Apple device evidence. No Plan 376 or third N08
-  implementation slice is warranted by this contract.
+- N12 retains consolidated Apple device evidence. No third N08 implementation
+  slice is warranted; continue the sequence only when a separately scoped next
+  plan actually exists.
 
 ## Reviewer Findings
 
-Independent `$tdd-review` result: **PENDING**.
+Independent `$tdd-review` result: **PASS after material in-place corrections**.
+
+- Claims and boundary: PASS. The identity-free `{v,w}` wake is only a durable
+  mailbox trigger. It cannot mint correlation, SQL, v116, ledger state,
+  `ANDROID_PUSH_SERVICE`, `RELAY_VERIFIED_UNACKED` or relay ACK authority;
+  Plan 374 remains the sole `INBOX_RECONCILER` materializer.
+- Causal state and sound safety: PASS. Every fixed generic request is visible
+  but explicitly silent, so both fixed-before-canonical and
+  canonical-before-fixed request at most one sound without inventing an event
+  identity or seven-day global mute. Legacy/deleted-batch audible ambiguity is
+  conservative and cannot be downgraded by fixed coalescing. Current durable
+  marker state wins stale WorkRequest reasons, including periodic recovery
+  after enqueue failure.
+- Alternate paths and cutover: PASS. Exact fixed data is consumed only by the
+  app-owned service; all other/rich shapes delegate once. Persisted-token
+  restore and all three relay-health retries enter the one registration
+  coordinator. Binding/role/readiness mutation fences and joins a held send;
+  accepted or ambiguous stale routes are withdrawn/replaced before the new
+  epoch reports healthy.
+- Gate integrity: PASS. Focused pure and process-global Dart legs are split,
+  Gradle XML and Go root/subtest results are counted, shared registration is
+  exact-once, and all Bash fences parse. One fresh immutable APK drives each
+  rediscovered available USB/emulator class in isolated parallel evidence;
+  an absent class is policy N/A.
+- Operability and economy: PASS. The existing store, card, scheduler, worker,
+  graph, ledger seam, registration coordinator, native host row and device
+  runner are extended rather than duplicated. Focused/preservation and the
+  affected curated lanes precede one N07+N08 wave `host-all`; no core/feature
+  duplicate, live-provider campaign or third N08 plan is justified.
+
+## Arbiter Decision
+
+**READY AS A CONTRACT, EXECUTION BLOCKED ON PLANS 373 AND 374.** Plan 375 is the
+second and final N08 mechanism slice. Re-review only if either prerequisite
+changes the shared readiness owner, production headless graph, ledger/effect
+API, registration coordinator or native marker semantics. Do not hide such a
+change in an unplanned third N08 slice, second worker/store/card, new protocol,
+synthetic event identity or broadened rollout plan.
 
 ## Execution Progress
 
 | Time | Step | RED evidence | GREEN evidence | Refactor / regression | Evidence path |
 |---|---|---|---|---|---|
-| pending | TC-375-00 prerequisite | Plan-374 receipt absent while Plan 371 is in progress | pending | No production execution authorized | pending |
+| pending | TC-375-00 prerequisite | Committed Plan-373/374 receipts and clean post-Plan-374 product baseline are not yet validated | pending | No production execution authorized | pending |
