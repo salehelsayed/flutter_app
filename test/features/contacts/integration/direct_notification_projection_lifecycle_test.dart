@@ -25,6 +25,7 @@ void main() {
           'username': 'Alice',
           'blocked': false,
           'archived': false,
+          'authorizedTransportPeerIds': <String>[],
         }),
       );
 
@@ -38,6 +39,7 @@ void main() {
         'username': 'Alice Local',
         'blocked': true,
         'archived': false,
+        'authorizedTransportPeerIds': <String>[],
       });
 
       await projection.upsertContact(
@@ -47,6 +49,7 @@ void main() {
         'username': 'Alice Local',
         'blocked': false,
         'archived': true,
+        'authorizedTransportPeerIds': <String>[],
       });
 
       await projection.setContactBlocked(
@@ -235,6 +238,7 @@ void main() {
         'username': 'Encrypted fixture title',
         'blocked': false,
         'archived': false,
+        'authorizedTransportPeerIds': <String>[],
         'simsFixtureDigest': digest,
       });
       await projection.replaceContacts(<ContactModel>[

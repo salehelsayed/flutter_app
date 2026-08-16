@@ -5,6 +5,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'p2p_service.dart';
 import '../notifications/active_conversation_tracker.dart';
+import '../notifications/ios_notification_recovery_coordinator.dart';
+import '../notifications/ios_mailbox_alert_silent_replay_context.dart';
 import '../bridge/bridge.dart';
 import '../bridge/p2p_bridge_client.dart';
 import '../debug/transport_metrics.dart';
@@ -105,6 +107,25 @@ typedef AcceptedInboxWakeTokenHashObserver =
       required String wakeTokenSha256,
     });
 
+typedef PublishQualifiedIosNseTransport =
+    Future<bool> Function({
+      required String logicalAccountPeerId,
+      required String transportPeerId,
+      required String transportPrivateKeyBase64,
+      required List<String> relayMultiaddrs,
+    });
+
+typedef ReadOpaqueWakePlatformConsumerReadiness =
+    Future<bool> Function(String platform);
+
+typedef BeginIosInboxDrainGeneration =
+    Future<IosNotificationRecoveryDrainGeneration> Function();
+typedef EndIosInboxDrainGeneration =
+    Future<void> Function(
+      IosNotificationRecoveryDrainGeneration generation, {
+      required bool reachedFixedPoint,
+    });
+
 /// Implementation of P2PService backed by the Go native bridge.
 class P2PServiceImpl
     implements
@@ -165,6 +186,13 @@ class P2PServiceImpl
   /// covers, so a migrated-out account could keep transmitting from its linked
   /// device.
   final String? Function()? _logicalAccountPeerId;
+  final PublishQualifiedIosNseTransport? _publishQualifiedIosNseTransport;
+  final ReadOpaqueWakePlatformConsumerReadiness?
+  _readOpaqueWakePlatformConsumerReadiness;
+  final BeginIosInboxDrainGeneration? _beginIosInboxDrainGeneration;
+  final EndIosInboxDrainGeneration? _endIosInboxDrainGeneration;
+  List<String> _activeNodeRelayMultiaddrs = const <String>[];
+  String? _qualifiedNodePrivateKeyBase64;
 
   /// The peer the account-migration gate must be asked about for [peerId].
   ///
@@ -336,6 +364,11 @@ class P2PServiceImpl
     // authority is an account-level fact and must never be evaluated against a
     // per-device transport peer.
     String? Function()? logicalAccountPeerId,
+    PublishQualifiedIosNseTransport? publishQualifiedIosNseTransport,
+    ReadOpaqueWakePlatformConsumerReadiness?
+    readOpaqueWakePlatformConsumerReadiness,
+    BeginIosInboxDrainGeneration? beginIosInboxDrainGeneration,
+    EndIosInboxDrainGeneration? endIosInboxDrainGeneration,
   }) : _bridge = bridge,
        _pushTokenStore = pushTokenStore,
        _liveFcmTokenReader = liveFcmTokenReader,
@@ -343,7 +376,12 @@ class P2PServiceImpl
        _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride,
        _networkChangeSignal = networkChangeSignal,
        _requiredTransportPeerId = requiredTransportPeerId,
-       _logicalAccountPeerId = logicalAccountPeerId {
+       _logicalAccountPeerId = logicalAccountPeerId,
+       _publishQualifiedIosNseTransport = publishQualifiedIosNseTransport,
+       _readOpaqueWakePlatformConsumerReadiness =
+           readOpaqueWakePlatformConsumerReadiness,
+       _beginIosInboxDrainGeneration = beginIosInboxDrainGeneration,
+       _endIosInboxDrainGeneration = endIosInboxDrainGeneration {
     _inboxCoordinator = _P2PInboxCoordinator(
       port: _P2PInboxPort(
         readNodeState: () => _currentState,
@@ -431,6 +469,8 @@ class P2PServiceImpl
       maxRecoverableInboxReplayEntries: maxRecoverableInboxReplayEntries,
       maxConcurrentInboxDecrypts: maxConcurrentInboxDecrypts,
       foregroundInboxTimeout: foregroundInboxTimeout,
+      beginIosInboxDrainGeneration: _beginIosInboxDrainGeneration,
+      endIosInboxDrainGeneration: _endIosInboxDrainGeneration,
     );
 
     _peerTransportCoordinator = _P2PPeerTransportCoordinator(
@@ -675,6 +715,30 @@ class P2PServiceImpl
       if (!await _qualifyLinkedTransportPeer()) {
         return false;
       }
+      final actualPeerId = _currentState.peerId?.trim();
+      if (actualPeerId == null || actualPeerId != peerId) {
+        try {
+          await stopNode();
+        } on Object {
+          // The mismatched node is already disqualified; preserve the refusal.
+        }
+        return false;
+      }
+      _qualifiedNodePrivateKeyBase64 = privateKeyBase64;
+      final publishTransport = _publishQualifiedIosNseTransport;
+      if (publishTransport != null) {
+        try {
+          await publishTransport(
+            logicalAccountPeerId: _accountAuthorityPeerId(peerId) ?? peerId,
+            transportPeerId: actualPeerId,
+            transportPrivateKeyBase64: privateKeyBase64,
+            relayMultiaddrs: _activeNodeRelayMultiaddrs,
+          );
+        } on Object {
+          // Projection failure only withholds opaque-wake capability. The
+          // already-qualified foreground transport remains usable.
+        }
+      }
       // 361: an ACTIVE LINKED SECONDARY starts NO generic LAN discovery and
       // NO generic warm body from node start. Its restricted runtime owns the
       // exact inbox retrieve/replay work explicitly; everything broader stays
@@ -698,6 +762,30 @@ class P2PServiceImpl
       unawaited(_warmBackgroundSafely());
     }
     return success;
+  }
+
+  /// Republishes the exact already-qualified live transport after an identity
+  /// or binding commit. No node/key inference is permitted: before first node
+  /// start or after stop the projection stays retired until normal startup.
+  Future<bool> refreshQualifiedIosNseTransportProjection({
+    required String logicalAccountPeerId,
+  }) async {
+    final publish = _publishQualifiedIosNseTransport;
+    final transportPeerId = _currentState.peerId;
+    final privateKey = _qualifiedNodePrivateKeyBase64;
+    if (publish == null ||
+        !_currentState.isStarted ||
+        transportPeerId == null ||
+        privateKey == null ||
+        _accountAuthorityPeerId(transportPeerId) != logicalAccountPeerId) {
+      return false;
+    }
+    return publish(
+      logicalAccountPeerId: logicalAccountPeerId,
+      transportPeerId: transportPeerId,
+      transportPrivateKeyBase64: privateKey,
+      relayMultiaddrs: _activeNodeRelayMultiaddrs,
+    );
   }
 
   /// Returns true when this installation may proceed past node start.
@@ -782,10 +870,15 @@ class P2PServiceImpl
     try {
       final privateKeyHex = base64ToHex(privateKeyBase64);
       final namespace = 'mknoon:chat:$peerId';
+      final relayMultiaddrs = List<String>.unmodifiable(
+        defaultRelayAddresses(),
+      );
+      _activeNodeRelayMultiaddrs = relayMultiaddrs;
 
       final response = await callP2PNodeStart(
         _bridge,
         privateKeyHex: privateKeyHex,
+        relayAddresses: relayMultiaddrs,
         autoRegister: true,
         namespace: namespace,
         keyRotationGracePeriod: _keyRotationGracePeriodOverride,
@@ -1040,6 +1133,7 @@ class P2PServiceImpl
         _hasEverBeenOnline = false;
         _lastStartupRelayRecoveryAttemptAt = null;
         _clearActiveReadinessProofWindow();
+        _qualifiedNodePrivateKeyBase64 = null;
         _emitState(NodeState.stopped);
 
         emitFlowEvent(
@@ -2936,10 +3030,15 @@ class P2PServiceImpl
     );
 
     try {
+      final readiness = _readOpaqueWakePlatformConsumerReadiness;
+      final opaqueWakeReady = readiness == null
+          ? kWakeOutcomeCoordinatorAdmissionEnabled
+          : await readiness(platform);
       final response = await callP2PInboxRegisterToken(
         _bridge,
         token: token,
         platform: platform,
+        wakeOutcomeCoordinatorAdmissionEnabled: opaqueWakeReady,
       );
       final ok = response['ok'] == true;
       if (ok) {
@@ -3042,6 +3141,11 @@ class P2PServiceImpl
 
   @override
   Future<void> drainOfflineInbox() => _inboxCoordinator.drainOfflineInbox();
+
+  /// Arms the next/current paged drain with native mailbox ambiguity
+  /// suppression. Partial drains retain the context for continuation/retry.
+  void armIosMailboxAlertDrainContext(IosMailboxAlertDrainContext? context) =>
+      _inboxCoordinator.armIosMailboxAlertDrainContext(context);
 
   @override
   Future<DirectInboxDrainOutcome> drainOfflineInboxFully() =>

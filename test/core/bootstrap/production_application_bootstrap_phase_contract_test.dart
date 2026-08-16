@@ -12,6 +12,7 @@ import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart
 import 'package:flutter_app/app/bootstrap/direct_blob_free_linked_services.dart';
 import 'package:flutter_app/core/application/protected_group_content_runtime_quiescence.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/core/database/helpers/protected_group_content_db_helpers.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -1482,6 +1483,147 @@ void main() {
     });
   });
 
+  test(
+    'TC-373-02b active linked iOS registers its exact physical paired route without starting unrelated live services',
+    () async {
+      var firebaseReady = false;
+      var registrationStarts = 0;
+      var primaryStarts = 0;
+      var restrictedOwnerStarts = 0;
+      var unrelatedStarts = 0;
+
+      final linkedServices = DirectBlobFreeLinkedServices(
+        initializeBridge: () async {},
+        startMessageRouter: () => restrictedOwnerStarts += 1,
+        startChatMessageListener: () => restrictedOwnerStarts += 1,
+        startReactionListener: () => restrictedOwnerStarts += 1,
+        startMessageDeletionListener: () => restrictedOwnerStarts += 1,
+        startDeliveryReceiptListener: () => restrictedOwnerStarts += 1,
+        startLinkedTransport: () async => true,
+        afterLinkedTransportQualified: () async {
+          if (!firebaseReady) throw StateError('Firebase not ready');
+          registrationStarts += 1;
+        },
+        drainOfflineInbox: () async {},
+        drainExactBlobFreeFanoutOutboxes: () async => 0,
+      );
+      final runtime = RoleAwareDeferredRuntimeStart(
+        loadLinkedAuthority: () async =>
+            const LinkedInstallationAuthoritySnapshot(
+              disposition: LinkedInstallationDisposition.active,
+              credential: LinkedTransportCredential(
+                state: LinkedTransportCredentialState.active,
+                accountPeerId: 'account-peer',
+                accountPublicKey: 'account-public-key',
+                deviceId: 'linked-device',
+                transportPeerId: 'transport-peer',
+                transportPublicKey: 'transport-public-key',
+                transportPrivateKey: 'transport-private-key',
+                createdAt: '2026-08-16T00:00:00.000Z',
+                activatedAt: '2026-08-16T00:00:00.000Z',
+              ),
+              failClosedReason: null,
+            ),
+        startPrimaryRuntimeServices: () async {
+          primaryStarts += 1;
+          unrelatedStarts += 1;
+          return true;
+        },
+        startLinkedFoundationPrerequisites: linkedServices.start,
+      );
+
+      // A transient Firebase/readiness miss must not publish a successful role
+      // outcome or permanently latch the deferred startup owner.
+      expect(await runtime.start(), isFalse);
+      expect(runtime.lastOutcome, isNull);
+      expect(runtime.activeLinkedTransportPeerId, 'transport-peer');
+      expect(registrationStarts, 0);
+      expect(primaryStarts, 0);
+      expect(unrelatedStarts, 0);
+
+      firebaseReady = true;
+      expect(await runtime.start(), isTrue);
+      expect(
+        runtime.lastOutcome,
+        RoleAwareRuntimeStartOutcome.linkedFoundationStarted,
+      );
+      expect(registrationStarts, 1);
+      expect(primaryStarts, 0);
+      expect(unrelatedStarts, 0);
+      expect(restrictedOwnerStarts, 10);
+
+      // The ordinary-primary owner has the same retry contract. Listener
+      // arming belongs to the latch's successful-runtime callback, so a false
+      // first attempt cannot consume the only post-Firebase arm opportunity.
+      var primaryAttempts = 0;
+      var listenerArms = 0;
+      final retryingPrimary = RoleAwareDeferredRuntimeStart(
+        loadLinkedAuthority: () async =>
+            const LinkedInstallationAuthoritySnapshot(
+              disposition: LinkedInstallationDisposition.primary,
+              credential: null,
+              failClosedReason: null,
+            ),
+        startPrimaryRuntimeServices: () async => ++primaryAttempts > 1,
+        startLinkedFoundationPrerequisites: () async => false,
+      );
+      final primaryLatch = AccountMigrationRuntimeStartupLatch(
+        startRuntime: retryingPrimary.start,
+        onStarted: () => listenerArms += 1,
+      );
+      await primaryLatch.ensureStarted();
+      expect(primaryAttempts, 1);
+      expect(listenerArms, 0);
+      expect(retryingPrimary.lastOutcome, isNull);
+      await primaryLatch.ensureStarted();
+      expect(primaryAttempts, 2);
+      expect(listenerArms, 1);
+      expect(
+        retryingPrimary.lastOutcome,
+        RoleAwareRuntimeStartOutcome.primaryRuntimeStarted,
+      );
+
+      final source = File(_productionPath).readAsStringSync();
+      final hook = source.indexOf('afterLinkedTransportQualified:');
+      final drain = source.indexOf('drainOfflineInbox:', hook);
+      expect(hook, isNonNegative);
+      expect(drain, greaterThan(hook));
+      final exactHook = source.substring(hook, drain);
+      expect(exactHook, contains("isReadyFor(\n                    'ios',"));
+      expect(exactHook, contains('linked iOS Firebase is not ready'));
+      expect(exactHook, contains('await registration.ensureStarted();'));
+      expect(exactHook, isNot(contains('registerPushToken(')));
+      final appRoot = File(_applicationRootPath).readAsStringSync();
+      final latchStart = appRoot.indexOf(
+        'runtimeStartupLatch = AccountMigrationRuntimeStartupLatch(',
+      );
+      final latchEnd = appRoot.indexOf(
+        '_setPresenceUseCase = SetPresenceUseCase(',
+        latchStart,
+      );
+      final latchSource = appRoot.substring(latchStart, latchEnd);
+      expect(
+        latchSource,
+        contains('_armPushListenersAfterSuccessfulRuntimeStart();'),
+      );
+      expect(
+        appRoot,
+        allOf(
+          contains('bool _firebaseReadinessListenerInstalled = false;'),
+          contains('readiness.addOnReadyListener(() {'),
+          contains('if (mounted) _setupPushListeners();'),
+        ),
+      );
+      expect(
+        source,
+        allOf(
+          contains('publishQualifiedIosNseTransport:'),
+          contains('iosNseInboxTransportProjection.publishAndReadBack('),
+        ),
+      );
+    },
+  );
+
   testWidgets(
     'TC-364-04a linked runtime exposes only protected blob-free group content',
     (tester) async {
@@ -2502,7 +2644,7 @@ void main() {
         root.indexOf('Future<void> _onResumed() async'),
       );
       final resumeDrain = root.indexOf(
-        'await widget.p2pService.drainOfflineInbox();',
+        'final inboxDrain = await widget.p2pService.drainOfflineInboxFully();',
         linkedResume,
       );
       final resumeBootstrap = root.indexOf(

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/notifications/ios_nse_inbox_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -36,6 +37,53 @@ typedef LoadGroupReactionNotificationAuthoredTargets =
       required int limit,
     });
 
+/// One current, verified physical sender binding for protected group content.
+final class GroupNotificationSenderAuthorityTuple {
+  const GroupNotificationSenderAuthorityTuple({
+    required this.logicalSender,
+    required this.deviceId,
+    required this.transportPeerId,
+    required this.signingPublicKey,
+  });
+
+  final String logicalSender;
+  final String deviceId;
+  final String transportPeerId;
+  final String signingPublicKey;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'logicalSender': logicalSender,
+    'deviceId': deviceId,
+    'transportPeerId': transportPeerId,
+    'signingPublicKey': signingPublicKey,
+  };
+}
+
+/// The only group sender generation the NSE may use for enrichment.
+final class GroupNotificationSenderAuthority {
+  const GroupNotificationSenderAuthority({
+    required this.authorityEventAt,
+    required this.authorityEventId,
+    required this.keyEpoch,
+    required this.tuples,
+  });
+
+  final String authorityEventAt;
+  final String authorityEventId;
+  final int keyEpoch;
+  final List<GroupNotificationSenderAuthorityTuple> tuples;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'authorityEventAt': authorityEventAt,
+    'authorityEventId': authorityEventId,
+    'keyEpoch': keyEpoch,
+    'tuples': tuples.map((tuple) => tuple.toJson()).toList(growable: false),
+  };
+}
+
+typedef LoadGroupNotificationSenderAuthority =
+    Future<GroupNotificationSenderAuthority?> Function(String groupId);
+
 /// Mirrors only recipient-owned group-reaction display and eligibility state.
 ///
 /// Reaction emoji remains inside the encrypted payload. Message text, group
@@ -46,6 +94,7 @@ class GroupReactionNotificationProjection {
   final SecureKeyStore _store;
   final int maxAuthoredTargets;
   final int maxReactionComparands;
+  final int maxSenderAuthorityTuples;
   Future<void> _tail = Future<void>.value();
   String? _expectedAccountPeerId;
   final Set<String> _terminalGroupIds = <String>{};
@@ -54,8 +103,10 @@ class GroupReactionNotificationProjection {
     required SecureKeyStore store,
     this.maxAuthoredTargets = 256,
     this.maxReactionComparands = 1024,
+    this.maxSenderAuthorityTuples = 256,
   }) : assert(maxAuthoredTargets > 0),
        assert(maxReactionComparands > 0),
+       assert(maxSenderAuthorityTuples > 0),
        _store = store;
 
   /// Establishes the active account and this exact installation before any
@@ -179,6 +230,10 @@ class GroupReactionNotificationProjection {
         if (previous?['keyEpoch'] is int)
           'keyEpoch': previous!['keyEpoch'] as int,
         'members': _copyMembers(previous?['members']),
+        if (previous?['senderAuthority'] is Map)
+          'senderAuthority': Map<String, Object?>.from(
+            previous!['senderAuthority']! as Map,
+          ),
       };
       await _writeContexts(contexts);
     });
@@ -186,7 +241,9 @@ class GroupReactionNotificationProjection {
 
   Future<void> removeGroup(String groupId) => _enqueue(() async {
     final contexts = await _readContexts();
-    if (!_ownsContexts(contexts)) return;
+    if (!_ownsContexts(contexts)) {
+      throw StateError('group notification projection owner is unavailable');
+    }
     contexts.groups.remove(groupId);
     await _writeContexts(contexts);
     final targets = await _readTargets(
@@ -295,6 +352,181 @@ class GroupReactionNotificationProjection {
     await _writeContexts(contexts);
   });
 
+  /// Removes one group's physical sender authorization and verifies absence
+  /// before its authoritative database generation is allowed to mutate.
+  Future<void> retireGroupSenderAuthority(String groupId) => _enqueue(() async {
+    final normalized = _nonEmpty(groupId);
+    if (normalized == null) {
+      throw ArgumentError.value(groupId, 'groupId');
+    }
+    final contexts = await _readContexts();
+    if (!_ownsContexts(contexts)) {
+      throw StateError('group notification projection owner is unavailable');
+    }
+    contexts.groups[normalized]?.remove('senderAuthority');
+    await _writeContexts(contexts);
+    final readBack = await _readContexts();
+    if (!_ownsContexts(readBack) ||
+        readBack.groups[normalized]?['senderAuthority'] != null) {
+      throw StateError('group sender authority retirement failed');
+    }
+  }, propagateError: true);
+
+  /// Publishes one complete, currently verified sender generation. Failure
+  /// invalidates the shared documents so a previous generation cannot remain.
+  Future<void> replaceGroupSenderAuthority(
+    String groupId,
+    GroupNotificationSenderAuthority? authority,
+  ) => _enqueue(() async {
+    final normalized = _nonEmpty(groupId);
+    if (normalized == null) {
+      throw ArgumentError.value(groupId, 'groupId');
+    }
+    final contexts = await _readContexts();
+    if (!_ownsContexts(contexts)) {
+      throw StateError('group notification projection owner is unavailable');
+    }
+    final group = contexts.groups[normalized];
+    if (group == null) {
+      if (authority == null) return;
+      throw StateError('group notification context is unavailable');
+    }
+    if (authority == null) {
+      group.remove('senderAuthority');
+    } else {
+      group['senderAuthority'] = _canonicalSenderAuthority(authority);
+    }
+    await _writeContexts(contexts);
+    final expected = group['senderAuthority'];
+    final readBack = await _readContexts();
+    final actual = readBack.groups[normalized]?['senderAuthority'];
+    if (!_ownsContexts(readBack) ||
+        jsonEncode(expected) != jsonEncode(actual)) {
+      throw StateError('group sender authority read-back failed');
+    }
+  }, propagateError: true);
+
+  /// Startup replacement for all committed, verified group generations.
+  Future<void> replaceAllGroupSenderAuthorities(
+    Map<String, GroupNotificationSenderAuthority?> authorities,
+  ) => _enqueue(() async {
+    final contexts = await _readContexts();
+    if (!_ownsContexts(contexts)) {
+      throw StateError('group notification projection owner is unavailable');
+    }
+    for (final entry in contexts.groups.entries) {
+      final authority = authorities[entry.key];
+      if (authority == null) {
+        entry.value.remove('senderAuthority');
+      } else {
+        entry.value['senderAuthority'] = _canonicalSenderAuthority(authority);
+      }
+    }
+    await _writeContexts(contexts);
+    final readBack = await _readContexts();
+    if (!_ownsContexts(readBack) ||
+        jsonEncode(contexts.groups) != jsonEncode(readBack.groups)) {
+      throw StateError('group sender authority backfill read-back failed');
+    }
+  }, propagateError: true);
+
+  Map<String, Object?> _canonicalSenderAuthority(
+    GroupNotificationSenderAuthority authority,
+  ) {
+    final eventAt = _nonEmpty(authority.authorityEventAt);
+    final eventId = _strictAuthorityString(authority.authorityEventId);
+    final parsedAt = eventAt == null ? null : DateTime.tryParse(eventAt);
+    if (eventAt == null ||
+        parsedAt == null ||
+        !parsedAt.isUtc ||
+        _fixedUtc(parsedAt) != eventAt ||
+        eventId == null ||
+        authority.keyEpoch < 0 ||
+        authority.tuples.isEmpty ||
+        authority.tuples.length > maxSenderAuthorityTuples) {
+      throw const FormatException('invalid group sender authority generation');
+    }
+    final tuples =
+        authority.tuples
+            .map((tuple) {
+              final logical = _strictAuthorityString(
+                tuple.logicalSender,
+                maxUtf8Bytes: 1024,
+              );
+              final device = _strictAuthorityString(
+                tuple.deviceId,
+                maxUtf8Bytes: 1024,
+              );
+              final transport =
+                  isNativeCompatibleIosNsePeerId(tuple.transportPeerId)
+                  ? tuple.transportPeerId
+                  : null;
+              final signingKey = _strictAuthorityString(
+                tuple.signingPublicKey,
+                maxUtf8Bytes: 512,
+              );
+              if (logical == null ||
+                  device == null ||
+                  transport == null ||
+                  signingKey == null ||
+                  !_isCanonicalEd25519PublicKey(signingKey)) {
+                throw const FormatException(
+                  'invalid group sender authority tuple',
+                );
+              }
+              return <String, Object?>{
+                'logicalSender': logical,
+                'deviceId': device,
+                'transportPeerId': transport,
+                'signingPublicKey': signingKey,
+              };
+            })
+            .toList(growable: false)
+          ..sort((left, right) {
+            for (final key in const <String>[
+              'logicalSender',
+              'deviceId',
+              'transportPeerId',
+              'signingPublicKey',
+            ]) {
+              final order = (left[key]! as String).compareTo(
+                right[key]! as String,
+              );
+              if (order != 0) return order;
+            }
+            return 0;
+          });
+    final seenTuples = <String>{};
+    final seenTransports = <String>{};
+    final tupleByLogicalDevice = <String, String>{};
+    for (final tuple in tuples) {
+      final encoded = jsonEncode(tuple);
+      if (!seenTuples.add(encoded)) {
+        throw const FormatException('duplicate group sender authority tuple');
+      }
+      final transport = tuple['transportPeerId']! as String;
+      if (!seenTransports.add(transport)) {
+        throw const FormatException('ambiguous group sender transport');
+      }
+      final logicalDevice =
+          '${tuple['logicalSender']}\u0000${tuple['deviceId']}';
+      final transportAndKey = '$transport\u0000${tuple['signingPublicKey']}';
+      if (tupleByLogicalDevice.putIfAbsent(
+            logicalDevice,
+            () => transportAndKey,
+          ) !=
+          transportAndKey) {
+        throw const FormatException('ambiguous group sender device');
+      }
+    }
+    return <String, Object?>{
+      'authorityEventAt': eventAt,
+      'authorityEventId': eventId,
+      'keyEpoch': authority.keyEpoch,
+      'tuples': tuples,
+    };
+  }
+
   /// Strictly replaces one accepted group's complete notification context.
   ///
   /// Accepted post-removal re-entry must not publish group, roster, and key
@@ -351,6 +583,12 @@ class GroupReactionNotificationProjection {
     return _enqueue(() async {
       final contexts = await _readContexts();
       if (!_ownsContexts(contexts)) return;
+      final previousAuthority = contexts.groups[groupId]?['senderAuthority'];
+      if (previousAuthority is Map) {
+        replacement['senderAuthority'] = Map<String, Object?>.from(
+          previousAuthority,
+        );
+      }
       contexts.groups[groupId] = replacement;
       await _writeContexts(contexts);
       _terminalGroupIds.remove(groupId);
@@ -456,6 +694,10 @@ class GroupReactionNotificationProjection {
         'dissolved': group.isDissolved || group.dissolvedAt != null,
         if (keyEpoch != null && keyEpoch >= 0) 'keyEpoch': keyEpoch,
         'members': members,
+        if (current.groups[groupId]?['senderAuthority'] is Map)
+          'senderAuthority': Map<String, Object?>.from(
+            current.groups[groupId]!['senderAuthority']! as Map,
+          ),
       };
     }
     await _writeContexts(
@@ -710,7 +952,10 @@ class GroupReactionNotificationProjection {
       if (rawGroups is Map) {
         for (final entry in rawGroups.entries) {
           final groupId = _nonEmpty(entry.key);
-          final group = _sanitizeGroup(entry.value);
+          final group = _sanitizeGroup(
+            entry.value,
+            sanitizeAuthority: _sanitizeStoredSenderAuthority,
+          );
           if (groupId != null && group != null) groups[groupId] = group;
         }
       }
@@ -729,6 +974,82 @@ class GroupReactionNotificationProjection {
     sharedGroupReactionContextsKey,
     jsonEncode(_contextsJson(contexts)),
   );
+
+  Map<String, Object?>? _sanitizeStoredSenderAuthority(Object? value) {
+    if (value is! Map ||
+        value.length != 4 ||
+        !value.keys.toSet().containsAll(const <String>{
+          'authorityEventAt',
+          'authorityEventId',
+          'keyEpoch',
+          'tuples',
+        })) {
+      return null;
+    }
+    final tuplesRaw = value['tuples'];
+    if (tuplesRaw is! List ||
+        tuplesRaw.isEmpty ||
+        tuplesRaw.length > maxSenderAuthorityTuples) {
+      return null;
+    }
+    final tuples = <GroupNotificationSenderAuthorityTuple>[];
+    for (final raw in tuplesRaw) {
+      if (raw is! Map ||
+          raw.length != 4 ||
+          !raw.keys.toSet().containsAll(const <String>{
+            'logicalSender',
+            'deviceId',
+            'transportPeerId',
+            'signingPublicKey',
+          })) {
+        return null;
+      }
+      final logical = _strictAuthorityString(
+        raw['logicalSender'],
+        maxUtf8Bytes: 1024,
+      );
+      final device = _strictAuthorityString(
+        raw['deviceId'],
+        maxUtf8Bytes: 1024,
+      );
+      final transport = isNativeCompatibleIosNsePeerId(raw['transportPeerId'])
+          ? raw['transportPeerId']! as String
+          : null;
+      final signingKey = _strictAuthorityString(
+        raw['signingPublicKey'],
+        maxUtf8Bytes: 512,
+      );
+      if (logical == null ||
+          device == null ||
+          transport == null ||
+          signingKey == null ||
+          !_isCanonicalEd25519PublicKey(signingKey)) {
+        return null;
+      }
+      tuples.add(
+        GroupNotificationSenderAuthorityTuple(
+          logicalSender: logical,
+          deviceId: device,
+          transportPeerId: transport,
+          signingPublicKey: signingKey,
+        ),
+      );
+    }
+    try {
+      final canonical = _canonicalSenderAuthority(
+        GroupNotificationSenderAuthority(
+          authorityEventAt: _nonEmpty(value['authorityEventAt']) ?? '',
+          authorityEventId:
+              _strictAuthorityString(value['authorityEventId']) ?? '',
+          keyEpoch: value['keyEpoch'] is int ? value['keyEpoch']! as int : -1,
+          tuples: tuples,
+        ),
+      );
+      return jsonEncode(value) == jsonEncode(canonical) ? canonical : null;
+    } on Object {
+      return null;
+    }
+  }
 
   Map<String, Object?> _contextsJson(_ProjectionContexts contexts) {
     return <String, Object?>{
@@ -885,6 +1206,17 @@ class GroupReactionNotificationProjection {
       });
     return sorted.take(maxAuthoredTargets).toList(growable: false);
   }
+}
+
+String _fixedUtc(DateTime value) {
+  final utc = value.toUtc();
+  String two(int part) => part.toString().padLeft(2, '0');
+  final micros =
+      utc.millisecond * Duration.microsecondsPerMillisecond + utc.microsecond;
+  return '${utc.year.toString().padLeft(4, '0')}-'
+      '${two(utc.month)}-${two(utc.day)}T${two(utc.hour)}:'
+      '${two(utc.minute)}:${two(utc.second)}.'
+      '${micros.toString().padLeft(6, '0')}Z';
 }
 
 class _ProjectionContexts {
@@ -1063,6 +1395,28 @@ String? _nonEmpty(Object? value) {
   return trimmed.isEmpty ? null : trimmed;
 }
 
+String? _strictAuthorityString(Object? value, {int maxUtf8Bytes = 512}) {
+  if (value is! String ||
+      value.isEmpty ||
+      value != value.trim() ||
+      utf8.encode(value).length > maxUtf8Bytes ||
+      value.runes.any(
+        (rune) => rune < 0x20 || (rune >= 0x7f && rune <= 0x9f),
+      )) {
+    return null;
+  }
+  return value;
+}
+
+bool _isCanonicalEd25519PublicKey(String value) {
+  try {
+    final bytes = base64Decode(value);
+    return bytes.length == 32 && base64Encode(bytes) == value;
+  } on Object {
+    return false;
+  }
+}
+
 String? _normalizedTimestamp(String value) {
   final parsed = DateTime.tryParse(value.trim());
   return parsed?.toUtc().toIso8601String();
@@ -1107,12 +1461,19 @@ Map<String, Map<String, Object?>> _copyMembers(Object? value) {
   return result;
 }
 
-Map<String, Object?>? _sanitizeGroup(Object? value) {
+Map<String, Object?>? _sanitizeGroup(
+  Object? value, {
+  required Map<String, Object?>? Function(Object?) sanitizeAuthority,
+}) {
   if (value is! Map) return null;
   final name = _nonEmpty(value['name']);
   final type = _nonEmpty(value['type']);
   if (name == null || (type != 'chat' && type != 'announcement')) return null;
   final keyEpoch = value['keyEpoch'];
+  final authorityRaw = value['senderAuthority'];
+  final authority = authorityRaw == null
+      ? null
+      : sanitizeAuthority(authorityRaw);
   return <String, Object?>{
     'name': name,
     'type': type,
@@ -1121,5 +1482,6 @@ Map<String, Object?>? _sanitizeGroup(Object? value) {
     'dissolved': value['dissolved'] == true,
     if (keyEpoch is int && keyEpoch >= 0) 'keyEpoch': keyEpoch,
     'members': _copyMembers(value['members']),
+    'senderAuthority': ?authority,
   };
 }

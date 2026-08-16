@@ -43,6 +43,7 @@ final class IosNotificationRecoveryCoordinator {
   struct BeginResponse: Equatable {
     let token: String
     let watermark: UInt64
+    let mailboxAlertLease: IosNotificationMailboxAlertLease?
   }
 
   private struct Session {
@@ -111,7 +112,33 @@ final class IosNotificationRecoveryCoordinator {
       generation: begin.generation,
       watermark: begin.watermark
     )
-    return BeginResponse(token: token, watermark: begin.watermark)
+    return BeginResponse(
+      token: token,
+      watermark: begin.watermark,
+      mailboxAlertLease: begin.mailboxAlertLease
+    )
+  }
+
+  /// Consumes only the lease paired with this still-live reconciliation
+  /// session. The session itself remains available for the canonical commit.
+  func consumeMailboxAlertLease(
+    token: String,
+    watermark: UInt64,
+    generation: UInt64,
+    sequence: UInt64
+  ) -> Bool {
+    sessionLock.lock()
+    defer { sessionLock.unlock() }
+    guard let session = sessions[token],
+          session.watermark == watermark else {
+      return false
+    }
+    return store.consumeMailboxAlertLease(
+      accountPeerId: session.accountPeerId,
+      generation: generation,
+      sequence: sequence,
+      watermark: watermark
+    )
   }
 
   func commitReconciliation(

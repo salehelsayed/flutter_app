@@ -66,6 +66,31 @@ bool _sameMemberProjection(List<GroupMember> left, List<GroupMember> right) {
   return true;
 }
 
+/// Fail-closed authority handoff shared by each committed group mutation that
+/// can change the NSE's current sender generation.
+///
+/// Keeping this boundary directly testable prevents a projection-without-
+/// loader composition from silently committing SQL while stale shared bytes
+/// remain eligible.
+Future<T> runCommittedGroupSenderAuthorityHandoff<T>({
+  required String groupId,
+  required GroupReactionNotificationProjection? projection,
+  required LoadGroupNotificationSenderAuthority? loadCommittedAuthority,
+  required Future<T> Function() commitMutation,
+}) async {
+  if (projection == null) return commitMutation();
+  if (loadCommittedAuthority == null) {
+    throw StateError(
+      'group sender-authority projection requires committed authority readback',
+    );
+  }
+  await projection.retireGroupSenderAuthority(groupId);
+  final result = await commitMutation();
+  final authority = await loadCommittedAuthority(groupId);
+  await projection.replaceGroupSenderAuthority(groupId, authority);
+  return result;
+}
+
 /// Implementation of GroupRepository using constructor-injected DB helper functions.
 class GroupRepositoryImpl
     implements
@@ -363,6 +388,8 @@ class GroupRepositoryImpl
 
   final Map<String, GroupKeyInfo> _pendingKeyRotationFallback = {};
   final Map<String, Future<void>> _groupMutationTails = {};
+  LoadGroupNotificationSenderAuthority? _loadGroupNotificationSenderAuthority;
+  bool _groupNotificationSenderAuthorityHandoffConfigured = false;
 
   GroupRepositoryImpl({
     required this.dbInsertGroup,
@@ -436,6 +463,13 @@ class GroupRepositoryImpl
     this.dbPurgeSelfRemovedGroupShellFn,
   });
 
+  void setGroupNotificationSenderAuthorityLoader(
+    LoadGroupNotificationSenderAuthority? loader,
+  ) {
+    _groupNotificationSenderAuthorityHandoffConfigured = true;
+    _loadGroupNotificationSenderAuthority = loader;
+  }
+
   // --- Groups ---
 
   @override
@@ -449,7 +483,7 @@ class GroupRepositoryImpl
     );
 
     try {
-      await _runGroupMutation(group.id, () async {
+      await _runGroupSenderAuthorityMutation(group.id, () async {
         await dbInsertGroup(group.toMap());
         await _projectAuthoritativeGroup(group.id);
       });
@@ -566,7 +600,7 @@ class GroupRepositoryImpl
         'must be true for a terminal dissolve commit',
       );
     }
-    await _runGroupMutation(group.id, () async {
+    await _runGroupSenderAuthorityMutation(group.id, () async {
       final commit = dbCommitDissolvedGroup;
       if (commit == null) {
         // Compatibility for focused repositories without the v106 outbox.
@@ -601,7 +635,7 @@ class GroupRepositoryImpl
     if (commit == null) {
       throw StateError('protected dissolve atomic persistence is unavailable');
     }
-    await _runGroupMutation(group.id, () async {
+    await _runGroupSenderAuthorityMutation(group.id, () async {
       await commit(
         groupRow: group.toMap(),
         expectedBroadcastRows: expectedBroadcasts
@@ -622,7 +656,7 @@ class GroupRepositoryImpl
 
   @override
   Future<void> deleteGroup(String id) async {
-    await _runGroupMutation(id, () async {
+    await _runGroupSenderAuthorityMutation(id, () async {
       final group = await _loadGroupModel(id);
       if (group?.selfRemovedAt != null) {
         throw StateError(
@@ -684,7 +718,7 @@ class GroupRepositoryImpl
   }) {
     final advance = dbAdvanceGroupMembershipWatermark;
     if (advance == null) return Future<bool>.value(false);
-    return _runGroupMutation(
+    return _runGroupSenderAuthorityMutation(
       groupId,
       () => advance(
         groupId: groupId,
@@ -722,7 +756,7 @@ class GroupRepositoryImpl
     if (load == null || commit == null) {
       throw StateError('Removed-shell persistence capability is unavailable.');
     }
-    final outcome = await _runGroupMutation(groupId, () async {
+    final outcome = await _runGroupSenderAuthorityMutation(groupId, () async {
       final expected = await load(groupId: groupId, selfPeerId: selfPeerId);
       if (expected.shape !=
               shell_db
@@ -795,7 +829,7 @@ class GroupRepositoryImpl
     if (loadReferences == null || finalizeReferences == null) {
       throw StateError('Removed-shell terminal capability is unavailable.');
     }
-    return _runGroupMutation(expected.groupId, () async {
+    return _runGroupSenderAuthorityMutation(expected.groupId, () async {
       final rawExpected = _unwrapShellAuthority(expected);
       final loaded = await loadReferences(expected: rawExpected);
       if (!loaded.loaded) return _mapMutationOutcome(loaded.disposition);
@@ -896,7 +930,7 @@ class GroupRepositoryImpl
       );
     }
 
-    return _runGroupMutation(group.id, () async {
+    return _runGroupSenderAuthorityMutation(group.id, () async {
       final staged = _acceptedStorageRowAddress(
         key,
         bindingNonce: bindingNonce,
@@ -1056,7 +1090,7 @@ class GroupRepositoryImpl
     if (rollback == null || qualify == null || finalizeRollback == null) {
       throw StateError('Accepted removed-shell rollback is unavailable.');
     }
-    return _runGroupMutation(groupId, () async {
+    return _runGroupSenderAuthorityMutation(groupId, () async {
       final qualified = await qualify(
         groupId: groupId,
         selfPeerId: selfPeerId,
@@ -1252,7 +1286,7 @@ class GroupRepositoryImpl
     if (prepare == null || commit == null || primary == null) {
       throw StateError('Fresh accepted rollback is unavailable.');
     }
-    return _runGroupMutation(groupId, () async {
+    return _runGroupSenderAuthorityMutation(groupId, () async {
       final prepared = await prepare(
         groupId: groupId,
         selfPeerId: selfPeerId,
@@ -1356,7 +1390,7 @@ class GroupRepositoryImpl
     if (peerIdRejectReason != null) {
       throw ArgumentError.value(member.peerId, 'peerId', peerIdRejectReason);
     }
-    await _runGroupMutation(member.groupId, () async {
+    await _runGroupSenderAuthorityMutation(member.groupId, () async {
       await _requireOrdinaryGroupAuthority(member.groupId);
       final duplicateRejectReason =
           groupMemberDuplicatePeerIdVariantRejectReason(
@@ -1405,7 +1439,7 @@ class GroupRepositoryImpl
     if (peerIdRejectReason != null) {
       throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
     }
-    await _runGroupMutation(groupId, () async {
+    await _runGroupSenderAuthorityMutation(groupId, () async {
       await _requireOrdinaryGroupAuthority(groupId);
       await dbUpdateGroupMemberRole(groupId, peerId, role.toValue());
       final row = await dbLoadGroupMember(groupId, peerId);
@@ -1426,7 +1460,7 @@ class GroupRepositoryImpl
     if (peerIdRejectReason != null) {
       throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
     }
-    await _runGroupMutation(groupId, () async {
+    await _runGroupSenderAuthorityMutation(groupId, () async {
       await _requireOrdinaryGroupAuthority(groupId);
       await dbDeleteGroupMember(groupId, peerId);
       await groupReactionProjection?.removeMember(
@@ -1568,7 +1602,7 @@ class GroupRepositoryImpl
     if (commit == null) {
       throw StateError('Linked group bootstrap authoring is unavailable.');
     }
-    return _runGroupMutation(expectedGroup.id, () async {
+    return _runGroupSenderAuthorityMutation(expectedGroup.id, () async {
       final currentGroup = await getGroup(expectedGroup.id);
       final currentSelf = await getMember(
         expectedGroup.id,
@@ -1679,7 +1713,7 @@ class GroupRepositoryImpl
         authorityGenesis.payload.isEmpty) {
       return LinkedGroupBootstrapMaterializationOutcome.refusedConflict;
     }
-    return _runGroupMutation(group.id, () async {
+    return _runGroupSenderAuthorityMutation(group.id, () async {
       final storeName = groupLinkedBootstrapKeyMaterialStoreName(
         group.id,
         key.keyGeneration,
@@ -1751,7 +1785,7 @@ class GroupRepositoryImpl
 
   @override
   Future<void> removeAllMembers(String groupId) async {
-    await _runGroupMutation(groupId, () async {
+    await _runGroupSenderAuthorityMutation(groupId, () async {
       await _requireOrdinaryGroupAuthority(groupId);
       await dbDeleteAllGroupMembers(groupId);
       await groupReactionProjection?.removeAllMembers(groupId);
@@ -1762,7 +1796,7 @@ class GroupRepositoryImpl
 
   @override
   Future<void> saveKey(GroupKeyInfo key) async {
-    await _runGroupMutation(key.groupId, () async {
+    await _runGroupSenderAuthorityMutation(key.groupId, () async {
       await _requireOrdinaryGroupAuthority(key.groupId);
       final storageRow = await _toStorageRow(key);
       await dbInsertGroupKey(storageRow);
@@ -1799,7 +1833,7 @@ class GroupRepositoryImpl
     if (commit == null) {
       throw StateError('protected key authority persistence is unavailable');
     }
-    await _runGroupMutation(key.groupId, () async {
+    await _runGroupSenderAuthorityMutation(key.groupId, () async {
       await _requireOrdinaryGroupAuthority(key.groupId);
       final storageRow = await _toStorageRow(key);
       await commit(
@@ -1901,7 +1935,7 @@ class GroupRepositoryImpl
 
   @override
   Future<void> removeAllKeys(String groupId) async {
-    await _runGroupMutation(groupId, () async {
+    await _runGroupSenderAuthorityMutation(groupId, () async {
       await _requireOrdinaryGroupAuthority(groupId);
       final existingKeys =
           (pushSharedKeyStore == null && groupKeyStore == null) ||
@@ -1926,7 +1960,7 @@ class GroupRepositoryImpl
     required DateTime selfJoinedAt,
     required Future<T> Function() finalizeSql,
   }) {
-    return _runGroupMutation(groupId, () async {
+    return _runGroupSenderAuthorityMutation(groupId, () async {
       final group = await _loadGroupModel(groupId);
       if (group == null ||
           group.selfRemovedAt != null ||
@@ -2168,6 +2202,23 @@ class GroupRepositoryImpl
     }
   }
 
+  Future<void> mirrorAllGroupNotificationSenderAuthorities() async {
+    final projection = groupReactionProjection;
+    final load = _loadGroupNotificationSenderAuthority;
+    if (projection == null || load == null) return;
+    final authorities = <String, GroupNotificationSenderAuthority?>{};
+    for (final row in await dbLoadAllGroups()) {
+      final groupId = (row['id'] as String?)?.trim();
+      if (groupId == null ||
+          groupId.isEmpty ||
+          row['self_removed_at'] != null) {
+        continue;
+      }
+      authorities[groupId] = await load(groupId);
+    }
+    await projection.replaceAllGroupSenderAuthorities(authorities);
+  }
+
   Future<bool> _mustSkipExitCleanupBackfill(String groupId) async {
     final check = dbHasGroupExitCleanupPending;
     if (check == null) return false;
@@ -2265,6 +2316,34 @@ class GroupRepositoryImpl
         _groupMutationTails.remove(groupId);
       }
     }
+  }
+
+  /// Serializes a mutation that can change the current sender tuple/key
+  /// generation through the strict shared-Keychain authority handoff.
+  /// Policy-only and housekeeping mutations intentionally keep using
+  /// [_runGroupMutation], so projection storage availability cannot block
+  /// otherwise unrelated SQL work.
+  Future<T> _runGroupSenderAuthorityMutation<T>(
+    String groupId,
+    Future<T> Function() action,
+  ) {
+    // The incumbent projection-only composition mirrors recipient/display
+    // state and has never published sender authority. Preserve that mode until
+    // the authority loader is explicitly configured. Production configures it
+    // immediately after construction; once activated, clearing/missing the
+    // loader is a fail-closed composition error handled by the strict helper.
+    if (!_groupNotificationSenderAuthorityHandoffConfigured) {
+      return _runGroupMutation(groupId, action);
+    }
+    return _runGroupMutation(
+      groupId,
+      () => runCommittedGroupSenderAuthorityHandoff(
+        groupId: groupId,
+        projection: groupReactionProjection,
+        loadCommittedAuthority: _loadGroupNotificationSenderAuthority,
+        commitMutation: action,
+      ),
+    );
   }
 
   Future<GroupModel?> _loadGroupModel(String groupId) async {

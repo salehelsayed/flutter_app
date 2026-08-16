@@ -1,18 +1,50 @@
+import 'dart:convert';
+
 import 'package:flutter/services.dart';
 
 import '../database/helpers/canonical_notification_badge_state_db_helpers.dart';
 
 const iosNotificationRecoveryChannelName = 'mknoon/ios_notification_recovery';
 
+const int _maxSignedInt64 = 9223372036854775807;
+const Set<String> _mailboxAlertLeasePhases = <String>{
+  'PREPARED',
+  'PUBLISHING',
+  'AUDIBLE_AMBIGUOUS',
+};
+
+/// Optional native ambiguity lease for one collapsed fixed mailbox wake.
+final class IosMailboxAlertLease {
+  const IosMailboxAlertLease({
+    required this.token,
+    required this.accountHash,
+    required this.bindingHash,
+    required this.requestIdentifier,
+    required this.generation,
+    required this.sequence,
+    required this.phase,
+  });
+
+  final String token;
+  final String accountHash;
+  final String bindingHash;
+  final String requestIdentifier;
+  final int generation;
+  final int sequence;
+  final String phase;
+}
+
 /// Native token captured before Dart reads canonical SQLite state.
 final class IosNotificationReconciliationToken {
   const IosNotificationReconciliationToken({
     required this.token,
     required this.watermark,
+    this.mailboxAlertLease,
   });
 
   final String token;
   final int watermark;
+  final IosMailboxAlertLease? mailboxAlertLease;
 }
 
 /// Narrow owner boundary for exact iOS remote-notification recovery.
@@ -29,6 +61,13 @@ abstract interface class IosNotificationRecoveryBridge {
     required String accountPeerId,
     required CanonicalNotificationBadgeState canonicalState,
     required bool canonicalStateComplete,
+  });
+
+  /// Consumes the exact lease captured by [beginReconciliation] only after the
+  /// corresponding paged inbox generation reaches `hasMore == false`.
+  Future<void> consumeMailboxAlertLease({
+    required IosNotificationReconciliationToken begin,
+    required IosMailboxAlertLease lease,
   });
 
   Future<void> retireConversation({
@@ -62,24 +101,41 @@ final class MethodChannelIosNotificationRecoveryBridge
     final map = _exactMap(
       response,
       method: 'beginReconciliation',
-      keys: const {'token', 'watermark'},
+      keys: const {'token', 'watermark', 'mailboxAlertLease'},
     );
     final token = map['token'];
     final watermark = map['watermark'];
-    if (token is! String || token.trim().isEmpty) {
+    if (!_isBoundedPrintableString(token, maxUtf8Bytes: 128)) {
       throw const FormatException(
         'beginReconciliation token must be a non-empty string',
       );
     }
-    if (watermark is! int || watermark < 0) {
+    if (watermark is! int || watermark < 0 || watermark > _maxSignedInt64) {
       throw const FormatException(
         'beginReconciliation watermark must be a non-negative integer',
       );
     }
+    final lease = _decodeMailboxAlertLease(map['mailboxAlertLease']);
     return IosNotificationReconciliationToken(
-      token: token,
+      token: token as String,
       watermark: watermark,
+      mailboxAlertLease: lease,
     );
+  }
+
+  @override
+  Future<void> consumeMailboxAlertLease({
+    required IosNotificationReconciliationToken begin,
+    required IosMailboxAlertLease lease,
+  }) async {
+    final response = await _channel
+        .invokeMethod<Object?>('consumeMailboxAlertLease', <String, Object?>{
+          'token': _requiredOpaqueToken(begin.token),
+          'watermark': begin.watermark,
+          'generation': lease.generation,
+          'sequence': lease.sequence,
+        });
+    _requireAcknowledgement(response, method: 'consumeMailboxAlertLease');
   }
 
   @override
@@ -92,7 +148,7 @@ final class MethodChannelIosNotificationRecoveryBridge
     final response = await _channel.invokeMethod<Object?>(
       'commitReconciliation',
       <String, Object?>{
-        'token': _requiredId(begin.token),
+        'token': _requiredOpaqueToken(begin.token),
         'watermark': begin.watermark,
         'accountPeerId': _requiredId(accountPeerId),
         'canonicalStateComplete': canonicalStateComplete,
@@ -134,6 +190,76 @@ final class MethodChannelIosNotificationRecoveryBridge
     );
     _requireAcknowledgement(response, method: 'clearAccount');
   }
+}
+
+IosMailboxAlertLease? _decodeMailboxAlertLease(Object? value) {
+  if (value == null) return null;
+  final map = _exactMap(
+    value,
+    method: 'beginReconciliation.mailboxAlertLease',
+    keys: const {
+      'token',
+      'accountHash',
+      'bindingHash',
+      'requestIdentifier',
+      'generation',
+      'sequence',
+      'phase',
+    },
+  );
+  final token = map['token'];
+  final accountHash = map['accountHash'];
+  final bindingHash = map['bindingHash'];
+  final requestIdentifier = map['requestIdentifier'];
+  final generation = map['generation'];
+  final sequence = map['sequence'];
+  final phase = map['phase'];
+  if (!_isBoundedPrintableString(token, maxUtf8Bytes: 128) ||
+      accountHash is! String ||
+      !_lowercaseSha256.hasMatch(accountHash) ||
+      bindingHash is! String ||
+      !_lowercaseSha256.hasMatch(bindingHash) ||
+      !_isBoundedPrintableString(requestIdentifier, maxUtf8Bytes: 512) ||
+      generation is! int ||
+      generation <= 0 ||
+      generation > _maxSignedInt64 ||
+      sequence is! int ||
+      sequence <= 0 ||
+      sequence > _maxSignedInt64 ||
+      phase is! String ||
+      !_mailboxAlertLeasePhases.contains(phase)) {
+    throw const FormatException('invalid mailbox alert lease');
+  }
+  return IosMailboxAlertLease(
+    token: token as String,
+    accountHash: accountHash,
+    bindingHash: bindingHash,
+    requestIdentifier: requestIdentifier as String,
+    generation: generation,
+    sequence: sequence,
+    phase: phase,
+  );
+}
+
+final RegExp _lowercaseSha256 = RegExp(r'^[0-9a-f]{64}$');
+
+bool _isBoundedPrintableString(Object? value, {required int maxUtf8Bytes}) {
+  if (value is! String ||
+      value.isEmpty ||
+      value != value.trim() ||
+      utf8.encode(value).length > maxUtf8Bytes) {
+    return false;
+  }
+  return !value.runes.any(
+    (rune) => rune < 0x20 || (rune >= 0x7f && rune <= 0x9f),
+  );
+}
+
+String _requiredOpaqueToken(String value) {
+  if (!_isBoundedPrintableString(value, maxUtf8Bytes: 128)) {
+    throw ArgumentError.value(value, 'token', 'invalid opaque token');
+  }
+  return value;
 }
 
 String _requiredId(String value) {

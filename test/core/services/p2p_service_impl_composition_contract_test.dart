@@ -68,6 +68,14 @@ const _constructorParameters = <String>[
   // account-migration side-effect gate is asked about THIS peer, never the
   // transport peer, which account authority does not cover.
   'String? Function()? logicalAccountPeerId',
+  // 373: private iOS-NSE composition ports remain facade-owned. They publish
+  // only a qualified transport projection/readiness result and bracket one
+  // serialized inbox-drain generation; none expands the public P2P API.
+  'PublishQualifiedIosNseTransport? publishQualifiedIosNseTransport',
+  'ReadOpaqueWakePlatformConsumerReadiness? '
+      'readOpaqueWakePlatformConsumerReadiness',
+  'BeginIosInboxDrainGeneration? beginIosInboxDrainGeneration',
+  'EndIosInboxDrainGeneration? endIosInboxDrainGeneration',
 ];
 
 const _publicFields = <String>{
@@ -89,6 +97,10 @@ const _publicMethods = <String>{
   'stateStream',
   'messageStream',
   'incomingLocalMediaStream',
+  // 373: concrete bootstrap-only refresh after an identity/binding commit.
+  // P2PService itself remains unchanged; the facade validates the already-
+  // qualified live node before republishing its iOS NSE transport projection.
+  'refreshQualifiedIosNseTransportProjection',
   'startNode',
   'startNodeCore',
   'warmBackground',
@@ -118,6 +130,9 @@ const _publicMethods = <String>{
   'consecutiveRefreshFailures',
   'performImmediateHealthCheck',
   'drainOfflineInbox',
+  // 373: concrete application-root seam; the serialized inbox coordinator
+  // remains the sole owner of the lease context and paged-drain lifetime.
+  'armIosMailboxAlertDrainContext',
   'drainOfflineInboxFully',
   'pauseProtectedGroupContentAdmission',
   'resumeProtectedGroupContentAdmission',
@@ -626,7 +641,11 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // inbox-store delegate, and the pause/resume/fixed-point lifecycle delegates.
 // These additions keep durable replay and admission ordering behind the
 // existing private inbox coordinator; no unrelated public API changed.
-const _expectedFacadeApiFingerprint = '51eb4ecb';
+//
+// 373: repinned for four optional constructor-owned iOS NSE ports plus the two
+// concrete composition methods above. The P2PService interface and every
+// existing public member remain unchanged.
+const _expectedFacadeApiFingerprint = 'b36cfbe9';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
@@ -870,14 +889,23 @@ void main() {
             .toList(growable: false),
         _constructorParameters,
       );
-      expect(constructor.parameters.parameters, hasLength(23));
+      expect(constructor.parameters.parameters, hasLength(27));
       expect(
         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
         _publicFields,
       );
+      final publicMethodNames = _methodNames(
+        facade,
+      ).where((name) => !name.startsWith('_')).toSet();
       expect(
-        _methodNames(facade).where((name) => !name.startsWith('_')).toSet(),
-        _publicMethods,
+        publicMethodNames.difference(_publicMethods),
+        isEmpty,
+        reason: 'unexpected public P2P facade methods',
+      );
+      expect(
+        _publicMethods.difference(publicMethodNames),
+        isEmpty,
+        reason: 'missing public P2P facade methods',
       );
       final fingerprint = _publicApiFingerprint(facade);
       expect(

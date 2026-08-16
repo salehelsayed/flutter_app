@@ -8,15 +8,66 @@ typedef CanonicalNotificationBadgeStateLoader =
     Future<CanonicalNotificationBadgeState> Function();
 
 final class IosNotificationRecoveryMutationScope {
-  const IosNotificationRecoveryMutationScope._(this.id);
+  const IosNotificationRecoveryMutationScope._(
+    this.id, {
+    this.mailboxAlertDrainContext,
+  });
 
   final int id;
+  final IosMailboxAlertDrainContext? mailboxAlertDrainContext;
+}
+
+/// Native recovery boundary owned by one actual serialized P2P inbox drain.
+///
+/// A drain that starts inside a wider application mutation contributes its
+/// fixed-point result to that wider mutation. An autonomous warm/health/UI
+/// drain still captures the native lease before its first replay, but cannot
+/// by itself claim that every canonical notification family was exhausted.
+final class IosNotificationRecoveryDrainGeneration {
+  const IosNotificationRecoveryDrainGeneration._(
+    this.scope, {
+    required this.contributesToOuterCompleteness,
+  });
+
+  final IosNotificationRecoveryMutationScope scope;
+  final bool contributesToOuterCompleteness;
+
+  IosMailboxAlertDrainContext? get mailboxAlertDrainContext =>
+      scope.mailboxAlertDrainContext;
+}
+
+/// One begin-token-bound silent repair authority shared across every page of
+/// the existing inbox drain generation. It is one-shot and only the P2P drain
+/// fixed point may consume it.
+final class IosMailboxAlertDrainContext {
+  IosMailboxAlertDrainContext._({
+    required IosNotificationRecoveryBridge bridge,
+    required this.begin,
+    required this.lease,
+  }) : _bridge = bridge;
+
+  final IosNotificationRecoveryBridge _bridge;
+  final IosNotificationReconciliationToken begin;
+  final IosMailboxAlertLease lease;
+  Future<void>? _consumption;
+
+  String get identity =>
+      '${begin.token}\u0000${begin.watermark}\u0000'
+      '${lease.generation}\u0000${lease.sequence}';
+
+  Future<void> consumeAtFixedPoint() => _consumption ??= _bridge
+      .consumeMailboxAlertLease(begin: begin, lease: lease)
+      .catchError((Object error, StackTrace stackTrace) {
+        _consumption = null;
+        Error.throwWithStackTrace(error, stackTrace);
+      });
 }
 
 final class _IosNotificationRecoveryMutationBoundary {
   late final Future<void> ready;
   String? accountPeerId;
   IosNotificationReconciliationToken? begin;
+  IosMailboxAlertDrainContext? mailboxAlertDrainContext;
 }
 
 final class _IosNotificationRecoveryPassRequest {
@@ -78,6 +129,31 @@ final class IosNotificationRecoveryCoordinator {
   bool _accountClearRequiresRetry = false;
   var _accountClearGeneration = 0;
   String? _clearedAccountPeerId;
+
+  /// Captures the native watermark/optional mailbox lease for one real P2P
+  /// drain generation. This must run after P2P serialization elects an owner
+  /// and before that owner replays either staged or freshly retrieved rows.
+  Future<IosNotificationRecoveryDrainGeneration>
+  beginInboxDrainGeneration() async {
+    final contributesToOuterCompleteness = _activeMutationScopes.isNotEmpty;
+    final scope = await beginCanonicalMutation();
+    return IosNotificationRecoveryDrainGeneration._(
+      scope,
+      contributesToOuterCompleteness: contributesToOuterCompleteness,
+    );
+  }
+
+  /// Ends the exact drain-owned scope. Autonomous drains are deliberately
+  /// incomplete as a global canonical snapshot; nested drains may contribute
+  /// their fixed-point result while the wider owner accounts for other lanes.
+  Future<void> endInboxDrainGeneration(
+    IosNotificationRecoveryDrainGeneration generation, {
+    required bool reachedFixedPoint,
+  }) => endCanonicalMutation(
+    generation.scope,
+    canonicalStateComplete:
+        generation.contributesToOuterCompleteness && reachedFixedPoint,
+  );
 
   /// Fences a canonical ingress/drain mutation against settlement callbacks.
   /// The scope is registered before awaiting an older recovery pass, so a new
@@ -146,7 +222,10 @@ final class IosNotificationRecoveryCoordinator {
       throw StateError('iOS notification recovery mutation was superseded');
     }
     _returnedMutationScopes.add(scope.id);
-    return scope;
+    return IosNotificationRecoveryMutationScope._(
+      scope.id,
+      mailboxAlertDrainContext: boundary.mailboxAlertDrainContext,
+    );
   }
 
   Future<void> _initializeMutationBoundary(
@@ -171,6 +250,15 @@ final class IosNotificationRecoveryCoordinator {
     if (accountPeerId == null || accountPeerId.isEmpty) return;
     boundary.accountPeerId = accountPeerId;
     boundary.begin = await _bridge.beginReconciliation(accountPeerId);
+    final begin = boundary.begin!;
+    final lease = begin.mailboxAlertLease;
+    if (lease != null) {
+      boundary.mailboxAlertDrainContext = IosMailboxAlertDrainContext._(
+        bridge: _bridge,
+        begin: begin,
+        lease: lease,
+      );
+    }
     if (!identical(_mutationBoundary, boundary) || _accountClearFenced) {
       throw StateError('iOS notification recovery mutation was superseded');
     }

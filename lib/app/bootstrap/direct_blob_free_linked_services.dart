@@ -23,6 +23,7 @@ class DirectBlobFreeLinkedServices {
     required this.startMessageDeletionListener,
     required this.startDeliveryReceiptListener,
     required this.startLinkedTransport,
+    this.afterLinkedTransportQualified,
     required this.drainOfflineInbox,
     required this.drainExactBlobFreeFanoutOutboxes,
     this.cleanupLinkedDirectMediaBlobCustodyLocally,
@@ -51,6 +52,11 @@ class DirectBlobFreeLinkedServices {
   /// protected relay mailbox is keyed by the physical transport peer, not the
   /// logical account peer.
   final Future<bool> Function() startLinkedTransport;
+
+  /// Optional role-qualified owner that may publish/register this physical
+  /// linked route after node returned-peer verification. Absent is a strict
+  /// zero-work path (including no Firebase/listener subscription).
+  final Future<void> Function()? afterLinkedTransportQualified;
 
   /// One exact relay-inbox retrieve/stage/replay+ACK pass.
   final Future<void> Function() drainOfflineInbox;
@@ -101,6 +107,7 @@ class DirectBlobFreeLinkedServices {
         );
         return false;
       }
+      await afterLinkedTransportQualified?.call();
       emitFlowEvent(
         layer: 'FL',
         event: 'DIRECT_BLOB_FREE_LINKED_SERVICES_STARTED',

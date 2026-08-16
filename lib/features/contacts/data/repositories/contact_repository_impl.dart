@@ -29,6 +29,8 @@ class ContactRepositoryImpl
   final Future<void> Function(String peerId, String timestamp)
   dbSetIntrosSentAt;
   final DirectReactionNotificationProjection? directReactionProjection;
+  final Future<List<String>> Function(String peerId)?
+  loadDirectNotificationAuthorizedTransports;
   final void Function()? onPushEligibilityChanged;
 
   ContactRepositoryImpl({
@@ -48,6 +50,7 @@ class ContactRepositoryImpl
     required this.dbSetIntrosSentAt,
     this.dbPurgeDirectContactConversationAndContact,
     this.directReactionProjection,
+    this.loadDirectNotificationAuthorizedTransports,
     this.onPushEligibilityChanged,
   });
 
@@ -62,6 +65,9 @@ class ContactRepositoryImpl
     if (delegate == null) {
       throw StateError('direct contact conversation purge is unavailable');
     }
+    // Retirement is the fail-closed half of the authority handoff: a stale
+    // shared projection must not survive the authoritative physical purge.
+    await directReactionProjection?.retireContactTransportAuthority(peerId);
     final summary = await delegate(peerId);
     await directReactionProjection?.removeContact(peerId);
     _notifyPushEligibilityChanged();
@@ -77,8 +83,21 @@ class ContactRepositoryImpl
     );
 
     try {
+      final previous = await dbLoadContact(contact.peerId);
+      // An absent authoritative row can still have orphaned shared bytes from
+      // an interrupted earlier deletion. Treat creation as a new generation.
+      final authorityChanged =
+          previous == null || previous['public_key'] != contact.publicKey;
+      if (authorityChanged) {
+        await directReactionProjection?.retireContactTransportAuthority(
+          contact.peerId,
+        );
+      }
       await dbUpsertContact(contact.toMap());
       await directReactionProjection?.upsertContact(contact);
+      if (authorityChanged) {
+        await _republishCommittedTransportAuthority(contact.peerId);
+      }
       _notifyPushEligibilityChanged();
 
       emitFlowEvent(
@@ -111,6 +130,7 @@ class ContactRepositoryImpl
 
   @override
   Future<void> deleteContact(String peerId) async {
+    await directReactionProjection?.retireContactTransportAuthority(peerId);
     await dbDeleteContact(peerId);
     await directReactionProjection?.removeContact(peerId);
     _notifyPushEligibilityChanged();
@@ -257,7 +277,20 @@ class ContactRepositoryImpl
     if (projection == null) return;
     try {
       final rows = await dbLoadAllContacts();
-      await projection.replaceContacts(rows.map(ContactModel.fromMap));
+      final contacts = rows.map(ContactModel.fromMap).toList(growable: false);
+      final authorityLoader = loadDirectNotificationAuthorizedTransports;
+      if (authorityLoader == null) {
+        await projection.replaceContacts(contacts);
+        return;
+      }
+      final authorized = <String, Iterable<String>>{};
+      for (final contact in contacts) {
+        authorized[contact.peerId] = await authorityLoader(contact.peerId);
+      }
+      await projection.replaceContactsWithTransportAuthority(
+        contacts: contacts,
+        authorizedTransportsByContact: authorized,
+      );
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',
@@ -290,6 +323,16 @@ class ContactRepositoryImpl
         details: {'error': error.toString()},
       );
     }
+  }
+
+  Future<void> _republishCommittedTransportAuthority(String peerId) async {
+    final projection = directReactionProjection;
+    final loader = loadDirectNotificationAuthorizedTransports;
+    if (projection == null || loader == null) return;
+    await projection.replaceContactTransportAuthority(
+      peerId: peerId,
+      authorizedTransportPeerIds: await loader(peerId),
+    );
   }
 
   void _notifyPushEligibilityChanged() {

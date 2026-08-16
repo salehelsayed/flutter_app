@@ -460,6 +460,7 @@ class ChatMessageListener {
   Future<ChatMessageProcessOutcome> processIncomingMessage(
     ChatMessage message, {
     bool suppressNotification = false,
+    bool forceSilentNotification = false,
     String? stagedEntryId,
   }) async {
     Future<ChatMessageProcessOutcome> finish(
@@ -752,6 +753,7 @@ class ChatMessageListener {
                 privateMediaPolicy: conversationMessage.privateMediaPolicy,
               ),
               suppressNotification: suppressNotification,
+              forceSilent: forceSilentNotification,
               messageId: conversationMessage.id,
               toneTracker: notificationToneTracker,
               durableNotificationCoordinatorResolver:

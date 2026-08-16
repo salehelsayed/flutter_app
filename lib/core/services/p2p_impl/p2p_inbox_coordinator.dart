@@ -102,6 +102,8 @@ class _P2PInboxCoordinator {
   final int _maxRecoverableInboxReplayEntries;
   final int _maxConcurrentInboxDecrypts;
   final Duration _foregroundInboxTimeout;
+  final BeginIosInboxDrainGeneration? _beginIosInboxDrainGeneration;
+  final EndIosInboxDrainGeneration? _endIosInboxDrainGeneration;
 
   Completer<DirectInboxDrainOutcome>? _drainInProgress;
   bool _drainInProgressWaitsAllPages = false;
@@ -110,6 +112,7 @@ class _P2PInboxCoordinator {
   bool _pendingStartupDrainWaitForAllPages = false;
   bool _protectedGroupContentAdmissionPaused = false;
   Future<void>? _protectedGroupContentReplayInFlight;
+  IosMailboxAlertDrainContext? _mailboxAlertDrainContext;
 
   _P2PInboxCoordinator({
     required _P2PInboxPort port,
@@ -132,6 +135,8 @@ class _P2PInboxCoordinator {
     required int maxRecoverableInboxReplayEntries,
     required int maxConcurrentInboxDecrypts,
     required Duration foregroundInboxTimeout,
+    BeginIosInboxDrainGeneration? beginIosInboxDrainGeneration,
+    EndIosInboxDrainGeneration? endIosInboxDrainGeneration,
   }) : _port = port,
        _inboxStagingRepository = inboxStagingRepository,
        _receivedWakeTokenStore = receivedWakeTokenStore,
@@ -151,7 +156,94 @@ class _P2PInboxCoordinator {
        _maxInboxPages = maxInboxPages,
        _maxRecoverableInboxReplayEntries = maxRecoverableInboxReplayEntries,
        _maxConcurrentInboxDecrypts = maxConcurrentInboxDecrypts,
-       _foregroundInboxTimeout = foregroundInboxTimeout;
+       _foregroundInboxTimeout = foregroundInboxTimeout,
+       _beginIosInboxDrainGeneration = beginIosInboxDrainGeneration,
+       _endIosInboxDrainGeneration = endIosInboxDrainGeneration;
+
+  void armIosMailboxAlertDrainContext(IosMailboxAlertDrainContext? context) {
+    final current = _mailboxAlertDrainContext;
+    if (current?.identity == context?.identity) return;
+    // A new authoritative native boundary may intentionally return no lease
+    // after account/binding retirement or supersession. Clear the stored
+    // process copy in that case; an already-running background continuation
+    // retains its own captured local context and is unaffected.
+    _mailboxAlertDrainContext = context;
+  }
+
+  Future<T> _runWithMailboxAlertSilentReplay<T>(
+    IosMailboxAlertDrainContext? context,
+    Future<T> Function() action,
+  ) async {
+    if (context == null) return action();
+    return runInIosMailboxAlertSilentReplayContext(action);
+  }
+
+  Future<DirectInboxDrainOutcome> _consumeMailboxAlertLeaseAtFixedPoint(
+    IosMailboxAlertDrainContext context,
+    DirectInboxDrainOutcome outcome,
+  ) async {
+    if (!outcome.isSuccessful || outcome.hasMore) return outcome;
+    try {
+      await context.consumeAtFixedPoint();
+      return outcome;
+    } on Object catch (error) {
+      return DirectInboxDrainOutcome(
+        isSuccessful: false,
+        hasMore: true,
+        failureReason:
+            'mailbox_alert_lease_consume_failed:${error.runtimeType}',
+      );
+    } finally {
+      // A lost MethodChannel reply is ambiguous: native may already have
+      // consumed the lease. Never keep authorizing future generations from
+      // this process-local copy. If native did not consume it, the next begin
+      // response is the only authority allowed to re-arm it.
+      if (_mailboxAlertDrainContext?.identity == context.identity) {
+        _mailboxAlertDrainContext = null;
+      }
+    }
+  }
+
+  Future<DirectInboxDrainOutcome> _finishIosDrainGeneration({
+    required DirectInboxDrainOutcome outcome,
+    required IosNotificationRecoveryDrainGeneration? generation,
+    required IosMailboxAlertDrainContext? mailboxAlertContext,
+  }) async {
+    var finished = outcome;
+    if (finished.isSuccessful && !finished.hasMore) {
+      finished = await _verifyFullDrainOutcome(finished);
+    }
+    if (mailboxAlertContext != null) {
+      finished = await _consumeMailboxAlertLeaseAtFixedPoint(
+        mailboxAlertContext,
+        finished,
+      );
+    }
+    if (generation != null) {
+      final end = _endIosInboxDrainGeneration;
+      if (end == null) {
+        return const DirectInboxDrainOutcome(
+          isSuccessful: false,
+          hasMore: true,
+          failureReason: 'ios_recovery_drain_boundary_unpaired',
+        );
+      }
+      try {
+        await end(
+          generation,
+          reachedFixedPoint: finished.isSuccessful && !finished.hasMore,
+        );
+      } on Object catch (error) {
+        return DirectInboxDrainOutcome(
+          isSuccessful: false,
+          hasMore: true,
+          failureReason:
+              'ios_recovery_drain_boundary_end_failed:${error.runtimeType}',
+        );
+      }
+    }
+    return finished;
+  }
 
   void setProtectedGroupReplayHandler(
     ReplayRecoveredProtectedGroupEnvelope? handler,
@@ -1466,12 +1558,50 @@ class _P2PInboxCoordinator {
       hasMore: true,
       failureReason: 'drain_exception',
     );
+    IosNotificationRecoveryDrainGeneration? iosRecoveryGeneration;
+    IosMailboxAlertDrainContext? mailboxAlertContext;
+    var generationTransferredToBackground = false;
     try {
-      outcome = await _drainOfflineInboxDurably(
-        waitForAllPages: waitForAllPages,
+      final begin = _beginIosInboxDrainGeneration;
+      if (begin != null) {
+        if (_endIosInboxDrainGeneration == null) {
+          throw StateError('unpaired iOS inbox drain-generation boundary');
+        }
+        // The serialized owner captures the native recovery watermark and
+        // optional mailbox lease before replaying even already-staged rows.
+        // Coalescing callers above inherit this exact generation.
+        iosRecoveryGeneration = await begin();
+        armIosMailboxAlertDrainContext(
+          iosRecoveryGeneration.mailboxAlertDrainContext,
+        );
+      }
+      mailboxAlertContext =
+          iosRecoveryGeneration?.mailboxAlertDrainContext ??
+          _mailboxAlertDrainContext;
+      outcome = await _runWithMailboxAlertSilentReplay(
+        mailboxAlertContext,
+        () => _drainOfflineInboxDurably(
+          waitForAllPages: waitForAllPages,
+          mailboxAlertContext: mailboxAlertContext,
+          onBackgroundContinuation: (continuation) {
+            generationTransferredToBackground = true;
+            final terminal = continuation.then(
+              (result) => _finishIosDrainGeneration(
+                outcome: result,
+                generation: iosRecoveryGeneration,
+                mailboxAlertContext: mailboxAlertContext,
+              ),
+            );
+            _trackBackgroundDrain(terminal);
+          },
+        ),
       );
-      if (waitForAllPages) {
-        outcome = await _verifyFullDrainOutcome(outcome);
+      if (!generationTransferredToBackground) {
+        outcome = await _finishIosDrainGeneration(
+          outcome: outcome,
+          generation: iosRecoveryGeneration,
+          mailboxAlertContext: mailboxAlertContext,
+        );
       }
     } catch (e) {
       outcome = DirectInboxDrainOutcome(
@@ -1479,6 +1609,13 @@ class _P2PInboxCoordinator {
         hasMore: true,
         failureReason: e.toString(),
       );
+      if (!generationTransferredToBackground && iosRecoveryGeneration != null) {
+        outcome = await _finishIosDrainGeneration(
+          outcome: outcome,
+          generation: iosRecoveryGeneration,
+          mailboxAlertContext: mailboxAlertContext,
+        );
+      }
     } finally {
       _drainInProgress = null;
       _drainInProgressWaitsAllPages = false;
@@ -1606,6 +1743,9 @@ class _P2PInboxCoordinator {
 
   Future<DirectInboxDrainOutcome> _drainOfflineInboxDurably({
     bool waitForAllPages = false,
+    IosMailboxAlertDrainContext? mailboxAlertContext,
+    required void Function(Future<DirectInboxDrainOutcome> continuation)
+    onBackgroundContinuation,
   }) async {
     try {
       final toPeerId = _port.readNodeState().peerId ?? '';
@@ -1628,15 +1768,18 @@ class _P2PInboxCoordinator {
           failureReason: firstPage.failureReason ?? 'retrieve_pending_failed',
         );
       } else if (firstPage.hasMore && totalStaged > 0) {
-        final continuation = _continueDrainingOfflineInboxDurably(
-          toPeerId: toPeerId,
-          totalReplayed: totalReplayed,
-          totalStaged: totalStaged,
+        final continuation = _runWithMailboxAlertSilentReplay(
+          mailboxAlertContext,
+          () => _continueDrainingOfflineInboxDurably(
+            toPeerId: toPeerId,
+            totalReplayed: totalReplayed,
+            totalStaged: totalStaged,
+          ),
         );
         if (waitForAllPages) {
           outcome = await continuation;
         } else {
-          _trackBackgroundDrain(continuation);
+          onBackgroundContinuation(continuation);
           outcome = const DirectInboxDrainOutcome(
             isSuccessful: false,
             hasMore: true,

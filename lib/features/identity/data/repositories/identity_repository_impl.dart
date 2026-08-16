@@ -23,6 +23,9 @@ class IdentityRepositoryImpl implements IdentityRepository {
   final Future<void> Function(String accountPeerId)?
   _publishCanonicalAccountBinding;
   final Future<void> Function()? _retireCanonicalAccountBinding;
+  final Future<void> Function()? _retireIosNseInboxTransport;
+  final Future<void> Function(IdentityModel identity)?
+  _refreshIosNseInboxTransport;
   IdentityModel? _cachedIdentity;
   bool _hasCachedIdentity = false;
 
@@ -36,6 +39,8 @@ class IdentityRepositoryImpl implements IdentityRepository {
     GroupReactionNotificationProjection? groupReactionProjection,
     Future<void> Function(String accountPeerId)? publishCanonicalAccountBinding,
     Future<void> Function()? retireCanonicalAccountBinding,
+    Future<void> Function()? retireIosNseInboxTransport,
+    Future<void> Function(IdentityModel identity)? refreshIosNseInboxTransport,
   }) : _dbLoadIdentityRow = dbLoadIdentityRow,
        _dbUpsertIdentityRow = dbUpsertIdentityRow,
        _secureKeyStore = secureKeyStore,
@@ -43,7 +48,9 @@ class IdentityRepositoryImpl implements IdentityRepository {
        _directReactionProjection = directReactionProjection,
        _groupReactionProjection = groupReactionProjection,
        _publishCanonicalAccountBinding = publishCanonicalAccountBinding,
-       _retireCanonicalAccountBinding = retireCanonicalAccountBinding;
+       _retireCanonicalAccountBinding = retireCanonicalAccountBinding,
+       _retireIosNseInboxTransport = retireIosNseInboxTransport,
+       _refreshIosNseInboxTransport = refreshIosNseInboxTransport;
 
   void invalidateCache() {
     _cachedIdentity = null;
@@ -71,6 +78,12 @@ class IdentityRepositoryImpl implements IdentityRepository {
       );
       return cachedIdentity;
     }
+
+    // An uncached load can cross account/private-key generations after a cold
+    // start or import. Retire the old physical credential before reading the
+    // authoritative row; the qualified node start republishes only committed
+    // current bytes.
+    await _retireIosNseInboxTransport?.call();
 
     final row = await _dbLoadIdentityRow();
 
@@ -146,6 +159,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
     );
     await _mirrorMlKemSecretForPush(identity.mlKemSecretKey);
     await _publishCanonicalAccountBinding?.call(identity.peerId);
+    await _refreshIosNseInboxTransport?.call(identity);
     _cachedIdentity = identity;
     _hasCachedIdentity = true;
 
@@ -165,6 +179,10 @@ class IdentityRepositoryImpl implements IdentityRepository {
       event: 'ID_REPO_SAVE_IDENTITY_CALL',
       details: {'peerId': identity.peerId},
     );
+
+    // Identity/account-key replacement is also a physical inbox-authority
+    // boundary. A failed retirement aborts before secrets or SQL change.
+    await _retireIosNseInboxTransport?.call();
 
     // Make every old group/announcement route ineligible first, then bind the
     // empty direct documents. These transitions happen before secrets or DB so
@@ -213,6 +231,11 @@ class IdentityRepositoryImpl implements IdentityRepository {
 
     await _dbUpsertIdentityRow(row);
     await _publishCanonicalAccountBinding?.call(identity.peerId);
+    // Republish only after the identity and binding are committed. When no
+    // node is qualified yet this remains absent until node start; when a live
+    // qualified node exists, profile/account-key saves restore exact current
+    // transport bytes immediately. Failure deliberately leaves it retired.
+    await _refreshIosNseInboxTransport?.call(identity);
     _cachedIdentity = identity;
     _hasCachedIdentity = true;
 

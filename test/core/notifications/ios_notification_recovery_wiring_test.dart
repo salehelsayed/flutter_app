@@ -1,8 +1,19 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/app/application_root.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/helpers/canonical_notification_badge_state_db_helpers.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
+import 'package:flutter_app/core/notifications/ios_mailbox_alert_silent_replay_context.dart';
+import 'package:flutter_app/core/notifications/ios_notification_recovery_bridge.dart';
+import 'package:flutter_app/core/notifications/ios_notification_recovery_coordinator.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
 void main() {
   test(
@@ -515,4 +526,555 @@ void main() {
     expect(clear, greaterThan(cutover));
     expect(token, greaterThan(clear));
   });
+
+  test(
+    'TC-373-04b one drain generation silences every page and consumes its mailbox alert lease only at fixed point',
+    () async {
+      final native = _RecoveryBridgeWithLease();
+      final recovery = IosNotificationRecoveryCoordinator(
+        platformEnabled: true,
+        bridge: native,
+        loadActiveAccountPeerId: () async => 'account-peer',
+        loadCanonicalState: () async => _tc373EmptyState,
+      );
+      final bridge = _PagedInboxBridge();
+      final replayContexts = <bool>[];
+      final service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        beginIosInboxDrainGeneration: recovery.beginInboxDrainGeneration,
+        endIosInboxDrainGeneration: recovery.endInboxDrainGeneration,
+        replayRecoveredInboxChatMessage:
+            (ChatMessage _, {String? stagedEntryId}) async {
+              replayContexts.add(isIosMailboxAlertSilentReplayContext);
+              return (
+                disposition: RecoveredInboxChatDisposition.committed,
+                reasonCode: 'committed',
+                reasonDetail: null,
+              );
+            },
+      );
+      addTearDown(service.dispose);
+      await service.startNodeCore(
+        base64Encode(List<int>.filled(64, 7)),
+        'transport-peer',
+      );
+
+      // An autonomous warm/UI-style partial drain owns the native generation;
+      // it is not pre-armed by ApplicationRoot.
+      await service.drainOfflineInbox();
+      await bridge.secondPageRequested.future;
+      expect(replayContexts, <bool>[true]);
+      expect(native.consumeCount, 0);
+      expect(native.commitCount, 0);
+
+      // A scoped/full caller arriving during the continuation joins this exact
+      // generation and cannot consume a lease for rows it did not silence.
+      var coalescedReturned = false;
+      final coalesced = service.drainOfflineInboxFully().then((outcome) {
+        coalescedReturned = true;
+        return outcome;
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(coalescedReturned, isFalse);
+      expect(native.beginCount, 1);
+
+      // Silent authority is callback-Zone scoped. Concurrent live work remains
+      // outside it and keeps its ordinary presentation modality.
+      expect(isIosMailboxAlertSilentReplayContext, isFalse);
+
+      bridge.completeSecondPage();
+      final outcome = await coalesced;
+      expect(outcome.isSuccessful, isTrue);
+      expect(outcome.hasMore, isFalse);
+      expect(replayContexts, <bool>[true, true]);
+      expect(native.consumeCount, 1);
+      expect(native.commitCount, 1);
+      expect(native.events, <String>['begin', 'consume', 'commit']);
+      expect(bridge.retrieveCount, 2);
+    },
+  );
+
+  test(
+    'ambiguous mailbox lease consume reply re-arms only from the next native begin',
+    () async {
+      final native = _AmbiguousConsumeRecoveryBridge();
+      final recovery = IosNotificationRecoveryCoordinator(
+        platformEnabled: true,
+        bridge: native,
+        loadActiveAccountPeerId: () async => 'account-peer',
+        loadCanonicalState: () async => _tc373EmptyState,
+      );
+      final replayContexts = <bool>[];
+      final service = P2PServiceImpl(
+        bridge: _SinglePageInboxBridge(),
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        beginIosInboxDrainGeneration: recovery.beginInboxDrainGeneration,
+        endIosInboxDrainGeneration: recovery.endInboxDrainGeneration,
+        replayRecoveredInboxChatMessage:
+            (ChatMessage _, {String? stagedEntryId}) async {
+              replayContexts.add(isIosMailboxAlertSilentReplayContext);
+              return (
+                disposition: RecoveredInboxChatDisposition.committed,
+                reasonCode: 'committed',
+                reasonDetail: null,
+              );
+            },
+      );
+      addTearDown(service.dispose);
+      await service.startNodeCore(
+        base64Encode(List<int>.filled(64, 8)),
+        'transport-peer',
+      );
+
+      final ambiguous = await service.drainOfflineInboxFully();
+      expect(ambiguous.isSuccessful, isFalse);
+      expect(
+        ambiguous.failureReason,
+        startsWith('mailbox_alert_lease_consume_failed:'),
+      );
+      expect(replayContexts, <bool>[true]);
+
+      // Native consumed the first lease before losing the reply, so its next
+      // begin returns null. The stale process-local context must not silence or
+      // attempt to consume this unrelated generation.
+      final retried = await service.drainOfflineInboxFully();
+      expect(retried.isSuccessful, isTrue);
+      expect(retried.hasMore, isFalse);
+      expect(replayContexts, <bool>[true, false]);
+      expect(native.beginCount, 2);
+      expect(native.consumeCount, 1);
+    },
+  );
+
+  test(
+    'authoritative null lease clears stale context after a failed generation',
+    () async {
+      final native = _LeaseThenNullRecoveryBridge();
+      final recovery = IosNotificationRecoveryCoordinator(
+        platformEnabled: true,
+        bridge: native,
+        loadActiveAccountPeerId: () async => 'account-peer',
+        loadCanonicalState: () async => _tc373EmptyState,
+      );
+      final replayContexts = <bool>[];
+      final service = P2PServiceImpl(
+        bridge: _PartialFailureThenSinglePageInboxBridge(),
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        beginIosInboxDrainGeneration: recovery.beginInboxDrainGeneration,
+        endIosInboxDrainGeneration: recovery.endInboxDrainGeneration,
+        replayRecoveredInboxChatMessage:
+            (ChatMessage _, {String? stagedEntryId}) async {
+              replayContexts.add(isIosMailboxAlertSilentReplayContext);
+              return (
+                disposition: RecoveredInboxChatDisposition.committed,
+                reasonCode: 'committed',
+                reasonDetail: null,
+              );
+            },
+      );
+      addTearDown(service.dispose);
+      await service.startNodeCore(
+        base64Encode(List<int>.filled(64, 9)),
+        'transport-peer',
+      );
+
+      final partial = await service.drainOfflineInboxFully();
+      expect(partial.isSuccessful, isFalse);
+      expect(partial.hasMore, isTrue);
+      expect(replayContexts, <bool>[true]);
+      expect(native.consumeCount, 0);
+
+      // Account/binding retirement causes the next authoritative begin to
+      // return no lease. That null supersedes the prior failed generation.
+      final afterRetirement = await service.drainOfflineInboxFully();
+      expect(afterRetirement.isSuccessful, isTrue);
+      expect(afterRetirement.hasMore, isFalse);
+      expect(replayContexts, <bool>[true, false]);
+      expect(native.beginCount, 2);
+      expect(native.consumeCount, 0);
+    },
+  );
+}
+
+final _tc373EmptyState = CanonicalNotificationBadgeState(
+  unreadCount: 0,
+  identities: const <CanonicalNotificationIdentity>[],
+);
+
+final class _RecoveryBridgeWithLease implements IosNotificationRecoveryBridge {
+  final List<String> events = <String>[];
+  var beginCount = 0;
+  var consumeCount = 0;
+  var commitCount = 0;
+
+  @override
+  Future<IosNotificationReconciliationToken> beginReconciliation(
+    String accountPeerId,
+  ) async {
+    events.add('begin');
+    beginCount += 1;
+    return IosNotificationReconciliationToken(
+      token: 'begin-token',
+      watermark: 41,
+      mailboxAlertLease: const IosMailboxAlertLease(
+        token: 'lease-token',
+        accountHash:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        bindingHash:
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        requestIdentifier: 'request-373',
+        generation: 7,
+        sequence: 9,
+        phase: 'AUDIBLE_AMBIGUOUS',
+      ),
+    );
+  }
+
+  @override
+  Future<void> consumeMailboxAlertLease({
+    required IosNotificationReconciliationToken begin,
+    required IosMailboxAlertLease lease,
+  }) async {
+    expect(begin.token, 'begin-token');
+    expect(lease.generation, 7);
+    events.add('consume');
+    consumeCount += 1;
+  }
+
+  @override
+  Future<void> commitReconciliation({
+    required IosNotificationReconciliationToken begin,
+    required String accountPeerId,
+    required CanonicalNotificationBadgeState canonicalState,
+    required bool canonicalStateComplete,
+  }) async {
+    expect(canonicalStateComplete, isFalse);
+    events.add('commit');
+    commitCount += 1;
+  }
+
+  @override
+  Future<void> clearAccount() async {}
+
+  @override
+  Future<void> retireConversation({
+    required String accountPeerId,
+    required CanonicalNotificationLane lane,
+    required String conversationId,
+  }) async {}
+}
+
+final class _AmbiguousConsumeRecoveryBridge
+    implements IosNotificationRecoveryBridge {
+  var beginCount = 0;
+  var consumeCount = 0;
+
+  @override
+  Future<IosNotificationReconciliationToken> beginReconciliation(
+    String accountPeerId,
+  ) async {
+    beginCount += 1;
+    return IosNotificationReconciliationToken(
+      token: 'begin-$beginCount',
+      watermark: beginCount,
+      mailboxAlertLease: beginCount == 1
+          ? const IosMailboxAlertLease(
+              token: 'lease-token',
+              accountHash:
+                  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              bindingHash:
+                  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              requestIdentifier: 'request-ambiguous-reply',
+              generation: 11,
+              sequence: 12,
+              phase: 'AUDIBLE_AMBIGUOUS',
+            )
+          : null,
+    );
+  }
+
+  @override
+  Future<void> consumeMailboxAlertLease({
+    required IosNotificationReconciliationToken begin,
+    required IosMailboxAlertLease lease,
+  }) async {
+    consumeCount += 1;
+    throw StateError('native mutation succeeded but reply was lost');
+  }
+
+  @override
+  Future<void> commitReconciliation({
+    required IosNotificationReconciliationToken begin,
+    required String accountPeerId,
+    required CanonicalNotificationBadgeState canonicalState,
+    required bool canonicalStateComplete,
+  }) async {}
+
+  @override
+  Future<void> clearAccount() async {}
+
+  @override
+  Future<void> retireConversation({
+    required String accountPeerId,
+    required CanonicalNotificationLane lane,
+    required String conversationId,
+  }) async {}
+}
+
+final class _LeaseThenNullRecoveryBridge
+    implements IosNotificationRecoveryBridge {
+  var beginCount = 0;
+  var consumeCount = 0;
+
+  @override
+  Future<IosNotificationReconciliationToken> beginReconciliation(
+    String accountPeerId,
+  ) async {
+    beginCount += 1;
+    return IosNotificationReconciliationToken(
+      token: 'begin-$beginCount',
+      watermark: beginCount,
+      mailboxAlertLease: beginCount == 1
+          ? const IosMailboxAlertLease(
+              token: 'lease-before-retirement',
+              accountHash:
+                  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              bindingHash:
+                  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              requestIdentifier: 'request-before-retirement',
+              generation: 21,
+              sequence: 22,
+              phase: 'AUDIBLE_AMBIGUOUS',
+            )
+          : null,
+    );
+  }
+
+  @override
+  Future<void> consumeMailboxAlertLease({
+    required IosNotificationReconciliationToken begin,
+    required IosMailboxAlertLease lease,
+  }) async {
+    consumeCount += 1;
+  }
+
+  @override
+  Future<void> commitReconciliation({
+    required IosNotificationReconciliationToken begin,
+    required String accountPeerId,
+    required CanonicalNotificationBadgeState canonicalState,
+    required bool canonicalStateComplete,
+  }) async {}
+
+  @override
+  Future<void> clearAccount() async {}
+
+  @override
+  Future<void> retireConversation({
+    required String accountPeerId,
+    required CanonicalNotificationLane lane,
+    required String conversationId,
+  }) async {}
+}
+
+final class _PagedInboxBridge extends Bridge {
+  final Completer<void> secondPageRequested = Completer<void>();
+  final Completer<String> _secondPage = Completer<String>();
+  var retrieveCount = 0;
+
+  @override
+  bool get isInitialized => true;
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<bool> checkHealth() async => true;
+
+  @override
+  Future<void> reinitialize() async {}
+
+  @override
+  void dispose() {}
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    switch (request['cmd']) {
+      case 'node:start':
+        return jsonEncode(<String, Object?>{
+          'ok': true,
+          'peerId': 'transport-peer',
+          'isStarted': true,
+          'listenAddresses': const <String>[],
+          'circuitAddresses': const <String>[],
+          'connections': const <Object?>[],
+        });
+      case 'inbox:retrieve_pending':
+        retrieveCount += 1;
+        if (retrieveCount == 1) {
+          return _page(id: 'entry-1', messageId: 'message-1', hasMore: true);
+        }
+        if (!secondPageRequested.isCompleted) secondPageRequested.complete();
+        return _secondPage.future;
+      case 'inbox:ack':
+        return jsonEncode(<String, Object?>{
+          'ok': true,
+          'acked': 1,
+          'custodyContract': 'ack_or_expiry_v1',
+        });
+      default:
+        return jsonEncode(<String, Object?>{
+          'ok': false,
+          'errorCode': 'UNHANDLED',
+        });
+    }
+  }
+
+  void completeSecondPage() {
+    _secondPage.complete(
+      _page(id: 'entry-2', messageId: 'message-2', hasMore: false),
+    );
+  }
+
+  static String _page({
+    required String id,
+    required String messageId,
+    required bool hasMore,
+  }) => jsonEncode(<String, Object?>{
+    'ok': true,
+    'messages': <Object?>[
+      <String, Object?>{
+        'id': id,
+        'from': 'sender-peer',
+        'message': jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '1',
+          'payload': <String, Object?>{
+            'id': messageId,
+            'text': 'hello',
+            'senderPeerId': 'sender-peer',
+            'senderUsername': 'Alice',
+            'timestamp': '2026-08-16T00:00:00.000Z',
+          },
+        }),
+        'timestamp': '2026-08-16T00:00:00.000Z',
+      },
+    ],
+    'hasMore': hasMore,
+    'custodyContract': 'ack_or_expiry_v1',
+  });
+}
+
+final class _SinglePageInboxBridge extends Bridge {
+  var retrieveCount = 0;
+
+  @override
+  bool get isInitialized => true;
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<bool> checkHealth() async => true;
+
+  @override
+  Future<void> reinitialize() async {}
+
+  @override
+  void dispose() {}
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    switch (request['cmd']) {
+      case 'node:start':
+        return jsonEncode(<String, Object?>{
+          'ok': true,
+          'peerId': 'transport-peer',
+          'isStarted': true,
+          'listenAddresses': const <String>[],
+          'circuitAddresses': const <String>[],
+          'connections': const <Object?>[],
+        });
+      case 'inbox:retrieve_pending':
+        retrieveCount += 1;
+        return _PagedInboxBridge._page(
+          id: 'entry-$retrieveCount',
+          messageId: 'message-$retrieveCount',
+          hasMore: false,
+        );
+      case 'inbox:ack':
+        return jsonEncode(<String, Object?>{
+          'ok': true,
+          'acked': 1,
+          'custodyContract': 'ack_or_expiry_v1',
+        });
+      default:
+        return jsonEncode(<String, Object?>{
+          'ok': false,
+          'errorCode': 'UNHANDLED',
+        });
+    }
+  }
+}
+
+final class _PartialFailureThenSinglePageInboxBridge extends Bridge {
+  var retrieveCount = 0;
+
+  @override
+  bool get isInitialized => true;
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<bool> checkHealth() async => true;
+
+  @override
+  Future<void> reinitialize() async {}
+
+  @override
+  void dispose() {}
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    switch (request['cmd']) {
+      case 'node:start':
+        return jsonEncode(<String, Object?>{
+          'ok': true,
+          'peerId': 'transport-peer',
+          'isStarted': true,
+          'listenAddresses': const <String>[],
+          'circuitAddresses': const <String>[],
+          'connections': const <Object?>[],
+        });
+      case 'inbox:retrieve_pending':
+        retrieveCount += 1;
+        if (retrieveCount == 2) {
+          return jsonEncode(<String, Object?>{
+            'ok': false,
+            'errorCode': 'FIXTURE_RETRIEVE_FAILURE',
+          });
+        }
+        return _PagedInboxBridge._page(
+          id: 'entry-$retrieveCount',
+          messageId: 'message-$retrieveCount',
+          hasMore: retrieveCount == 1,
+        );
+      case 'inbox:ack':
+        return jsonEncode(<String, Object?>{
+          'ok': true,
+          'acked': 1,
+          'custodyContract': 'ack_or_expiry_v1',
+        });
+      default:
+        return jsonEncode(<String, Object?>{
+          'ok': false,
+          'errorCode': 'UNHANDLED',
+        });
+    }
+  }
 }

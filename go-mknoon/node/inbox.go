@@ -1220,13 +1220,35 @@ func (n *Node) retrieveAckCustodyRelay(
 	relay RelayInfo,
 	timeout time.Duration,
 ) (inboxCustodyRetrieveLeg, error) {
+	return retrieveAckCustodyRelayWithExchange(
+		relay,
+		50,
+		func(candidate RelayInfo, request inboxRequest) ([]byte, error) {
+			return n.exchangeInboxRequest(h, candidate, request, timeout)
+		},
+	)
+}
+
+type inboxRequestExchange func(
+	relay RelayInfo,
+	request inboxRequest,
+) ([]byte, error)
+
+// retrieveAckCustodyRelayWithExchange is the one protocol negotiation owner
+// shared by the long-lived Node and Plan-373's action-local NSE host. Fallback
+// always stays on the same relay peer/address candidate.
+func retrieveAckCustodyRelayWithExchange(
+	relay RelayInfo,
+	limit int,
+	exchange inboxRequestExchange,
+) (inboxCustodyRetrieveLeg, error) {
 	var lastErr error
 	for _, candidate := range relayInfoAttemptCandidates(relay) {
-		strictRaw, err := n.exchangeInboxRequest(h, candidate, inboxRequest{
+		strictRaw, err := exchange(candidate, inboxRequest{
 			Action:          inboxRetrieveAckCustodyAction,
-			Limit:           50,
+			Limit:           limit,
 			CustodyContract: AckOrExpiryCustodyContract,
-		}, timeout)
+		})
 		if err == nil {
 			if result, parseErr := parseInboxCustodyRetrieveResponse(strictRaw, true); parseErr == nil {
 				return result, nil
@@ -1237,10 +1259,10 @@ func (n *Node) retrieveAckCustodyRelay(
 			lastErr = err
 		}
 
-		legacyRaw, legacyErr := n.exchangeInboxRequest(h, candidate, inboxRequest{
+		legacyRaw, legacyErr := exchange(candidate, inboxRequest{
 			Action: "retrieve_pending",
-			Limit:  50,
-		}, timeout)
+			Limit:  limit,
+		})
 		if legacyErr == nil {
 			if result, parseErr := parseInboxCustodyRetrieveResponse(legacyRaw, false); parseErr == nil {
 				return result, nil

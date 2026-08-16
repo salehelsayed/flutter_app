@@ -5,6 +5,7 @@ import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/ios_mailbox_alert_silent_replay_context.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -77,6 +78,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
   required String senderUsername,
   required String messageText,
   bool suppressNotification = false,
+  bool forceSilent = false,
   String suppressionReason = 'recovery_replay',
   String? messageId,
   String? notificationEventIdentity,
@@ -91,6 +93,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
   Duration backgroundDuplicateGuardDelay = const Duration(seconds: 2),
   DurableLocalNotificationEffectContext? durableEffectContext,
 }) async {
+  final forceSilentEffect = forceSilent || isIosMailboxAlertSilentReplayContext;
   final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
     lane: contactPeerId.trim().startsWith('group:')
         ? AppVisibilityConversationLane.group
@@ -294,7 +297,9 @@ Future<NotificationPresentationResult> maybeShowNotification({
         toneTracker != null && !toneTracker.shouldPlayTone(conversationKey);
 
     late final bool silent;
-    if (durableNotificationCoordinator != null) {
+    if (forceSilentEffect) {
+      silent = true;
+    } else if (durableNotificationCoordinator != null) {
       try {
         toneReservation = await durableNotificationCoordinator.reserveTone(
           conversationKey,

@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
+import 'package:flutter_app/core/notifications/ios_nse_inbox_projection.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_secure_storage_key.dart';
@@ -142,6 +143,14 @@ class MigrationSecureStorageRegistry {
       category:
           MigrationSecureStorageKeyCategory.canonicalRuntimeAccountBinding,
       policy: MigrationSecureStorageKeyPolicy.clearRegenerate,
+      criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
+      includeInExportPayload: false,
+    ),
+    MigrationSecureStorageKey(
+      scope: MigrationSecureStoreScope.iosSharedAccessGroup,
+      activeKey: sharedIosNseInboxTransportKey,
+      category: MigrationSecureStorageKeyCategory.iosNseInboxTransport,
+      policy: MigrationSecureStorageKeyPolicy.deviceLocal,
       criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
       includeInExportPayload: false,
     ),

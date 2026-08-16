@@ -7,6 +7,7 @@ final class NotificationService: UNNotificationServiceExtension {
   private var bestAttemptContent: UNNotificationContent?
   private var resolvedPreview: NotificationPreviewResult?
   private var requestIdentifier: String?
+  private var fixedOriginalContent: UNNotificationContent?
   private let previewEventEmitter = LogPushPreviewEventEmitter()
   private lazy var notificationRecoveryStore = IosNotificationRecoveryStore()
   private lazy var notificationRecoveryHandoff =
@@ -41,11 +42,42 @@ final class NotificationService: UNNotificationServiceExtension {
   )
   private lazy var recentRemoteShownMarkerStore = RecentRemoteShownMarkerStore()
   private lazy var pushEnvelopeStore = AppGroupPushEnvelopeStore()
+  private lazy var fixedPreviewResolver = NotificationPreviewResolver(
+    keyReader: KeychainPushKeyReader(),
+    decryptor: BridgePushDecryptor(),
+    dedupeStore: nil,
+    toneLeaseStore: nil,
+    eventEmitter: NseNoopPreviewEventEmitter()
+  )
+  private lazy var mailboxWakeCoordinator = NseMailboxWakeCoordinator(
+    credentialReader: NseInboxCredentialReader(
+      keyReader: KeychainPushKeyReader()
+    ),
+    retriever: GoNseInboxRetriever(),
+    candidateAdapter: NseInboxCandidateAdapter(
+      keyReader: KeychainPushKeyReader(),
+      decryptor: BridgePushDecryptor(),
+      previewResolver: fixedPreviewResolver
+    ),
+    recoveryStore: notificationRecoveryStore
+  )
+  private lazy var localNotificationFinalEffect =
+    IosLocalNotificationFinalEffect(
+      recoveryStore: notificationRecoveryStore
+    )
 
   override func didReceive(
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
+    // The fixed wake is classified from Apple's immutable original before any
+    // rich-route staging, copying or resolver work. It never becomes a fake
+    // provider envelope.
+    if NseMailboxWakeClassifier.isExactFixedWake(request.content.userInfo) {
+      receiveFixedWake(request, contentHandler: contentHandler)
+      return
+    }
+
     let mutableContent: UNMutableNotificationContent
     if let copy = request.content.mutableCopy() as? UNMutableNotificationContent {
       mutableContent = copy
@@ -61,6 +93,7 @@ final class NotificationService: UNNotificationServiceExtension {
       bestAttemptContent = mutableContent
       resolvedPreview = nil
       requestIdentifier = request.identifier
+      fixedOriginalContent = nil
     }
 
     let envelopeStaged = pushEnvelopeStore?.stage(
@@ -92,6 +125,27 @@ final class NotificationService: UNNotificationServiceExtension {
     finish(generation: generation, expiry: true)
   }
 
+  private func receiveFixedWake(
+    _ request: UNNotificationRequest,
+    contentHandler: @escaping (UNNotificationContent) -> Void
+  ) {
+    let generation = completionGate.reset { _ in
+      self.contentHandler = contentHandler
+      fixedOriginalContent = request.content
+      bestAttemptContent = nil
+      resolvedPreview = nil
+      requestIdentifier = nil
+    }
+    mailboxWakeCoordinator.resolve(
+      requestIdentifier: request.identifier
+    ) { [weak self] resolution in
+      self?.finish(
+        generation: generation,
+        fixedResolution: resolution
+      )
+    }
+  }
+
   private func publish(
     preview: NotificationPreviewResult,
     generation: NotificationServiceCompletionGeneration
@@ -114,12 +168,14 @@ final class NotificationService: UNNotificationServiceExtension {
 
   private func finish(
     generation: NotificationServiceCompletionGeneration,
-    expiry: Bool = false
+    expiry: Bool = false,
+    fixedResolution: NseMailboxWakeResolution? = nil
   ) {
     var handler: ((UNNotificationContent) -> Void)?
     var content: UNNotificationContent?
     var preview: NotificationPreviewResult?
     var claimedRequestIdentifier: String?
+    var originalFixedContent: UNNotificationContent?
     let claimed = completionGate.claim(generation: generation) {
       handler = contentHandler
       content = bestAttemptContent
@@ -129,10 +185,41 @@ final class NotificationService: UNNotificationServiceExtension {
       resolvedPreview = nil
       claimedRequestIdentifier = requestIdentifier
       requestIdentifier = nil
+      originalFixedContent = fixedOriginalContent
+      fixedOriginalContent = nil
     }
-    guard claimed, let handler, let content else {
+    guard claimed, let handler else {
       return
     }
+
+    if let originalFixedContent {
+      let resolution = fixedResolution ?? .generic(lease: nil)
+      switch resolution {
+      case let .authenticated(candidate, lease):
+        let disposition = localNotificationFinalEffect?.complete(
+          candidate: candidate,
+          lease: lease,
+          originalContent: originalFixedContent,
+          contentHandler: handler
+        ) ?? .genericFallback
+        if disposition == .genericFallback {
+          mailboxWakeCoordinator.handoffGeneric(
+            lease: lease,
+            content: originalFixedContent,
+            contentHandler: handler
+          )
+        }
+      case let .generic(lease):
+        mailboxWakeCoordinator.handoffGeneric(
+          lease: lease,
+          content: originalFixedContent,
+          contentHandler: handler
+        )
+      }
+      return
+    }
+
+    guard let content else { return }
 
     var didApplyPreview = false
     var recoveryDisposition: IosNotificationRecoveryHandoffDisposition =
@@ -214,4 +301,8 @@ final class NotificationService: UNNotificationServiceExtension {
       )
     }
   }
+}
+
+private struct NseNoopPreviewEventEmitter: PushPreviewEventEmitting {
+  func emit(event: String, details: [String: String]) {}
 }

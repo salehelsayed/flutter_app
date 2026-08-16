@@ -391,6 +391,7 @@ class StartupRouter extends StatefulWidget {
   /// account erase can begin clearing account-owned state.
   final VoidCallback? invalidateAppVisibility;
   final Future<void> Function()? retireCanonicalNotificationBinding;
+  final Future<void> Function()? retireIosNseInboxTransport;
   final Future<void> Function()? ingestStagedPushEnvelopes;
   final NotificationOpenRouteContext Function(
     NotificationRouteTarget routeTarget,
@@ -508,6 +509,7 @@ class StartupRouter extends StatefulWidget {
     this.clearIosNotificationRecovery,
     this.invalidateAppVisibility,
     this.retireCanonicalNotificationBinding,
+    this.retireIosNseInboxTransport,
     this.ingestStagedPushEnvelopes,
     this.createNotificationRouteContext,
     this.onNotificationRouteContext,
@@ -650,6 +652,7 @@ class _StartupRouterState extends State<StartupRouter> {
                   widget.linkedGroupConversationBuilder,
               isLinkedGroupAuthoritySettled:
                   widget.isLinkedGroupAuthoritySettled,
+              retireIosNseInboxTransport: widget.retireIosNseInboxTransport,
               onSetupSuccess: widget.ensureRuntimeServicesReady,
               backgroundPreference:
                   widget.appShellController.backgroundPreference,
@@ -894,6 +897,8 @@ class _StartupRouterState extends State<StartupRouter> {
                           widget.linkedGroupConversationBuilder,
                       isLinkedGroupAuthoritySettled:
                           widget.isLinkedGroupAuthoritySettled,
+                      retireIosNseInboxTransport:
+                          widget.retireIosNseInboxTransport,
                       onSetupSuccess: widget.ensureRuntimeServicesReady,
                       backgroundPreference:
                           widget.appShellController.backgroundPreference,
@@ -1904,6 +1909,7 @@ class _StartupRouterState extends State<StartupRouter> {
       invalidateAppVisibility: widget.invalidateAppVisibility,
       retireCanonicalNotificationBinding:
           widget.retireCanonicalNotificationBinding,
+      retireIosNseInboxTransport: widget.retireIosNseInboxTransport,
       ingestStagedPushEnvelopes: widget.ingestStagedPushEnvelopes,
       createNotificationRouteContext: widget.createNotificationRouteContext,
       onNotificationRouteContext: widget.onNotificationRouteContext,

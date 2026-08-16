@@ -1180,7 +1180,34 @@ final class IosNotificationForegroundDispositionGate {
       result([
         "token": begin.token,
         "watermark": Int64(begin.watermark),
+        "mailboxAlertLease": begin.mailboxAlertLease?.methodChannelMap
+          ?? NSNull(),
       ])
+
+    case "consumeMailboxAlertLease":
+      guard let arguments = recoveryArguments(
+              call.arguments,
+              keys: ["token", "watermark", "generation", "sequence"]
+            ),
+            let token = nonEmptyRecoveryString(arguments["token"]),
+            let watermark = recoveryUInt64(arguments["watermark"]),
+            let generation = recoveryUInt64(arguments["generation"]),
+            generation > 0,
+            let sequence = recoveryUInt64(arguments["sequence"]),
+            sequence > 0 else {
+        result(recoveryFlutterError(code: "bad_args"))
+        return
+      }
+      guard coordinator.consumeMailboxAlertLease(
+        token: token,
+        watermark: watermark,
+        generation: generation,
+        sequence: sequence
+      ) else {
+        result(recoveryFlutterError(code: "consume_lease_rejected"))
+        return
+      }
+      result(["ok": true])
 
     case "commitReconciliation":
       guard let arguments = recoveryArguments(

@@ -20,6 +20,7 @@ import 'package:flutter_app/core/notifications/group_notification_presentation_c
 import 'package:flutter_app/core/notifications/group_notification_canonical_reconciler.dart';
 import 'package:flutter_app/core/notifications/group_notification_read_projector.dart';
 import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
+import 'package:flutter_app/core/notifications/ios_mailbox_alert_silent_replay_context.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
@@ -1420,6 +1421,7 @@ class GroupMessageListener {
     final result = await maybeShowNotification(
       notificationService: service,
       appVisibility: visibility,
+      forceSilent: isIosMailboxAlertSilentReplayContext,
       contactPeerId: 'group:${entry.groupId}',
       routePayload: NotificationRouteTarget.group(
         entry.groupId,
@@ -1493,6 +1495,7 @@ class GroupMessageListener {
     final result = await maybeShowNotification(
       notificationService: service,
       appVisibility: visibility,
+      forceSilent: isIosMailboxAlertSilentReplayContext,
       contactPeerId: 'group:${entry.groupId}',
       routePayload: NotificationRouteTarget.group(
         entry.groupId,
@@ -1608,6 +1611,7 @@ class GroupMessageListener {
     final result = await maybeShowNotification(
       notificationService: service,
       appVisibility: visibility,
+      forceSilent: isIosMailboxAlertSilentReplayContext,
       contactPeerId: 'group:${entry.groupId}',
       routePayload: NotificationRouteTarget.group(
         entry.groupId,
@@ -1785,6 +1789,7 @@ class GroupMessageListener {
     final result = await maybeShowNotification(
       notificationService: service,
       appVisibility: visibility,
+      forceSilent: isIosMailboxAlertSilentReplayContext,
       contactPeerId: 'group:${entry.groupId}',
       routePayload: NotificationRouteTarget.group(
         entry.groupId,
@@ -1860,6 +1865,7 @@ class GroupMessageListener {
     final result = await maybeShowNotification(
       notificationService: service,
       appVisibility: visibility,
+      forceSilent: isIosMailboxAlertSilentReplayContext,
       contactPeerId: 'group:${entry.groupId}',
       routePayload: NotificationRouteTarget.group(
         entry.groupId,
@@ -3304,6 +3310,7 @@ class GroupMessageListener {
             present() => maybeShowNotification(
               notificationService: _notificationService,
               appVisibility: _appVisibility,
+              forceSilent: isIosMailboxAlertSilentReplayContext,
               contactPeerId: 'group:$groupId',
               routePayload: NotificationRouteTarget.group(
                 groupId,

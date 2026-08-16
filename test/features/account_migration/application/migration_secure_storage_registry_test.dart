@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
+import 'package:flutter_app/core/notifications/ios_nse_inbox_projection.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_registry.dart';
@@ -164,6 +165,7 @@ void main() {
       expect(sharedFixed.keys, {
         'identity_ml_kem_secret_key',
         canonicalRuntimeSharedAccountBindingStorageKey,
+        sharedIosNseInboxTransportKey,
       });
       expect(
         sharedFixed['identity_ml_kem_secret_key']!.appleAccessGroup,
@@ -176,6 +178,18 @@ void main() {
         MigrationSecureStorageKeyPolicy.clearRegenerate,
       );
       expect(sharedBinding.includeInExportPayload, isFalse);
+      final nseTransport = sharedFixed[sharedIosNseInboxTransportKey]!;
+      expect(
+        nseTransport.category,
+        MigrationSecureStorageKeyCategory.iosNseInboxTransport,
+      );
+      expect(nseTransport.policy, MigrationSecureStorageKeyPolicy.deviceLocal);
+      expect(
+        nseTransport.criticality,
+        MigrationSecureStorageKeyCriticality.cleanupOnly,
+      );
+      expect(nseTransport.includeInExportPayload, isFalse);
+      expect(nseTransport.requiresStagedValueForPromotion, isFalse);
 
       final groupMirror = MigrationSecureStorageRegistry.sharedGroupMirror(
         groupId: 'group/raw:1',

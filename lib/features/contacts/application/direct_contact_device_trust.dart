@@ -1,4 +1,7 @@
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
+import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
+import 'package:flutter_app/core/notifications/ios_nse_inbox_projection.dart';
+import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
@@ -132,11 +135,14 @@ class DatabaseDirectContactDeviceTrust
     implements DirectContactDeviceTrustCapability {
   DatabaseDirectContactDeviceTrust({
     required Database database,
+    DirectReactionNotificationProjection? notificationProjection,
     DateTime Function()? now,
   }) : _database = database,
+       _notificationProjection = notificationProjection,
        _now = now ?? DateTime.now;
 
   final Database _database;
+  final DirectReactionNotificationProjection? _notificationProjection;
   final DateTime Function() _now;
 
   String get _decidedAt => _now().toUtc().toIso8601String();
@@ -168,16 +174,17 @@ class DatabaseDirectContactDeviceTrust
     required String deviceId,
     required String expectedFingerprint,
     required String expectedAccountSigningPublicKey,
-  }) {
-    return dbVerifyDirectContactDeviceBinding(
+  }) => _mutateProjectedAuthority(
+    contactAccountPeerId,
+    () => dbVerifyDirectContactDeviceBinding(
       _database,
       contactAccountPeerId: contactAccountPeerId,
       deviceId: deviceId,
       expectedFingerprint: expectedFingerprint,
       expectedAccountSigningPublicKey: expectedAccountSigningPublicKey,
       decidedAt: _decidedAt,
-    );
-  }
+    ),
+  );
 
   @override
   Future<bool> rejectDevice({
@@ -185,16 +192,17 @@ class DatabaseDirectContactDeviceTrust
     required String deviceId,
     required String expectedFingerprint,
     required String expectedAccountSigningPublicKey,
-  }) {
-    return dbRejectDirectContactDeviceBinding(
+  }) => _mutateProjectedAuthority(
+    contactAccountPeerId,
+    () => dbRejectDirectContactDeviceBinding(
       _database,
       contactAccountPeerId: contactAccountPeerId,
       deviceId: deviceId,
       expectedFingerprint: expectedFingerprint,
       expectedAccountSigningPublicKey: expectedAccountSigningPublicKey,
       decidedAt: _decidedAt,
-    );
-  }
+    ),
+  );
 
   @override
   Future<bool> revokeDevice({
@@ -202,16 +210,17 @@ class DatabaseDirectContactDeviceTrust
     required String deviceId,
     required String expectedFingerprint,
     required String expectedAccountSigningPublicKey,
-  }) {
-    return dbRevokeDirectContactDeviceBinding(
+  }) => _mutateProjectedAuthority(
+    contactAccountPeerId,
+    () => dbRevokeDirectContactDeviceBinding(
       _database,
       contactAccountPeerId: contactAccountPeerId,
       deviceId: deviceId,
       expectedFingerprint: expectedFingerprint,
       expectedAccountSigningPublicKey: expectedAccountSigningPublicKey,
       decidedAt: _decidedAt,
-    );
-  }
+    ),
+  );
 
   @override
   Future<bool> revokeLegacyTarget({
@@ -219,14 +228,82 @@ class DatabaseDirectContactDeviceTrust
     required String expectedAccountSigningPublicKey,
     required String expectedLegacyPeerId,
     required String expectedLegacyMlKemPublicKey,
-  }) {
-    return dbRevokeDirectContactLegacyTarget(
+  }) => _mutateProjectedAuthority(
+    contactAccountPeerId,
+    () => dbRevokeDirectContactLegacyTarget(
       _database,
       contactAccountPeerId: contactAccountPeerId,
       expectedAccountSigningPublicKey: expectedAccountSigningPublicKey,
       expectedLegacyPeerId: expectedLegacyPeerId,
       expectedLegacyMlKemPublicKey: expectedLegacyMlKemPublicKey,
       decidedAt: _decidedAt,
+    ),
+  );
+
+  Future<bool> _mutateProjectedAuthority(
+    String contactAccountPeerId,
+    Future<bool> Function() mutation,
+  ) async {
+    final projection = _notificationProjection;
+    if (projection == null) return mutation();
+    await projection.retireContactTransportAuthority(contactAccountPeerId);
+    final committed = await mutation();
+    final transports = await loadDirectNotificationAuthorizedTransportPeerIds(
+      _database,
+      contactAccountPeerId,
     );
+    await projection.replaceContactTransportAuthority(
+      peerId: contactAccountPeerId,
+      authorizedTransportPeerIds: transports,
+    );
+    return committed;
   }
+}
+
+/// Reads the currently authorized physical senders for one logical contact.
+/// This deliberately does not consult `ContactModel` display state.
+Future<List<String>> loadDirectNotificationAuthorizedTransportPeerIds(
+  Database database,
+  String contactAccountPeerId,
+) async {
+  final contact = contactAccountPeerId.trim();
+  if (contact.isEmpty) return const <String>[];
+  final rows = await database.query(
+    'contacts',
+    columns: const <String>['peer_id', 'public_key', 'is_blocked'],
+    where: 'peer_id = ?',
+    whereArgs: <Object?>[contact],
+    limit: 1,
+  );
+  if (rows.isEmpty) return const <String>[];
+  final row = rows.single;
+  final accountKey = row['public_key'];
+  final blocked = row['is_blocked'];
+  if (accountKey is! String ||
+      accountKey.trim().isEmpty ||
+      accountKey != accountKey.trim() ||
+      !isNativeCompatibleIosNsePeerId(contact) ||
+      !ed25519PublicKeyMatchesPeerId(
+        base64PublicKey: accountKey,
+        claimedPeerId: contact,
+      ) ||
+      (blocked is int ? blocked != 0 : blocked == true)) {
+    return const <String>[];
+  }
+  final roster = await dbLoadDirectContactDeviceRoster(database, contact);
+  final peers = <String>{
+    if (!roster.metadata.rosterInitialized ||
+        !roster.metadata.legacyTargetRevoked)
+      contact,
+    if (roster.metadata.rosterInitialized)
+      for (final binding in roster.activeBindings)
+        if (binding.verifiedAccountSigningPublicKey == accountKey &&
+            isNativeCompatibleIosNsePeerId(binding.transportPeerId) &&
+            ed25519PublicKeyMatchesPeerId(
+              base64PublicKey: binding.transportPublicKey,
+              claimedPeerId: binding.transportPeerId,
+            ))
+          binding.transportPeerId,
+  }.toList(growable: false)..sort();
+  return peers;
 }

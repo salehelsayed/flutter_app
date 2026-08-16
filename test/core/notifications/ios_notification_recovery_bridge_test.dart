@@ -21,6 +21,7 @@ void main() {
             'beginReconciliation' => <String, Object?>{
               'token': 'begin-token',
               'watermark': 17,
+              'mailboxAlertLease': null,
             },
             _ => <String, Object?>{'ok': true},
           };
@@ -98,6 +99,7 @@ void main() {
             (_) async => <String, Object?>{
               'token': 'token',
               'watermark': 1,
+              'mailboxAlertLease': null,
               'unexpected': true,
             },
           );
@@ -105,6 +107,42 @@ void main() {
         bridge.beginReconciliation('account-a'),
         throwsA(isA<FormatException>()),
       );
+    },
+  );
+
+  test(
+    'mailbox lease rejects edge whitespace and control-domain drift',
+    () async {
+      final bridge = MethodChannelIosNotificationRecoveryBridge(
+        channel: channel,
+      );
+      for (final malformed in <Map<String, Object?>>[
+        <String, Object?>{
+          'token': ' begin-token',
+          'watermark': 1,
+          'mailboxAlertLease': null,
+        },
+        <String, Object?>{
+          'token': 'begin-token',
+          'watermark': 1,
+          'mailboxAlertLease': <String, Object?>{
+            'token': 'lease-token',
+            'accountHash': List<String>.filled(64, 'a').join(),
+            'bindingHash': List<String>.filled(64, 'b').join(),
+            'requestIdentifier': 'request-with-edge-space ',
+            'generation': 1,
+            'sequence': 1,
+            'phase': 'PREPARED',
+          },
+        },
+      ]) {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (_) async => malformed);
+        await expectLater(
+          bridge.beginReconciliation('account-a'),
+          throwsA(isA<FormatException>()),
+        );
+      }
     },
   );
 
@@ -593,6 +631,12 @@ final class _FakeBridge implements IosNotificationRecoveryBridge {
     events.add('commit');
     completeness.add(canonicalStateComplete);
   }
+
+  @override
+  Future<void> consumeMailboxAlertLease({
+    required IosNotificationReconciliationToken begin,
+    required IosMailboxAlertLease lease,
+  }) async {}
 
   @override
   Future<void> retireConversation({

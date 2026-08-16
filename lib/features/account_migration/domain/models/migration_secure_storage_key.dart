@@ -22,6 +22,7 @@ enum MigrationSecureStorageKeyCategory {
   accountMigrationPairingSession,
   linkedInstallationRole,
   linkedInstallationTransportCredential,
+  iosNseInboxTransport,
   groupKeyMaterial,
   mediaAttachmentEncryptionKey,
 }

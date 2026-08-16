@@ -82,6 +82,7 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   ResolveDurableNotificationCoordinator? durableNotificationCoordinatorResolver,
   LoadConversationNotificationSnapshot? loadConversationNotificationSnapshot,
   bool suppressReactionNotification = false,
+  bool forceSilentReactionNotification = false,
   StageDirectReactionNotificationDisplayCustody?
   stageNotificationDisplayCustody,
   PromoteDirectReactionNotificationDisplayCustody?
@@ -444,6 +445,7 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
         notificationEventIdentity: boundedReactionEventIdentity(reaction.id),
         notificationEventType: 'message_reaction',
         suppressNotification: suppressReactionNotification,
+        forceSilent: forceSilentReactionNotification,
         suppressionReason: 'reaction_recovery_replay',
         toneTracker: notificationToneTracker,
         consumeRecentRemoteNotificationAnnouncement:

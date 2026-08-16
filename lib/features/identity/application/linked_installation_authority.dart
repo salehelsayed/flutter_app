@@ -309,11 +309,14 @@ enum LinkedInstallationSetupResult {
 class LinkedInstallationAuthority {
   LinkedInstallationAuthority({
     required SecureKeyStore secureKeyStore,
+    Future<void> Function()? retireIosNseInboxTransport,
     DateTime Function()? now,
   }) : _secureKeyStore = secureKeyStore,
+       _retireIosNseInboxTransport = retireIosNseInboxTransport,
        _now = now ?? DateTime.now;
 
   final SecureKeyStore _secureKeyStore;
+  final Future<void> Function()? _retireIosNseInboxTransport;
   final DateTime Function() _now;
 
   /// Classifies the persisted authority.
@@ -399,6 +402,7 @@ class LinkedInstallationAuthority {
 
   /// Step 1 — records that this installation expects to be a linked secondary.
   Future<void> markExpectedLinkedRole() async {
+    await _retireIosNseInboxTransport?.call();
     await _writeAndVerify(
       linkedInstallationRoleStorageKey,
       linkedInstallationRoleMarkerValue,
@@ -438,6 +442,7 @@ class LinkedInstallationAuthority {
     })
     callVerify,
   }) async {
+    await _retireIosNseInboxTransport?.call();
     final snapshot = await load(expectedAccountPeerId: accountPeerId);
     switch (snapshot.disposition) {
       case LinkedInstallationDisposition.preparing:
@@ -563,6 +568,7 @@ class LinkedInstallationAuthority {
     required String accountPeerId,
     required String expectedTransportPeerId,
   }) async {
+    await _retireIosNseInboxTransport?.call();
     final snapshot = await load(expectedAccountPeerId: accountPeerId);
     if (snapshot.disposition == LinkedInstallationDisposition.active) {
       // Idempotent only for the same credential.

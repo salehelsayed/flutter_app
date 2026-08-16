@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/notifications/ios_nse_inbox_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -17,6 +18,7 @@ const String _simsFixtureDigestKey = 'simsFixtureDigest';
 class DirectReactionNotificationProjection {
   final SecureKeyStore _store;
   final int maxAuthoredTargets;
+  final int maxAuthorizedTransportsPerContact;
   Future<void> _tail = Future<void>.value();
   String? _expectedAccountPeerId;
   final Map<String, String> _simsCleanupTombstones = <String, String>{};
@@ -24,7 +26,9 @@ class DirectReactionNotificationProjection {
   DirectReactionNotificationProjection({
     required SecureKeyStore store,
     this.maxAuthoredTargets = 256,
+    this.maxAuthorizedTransportsPerContact = 32,
   }) : assert(maxAuthoredTargets > 0),
+       assert(maxAuthorizedTransportsPerContact > 0),
        _store = store;
 
   /// Establishes the account generation that owns both direct documents.
@@ -80,10 +84,14 @@ class DirectReactionNotificationProjection {
   Future<void> upsertContact(ContactModel contact) => _enqueue(() async {
     final document = await _readContactsDocument();
     if (!_owns(document.accountPeerId)) return;
+    final currentAuthority = _authorizedTransportPeerIds(
+      document.contacts[contact.peerId],
+    );
     document.contacts[contact.peerId] = <String, Object?>{
       'username': contact.username.trim(),
       'blocked': contact.isBlocked,
       'archived': contact.isArchived,
+      'authorizedTransportPeerIds': currentAuthority,
     };
     await _writeContacts(document.accountPeerId!, document.contacts);
   });
@@ -100,6 +108,9 @@ class DirectReactionNotificationProjection {
       'username': username.trim(),
       'blocked': blocked,
       'archived': archived,
+      'authorizedTransportPeerIds': _authorizedTransportPeerIds(
+        document.contacts[peerId],
+      ),
     };
     await _writeContacts(document.accountPeerId!, document.contacts);
   });
@@ -126,6 +137,9 @@ class DirectReactionNotificationProjection {
             'username': contact.username.trim(),
             'blocked': contact.isBlocked,
             'archived': contact.isArchived,
+            'authorizedTransportPeerIds': _authorizedTransportPeerIds(
+              current.contacts[contact.peerId],
+            ),
           };
           final simsDigest = _simsFixtureDigestForBackfill(
             contact,
@@ -138,6 +152,83 @@ class DirectReactionNotificationProjection {
         }
         await _writeContacts(current.accountPeerId!, projection);
       });
+
+  /// Removes one contact's physical-sender admission before authoritative trust
+  /// changes. Storage failure propagates and invalidates the shared documents,
+  /// so callers must abort the database mutation.
+  Future<void> retireContactTransportAuthority(
+    String peerId,
+  ) => _enqueue(() async {
+    final document = await _readContactsDocument();
+    if (!_owns(document.accountPeerId)) {
+      throw StateError('direct notification projection owner is unavailable');
+    }
+    final normalized = peerId.trim();
+    final current = document.contacts[normalized];
+    if (current != null) {
+      current['authorizedTransportPeerIds'] = <String>[];
+      await _writeContacts(document.accountPeerId!, document.contacts);
+    }
+    final readBack = await _readContactsDocument();
+    if (!_owns(readBack.accountPeerId) ||
+        _authorizedTransportPeerIds(readBack.contacts[normalized]).isNotEmpty) {
+      throw StateError('direct transport authority retirement was not durable');
+    }
+  }, propagateError: true);
+
+  /// Publishes only the committed current trust readback for one contact.
+  Future<void> replaceContactTransportAuthority({
+    required String peerId,
+    required Iterable<String> authorizedTransportPeerIds,
+  }) => _enqueue(() async {
+    final document = await _readContactsDocument();
+    if (!_owns(document.accountPeerId)) {
+      throw StateError('direct notification projection owner is unavailable');
+    }
+    final normalized = peerId.trim();
+    final current = document.contacts[normalized];
+    if (normalized.isEmpty || current == null) return;
+    final expected = _boundedAuthorizedTransports(authorizedTransportPeerIds);
+    current['authorizedTransportPeerIds'] = expected;
+    await _writeContacts(document.accountPeerId!, document.contacts);
+    final readBack = await _readContactsDocument();
+    if (!_owns(readBack.accountPeerId) ||
+        !_sameStrings(
+          _authorizedTransportPeerIds(readBack.contacts[normalized]),
+          expected,
+        )) {
+      throw StateError('direct transport authority read-back failed');
+    }
+  }, propagateError: true);
+
+  /// Launch-time atomic replacement from display rows plus committed device
+  /// trust. No old authority field survives when a loader omits a contact.
+  Future<void> replaceContactsWithTransportAuthority({
+    required Iterable<ContactModel> contacts,
+    required Map<String, Iterable<String>> authorizedTransportsByContact,
+  }) => _enqueue(() async {
+    final current = await _readContactsDocument();
+    if (!_owns(current.accountPeerId)) {
+      throw StateError('direct notification projection owner is unavailable');
+    }
+    final replacement = <String, Map<String, Object?>>{};
+    for (final contact in contacts) {
+      replacement[contact.peerId] = <String, Object?>{
+        'username': contact.username.trim(),
+        'blocked': contact.isBlocked,
+        'archived': contact.isArchived,
+        'authorizedTransportPeerIds': _boundedAuthorizedTransports(
+          authorizedTransportsByContact[contact.peerId] ?? const <String>[],
+        ),
+      };
+    }
+    await _writeContacts(current.accountPeerId!, replacement);
+    final readBack = await _readContactsDocument();
+    if (!_owns(readBack.accountPeerId) ||
+        jsonEncode(readBack.contacts) != jsonEncode(replacement)) {
+      throw StateError('direct transport authority backfill read-back failed');
+    }
+  }, propagateError: true);
 
   /// Test-only targeted insert used by the private physical-iOS SIMS seam.
   ///
@@ -166,6 +257,7 @@ class DirectReactionNotificationProjection {
       'username': username.trim(),
       'blocked': false,
       'archived': false,
+      'authorizedTransportPeerIds': <String>[],
       _simsFixtureDigestKey: fixtureDigest,
     };
     await _writeContacts(document.accountPeerId!, next);
@@ -339,12 +431,14 @@ class DirectReactionNotificationProjection {
       for (final entry in values.entries) {
         final value = entry.value;
         if (value is! Map) continue;
+        final contact = Map<String, Object?>.from(value);
         final username = value['username']?.toString().trim() ?? '';
         if (entry.key.trim().isEmpty || username.isEmpty) continue;
         result[entry.key] = <String, Object?>{
           'username': username,
           'blocked': value['blocked'] == true,
           'archived': value['archived'] == true,
+          'authorizedTransportPeerIds': _authorizedTransportPeerIds(contact),
           if (_isSha256(value[_simsFixtureDigestKey]?.toString() ?? ''))
             _simsFixtureDigestKey: value[_simsFixtureDigestKey].toString(),
         };
@@ -441,6 +535,48 @@ class DirectReactionNotificationProjection {
       });
     return sorted.take(maxAuthoredTargets).toList(growable: false);
   }
+
+  List<String> _boundedAuthorizedTransports(Iterable<String> values) {
+    final result = <String>[];
+    final seen = <String>{};
+    for (final value in values) {
+      if (!isNativeCompatibleIosNsePeerId(value) || !seen.add(value)) {
+        throw const FormatException(
+          'direct notification transport authority is non-canonical',
+        );
+      }
+      result.add(value);
+    }
+    result.sort();
+    if (result.length > maxAuthorizedTransportsPerContact) {
+      throw StateError('direct notification transport authority exceeds bound');
+    }
+    return result;
+  }
+}
+
+bool _sameStrings(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+List<String> _authorizedTransportPeerIds(Map<String, Object?>? value) {
+  final raw = value?['authorizedTransportPeerIds'];
+  if (raw is! List) return <String>[];
+  final result = <String>[];
+  final seen = <String>{};
+  for (final item in raw) {
+    if (!isNativeCompatibleIosNsePeerId(item) || !seen.add(item)) {
+      return <String>[];
+    }
+    result.add(item);
+  }
+  final sorted = List<String>.from(result)..sort();
+  if (!_sameStrings(result, sorted)) return <String>[];
+  return result;
 }
 
 bool _isExactSimsFixtureProjection(
@@ -449,10 +585,11 @@ bool _isExactSimsFixtureProjection(
   required String fixtureDigest,
 }) =>
     value != null &&
-    value.length == 4 &&
+    value.length == 5 &&
     value['username'] == username.trim() &&
     value['blocked'] == false &&
     value['archived'] == false &&
+    _authorizedTransportPeerIds(value).isEmpty &&
     value[_simsFixtureDigestKey] == fixtureDigest;
 
 bool _isSha256(String value) => RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
@@ -465,7 +602,7 @@ String? _simsFixtureDigestForBackfill(
   if (digest == null) return null;
   final username = contact.username.trim();
   if (projected == null ||
-      (projected.length != 3 && projected.length != 4) ||
+      (projected.length != 4 && projected.length != 5) ||
       projected['username'] != username ||
       projected['blocked'] != false ||
       projected['archived'] != false) {

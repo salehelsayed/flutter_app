@@ -363,8 +363,10 @@ bool _isExactProjection(
   IosSenderProjectionRequest request,
 ) =>
     actual != null &&
-    actual.length == 4 &&
+    actual.length == 5 &&
     actual['username'] == request.senderUsername &&
     actual['blocked'] == false &&
     actual['archived'] == false &&
+    actual['authorizedTransportPeerIds'] is List<Object?> &&
+    (actual['authorizedTransportPeerIds']! as List<Object?>).isEmpty &&
     actual[iosSenderProjectionDigestField] == request.fixtureDigest;

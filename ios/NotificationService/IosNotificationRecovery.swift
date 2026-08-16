@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Security
 import UserNotifications
 
 enum IosNotificationRecoveryLane: String, Codable {
@@ -30,6 +31,37 @@ struct IosNotificationCanonicalIdentity: Hashable {
 struct IosNotificationRecoveryBegin: Equatable {
   let generation: UInt64
   let watermark: UInt64
+  let mailboxAlertLease: IosNotificationMailboxAlertLease?
+}
+
+enum IosNotificationMailboxAlertLeasePhase: String, Codable {
+  case prepared = "PREPARED"
+  case publishing = "PUBLISHING"
+  case audibleAmbiguous = "AUDIBLE_AMBIGUOUS"
+}
+
+/// Bounded compatibility projection for one fixed mailbox wake. Raw account,
+/// binding and event identifiers never enter this store.
+struct IosNotificationMailboxAlertLease: Codable, Equatable {
+  let token: String
+  let accountHash: String
+  let bindingHash: String
+  let requestIdentifier: String
+  let generation: UInt64
+  let sequence: UInt64
+  var phase: IosNotificationMailboxAlertLeasePhase
+
+  var methodChannelMap: [String: Any] {
+    [
+      "token": token,
+      "accountHash": accountHash,
+      "bindingHash": bindingHash,
+      "requestIdentifier": requestIdentifier,
+      "generation": Int64(generation),
+      "sequence": Int64(sequence),
+      "phase": phase.rawValue,
+    ]
+  }
 }
 
 struct IosNotificationBadgeSnapshot: Equatable {
@@ -91,6 +123,7 @@ private struct IosNotificationRecoveryState: Codable, Equatable {
   var pendingOrdinaryEvents: [IosNotificationPendingOrdinaryEvent] = []
   var recentEventClaims: [IosNotificationRecentEventClaim] = []
   var requestRows: [String: IosNotificationRecoveryRow] = [:]
+  var mailboxAlertLease: IosNotificationMailboxAlertLease?
 
   private enum CodingKeys: String, CodingKey {
     case version
@@ -104,6 +137,7 @@ private struct IosNotificationRecoveryState: Codable, Equatable {
     case pendingOrdinaryEvents
     case recentEventClaims
     case requestRows
+    case mailboxAlertLease
   }
 
   init() {}
@@ -144,6 +178,10 @@ private struct IosNotificationRecoveryState: Codable, Equatable {
       [String: IosNotificationRecoveryRow].self,
       forKey: .requestRows
     )
+    mailboxAlertLease = try container.decodeIfPresent(
+      IosNotificationMailboxAlertLease.self,
+      forKey: .mailboxAlertLease
+    )
   }
 }
 
@@ -171,12 +209,16 @@ final class IosNotificationRecoveryStore {
   private let maxCanonicalEvents: Int
   private let maxRecentEvents: Int
   private let fileManager: FileManager
+  private let currentOpaqueBinding: () -> String?
 
   convenience init?(
     appGroupIdentifier: String = "group.com.mknoon.app.share",
     maxRows: Int = 512,
     maxCanonicalEvents: Int = 4_096,
-    maxRecentEvents: Int = 256
+    maxRecentEvents: Int = 256,
+    currentOpaqueBinding: @escaping () -> String? = {
+      IosNotificationRecoveryStore.readCurrentOpaqueBinding()
+    }
   ) {
     guard let container = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: appGroupIdentifier
@@ -187,7 +229,8 @@ final class IosNotificationRecoveryStore {
       directory: container,
       maxRows: maxRows,
       maxCanonicalEvents: maxCanonicalEvents,
-      maxRecentEvents: maxRecentEvents
+      maxRecentEvents: maxRecentEvents,
+      currentOpaqueBinding: currentOpaqueBinding
     )
   }
 
@@ -196,7 +239,8 @@ final class IosNotificationRecoveryStore {
     maxRows: Int = 512,
     maxCanonicalEvents: Int = 4_096,
     maxRecentEvents: Int = 256,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    currentOpaqueBinding: @escaping () -> String? = { nil }
   ) {
     self.directory = directory
     stateURL = directory.appendingPathComponent(Self.stateFileName)
@@ -206,10 +250,170 @@ final class IosNotificationRecoveryStore {
     self.maxCanonicalEvents = max(0, maxCanonicalEvents)
     self.maxRecentEvents = max(0, maxRecentEvents)
     self.fileManager = fileManager
+    self.currentOpaqueBinding = currentOpaqueBinding
     try? fileManager.createDirectory(
       at: directory,
       withIntermediateDirectories: true
     )
+  }
+
+  /// Persists the fixed-wake ambiguity boundary before any network/decrypt
+  /// work. A newer fixed wake supersedes the single bounded lease.
+  func prepareMailboxAlertLease(
+    requestIdentifier: String
+  ) -> IosNotificationMailboxAlertLease? {
+    guard Self.isBoundedOpaqueString(requestIdentifier, maxBytes: 512),
+          let opaqueBinding = currentOpaqueBinding(),
+          Self.isCanonicalOpaqueBinding(opaqueBinding) else {
+      return nil
+    }
+    return withBoundedLock(defaultValue: nil) {
+      guard case var .valid(state) = loadState(),
+            !state.nseClaimsSuspended,
+            let accountHash = state.activeAccountHash else {
+        return nil
+      }
+      return prepareMailboxAlertLeaseLocked(
+        state: &state,
+        requestIdentifier: requestIdentifier,
+        accountHash: accountHash,
+        opaqueBinding: opaqueBinding
+      )
+    }
+  }
+
+  func prepareMailboxAlertLease(
+    requestIdentifier: String,
+    accountPeerId: String,
+    opaqueBinding: String
+  ) -> IosNotificationMailboxAlertLease? {
+    guard Self.isBoundedOpaqueString(requestIdentifier, maxBytes: 512),
+          Self.isBoundedOpaqueString(accountPeerId, maxBytes: 512),
+          Self.isCanonicalOpaqueBinding(opaqueBinding) else {
+      return nil
+    }
+    return withBoundedLock(defaultValue: nil) {
+      var state: IosNotificationRecoveryState
+      switch loadState() {
+      case let .valid(value): state = value
+      case .missing: state = IosNotificationRecoveryState()
+      case .unsupported, .corrupt, .unavailable: return nil
+      }
+      let accountHash = Self.hash(domain: "account", value: accountPeerId)
+      guard !state.nseClaimsSuspended,
+            state.activeAccountHash == nil ||
+              state.activeAccountHash == accountHash,
+            state.generation < UInt64(Int64.max) else {
+        return nil
+      }
+      if state.activeAccountHash == nil {
+        state.activeAccountHash = accountHash
+        state.generation += 1
+      }
+      return prepareMailboxAlertLeaseLocked(
+        state: &state,
+        requestIdentifier: requestIdentifier,
+        accountHash: accountHash,
+        opaqueBinding: opaqueBinding
+      )
+    }
+  }
+
+  func mailboxAlertLeaseMatches(
+    _ expected: IosNotificationMailboxAlertLease,
+    accountPeerId: String,
+    opaqueBinding: String
+  ) -> Bool {
+    guard Self.isBoundedOpaqueString(accountPeerId, maxBytes: 512),
+          Self.isCanonicalOpaqueBinding(opaqueBinding) else {
+      return false
+    }
+    return readBounded(defaultValue: false) { state in
+      guard let current = state.mailboxAlertLease else { return false }
+      return current == expected &&
+        current.accountHash == Self.hash(domain: "account", value: accountPeerId) &&
+        current.bindingHash == Self.hash(domain: "binding", value: opaqueBinding)
+    }
+  }
+
+  @discardableResult
+  func markMailboxAlertLeasePublishing(
+    token: String,
+    generation: UInt64,
+    sequence: UInt64
+  ) -> Bool {
+    mutateExistingBounded { state in
+      guard var lease = state.mailboxAlertLease,
+            lease.token == token,
+            lease.generation == generation,
+            lease.sequence == sequence,
+            (lease.phase == .prepared || lease.phase == .publishing) else {
+        return false
+      }
+      lease.phase = .publishing
+      state.mailboxAlertLease = lease
+      return true
+    }
+  }
+
+  @discardableResult
+  func markMailboxAlertLeaseAudibleAmbiguous(
+    token: String,
+    generation: UInt64,
+    sequence: UInt64
+  ) -> Bool {
+    mutateExistingBounded { state in
+      guard var lease = state.mailboxAlertLease,
+            lease.token == token,
+            lease.generation == generation,
+            lease.sequence == sequence,
+            lease.phase == .publishing || lease.phase == .prepared else {
+        return false
+      }
+      lease.phase = .audibleAmbiguous
+      state.mailboxAlertLease = lease
+      return true
+    }
+  }
+
+  @discardableResult
+  func retireMailboxAlertLease(
+    token: String,
+    generation: UInt64,
+    sequence: UInt64
+  ) -> Bool {
+    mutateExistingBounded { state in
+      guard let lease = state.mailboxAlertLease,
+            lease.token == token,
+            lease.generation == generation,
+            lease.sequence == sequence else {
+        return false
+      }
+      state.mailboxAlertLease = nil
+      return true
+    }
+  }
+
+  @discardableResult
+  func consumeMailboxAlertLease(
+    accountPeerId: String,
+    generation: UInt64,
+    sequence: UInt64,
+    watermark: UInt64
+  ) -> Bool {
+    mutateExistingBounded { state in
+      let accountHash = Self.hash(domain: "account", value: accountPeerId)
+      guard let lease = state.mailboxAlertLease,
+            state.activeAccountHash == accountHash,
+            lease.accountHash == accountHash,
+            lease.generation == generation,
+            lease.sequence == sequence,
+            lease.sequence <= watermark else {
+        return false
+      }
+      state.mailboxAlertLease = nil
+      return true
+    }
   }
 
   func claimPrepared(
@@ -385,14 +589,26 @@ final class IosNotificationRecoveryStore {
         state.recentEventClaims.removeAll()
         state.canonicalBadgeBaseline = 0
         state.canonicalOrdinaryEventHashes.removeAll()
+        state.mailboxAlertLease = nil
         state.activeAccountHash = accountHash
+      }
+      let currentBindingHash = currentOpaqueBinding().flatMap { binding in
+        Self.isCanonicalOpaqueBinding(binding)
+          ? Self.hash(domain: "binding", value: binding)
+          : nil
+      }
+      if let lease = state.mailboxAlertLease,
+         lease.accountHash != accountHash ||
+           lease.bindingHash != currentBindingHash {
+        state.mailboxAlertLease = nil
       }
       state.nseClaimsSuspended = false
       state.generation &+= 1
       state.revision &+= 1
       let begin = IosNotificationRecoveryBegin(
         generation: state.generation,
-        watermark: state.nextSequence == 0 ? 0 : state.nextSequence - 1
+        watermark: state.nextSequence == 0 ? 0 : state.nextSequence - 1,
+        mailboxAlertLease: state.mailboxAlertLease
       )
       guard writeState(state) else { return nil }
       return begin
@@ -544,6 +760,7 @@ final class IosNotificationRecoveryStore {
       state.recentEventClaims.removeAll()
       state.canonicalBadgeBaseline = 0
       state.canonicalOrdinaryEventHashes.removeAll()
+      state.mailboxAlertLease = nil
       state.activeAccountHash = nil
       state.nseClaimsSuspended = true
       state.generation &+= 1
@@ -699,11 +916,63 @@ final class IosNotificationRecoveryStore {
     }
   }
 
+  private func mutateExistingBounded(
+    _ mutation: (inout IosNotificationRecoveryState) -> Bool
+  ) -> Bool {
+    withBoundedLock(defaultValue: false) {
+      guard case var .valid(state) = loadState() else { return false }
+      guard mutation(&state) else { return false }
+      guard state.revision < UInt64.max else { return false }
+      state.revision += 1
+      return writeState(state)
+    }
+  }
+
+  private func prepareMailboxAlertLeaseLocked(
+    state: inout IosNotificationRecoveryState,
+    requestIdentifier: String,
+    accountHash: String,
+    opaqueBinding: String
+  ) -> IosNotificationMailboxAlertLease? {
+    guard state.activeAccountHash == accountHash,
+          state.nextSequence > 0,
+          state.nextSequence < UInt64(Int64.max),
+          state.generation > 0,
+          state.generation <= UInt64(Int64.max),
+          state.revision < UInt64.max else {
+      return nil
+    }
+    let lease = IosNotificationMailboxAlertLease(
+      token: UUID().uuidString,
+      accountHash: accountHash,
+      bindingHash: Self.hash(domain: "binding", value: opaqueBinding),
+      requestIdentifier: requestIdentifier,
+      generation: state.generation,
+      sequence: state.nextSequence,
+      phase: .prepared
+    )
+    state.nextSequence += 1
+    state.mailboxAlertLease = lease
+    state.revision += 1
+    guard writeState(state) else { return nil }
+    return lease
+  }
+
   private func read<T>(
     defaultValue: T,
     _ body: (IosNotificationRecoveryState) -> T
   ) -> T {
     withLock(defaultValue: defaultValue) {
+      guard case let .valid(state) = loadState() else { return defaultValue }
+      return body(state)
+    }
+  }
+
+  private func readBounded<T>(
+    defaultValue: T,
+    _ body: (IosNotificationRecoveryState) -> T
+  ) -> T {
+    withBoundedLock(defaultValue: defaultValue) {
       guard case let .valid(state) = loadState() else { return defaultValue }
       return body(state)
     }
@@ -721,6 +990,35 @@ final class IosNotificationRecoveryStore {
       close(fd)
     }
     guard flock(fd, LOCK_EX) == 0 else { return defaultValue }
+    return body()
+  }
+
+  /// NSE-only lease operations must lose quickly to Runner/rich recovery
+  /// contention. They never schedule late mutation after this function exits.
+  private func withBoundedLock<T>(
+    defaultValue: T,
+    timeoutMs: UInt64 = 150,
+    _ body: () -> T
+  ) -> T {
+    try? fileManager.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    let fd = open(stateLockURL.path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
+    guard fd >= 0 else { return defaultValue }
+    defer {
+      flock(fd, LOCK_UN)
+      close(fd)
+    }
+    let started = DispatchTime.now().uptimeNanoseconds
+    let timeoutNs = timeoutMs * 1_000_000
+    while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+      guard errno == EWOULDBLOCK || errno == EAGAIN,
+            DispatchTime.now().uptimeNanoseconds - started < timeoutNs else {
+        return defaultValue
+      }
+      usleep(2_000)
+    }
     return body()
   }
 
@@ -759,7 +1057,11 @@ final class IosNotificationRecoveryStore {
       ).allSatisfy({ pair in pair.0.sequence < pair.1.sequence }),
       Set(state.recentEventClaims.map {
         "\($0.accountHash):\($0.eventHash)"
-      }).count == state.recentEventClaims.count else {
+      }).count == state.recentEventClaims.count,
+      Self.isValidMailboxAlertLease(
+        state.mailboxAlertLease,
+        nextSequence: state.nextSequence
+      ) else {
       return .corrupt
     }
     return .valid(state)
@@ -855,6 +1157,64 @@ final class IosNotificationRecoveryStore {
     value.utf8.count == 64 && value.utf8.allSatisfy { byte in
       (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
     }
+  }
+
+  private static func isCanonicalOpaqueBinding(_ value: String) -> Bool {
+    guard value.utf8.count == 67, value.hasPrefix("v1:") else { return false }
+    return value.dropFirst(3).utf8.allSatisfy { byte in
+      (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
+    }
+  }
+
+  private static func isValidMailboxAlertLease(
+    _ lease: IosNotificationMailboxAlertLease?,
+    nextSequence: UInt64
+  ) -> Bool {
+    guard let lease else { return true }
+    return isBoundedOpaqueString(lease.token, maxBytes: 128) &&
+      isStoredHash(lease.accountHash) &&
+      isStoredHash(lease.bindingHash) &&
+      isBoundedOpaqueString(lease.requestIdentifier, maxBytes: 512) &&
+      lease.generation > 0 &&
+      lease.generation <= UInt64(Int64.max) &&
+      lease.sequence > 0 &&
+      lease.sequence < nextSequence &&
+      lease.sequence <= UInt64(Int64.max)
+  }
+
+  private static func isBoundedOpaqueString(
+    _ value: String,
+    maxBytes: Int
+  ) -> Bool {
+    !value.isEmpty && value.utf8.count <= maxBytes &&
+      value == value.trimmingCharacters(in: .whitespacesAndNewlines) &&
+      value.unicodeScalars.allSatisfy { scalar in
+        scalar.value > 31 && !(127...159).contains(scalar.value)
+      }
+  }
+
+  private static func readCurrentOpaqueBinding() -> String? {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrAccount as String: "canonical_runtime_shared_account_binding_v1",
+      kSecAttrService as String: "flutter_secure_storage_service",
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+      kSecAttrAccessGroup as String:
+        "397R9Q4WMX.group.com.mknoon.app.share",
+    ]
+#if MKNOON_SIMS_GROUP_MEDIA_269
+    query[kSecAttrAccessGroup as String] =
+      "397R9Q4WMX.group.com.mknoon.sims.groupmedia269.share"
+#endif
+    var item: CFTypeRef?
+    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+          let data = item as? Data,
+          let binding = String(data: data, encoding: .utf8),
+          isCanonicalOpaqueBinding(binding) else {
+      return nil
+    }
+    return binding
   }
 }
 

@@ -7,6 +7,7 @@ import 'package:flutter_app/core/application/protected_group_content_runtime_qui
 import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome_drainer.dart';
+import 'package:flutter_app/core/notifications/ios_mailbox_alert_silent_replay_context.dart';
 import 'package:flutter_app/core/services/protected_group_content_contract.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -110,6 +111,7 @@ import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/core/secure_storage/legacy_group_secret_storage_scrub.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
@@ -312,6 +314,7 @@ import 'package:flutter_app/core/notifications/group_reaction_notification_proje
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
 import 'package:flutter_app/core/notifications/ios_notification_recovery_bridge.dart';
 import 'package:flutter_app/core/notifications/ios_notification_recovery_coordinator.dart';
+import 'package:flutter_app/core/notifications/ios_nse_inbox_projection.dart';
 import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_bridge.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_coordinator.dart';
@@ -709,7 +712,24 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     final groupReactionNotificationProjection = sharedPushKeyStore == null
         ? null
         : GroupReactionNotificationProjection(store: sharedPushKeyStore);
+    final iosNseInboxTransportProjection = sharedPushKeyStore == null
+        ? null
+        : IosNseInboxTransportProjection(store: sharedPushKeyStore);
+    final iosNseTransportAdmissionActive =
+        iosNseInboxTransportProjection != null &&
+        kWakeOutcomeCoordinatorAdmissionEnabled &&
+        !kIsWeb &&
+        Platform.isIOS;
+    if (iosNseInboxTransportProjection != null &&
+        !kWakeOutcomeCoordinatorAdmissionEnabled) {
+      // Rollback/default-off cleanup is outside the linked registration hook:
+      // that hook itself remains zero-work while admission is disabled, while
+      // stale private transport bytes cannot survive a downgraded launch.
+      await iosNseInboxTransportProjection.retireAndReadBack();
+    }
     void Function()? notifyContactPushEligibilityChanged;
+    Future<void> Function(IdentityModel identity)?
+    refreshIosNseTransportAfterIdentityCommit;
     // 229: install the process-wide auto-download policy so EVERY automatic
     // media transfer entry point (direct listener, direct visible-media
     // recovery, shared group loader) consults the user's persisted matrix +
@@ -887,6 +907,15 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           : () async {
               await canonicalRuntimeBindingCoordinator.retireAccount();
             },
+      retireIosNseInboxTransport: iosNseTransportAdmissionActive
+          ? iosNseInboxTransportProjection.retireAndReadBack
+          : null,
+      refreshIosNseInboxTransport: iosNseTransportAdmissionActive
+          ? (identity) async {
+              final refresh = refreshIosNseTransportAfterIdentityCommit;
+              if (refresh != null) await refresh(identity);
+            }
+          : null,
     );
     Future<void> Function()? notificationCompletedOutcomeDrainKick;
     void kickNotificationCompletedOutcomeDrain() {
@@ -984,6 +1013,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         );
       },
       directReactionProjection: directReactionNotificationProjection,
+      loadDirectNotificationAuthorizedTransports: (peerId) =>
+          loadDirectNotificationAuthorizedTransportPeerIds(db, peerId),
       onPushEligibilityChanged: () =>
           notifyContactPushEligibilityChanged?.call(),
     );
@@ -5556,11 +5587,16 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         publishCanonicalAccountBinding:
             canonicalRuntimeBindingCoordinator == null
             ? null
-            : (accountPeerId) async {
-                await canonicalRuntimeBindingCoordinator.publishAccount(
-                  accountPeerId,
-                );
-              },
+            : (accountPeerId) => runWithRetiredIosNseTransportAuthority<void>(
+                projection: iosNseTransportAdmissionActive
+                    ? iosNseInboxTransportProjection
+                    : null,
+                mutateAuthority: () async {
+                  await canonicalRuntimeBindingCoordinator.publishAccount(
+                    accountPeerId,
+                  );
+                },
+              ),
         stagingDirectoryPath: '${appDocDir.path}/account_migration/import',
         documentsRootPath: appDocDir.path,
       ),
@@ -5577,6 +5613,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               details: {'errorType': error.runtimeType.toString()},
             );
           }
+          await iosNseInboxTransportProjection?.retireAndReadBack();
           await pushTokenStore.clearToken();
           await canonicalRuntimeBindingCoordinator?.retireAccount();
           await directReactionNotificationProjection?.clearForLogout();
@@ -5598,6 +5635,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       accountMigrationTransferRuntime.handleMigrationTransferRequest,
     );
     late final ChatMessageListener chatMessageListener;
+    late final GroupMessageListener groupMessageListener;
     late final IntroductionListener introductionListener;
     // 171: forward-declared so the p2pService inbox-replay closure (below) can
     // route a cold-receiver contact_request through the listener; assigned after
@@ -5633,6 +5671,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       var outcome = await chatMessageListener.processIncomingMessage(
         message,
         suppressNotification: suppressNotification,
+        forceSilentNotification: isIosMailboxAlertSilentReplayContext,
         stagedEntryId: stagedEntryId,
       );
       if (outcome.state == ChatMessageProcessState.unknownSender) {
@@ -5648,6 +5687,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             outcome = await chatMessageListener.processIncomingMessage(
               message,
               suppressNotification: suppressNotification,
+              forceSilentNotification: isIosMailboxAlertSilentReplayContext,
               stagedEntryId: stagedEntryId,
             );
           }
@@ -5744,6 +5784,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         contactRepo: contactRepository,
         bridge: bridge,
         ownMlKemSecretKey: identity?.mlKemSecretKey,
+        forceSilentReactionNotification: isIosMailboxAlertSilentReplayContext,
         // 127-Bug-C: notify the recipient that a contact reacted to their 1:1
         // message (no-op until the holder below is populated). The use case fires
         // only on a fresh ADD upsert and respects the standard suppression gates.
@@ -5882,6 +5923,36 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     /// consumed synchronously by the route-push fanout authoring resolver.
     String? lastKnownAccountPeerId;
     RoleAwareDeferredRuntimeStart? roleAwareDeferredRuntimeStartRef;
+    final opaqueWakePlatformConsumerReadiness =
+        OpaqueWakePlatformConsumerReadiness(
+          admissionEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
+          readIosConsumer: iosNseInboxTransportProjection == null
+              ? null
+              : () async {
+                  if (kIsWeb || !Platform.isIOS) return false;
+                  final identityRow = await dbLoadIdentityRow(db);
+                  final logicalAccountPeerId = identityRow?['peer_id'];
+                  final transportPeerId = p2pService.currentState.peerId;
+                  final sharedOpaqueBinding = await sharedPushKeyStore!.read(
+                    canonicalRuntimeSharedAccountBindingStorageKey,
+                  );
+                  final canonicalOpaqueBinding =
+                      await canonicalRuntimeBindingCoordinator
+                          ?.readCurrentAccountBinding();
+                  if (logicalAccountPeerId is! String ||
+                      transportPeerId == null ||
+                      canonicalOpaqueBinding == null ||
+                      sharedOpaqueBinding != canonicalOpaqueBinding) {
+                    return false;
+                  }
+                  return iosNseInboxTransportProjection.isBindingQualified(
+                    opaqueBinding: canonicalOpaqueBinding,
+                    logicalAccountPeerId: logicalAccountPeerId,
+                    transportPeerId: transportPeerId,
+                    relayMultiaddrs: defaultRelayAddresses(),
+                  );
+                },
+        );
 
     // Create P2P service (uses the same bridge + local P2P)
     p2pService = P2PServiceImpl(
@@ -5889,6 +5960,53 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           roleAwareDeferredRuntimeStartRef?.activeLinkedTransportPeerId,
       logicalAccountPeerId: () =>
           roleAwareDeferredRuntimeStartRef?.activeLinkedAccountPeerId,
+      publishQualifiedIosNseTransport: iosNseInboxTransportProjection == null
+          ? null
+          : ({
+              required logicalAccountPeerId,
+              required transportPeerId,
+              required transportPrivateKeyBase64,
+              required relayMultiaddrs,
+            }) async {
+              if (kIsWeb ||
+                  !Platform.isIOS ||
+                  !kWakeOutcomeCoordinatorAdmissionEnabled) {
+                return false;
+              }
+              try {
+                final identityRow = await dbLoadIdentityRow(db);
+                final committedAccountPeerId = identityRow?['peer_id'];
+                final sharedOpaqueBinding = await sharedPushKeyStore!.read(
+                  canonicalRuntimeSharedAccountBindingStorageKey,
+                );
+                final canonicalOpaqueBinding =
+                    await canonicalRuntimeBindingCoordinator
+                        ?.readCurrentAccountBinding();
+                if (committedAccountPeerId is! String ||
+                    committedAccountPeerId != logicalAccountPeerId ||
+                    canonicalOpaqueBinding == null ||
+                    sharedOpaqueBinding != canonicalOpaqueBinding) {
+                  throw StateError('iOS NSE transport binding is not current');
+                }
+                await iosNseInboxTransportProjection.publishAndReadBack(
+                  opaqueBinding: canonicalOpaqueBinding,
+                  logicalAccountPeerId: logicalAccountPeerId,
+                  transportPeerId: transportPeerId,
+                  transportPrivateKeyBase64: transportPrivateKeyBase64,
+                  relayMultiaddrs: relayMultiaddrs,
+                );
+                return true;
+              } on Object {
+                await iosNseInboxTransportProjection.retireAndReadBack();
+                return false;
+              }
+            },
+      readOpaqueWakePlatformConsumerReadiness:
+          opaqueWakePlatformConsumerReadiness.isReadyFor,
+      beginIosInboxDrainGeneration:
+          iosNotificationRecoveryCoordinator?.beginInboxDrainGeneration,
+      endIosInboxDrainGeneration:
+          iosNotificationRecoveryCoordinator?.endInboxDrainGeneration,
       bridge: bridge,
       localP2PService: localP2PService,
       pushTokenStore: pushTokenStore,
@@ -5916,7 +6034,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) =>
           replayInboxChatMessage(
             message,
-            suppressNotification: true,
+            suppressNotification: !isIosMailboxAlertSilentReplayContext,
             stagedEntryId: stagedEntryId,
           ),
       replayLiveLanChatMessage: (message, {String? stagedEntryId}) =>
@@ -6011,6 +6129,18 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         loadOwnMlKemSecretKeyRing: () => loadMlKemSecretKeyRing(secureKeyStore),
       ),
     );
+    if (iosNseTransportAdmissionActive) {
+      refreshIosNseTransportAfterIdentityCommit = (identity) async {
+        if (!p2pService.currentState.isStarted) return;
+        if (!await p2pService.refreshQualifiedIosNseTransportProjection(
+          logicalAccountPeerId: identity.peerId,
+        )) {
+          throw StateError(
+            'qualified iOS NSE transport refresh failed after identity commit',
+          );
+        }
+      };
+    }
     // 364: one owner per production bootstrap/runtime. It spans inbound
     // protected replay plus every strict linked outgoing custody operation;
     // no process-global pause bit can leak between runtime instances.
@@ -7321,7 +7451,6 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     );
 
     // Create group message listener and wire bridge callback to stream
-    late final GroupMessageListener groupMessageListener;
     late final GroupExitIntentRepositoryImpl groupExitIntentRepository;
     groupMessageListener = GroupMessageListener(
       groupRepo: groupRepository,
@@ -9273,6 +9402,47 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       return currentKey?.keyGeneration == selected.keyEpoch ? selected : null;
     }
 
+    Future<GroupNotificationSenderAuthority?>
+    loadCurrentGroupNotificationSenderAuthority(String groupId) async {
+      final proof = await loadLatestSettledProtectedContentAuthority(groupId);
+      if (proof == null) return null;
+      final tuples = <GroupNotificationSenderAuthorityTuple>[];
+      for (final member in await groupRepository.getMembers(groupId)) {
+        for (final device in member.activeDevicesWithLegacyFallback()) {
+          if (!device.isActive ||
+              member.peerId.trim().isEmpty ||
+              device.deviceId.trim().isEmpty ||
+              device.transportPeerId.trim().isEmpty ||
+              device.deviceSigningPublicKey.trim().isEmpty) {
+            continue;
+          }
+          tuples.add(
+            GroupNotificationSenderAuthorityTuple(
+              logicalSender: member.peerId,
+              deviceId: device.deviceId,
+              transportPeerId: device.transportPeerId,
+              signingPublicKey: device.deviceSigningPublicKey,
+            ),
+          );
+        }
+      }
+      if (tuples.isEmpty) return null;
+      return GroupNotificationSenderAuthority(
+        authorityEventAt: fixedGroupAuthorityUtc(proof.eventAt),
+        authorityEventId: proof.eventId,
+        keyEpoch: proof.keyEpoch,
+        tuples: tuples,
+      );
+    }
+
+    groupRepository.setGroupNotificationSenderAuthorityLoader(
+      loadCurrentGroupNotificationSenderAuthority,
+    );
+    keychainMirrorBackfill = (keychainMirrorBackfill ?? Future<void>.value())
+        .then(
+          (_) => groupRepository.mirrorAllGroupNotificationSenderAuthorities(),
+        );
+
     Future<bool> isLinkedGroupAuthoritySettled(String groupId) async =>
         await loadLatestSettledProtectedContentAuthority(groupId) != null;
 
@@ -10566,6 +10736,31 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             );
             return result == StartNodeResult.success;
           },
+          afterLinkedTransportQualified:
+              kWakeOutcomeCoordinatorAdmissionEnabled &&
+                  !kIsWeb &&
+                  Platform.isIOS
+              ? () async {
+                  if (!await opaqueWakePlatformConsumerReadiness.isReadyFor(
+                    'ios',
+                  )) {
+                    throw StateError(
+                      'linked iOS opaque-wake projection is not ready',
+                    );
+                  }
+                  await ensureFirebaseReady();
+                  if (!firebaseReadiness.isReady) {
+                    throw StateError('linked iOS Firebase is not ready');
+                  }
+                  final registration = pushRegistrationCoordinator;
+                  if (registration == null) {
+                    throw StateError(
+                      'linked iOS push registration owner is unavailable',
+                    );
+                  }
+                  await registration.ensureStarted();
+                }
+              : null,
           drainOfflineInbox: p2pService.drainOfflineInbox,
           drainExactBlobFreeFanoutOutboxes: drainDirectBlobFreeLinkedOutboxes,
           drainLinkedDirectMediaBlobCustody: drainLinkedDirectMediaBlobCustody,
@@ -10728,7 +10923,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         // 360: the real database-backed linked-device trust authority. The
         // contact profile is the only surface that admits or withdraws a
         // device, and it requires a non-null capability.
-        directDeviceTrust: DatabaseDirectContactDeviceTrust(database: db),
+        directDeviceTrust: DatabaseDirectContactDeviceTrust(
+          database: db,
+          notificationProjection: directReactionNotificationProjection,
+        ),
         contactRepository: contactRepository,
         contactRequestRepository: contactRequestRepository,
         contactRequestListener: contactRequestListener,
@@ -11222,7 +11420,16 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         accountMigrationReceiverEvents:
             accountMigrationTransferRuntime.receiverEvents,
         retireCanonicalNotificationBinding:
-            canonicalRuntimeBindingCoordinator?.retireAccount,
+            canonicalRuntimeBindingCoordinator == null &&
+                iosNseInboxTransportProjection == null
+            ? null
+            : () async {
+                await iosNseInboxTransportProjection?.retireAndReadBack();
+                await canonicalRuntimeBindingCoordinator?.retireAccount();
+              },
+        retireIosNseInboxTransport: iosNseTransportAdmissionActive
+            ? iosNseInboxTransportProjection.retireAndReadBack
+            : null,
         accountMigrationRecoverExportPause: () async {
           if (accountMigrationTransferRuntime.hasActiveExportRun) {
             return false;
@@ -11236,6 +11443,16 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           return result.isCanonicalStateComplete;
         },
         firebaseReadiness: firebaseReadiness,
+        mayArmPushListeners: () {
+          return switch (roleAwareDeferredRuntimeStart.lastOutcome) {
+            RoleAwareRuntimeStartOutcome.primaryRuntimeStarted => true,
+            RoleAwareRuntimeStartOutcome.linkedFoundationStarted =>
+              kWakeOutcomeCoordinatorAdmissionEnabled &&
+                  !kIsWeb &&
+                  Platform.isIOS,
+            _ => false,
+          };
+        },
         onAppDetached: () async {
           if (canonicalWritableRuntimeSession != null) {
             await shutdownCanonicalRuntime();

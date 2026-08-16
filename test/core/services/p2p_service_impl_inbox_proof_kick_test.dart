@@ -339,10 +339,11 @@ void main() {
         reason: 'fixture: send NOT yet proven',
       );
 
-      bridge.calledCommands.clear();
-
-      // Now the send proof stores (relay became healthy). Because inbox is
-      // ALREADY proven, the store-seam kick must short-circuit — no extra drain.
+      // The inbox-success callback is allowed to start its send proof
+      // immediately and does so unawaited. Do not clear command history here:
+      // that races the already-started store and can erase the only proof from
+      // the observation window. The invariant is total work in this readiness
+      // window: one initial drain and one send store, with no second drain.
       bridge.onRelayStateChanged?.call({
         'relayState': 'online',
         'healthyRelayCount': 1,
@@ -363,10 +364,10 @@ void main() {
       );
       expect(
         drains(),
-        0,
+        1,
         reason:
             'INV-2: the kick is guarded on !inboxCapabilityReady — with '
-            'inbox already proven the store must NOT drain again',
+            'inbox already proven the initial drain must be the only drain',
       );
       expect(
         service.currentState.inboxCapabilityReady,

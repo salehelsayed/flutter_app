@@ -41,6 +41,7 @@ class LinkedDeviceSetupWired extends StatefulWidget {
     this.groupRepository,
     this.linkedGroupConversationBuilder,
     this.isLinkedGroupAuthoritySettled,
+    this.retireIosNseInboxTransport,
     this.onSetupSuccess,
   });
 
@@ -58,6 +59,7 @@ class LinkedDeviceSetupWired extends StatefulWidget {
   final Widget Function(BuildContext context, GroupModel group)?
   linkedGroupConversationBuilder;
   final Future<bool> Function(String groupId)? isLinkedGroupAuthoritySettled;
+  final Future<void> Function()? retireIosNseInboxTransport;
   final Future<void> Function()? onSetupSuccess;
 
   @override
@@ -71,7 +73,10 @@ class _LinkedDeviceSetupWiredState extends State<LinkedDeviceSetupWired> {
   String? _error;
 
   late final LinkedInstallationAuthority _authority =
-      LinkedInstallationAuthority(secureKeyStore: widget.secureKeyStore);
+      LinkedInstallationAuthority(
+        secureKeyStore: widget.secureKeyStore,
+        retireIosNseInboxTransport: widget.retireIosNseInboxTransport,
+      );
 
   @override
   void initState() {

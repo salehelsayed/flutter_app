@@ -440,6 +440,37 @@ final class IosAppVisibilitySnapshotStore {
     }
   }
 
+  /// NSE-only bounded reader. It preserves the exact v1 decoder and process
+  /// fail-closed latch while ensuring a contended visibility inode cannot
+  /// consume the extension's completion budget.
+  func readSnapshotForNse(lockTimeoutMs: Int = 100)
+    -> IosAppVisibilitySnapshotEnvelope? {
+    guard operationLock.try() else { return nil }
+    defer { operationLock.unlock() }
+    guard currentProcessEligible,
+          let context = currentContextUnlocked() else {
+      currentProcessEligible = false
+      return nil
+    }
+    return withBoundedFileLock(
+      timeoutMs: min(250, max(1, lockTimeoutMs)),
+      defaultValue: nil
+    ) {
+      switch loadStateUnlocked() {
+      case let .valid(snapshot):
+        return IosAppVisibilitySnapshotEnvelope(
+          snapshot: snapshot,
+          context: context
+        )
+      case .unavailable:
+        currentProcessEligible = false
+        return nil
+      case .missing, .futureSchema, .unsupportedBounds, .corrupt:
+        return nil
+      }
+    }
+  }
+
   @discardableResult
   func recordColdStart(
     lifecycle: IosAppVisibilityLifecycle = .inactive
@@ -643,6 +674,27 @@ final class IosAppVisibilitySnapshotStore {
       return defaultValue
     }
     return body()
+  }
+
+  private func withBoundedFileLock<T>(
+    timeoutMs: Int,
+    defaultValue: T,
+    _ body: () -> T
+  ) -> T {
+    let descriptor = open(lockURL.path, O_RDWR | O_CLOEXEC)
+    guard descriptor >= 0 else { return defaultValue }
+    defer {
+      _ = flock(descriptor, LOCK_UN)
+      close(descriptor)
+    }
+    let deadline = DispatchTime.now().uptimeNanoseconds +
+      UInt64(timeoutMs) * 1_000_000
+    repeat {
+      if flock(descriptor, LOCK_EX | LOCK_NB) == 0 { return body() }
+      if errno != EWOULDBLOCK && errno != EAGAIN { return defaultValue }
+      usleep(2_000)
+    } while DispatchTime.now().uptimeNanoseconds < deadline
+    return defaultValue
   }
 
   private func loadStateUnlocked() -> IosAppVisibilityLoadResult {

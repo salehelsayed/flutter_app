@@ -121,8 +121,12 @@ class RoleAwareDeferredRuntimeStart {
     if (snapshot.isOrdinaryPrimary) {
       _activeLinkedTransportPeerId = null;
       _activeLinkedAccountPeerId = null;
-      _lastOutcome = RoleAwareRuntimeStartOutcome.primaryRuntimeStarted;
-      return _startPrimaryRuntimeServices();
+      _lastOutcome = null;
+      final started = await _startPrimaryRuntimeServices();
+      if (started) {
+        _lastOutcome = RoleAwareRuntimeStartOutcome.primaryRuntimeStarted;
+      }
+      return started;
     }
 
     if (snapshot.isActiveLinkedSecondary) {
@@ -135,8 +139,12 @@ class RoleAwareDeferredRuntimeStart {
         event: 'ROLE_AWARE_RUNTIME_START_LINKED_FOUNDATION',
         details: const {},
       );
-      _lastOutcome = RoleAwareRuntimeStartOutcome.linkedFoundationStarted;
-      return _startLinkedFoundationPrerequisites();
+      _lastOutcome = null;
+      final started = await _startLinkedFoundationPrerequisites();
+      if (started) {
+        _lastOutcome = RoleAwareRuntimeStartOutcome.linkedFoundationStarted;
+      }
+      return started;
     }
 
     _activeLinkedTransportPeerId = null;

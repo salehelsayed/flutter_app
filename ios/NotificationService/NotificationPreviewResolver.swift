@@ -347,6 +347,77 @@ final class NotificationPreviewResolver {
     self.localeIdentifierProvider = localeIdentifierProvider
   }
 
+  /// Side-effect-free incumbent target authority used by the mailbox adapter
+  /// for both ADD and REMOVE. Rendering still flows through `resolve` for ADD;
+  /// REMOVE must nevertheless prove that the exact local-authored target is
+  /// current before it can authorize a suppressed/cancellation effect.
+  func directReactionAuthorityDigest(
+    expectedAccountPeerId: String,
+    authorizedPeerIds: Set<String>,
+    senderPeerId: String,
+    targetMessageId: String,
+    reactionTimestamp: Date
+  ) -> String? {
+    guard let projection = DirectReactionAuthoredTargetsSnapshot(
+            keyReader: keyReader,
+            expectedAccountPeerId: expectedAccountPeerId,
+            authorizedPeerIds: authorizedPeerIds
+          ),
+          let target = projection.values[targetMessageId],
+          target.peerId == senderPeerId,
+          reactionTimestamp >= target.timestamp else {
+      return nil
+    }
+    return projection.documentDigest
+  }
+
+  /// Returns the exact raw-document provenance only after the incumbent group
+  /// target and latest-state comparand authorize this transition. Absence of a
+  /// prior state deliberately permits remove-before-add LWW semantics.
+  func groupReactionAuthorityDigests(
+    expectedContextsDigest: String,
+    groupId: String,
+    keyEpoch: Int,
+    targetMessageId: String,
+    reactorPeerId: String,
+    reactorTransportPeerId: String,
+    reactionTimestamp: Date
+  ) -> [String: String]? {
+    guard let projection = GroupReactionProjectionSnapshot(
+            keyReader: keyReader
+          ),
+          projection.contextsDocumentDigest == expectedContextsDigest,
+          let group = projection.groups[groupId],
+          group.keyEpoch == keyEpoch,
+          let local = group.members[projection.localAccountPeerId],
+          local.deviceIds.contains(projection.localDeviceId),
+          local.transportPeerIds.contains(projection.localTransportPeerId),
+          reactorPeerId != projection.localAccountPeerId,
+          let reactor = group.members[reactorPeerId],
+          reactor.transportPeerIds.contains(reactorTransportPeerId),
+          let target = projection.authoredTargets[targetMessageId],
+          target.groupId == groupId,
+          reactionTimestamp >= target.timestamp else {
+      return nil
+    }
+    let stateKey = GroupReactionProjectedStateKey(
+      targetMessageId: targetMessageId,
+      reactorPeerId: reactorPeerId
+    )
+    if let state = projection.latestReactionStates[stateKey] {
+      guard state.groupId == groupId,
+            reactionTimestamp >= state.authoritativeTimestamp else {
+        return nil
+      }
+    }
+    return [
+      PushSharedKeyNames.groupReactionAuthoredTargets:
+        projection.authoredTargetsDocumentDigest,
+      PushSharedKeyNames.groupReactionLatestStates:
+        projection.latestStatesDocumentDigest,
+    ]
+  }
+
   func resolve(
     userInfo: [AnyHashable: Any],
     fallbackTitle: String,
@@ -610,7 +681,8 @@ final class NotificationPreviewResolver {
         trustedTitle: contact.username
       )
     }
-    guard projection.authoredTargets[targetMessageId] == senderPeerId else {
+    guard let authoredTarget = projection.authoredTargets[targetMessageId],
+          authoredTarget.peerId == senderPeerId else {
       return reactionFallback(
         threadIdentifier: senderPeerId,
         eventId: eventId,
@@ -641,6 +713,8 @@ final class NotificationPreviewResolver {
             trimmedString(payload["messageId"]) == targetMessageId,
             trimmedString(payload["action"]) == "add",
             trimmedString(payload["senderPeerId"]) == senderPeerId,
+            let reactionTimestamp = exactISO8601Date(payload["timestamp"]),
+            reactionTimestamp >= authoredTarget.timestamp,
             let emoji = trimmedString(payload["emoji"]) else {
         return reactionFallback(
           threadIdentifier: senderPeerId,
@@ -1451,50 +1525,83 @@ private struct DirectContactsProjectionSnapshot {
   }
 }
 
+private struct DirectReactionProjectedTarget {
+  let peerId: String
+  let timestamp: Date
+}
+
 private struct DirectReactionProjectionSnapshot {
   let localAccountPeerId: String
   let contacts: [String: DirectReactionProjectedContact]
-  let authoredTargets: [String: String]
+  let authoredTargets: [String: DirectReactionProjectedTarget]
+  let authoredTargetsDocumentDigest: String
 
   init?(keyReader: PushKeyReading) {
     guard let contacts = DirectContactsProjectionSnapshot(
       keyReader: keyReader
     ),
-      let decodedTargets = Self.decodeAuthoredTargets(
-        keyReader.readString(
-          key: PushSharedKeyNames.directReactionAuthoredTargets
-        )
-      ),
-      decodedTargets.accountPeerId == contacts.localAccountPeerId else {
+      let targets = DirectReactionAuthoredTargetsSnapshot(
+        keyReader: keyReader,
+        expectedAccountPeerId: contacts.localAccountPeerId,
+        authorizedPeerIds: Set(contacts.contacts.keys)
+      ) else {
       return nil
     }
     localAccountPeerId = contacts.localAccountPeerId
     self.contacts = contacts.contacts
-    authoredTargets = decodedTargets.values
+    authoredTargets = targets.values
+    authoredTargetsDocumentDigest = targets.documentDigest
   }
+}
 
-  private static func decodeAuthoredTargets(
-    _ value: String?
-  ) -> (accountPeerId: String, values: [String: String])? {
-    guard let root = decodeJSONObject(value ?? ""),
+private struct DirectReactionAuthoredTargetsSnapshot {
+  let values: [String: DirectReactionProjectedTarget]
+  let documentDigest: String
+
+  init?(
+    keyReader: PushKeyReading,
+    expectedAccountPeerId: String,
+    authorizedPeerIds: Set<String>
+  ) {
+    guard let value = keyReader.readString(
+            key: PushSharedKeyNames.directReactionAuthoredTargets
+          ),
+          value.utf8.count <= 262_144,
+          let root = decodeJSONObject(value),
+          Set(root.keys) == ["version", "localAccountPeerId", "targets"],
           exactJSONInteger(root["version"]) == 1,
           root["localAccountPeerIds"] == nil,
           let accountPeerId = exactNonEmptyString(
             root["localAccountPeerId"]
           ),
+          accountPeerId == expectedAccountPeerId,
           let values = root["targets"] as? [[String: Any]] else {
       return nil
     }
-    var result: [String: String] = [:]
+    guard values.count <= 256 else { return nil }
+    var result: [String: DirectReactionProjectedTarget] = [:]
     for target in values {
-      guard let id = trimmedString(target["id"]),
+      guard Set(target.keys) == ["id", "peerId", "timestamp"],
+            let id = NseInboxCandidateAdapter.wireId(
+              target["id"], maxBytes: 4_096
+            ),
             result[id] == nil,
-            let peerId = trimmedString(target["peerId"]) else {
+            let peerId = NseInboxCandidateAdapter.exactPeerId(
+              target["peerId"]
+            ),
+            authorizedPeerIds.contains(peerId),
+            let timestamp = NseInboxCandidateAdapter.canonicalReactionDate(
+              target["timestamp"]
+            ) else {
         return nil
       }
-      result[id] = peerId
+      result[id] = DirectReactionProjectedTarget(
+        peerId: peerId,
+        timestamp: timestamp
+      )
     }
-    return (accountPeerId, result)
+    self.values = result
+    documentDigest = projectionSHA256(value)
   }
 }
 
@@ -1640,6 +1747,9 @@ private struct GroupReactionProjectionSnapshot {
   let authoredTargets: [String: GroupReactionProjectedTarget]
   let latestReactionStates:
     [GroupReactionProjectedStateKey: GroupReactionProjectedState]
+  let authoredTargetsDocumentDigest: String
+  let latestStatesDocumentDigest: String
+  let contextsDocumentDigest: String
 
   init?(keyReader: PushKeyReading) {
     guard let contextsJSON = keyReader.readString(
@@ -1651,9 +1761,18 @@ private struct GroupReactionProjectionSnapshot {
       let statesJSON = keyReader.readString(
         key: PushSharedKeyNames.groupReactionLatestStates
       ),
+      contextsJSON.utf8.count <= 1_048_576,
+      targetsJSON.utf8.count <= 262_144,
+      statesJSON.utf8.count <= 262_144,
       let contexts = decodeJSONObject(contextsJSON),
       let targets = decodeJSONObject(targetsJSON),
       let states = decodeJSONObject(statesJSON),
+      Set(contexts.keys) == [
+        "version", "localAccountPeerId", "localDeviceId",
+        "localTransportPeerId", "groups",
+      ],
+      Set(targets.keys) == ["version", "localAccountPeerId", "targets"],
+      Set(states.keys) == ["version", "localAccountPeerId", "states"],
       exactJSONInteger(contexts["version"]) == 1,
       exactJSONInteger(targets["version"]) == 1,
       exactJSONInteger(states["version"]) == 1,
@@ -1674,7 +1793,10 @@ private struct GroupReactionProjectionSnapshot {
       ),
       let rawGroups = contexts["groups"] as? [String: Any],
       let rawTargets = targets["targets"] as? [[String: Any]],
-      let rawStates = states["states"] as? [[String: Any]] else {
+      let rawStates = states["states"] as? [[String: Any]],
+      rawGroups.count <= 4_096,
+      rawTargets.count <= 256,
+      rawStates.count <= 1_024 else {
       return nil
     }
 
@@ -1729,13 +1851,21 @@ private struct GroupReactionProjectionSnapshot {
 
     var parsedTargets: [String: GroupReactionProjectedTarget] = [:]
     for value in rawTargets {
-      guard let id = exactNonEmptyString(value["id"]),
+      guard Set(value.keys) == ["id", "groupId", "keyEpoch", "timestamp"],
+            let id = NseInboxCandidateAdapter.wireId(
+              value["id"], maxBytes: 4_096
+            ),
             parsedTargets[id] == nil,
-            let groupId = exactNonEmptyString(value["groupId"]),
+            let groupId = NseInboxCandidateAdapter.wireId(
+              value["groupId"], maxBytes: 512
+            ),
+            parsedGroups[groupId] != nil,
             let keyEpoch = exactJSONInteger(value["keyEpoch"]),
             keyEpoch >= 0,
-            let timestamp = exactISO8601Date(value["timestamp"]) else {
-        continue
+            let timestamp = NseInboxCandidateAdapter.canonicalReactionDate(
+              value["timestamp"]
+            ) else {
+        return nil
       }
       parsedTargets[id] = GroupReactionProjectedTarget(
         groupId: groupId,
@@ -1747,23 +1877,40 @@ private struct GroupReactionProjectionSnapshot {
     var parsedStates:
       [GroupReactionProjectedStateKey: GroupReactionProjectedState] = [:]
     for value in rawStates {
-      guard let groupId = exactNonEmptyString(value["groupId"]),
-            let targetMessageId = exactNonEmptyString(
-              value["targetMessageId"]
+      let allowedStateKeys: Set<String> = [
+        "groupId", "targetMessageId", "reactorPeerId", "timestamp",
+        "removedAt",
+      ]
+      let requiredStateKeys: Set<String> = [
+        "groupId", "targetMessageId", "reactorPeerId", "timestamp",
+      ]
+      guard Set(value.keys).isSubset(of: allowedStateKeys),
+            requiredStateKeys.isSubset(of: Set(value.keys)),
+            let groupId = NseInboxCandidateAdapter.wireId(
+              value["groupId"], maxBytes: 512
             ),
-            let reactorPeerId = exactNonEmptyString(value["reactorPeerId"]),
-            let timestamp = exactISO8601Date(value["timestamp"]),
+            let targetMessageId = NseInboxCandidateAdapter.wireId(
+              value["targetMessageId"], maxBytes: 4_096
+            ),
+            let reactorPeerId = NseInboxCandidateAdapter.exactPeerId(
+              value["reactorPeerId"]
+            ),
+            let timestamp = NseInboxCandidateAdapter.canonicalReactionDate(
+              value["timestamp"]
+            ),
             let target = parsedTargets[targetMessageId],
             target.groupId == groupId else {
-        continue
+        return nil
       }
       let removedAt: Date?
       if value["removedAt"] == nil {
         removedAt = nil
-      } else if let parsed = exactISO8601Date(value["removedAt"]) {
+      } else if let parsed = NseInboxCandidateAdapter
+        .canonicalReactionDate(value["removedAt"]),
+                parsed >= timestamp {
         removedAt = parsed
       } else {
-        continue
+        return nil
       }
       let key = GroupReactionProjectedStateKey(
         targetMessageId: targetMessageId,
@@ -1783,7 +1930,16 @@ private struct GroupReactionProjectionSnapshot {
     groups = parsedGroups
     authoredTargets = parsedTargets
     latestReactionStates = parsedStates
+    authoredTargetsDocumentDigest = projectionSHA256(targetsJSON)
+    latestStatesDocumentDigest = projectionSHA256(statesJSON)
+    contextsDocumentDigest = projectionSHA256(contextsJSON)
   }
+}
+
+private func projectionSHA256(_ value: String) -> String {
+  SHA256.hash(data: Data(value.utf8)).map {
+    String(format: "%02x", $0)
+  }.joined()
 }
 
 private func verifyGroupReactionNotificationExtension(

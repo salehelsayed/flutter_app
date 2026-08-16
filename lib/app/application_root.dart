@@ -514,6 +514,7 @@ class MyApp extends StatefulWidget {
   final AccountMigrationReceiverStopFn? accountMigrationStopReceiver;
   final AccountMigrationReceiverEvents? accountMigrationReceiverEvents;
   final Future<void> Function()? retireCanonicalNotificationBinding;
+  final Future<void> Function()? retireIosNseInboxTransport;
 
   /// Restores active authority on app resume when a Move Account export
   /// pause is stale (no export run in flight). See handleAppResumed.
@@ -527,6 +528,11 @@ class MyApp extends StatefulWidget {
   /// Firebase init still arms the foreground-push listeners. Optional so the
   /// widget-test harnesses (no real Firebase) construct MyApp without it.
   final FirebaseReadiness? firebaseReadiness;
+
+  /// Role/admission gate for the incumbent Firebase foreground/open listener
+  /// seam. Production keeps this false until deferred role selection is known;
+  /// an active linked runtime enables it only for admitted iOS NSE routing.
+  final bool Function()? mayArmPushListeners;
 
   /// Best-effort teardown invoked on [AppLifecycleState.detached] (app
   /// terminating): stops the libp2p node and closes the encrypted DB so the
@@ -658,10 +664,12 @@ class MyApp extends StatefulWidget {
     this.accountMigrationStopReceiver,
     this.accountMigrationReceiverEvents,
     this.retireCanonicalNotificationBinding,
+    this.retireIosNseInboxTransport,
     this.accountMigrationRecoverExportPause,
     this.deferredRuntimeStartup,
     this.ingestStagedPushEnvelopes,
     this.firebaseReadiness,
+    this.mayArmPushListeners,
     this.onAppDetached,
   });
 
@@ -750,6 +758,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // onMessage/onMessageOpenedApp subscription + the PUSH_LISTENERS_ARMED
   // telemetry; _setupPushListeners delegates to it.
   late final PushListenerArmer _pushListenerArmer;
+  bool _firebaseReadinessListenerInstalled = false;
   Future<PendingConversationNotificationOverlayStore>?
   _pendingConversationNotificationOverlay;
 
@@ -797,6 +806,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       },
       onStarted: () async {
         StartupTiming.instance.mark('deferred_runtime_start_complete');
+        _armPushListenersAfterSuccessfulRuntimeStart();
         if (widget.iosNotificationRecoveryCoordinator == null) {
           unawaited(_ingestStagedPushEnvelopes(source: 'runtime_ready'));
           return;
@@ -932,18 +942,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         _ensureRuntimeServicesReady().then((_) => debugE2EAfterRuntimeReady()),
       );
     }
-    // 191 (Fix D2): a THIRD arm point rides Firebase first-success readiness —
-    // the only event that flips Firebase.apps non-empty. If the
-    // _ensureRuntimeServicesReady re-arm above fires while Firebase.apps is
-    // still empty (a retried/late init), it no-ops WITHOUT consuming the
-    // _pushListenersArmed latch; this readiness listener then arms the moment
-    // Firebase actually becomes ready — so a transient init failure can never
-    // leave push permanently disarmed.
-    widget.firebaseReadiness?.addOnReadyListener(() {
-      if (mounted) {
-        _setupPushListeners();
-      }
-    });
+    // The Firebase first-success listener is installed by the startup latch's
+    // post-success callback. A false/failed first attempt therefore cannot
+    // consume the only arm opportunity, while default-off linked startup still
+    // performs zero Firebase listener work.
     _setupNotificationTapHandler();
     widget.droppedPushRecoveryCoordinator?.registerNativeAcceleration(
       _handleNativeDroppedPushRecoverySignal,
@@ -1112,12 +1114,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final coordinator = widget.iosNotificationRecoveryCoordinator;
     if (coordinator == null) return null;
     try {
-      return await coordinator.beginCanonicalMutation(
+      final scope = await coordinator.beginCanonicalMutation(
         globallyExhaustive: globallyExhaustive,
         canReactivateAfterAccountClear: canReactivateAfterAccountClear,
         allowClearedAccountPeerReactivation:
             allowClearedAccountPeerReactivation,
       );
+      widget.p2pService.armIosMailboxAlertDrainContext(
+        scope.mailboxAlertDrainContext,
+      );
+      return scope;
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',
@@ -2365,46 +2371,64 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // post, upload or push owners. 362 adds only the target-qualified
     // strict-media custody convergers when they are wired.
     if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {
-      widget.p2pService.markResumeStarted();
-      final linkedGroupContentPause = widget.pauseLinkedGroupContentAdmission
-          ?.call();
-      if (linkedGroupContentPause != null) {
-        await linkedGroupContentPause.quiesced;
+      IosNotificationRecoveryMutationScope? linkedRecoveryMutationScope;
+      var linkedCanonicalStateComplete = false;
+      try {
+        linkedRecoveryMutationScope =
+            await _beginIosNotificationCanonicalMutation(
+              source: 'linked_app_resumed',
+              globallyExhaustive: true,
+              canReactivateAfterAccountClear: true,
+            );
+        widget.p2pService.markResumeStarted();
+        final linkedGroupContentPause = widget.pauseLinkedGroupContentAdmission
+            ?.call();
+        if (linkedGroupContentPause != null) {
+          await linkedGroupContentPause.quiesced;
+        }
+        final inboxDrain = await widget.p2pService.drainOfflineInboxFully();
+        await widget.drainLinkedGroupBootstrap?.call();
+        await widget.replayLinkedGroupAuthority?.call();
+        if (linkedGroupContentPause != null &&
+            !(await widget.resumeLinkedGroupContentAdmission?.call(
+                  linkedGroupContentPause,
+                ) ??
+                false)) {
+          return;
+        }
+        final groupDrain = await drainProtectedGroupContentMediaFixedPoint(
+          replayContent: widget.replayLinkedGroupContent,
+          drainOutgoingMedia: widget.drainLinkedGroupOutgoingMedia,
+          retryContent: widget.retryLinkedGroupContent,
+          drainIncomingMedia: widget.drainLinkedGroupIncomingMedia,
+        );
+        await widget.drainLinkedGroupNotificationDisplayCustody?.call();
+        await widget.refreshLinkedGroupList?.call();
+        final drained =
+            await widget.drainDirectBlobFreeLinkedOutboxes?.call() ?? 0;
+        await widget.drainLinkedDirectMediaBlobCustody?.call();
+        linkedCanonicalStateComplete =
+            inboxDrain.isSuccessful && !inboxDrain.hasMore;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'APP_LIFECYCLE_LINKED_RESUME_COMPLETE',
+          details: {
+            'drained': drained,
+            'groupContentReplayed': groupDrain.contentReplayed,
+            'groupContentRetried': groupDrain.contentRetried,
+            'groupOutgoingMediaProgress': groupDrain.outgoingMedia,
+            'groupIncomingMediaProgress': groupDrain.incomingMedia,
+            'groupMediaFixedPointPasses': groupDrain.passes,
+          },
+        );
+        widget.p2pService.checkResumeAlreadyOnline();
+      } finally {
+        await _endIosNotificationCanonicalMutation(
+          linkedRecoveryMutationScope,
+          canonicalStateComplete: linkedCanonicalStateComplete,
+          source: 'linked_app_resumed',
+        );
       }
-      await widget.p2pService.drainOfflineInbox();
-      await widget.drainLinkedGroupBootstrap?.call();
-      await widget.replayLinkedGroupAuthority?.call();
-      if (linkedGroupContentPause != null &&
-          !(await widget.resumeLinkedGroupContentAdmission?.call(
-                linkedGroupContentPause,
-              ) ??
-              false)) {
-        return;
-      }
-      final groupDrain = await drainProtectedGroupContentMediaFixedPoint(
-        replayContent: widget.replayLinkedGroupContent,
-        drainOutgoingMedia: widget.drainLinkedGroupOutgoingMedia,
-        retryContent: widget.retryLinkedGroupContent,
-        drainIncomingMedia: widget.drainLinkedGroupIncomingMedia,
-      );
-      await widget.drainLinkedGroupNotificationDisplayCustody?.call();
-      await widget.refreshLinkedGroupList?.call();
-      final drained =
-          await widget.drainDirectBlobFreeLinkedOutboxes?.call() ?? 0;
-      await widget.drainLinkedDirectMediaBlobCustody?.call();
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'APP_LIFECYCLE_LINKED_RESUME_COMPLETE',
-        details: {
-          'drained': drained,
-          'groupContentReplayed': groupDrain.contentReplayed,
-          'groupContentRetried': groupDrain.contentRetried,
-          'groupOutgoingMediaProgress': groupDrain.outgoingMedia,
-          'groupIncomingMediaProgress': groupDrain.incomingMedia,
-          'groupMediaFixedPointPasses': groupDrain.passes,
-        },
-      );
-      widget.p2pService.checkResumeAlreadyOnline();
       return;
     }
     // Private lifecycle recovery has its own generation/queue. Start it before
@@ -2677,6 +2701,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _setupPushListeners() {
+    if (!(widget.mayArmPushListeners?.call() ?? true)) return;
     if (widget.isDesktop || Firebase.apps.isEmpty) return;
     // 164: latch AFTER the empty-Firebase.apps guard so the no-op initState call
     // on a normal launch does NOT consume the latch — the post-ready re-arm is
@@ -2688,6 +2713,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // widget-level guard + _pushListenersArmed latch above preserve the 164
     // idempotence contract; the armer carries its own latch too.
     _pushListenerArmer.arm();
+  }
+
+  void _armPushListenersAfterSuccessfulRuntimeStart() {
+    _setupPushListeners();
+    if (!(widget.mayArmPushListeners?.call() ?? true) ||
+        _firebaseReadinessListenerInstalled) {
+      return;
+    }
+    final readiness = widget.firebaseReadiness;
+    if (readiness == null) return;
+    _firebaseReadinessListenerInstalled = true;
+    readiness.addOnReadyListener(() {
+      if (mounted) _setupPushListeners();
+    });
   }
 
   Future<void> _handleForegroundRemotePush(RemoteMessage message) async {
@@ -3289,6 +3328,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               _appVisibilityAuthority.invalidateSynchronously,
           retireCanonicalNotificationBinding:
               widget.retireCanonicalNotificationBinding,
+          retireIosNseInboxTransport: widget.retireIosNseInboxTransport,
           ingestStagedPushEnvelopes: () => _ingestStagedPushEnvelopes(
             source: 'startup_router_notification_tap',
           ),

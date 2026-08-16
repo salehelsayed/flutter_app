@@ -1,9 +1,9 @@
 # 373 - GAP-N07 iOS NSE Opaque Mailbox-Wake Adoption
 
-Status: **EXECUTION_READY / PREREQUISITE_REVALIDATED / INDEPENDENTLY REVIEWED / ONE N07-OWNED ADAPTER SLICE / DEFAULT-OFF / IOS EVIDENCE DEFERRED / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
+Status: **POST-EXECUTION AUDIT CLOSED / N07 IOS NSE OPAQUE-WAKE ADAPTER CODE COMPLETE / HOST+NATIVE+AVAILABLE-SIMULATOR VERIFIED / DEFAULT-OFF / PHYSICAL-IOS EVIDENCE DEFERRED / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
 Type: Modification
 Spec inputs: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` §§6, 8 and 9; GAP-N07 and WP-04 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`
-Classification: execution-ready iOS native-consumer vertical slice
+Classification: post-execution-audit-closed iOS native-consumer vertical slice
 Closure tier: host Go/Swift/Dart plus available iPhone-simulator XCTest; physical APNs and Apple lifecycle evidence remain N12/WP-07
 
 ## Planning Progress
@@ -1141,39 +1141,39 @@ The native runner must:
   bounded mailbox-alert lease and silent-generation handoff, stop. Do not add a
   second ledger/journal or claim N07/A-15 closure.
 
-- [ ] TC-373-00 validates the committed Plan-372 receipt/tree and default-off
+- [x] TC-373-00 validates the committed Plan-372 receipt/tree and default-off
       paired admission.
-- [ ] TC-373-01 through TC-373-07 each have a named causal proof and at least
+- [x] TC-373-01 through TC-373-07 each have a named causal proof and at least
       one representative mutation re-reds before reversion.
-- [ ] The NSE uses the exact physical primary/linked transport key and binding;
+- [x] The NSE uses the exact physical primary/linked transport key and binding;
       linked never falls back to the logical-account key, the primary dual-use
       key exception is explicit/admission-bounded, and no sensitive log exists.
-- [ ] Direct/group sender authorization retires before authoritative mutation
+- [x] Direct/group sender authorization retires before authoritative mutation
       and republishes only committed current trust/authority readback; stale,
       crossed, removed or failed projections remain generic.
-- [ ] Fixed-v1 failure/expiry returns the untouched generic content exactly once;
+- [x] Fixed-v1 failure/expiry returns the untouched generic content exactly once;
       rich payload behavior is preserved.
-- [ ] One bounded protected-first/legacy-fallback row is fetched under one
+- [x] One bounded protected-first/legacy-fallback row is fetched under one
       deadline, with no singleton/listener/ACK/loop/persistence side effect.
-- [ ] Direct and fetchable protected-group candidates validate complete event
+- [x] Direct and fetchable protected-group candidates validate complete event
       authority; legacy group-only/direct-empty remains generic.
-- [ ] Main/NSE races use one Plan-372 owner/revision/effect lock and relay custody
+- [x] Main/NSE races use one Plan-372 owner/revision/effect lock and relay custody
       remains pending until main-app persistence.
-- [ ] `IosLocalNotificationFinalEffect.swift` exact-decodes and mutates only the
+- [x] `IosLocalNotificationFinalEffect.swift` exact-decodes and mutates only the
       shared v1 logical file/lock/ID/sidecars for matching
       `RELAY_VERIFIED_UNACKED`/`IOS_NSE`; it cannot initialize, rebind, suspend,
       open SQL/v116, upgrade, settle or ACK, and lock contention stays generic.
-- [ ] TC-373-05 classifies exactly 14 accepted, 6 rejected and 11 invalid rows;
+- [x] TC-373-05 classifies exactly 14 accepted, 6 rejected and 11 invalid rows;
       the three serial native authority mutations re-red and are reverted before
       the final 16/16 invocation.
-- [ ] A mailbox-alert lease makes every page in one existing drain generation
+- [x] A mailbox-alert lease makes every page in one existing drain generation
       silent, survives partial/crash continuation and is consumed only at the
       successful no-more-pages fixed point.
-- [ ] The one synthetic native row executes through the host runner and is
+- [x] The one synthetic native row executes through the host runner and is
       absent from dart-only; no full/family host sweep runs.
-- [ ] Binding/header/framework, embedded NSE, entitlements, privacy, analyzer,
+- [x] Binding/header/framework, embedded NSE, entitlements, privacy, analyzer,
       format/diff and refreshed Graphify gates are clean.
-- [ ] No physical iPhone/APNs/activation/rich-retirement/N08/N11/N12/release
+- [x] No physical iPhone/APNs/activation/rich-retirement/N08/N11/N12/release
       claim is made.
 
 ## Handoff
@@ -1267,9 +1267,29 @@ live/GAP-N07/PRD/release acceptance.
 
 ## Execution Progress
 
-Execution-ready, not started. Plan-372 dependency identities, source/API
-sentinels, exact preservation tests and current Graphify context are
-revalidated. Commit this successor-plan freeze and require the clean-tree
-preflight before the first TC-373-01 RED. No Plan-373 production edit, binding
-regeneration, causal RED, native test, device evidence or activation is claimed
-by this planning artifact.
+Execution and independent final audit are closed against base HEAD
+`e7b99e12c520e02624a0eeeaaef4186e052a0d40`. The accepted implementation is
+frozen at tree `cfa123c59afa97cefd06fe6128caffcfa894c6c4`, with workspace
+snapshot SHA-256
+`bf81fb428fcc2403d439f7bd1765c4c0b06de89e7c26497d458e3d6e6109cd51`
+and current anchored Graphify fingerprint `e0344a42ddda114c`.
+
+The semantic TC-373-01 RED is retained; the final native owner passed four
+focused Go roots, their race run, four preservation roots, three isolated
+authority mutation re-REDs with byte restoration, and 16/16 XCTest methods on
+iPhone simulator `DBE8C32E-9F19-4593-860A-B41113791D79`. The fixture census is
+exactly 14 accepted, 6 rejected and 11 invalid. The five selected Dart cases
+and final-fixture TC-373-07 passed by terminal attestation; the broader retained
+175/175 Dart artifact predates the final fixture regeneration and is recorded
+only as preservation evidence. Curated `1to1` passed 3,334 with 10 declared
+skips plus all tails, and `groups` passed 4,339 plus 278 hidden tests with zero
+failure/skip. Full analysis, format, native build/privacy/entitlement, diff and
+Graphify gates are green; the registered native owner occurs once and remains
+absent from dart-only. No family or full-host sweep was run.
+
+The checksum-bound final-tree receipt is
+`Test-Flight-Improv/evidence/373/README.md`. This closes only the default-off
+N07 iOS adapter mechanism. Physical iPhone/APNs, locked/before-first-unlock and
+force-quit lifecycle evidence, capability activation, rich compatibility
+retirement, full GAP-N07/PRD acceptance and release eligibility remain
+deferred to their existing owners.
