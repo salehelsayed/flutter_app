@@ -384,32 +384,62 @@ void main() {
       expect(cutoverReport.result.failureReason, 'binding_changed_before_ack');
       expect(accountCutover.ackCalls, 0);
 
+      // Plan 375: a marker present when the periodic sweep STARTS is adopted
+      // and exact-acknowledged after the same fixed-point proof — this is the
+      // recovery path after an immediate enqueue failure.
       final periodic = _RunnerBackend(initial);
-      final periodicReport =
-          await ProductionHeadlessCanonicalRecoveryRunner(
-            backend: periodic,
-          ).run(
-            invocation: const HeadlessCanonicalRecoveryInvocation(
-              reason: CanonicalRecoveryReason.periodicSweep,
-              nativeReason: 'periodic_sweep',
-              nonce: 'nonce-periodic',
-              binding: binding,
-              generation: null,
-            ),
-            isStopRequested: () => false,
-          );
+      const periodicInvocation = HeadlessCanonicalRecoveryInvocation(
+        reason: CanonicalRecoveryReason.periodicSweep,
+        nativeReason: 'periodic_sweep',
+        nonce: 'nonce-periodic',
+        binding: binding,
+        generation: null,
+      );
+      final periodicReport = await ProductionHeadlessCanonicalRecoveryRunner(
+        backend: periodic,
+      ).run(invocation: periodicInvocation, isStopRequested: () => false);
       expect(
         periodicReport.result.disposition,
-        CanonicalRecoveryDisposition.retry,
-      );
-      expect(
-        periodicReport.result.failureReason,
-        'generation_arrived_during_periodic_sweep',
+        CanonicalRecoveryDisposition.succeeded,
       );
       expect(
         periodic.ackCalls,
+        1,
+        reason: 'periodic continuation exact-acknowledges the adopted marker',
+      );
+      expect(periodic.lastExpectedMarker, isNull);
+
+      // A marker that only ARRIVES mid-run is never consumed by that sweep:
+      // it is preserved for the serial immediate work.
+      const noMarker = ProductionHeadlessCanonicalAuthoritySnapshot(
+        binding: binding,
+        marker: null,
+        recoveryWorkEnabled: true,
+        migrationAllowsRecovery: true,
+        roleAllowsRecovery: true,
+        authorityFingerprint: 'linked:physical-a:active',
+      );
+      late final _RunnerBackend periodicArrival;
+      periodicArrival = _RunnerBackend(noMarker)
+        ..onAuthorityRead = (read) {
+          if (read >= 2) periodicArrival.authority = initial;
+        };
+      final periodicArrivalReport =
+          await ProductionHeadlessCanonicalRecoveryRunner(
+            backend: periodicArrival,
+          ).run(invocation: periodicInvocation, isStopRequested: () => false);
+      expect(
+        periodicArrivalReport.result.disposition,
+        CanonicalRecoveryDisposition.retry,
+      );
+      expect(
+        periodicArrivalReport.result.failureReason,
+        'generation_arrived_during_periodic_sweep',
+      );
+      expect(
+        periodicArrival.ackCalls,
         0,
-        reason: 'periodic work cannot consume a marker',
+        reason: 'periodic work cannot consume a marker it did not adopt',
       );
 
       final coherent = _RunnerBackend(initial);
@@ -540,6 +570,9 @@ final class _RunnerBackend
     onAuthorityRead?.call(authorityReads);
     return snapshot;
   }
+
+  @override
+  Future<bool> readGenericRecoveryMayHaveAlerted() async => false;
 
   @override
   Future<ProductionHeadlessOwnedRecoverySession?> acquireSession({

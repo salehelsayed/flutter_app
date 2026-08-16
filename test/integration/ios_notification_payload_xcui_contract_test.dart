@@ -496,9 +496,17 @@ void main() {
       expect(nse, contains('PUSH_NSE_CONTENT_HANDOFF'));
       expect(nse, contains('"authorized": didApplyPreview ? "true" : "false"'));
       expect(nse, contains('"success": envelopeStaged ? "true" : "false"'));
+      // Plan 373's fixed-wake branch hands the claimed handler to its own
+      // final-effect/generic owners earlier in the file; the rich completion
+      // this proof gates is the apply-path handler call after the marker.
       expect(
         nse.indexOf('PUSH_NSE_CONTENT_HANDOFF'),
-        lessThan(nse.indexOf('contentHandler: handler')),
+        lessThan(
+          nse.indexOf(
+            'contentHandler: handler',
+            nse.indexOf('recentRemoteShownMarkerStore?.mark('),
+          ),
+        ),
         reason: 'the proof must be emitted before NSE completion can suspend',
       );
       expect(resolver, contains('func nsePublicProofPayload('));

@@ -51,6 +51,127 @@ class HeadlessCanonicalRecoveryWorkerTest {
         }
 
     @Test
+    fun testTC37503WorkerAdoptsCurrentTriggerAcrossRetryProcessDeathAndPeriodicContinuation() =
+        runBlocking {
+            // A queued fixed reason adopts the newest durable marker even when
+            // that marker is now a deletion, and vice versa: WorkRequest input
+            // is a wake hint, never the authority.
+            val deletionAuthority = FakeHeadlessRecoveryAuthority(
+                pending = DroppedPushRecoveryStore.PendingRecovery(
+                    generation = 11L,
+                    binding = TEST_BINDING,
+                    triggerKind = DroppedPushRecoveryStore.TriggerKind.DELETED_BATCH,
+                    genericMayHaveAlerted = true,
+                ),
+            )
+            val deletionRunner = FakeHeadlessRecoveryRunner { snapshot ->
+                assertEquals(
+                    DroppedPushRecoveryWorkScheduler.REASON_DELETED_BATCH,
+                    snapshot.reason,
+                )
+                assertEquals(11L, snapshot.pendingRecovery?.generation)
+                deletionAuthority.pending = null
+                successfulCompletion()
+            }
+            assertEquals(
+                HeadlessCanonicalRecoveryWorkOutcome.SUCCESS,
+                execution(deletionAuthority, deletionRunner)
+                    .execute(fixedWake(generation = 3L)),
+            )
+
+            val fixedAuthority = FakeHeadlessRecoveryAuthority(
+                pending = DroppedPushRecoveryStore.PendingRecovery(
+                    generation = 12L,
+                    binding = TEST_BINDING,
+                    triggerKind = DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE,
+                    genericMayHaveAlerted = false,
+                ),
+            )
+            var fixedAttempts = 0
+            val fixedRunner = FakeHeadlessRecoveryRunner { snapshot ->
+                fixedAttempts += 1
+                assertEquals(
+                    DroppedPushRecoveryWorkScheduler.REASON_FIXED_WAKE,
+                    snapshot.reason,
+                )
+                assertEquals(12L, snapshot.pendingRecovery?.generation)
+                if (fixedAttempts == 1) {
+                    // First attempt dies before convergence: the marker stays
+                    // durable and the retry adopts the same current trigger.
+                    successfulCompletion().copy(
+                        disposition = HeadlessCanonicalRecoveryDisposition.RETRY,
+                    )
+                } else {
+                    fixedAuthority.pending = null
+                    successfulCompletion()
+                }
+            }
+            val fixedExecution = execution(fixedAuthority, fixedRunner)
+            assertEquals(
+                HeadlessCanonicalRecoveryWorkOutcome.RETRY,
+                fixedExecution.execute(deletedWake(generation = 2L)),
+            )
+            assertEquals(12L, fixedAuthority.pending?.generation)
+            assertEquals(
+                HeadlessCanonicalRecoveryWorkOutcome.SUCCESS,
+                fixedExecution.execute(deletedWake(generation = 2L)),
+            )
+            assertEquals(2, fixedAttempts)
+
+            // Periodic continuation is the recovery path after an immediate
+            // enqueue failure: the sweep input carries no generation, but the
+            // run may exact-consume the durable fixed marker; success reports
+            // only after the marker is gone.
+            val periodicAuthority = FakeHeadlessRecoveryAuthority(
+                pending = DroppedPushRecoveryStore.PendingRecovery(
+                    generation = 13L,
+                    binding = TEST_BINDING,
+                    triggerKind = DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE,
+                    genericMayHaveAlerted = false,
+                ),
+            )
+            val periodicRunner = FakeHeadlessRecoveryRunner { snapshot ->
+                assertEquals(
+                    DroppedPushRecoveryWorkScheduler.REASON_PERIODIC_SWEEP,
+                    snapshot.reason,
+                )
+                assertEquals(null, snapshot.pendingRecovery)
+                periodicAuthority.pending = null
+                successfulCompletion()
+            }
+            assertEquals(
+                HeadlessCanonicalRecoveryWorkOutcome.SUCCESS,
+                execution(periodicAuthority, periodicRunner).execute(periodicWake()),
+            )
+
+            // An unsupported future trigger kind is drained conservatively but
+            // can never be consumed by this binary: completion with the marker
+            // still durable remains retry.
+            val unsupportedAuthority = FakeHeadlessRecoveryAuthority(
+                pending = DroppedPushRecoveryStore.PendingRecovery(
+                    generation = 14L,
+                    binding = TEST_BINDING,
+                    triggerKind =
+                    DroppedPushRecoveryStore.TriggerKind.UNSUPPORTED_PENDING,
+                    genericMayHaveAlerted = true,
+                ),
+            )
+            val unsupportedRunner = FakeHeadlessRecoveryRunner { snapshot ->
+                assertEquals(
+                    DroppedPushRecoveryWorkScheduler.REASON_FIXED_WAKE,
+                    snapshot.reason,
+                )
+                successfulCompletion()
+            }
+            assertEquals(
+                HeadlessCanonicalRecoveryWorkOutcome.RETRY,
+                execution(unsupportedAuthority, unsupportedRunner)
+                    .execute(fixedWake(generation = 14L)),
+            )
+            assertEquals(14L, unsupportedAuthority.pending?.generation)
+        }
+
+    @Test
     fun `periodic success retries when a marker arrives and never consumes it`() =
         runBlocking {
             val authority = FakeHeadlessRecoveryAuthority(pending = null)
@@ -348,6 +469,21 @@ class HeadlessCanonicalRecoveryWorkerTest {
         .putString(
             DroppedPushRecoveryWorkScheduler.INPUT_REASON,
             DroppedPushRecoveryWorkScheduler.REASON_DELETED_BATCH,
+        )
+        .putLong(DroppedPushRecoveryWorkScheduler.INPUT_WAKE_GENERATION, generation)
+        .putString(
+            DroppedPushRecoveryWorkScheduler.INPUT_BINDING_DIGEST,
+            DroppedPushRecoveryWorkScheduler.bindingDigest(binding),
+        )
+        .build()
+
+    private fun fixedWake(
+        generation: Long = 7L,
+        binding: String = TEST_BINDING,
+    ): Data = Data.Builder()
+        .putString(
+            DroppedPushRecoveryWorkScheduler.INPUT_REASON,
+            DroppedPushRecoveryWorkScheduler.REASON_FIXED_WAKE,
         )
         .putLong(DroppedPushRecoveryWorkScheduler.INPUT_WAKE_GENERATION, generation)
         .putString(

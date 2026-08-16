@@ -4,9 +4,13 @@ set -euo pipefail
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  run_android_headless_recovery_374.sh --build-only --output DIR
+  run_android_headless_recovery_374.sh --build-only [--fixed-wake] \
+    [--apk-output PATH] --output DIR
   run_android_headless_recovery_374.sh --device-id ID --apk APK --skip-build \
     --production-deleted-batch-seam --no-activity --process-death --output DIR
+  run_android_headless_recovery_374.sh --device-id ID --apk APK --skip-build \
+    --fixed-wake --production-fixed-ingress-seam --no-activity \
+    --process-death --output DIR
 EOF
 }
 
@@ -22,10 +26,13 @@ readonly BUILT_APK="$REPO_ROOT/build/app/outputs/flutter-apk/app-debug.apk"
 
 DEVICE_ID=
 APK_PATH=
+APK_OUTPUT=
 OUTPUT_DIR=
 BUILD_ONLY=false
 SKIP_BUILD=false
 PRODUCTION_DELETED_BATCH_SEAM=false
+PRODUCTION_FIXED_INGRESS_SEAM=false
+FIXED_WAKE=false
 NO_ACTIVITY=false
 PROCESS_DEATH=false
 
@@ -52,6 +59,16 @@ while [[ $# -gt 0 ]]; do
       PRODUCTION_DELETED_BATCH_SEAM=true
       shift
       ;;
+    --production-fixed-ingress-seam)
+      PRODUCTION_FIXED_INGRESS_SEAM=true
+      shift
+      ;;
+    --fixed-wake) FIXED_WAKE=true; shift ;;
+    --apk-output)
+      [[ $# -ge 2 ]] || { usage; exit 64; }
+      APK_OUTPUT=$2
+      shift 2
+      ;;
     --no-activity) NO_ACTIVITY=true; shift ;;
     --process-death) PROCESS_DEATH=true; shift ;;
     *) usage; exit 64 ;;
@@ -72,7 +89,8 @@ build_apk() {
 
 if [[ "$BUILD_ONLY" == true ]]; then
   if [[ -n "$DEVICE_ID" || -n "$APK_PATH" || "$SKIP_BUILD" == true || \
-        "$PRODUCTION_DELETED_BATCH_SEAM" == true || "$NO_ACTIVITY" == true || \
+        "$PRODUCTION_DELETED_BATCH_SEAM" == true || \
+        "$PRODUCTION_FIXED_INGRESS_SEAM" == true || "$NO_ACTIVITY" == true || \
         "$PROCESS_DEATH" == true ]]; then
     usage
     exit 64
@@ -82,10 +100,23 @@ if [[ "$BUILD_ONLY" == true ]]; then
   cp "$BUILT_APK" "$OUTPUT_DIR/app-plan374-debug.apk"
   shasum -a 256 "$OUTPUT_DIR/app-plan374-debug.apk" \
     >"$OUTPUT_DIR/app-plan374-debug.apk.sha256"
+  if [[ -n "$APK_OUTPUT" ]]; then
+    mkdir -p "$(dirname "$APK_OUTPUT")"
+    cp "$BUILT_APK" "$APK_OUTPUT"
+    shasum -a 256 "$APK_OUTPUT" >"$APK_OUTPUT.sha256"
+  fi
   exit 0
 fi
 
-if [[ -z "$DEVICE_ID" || "$PRODUCTION_DELETED_BATCH_SEAM" != true || \
+if [[ "$FIXED_WAKE" == true ]]; then
+  if [[ -z "$DEVICE_ID" || "$PRODUCTION_FIXED_INGRESS_SEAM" != true || \
+        "$PRODUCTION_DELETED_BATCH_SEAM" == true || \
+        "$NO_ACTIVITY" != true || "$PROCESS_DEATH" != true ]]; then
+    usage
+    exit 64
+  fi
+elif [[ -z "$DEVICE_ID" || "$PRODUCTION_DELETED_BATCH_SEAM" != true || \
+      "$PRODUCTION_FIXED_INGRESS_SEAM" == true || \
       "$NO_ACTIVITY" != true || "$PROCESS_DEATH" != true ]]; then
   usage
   exit 64
@@ -131,7 +162,15 @@ service = (root / "android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMess
 seam = (root / "android/app/src/main/kotlin/com/mknoon/app/ProductionDeletedBatchRecovery.kt").read_text()
 
 required = {
-    "receiver": ["EXTRA_PLAN374_PHASE", "ProductionDeletedBatchRecovery(", "Plan374FixtureRunner"],
+    "receiver": [
+        "EXTRA_PLAN374_PHASE",
+        "ProductionDeletedBatchRecovery(",
+        "Plan374FixtureRunner",
+        # Plan 375: the fixed-wake phase drives the REAL production service
+        # ingress (classifier + seam + silent card + scheduler).
+        "DebugFixedWakeIngressService(",
+        "ingressService.onMessageReceived(",
+    ],
     "fixture": [
         "runAndroidHeadlessRecovery374Fixture",
         "currentIdentityDatabaseVersion",
@@ -142,17 +181,29 @@ required = {
         "LocalNotificationLedgerStore",
     ],
     "main": ["androidHeadlessRecovery374FixtureMain", "androidHeadlessCanonicalRecoveryMain"],
-    "service": ["ProductionDeletedBatchRecovery(", ".commitAndSchedule { generation ->"],
-    "seam": ["store.recordDeletion { generation ->", "enqueueDeletedBatch"],
+    "service": [
+        "ProductionDeletedBatchRecovery(",
+        ".recordGenericRecoveryTrigger(",
+        "override fun onMessageReceived(",
+        "fun isExactFixedOpaqueWake(",
+    ],
+    "seam": [
+        "store.recordDeletion { generation ->",
+        "store.recordFixedWake { generation ->",
+        "scheduler::enqueueDeletedBatch",
+        "scheduler::enqueueFixedWake",
+    ],
 }
 sources = {"receiver": receiver, "fixture": fixture, "main": main, "service": service, "seam": seam}
 for owner, needles in required.items():
     for needle in needles:
         if needle not in sources[owner]:
-            raise SystemExit(f"Plan-374 source contract missing {owner}: {needle}")
-if ".recordDeletion" in service:
+            raise SystemExit(f"Plan-374/375 source contract missing {owner}: {needle}")
+if ".recordDeletion" in service or ".recordFixedWake" in service:
     raise SystemExit("Firebase service bypasses ProductionDeletedBatchRecovery")
-if "store.recordDeletion" in receiver or "WorkManager.getInstance" in receiver:
+if service.count("super.onMessageReceived(message)") != 1:
+    raise SystemExit("exactly one FlutterFire delegation seam may call super")
+if "store.recordDeletion" in receiver or "store.recordFixedWake" in receiver or "WorkManager.getInstance" in receiver:
     raise SystemExit("debug receiver bypasses the production commit/schedule seam")
 for forbidden in ("runApp(", "runApplicationBootstrap(", "ApplicationRoot"):
     if forbidden in fixture:
@@ -166,6 +217,7 @@ shasum -a 256 \
   "$REPO_ROOT/lib/app/bootstrap/production_canonical_direct_projection_composition.dart" \
   "$REPO_ROOT/lib/features/conversation/application/direct_notification_projection_owner.dart" \
   "$REPO_ROOT/android/app/src/debug/kotlin/com/mknoon/app/CanonicalRuntimeH0ProbeReceiver.kt" \
+  "$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessagingService.kt" \
   "$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/ProductionDeletedBatchRecovery.kt" \
   "$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorker.kt" \
   "$REPO_ROOT/scripts/run_android_headless_recovery_374.sh" \
@@ -321,7 +373,48 @@ registered_namespaced_recovery_job_ids \
   "$OUTPUT_DIR/jobscheduler-baseline.txt" \
   >"$OUTPUT_DIR/jobscheduler-baseline-worker-ids.txt"
 
-run_phase deleted-batch
+if [[ "$FIXED_WAKE" == true ]]; then
+  TRIGGER_PHASE=fixed-wake
+else
+  TRIGGER_PHASE=deleted-batch
+fi
+run_phase "$TRIGGER_PHASE"
+if [[ "$FIXED_WAKE" == true ]]; then
+GENERATION=$(python3 - "$OUTPUT_DIR/fixed-wake.json" <<'PY'
+import json
+import sys
+p = json.load(open(sys.argv[1], encoding="utf-8"))
+generation = p.get("committedGeneration")
+passed = (
+    p.get("status") == "PASS" and
+    p.get("productionFixedIngressSeam") is True and
+    p.get("processDeathBarrierArmed") is True and
+    p.get("recoveryWorkEnabledBefore") is True and
+    p.get("richCanaryDelegatedOnce") is True and
+    p.get("fixedDelegated") is False and
+    p.get("committedTriggerKind") == "FIXED_WAKE" and
+    p.get("committedGenericMayHaveAlerted") is False and
+    p.get("genericCardPresent") is True and
+    p.get("genericCardRequestedSilent") is True and
+    p.get("genericCardSoundUri") in (None, "") and
+    p.get("genericCardDefaults") == 0 and
+    p.get("genericCardVibratePattern") in (None, "") and
+    # API 36+ forced auto-grouping may strip the sparse app "silent" group at
+    # post time and regroup under the system silent-section aggregate; the
+    # group/override facts are recorded verbatim while the requested-silence
+    # invariants above stay exact. Robolectric owns the pre-post group key.
+    p.get("genericCardGroupAlertBehavior") == 1 and
+    p.get("genericCardOnlyAlertOnce") is True and
+    isinstance(generation, int) and generation > 0 and
+    p.get("committedBinding") and
+    str(p.get("immediateUniqueWorkName", "")).startswith("mknoon-recovery-immediate-")
+)
+if not passed:
+    raise SystemExit("fixed-wake artifact failed Plan-375 invariants")
+print(generation)
+PY
+)
+else
 GENERATION=$(python3 - "$OUTPUT_DIR/deleted-batch.json" <<'PY'
 import json
 import sys
@@ -342,6 +435,7 @@ if not passed:
 print(generation)
 PY
 )
+fi
 
 worker_log() {
   adb -s "$DEVICE_ID" logcat -d -v raw -s "$WORKER_LOG_TAG:I" '*:S'
@@ -641,14 +735,21 @@ passed = (
 raise SystemExit(0 if passed else "inspect artifact failed Plan-374 invariants")
 PY
 
+if [[ "$FIXED_WAKE" == true ]]; then
+  RESULT_TEST_ID=TC-375-08
+  RESULT_PATH="$OUTPUT_DIR/tc-375-08-result.json"
+else
+  RESULT_TEST_ID=TC-374-08
+  RESULT_PATH="$OUTPUT_DIR/tc-374-08-result.json"
+fi
 python3 - \
   "$OUTPUT_DIR/seed.json" \
-  "$OUTPUT_DIR/deleted-batch.json" \
+  "$OUTPUT_DIR/$TRIGGER_PHASE.json" \
   "$OUTPUT_DIR/inspect.json" \
   "$OUTPUT_DIR/worker-log.txt" \
-  "$OUTPUT_DIR/tc-374-08-result.json" \
+  "$RESULT_PATH" \
   "$DEVICE_ID" "$RUN_NONCE" "$FIRST_PID" "$SECOND_PID" "$GENERATION" \
-  "$ACTIVITY_COUNT" <<'PY'
+  "$ACTIVITY_COUNT" "$RESULT_TEST_ID" "$TRIGGER_PHASE" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -657,6 +758,7 @@ import sys
 seed_path, deletion_path, inspect_path, worker_path, output_path = map(pathlib.Path, sys.argv[1:6])
 device_id, nonce, first_pid, second_pid = sys.argv[6:10]
 generation, activity_count = map(int, sys.argv[10:12])
+result_test_id, trigger_phase = sys.argv[12:14]
 
 def load(path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -682,14 +784,23 @@ successful_resumes = [
 if first_pid == second_pid or len(successful_resumes) != 1:
     raise SystemExit("final resumed WorkManager success identity is not exact")
 
+trigger = json.loads(deletion_path.read_text(encoding="utf-8"))
 result = {
     "schemaVersion": 1,
-    "testId": "TC-374-08",
+    "testId": result_test_id,
     "status": "PASS",
     "deviceId": device_id,
     "runNonce": nonce,
     "scenarioCount": 1,
-    "productionDeletedBatchSeam": True,
+    "triggerPhase": trigger_phase,
+    "productionDeletedBatchSeam": trigger_phase == "deleted-batch",
+    "productionFixedIngressSeam": trigger_phase == "fixed-wake",
+    "fixedGenericCardRequestedSilent": bool(
+        trigger.get("genericCardRequestedSilent"),
+    ) if trigger_phase == "fixed-wake" else None,
+    "richCanaryDelegatedOnce": bool(
+        trigger.get("richCanaryDelegatedOnce"),
+    ) if trigger_phase == "fixed-wake" else None,
     "workManagerProductionEntrypoint": "androidHeadlessCanonicalRecoveryMain",
     "existingSqlCipherVersion": 116,
     "processDeath": {
@@ -709,7 +820,7 @@ result = {
     "manualTapCount": 0,
     "skipCount": 0,
     "seed": load(seed_path),
-    "deletedBatch": load(deletion_path),
+    "trigger": trigger,
     "inspection": load(inspect_path),
     "workerEvents": worker_events,
 }
@@ -717,5 +828,10 @@ output_path.write_text(json.dumps(result, sort_keys=True, separators=(",", ":"))
 print(hashlib.sha256(output_path.read_bytes()).hexdigest(), output_path.name)
 PY
 
-printf '%s\n' \
-  'TC-374-08 PASS: production deleted-batch seam -> WorkManager -> process-death retry -> production headless recovery; Activity launches=0, manual taps=0, skips=0'
+if [[ "$FIXED_WAKE" == true ]]; then
+  printf '%s\n' \
+    'TC-375-08 PASS: exact production fixed ingress -> silent generic card -> WorkManager -> process-death retry -> production headless recovery -> exact generic retirement; Activity launches=0, manual taps=0, skips=0'
+else
+  printf '%s\n' \
+    'TC-374-08 PASS: production deleted-batch seam -> WorkManager -> process-death retry -> production headless recovery; Activity launches=0, manual taps=0, skips=0'
+fi

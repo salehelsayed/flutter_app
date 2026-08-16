@@ -1,6 +1,6 @@
 # 375 - GAP-N08 Android Fixed Opaque Wake Adoption And Mechanism Closure
 
-Status: **PREREQUISITE_BLOCKED / CONTRACT_READY / INDEPENDENTLY_REVIEWED / N08 SLICE 2 OF 2 / PAIRED ADMISSION DEFAULT-OFF / ADAPTER-WAVE HOST REQUIRED / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
+Status: **POST_EXECUTION_AUDIT_CLOSED / N08_ANDROID_FIXED_WAKE_MECHANISM_CODE_COMPLETE / N07_N08_ADAPTER_WAVE_HOST_ALL_GREEN / N08 SLICE 2 OF 2 / PAIRED ADMISSION DEFAULT-OFF / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
 Type: Modification
 Spec inputs: GAP-N08, WP-05 and sequencing guidance in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; Plans 368, 370, 372, 373 and 374
 Classification: Android fixed-wake ingress and existing headless-recovery adoption
@@ -1118,51 +1118,51 @@ worktree before looking for the next sequential plan.
 
 ## Execution Interpretation And Done Criteria
 
-- [ ] Plan-373/374 committed receipts, artifacts, ancestry and finalized
+- [x] Plan-373/374 committed receipts, artifacts, ancestry and finalized
       source/test/API names validate; post-Plan-374 product drift is empty.
       Plan-368 receipt/provider API/test and Plan-370 default-off sentinels pass.
-- [ ] TC-375-01 has the one assertion-owned pre-implementation RED described by
+- [x] TC-375-01 has the one assertion-owned pre-implementation RED described by
       Gate 1. TC-375-01 through TC-375-08 then have causal GREEN evidence.
       Representative mutations re-red the six load-bearing seams: exact
       classifier, current-marker resnapshot, no synthetic authority, cross-path
       sound policy, paired readiness and linked logical/physical identity. The
       other table mutations remain mandatory review counterexamples, not
       duplicate mutation executions.
-- [ ] Exactly one app-owned FCM service intercepts only exact fixed data and
+- [x] Exactly one app-owned FCM service intercepts only exact fixed data and
       delegates every nonfixed/rich message to FlutterFire once.
-- [ ] One existing binding/generation store owns both trigger kinds and one
+- [x] One existing binding/generation store owns both trigger kinds and one
       conservative audible disposition; fixed coalescing cannot downgrade an
       incumbent deletion ambiguity, and no second persistent/notification
       family exists.
-- [ ] Fixed/deleted/periodic work uses one scheduler/worker/engine/runtime;
+- [x] Fixed/deleted/periodic work uses one scheduler/worker/engine/runtime;
       current state wins stale WorkRequest input and failures preserve work.
-- [ ] Fixed provider fields mint no event identity, ledger/SQL/outcome or relay
+- [x] Fixed provider fields mint no event identity, ledger/SQL/outcome or relay
       ACK. Plan-374 canonical SQL materialization remains `INBOX_RECONCILER`.
-- [ ] Fixed generic requests are visibly present but explicitly silent in both
+- [x] Fixed generic requests are visibly present but explicitly silent in both
       arrival orders; fixed-only work retains normal exact canonical tone
       arbitration. Exact generic retirement happens only after final
       convergence/ACK, and periodic work recovers an enqueue failure.
-- [ ] One effective default-false predicate gates both capabilities, outcome
+- [x] One effective default-false predicate gates both capabilities, outcome
       producer and drainer; primary/active-linked routes use exact logical and
       physical authority through one registration coordinator.
-- [ ] Focused Dart/native/Go and exact preservation pass with exact selection,
+- [x] Focused Dart/native/Go and exact preservation pass with exact selection,
       success and zero-skip evidence.
-- [ ] `completeness-check`, baseline, `1to1` and `groups` pass serially.
-- [ ] Each rediscovered available USB-Android/emulator class passes the same
+- [x] `completeness-check`, baseline, `1to1` and `groups` pass serially.
+- [x] Each rediscovered available USB-Android/emulator class passes the same
       immutable-APK, no-Activity, process-death fixed-wake proof in isolated
       parallel output; each absent class records exact policy N/A.
-- [ ] The unconditional Plan-375 closure run contains one and only one N07+N08
+- [x] The unconditional Plan-375 closure run contains one and only one N07+N08
       adapter-wave full host gate and rediscovers both synthetic native items
       once.
-- [ ] No core/feature/performance sweep, broad Plan-331 campaign, live FCM/Doze/
+- [x] No core/feature/performance sweep, broad Plan-331 campaign, live FCM/Doze/
       OEM claim, activation or release action is performed.
-- [ ] Analyzer, changed+untracked Dart formatting, changed-Go `gofmt` zero-diff,
+- [x] Analyzer, changed+untracked Dart formatting, changed-Go `gofmt` zero-diff,
       both main gate-runner and both Android-runner `bash -n` checks, staged and
       unstaged diff hygiene, and fresh Graphify review pass.
-- [ ] The four checksum-bound evidence artifacts exist and rehash. The receipt
+- [x] The four checksum-bound evidence artifacts exist and rehash. The receipt
       records `N08_ANDROID_FIXED_WAKE_MECHANISM_CODE_COMPLETE` and
       `N07_N08_ADAPTER_WAVE_HOST_ALL_GREEN` as separate standalone raw lines.
-- [ ] Plan/progress, `STATUS.md`, `00-INDEX.md` and GAP-N08 coverage/counts are
+- [x] Plan/progress, `STATUS.md`, `00-INDEX.md` and GAP-N08 coverage/counts are
       updated only after the tested-tree freeze; one Plan-375 commit contains
       exactly the reviewed scope and leaves a clean worktree.
 
@@ -1228,4 +1228,13 @@ synthetic event identity or broadened rollout plan.
 
 | Time | Step | RED evidence | GREEN evidence | Refactor / regression | Evidence path |
 |---|---|---|---|---|---|
-| pending | TC-375-00 prerequisite | Committed Plan-373/374 receipts and clean post-Plan-374 product baseline are not yet validated | pending | No production execution authorized | pending |
+| 2026-08-16 | TC-375-00 prerequisite | — | Full literal preflight exit 0 on clean committed `HEAD` `5bb389906`: Plan-368/373/374 receipts, ancestry, drift allowlists, provider root, TC-373-07/TC-370-05/07 sentinels | Execution authorized from the committed Plan-374 receipt tree | transcripted preflight run |
+| 2026-08-16 | TC-375-01 | Assertion-owned RED 1/1/0/0 (`exact fixed wake must never enter FlutterFire rich staging`), XML SHA-256 `6c8f69b1d5f3a399e3b4628481e7efa2ec80221574535f9ea648395a66af3bf7` | Exact classifier + silent-card + fail-closed binding GREEN; 10/10 service methods | Frozen 374 service methods intact | `build/plan375-evidence/tc-375-01-red.xml` |
+| 2026-08-16 | TC-375-02/03 native | — | Store kind/disposition CAS, scheduler chain-reuse and worker trigger-adoption GREEN; native suite 9 classes / 67 methods, 0 fail/skip via `host-all --only` row #1383 | 62 frozen Plan-374 methods preserved; seam/service source contracts evolved in the native script | wave log |
+| 2026-08-16 | TC-375-04/05 serial | — | Real-SQLite/real-ledger no-synthetic-authority + `INBOX_RECONCILER` proof and both-orders sound/retirement contract GREEN (serial fence exit 0) | Periodic-adoption retarget of the runtime/entrypoint tests recorded | transcripted `FENCE4_EXIT=0` |
+| 2026-08-16 | TC-375-06/07/07b pure | — | Live paired-epoch resolver, linked pair-only route and coordinator-owned retries GREEN (pure fence exit 0); Go pair-withdrawal subtest PASS | TC-370-05/07, TC-295-02/08, TC-296-07, DTR-16/18 pins extended, never weakened | transcripted `FENCE3_EXIT=0`, `build/plan375-evidence/gate4-go.log` |
+| 2026-08-16 | Mutations 6/6 | Each family red on its exact owner | Byte-identical restore verified by SHA-256; owners re-GREEN | `build/plan375-evidence/mutations/mutation-report.json` SHA-256 `4528fd59c0c525fb560f1e85713416d28095156669d38e4afed557ecc2315363` | `build/plan375-evidence/mutations/` |
+| 2026-08-16 | Preservation + curated | — | Gate-5 12-label bundle exit 0; completeness 1465/1465; baseline +197/+6/+1; 1to1 3,345/~10; groups 4,350/0 | Final-tree reruns after formatting and the receiver-validator re-grounding | `build/plan375-evidence/gate6-curated.log` |
+| 2026-08-16 | TC-375-08 device | First pass failed only its own group-string validator (Android 16 forced autogroup strips sparse app groups) | PASS on `emulator-5554` (API 37) and USB Pixel 6 `21071FDF600CSC` (API 36) from one immutable APK `045855c4…`; distinct-process death/resume; silent fixed card; exact retirement; 0 Activity/taps/skips | Validators re-grounded to requested-silence facts; Robolectric owns the pre-post group key | `build/plan375.iRYdNC/` + receipt table |
+| 2026-08-16 | N07+N08 wave | First wave pass exposed 10 latent 373/374 pins and second-order manifest pins | `host-all` exit 0: 1,383 rows, Flutter batch 14,344/~11/0, both native adapter rows rediscovered once and PASS | Ten re-pins/extensions enumerated in the receipt; 13 pre-existing performance reds worktree-verified at base `HEAD` | `build/plan375-evidence/gate8-wave.log` |
+| 2026-08-16 | Hygiene/graph + closure | — | Analyzer clean; formats/gofmt/diff/bash -n clean; Graphify refresh 38/3,239/0, fingerprint `b5f0b986c86ff8e5`; frozen tested tree `5235d49aba3b2f940650464d72f3ec8353d57f69`; four checksum-bound artifacts committed | Closure docs postdate the freeze; one Plan-375 commit | `Test-Flight-Improv/evidence/375/README.md` |

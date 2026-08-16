@@ -124,6 +124,127 @@ class CanonicalRuntimeH0ProbeReceiver : BroadcastReceiver() {
                 )
                 return
             }
+            if (plan374Phase == "fixed-wake") {
+                val store = DroppedPushRecoveryStore(applicationContext)
+                val before = store.recoveryAuthority()
+                val processDeathBarrierArmed = Plan374ProcessDeathBarrier.arm(
+                    applicationContext,
+                    runNonce,
+                )
+                // Drive the REAL production service ingress: classifier, seam,
+                // silent generic card and WorkManager scheduling. Direct
+                // preference writes or direct enqueue would not prove ingress.
+                val ingressService = DebugFixedWakeIngressService(applicationContext)
+                val richCanary = com.google.firebase.messaging.debugRemoteMessageFromBundle(
+                    android.os.Bundle().apply {
+                        putString("v", "1")
+                        putString("w", "1")
+                        putString("x", "1")
+                    },
+                )
+                ingressService.onMessageReceived(richCanary)
+                val delegatedBeforeFixed = ingressService.delegatedCount
+                val exactFixed = com.google.firebase.messaging.debugRemoteMessageFromBundle(
+                    android.os.Bundle().apply {
+                        putString("v", "1")
+                        putString("w", "1")
+                    },
+                )
+                ingressService.onMessageReceived(exactFixed)
+                if (store.pendingRecovery() == null) {
+                    Plan374ProcessDeathBarrier.disarm(applicationContext)
+                }
+                val after = store.recoveryAuthority()
+                val committed = after.pendingRecovery
+                val postedCard = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    applicationContext.getSystemService(NotificationManager::class.java)
+                        .activeNotifications.firstOrNull { posted ->
+                            posted.tag ==
+                                MknoonFirebaseMessagingService.RECOVERY_NOTIFICATION_TAG &&
+                                posted.id ==
+                                MknoonFirebaseMessagingService.RECOVERY_NOTIFICATION_ID
+                        }
+                } else {
+                    null
+                }
+                // Requested-silence facts that survive the OS post: no sound
+                // URI, no sound/vibrate defaults, no vibrate pattern, and the
+                // summary-only alert behavior. The app-requested "silent"
+                // group itself is NOT stable evidence on API 36+: forced
+                // auto-grouping may strip a sparse app group at post time and
+                // regroup the card under the system silent-section aggregate,
+                // so the group and override-group facts are recorded verbatim
+                // instead of asserted. Robolectric TC-375-01 owns the exact
+                // pre-post builder request including the group key.
+                @Suppress("DEPRECATION")
+                val cardRequestedSilent = postedCard != null &&
+                    postedCard.notification.sound == null &&
+                    postedCard.notification.defaults == 0 &&
+                    postedCard.notification.vibrate == null &&
+                    postedCard.notification.groupAlertBehavior ==
+                    Notification.GROUP_ALERT_SUMMARY
+                val passed = before.currentBinding != null &&
+                    before.recoveryWorkEnabled &&
+                    processDeathBarrierArmed &&
+                    delegatedBeforeFixed == 1 &&
+                    ingressService.delegatedCount == 1 &&
+                    committed != null &&
+                    committed.triggerKind ==
+                    DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE &&
+                    postedCard != null &&
+                    cardRequestedSilent
+                finishPlan374(
+                    JSONObject()
+                        .put("status", if (passed) "PASS" else "FAIL")
+                        .put("phase", plan374Phase)
+                        .put("runNonce", runNonce)
+                        .put("productionFixedIngressSeam", true)
+                        .put("processDeathBarrierArmed", processDeathBarrierArmed)
+                        .put("recoveryWorkEnabledBefore", before.recoveryWorkEnabled)
+                        .put("bindingBefore", before.currentBinding)
+                        .put("richCanaryDelegatedOnce", delegatedBeforeFixed == 1)
+                        .put("fixedDelegated", ingressService.delegatedCount != 1)
+                        .put("committedGeneration", committed?.generation)
+                        .put("committedBinding", committed?.binding)
+                        .put("committedTriggerKind", committed?.triggerKind?.name)
+                        .put(
+                            "committedGenericMayHaveAlerted",
+                            committed?.genericMayHaveAlerted,
+                        )
+                        .put("genericCardPresent", postedCard != null)
+                        .put("genericCardRequestedSilent", cardRequestedSilent)
+                        .put("genericCardSoundUri", postedCard?.notification?.sound?.toString())
+                        .put("genericCardDefaults", postedCard?.notification?.defaults)
+                        .put(
+                            "genericCardVibratePattern",
+                            @Suppress("DEPRECATION")
+                            postedCard?.notification?.vibrate?.joinToString(","),
+                        )
+                        .put("genericCardGroup", postedCard?.notification?.group)
+                        .put("genericCardOverrideGroupKey", postedCard?.overrideGroupKey)
+                        .put("genericCardSystemGroupKey", postedCard?.groupKey)
+                        .put(
+                            "genericCardGroupAlertBehavior",
+                            postedCard?.notification?.groupAlertBehavior,
+                        )
+                        .put(
+                            "genericCardOnlyAlertOnce",
+                            postedCard?.notification?.flags?.let { flags ->
+                                flags and Notification.FLAG_ONLY_ALERT_ONCE != 0
+                            },
+                        )
+                        .put(
+                            "immediateUniqueWorkName",
+                            committed?.binding?.let(
+                                DroppedPushRecoveryWorkScheduler::immediateUniqueName,
+                            ),
+                        )
+                        .put("mainActivityLaunchCount", 0)
+                        .put("pid", Process.myPid()),
+                    passed,
+                )
+                return
+            }
             if (plan374Phase == "deleted-batch") {
                 val store = DroppedPushRecoveryStore(applicationContext)
                 val before = store.recoveryAuthority()
@@ -1901,5 +2022,29 @@ class CanonicalRuntimeH0ProbeReceiver : BroadcastReceiver() {
             }
             else -> value
         }
+    }
+}
+
+/**
+ * Debug-proof host for the real production service ingress. The base context
+ * is attached manually because the proof runs inside a broadcast, but every
+ * classifier/seam/card/scheduler call is the production implementation; only
+ * FlutterFire delegation is recorded so a rich canary cannot start incumbent
+ * background staging mid-proof.
+ */
+private class DebugFixedWakeIngressService(
+    base: android.content.Context,
+) : MknoonFirebaseMessagingService() {
+    var delegatedCount = 0
+        private set
+
+    init {
+        attachBaseContext(base)
+    }
+
+    override fun delegateRichMessageToFlutterFire(
+        message: com.google.firebase.messaging.RemoteMessage,
+    ) {
+        delegatedCount += 1
     }
 }

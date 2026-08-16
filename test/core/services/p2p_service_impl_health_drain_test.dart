@@ -146,10 +146,7 @@ void main() {
     bridge = _FakeBridge();
     statusFeed = _StatusFeed(sticky: _statusJson(relayState: 'online'));
     bridge.whenCommand('node:status', (_) => statusFeed.next());
-    bridge.whenCommand(
-      'node:start',
-      (_) => _statusJson(relayState: 'online'),
-    );
+    bridge.whenCommand('node:start', (_) => _statusJson(relayState: 'online'));
     bridge.whenCommand(
       'inbox:retrieve_pending',
       (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
@@ -206,13 +203,15 @@ void main() {
       expect(
         recoveryStarts,
         3,
-        reason: 'discriminator: every tick must have taken the recovery '
+        reason:
+            'discriminator: every tick must have taken the recovery '
             'branch, not the healthy path',
       );
       expect(
         drains(),
         greaterThanOrEqualTo(3),
-        reason: 'INV-1: each recovery tick must issue an inbox drain '
+        reason:
+            'INV-1: each recovery tick must issue an inbox drain '
             '(HEAD returns at the recovery branch before the drain)',
       );
     },
@@ -235,7 +234,8 @@ void main() {
       expect(
         drains(),
         greaterThanOrEqualTo(1),
-        reason: 'INV-1: a failed recovery must not starve the drain — a '
+        reason:
+            'INV-1: a failed recovery must not starve the drain — a '
             'degraded relay session can still serve retrieve_pending',
       );
     },
@@ -301,7 +301,8 @@ void main() {
       expect(
         drains(),
         greaterThanOrEqualTo(1),
-        reason: 'INV-1: performImmediateHealthCheck inherits the per-tick '
+        reason:
+            'INV-1: performImmediateHealthCheck inherits the per-tick '
             'drain guarantee',
       );
     },
@@ -350,7 +351,8 @@ void main() {
       expect(
         P2PServiceImpl.healthCheckInterval,
         const Duration(seconds: 30),
-        reason: 'TC-189-06: store→ack ≤ ~35s derives from drain-per-tick '
+        reason:
+            'TC-189-06: store→ack ≤ ~35s derives from drain-per-tick '
             '(TC-189-01) + this cadence',
       );
     },
@@ -409,7 +411,8 @@ void main() {
       expect(
         recovered,
         isEmpty,
-        reason: 'INV-2: a Success:false/NO_CIRCUIT reconnect is NOT a '
+        reason:
+            'INV-2: a Success:false/NO_CIRCUIT reconnect is NOT a '
             'recovery — HEAD branches on ok alone and lies',
       );
       expect(
@@ -450,7 +453,8 @@ void main() {
       expect(
         reconnects(),
         lessThanOrEqualTo(4),
-        reason: 'INV-4: from the refreshFailureThreshold-th consecutive '
+        reason:
+            'INV-4: from the refreshFailureThreshold-th consecutive '
             'failure on, recovery attempts must start skipping ticks '
             '(HEAD hammers one attempt per tick forever)',
       );
@@ -465,7 +469,8 @@ void main() {
       expect(
         drains(),
         6,
-        reason: 'INV-4: recovery attempts back off; drains NEVER do — one '
+        reason:
+            'INV-4: recovery attempts back off; drains NEVER do — one '
             'drain per tick, including skipped-recovery ticks',
       );
     },
@@ -561,6 +566,12 @@ void main() {
 
       await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
       await service.registerPushToken('token-189', 'android');
+      // Plan 375: the healthy transition hands re-registration to the one
+      // installed coordinator owner; its attempt sends the current-policy
+      // frame (production wires PushRegistrationCoordinator.retryNow here).
+      service.installPushRegistrationRetryNow(() async {
+        await service.registerPushToken('token-189', 'android');
+      });
       await service.performImmediateHealthCheck();
       bridge.calledCommands.clear();
 
@@ -595,7 +606,8 @@ void main() {
       expect(
         recovered.length,
         1,
-        reason: 'INV-2: exactly ONE truthful phase=recovered on convergence '
+        reason:
+            'INV-2: exactly ONE truthful phase=recovered on convergence '
             '(HEAD emits one per tick)',
       );
       expect(
@@ -609,19 +621,22 @@ void main() {
       expect(
         recoveryStarts,
         4,
-        reason: '3 failing attempts + 1 successful attempt; the backoff tick '
+        reason:
+            '3 failing attempts + 1 successful attempt; the backoff tick '
             'and the converged tick must not attempt recovery',
       );
       expect(
         bridge.calledCommands.where((c) => c == 'inbox:register_token').length,
         greaterThanOrEqualTo(1),
-        reason: 'invariant re-verification: the healthy transition must '
+        reason:
+            'invariant re-verification: the healthy transition must '
             're-register the stored push token',
       );
       expect(
         drains(),
         6,
-        reason: 'INV-1 across the whole convergence: every tick drained '
+        reason:
+            'INV-1 across the whole convergence: every tick drained '
             '(4 degraded + 1 recovering + 1 converged)',
       );
     },

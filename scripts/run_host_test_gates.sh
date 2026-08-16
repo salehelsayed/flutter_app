@@ -16,6 +16,9 @@ flutter_concurrency=""
 flutter_reporter=""
 
 readonly ONE_TO_ONE_HOST_TESTS=(
+  # 375: one live Android paired-capability readiness epoch gates the
+  # producer, drainer and registration for both messaging families.
+  "test/core/notifications/android_opaque_wake_readiness_test.dart"
   # 372: shared final-effect ledger, barrier, convergence and production
   # ownership census stay registered for the wave-level host aggregate.
   "test/core/notifications/local_notification_ledger_test.dart"

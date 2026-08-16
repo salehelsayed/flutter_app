@@ -9,6 +9,7 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/database/migrations/107_direct_notification_durability.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/notifications/android_recovery_alert_disposition.dart';
 import 'package:flutter_app/core/notifications/canonical_recovery_runtime.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_bridge.dart';
@@ -365,6 +366,11 @@ abstract interface class ProductionHeadlessCanonicalRecoveryBackend {
     int? authorityRevision,
   });
 
+  /// Plan-372 final-effect tone consultation: whether the current marker's
+  /// coalesced generic card may already have alerted. No marker means false;
+  /// a failed or ambiguous read must answer conservatively true.
+  Future<bool> readGenericRecoveryMayHaveAlerted();
+
   HeadlessCanonicalRecoveryCleanup get lifecycleFacts;
 
   Future<HeadlessCanonicalRecoveryCleanup> emergencyCleanup();
@@ -433,7 +439,9 @@ final class ProductionHeadlessCanonicalRecoveryAcquisitionOwner<
       int? authorityRevision,
     })
     acknowledgeHeadlessMarker,
+    Future<bool> Function()? readGenericRecoveryMayHaveAlerted,
   }) : _loadAuthority = loadAuthority,
+       _readGenericRecoveryMayHaveAlerted = readGenericRecoveryMayHaveAlerted,
        _hasWritableOwnership = hasWritableOwnership,
        _acquireThenOpen = acquireThenOpen,
        _openExistingDatabase = openExistingDatabase,
@@ -447,6 +455,7 @@ final class ProductionHeadlessCanonicalRecoveryAcquisitionOwner<
 
   final Future<ProductionHeadlessCanonicalAuthoritySnapshot> Function()
   _loadAuthority;
+  final Future<bool> Function()? _readGenericRecoveryMayHaveAlerted;
   final bool Function() _hasWritableOwnership;
   final ProductionHeadlessAcquireThenOpen<TDatabase> _acquireThenOpen;
   final Future<TDatabase> Function({
@@ -491,6 +500,17 @@ final class ProductionHeadlessCanonicalRecoveryAcquisitionOwner<
   @override
   Future<ProductionHeadlessCanonicalAuthoritySnapshot> loadAuthority() =>
       _loadAuthority();
+
+  @override
+  Future<bool> readGenericRecoveryMayHaveAlerted() async {
+    final read = _readGenericRecoveryMayHaveAlerted;
+    if (read == null) return false;
+    try {
+      return await read();
+    } on Object {
+      return true;
+    }
+  }
 
   @override
   HeadlessCanonicalRecoveryCleanup get lifecycleFacts {
@@ -897,7 +917,7 @@ final class ProductionHeadlessCanonicalRecoveryRunner {
             binding: binding,
             reason: reason,
             expectedMarker:
-                invocation.reason == CanonicalRecoveryReason.deletedBatch
+                invocation.reason != CanonicalRecoveryReason.periodicSweep
                 ? CanonicalRecoveryMarker(
                     generation: invocation.generation!,
                     binding: invocation.binding,
@@ -907,15 +927,22 @@ final class ProductionHeadlessCanonicalRecoveryRunner {
       acknowledgeMarker: _backend.acknowledgeHeadlessMarker,
       isStopRequested: isStopRequested,
     );
-    final result = await runtime.run(
-      invocation.reason,
-      expectedBinding: invocation.binding,
-      expectedMarker: invocation.reason == CanonicalRecoveryReason.deletedBatch
-          ? CanonicalRecoveryMarker(
-              generation: invocation.generation!,
-              binding: invocation.binding,
-            )
-          : null,
+    // Every drain/settlement callback admitted by this run reads the marker's
+    // audible disposition live at the Plan-372 final-effect boundary. The
+    // zone keeps concurrent foreground work outside this recovery generation.
+    final result = await runWithAndroidRecoveryGenericAlertDisposition(
+      reader: _backend.readGenericRecoveryMayHaveAlerted,
+      action: () => runtime.run(
+        invocation.reason,
+        expectedBinding: invocation.binding,
+        expectedMarker:
+            invocation.reason != CanonicalRecoveryReason.periodicSweep
+            ? CanonicalRecoveryMarker(
+                generation: invocation.generation!,
+                binding: invocation.binding,
+              )
+            : null,
+      ),
     );
     final facts = _backend.lifecycleFacts;
     if (!facts.databaseClosed || !facts.leaseReleased) {
@@ -949,6 +976,7 @@ final class ProductionHeadlessCanonicalRecoveryRunner {
     }
     switch (invocation.reason) {
       case CanonicalRecoveryReason.deletedBatch:
+      case CanonicalRecoveryReason.fixedWake:
         final marker = authority.marker;
         if (marker == null ||
             marker.binding != invocation.binding ||
@@ -962,8 +990,8 @@ final class ProductionHeadlessCanonicalRecoveryRunner {
         }
         break;
       case CanonicalRecoveryReason.periodicSweep:
-        // Periodic work has no deletion generation. Authority, binding, and
-        // the exact post-teardown fingerprint remain mandatory for both kinds.
+        // Periodic work has no trigger generation. Authority, binding, and
+        // the exact post-teardown fingerprint remain mandatory for all kinds.
         break;
     }
     return null;
@@ -1180,6 +1208,20 @@ final class AndroidProductionHeadlessCanonicalRecoveryBackend
     reason: reason,
     expectedMarker: expectedMarker,
   );
+
+  @override
+  Future<bool> readGenericRecoveryMayHaveAlerted() async {
+    try {
+      final disposition = await _droppedPushRecoveryBridge
+          .pendingRecoveryDisposition();
+      if (disposition == null) return false;
+      return disposition.genericMayHaveAlerted;
+    } on Object {
+      // Ambiguous native state must not spend the canonical event's one
+      // sound; the marker itself stays untouched for the exact ACK path.
+      return true;
+    }
+  }
 
   Future<Database> _acquireThenOpen({
     required String binding,

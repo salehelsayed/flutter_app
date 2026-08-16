@@ -1146,6 +1146,10 @@
       "rootKind": "vm-callback"
     },
     {
+      "id": "callback.android.headless-recovery-374-fixture",
+      "rootKind": "vm-callback"
+    },
+    {
       "id": "callback.android.headless-canonical-recovery",
       "rootKind": "vm-callback"
     },
@@ -1258,6 +1262,29 @@
           "source": "android/app/src/debug/kotlin/com/mknoon/app/CanonicalRuntimeH0ProbeReceiver.kt",
           "callee": "DartExecutor.DartEntrypoint",
           "argument": "androidCanonicalRuntimeH0ProbeMain"
+        }
+      ]
+    },
+    {
+      "id": "callback.android.headless-recovery-374-fixture",
+      "path": "lib/main.dart",
+      "rootKind": "vm-callback",
+      "owner": "Plan 374 / Plan 375 Android device proof",
+      "reason": "The debug-only H0 receiver launches this pragma-protected non-UI seed/inspection fixture entrypoint by exact DartEntrypoint name; WorkManager still enters androidHeadlessCanonicalRecoveryMain for the measured recovery run.",
+      "condition": "Remove only with the disposable Plan-374/375 device fixture family and an equivalent production-classifier device proof.",
+      "evidence": [
+        {
+          "kind": "dart-annotation",
+          "source": "lib/main.dart",
+          "symbol": "androidHeadlessRecovery374FixtureMain",
+          "annotation": "pragma",
+          "value": "vm:entry-point"
+        },
+        {
+          "kind": "source-call-token",
+          "source": "android/app/src/debug/kotlin/com/mknoon/app/CanonicalRuntimeH0ProbeReceiver.kt",
+          "callee": "DartExecutor.DartEntrypoint",
+          "argument": "androidHeadlessRecovery374FixtureMain"
         }
       ]
     },

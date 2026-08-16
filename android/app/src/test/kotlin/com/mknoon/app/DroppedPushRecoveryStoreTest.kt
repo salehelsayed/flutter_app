@@ -32,6 +32,132 @@ class DroppedPushRecoveryStoreTest {
     }
 
     @Test
+    fun testTC37502FixedAndDeletedTriggersShareOneCrashSafeAudibleDisposition() {
+        val preferences = context.getSharedPreferences(
+            DroppedPushRecoveryStore.PREFERENCES_NAME,
+            Context.MODE_PRIVATE,
+        )
+        val store = DroppedPushRecoveryStore(context)
+        val binding = "installation-a/account-a"
+
+        // A legacy record with neither kind nor disposition decodes as the old
+        // deletion service's possibly-audible marker.
+        preferences.edit()
+            .putLong("last_generation", 7L)
+            .putLong("pending_generation", 7L)
+            .putString("pending_binding", binding)
+            .commit()
+        val legacy = requireNotNull(DroppedPushRecoveryStore(context).pendingRecovery())
+        assertEquals(
+            DroppedPushRecoveryStore.PendingRecovery(
+                generation = 7L,
+                binding = binding,
+                triggerKind = DroppedPushRecoveryStore.TriggerKind.DELETED_BATCH,
+                genericMayHaveAlerted = true,
+            ),
+            legacy,
+        )
+
+        // Coalescing a fixed trigger over that ambiguity allocates a newer
+        // generation, replaces the one record atomically, and never downgrades
+        // the audible ambiguity to false.
+        assertEquals(8L, store.recordFixedWake())
+        val coalesced = requireNotNull(store.pendingRecovery())
+        assertEquals(8L, coalesced.generation)
+        assertEquals(DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE, coalesced.triggerKind)
+        assertTrue(coalesced.genericMayHaveAlerted)
+
+        // Exact-CAS acknowledgement clears generation, binding, kind and
+        // disposition in one durable transaction; a stale generation cannot.
+        assertFalse(store.acknowledgeRecovery(7L, binding))
+        assertTrue(store.acknowledgeRecovery(8L, binding))
+        assertNull(store.pendingRecovery())
+        assertFalse(preferences.contains("pending_generation"))
+        assertFalse(preferences.contains("pending_binding"))
+        assertFalse(preferences.contains("pending_trigger_kind"))
+        assertFalse(preferences.contains("pending_generic_may_have_alerted"))
+
+        // A fixed-only marker commits an explicitly silent disposition, and a
+        // reopened store decodes the same committed record.
+        assertEquals(9L, store.recordFixedWake())
+        val fixedOnly = requireNotNull(DroppedPushRecoveryStore(context).pendingRecovery())
+        assertEquals(DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE, fixedOnly.triggerKind)
+        assertFalse(fixedOnly.genericMayHaveAlerted)
+
+        // A deletion coalescing over fixed-only work restores the conservative
+        // possibly-audible commitment before its own notify attempt.
+        assertEquals(10L, store.recordDeletion())
+        val deletion = requireNotNull(store.pendingRecovery())
+        assertEquals(DroppedPushRecoveryStore.TriggerKind.DELETED_BATCH, deletion.triggerKind)
+        assertTrue(deletion.genericMayHaveAlerted)
+        assertEquals(11L, store.recordFixedWake())
+        assertTrue(requireNotNull(store.pendingRecovery()).genericMayHaveAlerted)
+
+        // An unknown or malformed future kind retains the exact binding and
+        // generation as conservative pending work: it never decodes as no work
+        // and never authorizes acknowledgement or card cancellation.
+        preferences.edit()
+            .putString("pending_trigger_kind", "future_kind_v9")
+            .putBoolean("pending_generic_may_have_alerted", false)
+            .commit()
+        val unsupported = requireNotNull(store.pendingRecovery())
+        assertEquals(11L, unsupported.generation)
+        assertEquals(binding, unsupported.binding)
+        assertEquals(
+            DroppedPushRecoveryStore.TriggerKind.UNSUPPORTED_PENDING,
+            unsupported.triggerKind,
+        )
+        assertFalse(unsupported.genericMayHaveAlerted)
+        val cancelled = mutableListOf<Long>()
+        assertFalse(store.acknowledgeRecovery(11L, binding) { cancelled += 11L })
+        assertFalse(store.acknowledgeGeneration(11L) { cancelled += 11L })
+        assertTrue(cancelled.isEmpty())
+        assertEquals(11L, store.pendingGeneration())
+        assertFalse(store.reconcileNoPendingGeneration { cancelled += -1L })
+        assertTrue(cancelled.isEmpty())
+
+        // Account cutover removes marker, kind and disposition in the one
+        // incumbent rotation transaction even for an unsupported kind.
+        val rotation = store.setCurrentBinding("installation-b/account-b")
+        assertTrue(rotation.committed)
+        assertNull(store.pendingRecovery())
+        assertFalse(preferences.contains("pending_trigger_kind"))
+        assertFalse(preferences.contains("pending_generic_may_have_alerted"))
+
+        // Missing binding consumes a fixed trigger fail-closed.
+        store.setCurrentBinding(null)
+        assertNull(store.recordFixedWake())
+        assertNull(store.pendingRecovery())
+
+        // Concurrent mixed triggers allocate unique generations, keep exactly
+        // one newest pending record, and the audible ambiguity is absorbing:
+        // any committed deletion leaves the final disposition true.
+        store.setCurrentBinding(binding)
+        val executor = Executors.newFixedThreadPool(6)
+        val start = CountDownLatch(1)
+        val generations = Collections.synchronizedList(mutableListOf<Long>())
+        repeat(6) { index ->
+            executor.execute {
+                start.await()
+                val generation = if (index % 2 == 0) {
+                    DroppedPushRecoveryStore(context).recordFixedWake()
+                } else {
+                    DroppedPushRecoveryStore(context).recordDeletion()
+                }
+                generation?.let(generations::add)
+            }
+        }
+        start.countDown()
+        executor.shutdown()
+        assertTrue(executor.awaitTermination(20, TimeUnit.SECONDS))
+        assertEquals(6, generations.size)
+        assertEquals(6, generations.toSet().size)
+        val finalPending = requireNotNull(store.pendingRecovery())
+        assertEquals(generations.max(), finalPending.generation)
+        assertTrue(finalPending.genericMayHaveAlerted)
+    }
+
+    @Test
     fun `read is non-consuming and matching acknowledgement retains monotonic last generation`() {
         val store = DroppedPushRecoveryStore(context)
 

@@ -254,6 +254,11 @@ class GroupMessageListener {
   _durableLocalNotificationEffectRegistry;
   final LocalNotificationPresentationOwner _notificationPresentationOwner;
   final bool _completedOutcomeProducerEnabled;
+
+  /// Live platform consumer read consulted at each producer event. Shared
+  /// with the outcome drainer and paired capability registration so all three
+  /// follow one binding/role epoch; a failed read never mints an outcome.
+  final Future<bool> Function()? _readCompletedOutcomeProducerReady;
   late final GroupNotificationCanonicalReconciler?
   _notificationCanonicalReconciler;
   late final GroupNotificationDisplayRetryCoordinator<
@@ -353,6 +358,7 @@ class GroupMessageListener {
     LocalNotificationPresentationOwner notificationPresentationOwner =
         LocalNotificationPresentationOwner.mainApp,
     bool completedOutcomeProducerEnabled = false,
+    Future<bool> Function()? readCompletedOutcomeProducerReady,
     BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask,
     EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask,
   }) : _groupRepo = groupRepo,
@@ -401,7 +407,8 @@ class GroupMessageListener {
        _durableLocalNotificationEffectRegistry =
            durableLocalNotificationEffectRegistry,
        _notificationPresentationOwner = notificationPresentationOwner,
-       _completedOutcomeProducerEnabled = completedOutcomeProducerEnabled {
+       _completedOutcomeProducerEnabled = completedOutcomeProducerEnabled,
+       _readCompletedOutcomeProducerReady = readCompletedOutcomeProducerReady {
     final readSource = msgRepo is GroupConversationReadEventSource
         ? msgRepo as GroupConversationReadEventSource
         : null;
@@ -1392,7 +1399,7 @@ class GroupMessageListener {
             onExactReady: (current) => terminalEntry = current,
           ),
       onEffectTerminal: (receipt) async {
-        terminalOutcome = _outcomeForTerminalReceipt(
+        terminalOutcome = await _outcomeForTerminalReceipt(
           authority: authority,
           receipt: receipt,
         );
@@ -1760,7 +1767,7 @@ class GroupMessageListener {
             onExactReady: (current) => terminalEntry = current,
           ),
       onEffectTerminal: (receipt) async {
-        terminalOutcome = _outcomeForTerminalReceipt(
+        terminalOutcome = await _outcomeForTerminalReceipt(
           authority: authority,
           receipt: receipt,
         );
@@ -2215,10 +2222,10 @@ class GroupMessageListener {
     return disposition;
   }
 
-  NotificationCompletedOutcomeCandidate? _outcomeForTerminalReceipt({
+  Future<NotificationCompletedOutcomeCandidate?> _outcomeForTerminalReceipt({
     required _GroupDurableNotificationAuthority authority,
     required DurableLocalNotificationEffectReceipt receipt,
-  }) {
+  }) async {
     if (receipt.eventCorrelation != authority.eventCorrelation) {
       throw const GroupNotificationDisplayRetryableException();
     }
@@ -2239,6 +2246,7 @@ class GroupMessageListener {
         eventKey == null) {
       return null;
     }
+    if (!await _liveCompletedOutcomeProducerReady()) return null;
     return NotificationCompletedOutcomeCandidate(
       physicalPeerId: physicalPeerId,
       producerKind: authority.outcomeProducerKind,
@@ -2246,6 +2254,16 @@ class GroupMessageListener {
       outcome: category,
       completedAt: DateTime.now().toUtc(),
     );
+  }
+
+  Future<bool> _liveCompletedOutcomeProducerReady() async {
+    final read = _readCompletedOutcomeProducerReady;
+    if (read == null) return true;
+    try {
+      return await read();
+    } on Object {
+      return false;
+    }
   }
 
   Future<GroupNotificationDisplayProjectionResult>

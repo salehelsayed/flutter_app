@@ -231,6 +231,7 @@ final class DirectNotificationProjectionOwner {
     afterDurableSettlement,
     Future<String?> Function()? resolveCompletedOutcomePhysicalPeerId,
     this.completedOutcomeProducerEnabled = false,
+    this.readCompletedOutcomeProducerReady,
     DateTime Function()? nowUtc,
     this.retryDelay = const Duration(seconds: 65),
   }) : _displayOutbox = displayOutbox,
@@ -351,6 +352,11 @@ final class DirectNotificationProjectionOwner {
   final DateTime Function() _nowUtc;
   final Duration retryDelay;
   final bool completedOutcomeProducerEnabled;
+
+  /// Live platform consumer read consulted at each producer event. Shared
+  /// with the outcome drainer and paired capability registration so all three
+  /// follow one binding/role epoch; a failed read never mints an outcome.
+  final Future<bool> Function()? readCompletedOutcomeProducerReady;
   late final DirectNotificationDisplayRetryCoordinator<
     DirectNotificationDisplayOutboxEntry
   >
@@ -574,6 +580,7 @@ final class DirectNotificationProjectionOwner {
       throw const DirectNotificationDisplayRetryableException();
     }
     if (!completedOutcomeProducerEnabled) return null;
+    if (!await _liveProducerConsumerReady()) return null;
     final outcome = switch (presentation) {
       NotificationPresentationResult.osPosted =>
         NotificationCompletedOutcomeCategory.osPosted,
@@ -621,6 +628,16 @@ final class DirectNotificationProjectionOwner {
       outcome: outcome,
       completedAt: _nowUtc().toUtc(),
     );
+  }
+
+  Future<bool> _liveProducerConsumerReady() async {
+    final read = readCompletedOutcomeProducerReady;
+    if (read == null) return true;
+    try {
+      return await read();
+    } on Object {
+      return false;
+    }
   }
 
   Future<void> _settleDurableEffect(

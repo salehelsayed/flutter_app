@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/notifications/android_recovery_alert_disposition.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
@@ -93,7 +94,14 @@ Future<NotificationPresentationResult> maybeShowNotification({
   Duration backgroundDuplicateGuardDelay = const Duration(seconds: 2),
   DurableLocalNotificationEffectContext? durableEffectContext,
 }) async {
-  final forceSilentEffect = forceSilent || isIosMailboxAlertSilentReplayContext;
+  // The Android recovery disposition is consulted at the same decision the
+  // iOS mailbox replay context uses: it may alter only the sound flag, and
+  // only inside the one installed headless recovery graph. A fixed-only
+  // marker reads false and keeps normal exact tone arbitration.
+  final forceSilentEffect =
+      forceSilent ||
+      isIosMailboxAlertSilentReplayContext ||
+      await readAmbientAndroidRecoveryGenericAlertAmbiguity();
   final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
     lane: contactPeerId.trim().startsWith('group:')
         ? AppVisibilityConversationLane.group

@@ -105,6 +105,7 @@ final class ProductionCanonicalDirectProjectionDependencies {
     required this.resolvePhysicalPeerId,
     required this.presentationOwner,
     required this.completedOutcomeProducerEnabled,
+    this.readCompletedOutcomeProducerReady,
     required this.notificationToneTracker,
     required this.durableNotificationCoordinatorResolver,
     this.pendingNotificationOverlay,
@@ -127,6 +128,10 @@ final class ProductionCanonicalDirectProjectionDependencies {
   final Future<String?> Function() resolvePhysicalPeerId;
   final LocalNotificationPresentationOwner presentationOwner;
   final bool completedOutcomeProducerEnabled;
+
+  /// Live platform consumer read for the direct outcome producer. One shared
+  /// resolver also gates the drainer and paired capability registration.
+  final Future<bool> Function()? readCompletedOutcomeProducerReady;
   final NotificationToneTracker notificationToneTracker;
   final ResolveDurableNotificationCoordinator
   durableNotificationCoordinatorResolver;
@@ -492,7 +497,8 @@ buildProductionCanonicalDirectProjectionComposition(
         };
         final outcome =
             !dependencies.completedOutcomeProducerEnabled ||
-                outcomeCategory == null
+                outcomeCategory == null ||
+                !await _liveCompletedOutcomeProducerReady(dependencies)
             ? null
             : NotificationCompletedOutcomeCandidate(
                 physicalPeerId: physicalPeerId,
@@ -932,6 +938,8 @@ buildProductionCanonicalDirectProjectionComposition(
     resolveCompletedOutcomePhysicalPeerId: dependencies.resolvePhysicalPeerId,
     completedOutcomeProducerEnabled:
         dependencies.completedOutcomeProducerEnabled,
+    readCompletedOutcomeProducerReady:
+        dependencies.readCompletedOutcomeProducerReady,
     durableLocalNotificationEffectRegistry: dependencies.durableRegistry,
     completeDurableSqlHandoff: (entry, outcome, _) async {
       final handoff =
@@ -1164,4 +1172,16 @@ buildProductionCanonicalDirectProjectionComposition(
     owner: owner,
     readProjector: readProjector,
   );
+}
+
+Future<bool> _liveCompletedOutcomeProducerReady(
+  ProductionCanonicalDirectProjectionDependencies dependencies,
+) async {
+  final read = dependencies.readCompletedOutcomeProducerReady;
+  if (read == null) return true;
+  try {
+    return await read();
+  } on Object {
+    return false;
+  }
 }

@@ -26,19 +26,27 @@ void main() {
       final claim = source.indexOf(
         'completionGate.claim(generation: generation)',
       );
-      final guard = source.indexOf('guard claimed, let handler, let content');
+      // Plan 373: the claim guard binds handler first; the fixed-wake branch
+      // consumes a nil rich content itself, so the rich content guard follows
+      // separately before the recovery handoff.
+      final guard = source.indexOf('guard claimed, let handler else');
+      final contentGuard = source.indexOf('guard let content else', guard);
       final recoveryHandoff = source.indexOf(
         'notificationRecoveryHandoff.handoff(',
       );
       final apply = source.indexOf('applyOrSanitizeNotificationPreviewResult(');
       final marker = source.indexOf('recentRemoteShownMarkerStore?.mark(');
-      final handlerArgument = source.indexOf('contentHandler: handler');
+      // The fixed-wake branch hands the claimed handler to its own
+      // final-effect/generic owners earlier; the RICH apply path still passes
+      // the handler only after the shown marker.
+      final handlerArgument = source.indexOf('contentHandler: handler', marker);
       final commit = source.indexOf('toneReservation.commit(now: Date())');
 
       expect(publish, greaterThanOrEqualTo(0));
       expect(claim, greaterThan(publish));
       expect(guard, greaterThan(claim));
-      expect(recoveryHandoff, greaterThan(guard));
+      expect(contentGuard, greaterThan(guard));
+      expect(recoveryHandoff, greaterThan(contentGuard));
       expect(apply, greaterThan(recoveryHandoff));
       expect(marker, greaterThan(apply));
       expect(handlerArgument, greaterThan(marker));

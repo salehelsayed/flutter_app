@@ -1608,8 +1608,21 @@ void main() {
       expect(hook, isNonNegative);
       expect(drain, greaterThan(hook));
       final exactHook = source.substring(hook, drain);
-      expect(exactHook, contains("isReadyFor(\n                    'ios',"));
-      expect(exactHook, contains('linked iOS Firebase is not ready'));
+      // Plan 375: the one linked hook is platform-parameterized (iOS and
+      // Android), reads the shared live consumer readiness before Firebase or
+      // registration work, and still owns zero raw registration paths.
+      expect(exactHook, contains('(Platform.isIOS || Platform.isAndroid)'));
+      expect(
+        exactHook,
+        contains(
+          'opaqueWakePlatformConsumerReadiness.isReadyFor(\n'
+          '                    platformName,',
+        ),
+      );
+      expect(
+        exactHook,
+        contains(r'linked $platformName Firebase is not ready'),
+      );
       expect(exactHook, contains('await registration.ensureStarted();'));
       expect(exactHook, isNot(contains('registerPushToken(')));
       final appRoot = File(_applicationRootPath).readAsStringSync();
@@ -2995,6 +3008,53 @@ void main() {
         reason:
             'the shared composition reuses the delegated admission for the '
             'direct producer',
+      );
+      // Plan 375: one live platform consumer resolver is read at each drain
+      // kick, each producer event and immediately before every registration
+      // send — never a cached constructor boolean and never a second flag.
+      expect(
+        compositionArguments['readPlatformConsumerReady'],
+        '() => opaqueWakePlatformConsumerReadiness'
+        '.isReadyFor(currentPushPlatformName())',
+        reason: 'the drain kick reads the one live platform readiness',
+      );
+      expect(
+        'readCompletedOutcomeProducerReady: () =>'.allMatches(production),
+        hasLength(2),
+        reason:
+            'both producer owners (direct projection and group listener) '
+            'read the same live resolver at event time',
+      );
+      expect(
+        '.isReadyFor'.allMatches(production),
+        hasLength(5),
+        reason:
+            'drain kick, registration tear-off, two producer owners and the '
+            'linked hook all consult the one shared readiness resolver',
+      );
+      expect(
+        'readOpaqueWakePlatformConsumerReadiness:\n'
+                '          opaqueWakePlatformConsumerReadiness.isReadyFor,'
+            .allMatches(production),
+        hasLength(1),
+        reason: 'registration reads the same resolver before the bridge send',
+      );
+      expect(
+        'readAndroidConsumer: androidOpaqueWakeReadiness?.isConsumerReady,'
+            .allMatches(production),
+        hasLength(1),
+        reason: 'Android supplies exactly one live consumer read-back',
+      );
+      expect(
+        'installPushRegistrationRetryNow('.allMatches(production),
+        hasLength(1),
+        reason:
+            'the one coordinator retry owner is late-installed exactly once',
+      );
+      expect(
+        production,
+        isNot(contains('_reregisterStoredPushTokenIfAvailable')),
+        reason: 'no raw bootstrap re-registration bypass exists',
       );
       expect(
         'if (completed && outcome != null) {'.allMatches(production),

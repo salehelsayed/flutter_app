@@ -11,20 +11,26 @@ import 'package:flutter_app/core/database/helpers/group_notification_read_acknow
 import 'package:flutter_app/core/database/helpers/group_notification_reconciliation_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/notifications/android_recovery_alert_disposition.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
-import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
+import 'package:flutter_app/core/notifications/canonical_recovery_runtime.dart';
+import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
 import 'package:flutter_app/features/groups/domain/models/group_notification_display_outbox_entry.dart';
 import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../../shared/fakes/fake_notification_service.dart';
 
 const _groupId = 'group-plan-372';
 const _selfPeerId = 'peer-self';
@@ -81,6 +87,289 @@ void main() {
       await _verifyDirectReactionTerminalMutationCrashReplay(root);
     },
   );
+
+  test(
+    'TC-375-05 fixed generic stays silent in both orders while deletion ambiguity is never downgraded',
+    () async {
+      await _verifyFixedWakeSoundContractAcrossOrders();
+      await _verifyFixedPointRetirementOrdering();
+    },
+  );
+}
+
+/// Mutable Plan-374 native marker surface: the one durable trigger record
+/// whose kind and audible disposition the Dart tone gate reads live.
+final class _FakeRecoveryMarker {
+  int generation = 0;
+  String? kind;
+  bool mayHaveAlerted = false;
+  bool present = false;
+  bool throwOnRead = false;
+  int reads = 0;
+
+  Future<bool> readGenericMayHaveAlerted() async {
+    reads++;
+    if (throwOnRead) throw StateError('ambiguous native callback');
+    if (!present) return false;
+    return mayHaveAlerted;
+  }
+
+  void recordFixedWake() {
+    generation += 1;
+    // A fixed trigger is always requested silent; coalescing over an audible
+    // ambiguity preserves it and never downgrades true (native TC-375-02).
+    mayHaveAlerted = present && mayHaveAlerted;
+    kind = 'fixed_wake';
+    present = true;
+  }
+
+  void recordDeletion() {
+    generation += 1;
+    mayHaveAlerted = true;
+    kind = 'deleted_batch';
+    present = true;
+  }
+}
+
+Future<void> _verifyFixedWakeSoundContractAcrossOrders() async {
+  final marker = _FakeRecoveryMarker();
+  final visibility = _BackgroundVisibility();
+
+  Future<bool> lastShowSilent({NotificationToneTracker? tracker}) async {
+    final service = FakeNotificationService();
+    final result = await runWithAndroidRecoveryGenericAlertDisposition(
+      reader: marker.readGenericMayHaveAlerted,
+      action: () => maybeShowNotification(
+        notificationService: service,
+        appVisibility: visibility,
+        contactPeerId: _directPeerId,
+        senderUsername: 'Alice',
+        messageText: 'Hello',
+        toneTracker: tracker,
+        backgroundDuplicateGuardDelay: Duration.zero,
+      ),
+    );
+    expect(result, NotificationPresentationResult.osPosted);
+    return service.shown.single.silent;
+  }
+
+  // Fixed-before-canonical: the identity-free fixed marker is explicitly
+  // silent work, so the canonical event keeps its normal exact tone.
+  marker.recordFixedWake();
+  expect(marker.kind, 'fixed_wake');
+  expect(marker.mayHaveAlerted, isFalse);
+  expect(
+    await lastShowSilent(),
+    isFalse,
+    reason: 'fixed-only work never suppresses the canonical tone',
+  );
+
+  // Canonical-before-fixed: a canonical tone already played, then a fixed
+  // wake arrives; the next canonical event still arbitrates normally, so at
+  // most one requested sound exists per arbitration window in both orders.
+  final tracker = NotificationToneTracker();
+  marker.present = false;
+  expect(await lastShowSilent(tracker: tracker), isFalse);
+  marker.recordFixedWake();
+  expect(
+    await lastShowSilent(tracker: tracker),
+    isTrue,
+    reason: 'the incumbent per-conversation tone window is not bypassed',
+  );
+
+  // A coalesced deletion marker may already have alerted: the final gate
+  // retains the incumbent conservative silence for canonical work.
+  marker.recordDeletion();
+  expect(await lastShowSilent(), isTrue);
+
+  // Fixed coalescing over that ambiguity never downgrades it.
+  marker.recordFixedWake();
+  expect(marker.kind, 'fixed_wake');
+  expect(marker.mayHaveAlerted, isTrue);
+  expect(
+    await lastShowSilent(),
+    isTrue,
+    reason: 'a preserved deletion disposition keeps conservative silence',
+  );
+
+  // An ambiguous native callback fails toward silence, never toward a second
+  // sound, and never synthesizes a correlation or recent-sound horizon.
+  marker.throwOnRead = true;
+  expect(await lastShowSilent(), isTrue);
+  marker.throwOnRead = false;
+
+  // Outside the one installed recovery generation the ambient gate is inert.
+  final foregroundService = FakeNotificationService();
+  await maybeShowNotification(
+    notificationService: foregroundService,
+    appVisibility: visibility,
+    contactPeerId: _directPeerId,
+    senderUsername: 'Alice',
+    messageText: 'Hello',
+    backgroundDuplicateGuardDelay: Duration.zero,
+  );
+  expect(foregroundService.shown.single.silent, isFalse);
+  expect(marker.reads, greaterThanOrEqualTo(5));
+}
+
+/// The reserved generic card is retired only inside the exact marker+binding
+/// acknowledgement after every page and custody store converges; partial
+/// work, a newer generation, or enqueue-failure periodic continuation retains
+/// both the marker and the card.
+Future<void> _verifyFixedPointRetirementOrdering() async {
+  const binding =
+      'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  final marker = _FakeRecoveryMarker()..recordFixedWake();
+  final cancelledCards = <int>[];
+  var custodyRows = 2;
+  var directPages = 0;
+
+  CanonicalRecoveryRuntime buildRuntime({required bool convergeCustody}) =>
+      CanonicalRecoveryRuntime(
+        loadCurrentBinding: () async => binding,
+        loadPendingMarker: () async => marker.present
+            ? CanonicalRecoveryMarker(
+                generation: marker.generation,
+                binding: binding,
+              )
+            : null,
+        acquireSession: ({required binding, required reason}) async =>
+            _FixedPointSession(
+              drainDirect: () async {
+                directPages++;
+                if (directPages == 1) {
+                  return const CanonicalRecoveryDrainOutcome(
+                    isSuccessful: true,
+                    hasMore: true,
+                  );
+                }
+                return const CanonicalRecoveryDrainOutcome(
+                  isSuccessful: true,
+                  hasMore: false,
+                );
+              },
+              settle: () async {
+                if (convergeCustody) custodyRows = 0;
+                return CanonicalRecoveryProjectionOutcome(
+                  isSuccessful: true,
+                  hasPendingWork: custodyRows != 0,
+                );
+              },
+            ),
+        acknowledgeMarker: (acked, {authorityRevision}) async {
+          // Exact CAS: only the current generation under the current binding
+          // clears, and the reserved card cancels inside that callback.
+          if (!marker.present ||
+              acked.generation != marker.generation ||
+              acked.binding != binding) {
+            return false;
+          }
+          marker.present = false;
+          cancelledCards.add(acked.generation);
+          return true;
+        },
+      );
+
+  // Partial custody retains marker and card: no ACK, no cancellation.
+  final retained = await buildRuntime(
+    convergeCustody: false,
+  ).run(CanonicalRecoveryReason.fixedWake);
+  expect(retained.disposition, CanonicalRecoveryDisposition.retry);
+  expect(marker.present, isTrue);
+  expect(cancelledCards, isEmpty);
+  expect(directPages, greaterThanOrEqualTo(2), reason: 'multi-page drain ran');
+
+  // Periodic continuation after an enqueue failure adopts the same durable
+  // marker and performs the exact retirement only at full convergence.
+  final converged = await buildRuntime(
+    convergeCustody: true,
+  ).run(CanonicalRecoveryReason.periodicSweep);
+  expect(converged.disposition, CanonicalRecoveryDisposition.succeeded);
+  expect(marker.present, isFalse);
+  expect(cancelledCards, [1]);
+
+  // A stale ACK for a superseded generation cannot clear the newer marker or
+  // cancel its card.
+  marker.recordFixedWake();
+  final staleGeneration = marker.generation;
+  marker.recordFixedWake();
+  expect(marker.generation, greaterThan(staleGeneration));
+  final stale =
+      await CanonicalRecoveryRuntime(
+        loadCurrentBinding: () async => binding,
+        loadPendingMarker: () async => CanonicalRecoveryMarker(
+          generation: marker.generation,
+          binding: binding,
+        ),
+        acquireSession: ({required binding, required reason}) async =>
+            _FixedPointSession(
+              drainDirect: () async => const CanonicalRecoveryDrainOutcome(
+                isSuccessful: true,
+                hasMore: false,
+              ),
+              settle: () async => const CanonicalRecoveryProjectionOutcome(
+                isSuccessful: true,
+                hasPendingWork: false,
+              ),
+            ),
+        acknowledgeMarker: (acked, {authorityRevision}) async {
+          if (acked.generation != staleGeneration) return false;
+          cancelledCards.add(acked.generation);
+          return true;
+        },
+      ).run(
+        CanonicalRecoveryReason.fixedWake,
+        expectedBinding: binding,
+        expectedMarker: CanonicalRecoveryMarker(
+          generation: marker.generation,
+          binding: binding,
+        ),
+      );
+  expect(stale.disposition, CanonicalRecoveryDisposition.retry);
+  expect(stale.failureReason, 'exact_ack_failed');
+  expect(cancelledCards, [1], reason: 'a stale ACK cancels nothing');
+}
+
+final class _FixedPointSession implements CanonicalRecoverySession {
+  _FixedPointSession({required this.drainDirect, required this.settle});
+
+  final Future<CanonicalRecoveryDrainOutcome> Function() drainDirect;
+  final Future<CanonicalRecoveryProjectionOutcome> Function() settle;
+
+  @override
+  Future<void> ensureRuntimeReady() async {}
+
+  @override
+  Future<void> ensureTransportHealthy() async {}
+
+  @override
+  Future<CanonicalRecoveryDrainOutcome> drainDirectInbox() => drainDirect();
+
+  @override
+  Future<CanonicalRecoveryDrainOutcome> drainGroupInbox() async =>
+      const CanonicalRecoveryDrainOutcome(isSuccessful: true, hasMore: false);
+
+  @override
+  Future<CanonicalRecoveryProjectionOutcome> settleNotificationProjection() =>
+      settle();
+
+  @override
+  Future<void> sealAdmissionAndAwaitInFlight() async {}
+
+  @override
+  Future<void> stopGroupMessageListener() async {}
+
+  @override
+  Future<void> disposeProjectionOwners() async {}
+
+  @override
+  Future<bool> quiesceRuntime() async => true;
+
+  @override
+  Future<bool> closeDatabase() async => true;
+
+  @override
+  Future<bool> releaseOwnership({required bool databaseClosed}) async => true;
 }
 
 Future<void> _verifyGroupFinalCanonicalReadBarrier(Directory root) async {

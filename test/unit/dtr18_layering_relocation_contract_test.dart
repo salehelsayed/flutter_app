@@ -189,7 +189,7 @@ const _privacySha256 =
 // Plan 372 threads canonical-notification binding retirement through the same
 // MyApp/startup-router account boundary; no adapter or resume owner moves.
 const _applicationRootNormalizedSha256 =
-    'caa80756a395892866804f9491e9beb42397b4391c46e4e160afa4a5e0ff18c2';
+    'e5a771243ee5d68428d691202f204ee13c5ebc335ede35f715f098163e212834';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -252,7 +252,7 @@ const _productionBootstrapNormalizedSha256 =
     // Plan 372 composes the shared final-effect ledger, canonical binding,
     // exact SQL handoff/recovery and trigger repair at this same app-owned
     // bootstrap boundary; no repository adapter or core shim moves.
-    '55dcdf8d0c983627a4bd94f21b979676f8949ad8ca36355f6dc3622bdfdc881c';
+    '2a0b43440fc95aad4c6ee4cfb3a38d454ef9b10418083fb6d36c37f06f70aa0a';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
@@ -494,7 +494,7 @@ void main() {
     final placements = (manifest['placementExceptions'] as List<dynamic>)
         .cast<Map<String, dynamic>>();
 
-    expect(dependencies, hasLength(165));
+    expect(dependencies, hasLength(169));
     expect(placements, isEmpty);
     expect(_reviewedResumeExceptionTargets, hasLength(18));
     for (final target in _reviewedResumeExceptionTargets) {

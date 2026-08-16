@@ -12,6 +12,12 @@ typedef SendNotificationCompletedOutcome =
 typedef RunNotificationCompletedOutcomeNetworkAction =
     Future<void> Function(Future<void> Function() action);
 
+/// Live platform consumer read-back consulted at each drain kick. It shares
+/// the one `OpaqueWakePlatformConsumerReadiness` resolver with the outcome
+/// producer and paired capability registration, so all three enable and
+/// retire together on the same binding/role epoch.
+typedef ReadNotificationOutcomePlatformConsumerReady = Future<bool> Function();
+
 /// The single production composition boundary for v116 draining.
 ///
 /// Tests use this same factory across database reopen, so admission, repository
@@ -24,6 +30,7 @@ final class NotificationCompletedOutcomeDrainComposition {
     required Database database,
     required SendNotificationCompletedOutcome sendOutcome,
     required bool admissionEnabled,
+    ReadNotificationOutcomePlatformConsumerReady? readPlatformConsumerReady,
     RunNotificationCompletedOutcomeNetworkAction? runNetworkAction,
     DateTime Function()? nowUtc,
   }) {
@@ -58,6 +65,19 @@ final class NotificationCompletedOutcomeDrainComposition {
       Future<void> run() async {
         var passes = 0;
         try {
+          // The live epoch read happens once per coalesced drain owner: an
+          // unready or rotated platform consumer retires draining together
+          // with the producer and registration, and the rows stay durable
+          // for the next ready kick. Joined kicks share this owner's read.
+          if (readPlatformConsumerReady != null) {
+            var consumerReady = false;
+            try {
+              consumerReady = await readPlatformConsumerReady();
+            } on Object {
+              consumerReady = false;
+            }
+            if (!consumerReady) return;
+          }
           do {
             followUpRequested = false;
             passes++;

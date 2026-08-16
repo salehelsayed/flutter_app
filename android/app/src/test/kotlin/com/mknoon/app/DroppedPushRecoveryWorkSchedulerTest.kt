@@ -70,6 +70,92 @@ class DroppedPushRecoveryWorkSchedulerTest {
     }
 
     @Test
+    fun testTC37503FixedWakeUsesExistingUniqueExpeditedChain() {
+        val enqueuer = RecordingRecoveryWorkEnqueuer()
+        val scheduler = DroppedPushRecoveryWorkScheduler(context, enqueuer, store)
+
+        // The fixed wake rides the exact deleted-batch unique immediate chain:
+        // same unique name, same append policy, same expedited/connected shape.
+        store.recordDeletion()
+        scheduler.enqueueDeletedBatch(requireNotNull(store.pendingRecovery()))
+        val fixedGeneration = requireNotNull(store.recordFixedWake())
+        scheduler.enqueueFixedWake(requireNotNull(store.pendingRecovery()))
+
+        assertEquals(2, enqueuer.immediate.size)
+        assertEquals(1, enqueuer.immediate.map { it.uniqueName }.distinct().size)
+        val fixedRecorded = enqueuer.immediate.last()
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, fixedRecorded.policy)
+        assertTrue(fixedRecorded.request.workSpec.expedited)
+        assertEquals(
+            OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST,
+            fixedRecorded.request.workSpec.outOfQuotaPolicy,
+        )
+        assertEquals(
+            NetworkType.CONNECTED,
+            fixedRecorded.request.workSpec.constraints.requiredNetworkType,
+        )
+        assertEquals(
+            DroppedPushRecoveryWorkScheduler.REASON_FIXED_WAKE,
+            fixedRecorded.request.workSpec.input.getString(
+                DroppedPushRecoveryWorkScheduler.INPUT_REASON,
+            ),
+        )
+        assertEquals(
+            fixedGeneration,
+            fixedRecorded.request.workSpec.input.getLong(
+                DroppedPushRecoveryWorkScheduler.INPUT_WAKE_GENERATION,
+                -1L,
+            ),
+        )
+
+        // A stale queued deleted-batch reason adopts the newest current marker
+        // with that marker's own fixed trigger semantics.
+        val staleDeletedInput = enqueuer.immediate.first().request.workSpec.input
+        val adopted = requireNotNull(
+            HeadlessCanonicalRecoveryWorker.resolveStartSnapshot(
+                store,
+                staleDeletedInput,
+            ),
+        )
+        assertEquals(DroppedPushRecoveryWorkScheduler.REASON_FIXED_WAKE, adopted.reason)
+        assertEquals(fixedGeneration, adopted.pendingRecovery?.generation)
+        assertEquals(
+            DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE,
+            adopted.pendingRecovery?.triggerKind,
+        )
+
+        // Immediate enqueue failure leaves the durable marker; a same-binding
+        // re-enable re-enqueues the pending fixed trigger on the same chain and
+        // keeps the one bounded periodic recovery path armed.
+        val disabled = store.setCurrentBinding(
+            "installation-a/account-a",
+            recoveryWorkEnabled = false,
+        )
+        scheduler.onBindingRotated(disabled)
+        assertEquals(fixedGeneration, store.pendingGeneration())
+        val reEnabled = store.setCurrentBinding(
+            "installation-a/account-a",
+            recoveryWorkEnabled = true,
+        )
+        scheduler.onBindingRotated(reEnabled)
+        val reEnqueued = enqueuer.immediate.last()
+        assertEquals(enqueuer.immediate.first().uniqueName, reEnqueued.uniqueName)
+        assertEquals(
+            DroppedPushRecoveryWorkScheduler.REASON_FIXED_WAKE,
+            reEnqueued.request.workSpec.input.getString(
+                DroppedPushRecoveryWorkScheduler.INPUT_REASON,
+            ),
+        )
+        assertEquals(1, enqueuer.periodic.size)
+        assertEquals(
+            DroppedPushRecoveryWorkScheduler.REASON_PERIODIC_SWEEP,
+            enqueuer.periodic.single().request.workSpec.input.getString(
+                DroppedPushRecoveryWorkScheduler.INPUT_REASON,
+            ),
+        )
+    }
+
+    @Test
     fun `generation arriving during active work is resnapshotted`() {
         val enqueuer = RecordingRecoveryWorkEnqueuer()
         val scheduler = DroppedPushRecoveryWorkScheduler(context, enqueuer)

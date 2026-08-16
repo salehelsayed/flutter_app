@@ -19,6 +19,11 @@ class DroppedPushRecoveryBridge internal constructor(
     companion object {
         internal const val CHANNEL_NAME = "mknoon/dropped_push_recovery"
         private const val RECOVERY_PENDING_CALLBACK = "recoveryPending"
+
+        // Plan-375 Android consumer readiness version. Dart requires this exact
+        // value before advertising the paired opaque/outcome capabilities, so a
+        // binary without the fixed ingress/worker family reads as not ready.
+        internal const val FIXED_WAKE_CONSUMER_VERSION = 1
     }
 
     private val applicationContext = context.applicationContext
@@ -46,6 +51,8 @@ class DroppedPushRecoveryBridge internal constructor(
                     mapOf(
                         "generation" to pending.generation,
                         "binding" to pending.binding,
+                        "triggerKind" to wireTriggerKind(pending.triggerKind),
+                        "genericMayHaveAlerted" to pending.genericMayHaveAlerted,
                     )
                 },
             )
@@ -125,10 +132,25 @@ class DroppedPushRecoveryBridge internal constructor(
             "recoveryWorkEnabled" to authority.recoveryWorkEnabled,
             "pendingGeneration" to authority.pendingRecovery?.generation,
             "pendingBinding" to authority.pendingRecovery?.binding,
+            "pendingTriggerKind" to authority.pendingRecovery
+                ?.let { wireTriggerKind(it.triggerKind) },
+            "pendingGenericMayHaveAlerted" to
+                authority.pendingRecovery?.genericMayHaveAlerted,
             "authorityRevision" to authority.authorityRevision,
             "authorityMutationInProgress" to authority.authorityMutationInProgress,
+            "fixedWakeConsumerVersion" to FIXED_WAKE_CONSUMER_VERSION,
         )
     }
+
+    private fun wireTriggerKind(kind: DroppedPushRecoveryStore.TriggerKind): String =
+        when (kind) {
+            DroppedPushRecoveryStore.TriggerKind.DELETED_BATCH ->
+                DroppedPushRecoveryStore.TRIGGER_KIND_DELETED_BATCH
+            DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE ->
+                DroppedPushRecoveryStore.TRIGGER_KIND_FIXED_WAKE
+            DroppedPushRecoveryStore.TriggerKind.UNSUPPORTED_PENDING ->
+                "unsupported_pending"
+        }
 
     private fun setCurrentBinding(call: MethodCall, result: MethodChannel.Result) {
         val arguments = call.arguments as? Map<*, *>

@@ -15,6 +15,9 @@ class DroppedPushRecoveryStore(context: Context) {
         private const val LAST_GENERATION_KEY = "last_generation"
         private const val PENDING_GENERATION_KEY = "pending_generation"
         private const val PENDING_BINDING_KEY = "pending_binding"
+        private const val PENDING_TRIGGER_KIND_KEY = "pending_trigger_kind"
+        private const val PENDING_GENERIC_MAY_HAVE_ALERTED_KEY =
+            "pending_generic_may_have_alerted"
         private const val CURRENT_BINDING_KEY = "current_binding"
         private const val RECOVERY_WORK_ENABLED_KEY = "recovery_work_enabled"
         private const val DESIRED_RECOVERY_WORK_ENABLED_KEY =
@@ -22,12 +25,27 @@ class DroppedPushRecoveryStore(context: Context) {
         private const val AUTHORITY_REVISION_KEY = "authority_revision"
         private const val AUTHORITY_MUTATION_TOKENS_KEY =
             "authority_mutation_tokens"
+        internal const val TRIGGER_KIND_DELETED_BATCH = "deleted_batch"
+        internal const val TRIGGER_KIND_FIXED_WAKE = "fixed_wake"
         private val transactionLock = Any()
+    }
+
+    /**
+     * Strict wire decode of the one pending marker's trigger. A legacy record
+     * with no kind is a deletion; an unrecognized future kind stays durable as
+     * conservative unsupported work and never authorizes ACK or card cancel.
+     */
+    enum class TriggerKind {
+        DELETED_BATCH,
+        FIXED_WAKE,
+        UNSUPPORTED_PENDING,
     }
 
     data class PendingRecovery(
         val generation: Long,
         val binding: String,
+        val triggerKind: TriggerKind = TriggerKind.DELETED_BATCH,
+        val genericMayHaveAlerted: Boolean = true,
     )
 
     /** One transaction-locked view used by headless final authority checks. */
@@ -129,7 +147,9 @@ class DroppedPushRecoveryStore(context: Context) {
         val retired = pending?.takeIf { bindingChanged && it.binding != normalized }
         val hasPendingMarkerKeys =
             preferences.contains(PENDING_GENERATION_KEY) ||
-                preferences.contains(PENDING_BINDING_KEY)
+                preferences.contains(PENDING_BINDING_KEY) ||
+                preferences.contains(PENDING_TRIGGER_KIND_KEY) ||
+                preferences.contains(PENDING_GENERIC_MAY_HAVE_ALERTED_KEY)
         val editor = preferences.edit()
         if (normalized == null) {
             editor.remove(CURRENT_BINDING_KEY)
@@ -152,10 +172,13 @@ class DroppedPushRecoveryStore(context: Context) {
         }
         // Rotation is also the repair boundary for an interrupted/corrupt
         // legacy marker whose generation or binding half is missing. Such a
-        // marker has no safe owner and must not survive account cutover.
+        // marker has no safe owner and must not survive account cutover. Kind
+        // and audible disposition are removed in the same durable edit.
         if (bindingChanged && hasPendingMarkerKeys) {
             editor.remove(PENDING_GENERATION_KEY)
             editor.remove(PENDING_BINDING_KEY)
+            editor.remove(PENDING_TRIGGER_KIND_KEY)
+            editor.remove(PENDING_GENERIC_MAY_HAVE_ALERTED_KEY)
         }
         val committed = editor.commit()
         BindingRotation(
@@ -268,21 +291,65 @@ class DroppedPushRecoveryStore(context: Context) {
      * clear/cancel between the durable write and this generation's card.
      */
     fun recordDeletion(afterCommit: (Long) -> Unit = {}): Long? = synchronized(transactionLock) {
+        recordTriggerLocked(TriggerKind.DELETED_BATCH, afterCommit)
+    }
+
+    /**
+     * Records one exact content-free fixed wake as the newest pending trigger.
+     *
+     * The replacement commits kind and audible disposition atomically with the
+     * marker. A fixed trigger is always requested silent, so it publishes
+     * `genericMayHaveAlerted = false` — unless the record it coalesces over
+     * already carries an audible ambiguity, which is never downgraded.
+     */
+    fun recordFixedWake(afterCommit: (Long) -> Unit = {}): Long? = synchronized(transactionLock) {
+        recordTriggerLocked(TriggerKind.FIXED_WAKE, afterCommit)
+    }
+
+    private fun recordTriggerLocked(
+        kind: TriggerKind,
+        afterCommit: (Long) -> Unit,
+    ): Long? {
+        require(kind != TriggerKind.UNSUPPORTED_PENDING) {
+            "unsupported trigger kinds are decode-only"
+        }
         val binding = preferences.getString(CURRENT_BINDING_KEY, null)
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-            ?: return@synchronized null
+            ?: return null
         val lastGeneration = preferences.getLong(LAST_GENERATION_KEY, 0L)
-        if (lastGeneration == Long.MAX_VALUE) return@synchronized null
+        if (lastGeneration == Long.MAX_VALUE) return null
         val generation = lastGeneration + 1L
+        val genericMayHaveAlerted = when (kind) {
+            // The incumbent deletion card is possibly audible; commit the
+            // conservative ambiguity before any notify attempt runs.
+            TriggerKind.DELETED_BATCH -> true
+            // Fixed generic requests are always silent. Coalescing over a
+            // same-binding record that may already have alerted preserves that
+            // ambiguity instead of downgrading it.
+            TriggerKind.FIXED_WAKE ->
+                pendingRecoveryLocked(requireCurrentBinding = false)
+                    ?.takeIf { it.binding == binding }
+                    ?.genericMayHaveAlerted == true
+            TriggerKind.UNSUPPORTED_PENDING -> true
+        }
         val committed = preferences.edit()
             .putLong(LAST_GENERATION_KEY, generation)
             .putLong(PENDING_GENERATION_KEY, generation)
             .putString(PENDING_BINDING_KEY, binding)
+            .putString(PENDING_TRIGGER_KIND_KEY, wireTriggerKind(kind))
+            .putBoolean(PENDING_GENERIC_MAY_HAVE_ALERTED_KEY, genericMayHaveAlerted)
             .commit()
-        if (!committed) return@synchronized null
+        if (!committed) return null
         afterCommit(generation)
-        generation
+        return generation
+    }
+
+    private fun wireTriggerKind(kind: TriggerKind): String = when (kind) {
+        TriggerKind.DELETED_BATCH -> TRIGGER_KIND_DELETED_BATCH
+        TriggerKind.FIXED_WAKE -> TRIGGER_KIND_FIXED_WAKE
+        TriggerKind.UNSUPPORTED_PENDING ->
+            throw IllegalArgumentException("unsupported trigger kinds are decode-only")
     }
 
     /** Returns the pending marker without clearing or otherwise mutating it. */
@@ -370,7 +437,11 @@ class DroppedPushRecoveryStore(context: Context) {
             expectedGeneration <= 0L ||
             expectedBinding.isBlank() ||
             pending?.generation != expectedGeneration ||
-            pending.binding != expectedBinding
+            pending.binding != expectedBinding ||
+            // An unrecognized future trigger kind never decodes as no work and
+            // never authorizes this binary's ACK/cancel path. Binding rotation
+            // remains its only repair boundary.
+            pending.triggerKind == TriggerKind.UNSUPPORTED_PENDING
         ) {
             return false
         }
@@ -378,6 +449,8 @@ class DroppedPushRecoveryStore(context: Context) {
             !preferences.edit()
                 .remove(PENDING_GENERATION_KEY)
                 .remove(PENDING_BINDING_KEY)
+                .remove(PENDING_TRIGGER_KIND_KEY)
+                .remove(PENDING_GENERIC_MAY_HAVE_ALERTED_KEY)
                 .commit()
         ) {
             return false
@@ -401,7 +474,26 @@ class DroppedPushRecoveryStore(context: Context) {
         ) {
             return null
         }
-        return PendingRecovery(generation, binding)
+        // Legacy records predate the kind/disposition fields: no kind means the
+        // old deletion service wrote it, and its card may already have alerted.
+        val triggerKind = when {
+            !preferences.contains(PENDING_TRIGGER_KIND_KEY) ->
+                TriggerKind.DELETED_BATCH
+            else -> when (preferences.getString(PENDING_TRIGGER_KIND_KEY, null)) {
+                TRIGGER_KIND_DELETED_BATCH -> TriggerKind.DELETED_BATCH
+                TRIGGER_KIND_FIXED_WAKE -> TriggerKind.FIXED_WAKE
+                else -> TriggerKind.UNSUPPORTED_PENDING
+            }
+        }
+        return PendingRecovery(
+            generation = generation,
+            binding = binding,
+            triggerKind = triggerKind,
+            genericMayHaveAlerted = preferences.getBoolean(
+                PENDING_GENERIC_MAY_HAVE_ALERTED_KEY,
+                true,
+            ),
+        )
     }
 
     private fun recoveryAuthorityLocked(): RecoveryAuthority {

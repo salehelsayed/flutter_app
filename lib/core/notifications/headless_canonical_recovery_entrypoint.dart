@@ -27,6 +27,7 @@ final class HeadlessCanonicalRecoveryInvocation {
     final nativeReason = arguments[0];
     final reason = switch (nativeReason) {
       'deleted_batch' => CanonicalRecoveryReason.deletedBatch,
+      'fixed_wake' => CanonicalRecoveryReason.fixedWake,
       'periodic_sweep' => CanonicalRecoveryReason.periodicSweep,
       _ => throw FormatException('unsupported recovery reason: $nativeReason'),
     };
@@ -44,7 +45,7 @@ final class HeadlessCanonicalRecoveryInvocation {
     if (rawGeneration.isNotEmpty && (generation == null || generation <= 0)) {
       throw const FormatException('recovery generation must be positive');
     }
-    if ((reason == CanonicalRecoveryReason.deletedBatch &&
+    if ((reason != CanonicalRecoveryReason.periodicSweep &&
             generation == null) ||
         (reason == CanonicalRecoveryReason.periodicSweep &&
             generation != null)) {

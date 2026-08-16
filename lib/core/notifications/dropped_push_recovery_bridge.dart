@@ -13,6 +13,42 @@ final class DroppedPushRecoveryMarker {
   final String binding;
 }
 
+/// Marker trigger/audible facts read for the Plan-372 final-effect tone gate.
+///
+/// The disposition is deliberately separate from [DroppedPushRecoveryMarker]:
+/// generation/binding equality remains the sole ACK authority, while this
+/// read answers only "may the coalesced generic card already have alerted".
+final class DroppedPushRecoveryMarkerDisposition {
+  const DroppedPushRecoveryMarkerDisposition({
+    required this.generation,
+    required this.binding,
+    required this.triggerKind,
+    required this.genericMayHaveAlerted,
+  });
+
+  final int generation;
+  final String binding;
+  final String triggerKind;
+  final bool genericMayHaveAlerted;
+}
+
+/// One live Android consumer read-back used by the paired opaque/outcome
+/// readiness resolver. Missing/malformed native state parses to null, which
+/// readiness treats as not ready.
+final class AndroidOpaqueWakeConsumerSnapshot {
+  const AndroidOpaqueWakeConsumerSnapshot({
+    required this.currentBinding,
+    required this.recoveryWorkEnabled,
+    required this.authorityMutationInProgress,
+    required this.fixedWakeConsumerVersion,
+  });
+
+  final String? currentBinding;
+  final bool recoveryWorkEnabled;
+  final bool authorityMutationInProgress;
+  final int fixedWakeConsumerVersion;
+}
+
 /// Atomic native authority used only by the production headless owner.
 ///
 /// Every field is read under the native store lock. Dart never combines
@@ -185,6 +221,71 @@ class DroppedPushRecoveryBridge
         binding: binding,
       );
     } on MissingPluginException {
+      return null;
+    }
+  }
+
+  /// Reads the current marker's trigger kind and audible disposition. A
+  /// missing marker returns null; malformed kind/disposition fields throw so
+  /// the tone gate's caller can fail toward conservative silence.
+  Future<DroppedPushRecoveryMarkerDisposition?>
+  pendingRecoveryDisposition() async {
+    final value = await _channel.invokeMethod<Object?>(pendingRecoveryMethod);
+    if (value == null) return null;
+    if (value is! Map) {
+      throw StateError('malformed native pending recovery shape');
+    }
+    final generation = _positiveGeneration(value['generation']);
+    final binding = (value['binding'] as String?)?.trim();
+    final triggerKind = value['triggerKind'];
+    final genericMayHaveAlerted = value['genericMayHaveAlerted'];
+    if (generation == null ||
+        binding == null ||
+        binding.isEmpty ||
+        triggerKind is! String ||
+        triggerKind.trim().isEmpty ||
+        genericMayHaveAlerted is! bool) {
+      throw StateError('malformed native pending recovery disposition');
+    }
+    return DroppedPushRecoveryMarkerDisposition(
+      generation: generation,
+      binding: binding,
+      triggerKind: triggerKind,
+      genericMayHaveAlerted: genericMayHaveAlerted,
+    );
+  }
+
+  /// Reads the Android paired-capability consumer snapshot. Any missing or
+  /// malformed field — including an absent `fixedWakeConsumerVersion` from a
+  /// pre-Plan-375 binary — returns null, which readiness treats as not ready.
+  Future<AndroidOpaqueWakeConsumerSnapshot?>
+  opaqueWakeConsumerSnapshot() async {
+    try {
+      final value = await _channel.invokeMethod<Object?>(
+        recoveryAuthorityMethod,
+      );
+      if (value is! Map ||
+          value['recoveryWorkEnabled'] is! bool ||
+          value['authorityMutationInProgress'] is! bool ||
+          value['fixedWakeConsumerVersion'] is! int) {
+        return null;
+      }
+      final rawBinding = value['currentBinding'];
+      if (rawBinding != null && rawBinding is! String) return null;
+      final binding = (rawBinding as String?)?.trim();
+      if (binding != null && (binding.isEmpty || binding != rawBinding)) {
+        return null;
+      }
+      return AndroidOpaqueWakeConsumerSnapshot(
+        currentBinding: binding,
+        recoveryWorkEnabled: value['recoveryWorkEnabled'] as bool,
+        authorityMutationInProgress:
+            value['authorityMutationInProgress'] as bool,
+        fixedWakeConsumerVersion: value['fixedWakeConsumerVersion'] as int,
+      );
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
       return null;
     }
   }

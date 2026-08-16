@@ -1,12 +1,15 @@
-/// Plan 320 P2 (TC-320-08/09) — relay-health re-registration must not
-/// resurrect a push token the provider has retired.
+/// Plan 320 P2 (TC-320-08/09), re-grounded by Plan 375 (TC-375-07).
 ///
 /// The relay evicts permanently-unroutable tokens on the first permanent FCM
 /// error (plan 320 P1). Before P2, every relay-health transition replayed the
 /// CACHED `_lastFcmToken` verbatim, so the very token the relay just evicted
 /// was re-registered on the next reconnect — the eviction silently decayed.
-/// The service must prefer a LIVE provider read (`liveFcmTokenReader`) and
-/// fall back to the cached value only when the live read is unavailable.
+/// Plan 375 closes the residual raw path entirely: the persisted-token
+/// restore and every relay-health transition now route through the one
+/// late-installed `PushRegistrationCoordinator.retryNow` callback, whose
+/// registration attempt re-reads the LIVE provider token and the current
+/// capability policy inside `registerPushToken` immediately before the bridge
+/// send. No raw bridge registration path remains in the service.
 ///
 /// Own fake-bridge copy of the p2p_service_impl_health_drain_test.dart
 /// pattern — deliberately a separate file (Scope Guard: do not edit that
@@ -120,7 +123,10 @@ void main() {
       'inbox:retrieve_pending',
       (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
     );
-    bridge.whenCommand('inbox:ack', (_) => jsonEncode({'ok': true, 'acked': 1}));
+    bridge.whenCommand(
+      'inbox:ack',
+      (_) => jsonEncode({'ok': true, 'acked': 1}),
+    );
     // Recovery attempts triggered by the degradation must fail fast so the
     // node deterministically STAYS degraded until the online push below.
     bridge.whenCommand(
@@ -138,13 +144,10 @@ void main() {
     service = null;
   });
 
-  P2PServiceImpl buildService({
-    Future<String?> Function()? liveFcmTokenReader,
-  }) {
+  P2PServiceImpl buildService() {
     final built = P2PServiceImpl(
       bridge: bridge,
       inboxStagingRepository: InMemoryInboxStagingRepository(),
-      liveFcmTokenReader: liveFcmTokenReader,
     );
     service = built;
     return built;
@@ -155,13 +158,20 @@ void main() {
   Future<void> startAndSeedCachedToken(P2PServiceImpl svc) async {
     await svc.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
     final ok = await svc.registerPushToken('cached-token-dead', 'android');
-    expect(ok, isTrue, reason: 'fixture: seeding the cached token must succeed');
+    expect(
+      ok,
+      isTrue,
+      reason: 'fixture: seeding the cached token must succeed',
+    );
     registeredTokens.clear();
   }
 
   /// Degrades the relay (push + confirming poll) and settles, then transitions
   /// back to healthy via a `relay:state` push — the re-registration trigger.
-  Future<void> degradeThenComeBackOnline(P2PServiceImpl svc) async {
+  Future<void> degradeThenComeBackOnline(
+    P2PServiceImpl svc, {
+    Future<bool> Function()? settled,
+  }) async {
     stickyStatus = _statusJson(relayState: 'degraded');
     bridge.onRelayStateChanged?.call({
       'relayState': 'degraded',
@@ -181,129 +191,112 @@ void main() {
       'watchdogRestartCount': 0,
       'reason': 'relay_connected',
     });
-    // The re-register is fired unawaited from the push handler — settle.
-    for (var i = 0; i < 100 && registeredTokens.isEmpty; i++) {
+    // The re-register trigger fires unawaited from the push handler — settle.
+    for (var i = 0; i < 100; i++) {
+      if (settled != null && await settled()) break;
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
   }
 
   test(
-    // TC-320-08
-    'relay reconnect re-reads the live token before re-registering',
+    // TC-320-08 (Plan-375 shape) / TC-375-07 sibling
+    'relay reconnect routes through the one installed coordinator retryNow',
     () async {
-      var liveReads = 0;
-      final svc = buildService(
-        liveFcmTokenReader: () async {
-          liveReads++;
-          return 'live-token-fresh';
-        },
-      );
+      final svc = buildService();
+      var retryNowCalls = 0;
+      // The production coordinator's retryNow owns the live-token read and
+      // the current capability policy; here the callback records ownership
+      // and performs the current-policy frame the coordinator would send.
+      svc.installPushRegistrationRetryNow(() async {
+        retryNowCalls++;
+        await svc.registerPushToken('live-token-fresh', 'android');
+      });
       await startAndSeedCachedToken(svc);
       expect(
-        liveReads,
+        retryNowCalls,
         0,
-        reason: 'fixture: a plain registration must not consult the live '
-            'reader — only relay-health re-registration does',
+        reason:
+            'fixture: a plain registration must not consult retryNow — '
+            'only relay-health re-registration does',
       );
 
-      await degradeThenComeBackOnline(svc);
+      await degradeThenComeBackOnline(
+        svc,
+        settled: () async => registeredTokens.isNotEmpty,
+      );
 
       expect(
-        liveReads,
-        greaterThanOrEqualTo(1),
-        reason: 'TC-320-08: the healthy transition must consult the live '
-            'provider token before re-registering',
+        retryNowCalls,
+        1,
+        reason:
+            'TC-320-08: the healthy transition must hand exactly one '
+            'trigger to the installed coordinator owner',
       );
       expect(
         registeredTokens,
         ['live-token-fresh'],
-        reason: 'TC-320-08: the LIVE token must be registered, not the cached '
-            'one (HEAD replayed _lastFcmToken verbatim, resurrecting the '
-            'relay-evicted entry on every reconnect)',
+        reason:
+            'TC-320-08: the coordinator-owned current-policy frame must '
+            'be registered, never a raw replay of the cached token',
       );
     },
   );
 
   test(
-    // TC-320-09
-    'falls back to the cached token when the live read fails',
-    () async {
-      final svc = buildService(
-        liveFcmTokenReader: () async {
-          throw StateError('FIS_AUTH_ERROR: provider unavailable');
-        },
-      );
-      await startAndSeedCachedToken(svc);
-
-      final printed = await _capturePrints(() async {
-        await degradeThenComeBackOnline(svc);
-      });
-
-      expect(
-        registeredTokens,
-        ['cached-token-dead'],
-        reason: 'TC-320-09: a throwing live read must fall back to the cached '
-            'token — degrading to zero-token would be a regression',
-      );
-      expect(
-        printed
-            .where(
-              (line) =>
-                  line.contains('live_push_token_read_failed_using_cached'),
-            )
-            .length,
-        1,
-        reason: 'TC-320-09: the fallback must be attributable — exactly one '
-            'diagnostic for the one failed live read',
-      );
-    },
-  );
-
-  test(
-    // TC-320-09 (empty-read shape)
-    'falls back to the cached token when the live read returns no token',
-    () async {
-      final svc = buildService(liveFcmTokenReader: () async => '  ');
-      await startAndSeedCachedToken(svc);
-
-      final printed = await _capturePrints(() async {
-        await degradeThenComeBackOnline(svc);
-      });
-
-      expect(
-        registeredTokens,
-        ['cached-token-dead'],
-        reason: 'TC-320-09: an empty/whitespace live read must fall back to '
-            'the cached token',
-      );
-      expect(
-        printed
-            .where(
-              (line) =>
-                  line.contains('live_push_token_unavailable_using_cached'),
-            )
-            .length,
-        1,
-        reason: 'TC-320-09: the empty-read fallback must be attributable',
-      );
-    },
-  );
-
-  test(
-    // Wiring sanity: no reader injected (legacy construction) keeps the
-    // pre-320 behaviour — the cached token is re-registered.
-    'no live reader injected still re-registers the cached token',
+    // TC-320-09 (Plan-375 shape)
+    'before coordinator install no raw bridge registration path remains',
     () async {
       final svc = buildService();
       await startAndSeedCachedToken(svc);
 
-      await degradeThenComeBackOnline(svc);
+      final printed = await _capturePrints(() async {
+        await degradeThenComeBackOnline(svc);
+      });
 
       expect(
         registeredTokens,
-        ['cached-token-dead'],
-        reason: 'a construction site without the seam must keep re-registering '
-            'the cached token (no zero-token regression)',
+        isEmpty,
+        reason:
+            'TC-320-09: without the installed coordinator callback the '
+            'service must not replay any token through a raw bridge path',
+      );
+      expect(
+        printed
+            .where(
+              (line) => line.contains(
+                'push_reregistration_skipped_before_coordinator_install',
+              ),
+            )
+            .length,
+        greaterThanOrEqualTo(1),
+        reason: 'TC-320-09: the skipped trigger must be attributable',
+      );
+    },
+  );
+
+  test(
+    // Wiring sanity: repeated health flaps coalesce into one policy owner
+    // call per transition and never bypass the coordinator.
+    'each healthy transition emits at most one coordinator trigger',
+    () async {
+      final svc = buildService();
+      var retryNowCalls = 0;
+      svc.installPushRegistrationRetryNow(() async {
+        retryNowCalls++;
+      });
+      await startAndSeedCachedToken(svc);
+
+      await degradeThenComeBackOnline(
+        svc,
+        settled: () async => retryNowCalls > 0,
+      );
+      expect(retryNowCalls, 1);
+      expect(
+        registeredTokens,
+        isEmpty,
+        reason:
+            'the trigger itself must not register anything raw; only the '
+            'coordinator decides whether a frame is sent',
       );
     },
   );

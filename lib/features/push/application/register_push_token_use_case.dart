@@ -37,6 +37,13 @@ const _getTokenTimeout = Duration(seconds: 15);
 Future<RegisterPushTokenResult> registerPushToken({
   required P2PService p2pService,
   PushTokenStore? pushTokenStore,
+
+  /// The LOGICAL account peer for migration/account authority. An
+  /// active-linked installation must supply its account peer here; the
+  /// linked physical transport peer is a relay route, never an account
+  /// identity, and checking it against migration authority would answer for
+  /// an identity that authority never covers.
+  String? logicalAuthorityPeerId,
   Future<String?> Function()? getTokenFn,
   Future<String?> Function()? getApnsTokenFn,
   Future<String?> Function(
@@ -61,19 +68,22 @@ Future<RegisterPushTokenResult> registerPushToken({
   emitFlowEvent(layer: 'FL', event: 'PUSH_REGISTER_TOKEN_BEGIN', details: {});
 
   final localPeerId = p2pService.currentState.peerId;
+  final authorityPeerId = logicalAuthorityPeerId?.trim().isNotEmpty == true
+      ? logicalAuthorityPeerId!.trim()
+      : localPeerId;
   final migrationAllowsNetwork = await accountMigrationNetworkGate(
-    peerId: localPeerId,
+    peerId: authorityPeerId,
     operation: 'push_register_token',
   );
   if (!migrationAllowsNetwork) {
     logPushDiagnostic(
       'register_token_account_migration_blocked',
-      details: {'platform': platform, 'peerId': localPeerId},
+      details: {'platform': platform, 'peerId': authorityPeerId},
     );
     emitFlowEvent(
       layer: 'FL',
       event: 'PUSH_REGISTER_TOKEN_ACCOUNT_MIGRATION_BLOCKED',
-      details: {'platform': platform, 'peerId': localPeerId},
+      details: {'platform': platform, 'peerId': authorityPeerId},
     );
     return RegisterPushTokenResult.accountMigrationBlocked;
   }

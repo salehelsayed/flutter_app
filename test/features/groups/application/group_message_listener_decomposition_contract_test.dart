@@ -325,6 +325,8 @@ const _expectedConstructorParameters = <String>[
   'LocalNotificationPresentationOwner notificationPresentationOwner = '
       'LocalNotificationPresentationOwner.mainApp',
   'bool completedOutcomeProducerEnabled = false',
+  // 375: live paired-consumer read consulted at each producer event.
+  'Future<bool> Function()? readCompletedOutcomeProducerReady',
   'BeginGroupMediaReceiveCriticalTask? beginGroupMediaReceiveCriticalTask',
   'EndGroupMediaReceiveCriticalTask? endGroupMediaReceiveCriticalTask',
 ];
@@ -1084,7 +1086,7 @@ void main() {
         manifest['dependencyExceptions'] as List<dynamic>;
     expect(
       dependencyExceptions,
-      hasLength(165),
+      hasLength(169),
       reason:
           'DTR-16 must not add or rebaseline a dependency exception; '
           'DTR-18 removed only its reviewed resume rows',

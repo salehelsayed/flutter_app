@@ -73,6 +73,31 @@ void main() {
       wakeOutcomePushCapability,
     ]);
 
+    // Plan 375: the admitted active-linked route advertises exactly the pair
+    // and never inherits the primary reaction defaults.
+    await callP2PInboxRegisterToken(
+      bridge,
+      token: 'linked-pair-token',
+      platform: 'android',
+      capabilities: const <String>[],
+      wakeOutcomeCoordinatorAdmissionEnabled: true,
+    );
+    payload = bridge.lastPayload;
+    expect(payload['capabilities'], <String>[
+      opaqueWakePushCapability,
+      wakeOutcomePushCapability,
+    ]);
+
+    // An unadmitted empty caller set sends zero capabilities: a half pair is
+    // never a legal frame in either direction.
+    await callP2PInboxRegisterToken(
+      bridge,
+      token: 'linked-unadmitted-token',
+      platform: 'android',
+      capabilities: const <String>[],
+    );
+    expect(bridge.lastPayload.containsKey('capabilities'), isFalse);
+
     await expectLater(
       callP2PInboxRegisterToken(
         bridge,

@@ -168,6 +168,53 @@ func TestRelayNotificationClosure_WakeOutcomeCapabilityAndLegacyMatrix(t *testin
 		})
 	}
 
+	t.Run("same-token pair withdrawal invalidates opaque selection without generation advance", func(t *testing.T) {
+		withdrawFixture := newWakeOutcomeTestFixture(t, "wake-withdraw:")
+		const withdrawPeer = "wake-withdraw-peer"
+		withdrawMessage := wakeOutcomeDirectEnvelope("wake-withdraw-event")
+		storedAt := withdrawFixture.now.UnixMilli()
+		expiresAt := withdrawFixture.now.Add(time.Hour).UnixMilli()
+
+		paired := plan367RegisterEncrypted(
+			t, withdrawFixture.pushBackend, withdrawPeer, "withdraw-token", "android",
+			directReactionCapability, groupReactionCapability,
+			opaqueWakeCapability, wakeOutcomeCapability,
+		)
+		if _, ok := newWakeOutcomeAdmission(
+			withdrawPeer, withdrawMessage, wakeOutcomeProducerDirectMessage,
+			paired, storedAt, expiresAt,
+		); !ok {
+			t.Fatal("fully paired route was not admitted for opaque selection")
+		}
+
+		// Rollback re-registers the SAME token and platform without the pair.
+		withdrawn := plan367RegisterEncrypted(
+			t, withdrawFixture.pushBackend, withdrawPeer, "withdraw-token", "android",
+			directReactionCapability, groupReactionCapability,
+		)
+		if withdrawn.Handle != paired.Handle || withdrawn.Generation != paired.Generation {
+			t.Fatalf(
+				"same-token capability refresh must not advance route identity: %q/%d -> %q/%d",
+				paired.Handle, paired.Generation, withdrawn.Handle, withdrawn.Generation,
+			)
+		}
+		if !reflect.DeepEqual(
+			withdrawn.Capabilities,
+			canonicalPushCapabilities([]string{directReactionCapability, groupReactionCapability}),
+		) {
+			t.Fatalf("withdrawn route capabilities = %#v", withdrawn.Capabilities)
+		}
+		if _, ok := newWakeOutcomeAdmission(
+			withdrawPeer, withdrawMessage, wakeOutcomeProducerDirectMessage,
+			withdrawn, storedAt, expiresAt,
+		); ok {
+			t.Fatal("pair-withdrawn route still admitted opaque selection")
+		}
+		if got := plan367Target(t, withdrawFixture.pushBackend, withdrawn); got.Token != "withdraw-token" {
+			t.Fatalf("withdrawn route lost its rich token resolution: %#v", got)
+		}
+	})
+
 	t.Run("real producer adapters commit exact delayed policies", func(t *testing.T) {
 		adapterFixture := newWakeOutcomeTestFixture(t, "wake-adapters:")
 		requirePending := func(peerID, correlation string, policy wakeOutcomeRoutePolicy) {

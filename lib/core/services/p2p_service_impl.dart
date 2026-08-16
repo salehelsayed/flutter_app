@@ -179,7 +179,6 @@ class P2PServiceImpl
   /// must not replay a cached token the provider has already retired — the relay
   /// evicts dead tokens now (plan 320 P1), and replaying the cached value would
   /// silently undo that eviction on the next reconnect.
-  final Future<String?> Function()? _liveFcmTokenReader;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   final bool _recoveryOnly;
   late final _P2PInboxCoordinator _inboxCoordinator;
@@ -245,6 +244,12 @@ class P2PServiceImpl
   String? _lastFcmToken;
   String? _lastFcmPlatform;
   Future<void>? _restorePushTokenFuture;
+
+  /// Late-installed `PushRegistrationCoordinator.retryNow`. Once installed it
+  /// owns every persisted-token and relay-health re-registration trigger, so
+  /// cached-token recovery, token refresh and health transitions emit at most
+  /// one current-policy frame each and no raw bridge registration path remains.
+  Future<void> Function()? _pushRegistrationRetryNow;
   bool _isStarting = false;
   DateTime? _startNodeTime;
   bool _hasEverBeenOnline = false;
@@ -364,7 +369,6 @@ class P2PServiceImpl
     required Bridge bridge,
     LocalP2PService? localP2PService,
     PushTokenStore? pushTokenStore,
-    Future<String?> Function()? liveFcmTokenReader,
     ReceivedWakeTokenStore? receivedWakeTokenStore,
     AcceptedInboxWakeTokenHashObserver? acceptedInboxWakeTokenHashObserver,
     AccountMigrationNetworkGate accountMigrationNetworkGate =
@@ -407,7 +411,6 @@ class P2PServiceImpl
     bool recoveryOnly = false,
   }) : _bridge = bridge,
        _pushTokenStore = pushTokenStore,
-       _liveFcmTokenReader = liveFcmTokenReader,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _recoveryOnly = recoveryOnly,
        _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride,
@@ -3048,39 +3051,33 @@ class P2PServiceImpl
     return _restorePushTokenFuture!;
   }
 
+  /// Installs the one late-bound registration retry owner. Passing the
+  /// coordinator's own `retryNow` keeps startup, token refresh, persisted-token
+  /// restore and every relay-health transition on one serialized policy owner.
+  void installPushRegistrationRetryNow(Future<void> Function() retryNow) {
+    _pushRegistrationRetryNow = retryNow;
+  }
+
   Future<void> _reregisterStoredPushTokenIfAvailable() async {
+    // Plan 375: the persisted-token restore and all relay-health triggers
+    // route through the one late-installed coordinator retryNow callback.
+    // Before installation the startup coordinator owns the initial attempt;
+    // afterward no raw bridge registration path remains. The coordinator's
+    // attempt re-reads the LIVE provider token (Plan 320 P2) and the current
+    // capability policy immediately before the bridge send.
+    final retryNow = _pushRegistrationRetryNow;
+    if (retryNow == null) {
+      logPushDiagnostic(
+        'push_reregistration_skipped_before_coordinator_install',
+        details: {'platform': _lastFcmPlatform},
+      );
+      return;
+    }
     await _restorePersistedPushTokenIfNeeded();
-    final platform = _lastFcmPlatform;
-    if (platform == null) {
+    if (_lastFcmPlatform == null) {
       return;
     }
-    // Plan 320 P2: prefer the LIVE provider token. The cached value may be the
-    // very token the relay just evicted as permanently unroutable; re-sending
-    // it would resurrect a dead entry on every relay-health transition.
-    var token = _lastFcmToken;
-    final reader = _liveFcmTokenReader;
-    if (reader != null) {
-      try {
-        final live = (await reader())?.trim();
-        if (live != null && live.isNotEmpty) {
-          token = live;
-        } else {
-          logPushDiagnostic(
-            'live_push_token_unavailable_using_cached',
-            details: {'platform': platform},
-          );
-        }
-      } catch (e) {
-        logPushDiagnostic(
-          'live_push_token_read_failed_using_cached',
-          details: {'platform': platform, 'error': e.toString()},
-        );
-      }
-    }
-    if (token == null) {
-      return;
-    }
-    await registerPushToken(token, platform);
+    await retryNow();
   }
 
   @override
@@ -3162,14 +3159,59 @@ class P2PServiceImpl
     );
 
     try {
+      // The physical relay route must be the qualified transport peer. An
+      // active-linked role never falls back to the account/primary key: a
+      // node running some other peer sends zero registration frames.
+      final requiredLinkedTransportPeerId = _requiredTransportPeerId
+          ?.call()
+          ?.trim();
+      final isActiveLinkedRoute =
+          requiredLinkedTransportPeerId != null &&
+          requiredLinkedTransportPeerId.isNotEmpty;
+      final currentTransportPeerId = _currentState.peerId?.trim();
+      if (isActiveLinkedRoute &&
+          currentTransportPeerId != requiredLinkedTransportPeerId) {
+        logPushDiagnostic(
+          'bridge_register_push_token_linked_transport_unqualified',
+          details: {'platform': platform},
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_REGISTER_PUSH_TOKEN_LINKED_UNQUALIFIED',
+          details: {'platform': platform},
+        );
+        return false;
+      }
+      // The live paired read-back happens after token acquisition and
+      // immediately before the bridge send, on the same binding/role epoch as
+      // the outcome producer and drainer.
       final readiness = _readOpaqueWakePlatformConsumerReadiness;
       final opaqueWakeReady = readiness == null
           ? kWakeOutcomeCoordinatorAdmissionEnabled
           : await readiness(platform);
+      if (isActiveLinkedRoute && !opaqueWakeReady) {
+        // No accepted linked-rich proof exists: an unready pair would leave a
+        // linked registration with zero usable capabilities, so no frame is
+        // sent and no reaction capability is silently advertised.
+        logPushDiagnostic(
+          'bridge_register_push_token_linked_pair_unready',
+          details: {'platform': platform},
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_REGISTER_PUSH_TOKEN_LINKED_PAIR_UNREADY',
+          details: {'platform': platform},
+        );
+        return false;
+      }
       final response = await callP2PInboxRegisterToken(
         _bridge,
         token: token,
         platform: platform,
+        // Ordinary primary keeps its incumbent default set; the linked route
+        // advertises exactly the paired opaque/outcome capabilities and never
+        // inherits the primary reaction defaults.
+        capabilities: isActiveLinkedRoute ? const <String>[] : null,
         wakeOutcomeCoordinatorAdmissionEnabled: opaqueWakeReady,
       );
       final ok = response['ok'] == true;

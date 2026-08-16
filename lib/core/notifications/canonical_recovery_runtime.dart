@@ -1,7 +1,7 @@
 import 'dart:async';
 
 /// Why one canonical recovery pass was requested.
-enum CanonicalRecoveryReason { deletedBatch, periodicSweep }
+enum CanonicalRecoveryReason { deletedBatch, fixedWake, periodicSweep }
 
 enum CanonicalRecoveryDisposition { succeeded, retry, stale }
 
@@ -260,15 +260,15 @@ final class CanonicalRecoveryRuntime {
           failureReason: 'binding_changed_before_acquire',
         );
       }
-      // Periodic work never adopts or consumes a deleted-batch marker. It
-      // performs the same canonical drain, then the final resnapshot below
-      // retries while any marker is present so the serial immediate work owns
-      // that exact compare-and-acknowledgement.
-      if (reason == CanonicalRecoveryReason.deletedBatch) {
-        startingMarker = authorityFence == null
-            ? await _loadPendingMarker()
-            : authorityFence.marker;
-      }
+      // Every reason adopts the newest current marker present at start —
+      // deleted-batch and fixed-wake by contract, and the periodic sweep as
+      // the recovery path after an immediate enqueue failure. Periodic work
+      // still cannot report a surviving marker as success: an adopted marker
+      // converges into the same exact compare-and-acknowledgement, and one
+      // that only arrives mid-run is retried for the serial immediate work.
+      startingMarker = authorityFence == null
+          ? await _loadPendingMarker()
+          : authorityFence.marker;
       if (authorityFence != null) {
         startingAuthorityRevision = authorityFence.authorityRevision;
         if (startingAuthorityRevision < 0 ||
@@ -327,7 +327,7 @@ final class CanonicalRecoveryRuntime {
       );
     }
 
-    if (reason == CanonicalRecoveryReason.deletedBatch &&
+    if (reason != CanonicalRecoveryReason.periodicSweep &&
         startingMarker == null) {
       return const CanonicalRecoveryResult(
         disposition: CanonicalRecoveryDisposition.stale,

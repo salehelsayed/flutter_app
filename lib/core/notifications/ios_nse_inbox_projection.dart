@@ -227,8 +227,9 @@ Future<T> runWithRetiredIosNseTransportAuthority<T>({
 typedef OpaqueWakeConsumerReadBack = Future<bool> Function();
 
 /// The one production platform predicate applied to paired opaque/outcome
-/// capability registration. Plan 373 supplies iOS; Android deliberately has no
-/// reader until Plan 375 and therefore remains false.
+/// capability registration, the completed-outcome producer and the outcome
+/// drainer. Plan 373 supplies iOS; Plan 375 supplies the live Android
+/// consumer read-back. A platform without a reader remains false.
 final class OpaqueWakePlatformConsumerReadiness {
   const OpaqueWakePlatformConsumerReadiness({
     required this.admissionEnabled,

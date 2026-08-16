@@ -288,6 +288,7 @@ import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/android_opaque_wake_readiness.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
@@ -5234,12 +5235,20 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create and initialize the bridge (Go native)
     bridge = GoBridgeClient();
+    // Declared before the drain composition so its per-kick live read can
+    // reference the one shared platform readiness resolver; assigned below
+    // with the platform readers, before any drain kick can run.
+    late final OpaqueWakePlatformConsumerReadiness
+    opaqueWakePlatformConsumerReadiness;
+    String currentPushPlatformName() => Platform.isIOS ? 'ios' : 'android';
     final notificationCompletedOutcomeDrainComposition =
         NotificationCompletedOutcomeDrainComposition(
           database: db,
           sendOutcome: ({required correlation}) =>
               callP2PInboxWakeOutcome(bridge, correlation: correlation),
           admissionEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
+          readPlatformConsumerReady: () => opaqueWakePlatformConsumerReadiness
+              .isReadyFor(currentPushPlatformName()),
           runNetworkAction: (action) => runAccountRuntimeNetworkVoidAction(
             operation: 'notification_completed_outcome_drain',
             action: action,
@@ -5831,36 +5840,49 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     /// consumed synchronously by the route-push fanout authoring resolver.
     String? lastKnownAccountPeerId;
     RoleAwareDeferredRuntimeStart? roleAwareDeferredRuntimeStartRef;
-    final opaqueWakePlatformConsumerReadiness =
-        OpaqueWakePlatformConsumerReadiness(
-          admissionEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
-          readIosConsumer: iosNseInboxTransportProjection == null
-              ? null
-              : () async {
-                  if (kIsWeb || !Platform.isIOS) return false;
-                  final identityRow = await dbLoadIdentityRow(db);
-                  final logicalAccountPeerId = identityRow?['peer_id'];
-                  final transportPeerId = p2pService.currentState.peerId;
-                  final sharedOpaqueBinding = await sharedPushKeyStore!.read(
-                    canonicalRuntimeSharedAccountBindingStorageKey,
-                  );
-                  final canonicalOpaqueBinding =
-                      await canonicalRuntimeBindingCoordinator
-                          ?.readCurrentAccountBinding();
-                  if (logicalAccountPeerId is! String ||
-                      transportPeerId == null ||
-                      canonicalOpaqueBinding == null ||
-                      sharedOpaqueBinding != canonicalOpaqueBinding) {
-                    return false;
-                  }
-                  return iosNseInboxTransportProjection.isBindingQualified(
-                    opaqueBinding: canonicalOpaqueBinding,
-                    logicalAccountPeerId: logicalAccountPeerId,
-                    transportPeerId: transportPeerId,
-                    relayMultiaddrs: defaultRelayAddresses(),
-                  );
-                },
-        );
+    // Plan 375: the one live Android consumer read-back behind the shared
+    // platform readiness. Production never infers readiness from the platform
+    // alone — the native Plan-374 bridge and the current secure binding are
+    // read at each consult, on the same epoch as producer/drainer/register.
+    final androidOpaqueWakeReadiness = !kIsWeb && Platform.isAndroid
+        ? AndroidOpaqueWakeReadiness(
+            admissionEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
+            readConsumerSnapshot:
+                droppedPushRecoveryBridge.opaqueWakeConsumerSnapshot,
+            readCurrentSecureBinding: () async =>
+                canonicalRuntimeBindingCoordinator?.readCurrentAccountBinding(),
+          )
+        : null;
+    opaqueWakePlatformConsumerReadiness = OpaqueWakePlatformConsumerReadiness(
+      admissionEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
+      readAndroidConsumer: androidOpaqueWakeReadiness?.isConsumerReady,
+      readIosConsumer: iosNseInboxTransportProjection == null
+          ? null
+          : () async {
+              if (kIsWeb || !Platform.isIOS) return false;
+              final identityRow = await dbLoadIdentityRow(db);
+              final logicalAccountPeerId = identityRow?['peer_id'];
+              final transportPeerId = p2pService.currentState.peerId;
+              final sharedOpaqueBinding = await sharedPushKeyStore!.read(
+                canonicalRuntimeSharedAccountBindingStorageKey,
+              );
+              final canonicalOpaqueBinding =
+                  await canonicalRuntimeBindingCoordinator
+                      ?.readCurrentAccountBinding();
+              if (logicalAccountPeerId is! String ||
+                  transportPeerId == null ||
+                  canonicalOpaqueBinding == null ||
+                  sharedOpaqueBinding != canonicalOpaqueBinding) {
+                return false;
+              }
+              return iosNseInboxTransportProjection.isBindingQualified(
+                opaqueBinding: canonicalOpaqueBinding,
+                logicalAccountPeerId: logicalAccountPeerId,
+                transportPeerId: transportPeerId,
+                relayMultiaddrs: defaultRelayAddresses(),
+              );
+            },
+    );
 
     // Create P2P service (uses the same bridge + local P2P)
     p2pService = P2PServiceImpl(
@@ -5918,10 +5940,6 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       bridge: bridge,
       localP2PService: localP2PService,
       pushTokenStore: pushTokenStore,
-      // Plan 320 P2: relay-health re-registration reads the LIVE provider token
-      // so a relay-side eviction of a dead token is not undone by replaying the
-      // cached one. Falls back to the cache when the provider read fails.
-      liveFcmTokenReader: () => FirebaseMessaging.instance.getToken(),
       // FDC-09 §12 / CV-14: the send funnel attaches received[toPeerId] on
       // `inbox:store` (1:1 contacts only). Inert until a peer distributes a `wt`.
       receivedWakeTokenStore: receivedWakeTokenStore,
@@ -6154,6 +6172,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               return push_registration.registerPushToken(
                 p2pService: p2pService,
                 pushTokenStore: pushTokenStore,
+                // The DB identity row is the logical account peer for both
+                // roles; a linked physical transport peer is a relay route,
+                // never migration/account authority.
+                logicalAuthorityPeerId: identity?.peerId,
                 accountMigrationNetworkGate: accountMigrationRuntimeNetworkGate
                     .allowsAccountNetworkSideEffects,
                 relayRegistrationProof: pushRelayRegistrationProof,
@@ -6181,6 +6203,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             healthNotifier: pushRegistrationHealthNotifier,
           )
         : null;
+    // Plan 375: persisted-token restore and every relay-health transition
+    // route through this one late-installed retry owner; afterward no raw
+    // bridge registration path remains in the service.
+    if (pushRegistrationCoordinator != null) {
+      p2pService.installPushRegistrationRetryNow(
+        pushRegistrationCoordinator.retryNow,
+      );
+    }
     // conversationTracker is constructed EARLIER (ahead of P2PServiceImpl) for the
     // CV-26 FDC-04 re-warm wiring; see the P2PServiceImpl build site above.
     final groupConversationTracker = ActiveConversationTracker();
@@ -6212,6 +6242,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             presentationOwner: LocalNotificationPresentationOwner.mainApp,
             completedOutcomeProducerEnabled:
                 kWakeOutcomeCoordinatorAdmissionEnabled,
+            readCompletedOutcomeProducerReady: () =>
+                opaqueWakePlatformConsumerReadiness.isReadyFor(
+                  currentPushPlatformName(),
+                ),
             notificationToneTracker: notificationToneTracker,
             durableNotificationCoordinatorResolver: () async =>
                 durableReactionNotificationCoordinator,
@@ -6582,6 +6616,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       resolveCompletedOutcomePhysicalPeerId:
           resolveCompletedOutcomePhysicalPeerId,
       completedOutcomeProducerEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
+      readCompletedOutcomeProducerReady: () =>
+          opaqueWakePlatformConsumerReadiness.isReadyFor(
+            currentPushPlatformName(),
+          ),
       resolveCurrentOpaqueBinding:
           canonicalRuntimeBindingCoordinator?.readCurrentAccountBinding,
       durableLocalNotificationEffectRegistry: durableNotificationIdRegistry,
@@ -9155,23 +9193,31 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           afterLinkedTransportQualified:
               kWakeOutcomeCoordinatorAdmissionEnabled &&
                   !kIsWeb &&
-                  Platform.isIOS
+                  (Platform.isIOS || Platform.isAndroid)
               ? () async {
+                  // Role-gated: runs only after the linked transport peer has
+                  // qualified. The exact consumer/binding read-back precedes
+                  // any Firebase or registration work, and the same one
+                  // coordinator owns the pair-only registration frame.
+                  final platformName = currentPushPlatformName();
                   if (!await opaqueWakePlatformConsumerReadiness.isReadyFor(
-                    'ios',
+                    platformName,
                   )) {
                     throw StateError(
-                      'linked iOS opaque-wake projection is not ready',
+                      'linked $platformName opaque-wake consumer is not ready',
                     );
                   }
                   await ensureFirebaseReady();
                   if (!firebaseReadiness.isReady) {
-                    throw StateError('linked iOS Firebase is not ready');
+                    throw StateError(
+                      'linked $platformName Firebase is not ready',
+                    );
                   }
                   final registration = pushRegistrationCoordinator;
                   if (registration == null) {
                     throw StateError(
-                      'linked iOS push registration owner is unavailable',
+                      'linked $platformName push registration owner is '
+                      'unavailable',
                     );
                   }
                   await registration.ensureStarted();
@@ -9865,7 +9911,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             RoleAwareRuntimeStartOutcome.linkedFoundationStarted =>
               kWakeOutcomeCoordinatorAdmissionEnabled &&
                   !kIsWeb &&
-                  Platform.isIOS,
+                  (Platform.isIOS || Platform.isAndroid),
             _ => false,
           };
         },

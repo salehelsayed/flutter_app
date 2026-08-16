@@ -6,11 +6,19 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _contractPath = 'test/unit/dtr18_placement_closure_contract_test.dart';
 const _dependencyIdentitySha256 =
-    'd4f42f151ae18feaf922ad90f172401917a3b7b4ca104d4574e6f9c12a6afb40';
+    '50c21d843f8ee7833b000b203a8ab4397f3330f05b05c32452d0769939acd338';
 const _dependencyDispositionSha256 =
-    '5f24faf4c5f693d0f19eb18503e5d37c4db4580c6ccbc91806abc75a78dcf132';
+    '0a4729898bd543a28c128aa6ee4a72f52a88e7c4bdf6644e5aee7ec21e0991c3';
 const _residualEvidence =
     'DTR18-AUTH-02 terminal residual disposition dated 2026-07-28.';
+
+// Plan 374 shipped the debug-only device seed/inspection fixture with four
+// reviewed core->feature imports; Plan 375 adopted it for the fixed-wake
+// proof. These rows are receipt-bound, not DTR18-AUTH-02 residuals.
+const _plan374FixtureEvidence =
+    'Plan-374 checksum receipt (Test-Flight-Improv/evidence/374/README.md) '
+    'binds the fixture and its TC-374-08 device proof; adopted unchanged by '
+    'the Plan-375 fixed-wake proof.';
 
 const _relocations = <String, List<String>>{
   'lib/features/contact_request/domain/repositories/'
@@ -25,7 +33,7 @@ const _relocations = <String, List<String>>{
     // Plan 361 adds the serialized contact-conversation purge capability
     // delegate (dbPurgeDirectContactConversationAndContact) and its
     // reconciliation surface to the SAME data adapter; nothing relocates.
-    'b086161e3449442c6b98ee1513798e55d75616008acca40b59b0132062737da9',
+    'ef67291da37df1e3edb35b95c7b1419fb78762c709a0bdff47bae5f19d31cd96',
   ],
   'lib/features/conversation/domain/repositories/'
       'media_attachment_repository_impl.dart': <String>[
@@ -178,7 +186,7 @@ const _relocations = <String, List<String>>{
     // metadata PREPARED projection, and exact restart repair to this already-
     // relocated adapter; its placement and stale-import checks remain
     // unchanged.
-    'd5bb80905cde0eb02e3a6c3f9f71d7ace44e5d176d5b1f0b246754c252c0f522',
+    '1128da7e6d890736b5ad8b5f14d68440cda277d9d8c6ac4fd0a2c33eee3eca89',
   ],
   'lib/features/groups/domain/repositories/'
       'pending_group_invite_repository_impl.dart': <String>[
@@ -189,7 +197,7 @@ const _relocations = <String, List<String>>{
   'lib/features/identity/domain/repositories/'
       'identity_repository_impl.dart': <String>[
     'lib/features/identity/data/repositories/identity_repository_impl.dart',
-    'b8133f8db2ce827328b96e50dbc5da5e4cd10656b1eb19e30e9fa6356e65fa0c',
+    '4b3e115b1941a402ffcf154ab678d1be668f56ab467dc41620b30b08697e7671',
   ],
   'lib/features/introduction/domain/repositories/'
       'intro_review_seen_repository_impl.dart': <String>[
@@ -431,7 +439,7 @@ void main() {
 
     expect(_relocations, hasLength(22));
     expect(placements, isEmpty);
-    expect(dependencies, hasLength(165));
+    expect(dependencies, hasLength(169));
     expect(
       _dependencyIdentitySha256For(dependencies),
       _dependencyIdentitySha256,
@@ -441,7 +449,17 @@ void main() {
       _dependencyDispositionSha256,
     );
     expect(
-      dependencies.where((entry) => entry['evidence'] != _residualEvidence),
+      dependencies.where(
+        (entry) => entry['evidence'] == _plan374FixtureEvidence,
+      ),
+      hasLength(4),
+    );
+    expect(
+      dependencies.where(
+        (entry) =>
+            entry['evidence'] != _residualEvidence &&
+            entry['evidence'] != _plan374FixtureEvidence,
+      ),
       isEmpty,
     );
     expect(

@@ -99,8 +99,11 @@ class ProductionHeadlessCanonicalRecovery374Test {
                 "recoveryWorkEnabled" to true,
                 "pendingGeneration" to 1L,
                 "pendingBinding" to binding,
+                "pendingTriggerKind" to "deleted_batch",
+                "pendingGenericMayHaveAlerted" to true,
                 "authorityRevision" to 1L,
                 "authorityMutationInProgress" to false,
+                "fixedWakeConsumerVersion" to 1,
             ),
             authority.value,
         )
@@ -174,8 +177,11 @@ class ProductionHeadlessCanonicalRecovery374Test {
                 "recoveryWorkEnabled" to false,
                 "pendingGeneration" to marker.generation,
                 "pendingBinding" to binding,
+                "pendingTriggerKind" to "deleted_batch",
+                "pendingGenericMayHaveAlerted" to true,
                 "authorityRevision" to initialAuthorityRevision,
                 "authorityMutationInProgress" to false,
+                "fixedWakeConsumerVersion" to 1,
             ),
             disabledAuthority.value,
         )
@@ -408,8 +414,11 @@ class ProductionHeadlessCanonicalRecovery374Test {
                 "recoveryWorkEnabled" to false,
                 "pendingGeneration" to null,
                 "pendingBinding" to null,
+                "pendingTriggerKind" to null,
+                "pendingGenericMayHaveAlerted" to null,
                 "authorityRevision" to 3L,
                 "authorityMutationInProgress" to true,
+                "fixedWakeConsumerVersion" to 1,
             ),
             rotatedAuthority.value,
         )
@@ -520,8 +529,11 @@ class ProductionHeadlessCanonicalRecovery374Test {
                 "recoveryWorkEnabled" to true,
                 "pendingGeneration" to accountBMarker.generation,
                 "pendingBinding" to bindingB,
+                "pendingTriggerKind" to "deleted_batch",
+                "pendingGenericMayHaveAlerted" to true,
                 "authorityRevision" to 4L,
                 "authorityMutationInProgress" to false,
+                "fixedWakeConsumerVersion" to 1,
             ),
             recoveredAuthority.value,
         )
@@ -555,6 +567,51 @@ class ProductionHeadlessCanonicalRecovery374Test {
             ),
             enqueuer.cancelled,
         )
+    }
+
+    @Test
+    fun `TC-375-06 native read back advertises exact fixed consumer version kind and disposition`() {
+        val binding = "installation-a/account-a"
+        store.setCurrentBinding(binding, recoveryWorkEnabled = true)
+        assertEquals(1L, store.recordFixedWake())
+        val enqueuer = Plan374RecoveryWorkEnqueuer()
+        val bridge = readinessBridge(enqueuer)
+
+        val authority = Plan374BridgeResult()
+        bridge.onMethodCall(MethodCall("recoveryAuthority", null), authority)
+        assertEquals(
+            mapOf(
+                "currentBinding" to binding,
+                "recoveryWorkEnabled" to true,
+                "pendingGeneration" to 1L,
+                "pendingBinding" to binding,
+                "pendingTriggerKind" to "fixed_wake",
+                "pendingGenericMayHaveAlerted" to false,
+                "authorityRevision" to 1L,
+                "authorityMutationInProgress" to false,
+                "fixedWakeConsumerVersion" to 1,
+            ),
+            authority.value,
+        )
+
+        val marker = Plan374BridgeResult()
+        bridge.onMethodCall(MethodCall("pendingRecovery", null), marker)
+        assertEquals(
+            mapOf(
+                "generation" to 1L,
+                "binding" to binding,
+                "triggerKind" to "fixed_wake",
+                "genericMayHaveAlerted" to false,
+            ),
+            marker.value,
+        )
+
+        // The version constant is a source fact, not a per-install boolean: a
+        // binary that lacks the fixed ingress family cannot advertise it.
+        assertEquals(1, DroppedPushRecoveryBridge.FIXED_WAKE_CONSUMER_VERSION)
+        val service = sourceFile("MknoonFirebaseMessagingService.kt").readText()
+        assertEquals(1, service.windowedCount("override fun onMessageReceived("))
+        assertEquals(1, service.windowedCount("super.onMessageReceived(message)"))
     }
 
     @Test
@@ -640,10 +697,15 @@ class ProductionHeadlessCanonicalRecovery374Test {
         val service = sourceFile("MknoonFirebaseMessagingService.kt").readText()
         val seam = sourceFile("ProductionDeletedBatchRecovery.kt").readText()
 
+        // Plan 375 generalized the one seam entry: deletion and fixed ingress
+        // both route through recordGenericRecoveryTrigger on one construction.
         assertEquals(1, service.windowedCount("ProductionDeletedBatchRecovery("))
-        assertEquals(1, service.windowedCount(".commitAndSchedule { generation ->"))
+        assertEquals(2, service.windowedCount(".recordGenericRecoveryTrigger("))
+        assertFalse(service.contains(".commitAndSchedule"))
         assertFalse(service.contains(".recordDeletion"))
+        assertFalse(service.contains(".recordFixedWake"))
         assertEquals(1, seam.windowedCount("store.recordDeletion { generation ->"))
+        assertEquals(1, seam.windowedCount("store.recordFixedWake { generation ->"))
         assertEquals(1, seam.windowedCount("DroppedPushRecoveryWorkScheduler(context)"))
         assertFalse(seam.contains("WorkManager.getInstance"))
         assertFalse(seam.contains("HeadlessCanonicalRecoveryWorker("))

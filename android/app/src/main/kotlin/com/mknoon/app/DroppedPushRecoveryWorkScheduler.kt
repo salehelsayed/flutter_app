@@ -74,6 +74,7 @@ internal class DroppedPushRecoveryWorkScheduler(
         internal const val INPUT_WAKE_GENERATION = "wake_generation"
         internal const val INPUT_BINDING_DIGEST = "binding_digest"
         internal const val REASON_DELETED_BATCH = "deleted_batch"
+        internal const val REASON_FIXED_WAKE = "fixed_wake"
         internal const val REASON_PERIODIC_SWEEP = "periodic_sweep"
         private const val IMMEDIATE_PREFIX = "mknoon-recovery-immediate-"
         private const val PERIODIC_PREFIX = "mknoon-recovery-periodic-"
@@ -93,11 +94,23 @@ internal class DroppedPushRecoveryWorkScheduler(
     }
 
     fun enqueueDeletedBatch(snapshot: DroppedPushRecoveryStore.PendingRecovery) {
+        enqueueImmediateTrigger(REASON_DELETED_BATCH, snapshot)
+    }
+
+    /** Fixed wakes ride the exact same unique expedited immediate chain. */
+    fun enqueueFixedWake(snapshot: DroppedPushRecoveryStore.PendingRecovery) {
+        enqueueImmediateTrigger(REASON_FIXED_WAKE, snapshot)
+    }
+
+    private fun enqueueImmediateTrigger(
+        reason: String,
+        snapshot: DroppedPushRecoveryStore.PendingRecovery,
+    ) {
         val request = OneTimeWorkRequestBuilder<HeadlessCanonicalRecoveryWorker>()
             .setConstraints(connectedConstraints())
             .setInputData(
                 Data.Builder()
-                    .putString(INPUT_REASON, REASON_DELETED_BATCH)
+                    .putString(INPUT_REASON, reason)
                     .putLong(INPUT_WAKE_GENERATION, snapshot.generation)
                     .putString(INPUT_BINDING_DIGEST, bindingDigest(snapshot.binding))
                     .build(),
@@ -148,7 +161,16 @@ internal class DroppedPushRecoveryWorkScheduler(
                 ensurePeriodic(binding)
                 store.pendingRecovery()
                     ?.takeIf { pending -> pending.binding == binding }
-                    ?.let(::enqueueDeletedBatch)
+                    ?.let { pending ->
+                        // Re-enqueue adopts the durable marker's own trigger
+                        // kind; an unsupported future kind conservatively rides
+                        // the deleted-batch chain and is never dropped.
+                        when (pending.triggerKind) {
+                            DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE ->
+                                enqueueFixedWake(pending)
+                            else -> enqueueDeletedBatch(pending)
+                        }
+                    }
             }
         }
     }

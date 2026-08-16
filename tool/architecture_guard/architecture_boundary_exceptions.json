@@ -2158,6 +2158,58 @@
       "reason": "Retained source-owner dependency under terminal DTR18-AUTH-02 disposition.",
       "evidence": "DTR18-AUTH-02 terminal residual disposition dated 2026-07-28.",
       "condition": "Revisit only with an owner-approved source-family relocation plan and its affected causal and preservation gates; never substitute a new exception."
+    },
+    {
+      "rule": "core-must-not-depend-on-feature",
+      "sourceLayer": "core",
+      "targetLayer": "domain",
+      "source": "lib/core/debug/android_headless_recovery_374_fixture.dart",
+      "directiveKind": "import",
+      "target": "lib/features/conversation/domain/models/direct_notification_display_outbox_entry.dart",
+      "count": 1,
+      "owner": "Plan 374 / Plan 375",
+      "reason": "Debug-only Plan-374 device seed/inspection fixture must stage the exact typed custody and identity shapes the production headless graph consumes.",
+      "evidence": "Plan-374 checksum receipt (Test-Flight-Improv/evidence/374/README.md) binds the fixture and its TC-374-08 device proof; adopted unchanged by the Plan-375 fixed-wake proof.",
+      "condition": "Remove only with the disposable H0/374 fixture family and an equivalent production-classifier device proof; never widen beyond the debug fixture."
+    },
+    {
+      "rule": "core-must-not-depend-on-feature",
+      "sourceLayer": "core",
+      "targetLayer": "domain",
+      "source": "lib/core/debug/android_headless_recovery_374_fixture.dart",
+      "directiveKind": "import",
+      "target": "lib/features/groups/domain/models/group_notification_display_outbox_entry.dart",
+      "count": 1,
+      "owner": "Plan 374 / Plan 375",
+      "reason": "Debug-only Plan-374 device seed/inspection fixture must stage the exact typed custody and identity shapes the production headless graph consumes.",
+      "evidence": "Plan-374 checksum receipt (Test-Flight-Improv/evidence/374/README.md) binds the fixture and its TC-374-08 device proof; adopted unchanged by the Plan-375 fixed-wake proof.",
+      "condition": "Remove only with the disposable H0/374 fixture family and an equivalent production-classifier device proof; never widen beyond the debug fixture."
+    },
+    {
+      "rule": "core-must-not-depend-on-feature",
+      "sourceLayer": "core",
+      "targetLayer": "unclassified",
+      "source": "lib/core/debug/android_headless_recovery_374_fixture.dart",
+      "directiveKind": "import",
+      "target": "lib/features/identity/data/repositories/identity_repository_impl.dart",
+      "count": 1,
+      "owner": "Plan 374 / Plan 375",
+      "reason": "Debug-only Plan-374 device seed/inspection fixture must stage the exact typed custody and identity shapes the production headless graph consumes.",
+      "evidence": "Plan-374 checksum receipt (Test-Flight-Improv/evidence/374/README.md) binds the fixture and its TC-374-08 device proof; adopted unchanged by the Plan-375 fixed-wake proof.",
+      "condition": "Remove only with the disposable H0/374 fixture family and an equivalent production-classifier device proof; never widen beyond the debug fixture."
+    },
+    {
+      "rule": "core-must-not-depend-on-feature",
+      "sourceLayer": "core",
+      "targetLayer": "domain",
+      "source": "lib/core/debug/android_headless_recovery_374_fixture.dart",
+      "directiveKind": "import",
+      "target": "lib/features/identity/domain/models/identity_model.dart",
+      "count": 1,
+      "owner": "Plan 374 / Plan 375",
+      "reason": "Debug-only Plan-374 device seed/inspection fixture must stage the exact typed custody and identity shapes the production headless graph consumes.",
+      "evidence": "Plan-374 checksum receipt (Test-Flight-Improv/evidence/374/README.md) binds the fixture and its TC-374-08 device proof; adopted unchanged by the Plan-375 fixed-wake proof.",
+      "condition": "Remove only with the disposable H0/374 fixture family and an equivalent production-classifier device proof; never widen beyond the debug fixture."
     }
   ],
   "placementExceptions": []

@@ -50,6 +50,8 @@ class DroppedPushRecoveryBridgeTest {
             mapOf(
                 "generation" to 1L,
                 "binding" to "installation-a/account-a",
+                "triggerKind" to "deleted_batch",
+                "genericMayHaveAlerted" to true,
             ),
             markerRead.value,
         )
@@ -162,6 +164,8 @@ class DroppedPushRecoveryBridgeTest {
             mapOf(
                 "generation" to 1L,
                 "binding" to "installation-a/account-a",
+                "triggerKind" to "deleted_batch",
+                "genericMayHaveAlerted" to true,
             ),
             pending.value,
         )

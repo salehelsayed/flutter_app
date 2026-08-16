@@ -298,7 +298,9 @@ internal class HeadlessCanonicalRecoveryExecution(
                 return null
             }
             return when (reason) {
-                DroppedPushRecoveryWorkScheduler.REASON_DELETED_BATCH -> {
+                DroppedPushRecoveryWorkScheduler.REASON_DELETED_BATCH,
+                DroppedPushRecoveryWorkScheduler.REASON_FIXED_WAKE,
+                -> {
                     if (
                         inputData.getLong(
                             DroppedPushRecoveryWorkScheduler.INPUT_WAKE_GENERATION,
@@ -308,7 +310,22 @@ internal class HeadlessCanonicalRecoveryExecution(
                         return null
                     }
                     val latest = authority.pendingRecovery() ?: return null
-                    HeadlessCanonicalRecoveryStartSnapshot(reason, binding, latest)
+                    // WorkRequest input is only a wake hint. The run adopts the
+                    // newest durable marker with that marker's own trigger
+                    // semantics; an unsupported future kind keeps the queued
+                    // reason and can converge but never exact-ACK.
+                    HeadlessCanonicalRecoveryStartSnapshot(
+                        reason = when (latest.triggerKind) {
+                            DroppedPushRecoveryStore.TriggerKind.DELETED_BATCH ->
+                                DroppedPushRecoveryWorkScheduler.REASON_DELETED_BATCH
+                            DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE ->
+                                DroppedPushRecoveryWorkScheduler.REASON_FIXED_WAKE
+                            DroppedPushRecoveryStore.TriggerKind.UNSUPPORTED_PENDING ->
+                                reason
+                        },
+                        binding = binding,
+                        pendingRecovery = latest,
+                    )
                 }
 
                 DroppedPushRecoveryWorkScheduler.REASON_PERIODIC_SWEEP ->
@@ -360,7 +377,10 @@ internal object Plan374ProcessDeathBarrier {
     ): Boolean {
         if (
             !BuildConfig.DEBUG ||
-            reason != DroppedPushRecoveryWorkScheduler.REASON_DELETED_BATCH
+            (
+                reason != DroppedPushRecoveryWorkScheduler.REASON_DELETED_BATCH &&
+                    reason != DroppedPushRecoveryWorkScheduler.REASON_FIXED_WAKE
+                )
         ) {
             return false
         }

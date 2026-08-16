@@ -8,11 +8,23 @@ import 'package:flutter_app/core/database/helpers/direct_notification_display_ou
 import 'package:flutter_app/core/database/helpers/direct_notification_reconciliation_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_reconciliation_outbox_db_helpers.dart';
+import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/canonical_recovery_runtime.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
+import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
+import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/headless_canonical_recovery_entrypoint.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
+import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import 'dart:convert' show utf8;
 
 import '../secure_storage/fake_secure_key_store.dart';
 
@@ -595,6 +607,259 @@ void main() {
           unresolvedLedgerRecords: 0,
         ).isConverged,
         isTrue,
+      );
+    },
+  );
+
+  test(
+    'TC-375-04 fixed wake carries no event authority and canonical drain remains inbox reconciler',
+    () async {
+      sqfliteFfiInit();
+      final database = await databaseFactoryFfi.openDatabase(
+        inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      for (final table in const <String>[
+        'direct_notification_display_outbox',
+        'direct_notification_reconciliation_outbox',
+        'group_notification_display_outbox',
+        'group_notification_reconciliation_outbox',
+      ]) {
+        await database.execute(
+          'CREATE TABLE $table (id INTEGER PRIMARY KEY, status TEXT NOT NULL)',
+        );
+      }
+      // One canonical direct message waits in SQL custody; nothing else.
+      await database.insert(
+        'direct_notification_display_outbox',
+        <String, Object?>{'status': 'DEFERRED_NOT_READY'},
+      );
+
+      final ledgerDirectory = await Directory.systemTemp.createTemp(
+        'plan375-fixed-wake-ledger-',
+      );
+      addTearDown(() => ledgerDirectory.delete(recursive: true));
+      final ledgerStore = LocalNotificationLedgerStore(
+        directory: ledgerDirectory,
+      );
+      expect(
+        await ledgerStore.initializeOrRebind(currentOpaqueBinding: _binding),
+        isNotNull,
+      );
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: ledgerDirectory,
+        localNotificationEffectCoordinator:
+            DurableLocalNotificationEffectCoordinator(
+              ledgerStore: ledgerStore,
+              nowUtc: () => DateTime.parse('2026-08-16T12:00:01.000Z').toUtc(),
+              effectTokenFactory: () => 'f' * 64,
+            ),
+      );
+
+      // The exact fixed invocation is only a durable mailbox signal: its
+      // parse admits reason/nonce/binding/generation and nothing else — no
+      // FCM message ID, collapse key, priority or TTL survives into Dart.
+      final invocation = HeadlessCanonicalRecoveryInvocation.parse(
+        const <String>['fixed_wake', 'nonce-tc-375-04', _binding, '7'],
+      );
+      expect(invocation.reason, CanonicalRecoveryReason.fixedWake);
+      expect(invocation.identityPayload().keys.toSet(), <String>{
+        'reason',
+        'nonce',
+        'binding',
+        'generation',
+      });
+      // Before any canonical drain the real ledger holds zero records: the
+      // identity-free wake minted no event, correlation or custody authority.
+      final preDrain = await ledgerStore.read(currentOpaqueBinding: _binding);
+      expect(preDrain, isNotNull);
+      expect(preDrain!.records, isEmpty);
+
+      const messageId = 'direct-message-tc-375-04';
+      const physicalPeerId = 'physical-peer-tc-375-04';
+      final eventCorrelation =
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: physicalPeerId,
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.directMessage,
+            eventKey: messageId,
+          )!;
+      final conversationIdentity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.direct,
+        value: 'direct-peer-tc-375-04',
+      )!;
+
+      Future<ProductionHeadlessCustodyTotals> readTotals() async {
+        final envelope = await ledgerStore.read(currentOpaqueBinding: _binding);
+        final unresolvedLedgerRecords = envelope == null
+            ? 1
+            : (envelope.claimsSuspended ? 1 : 0) +
+                  envelope.records.values
+                      .where(
+                        (record) =>
+                            record.effectPhase !=
+                            LocalNotificationEffectPhase.settled,
+                      )
+                      .length;
+        return ProductionHeadlessCustodyTotals(
+          directDisplay: await dbCountAllDirectNotificationDisplayOutboxEntries(
+            database,
+          ),
+          directReconciliation:
+              await dbCountAllDirectNotificationReconciliationOutboxEntries(
+                database,
+              ),
+          groupDisplay: await dbCountAllGroupNotificationDisplayOutboxEntries(
+            database,
+          ),
+          groupReconciliation:
+              await dbCountAllGroupNotificationReconciliationOutboxEntries(
+                database,
+              ),
+          unresolvedLedgerRecords: unresolvedLedgerRecords,
+        );
+      }
+
+      var nativePosts = 0;
+      Future<void> materializeCanonicalDirectMessage() async {
+        final notificationId = await registry.resolve(
+          'direct-peer-tc-375-04',
+          activeNotificationIds: () async => const <Object?>[],
+        );
+        // The Plan-374 drain authenticates and persists the current direct
+        // row first, then materializes notification custody strictly as
+        // INBOX_RECONCILER over SQL_READY source custody through Plan 372.
+        final effect = await registry.runFinalEffect(
+          context: DurableLocalNotificationEffectContext(
+            currentOpaqueBinding: _binding,
+            eventCorrelation: eventCorrelation,
+            conversationDigest: conversationIdentity.digest,
+            producerKind: LocalNotificationProducerKind.directMessage,
+            sourceCustody: LocalNotificationSourceCustody.sqlReady,
+            presentationOwner:
+                LocalNotificationPresentationOwner.inboxReconciler,
+            readFinalCanonicalDisposition: () async =>
+                DurableLocalNotificationCanonicalDisposition.eligible,
+          ),
+          appVisibility: _HeadlessBackgroundVisibility(),
+          conversationIdentity: conversationIdentity,
+          conversationKey: 'direct-peer-tc-375-04',
+          notificationId: notificationId,
+          metadata: ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity: eventCorrelation,
+            generation: 'ledger:$eventCorrelation',
+          ),
+          retireCurrent: () async {},
+          publishNative: () async {
+            nativePosts += 1;
+          },
+        );
+        expect(
+          effect.disposition,
+          DurableLocalNotificationEffectDisposition.osPosted,
+        );
+        final settled = await registry.settleSqlReadyEffect(
+          currentOpaqueBinding: _binding,
+          eventCorrelation: eventCorrelation,
+          expectedRevision: effect.receipt!.recordRevision,
+        );
+        expect(settled, isNotNull);
+        await database.delete('direct_notification_display_outbox');
+      }
+
+      final acknowledged = <CanonicalRecoveryMarker>[];
+      var markerPresent = true;
+      final runtime = CanonicalRecoveryRuntime(
+        loadCurrentBinding: () async => _binding,
+        loadPendingMarker: () async => markerPresent ? _marker : null,
+        acquireSession: ({required binding, required reason}) async {
+          expect(reason, CanonicalRecoveryReason.fixedWake);
+          return _Tc37504Session(
+            drainDirect: () async {
+              await materializeCanonicalDirectMessage();
+              return const CanonicalRecoveryDrainOutcome(
+                isSuccessful: true,
+                hasMore: false,
+              );
+            },
+            settle: () async {
+              final totals = await readTotals();
+              return CanonicalRecoveryProjectionOutcome(
+                isSuccessful: true,
+                hasPendingWork: !totals.isConverged,
+              );
+            },
+          );
+        },
+        acknowledgeMarker: (marker, {authorityRevision}) async {
+          if (marker != _marker || !markerPresent) return false;
+          markerPresent = false;
+          acknowledged.add(marker);
+          return true;
+        },
+      );
+
+      final result = await runtime.run(
+        CanonicalRecoveryReason.fixedWake,
+        expectedBinding: _binding,
+        expectedMarker: _marker,
+      );
+      expect(result.disposition, CanonicalRecoveryDisposition.succeeded);
+      expect(nativePosts, 1);
+      expect(acknowledged, <CanonicalRecoveryMarker>[_marker]);
+      expect((await readTotals()).isConverged, isTrue);
+
+      // The one real ledger record is canonical custody, not wake authority:
+      // exact INBOX_RECONCILER over SQL_READY, keyed by the authenticated
+      // message correlation. Nothing anywhere derives from the wake nonce,
+      // recovery generation, or an FCM transport hint, and no record claims
+      // ANDROID_PUSH_SERVICE or RELAY_VERIFIED_UNACKED custody.
+      final envelope = (await ledgerStore.read(
+        currentOpaqueBinding: _binding,
+      ))!;
+      expect(envelope.records, hasLength(1));
+      final record = envelope.records.values.single;
+      expect(
+        record.presentationOwner,
+        LocalNotificationPresentationOwner.inboxReconciler,
+      );
+      expect(record.sourceCustody, LocalNotificationSourceCustody.sqlReady);
+      expect(
+        record.presentationState,
+        LocalNotificationPresentationState.osPosted,
+      );
+      expect(record.effectPhase, LocalNotificationEffectPhase.settled);
+      expect(envelope.records.keys.single, eventCorrelation);
+      final ledgerBytes = StringBuffer();
+      await for (final entity in ledgerDirectory.list(recursive: true)) {
+        if (entity is File) {
+          ledgerBytes.write(
+            utf8.decode(await entity.readAsBytes(), allowMalformed: true),
+          );
+        }
+      }
+      final persistedLedger = ledgerBytes.toString();
+      expect(persistedLedger, isNot(contains('nonce-tc-375-04')));
+      expect(persistedLedger, isNot(contains('fixed_wake')));
+      expect(persistedLedger, isNot(contains('ANDROID_PUSH_SERVICE')));
+      expect(persistedLedger, isNot(contains('RELAY_VERIFIED_UNACKED')));
+      expect(persistedLedger, contains('INBOX_RECONCILER'));
+
+      // The wake fields also never become a correlation: the Plan-369
+      // projection accepts only authenticated event keys, and hashing the
+      // generation would collide with nothing the ledger recognizes.
+      expect(
+        tryComputeNotificationCompletedOutcomeCorrelation(
+          physicalPeerId: physicalPeerId,
+          producerKind: NotificationCompletedOutcomeProducerKind.directMessage,
+          eventKey: '',
+        ),
+        isNull,
+      );
+      expect(
+        sha256.convert(utf8.encode('7')).toString(),
+        isNot(eventCorrelation),
       );
     },
   );
@@ -1653,4 +1918,60 @@ final class _TracingCanonicalRuntimeLeaseGateway
     maximumConcurrentWritableOwners:
         _state == CanonicalRuntimeLeaseState.released ? 0 : 1,
   );
+}
+
+final class _HeadlessBackgroundVisibility
+    extends AppVisibilitySuppressionReader {
+  @override
+  Future<AppVisibilityEvaluation> evaluate(
+    AppVisibilityConversationIdentity? identity,
+  ) async => const AppVisibilityEvaluation(
+    isForegroundActive: false,
+    maySuppress: false,
+    lifecycle: AppVisibilityLifecycle.background,
+    revision: 1,
+    lifecycleGeneration: 1,
+  );
+}
+
+final class _Tc37504Session implements CanonicalRecoverySession {
+  _Tc37504Session({required this.drainDirect, required this.settle});
+
+  final Future<CanonicalRecoveryDrainOutcome> Function() drainDirect;
+  final Future<CanonicalRecoveryProjectionOutcome> Function() settle;
+
+  @override
+  Future<void> ensureRuntimeReady() async {}
+
+  @override
+  Future<void> ensureTransportHealthy() async {}
+
+  @override
+  Future<CanonicalRecoveryDrainOutcome> drainDirectInbox() => drainDirect();
+
+  @override
+  Future<CanonicalRecoveryDrainOutcome> drainGroupInbox() async =>
+      const CanonicalRecoveryDrainOutcome(isSuccessful: true, hasMore: false);
+
+  @override
+  Future<CanonicalRecoveryProjectionOutcome> settleNotificationProjection() =>
+      settle();
+
+  @override
+  Future<void> sealAdmissionAndAwaitInFlight() async {}
+
+  @override
+  Future<void> stopGroupMessageListener() async {}
+
+  @override
+  Future<void> disposeProjectionOwners() async {}
+
+  @override
+  Future<bool> quiesceRuntime() async => true;
+
+  @override
+  Future<bool> closeDatabase() async => true;
+
+  @override
+  Future<bool> releaseOwnership({required bool databaseClosed}) async => true;
 }

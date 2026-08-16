@@ -14,6 +14,7 @@ import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
+import 'package:flutter_app/features/push/domain/push_token_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -7889,4 +7890,251 @@ void main() {
       reason: 'a primary keeps the incumbent warm start',
     );
   });
+  group('TC-375-07b coordinator-owned re-registration', () {
+    test(
+      'TC-375-07b persisted token and every relay health retry use the one coordinator',
+      () async {
+        // Persisted-token restore: a fresh process with a stored token gains
+        // trigger eligibility through the constructor restore, and the
+        // trigger itself is handed to the installed coordinator owner.
+        final store = _FakePushTokenStore(
+          stored: (token: 'persisted-token', platform: 'android'),
+        );
+        final restoreBridge = _FakeBridge();
+        restoreBridge.whenCommand(
+          'inbox:ack',
+          (_) => jsonEncode({'ok': true, 'acked': 1}),
+        );
+        restoreBridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        restoreBridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': <String>[],
+            'circuitAddresses': <String>[],
+            'connections': <dynamic>[],
+            'relayState': 'degraded',
+            'healthyRelayCount': 0,
+          }),
+        );
+        restoreBridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': <String>[],
+            'circuitAddresses': <String>[],
+            'connections': <dynamic>[],
+            'relayState': 'degraded',
+            'healthyRelayCount': 0,
+          }),
+        );
+        final restoreService = P2PServiceImpl(
+          bridge: restoreBridge,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+          pushTokenStore: store,
+        );
+        addTearDown(restoreService.dispose);
+        final retryTriggers = <String>[];
+        restoreService.installPushRegistrationRetryNow(() async {
+          retryTriggers.add('retry');
+        });
+        await restoreService.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        for (var i = 0; i < 100 && store.reads == 0; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(store.reads, greaterThanOrEqualTo(1));
+
+        // relay:state push transition (unhealthy -> healthy): one trigger.
+        restoreBridge.onRelayStateChanged?.call({
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+          'watchdogRestartCount': 0,
+        });
+        for (var i = 0; i < 100 && retryTriggers.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(
+          retryTriggers,
+          hasLength(1),
+          reason:
+              'the restored persisted token makes the relay-state '
+              'transition hand exactly one trigger to the coordinator',
+        );
+        expect(
+          restoreBridge.calledCommands.where(
+            (cmd) => cmd == 'inbox:register_token',
+          ),
+          isEmpty,
+          reason: 'no raw bridge registration path remains in the service',
+        );
+
+        // Legacy addresses transition (relayState absent): the same one
+        // coordinator owns the trigger.
+        final addressesBridge = _FakeBridge();
+        addressesBridge.whenCommand(
+          'inbox:ack',
+          (_) => jsonEncode({'ok': true, 'acked': 1}),
+        );
+        addressesBridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        addressesBridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': <String>[],
+            'circuitAddresses': <String>[],
+            'connections': <dynamic>[],
+          }),
+        );
+        addressesBridge.whenCommand('inbox:register_token', (_) {
+          return jsonEncode({'ok': true, 'status': 'registered'});
+        });
+        final addressesService = P2PServiceImpl(
+          bridge: addressesBridge,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+        );
+        addTearDown(addressesService.dispose);
+        var addressesTriggers = 0;
+        addressesService.installPushRegistrationRetryNow(() async {
+          addressesTriggers++;
+        });
+        await addressesService.startNodeCore(
+          'cHJpdmF0ZWtleXRlc3Q=',
+          'self-peer',
+        );
+        expect(
+          await addressesService.registerPushToken('token-a', 'android'),
+          isTrue,
+          reason: 'fixture: seed trigger eligibility via a normal frame',
+        );
+        addressesBridge.onAddressesUpdated?.call(
+          const <String>[],
+          const <String>['/p2p-circuit/relay1'],
+        );
+        for (var i = 0; i < 100 && addressesTriggers == 0; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(addressesTriggers, 1);
+
+        // Health-check recovery path: a degraded relay recovered by
+        // performImmediateHealthCheck hands its re-registration to the same
+        // coordinator owner instead of any raw bridge call.
+        var stickyRelayState = 'online';
+        final recoveryBridge = _FakeBridge();
+        recoveryBridge.whenCommand(
+          'inbox:ack',
+          (_) => jsonEncode({'ok': true, 'acked': 1}),
+        );
+        recoveryBridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        String recoveryStatus() => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[
+            if (stickyRelayState == 'online') '/p2p-circuit/relay1',
+          ],
+          'connections': <dynamic>[],
+          'relayState': stickyRelayState,
+          'healthyRelayCount': stickyRelayState == 'online' ? 1 : 0,
+          'watchdogRestartCount': 0,
+        });
+        recoveryBridge.whenCommand('node:start', (_) => recoveryStatus());
+        recoveryBridge.whenCommand('node:status', (_) => recoveryStatus());
+        recoveryBridge.whenCommand(
+          'relay:reconnect',
+          (_) => jsonEncode({'ok': false, 'errorCode': 'RELAY_ERROR'}),
+        );
+        recoveryBridge.whenCommand('inbox:register_token', (_) {
+          return jsonEncode({'ok': true, 'status': 'registered'});
+        });
+        final recoveryService = P2PServiceImpl(
+          bridge: recoveryBridge,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+        );
+        addTearDown(recoveryService.dispose);
+        var recoveryTriggers = 0;
+        recoveryService.installPushRegistrationRetryNow(() async {
+          recoveryTriggers++;
+        });
+        await recoveryService.startNodeCore(
+          'cHJpdmF0ZWtleXRlc3Q=',
+          'self-peer',
+        );
+        expect(
+          await recoveryService.registerPushToken('token-r', 'android'),
+          isTrue,
+        );
+        stickyRelayState = 'degraded';
+        recoveryBridge.onRelayStateChanged?.call({
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+          'watchdogRestartCount': 0,
+          'reason': 'relay_disconnected',
+        });
+        await recoveryService.performImmediateHealthCheck();
+        expect(recoveryTriggers, 0, reason: 'degradation is not a trigger');
+        // The next recovery attempt succeeds: the reconnect itself restores
+        // the healthy relay, and the post-recovery status confirms it.
+        recoveryBridge.whenCommand('relay:reconnect', (_) {
+          stickyRelayState = 'online';
+          return jsonEncode({'ok': true});
+        });
+        await recoveryService.performImmediateHealthCheck();
+        for (var i = 0; i < 100 && recoveryTriggers == 0; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(
+          recoveryTriggers,
+          greaterThanOrEqualTo(1),
+          reason:
+              'the health-check recovery path routes its re-registration '
+              'through the one coordinator owner',
+        );
+        final rawFramesAfterSeed = recoveryBridge.calledCommands
+            .where((cmd) => cmd == 'inbox:register_token')
+            .length;
+        expect(
+          rawFramesAfterSeed,
+          1,
+          reason:
+              'only the seeded fixture frame exists; recovery itself '
+              'sent nothing raw',
+        );
+      },
+    );
+  });
+}
+
+final class _FakePushTokenStore implements PushTokenStore {
+  _FakePushTokenStore({required this.stored});
+
+  final ({String token, String platform})? stored;
+  int reads = 0;
+
+  @override
+  Future<({String token, String platform})?> readToken() async {
+    reads++;
+    return stored;
+  }
+
+  @override
+  Future<void> writeToken(String token, String platform) async {}
+
+  @override
+  Future<void> clearToken() async {}
 }

@@ -113,12 +113,16 @@ void main() {
       // The recovery block is bounded by the next chat label (live-LAN).
       final block = sliceBlock(productionSource, recoveredLabel, liveLanLabel);
 
+      // Plan 373: one leased iOS mailbox-alert page replay may present its
+      // own alerts; every other recovered/store-and-forward drain stays calm.
       expect(
         block,
-        contains('suppressNotification: true'),
+        contains('suppressNotification: !isIosMailboxAlertSilentReplayContext'),
         reason:
-            'recovered/store-and-forward inbox replay must suppress notifications '
-            '(calm: a relay drain on resume must not re-alert for old messages).',
+            'recovered/store-and-forward inbox replay must suppress '
+            'notifications outside the one leased iOS mailbox alert replay '
+            '(calm: a relay drain on resume must not re-alert for old '
+            'messages).',
       );
       expect(
         block,
@@ -159,17 +163,28 @@ void main() {
   test(
     'main reaction replay publishes the persisted change to the UI listener',
     () async {
+      // Plan 374 moved the replay body into the shared direct-replay
+      // composition used by both the foreground bootstrap and the headless
+      // recovery graph; the bootstrap delegates and injects the UI publisher.
       final productionSource = await readProductionBootstrap();
       final replayBlock = sliceBlock(
         productionSource,
         'Future<RecoveredInboxReplayOutcome> replayInboxReaction(',
         'ingestStagedPushEnvelopesUseCase.replayReactionMessage =',
       );
-
-      expect(replayBlock, contains('final (result, change)'));
       expect(
         replayBlock,
-        contains('publishPersistedReactionChange?.call(change)'),
+        contains('productionDirectReplayComposition.replayReaction('),
+        reason: 'the bootstrap must delegate to the one shared composition',
+      );
+
+      final compositionSource = await File(
+        'lib/app/bootstrap/production_canonical_direct_replay_composition.dart',
+      ).readAsString();
+      expect(compositionSource, contains('final (result, change)'));
+      expect(
+        compositionSource,
+        contains('publishPersistedReactionChange()?.call(change)'),
         reason:
             'staged/live replay must update an already-mounted conversation '
             'without re-running persistence or notification policy',
@@ -180,6 +195,14 @@ void main() {
           'publishPersistedReactionChange = '
           'reactionListener.publishPersistedChange',
         ),
+      );
+      expect(
+        productionSource,
+        contains(
+          'publishPersistedReactionChange: () => '
+          'publishPersistedReactionChange',
+        ),
+        reason: 'the composition must receive the live UI publisher seam',
       );
     },
   );

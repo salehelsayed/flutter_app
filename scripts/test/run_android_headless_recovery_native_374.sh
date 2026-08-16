@@ -94,6 +94,11 @@ import xml.etree.ElementTree as ET
 result_dir = Path(sys.argv[1])
 selected_classes = sys.argv[2:]
 expected_text = r"""
+com.mknoon.app.DroppedPushRecoveryStoreTest|testTC37502FixedAndDeletedTriggersShareOneCrashSafeAudibleDisposition
+com.mknoon.app.DroppedPushRecoveryWorkSchedulerTest|testTC37503FixedWakeUsesExistingUniqueExpeditedChain
+com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest|testTC37503WorkerAdoptsCurrentTriggerAcrossRetryProcessDeathAndPeriodicContinuation
+com.mknoon.app.MknoonFirebaseMessagingServiceTest|testTC37501ExactFixedWakeInterceptsAndAllOtherShapesDelegateOnce
+com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-375-06 native read back advertises exact fixed consumer version kind and disposition
 com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|ADB script pins a device and supports handoff and process death
 com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|Dart entrypoint opens only through lease and cannot drain or acknowledge recovery
 com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|debug receiver is no Activity and uses an explicit minimal plugin allowlist
@@ -158,8 +163,10 @@ com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 default off 
 com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 shared deleted batch seam commits resnapshots and schedules before caller work
 """
 expected = [line for line in expected_text.strip().splitlines() if line]
-if len(expected) != 62 or len(set(expected)) != 62:
-    raise SystemExit("the frozen Plan 374 JUnit manifest must contain 62 unique methods")
+if len(expected) != 67 or len(set(expected)) != 67:
+    raise SystemExit(
+        "the frozen Plan 374/375 JUnit manifest must contain 67 unique methods"
+    )
 
 xml_files = [result_dir / f"TEST-{name}.xml" for name in selected_classes]
 missing_xml = [str(path) for path in xml_files if not path.is_file()]
@@ -205,10 +212,12 @@ for row in sorted(observed):
     print(row)
 PY
 
-[[ "$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')" -eq 62 ]] ||
-  fail "the parsed JUnit method manifest did not contain exactly 62 methods"
+[[ "$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')" -eq 67 ]] ||
+  fail "the parsed JUnit method manifest did not contain exactly 67 methods"
 [[ "$(rg -c '\|TC-374-(05|08) ' "$OBSERVED_MANIFEST")" -eq 7 ]] ||
   fail "the seven planned native TC-374 methods were not observed exactly once"
+[[ "$(rg -c '\|(testTC375|TC-375-)' "$OBSERVED_MANIFEST")" -eq 5 ]] ||
+  fail "the five planned native TC-375 methods were not observed exactly once"
 mkdir -p "$RESULT_DIR/android-junit-results"
 for class_name in "${SELECTED_CLASSES[@]}"; do
   cp "$JVM_RESULTS/TEST-$class_name.xml" "$RESULT_DIR/android-junit-results/"
@@ -273,13 +282,29 @@ readonly STORE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/Dro
 readonly BRIDGE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/DroppedPushRecoveryBridge.kt"
 
 [[ "$(rg -F -c 'ProductionDeletedBatchRecovery(' "$SERVICE_SOURCE")" -eq 1 ]] ||
-  fail "Firebase service must call the one production deleted-batch seam"
+  fail "Firebase service must construct the one production recovery seam"
+[[ "$(rg -F -c '.recordGenericRecoveryTrigger(' "$SERVICE_SOURCE")" -eq 2 ]] ||
+  fail "deletion and fixed ingress must both use the one generic trigger seam"
 ! rg -Fq '.recordDeletion' "$SERVICE_SOURCE" ||
-  fail "Firebase service bypasses the shared production deleted-batch seam"
+  fail "Firebase service bypasses the shared production recovery seam"
+! rg -Fq '.recordFixedWake' "$SERVICE_SOURCE" ||
+  fail "Firebase service bypasses the shared production recovery seam"
+[[ "$(rg -F -c 'override fun onMessageReceived(' "$SERVICE_SOURCE")" -eq 1 ]] ||
+  fail "Firebase service must own exactly one fixed-wake classifier override"
+[[ "$(rg -F -c 'super.onMessageReceived(message)' "$SERVICE_SOURCE")" -eq 1 ]] ||
+  fail "exactly one FlutterFire delegation seam may call super"
+[[ "$(rg -F -c 'fun isExactFixedOpaqueWake(' "$SERVICE_SOURCE")" -eq 1 ]] ||
+  fail "the exact fixed classifier must exist exactly once"
 [[ "$(rg -F -c 'store.recordDeletion { generation ->' "$SEAM_SOURCE")" -eq 1 ]] ||
-  fail "production deleted-batch seam must own one store transaction"
-[[ "$(rg -F -c 'DroppedPushRecoveryWorkScheduler(context)::enqueueDeletedBatch' "$SEAM_SOURCE")" -eq 1 ]] ||
-  fail "production deleted-batch seam must delegate to the incumbent scheduler"
+  fail "production seam must own one deleted-batch store transaction"
+[[ "$(rg -F -c 'store.recordFixedWake { generation ->' "$SEAM_SOURCE")" -eq 1 ]] ||
+  fail "production seam must own one fixed-wake store transaction"
+[[ "$(rg -F -c 'DroppedPushRecoveryWorkScheduler(context)' "$SEAM_SOURCE")" -eq 1 ]] ||
+  fail "production seam must construct the incumbent scheduler exactly once"
+[[ "$(rg -F -c 'scheduler::enqueueDeletedBatch' "$SEAM_SOURCE")" -eq 1 ]] ||
+  fail "production seam must delegate deletions to the incumbent chain"
+[[ "$(rg -F -c 'scheduler::enqueueFixedWake' "$SEAM_SOURCE")" -eq 1 ]] ||
+  fail "production seam must delegate fixed wakes to the incumbent chain"
 [[ "$(rg -F -c 'fun recoveryAuthority()' "$STORE_SOURCE")" -eq 1 ]] ||
   fail "store must expose one atomic read-only recovery authority snapshot"
 [[ "$(rg -F -c 'fun acknowledgeHeadlessRecovery(' "$STORE_SOURCE")" -eq 1 ]] ||
@@ -289,5 +314,5 @@ readonly BRIDGE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/Dr
 [[ "$(rg -F -c '"headlessAcknowledgeRecovery" ->' "$BRIDGE_SOURCE")" -eq 1 ]] ||
   fail "native bridge must expose one headless acknowledgement method"
 
-printf 'PASS: Plan 374 Android native suite selected 9 classes / 62 methods; artifacts: %s\n' \
+printf 'PASS: Plan 374/375 Android native suite selected 9 classes / 67 methods; artifacts: %s\n' \
   "$RESULT_DIR"

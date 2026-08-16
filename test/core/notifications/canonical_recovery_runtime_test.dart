@@ -536,38 +536,32 @@ void main() {
   );
 
   test(
-    'periodic sweep beginning with a marker drains but preserves it for immediate work',
+    // Plan 375: periodic continuation is the recovery path after an immediate
+    // enqueue failure. A marker present AT START is adopted and exact-ACKed
+    // after the same fixed-point proof; a marker that only ARRIVES mid-run is
+    // still preserved for the serial immediate work (test above/below).
+    'periodic sweep beginning with a marker adopts and exact acknowledges it',
     () async {
       final trace = <String>[];
-      var ackCount = 0;
-      var markerReads = 0;
+      final acknowledged = <CanonicalRecoveryMarker>[];
       final runtime = CanonicalRecoveryRuntime(
         loadCurrentBinding: () async => markerA.binding,
-        loadPendingMarker: () async {
-          markerReads++;
-          return markerA;
-        },
+        loadPendingMarker: () async => markerA,
         acquireSession: ({required binding, required reason}) async {
           expect(reason, CanonicalRecoveryReason.periodicSweep);
           return _FakeSession(trace);
         },
-        acknowledgeMarker: (_, {authorityRevision}) async {
-          ackCount++;
+        acknowledgeMarker: (marker, {authorityRevision}) async {
+          acknowledged.add(marker);
           return true;
         },
       );
 
       final result = await runtime.run(CanonicalRecoveryReason.periodicSweep);
 
-      expect(result.disposition, CanonicalRecoveryDisposition.retry);
-      expect(result.failureReason, 'generation_arrived_during_periodic_sweep');
-      expect(result.currentGeneration, markerA.generation);
-      expect(
-        markerReads,
-        1,
-        reason: 'periodic reads only the final resnapshot',
-      );
-      expect(ackCount, 0);
+      expect(result.disposition, CanonicalRecoveryDisposition.succeeded);
+      expect(result.generation, markerA.generation);
+      expect(acknowledged, <CanonicalRecoveryMarker>[markerA]);
       expect(
         trace,
         containsAllInOrder(<String>[
@@ -579,6 +573,27 @@ void main() {
           'release:true',
         ]),
       );
+    },
+  );
+
+  test(
+    'periodic sweep cannot report success while an adopted marker survives',
+    () async {
+      final trace = <String>[];
+      final runtime = CanonicalRecoveryRuntime(
+        loadCurrentBinding: () async => markerA.binding,
+        loadPendingMarker: () async => markerA,
+        acquireSession: ({required binding, required reason}) async =>
+            _FakeSession(trace),
+        // The exact compare-ACK is refused (superseded natively mid-run).
+        acknowledgeMarker: (_, {authorityRevision}) async => false,
+      );
+
+      final result = await runtime.run(CanonicalRecoveryReason.periodicSweep);
+
+      expect(result.disposition, CanonicalRecoveryDisposition.retry);
+      expect(result.failureReason, 'exact_ack_failed');
+      expect(result.generation, markerA.generation);
     },
   );
 

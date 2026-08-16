@@ -29,6 +29,9 @@ readonly BASELINE_TESTS=(
 )
 
 readonly ONE_TO_ONE_TESTS=(
+  # 375: one live Android paired-capability readiness epoch gates the
+  # producer, drainer and registration for both messaging families.
+  "test/core/notifications/android_opaque_wake_readiness_test.dart"
   # 372: shared final-effect ledger, barrier, convergence and production
   # ownership census are exercised by both notification families.
   "test/core/notifications/local_notification_ledger_test.dart"
@@ -461,6 +464,9 @@ readonly INTRO_TESTS=(
 )
 
 readonly GROUP_TESTS=(
+  # 375: one live Android paired-capability readiness epoch gates the
+  # producer, drainer and registration for both messaging families.
+  "test/core/notifications/android_opaque_wake_readiness_test.dart"
   # 372: shared final-effect ledger, barrier, convergence and production
   # ownership census are exercised by both notification families.
   "test/core/notifications/local_notification_ledger_test.dart"

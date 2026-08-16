@@ -40,7 +40,6 @@ const _constructorParameters = <String>[
   'required Bridge bridge',
   'LocalP2PService? localP2PService',
   'PushTokenStore? pushTokenStore',
-  'Future<String?> Function()? liveFcmTokenReader',
   'ReceivedWakeTokenStore? receivedWakeTokenStore',
   'AcceptedInboxWakeTokenHashObserver? acceptedInboxWakeTokenHashObserver',
   'AccountMigrationNetworkGate accountMigrationNetworkGate = '
@@ -104,6 +103,9 @@ const _publicMethods = <String>{
   // P2PService itself remains unchanged; the facade validates the already-
   // qualified live node before republishing its iOS NSE transport projection.
   'refreshQualifiedIosNseTransportProjection',
+  // 375: bootstrap-only late install of the one PushRegistrationCoordinator
+  // retryNow owner; afterward no raw bridge registration path remains.
+  'installPushRegistrationRetryNow',
   'startNode',
   'startNodeCore',
   'startRecoveryOnlyNode',
@@ -660,7 +662,7 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // 374: repinned for the opt-in recovery-only construction flag, exact node
 // start/status methods, global admission seal/await boundary, typed protected
 // fixed-point result and the latched post-seal-refusal proof.
-const _expectedFacadeApiFingerprint = '1bff8ef1';
+const _expectedFacadeApiFingerprint = 'e468f002';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
@@ -904,7 +906,7 @@ void main() {
             .toList(growable: false),
         _constructorParameters,
       );
-      expect(constructor.parameters.parameters, hasLength(28));
+      expect(constructor.parameters.parameters, hasLength(27));
       expect(
         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
         _publicFields,
@@ -1073,7 +1075,7 @@ void main() {
       final manifestSource = File(_exceptionsPath).readAsStringSync();
       final manifest = jsonDecode(manifestSource) as Map<String, dynamic>;
       final dependencies = manifest['dependencyExceptions'] as List<dynamic>;
-      expect(dependencies, hasLength(165));
+      expect(dependencies, hasLength(169));
       expect(manifest['placementExceptions'] as List<dynamic>, isEmpty);
       final p2pExceptions = dependencies
           .cast<Map<String, dynamic>>()
