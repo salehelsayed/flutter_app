@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import difflib
 import hashlib
 import json
 import math
@@ -389,13 +390,7 @@ class GraphIndex:
         if not terms:
             return [], "none", []
 
-        exact_structured = set()
-        for term in structured:
-            for nid, node in self.nodes.items():
-                norm = str(node.get("norm_label") or node.get("label") or "").lower().rstrip("()")
-                if term in {norm, nid.lower()} or term == Path(_source_file(node) or "").name.lower():
-                    exact_structured.add(term)
-                    break
+        exact_structured = {t for t in structured if self._exact_term(t)}
         scoring_terms = [t for t in terms if t in exact_structured] or terms
         confidence = "anchored" if exact_structured else "broad"
 
@@ -462,6 +457,72 @@ class GraphIndex:
             if len(chosen) == 3:
                 break
         return chosen, confidence, scoring_terms
+
+    def _exact_term(self, term: str) -> bool:
+        for nid, node in self.nodes.items():
+            norm = str(node.get("norm_label") or node.get("label") or "").lower().rstrip("()")
+            if term in {norm, nid.lower()} or term == Path(_source_file(node) or "").name.lower():
+                return True
+        return False
+
+    def missed_structured_terms(self, question: str) -> list[str]:
+        """Symbol-shaped question terms with no exact anchor — typo suspects."""
+        _, structured = _tokens(question)
+        return [t for t in structured if not self._exact_term(t)]
+
+    def suggest_anchors(self, candidates: list[str], limit: int = 5) -> list[str]:
+        """Did-you-mean pass over terms known to have no exact/substring hit.
+
+        Callers pass either every question term (total miss) or just the
+        missed structured terms (broad result where a symbol-shaped term
+        failed exact match — the typo case). Edit-distance similarity is
+        the only signal left at that point. Matches against the label
+        vocabulary and source-file basenames; returns render-ready lines.
+        """
+        candidates = candidates[:6]
+        if not candidates:
+            return []
+
+        label_nodes: dict[str, dict[str, Any]] = {}
+        basenames: dict[str, str] = {}
+        for node in self.nodes.values():
+            norm = str(node.get("norm_label") or node.get("label") or "").rstrip("()")
+            low = norm.lower()
+            if len(low) >= 4 and low not in GENERIC_LABELS:
+                prev = label_nodes.get(low)
+                if prev is None or (
+                    _source_file(node) and not _source_file(prev)
+                ):
+                    label_nodes[low] = node
+            source = _source_file(node)
+            if source:
+                basenames.setdefault(Path(source).name.lower(), source)
+
+        vocab = list(label_nodes)
+        names = list(basenames)
+        out: list[str] = []
+        seen: set[str] = set()
+        for term in candidates:
+            for low in difflib.get_close_matches(term, vocab, n=2, cutoff=0.72):
+                if low in seen:
+                    continue
+                seen.add(low)
+                node = label_nodes[low]
+                source = _source_file(node) or "unknown"
+                location = node.get("source_location") or ""
+                out.append(
+                    f"- {node.get('label', low)} — {source}"
+                    f"{':' + str(location).lstrip('L') if location else ''}"
+                    f" (close to '{term}')"
+                )
+            for name in difflib.get_close_matches(term, names, n=1, cutoff=0.72):
+                if name in seen:
+                    continue
+                seen.add(name)
+                out.append(f"- {basenames[name]} (close to '{term}')")
+            if len(out) >= limit:
+                break
+        return out[:limit]
 
     def context_files(self, seeds: list[str], terms: list[str], *, depth: int = 2) -> tuple[list[str], list[tuple[str, str, str]]]:
         scores: defaultdict[str, float] = defaultdict(float)
@@ -599,7 +660,13 @@ def _compact_lines(
     ]
     if not seeds:
         lines.append("No matching graph anchors. Use an exact class, function, or filename.")
-        return lines, {"confidence": "none", "sources": 0, "tests": 0, "seeds": []}
+        miss_terms, miss_structured = _tokens(question)
+        suggestions = graph.suggest_anchors(miss_structured or miss_terms)
+        if suggestions:
+            lines.append("Did you mean:")
+            lines.extend(suggestions)
+        return lines, {"confidence": "none", "sources": 0, "tests": 0,
+                       "seeds": [], "suggestions": len(suggestions)}
 
     community_labels = _load_community_labels()
     lines.append("Anchors:")
@@ -618,6 +685,19 @@ def _compact_lines(
             f"- {node.get('label', nid)} — {source}"
             f"{':' + str(location).lstrip('L') if location else ''} [{nid}]{membership}"
         )
+
+    # Broad result with a symbol-shaped term that exact-matched nothing:
+    # almost always a typo'd or renamed anchor. Surface the near misses
+    # right after the anchors (not at the tail, where _bounded truncates
+    # first) so the refinement round has a concrete symbol to use.
+    suggestions: list[str] = []
+    if confidence != "anchored":
+        missed = graph.missed_structured_terms(question)
+        if missed:
+            suggestions = graph.suggest_anchors(missed)
+            if suggestions:
+                lines.append("Did you mean:")
+                lines.extend(suggestions)
 
     files, edges = graph.context_files(seeds, terms)
     primary_production = [
@@ -698,6 +778,7 @@ def _compact_lines(
         "sources": len(set(production + scripts)),
         "tests": sum(len(r.get("tests", [])) for r in test_records),
         "seeds": [str(graph.nodes[n].get("label", n)) for n in seeds],
+        "suggestions": len(suggestions),
     }
     return lines, meta
 
@@ -798,7 +879,14 @@ def _component_lines(
     ranked = [cid for cid, score in sorted(scores.items(), key=lambda item: (-item[1], item[0])) if score > 0]
     if not ranked:
         lines.append("No matching components. Use a feature word from a community label, or an exact symbol/filename.")
-        return lines, {"confidence": "none", "level": "component", "components": 0, "seeds": []}
+        miss_terms, miss_structured = _tokens(question)
+        suggestions = graph.suggest_anchors(miss_structured or miss_terms)
+        if suggestions:
+            lines.append("Did you mean:")
+            lines.extend(suggestions)
+        return lines, {"confidence": "none", "level": "component",
+                       "components": 0, "seeds": [],
+                       "suggestions": len(suggestions)}
 
     # _bounded caps output at ~budget*3 chars; leave room for the
     # relationships section, which is this mode's main payload.

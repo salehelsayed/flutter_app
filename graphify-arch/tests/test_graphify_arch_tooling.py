@@ -147,6 +147,50 @@ class GraphifyArchToolingTest(unittest.TestCase):
         self.assertEqual(meta["components"], 0)
         self.assertIn("No matching components.", lines[1])
 
+    def test_miss_path_suggests_close_symbol_for_typo(self):
+        # 'deleteMesageForMe' (missing 's') matches nothing as a substring,
+        # so seeds() misses — the did-you-mean pass must surface the real
+        # symbol with its source location instead of dead-ending.
+        lines, meta = CONTEXT._compact_lines(
+            self.graph, self.overlay, "deleteMesageForMe", "general"
+        )
+        self.assertEqual(meta["confidence"], "none")
+        self.assertGreaterEqual(meta["suggestions"], 1)
+        self.assertIn("Did you mean:", lines)
+        suggestion_text = "\n".join(lines)
+        self.assertIn("deleteMessageForMe", suggestion_text)
+        self.assertIn("close to 'deletemesageforme'", suggestion_text)
+
+    def test_broad_query_with_typo_symbol_gets_suggestions(self):
+        # A typo'd symbol next to a common word lands in confidence=broad
+        # (the common word substring-matches), NOT the total-miss path.
+        # The did-you-mean pass must still fire for the missed
+        # symbol-shaped term.
+        lines, meta = CONTEXT._compact_lines(
+            self.graph, self.overlay,
+            "GroupConversatoinWired construction", "general",
+        )
+        self.assertEqual(meta["confidence"], "broad")
+        self.assertGreaterEqual(meta["suggestions"], 1)
+        text = "\n".join(lines)
+        self.assertIn("Did you mean:", text)
+        self.assertIn("GroupConversationWired", text)
+
+    def test_anchored_query_reports_zero_suggestions(self):
+        _, meta = CONTEXT._compact_lines(
+            self.graph, self.overlay,
+            "deleteMessageForMe cleanup attachments", "tdd",
+        )
+        self.assertEqual(meta["suggestions"], 0)
+
+    def test_miss_path_stays_quiet_for_true_gibberish(self):
+        lines, meta = CONTEXT._compact_lines(
+            self.graph, self.overlay, "zzqqxwyblorp", "general"
+        )
+        self.assertEqual(meta["confidence"], "none")
+        self.assertEqual(meta["suggestions"], 0)
+        self.assertNotIn("Did you mean:", lines)
+
     def test_affected_adds_direct_tests(self):
         tests = self.overlay["production_to_tests"][
             "lib/features/conversation/application/delete_message_use_case.dart"
@@ -242,7 +286,7 @@ print(json.dumps(_without_sources(data, {'lib/changed.dart'})))
         self.assertIn("--profile review --budget 800", review)
         self.assertIn("tdd_context.py affected", execution)
 
-    def test_local_hook_configuration_is_permissive(self):
+    def test_local_hook_configuration_is_enforcing(self):
         codex = json.loads((ROOT / ".codex" / "hooks.json").read_text())
         self.assertEqual(codex, {"hooks": {}})
         claude = json.loads((ROOT / ".claude" / "settings.json").read_text())
@@ -252,10 +296,15 @@ print(json.dumps(_without_sources(data, {'lib/changed.dart'})))
             for entry in claude["hooks"]["PreToolUse"]
             for hook in entry["hooks"]
         ]
+        self.assertTrue(commands)
+        # Enforcing since 2026-08-17: bypass mode doubled raw-grep volume
+        # with no query uptake, so it must stay out of the hook commands.
         self.assertTrue(
-            all("GRAPHIFY_LOCAL_DEV_BYPASS=1" in command for command in commands)
+            all("GRAPHIFY_LOCAL_DEV_BYPASS" not in command for command in commands)
         )
 
+        # The bypass MODE itself must keep working (explicit env only):
+        # telemetry without any deny/advisory payload.
         payloads = [
             {
                 "tool_name": "Bash",
