@@ -1110,6 +1110,95 @@ void main() {
   );
 
   test(
+    'TC-377-10 authority-unavailable group share fails without the permission copy',
+    () async {
+      // An authority-machinery refusal (resolver refuse) on a genuinely
+      // initialized (non-self-bound) roster must surface as a plain failed
+      // share with the generic detail — never the membership/permission copy
+      // and never a false queued promise.
+      final identity = _makeIdentity();
+      final groups = InMemoryGroupRepository();
+      final group = _makeGroup('group-tc377-share', 'Share target');
+      await groups.saveGroup(group);
+      await _saveLatestGroupKey(groups, group.id);
+      await groups.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: identity.peerId,
+          username: identity.username,
+          role: MemberRole.admin,
+          publicKey: identity.publicKey,
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-x',
+              transportPeerId: 'transport-x',
+              deviceSigningPublicKey: 'my-public-key',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 16, 8),
+        ),
+      );
+      await groups.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'peer-tc377-remote',
+          username: 'Remote',
+          role: MemberRole.writer,
+          publicKey: 'pk-tc377-remote',
+          joinedAt: DateTime.utc(2026, 8, 16, 8, 1),
+        ),
+      );
+      setGroupContentAuthoringResolver(
+        groups,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => const (
+          kind: GroupContentAuthoringResolutionKind.refuse,
+          context: null,
+        ),
+      );
+      addTearDown(() => setGroupContentAuthoringResolver(groups, null));
+
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(identity),
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: groups,
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'transport-x'),
+        ),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async =>
+            const ProcessedShareMediaBatch(processedMedia: []),
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'shared into a refusing group',
+        ),
+        targets: [ShareTargetSelection.group(group)],
+      );
+
+      final target = result.results.single;
+      expect(target.status, ShareBatchTargetStatus.failed);
+      expect(
+        target.detail,
+        isNot('You no longer have permission to post there.'),
+      );
+      expect(target.detail, 'Share failed.');
+    },
+  );
+
+  test(
     'TC-366-03b admitted strict group forward preserves provenance through dispatch',
     () async {
       final root = await Directory.systemTemp.createTemp(

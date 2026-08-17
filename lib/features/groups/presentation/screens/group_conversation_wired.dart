@@ -3305,12 +3305,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         }
       } else if (result == SendGroupMessageResult.groupNotFound ||
           result == SendGroupMessageResult.groupDissolved ||
-          result == SendGroupMessageResult.unauthorized) {
+          result == SendGroupMessageResult.unauthorized ||
+          result == SendGroupMessageResult.authorityUnavailable) {
         // 144: a terminal result is durable, not transient. Keep the optimistic
         // bubble as a non-retryable send_failed row (preserving the typed text /
         // attachments) and latch the composer read-only — instead of deleting
         // the row and flashing a 4s snackbar. saveMessage upserts, so even a
         // plain-text row that was never pre-persisted survives a reopen.
+        // 377: authorityUnavailable persists the same send_failed row but maps
+        // to _TerminalReadOnly.none below — a retryable bubble, no latch.
         final failedMessage = optimisticMessage.copyWith(
           status: GroupMessage.statusSendFailed,
         );
@@ -5538,11 +5541,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             } catch (_) {}
           } else if (result == SendGroupMessageResult.groupNotFound ||
               result == SendGroupMessageResult.groupDissolved ||
-              result == SendGroupMessageResult.unauthorized) {
+              result == SendGroupMessageResult.unauthorized ||
+              result == SendGroupMessageResult.authorityUnavailable) {
             // 144: keep the voice bubble + recorded audio as a durable,
             // non-retryable send_failed row and latch the composer read-only
             // (the row + attachment were already persisted above). Previously
             // this unconditionally deleted both and flashed a snackbar.
+            // 377: authorityUnavailable keeps the send_failed row but maps to
+            // _TerminalReadOnly.none below — retryable, no latch.
             _clearRestoredVoiceContinuationTracking(messageId: messageId);
             _updateLocalMessageStatus(messageId, GroupMessage.statusSendFailed);
             await _persistMessageStatus(

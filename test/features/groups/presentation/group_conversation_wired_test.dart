@@ -47,6 +47,7 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/linked_group_status_refresh.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
@@ -6333,6 +6334,94 @@ void main() {
     );
 
     testWidgets(
+      'TC-377-05 authority-unavailable send failure stays retryable and never claims removal',
+      (tester) async {
+        // Authority-machinery refusal (resolver refuse) on a genuinely
+        // initialized (non-self-bound) roster: the row must persist as a
+        // RETRYABLE send_failed bubble with the composer still writable —
+        // never the false "you're no longer in this group" removal latch.
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-x',
+                transportPeerId: 'transport-x',
+                deviceSigningPublicKey: 'pk-admin',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 5, 1, 10),
+          ),
+        );
+        setGroupContentAuthoringResolver(
+          groupRepo,
+          ({
+            required groupId,
+            required senderPeerId,
+            required senderPublicKey,
+            senderDeviceId,
+            senderTransportPeerId,
+          }) async => const (
+            kind: GroupContentAuthoringResolutionKind.refuse,
+            context: null,
+          ),
+        );
+        addTearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        await tester.enterText(
+          find.byType(TextField),
+          'Authority machinery refusal send',
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final retained = screen.messages
+            .where(
+              (message) => message.text == 'Authority machinery refusal send',
+            )
+            .toList();
+        expect(retained, hasLength(1));
+        expect(retained.single.status, GroupMessage.statusSendFailed);
+        // Recoverable, writable, and no removal claim — in the same pumped
+        // tree. The refusal fires before any retry payload exists, so the 144
+        // no-dead-retry rule (group_conversation_screen.dart: only payload-
+        // carrying send_failed rows offer Retry) keeps the Retry chip hidden;
+        // the honest affordances are the writable composer plus Delete.
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${retained.single.id}')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-delete-${retained.single.id}')),
+          findsOneWidget,
+        );
+        expect(screen.canWrite, isTrue);
+        expect(screen.failedTerminalReasonText, isNull);
+        expect(
+          find.text("Couldn't send — you're no longer in this group"),
+          findsNothing,
+        );
+        expect(find.byKey(const ValueKey('group-read-only-banner')), findsNothing);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
       'missing-group text send keeps failed bubble (unavailable) and flips read-only banner',
       (tester) async {
         final missingGroup = makeChatGroup();
@@ -11544,6 +11633,101 @@ void main() {
             ),
           ),
           findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-377-06 authority-refused reaction removal never latches the removed banner',
+      (tester) async {
+        // Authority-machinery refusal on the remove lane: the optimistic
+        // removal is reverted and the group stays writable — the false
+        // "removed" latch is reserved for genuine membership loss.
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-x',
+                transportPeerId: 'transport-x',
+                deviceSigningPublicKey: 'pk-admin',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 5, 1, 10),
+          ),
+        );
+        setGroupContentAuthoringResolver(
+          groupRepo,
+          ({
+            required groupId,
+            required senderPeerId,
+            required senderPublicKey,
+            senderDeviceId,
+            senderTransportPeerId,
+          }) async => const (
+            kind: GroupContentAuthoringResolutionKind.refuse,
+            context: null,
+          ),
+        );
+        addTearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
+
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+        final reactionRepo = FakeReactionRepository();
+        final reactionReplayOutboxRepo =
+            FakeGroupReactionReplayOutboxRepository();
+        // Pre-existing OWN reaction so the next toggle is a REMOVE.
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'r1',
+            messageId: 'msg-1',
+            emoji: '\u{1F44D}',
+            senderPeerId: testIdentity.peerId,
+            timestamp: '2026-01-15T12:00:00.000Z',
+            createdAt: '2026-01-15T12:00:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final s = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return s.onReactionSelected != null &&
+              (s.reactions['msg-1'] ?? const []).isNotEmpty;
+        });
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        // Toggle the own reaction OFF → removeGroupReaction → authority refusal.
+        screen.onReactionSelected!('msg-1', '\u{1F44D}');
+        await pumpFrames(tester, count: 20);
+
+        final after = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        // Reaction state restored, composer writable, no latch, no banner.
+        expect((after.reactions['msg-1'] ?? const []), hasLength(1));
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+        expect(after.canWrite, isTrue);
+        expect(after.failedTerminalReasonText, isNull);
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsNothing,
         );
       },
     );

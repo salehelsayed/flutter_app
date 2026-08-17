@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -216,6 +217,47 @@ void main() {
 
     expect(result, RemoveGroupReactionResult.notMember);
   });
+
+  test(
+    'TC-377-09 installed refuse-resolver remove refuses as authorityUnavailable',
+    () async {
+      // An authority-machinery refusal must be typed — never the false
+      // membership claim (`notMember`) and never the dead `publishFailed`.
+      setGroupContentAuthoringResolver(
+        groupRepo,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => const (
+          kind: GroupContentAuthoringResolutionKind.refuse,
+          context: null,
+        ),
+      );
+      addTearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
+
+      final result = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(result, RemoveGroupReactionResult.authorityUnavailable);
+      // Zero side effects: the stored reaction survives, nothing published.
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+      expect(bridge.commandLog, isEmpty);
+      expect(reactionReplayOutboxRepo.entries, isEmpty);
+    },
+  );
 
   test(
     'dissolved group rejects remove and preserves the stored reaction',

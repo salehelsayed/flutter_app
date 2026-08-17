@@ -63,7 +63,12 @@ ResolveGroupContentAuthoring buildProtectedGroupContentAuthoringResolver({
     if (installation.refusesStartup) {
       return (kind: GroupContentAuthoringResolutionKind.refuse, context: null);
     }
-    if (member.devices.isEmpty) {
+    // Initialized means a NON-self-bound device (the Plan-363 physical
+    // boundary), not merely a non-empty roster: the plain-creation creator
+    // stamp (deviceId == transportPeerId == account peerId) carries no
+    // information beyond legacyDeviceIdentity and must not strand the
+    // ordinary primary off the incumbent legacy lane.
+    if (!member.hasInitializedDeviceAuthority) {
       if (!installation.isOrdinaryPrimary) {
         return (
           kind: GroupContentAuthoringResolutionKind.refuse,

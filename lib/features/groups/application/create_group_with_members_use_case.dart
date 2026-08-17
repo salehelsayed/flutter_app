@@ -218,7 +218,14 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     description: description,
   );
   final currentSenderDeviceId = p2pService.currentState.peerId?.trim();
-  if (currentSenderDeviceId != null && currentSenderDeviceId.isNotEmpty) {
+  // Stamp only a genuinely distinct transport device. A self-bound stamp
+  // (node peerId == account peerId, the production shape) is informationally
+  // identical to legacyDeviceIdentity and would mark the fresh roster as
+  // initialized, stranding the creator's sends on the strict-authority
+  // refusal lane (Plan 377).
+  if (currentSenderDeviceId != null &&
+      currentSenderDeviceId.isNotEmpty &&
+      currentSenderDeviceId != identity.peerId) {
     final creatorMember = await groupRepo.getMember(group.id, identity.peerId);
     if (creatorMember != null &&
         creatorMember.findDeviceById(currentSenderDeviceId) == null) {

@@ -152,7 +152,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
     explicitContext: groupContentAuthoring,
   );
   if (snapshot.resolution.kind == GroupContentAuthoringResolutionKind.refuse ||
-      (snapshot.member?.devices.isNotEmpty == true &&
+      (snapshot.member?.hasInitializedDeviceAuthority == true &&
           !resolverAbsentLegacy &&
           snapshot.resolution.kind !=
               GroupContentAuthoringResolutionKind.strict)) {
@@ -1053,7 +1053,7 @@ Future<bool> _legacyReactionAuthorityStillUninitialized({
           group.selfRemovedAt != null ||
           group.isDissolved ||
           sender == null ||
-          (sender.devices.isNotEmpty && !resolverAbsentLegacy) ||
+          (sender.hasInitializedDeviceAuthority && !resolverAbsentLegacy) ||
           message == null ||
           message.groupId != groupId ||
           message.senderPeerId != expectedMessage.senderPeerId ||

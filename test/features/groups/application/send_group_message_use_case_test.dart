@@ -20,6 +20,7 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/protected_group_content_reconciliation.dart';
 import 'package:flutter_app/features/groups/application/protected_group_content_authoring_resolver.dart';
 import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
@@ -1346,7 +1347,7 @@ void main() {
         messageId: 'msg-tc364-missing-context',
         timestamp: DateTime.utc(2026, 8, 13, 12, 0, 40),
       );
-      expect(missingContext.$1, SendGroupMessageResult.unauthorized);
+      expect(missingContext.$1, SendGroupMessageResult.authorityUnavailable);
       expect(missingContext.$2, isNull);
       expect(missingContextBridge.commandLog, isEmpty);
       expect(
@@ -1412,6 +1413,10 @@ void main() {
         required GroupContentAuthoringContext context,
         bool forwarded = false,
         DateTime? authoredAt,
+        // Machinery refusals are typed authorityUnavailable since Plan 377;
+        // genuine role/content-policy refusals keep `unauthorized`.
+        SendGroupMessageResult expected =
+            SendGroupMessageResult.authorityUnavailable,
       }) async {
         final refusalBridge = FakeBridge();
         final refusalRepo = _StrictContentMessageRepository();
@@ -1432,11 +1437,7 @@ void main() {
           isForwarded: forwarded,
           groupContentAuthoring: context,
         );
-        expect(
-          result.$1,
-          SendGroupMessageResult.unauthorized,
-          reason: caseName,
-        );
+        expect(result.$1, expected, reason: caseName);
         expect(
           await refusalRepo.getMessage('msg-tc364-$caseName'),
           isNull,
@@ -1518,6 +1519,10 @@ void main() {
       );
       await expectAllZero(
         caseName: 'announcement-non-admin',
+        // Refused by the early group.myRole announcement gate
+        // (send_group_message_use_case.dart:1974) — a genuine role refusal,
+        // so it keeps `unauthorized` (TC-377-04 rung C semantics).
+        expected: SendGroupMessageResult.unauthorized,
         context: GroupContentAuthoringContext(
           directLinkedDeviceSelector:
               const DirectLinkedDeviceSelector.enabled(),
@@ -1765,7 +1770,7 @@ void main() {
         timestamp: DateTime.utc(2026, 8, 13, 12, 3, 3),
       );
       expect(linkedInstallationLoads, 1);
-      expect(emptyLinked.$1, SendGroupMessageResult.unauthorized);
+      expect(emptyLinked.$1, SendGroupMessageResult.authorityUnavailable);
       expect(emptyLinked.$2, isNull);
       expect(emptyLinkedBridge.commandLog, isEmpty);
       expect(
@@ -1840,6 +1845,408 @@ void main() {
         isNotEmpty,
       );
       setGroupContentAuthoringResolver(primaryRepo, null);
+    },
+  );
+
+  test(
+    'TC-377-01 self-bound creator device roster stays on the legacy lane with no settled authority',
+    () async {
+      // The seeded device row is the exact production creator-stamp shape
+      // (create_group_with_members_use_case.dart:229-234): deviceId ==
+      // transportPeerId == the account peerId, deviceSigningPublicKey == the
+      // account identity.publicKey that the send passes as senderPublicKey —
+      // which is also what satisfies the live unbound-device guard at
+      // send_group_message_use_case.dart:2445.
+      final selfBoundRepo = InMemoryGroupRepository();
+      await selfBoundRepo.saveGroup(testGroup);
+      final selfBoundMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-1',
+        username: 'Alice',
+        role: MemberRole.admin,
+        publicKey: 'pk-1',
+        mlKemPublicKey: 'mlkem-pk-1',
+        devices: const <GroupMemberDeviceIdentity>[
+          GroupMemberDeviceIdentity(
+            deviceId: 'peer-1',
+            transportPeerId: 'peer-1',
+            deviceSigningPublicKey: 'pk-1',
+            mlKemPublicKey: 'mlkem-pk-1',
+          ),
+        ],
+        joinedAt: DateTime.utc(2026, 8, 16),
+      );
+      await selfBoundRepo.saveMember(selfBoundMember);
+      await _saveGroupKey(selfBoundRepo, 'group-1');
+      setGroupContentAuthoringResolver(
+        selfBoundRepo,
+        buildProtectedGroupContentAuthoringResolver(
+          loadIdentity: () async => (peerId: 'peer-1', publicKey: 'pk-1'),
+          loadMember: selfBoundRepo.getMember,
+          loadInstallationAuthority: (_) async =>
+              const LinkedInstallationAuthoritySnapshot(
+                disposition: LinkedInstallationDisposition.primary,
+                credential: null,
+                failClosedReason: null,
+              ),
+          loadLatestSettledAuthority: (_) async => null,
+          readCurrentTransportPeerId: () => null,
+          inboxStore: _StrictContentInboxStore(),
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+        ),
+      );
+      addTearDown(() => setGroupContentAuthoringResolver(selfBoundRepo, null));
+      final selfBoundBridge = FakeBridge();
+      selfBoundBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-tc377-01',
+      };
+      final selfBoundMessageRepo = InMemoryGroupMessageRepository();
+
+      final (result, message) = await sendGroupMessage(
+        bridge: selfBoundBridge,
+        groupRepo: selfBoundRepo,
+        msgRepo: selfBoundMessageRepo,
+        groupId: 'group-1',
+        text: 'first send of a fresh group',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'msg-tc377-01',
+        timestamp: DateTime.utc(2026, 8, 16, 23, 0),
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(
+        selfBoundBridge.commandLog.where(
+          (command) =>
+              command == 'group:publish' || command == 'group:sendReliable',
+        ),
+        isNotEmpty,
+      );
+
+      // Predicate parity: the new getter must stay byte-equivalent to the
+      // wave's own authoring gate for every roster shape.
+      expect(selfBoundMember.hasInitializedDeviceAuthority, isFalse);
+      expect(
+        selfBoundMember.hasInitializedDeviceAuthority,
+        hasProtectedGroupPhysicalAuthority([selfBoundMember]),
+      );
+      final partiallyBound = selfBoundMember.copyWith(
+        devices: const <GroupMemberDeviceIdentity>[
+          GroupMemberDeviceIdentity(
+            deviceId: 'peer-1',
+            transportPeerId: 'transport-x',
+            deviceSigningPublicKey: 'pk-1',
+          ),
+        ],
+      );
+      expect(partiallyBound.hasInitializedDeviceAuthority, isTrue);
+      expect(
+        partiallyBound.hasInitializedDeviceAuthority,
+        hasProtectedGroupPhysicalAuthority([partiallyBound]),
+      );
+      final revokedDistinct = selfBoundMember.copyWith(
+        devices: const <GroupMemberDeviceIdentity>[
+          GroupMemberDeviceIdentity(
+            deviceId: 'device-x',
+            transportPeerId: 'transport-x',
+            deviceSigningPublicKey: 'pk-x',
+            status: GroupMemberDeviceStatus.revoked,
+          ),
+        ],
+      );
+      expect(revokedDistinct.hasInitializedDeviceAuthority, isTrue);
+      expect(
+        revokedDistinct.hasInitializedDeviceAuthority,
+        hasProtectedGroupPhysicalAuthority([revokedDistinct]),
+      );
+    },
+  );
+
+  test(
+    'TC-377-12 self-bound roster passes media admission while a physically initialized roster still refuses',
+    () async {
+      final admissionRepo = InMemoryGroupRepository();
+      await admissionRepo.saveGroup(testGroup);
+      final selfBoundMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-1',
+        username: 'Alice',
+        role: MemberRole.admin,
+        publicKey: 'pk-1',
+        mlKemPublicKey: 'mlkem-pk-1',
+        devices: const <GroupMemberDeviceIdentity>[
+          GroupMemberDeviceIdentity(
+            deviceId: 'peer-1',
+            transportPeerId: 'peer-1',
+            deviceSigningPublicKey: 'pk-1',
+          ),
+        ],
+        joinedAt: DateTime.utc(2026, 8, 16),
+      );
+      await admissionRepo.saveMember(selfBoundMember);
+      await _saveGroupKey(admissionRepo, 'group-1');
+      setGroupContentAuthoringResolver(
+        admissionRepo,
+        buildProtectedGroupContentAuthoringResolver(
+          loadIdentity: () async => (peerId: 'peer-1', publicKey: 'pk-1'),
+          loadMember: admissionRepo.getMember,
+          loadInstallationAuthority: (_) async =>
+              const LinkedInstallationAuthoritySnapshot(
+                disposition: LinkedInstallationDisposition.primary,
+                credential: null,
+                failClosedReason: null,
+              ),
+          loadLatestSettledAuthority: (_) async => null,
+          readCurrentTransportPeerId: () => null,
+          inboxStore: _StrictContentInboxStore(),
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+        ),
+      );
+      addTearDown(() => setGroupContentAuthoringResolver(admissionRepo, null));
+
+      // Rung A: the production creator shape must resolve legacyUninitialized,
+      // unblocking the widget media/voice admission pre-gate
+      // (group_conversation_wired.dart:2756 / :5193).
+      final selfBoundAdmission = await prepareGroupContentAuthoringAdmission(
+        groupRepo: admissionRepo,
+        groupId: 'group-1',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+      );
+      expect(
+        selfBoundAdmission.kind,
+        GroupContentAuthoringResolutionKind.legacyUninitialized,
+      );
+
+      // Rung B: a genuinely initialized (non-self-bound) roster with no
+      // settled proof keeps the Plan-364 fail-closed boundary — the rung
+      // ORDER inside the resolver is the contract (devices rung before the
+      // ordinary-primary fallback).
+      await admissionRepo.saveMember(
+        selfBoundMember.copyWith(
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-x',
+              transportPeerId: 'transport-x',
+              deviceSigningPublicKey: 'pk-1',
+            ),
+          ],
+        ),
+      );
+      final initializedAdmission = await prepareGroupContentAuthoringAdmission(
+        groupRepo: admissionRepo,
+        groupId: 'group-1',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+      );
+      expect(
+        initializedAdmission.kind,
+        GroupContentAuthoringResolutionKind.refuse,
+      );
+    },
+  );
+
+  test(
+    'TC-377-04 strict-authority refusal is authorityUnavailable with unchanged telemetry reason',
+    () async {
+      // A genuinely initialized (NON-self-bound) roster: device-x != peer-1.
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-1',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-x',
+              transportPeerId: 'transport-x',
+              deviceSigningPublicKey: 'pk-1',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 16),
+        ),
+      );
+
+      // Rung A: installed resolver refusal → authorityUnavailable while the
+      // GROUP_SEND_MSG_TIMING outcome/reason telemetry stays byte-stable.
+      setGroupContentAuthoringResolver(
+        groupRepo,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => const (
+          kind: GroupContentAuthoringResolutionKind.refuse,
+          context: null,
+        ),
+      );
+      final refuseBridge = FakeBridge();
+      final refuseRepo = _StrictContentMessageRepository();
+      late (SendGroupMessageResult, GroupMessage?) refuseResult;
+      final refuseEvents = await captureFlowEvents(() async {
+        refuseResult = await sendGroupMessage(
+          bridge: refuseBridge,
+          groupRepo: groupRepo,
+          msgRepo: refuseRepo,
+          groupId: 'group-1',
+          text: 'refused by authority machinery',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-tc377-04a',
+          timestamp: DateTime.utc(2026, 8, 16, 23, 1),
+        );
+      });
+      expect(refuseResult.$1, SendGroupMessageResult.authorityUnavailable);
+      expect(refuseResult.$2, isNull);
+      expect(refuseBridge.commandLog, isEmpty);
+      expect(await refuseRepo.getMessage('msg-tc377-04a'), isNull);
+      final refuseTiming = refuseEvents.lastWhere(
+        (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+      );
+      expect(
+        (refuseTiming['details'] as Map<String, dynamic>)['outcome'],
+        'unauthorized',
+      );
+      expect(
+        (refuseTiming['details'] as Map<String, dynamic>)['reason'],
+        'strict_group_content_authority_unavailable',
+      );
+      setGroupContentAuthoringResolver(groupRepo, null);
+
+      // Rung B: a resolver that answers legacyUninitialized for an
+      // initialized roster is rejected by the second disjunct at
+      // send_group_message_use_case.dart:2358 — the only direct lock on it.
+      setGroupContentAuthoringResolver(
+        groupRepo,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => const (
+          kind: GroupContentAuthoringResolutionKind.legacyUninitialized,
+          context: null,
+        ),
+      );
+      final staleLegacyBridge = FakeBridge();
+      final staleLegacyRepo = _StrictContentMessageRepository();
+      late (SendGroupMessageResult, GroupMessage?) staleLegacyResult;
+      final staleLegacyEvents = await captureFlowEvents(() async {
+        staleLegacyResult = await sendGroupMessage(
+          bridge: staleLegacyBridge,
+          groupRepo: groupRepo,
+          msgRepo: staleLegacyRepo,
+          groupId: 'group-1',
+          text: 'stale legacy resolution for an initialized roster',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-tc377-04b',
+          timestamp: DateTime.utc(2026, 8, 16, 23, 2),
+        );
+      });
+      expect(
+        staleLegacyResult.$1,
+        SendGroupMessageResult.authorityUnavailable,
+      );
+      expect(staleLegacyResult.$2, isNull);
+      expect(staleLegacyBridge.commandLog, isEmpty);
+      expect(await staleLegacyRepo.getMessage('msg-tc377-04b'), isNull);
+      final staleLegacyTiming = staleLegacyEvents.lastWhere(
+        (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+      );
+      expect(
+        (staleLegacyTiming['details'] as Map<String, dynamic>)['reason'],
+        'strict_group_content_authority_unavailable',
+      );
+      setGroupContentAuthoringResolver(groupRepo, null);
+
+      // Rung C: the role/content-policy clauses of the not-qualified block
+      // keep the genuine `unauthorized` after the :2380 split — announcement
+      // group, admin myRole (passes the early role gate), non-admin MEMBER
+      // row role, machinery-complete strict context.
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          type: GroupType.announcement,
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.writer,
+          publicKey: 'pk-1',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-x',
+              transportPeerId: 'transport-x',
+              deviceSigningPublicKey: 'pk-1',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 16),
+        ),
+      );
+      final policyBridge = FakeBridge();
+      final policyRepo = _StrictContentMessageRepository();
+      late (SendGroupMessageResult, GroupMessage?) policyResult;
+      final policyEvents = await captureFlowEvents(() async {
+        policyResult = await sendGroupMessage(
+          bridge: policyBridge,
+          groupRepo: groupRepo,
+          msgRepo: policyRepo,
+          groupId: 'group-1',
+          text: 'non-admin member posting to announcement',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-tc377-04c',
+          timestamp: DateTime.utc(2026, 8, 16, 23, 3),
+          groupContentAuthoring: GroupContentAuthoringContext(
+            directLinkedDeviceSelector:
+                const DirectLinkedDeviceSelector.enabled(),
+            multiDeviceSyncEnabled: true,
+            authorityVersion: GroupContentAuthorityVersion(
+              eventAt: DateTime.utc(2026, 8, 16, 22),
+              eventId: 'authority.tc377.04c',
+              keyEpoch: 1,
+            ),
+            inboxStore: _StrictContentInboxStore(),
+          ),
+        );
+      });
+      expect(policyResult.$1, SendGroupMessageResult.unauthorized);
+      expect(policyResult.$2, isNull);
+      expect(policyBridge.commandLog, isEmpty);
+      final policyTiming = policyEvents.lastWhere(
+        (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+      );
+      expect(
+        (policyTiming['details'] as Map<String, dynamic>)['outcome'],
+        'unauthorized',
+      );
+      expect(
+        (policyTiming['details'] as Map<String, dynamic>)['reason'],
+        'strict_group_content_not_qualified',
+      );
+      await groupRepo.saveGroup(testGroup);
     },
   );
 
@@ -5745,7 +6152,7 @@ void main() {
           ),
         );
 
-        expect(result, SendGroupMessageResult.unauthorized);
+        expect(result, SendGroupMessageResult.authorityUnavailable);
         expect(message, isNull);
         expect(msgRepo.count, 0);
         expect(mediaRepo.count, 0);

@@ -826,6 +826,59 @@ void main() {
       },
     );
 
+    test(
+      'TC-377-02 plain creation leaves the creator roster uninitialized',
+      () async {
+        // Production shape: the running node's peerId IS the account peerId
+        // (start_node_use_case.dart:81 boots the node from identity.peerId),
+        // so the creator stamp would be informationally-empty self-binding.
+        p2pService = FakeP2PService(
+          initialState: NodeState(
+            peerId: testIdentity.peerId,
+            isStarted: true,
+          ),
+        );
+
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice],
+          type: GroupType.chat,
+          name: 'Fresh Group',
+        );
+
+        final creator = await groupRepo.getMember(
+          result.group.id,
+          testIdentity.peerId,
+        );
+        expect(creator, isNotNull);
+        expect(
+          creator!.devices,
+          isEmpty,
+          reason: 'a self-bound creator stamp initializes the roster and '
+              'strands every send on the strict-authority refusal lane',
+        );
+
+        // The published members_added groupConfig mirrors the uninitialized
+        // roster: the creator entry carries no devices key at all.
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+        );
+        final payload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysMsg =
+            jsonDecode(payload['text'] as String) as Map<String, dynamic>;
+        final groupConfig = sysMsg['groupConfig'] as Map<String, dynamic>;
+        final creatorEntry = (groupConfig['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .singleWhere((member) => member['peerId'] == testIdentity.peerId);
+        expect(creatorEntry.containsKey('devices'), isFalse);
+      },
+    );
+
     test('sends individual encrypted P2P invites to each contact', () async {
       await createGroupWithMembers(
         bridge: bridge,

@@ -36,6 +36,12 @@ enum RemoveGroupReactionResult {
   groupNotFound,
   groupDissolved,
   notMember,
+
+  /// The strict-authority machinery refused the remove (resolver refusal or
+  /// legacy authority drift) — NOT a membership fact. The wired screen
+  /// restores the optimistic state without latching the removed banner
+  /// (Plan 377).
+  authorityUnavailable,
   publishFailed,
 }
 
@@ -160,11 +166,11 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
     explicitContext: groupContentAuthoring,
   );
   if (snapshot.resolution.kind == GroupContentAuthoringResolutionKind.refuse ||
-      (snapshot.member?.devices.isNotEmpty == true &&
+      (snapshot.member?.hasInitializedDeviceAuthority == true &&
           !resolverAbsentLegacy &&
           snapshot.resolution.kind !=
               GroupContentAuthoringResolutionKind.strict)) {
-    return RemoveGroupReactionResult.notMember;
+    return RemoveGroupReactionResult.authorityUnavailable;
   }
   if (snapshot.resolution.kind == GroupContentAuthoringResolutionKind.strict &&
       (!snapshot.targetEligible || !snapshot.authorBindingUnique)) {
@@ -327,7 +333,7 @@ Future<RemoveGroupReactionResult> _removeGroupReactionWithAuthorityRecheck({
         messageRepository: msgRepo,
         explicitContext: explicitGroupContentAuthoring,
       )) {
-    return RemoveGroupReactionResult.notMember;
+    return RemoveGroupReactionResult.authorityUnavailable;
   }
 
   // 3. Build remove payload (deterministic id ⇒ idempotent re-stage / OQ-2)
@@ -489,7 +495,7 @@ Future<bool> _legacyRemoveAuthorityStillUninitialized({
           group.selfRemovedAt != null ||
           group.isDissolved ||
           sender == null ||
-          (sender.devices.isNotEmpty && !resolverAbsentLegacy) ||
+          (sender.hasInitializedDeviceAuthority && !resolverAbsentLegacy) ||
           (expectedMessage != null &&
               (currentMessage == null ||
                   currentMessage.groupId != groupId ||

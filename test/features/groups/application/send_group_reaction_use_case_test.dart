@@ -333,6 +333,89 @@ void main() {
   tearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
 
   test(
+    'TC-377-03 self-bound roster keeps legacy reaction add and remove',
+    () async {
+      // Production creator-stamp shape (create_group_with_members_use_case
+      // .dart:229-234): the only device is self-bound, so the roster is NOT
+      // initialized under the wave's own definition and both reaction lanes
+      // must stay on the incumbent legacy transport.
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-1',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'peer-1',
+              transportPeerId: 'peer-1',
+              deviceSigningPublicKey: 'pk-1',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 16),
+        ),
+      );
+      setGroupContentAuthoringResolver(
+        groupRepo,
+        buildProtectedGroupContentAuthoringResolver(
+          loadIdentity: () async => (peerId: 'peer-1', publicKey: 'pk-1'),
+          loadMember: groupRepo.getMember,
+          loadInstallationAuthority: (_) async =>
+              const LinkedInstallationAuthoritySnapshot(
+                disposition: LinkedInstallationDisposition.primary,
+                credential: null,
+                failClosedReason: null,
+              ),
+          loadLatestSettledAuthority: (_) async => null,
+          readCurrentTransportPeerId: () => null,
+          inboxStore: _ThrowingStrictReactionStore(),
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+        ),
+      );
+
+      final add = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '\u{1F44D}',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+      expect(add.$1, SendGroupReactionResult.success);
+      expect(add.$2, isNotNull);
+      expect(
+        await reactionRepo.getReactionsForMessage('msg-1'),
+        hasLength(1),
+      );
+
+      final remove = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '\u{1F44D}',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        msgRepo: msgRepo,
+        targetMessage: testMessage,
+      );
+      expect(remove, RemoveGroupReactionResult.success);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+    },
+  );
+
+  test(
     'TC-364-02a strict ADD REMOVE use stable state and deterministic gr1 custody',
     () async {
       final strictOutbox = _StrictReactionOutbox();
@@ -804,7 +887,7 @@ void main() {
         targetMessage: testMessage,
       );
       expect(emptyLinkedAdd.$1, SendGroupReactionResult.unauthorizedSenderKey);
-      expect(emptyLinkedRemove, RemoveGroupReactionResult.notMember);
+      expect(emptyLinkedRemove, RemoveGroupReactionResult.authorityUnavailable);
       expect(emptyLinkedResolutions, 2);
       expect(emptyLinkedBridge.commandLog, isEmpty);
       expect(emptyLinkedOutbox.entries, isEmpty);
@@ -1042,7 +1125,7 @@ void main() {
 
       expect(refusedAdd.$1, SendGroupReactionResult.unauthorizedSenderKey);
       expect(refusedAdd.$2, isNull);
-      expect(refusedRemove, RemoveGroupReactionResult.notMember);
+      expect(refusedRemove, RemoveGroupReactionResult.authorityUnavailable);
       expect(bridge.commandLog, hasLength(commandCountBeforeRefusal));
       expect(
         reactionReplayOutboxRepo.entries,

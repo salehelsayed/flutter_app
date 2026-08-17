@@ -197,13 +197,13 @@ git diff --check
 - Environment blocker (NOT a product blocker): device leg requires the pinned Pixel + emulator; if the physical device is detached, the leg is deferred, not failed.
 - Scope drift (BLOCKING): any needed edit to receive-side authority handlers, `hasProtectedGroupPhysicalAuthority`, retry-authority classification, or the relay.
 
-- [ ] Every behavior has a named test or the justified device proof.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red recorded.
-- [ ] Preservation sentinels and the `groups` lane pass with semantic outcomes.
-- [ ] Registration grep counts + completeness-check pass (no new paths).
-- [ ] Device proof: bricked-group heal + fresh-group first send, both without the false removal.
-- [ ] `flutter analyze` clean; `git diff --check` clean.
-- [ ] Scope Contract And Guard respected.
+- [x] Every behavior has a named test or the justified device proof.
+- [x] Causal RED, focused GREEN, and representative mutation re-red recorded (M1 resolver rung → TC-377-01/12 red; M2 UI mapping → TC-377-05 red; both selective, both restored).
+- [x] Preservation sentinels and the `groups` lane pass with semantic outcomes (4359 tests + Go gates, exit 0).
+- [x] Registration grep counts + completeness-check pass (no new paths; 1465/1465).
+- [ ] Device proof: bricked-group heal + fresh-group first send, both without the false removal — build `1.0.0-5af8fc9f0.d26.t260817112403` deployed + provenance-verified in place; the on-screen legs are blocked on the Pixel's secure keyguard (environment blocker per this plan: deferred, not failed).
+- [x] `flutter analyze` clean; `git diff --check` clean.
+- [x] Scope Contract And Guard respected (no receive-side, relay, `hasProtectedGroupPhysicalAuthority`, retry-classification, or linked-surface edits; refusal conditions and reason strings byte-stable).
 
 ## Handoff
 - First causal RED command: `flutter test test/features/groups/application/send_group_message_use_case_test.dart --plain-name 'TC-377-01 self-bound creator device roster stays on the legacy lane with no settled authority'` (after writing the test; expect FAIL: result is `unauthorized`).
@@ -226,4 +226,23 @@ Post-fix state: **ready / execute**.
 ## Execution Progress
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | contract extraction |
+| 2026-08-17 09:0x | RED (Wave A, behavioral) | send/create/reaction/wired tests + inert `hasInitializedDeviceAuthority` getter (added first so TC-377-01's parity asserts compile; nothing consumed it yet) | 4 focused `--plain-name` runs | TC-377-01 red (`unauthorized`, timing reason `strict_group_content_authority_unavailable` — the live-device signature); TC-377-12 red (admission `refuse`); TC-377-02 red (1 self-bound device stamped); TC-377-03 red (`unauthorizedSenderKey`); TC-377-05 red (no retry affordance + latch); TC-377-06 red (canWrite false latch) | all six behavioral REDs match the documented mechanisms | Wave B |
+| 2026-08-17 09:0x | RED (Wave B, compile) | TC-377-04/10 + TC-377-09 expectation edits | `flutter test remove_group_reaction_use_case_test.dart` | `Error: Member not found: 'authorityUnavailable'` (both enums) | intentional contract compile-RED | production edits |
+| 2026-08-17 09:1x | Production edits (steps 2–6) | group_member.dart, resolver `:71`, send `:2350/:2358/:2380-split/:2399/:2418/:2468/:2498/:2617`, reaction `:155/:1056`, remove enum+`:167/:330`+`:163/:492`, create `:220`, wired `:3306`+voice `:5539` | `flutter analyze` → **No issues found** | zero forced exhaustiveness edits beyond plan list (as predicted) | `:2380` split ordered policy-first so a policy+machinery double-trip still reports the genuine permission fact | focused GREEN |
+| 2026-08-17 09:1x | Focused GREEN | all six pinned test files | full-file runs | send 167 ✓, reaction 34 ✓, remove 12 ✓, create 29 ✓, wired 241 ✓, share 47 ✓ | — | mutations |
+| 2026-08-17 09:2x | Mutation re-red | resolver, wired | M1: resolver `:71` reverted to `devices.isEmpty` → TC-377-01+12 RED, TC-377-04 green; M2: `_terminalReadOnlyForSendResult` maps `authorityUnavailable`→`removed` → TC-377-05 RED, TC-377-06 green; both restored (rg-verified) | selective kills on both defect axes | — | graph-affected + lane |
+| 2026-08-17 09:2x | Graph-affected + preservation | — | `tdd_context.py affected` (7 lib files) → groups-wide fan-out; KEEP-disposition dependents run direct (announcement_private_media_authorization, group_private_media_retry_qualification, member_removal_integration, group_remove_member_roundtrip → 38 ✓); `test/integration/invite_reliability_runner_contract_test.dart` → 20 ✓ | no test outside the 377 files seeds a self-bound roster (rg census) | — | lane |
+| 2026-08-17 09:3x | Curated lane + hygiene | — | `./scripts/run_test_gates.sh groups` → **4359 tests, All tests passed**, Go gates ok, exit 0; `completeness-check` 1465/1465 PASS; registration greps ≥1 each (share ×2: GROUP+ONE_TO_ONE); `flutter analyze` clean; `git diff --check` clean | TC-377-07/08 sentinels green pre+post | — | graph refresh + device |
+| 2026-08-17 09:4x | Graph refresh | graphify-arch | `host-run refresh_arch_graph.sh --incremental` | 13 changed code files, overlay rebuilt | — | device proof TC-377-11 |
+| 2026-08-17 11:2x | Device leg (TC-377-11) | docker-ws/deploy_pixel_only_377.sh | build+deploy+post-install verify → `P377 21071FDF600CSC OK 1.0.0-5af8fc9f0.d26.t260817112403 (verified)`, in-place `install -r` (bricked-group state preserved); logcat cleared | Pixel reachable (adb OK, dumps OK) but on a SECURE keyguard (`dumpsys window policy: secure=true`; PIN/fingerprint) — `wm dismiss-keyguard`/wake/swipe cannot legitimately pass it | **ENVIRONMENT BLOCKER (user unlock required)** — the plan's deferred-not-failed class; emulator-5554 carries no production app (sims variants only), so the fresh-group leg will invite an existing Pixel contact once unlocked | on unlock: drive bricked group "test" TEXT+IMAGE+VOICE sends, fresh group + send before acceptance, then the two logcat gates from Acceptance Gates |
+
+### Execution log — step-4 census dispositions (`rg -n 'devices\.isNotEmpty' lib/features lib/core`, 13 hits)
+- ALIGN (5): `send_group_message_use_case.dart:2350`; `send_group_reaction_use_case.dart:155`, `:1056`; `remove_group_reaction_use_case.dart:163`, `:492`.
+- LEAVE: `send_group_message_use_case.dart:871` (strict admission binding guard), `:2445` (live-but-satisfied for the self-bound shape — TC-377-01 fixture reproduces the key equality); `resend_group_invite_use_case.dart:95` (invite payload device fields revert to null for fresh groups once the stamp is conditional — intended, pre-`4a7675cb0` shape); `rotate_and_distribute_group_key_use_case.dart:291` (strict-lane); `group_message_listener_system_transition_processor.dart:1545` (receive-side, hard guard); `group_member.dart:409`, `:565` (internal serialization/fallback); `background_message_handler.dart:3495` (receive-side push path — census hit NOT in the plan's pre-list, dispositioned LEAVE under the no-receive-side guard).
+
+### Execution log — plan corrections found during execution (contract intent preserved)
+1. **TC-377-09 `:726` does NOT flip** — the strict-lane drift remove exits via `remove_group_reaction_use_case.dart:310` (`_ => notMember`), one of the plan's own LEAVE sites (Hard Do-not). Expectation kept `notMember`; the reaction file's green run confirms.
+2. **`send_group_reaction_use_case_test.dart:807` DOES flip** (missing from the plan's list): emptyLinked REMOVE is an entry-gate `:167` refusal (real resolver, active-linked, empty devices) → now `authorityUnavailable`.
+3. **expectAllZero `announcement-non-admin` keeps `unauthorized`** — that fixture refuses at the early `group.myRole` gate (`send_group_message_use_case.dart:1974`), not the `:2380` role clause; the helper gained an `expected` param (default `authorityUnavailable`, this one rung overrides).
+4. **TC-377-05 asserts Delete + writable composer instead of a Retry chip** — the refusal precedes any retry payload, and the 144 no-dead-retry rule (`group_conversation_screen.dart:697-733`) deliberately hides Retry on payload-less `send_failed` rows; a Retry chip here would be a dead button (`missing_retry_payload`), the same dishonesty class this plan removes. Both planned TC-377-05 mutations still re-red (row/banner asserts).
+5. **Device leg fixture**: emulator-5554 carries no production `com.mknoon.app` install (only sims variants), so the fresh-group leg invites an existing Pixel contact — the send-BEFORE-acceptance geometry (the closure claim) is unchanged; the refusal/heal under proof is sender-local.

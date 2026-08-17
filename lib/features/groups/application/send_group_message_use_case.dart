@@ -343,6 +343,13 @@ enum SendGroupMessageResult {
   groupNotFound,
   groupDissolved,
   unauthorized,
+
+  /// The strict-authority machinery refused the send (resolver refusal,
+  /// unavailable/ineligible strict context, binding or crypto failure) —
+  /// NOT a membership or role fact about the sender. UI surfaces must treat
+  /// this as a retryable failure and never claim removal (Plan 377). The
+  /// emitted GROUP_SEND_MSG_TIMING outcome/reason telemetry is unchanged.
+  authorityUnavailable,
   error,
 
   /// Publish succeeded but 0 peers were connected to the topic.
@@ -2347,7 +2354,8 @@ _sendGroupMessageWithAuthorityRecheck({
       _normalizeLogicalDeliveryId(logicalDeliveryId) ?? resolvedMessageId;
   final keyEpoch = latestKey.keyGeneration;
   final senderMember = currentSenderMember;
-  final initializedDeviceAuthority = senderMember?.devices.isNotEmpty == true;
+  final initializedDeviceAuthority =
+      senderMember?.hasInitializedDeviceAuthority == true;
   final authoringResolution = authoritySnapshot.authoring;
   final resolverAbsentLegacy =
       legacyMembershipActionPhaseHeld &&
@@ -2364,7 +2372,7 @@ _sendGroupMessageWithAuthorityRecheck({
       outcome: 'unauthorized',
       details: {'reason': 'strict_group_content_authority_unavailable'},
     );
-    return (SendGroupMessageResult.unauthorized, null);
+    return (SendGroupMessageResult.authorityUnavailable, null);
   }
   final strictContext = authoringResolution.context;
   final strictSelected = strictContext != null;
@@ -2377,15 +2385,14 @@ _sendGroupMessageWithAuthorityRecheck({
         (attachment) =>
             attachment.mediaType == 'image' || attachment.mediaType == 'video',
       );
+  // The not-qualified refusal is split by CAUSE, never by CONDITION: the
+  // role/content-policy clauses stay a genuine `unauthorized`, the strict
+  // machinery clauses are typed `authorityUnavailable`. Both keep the exact
+  // incumbent timing outcome/reason strings. Policy is evaluated first so a
+  // send that is both policy-refused and machinery-starved still reports the
+  // genuine permission fact.
   if (strictSelected &&
-      (!strictContext.directLinkedDeviceSelector.allowsLinkedDeviceAuthoring ||
-          !strictContext.multiDeviceSyncEnabled ||
-          strictContext.authorityVersion == null ||
-          strictContext.inboxStore == null ||
-          (hasMedia && preparedGroupMediaManifest == null) ||
-          (!hasMedia && preparedGroupMediaManifest != null) ||
-          (isForwarded && !eligibleForwardedMedia) ||
-          !privateMediaPolicy.isOrdinary ||
+      (!privateMediaPolicy.isOrdinary ||
           (!hasMedia && sanitizedText.trim().isEmpty) ||
           sanitizedText.trimLeft().startsWith(r'{"__sys":') ||
           (group.type == GroupType.announcement &&
@@ -2397,6 +2404,20 @@ _sendGroupMessageWithAuthorityRecheck({
     return (SendGroupMessageResult.unauthorized, null);
   }
   if (strictSelected &&
+      (!strictContext.directLinkedDeviceSelector.allowsLinkedDeviceAuthoring ||
+          !strictContext.multiDeviceSyncEnabled ||
+          strictContext.authorityVersion == null ||
+          strictContext.inboxStore == null ||
+          (hasMedia && preparedGroupMediaManifest == null) ||
+          (!hasMedia && preparedGroupMediaManifest != null) ||
+          (isForwarded && !eligibleForwardedMedia))) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'strict_group_content_not_qualified'},
+    );
+    return (SendGroupMessageResult.authorityUnavailable, null);
+  }
+  if (strictSelected &&
       !validGroupContentAuthoringOrder(
         authority: strictContext.authorityVersion!,
         contentAt: now,
@@ -2406,7 +2427,7 @@ _sendGroupMessageWithAuthorityRecheck({
       outcome: 'unauthorized',
       details: {'reason': 'strict_group_content_order_invalid'},
     );
-    return (SendGroupMessageResult.unauthorized, null);
+    return (SendGroupMessageResult.authorityUnavailable, null);
   }
   final linkedCredential = strictSelected
       ? strictContext.linkedTransportCredential
@@ -2422,7 +2443,7 @@ _sendGroupMessageWithAuthorityRecheck({
       outcome: 'unauthorized',
       details: {'reason': 'strict_group_content_missing_credential'},
     );
-    return (SendGroupMessageResult.unauthorized, null);
+    return (SendGroupMessageResult.authorityUnavailable, null);
   }
   final requestedSigningPublicKey = validLinkedCredential
       ? linkedCredential.transportPublicKey
@@ -2477,7 +2498,7 @@ _sendGroupMessageWithAuthorityRecheck({
       outcome: 'unauthorized',
       details: {'reason': 'strict_group_content_ambiguous_sender_binding'},
     );
-    return (SendGroupMessageResult.unauthorized, null);
+    return (SendGroupMessageResult.authorityUnavailable, null);
   }
 
   final recipientPeerIds = strictSelected
@@ -2511,7 +2532,7 @@ _sendGroupMessageWithAuthorityRecheck({
       outcome: 'unauthorized',
       details: {'reason': 'strict_group_media_manifest_mismatch'},
     );
-    return (SendGroupMessageResult.unauthorized, null);
+    return (SendGroupMessageResult.authorityUnavailable, null);
   }
   final mediaJson = strictSelected
       ? null
@@ -2619,7 +2640,7 @@ _sendGroupMessageWithAuthorityRecheck({
         outcome: 'unauthorized',
         details: {'reason': 'strict_group_content_crypto_failed'},
       );
-      return (SendGroupMessageResult.unauthorized, null);
+      return (SendGroupMessageResult.authorityUnavailable, null);
     }
   }
 

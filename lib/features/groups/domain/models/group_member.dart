@@ -385,6 +385,17 @@ class GroupMember {
   List<GroupMemberDeviceIdentity> get activeDevices =>
       devices.where((device) => device.isActive).toList(growable: false);
 
+  /// Whether this member's roster crossed the Plan-363 physical-device
+  /// authority boundary: at least one device that is NOT the self-bound
+  /// account identity (deviceId == transportPeerId == peerId). Must stay
+  /// byte-equivalent to `hasProtectedGroupPhysicalAuthority` over a single
+  /// member: raw [devices] (a revoked non-self-bound device still counts —
+  /// falling back would resurrect the account-keyed legacy transport after
+  /// device revocation), no trim, no active filter.
+  bool get hasInitializedDeviceAuthority => devices.any(
+    (device) => device.deviceId != peerId || device.transportPeerId != peerId,
+  );
+
   GroupMemberDeviceIdentity? get legacyDeviceIdentity {
     final publicKey = this.publicKey?.trim();
     final mlKemKey = mlKemPublicKey?.trim();
