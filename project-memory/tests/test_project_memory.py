@@ -894,12 +894,21 @@ class TestMemoryPass(unittest.TestCase):
                     rtype, "references",
                     "a memory may only `reference` anything outside its own note",
                 )
+            # `build_graph` stores `str(path.resolve())`, but TemporaryDirectory
+            # hands back the UNRESOLVED name. On any host whose $TMPDIR crosses a
+            # symlink (macOS /var -> private/var) an unresolved prefix matches
+            # nothing, so both prefixes below resolve before comparing.
+            #
+            # The `leaked` check stays structurally vacuous even so: the plan pass
+            # writes a RELATIVE source_doc and the memory pass an ABSOLUTE one, so
+            # no absolute prefix can ever match a plan row. Making it falsifiable
+            # needs a different query shape -- deferred, see plan 387.
             # No plan-pass entity may ever be sourced from the memory directory.
             leaked = build_graph.query(
                 poisoned,
                 "SELECT count(*) FROM entities"
                 " WHERE etype NOT IN ('MEMORY','NOTE') AND source_doc LIKE ?",
-                ("{}%".format(memory),),
+                ("{}%".format(Path(memory).resolve()),),
             )
             self.assertEqual(leaked[0][0], 0)
             # ...and no memory-pass entity may claim a plan doc as its source.
@@ -907,7 +916,7 @@ class TestMemoryPass(unittest.TestCase):
                 poisoned,
                 "SELECT count(*) FROM entities"
                 " WHERE etype IN ('MEMORY','NOTE') AND source_doc NOT LIKE ?",
-                ("{}%".format(memory),),
+                ("{}%".format(Path(memory).resolve()),),
             )
             self.assertEqual(reverse[0][0], 0)
 

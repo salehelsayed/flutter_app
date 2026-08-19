@@ -200,14 +200,22 @@ for fragment in (
 # owner-pinned byte-for-byte for DTR13-AUTH-01.
 expected_hashes = {
     "lib/smoke_test_main.dart":
-        "522bc158c34ce53e83381ac6d7efd6139585c67de2c27df39180eef815115d27",
+        "c99e6212616f89310a5f4c5a577c1c1a9add97cec08fb8fad1051325fb087f34",
     "lib/smoke_test_messages.dart":
         "94e604dbe2184b13efa483ad4ce57667d99f90d063beadf8ce2cd9f87934884e",
     "lib/smoke_test_restore.dart":
-        "09cefe37417ee283ab20d764ecb5d3067b4c5117c1e42d1a294defc33db7e6ab",
+        "43226bf4448725b947bc266bbd46223cc31404b823665fa7dec14079a0aa1ad6",
     "lib/core/debug/smoke_test_runner.dart":
         "852b835a5e7ecaa267005ae648475fcf0c9fbb5d0eec2a4819cb2c98b857e673",
 }
+# The dict below is only ever ITERATED, so deleting an entry would retire a
+# freeze silently and still exit 0. Pin the key set itself.
+assert set(expected_hashes) == {
+    "lib/smoke_test_main.dart",
+    "lib/smoke_test_messages.dart",
+    "lib/smoke_test_restore.dart",
+    "lib/core/debug/smoke_test_runner.dart",
+}, "DTR13-AUTH-01 byte-lock key set changed"
 for path, expected_hash in expected_hashes.items():
     actual_hash = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     assert actual_hash == expected_hash, f"DTR13-AUTH-01 byte lock changed: {path}"

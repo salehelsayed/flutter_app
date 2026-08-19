@@ -1,6 +1,6 @@
 # 387 - Sims-Contract Stale-Pin Hygiene: Unblock The Aborting Gate
 
-Status: execution-ready
+Status: **EXECUTED 2026-08-19 — all three in-scope contracts HOST GREEN, every recorded mutation re-reds, gate UNBLOCKED. TC-387-04 is PARTIALLY met and not claimed otherwise: `sims-contracts` now runs every contract instead of aborting at #4 (43 of 44 PASS), but it still exits 1 at a FOURTH red that step 1's stop-if found and this plan deliberately does not fix — see H4.**
 Type: Bug
 Spec: free-text intent (no formal spec) — the stale pins recorded in `Test-Flight-Improv/380-notification-device-matrix-and-b12-sound-tdd-plan.md:548-554`
 Classification: implementation-ready
@@ -75,9 +75,21 @@ This plan has no device leg, no dependency on any other plan, and can land today
     **relative** path, the memory pass an **absolute** one. A relative string can never `LIKE`-match an
     absolute prefix, with or without `resolve()`. Resolving `:902` is still correct hygiene, but it
     does not make that assertion falsifiable — see TC-387-03's note.
-- **Unresolved findings:** whether any sims contract **after** the 4th is also red. Nothing has run
-  them since 2026-08-17, and plans 384/385 have since landed. The first execution step measures this
-  rather than assuming Plan 380's list is still complete.
+- **Unresolved findings — RESOLVED by step 1's measurement.** The full set is four reds, not three:
+  contracts #4, #13, #20 (this plan's H1/H2/H3) and #26 (H4 below). The other 40 all passed.
+
+  **H4. `run_claude_docker_update_contract_test.sh` (contract #26) — a FOURTH red, recorded and NOT
+  fixed here.** It fails at `:78`, `normal launch did not build the cached image`. Commit `ed7e07284`
+  (2026-08-09, "chore: refresh local tooling paths, docker launch guard, and arch graph")
+  intentionally changed `scripts/run_claude_docker.sh:473-478` so a normal launch builds **only** when
+  `CLAUDE_DOCKER_REBUILD=1` or the image is absent, and passes `--pull` when it does build. The
+  contract still pins the pre-change behavior in two places: `:78` (a normal launch must build) and
+  `:79-80` (a normal launch must not pass `--pull`). It has been red for ten days, invisible because
+  the gate aborted at #4 long before reaching #26 — precisely the harm this plan exists to describe.
+  Unlike H1-H3 this is **not** a stale byte- or text-pin: the runner change was deliberate and
+  documented in its own comment, so closing it means deciding which behavior is now correct and
+  re-pinning the contract to that decision. That is a behavior call for the runner's owner, not
+  gate hygiene, so step 1's stop-if was honored: recorded, not touched.
 - **Affected files:** `scripts/test/dtr13_profile_entrypoint_preservation_contract_test.sh`,
   `scripts/test/intro_accept_notification_sims_adapter_contract_test.sh`,
   `project-memory/tests/test_project_memory.py`. No `lib/` change. No production change of any kind.
@@ -265,14 +277,18 @@ assertion above; `git diff --stat project-memory/src/` prints nothing.
 - Scope drift (BLOCKING): any `lib/` change, any `project-memory/src/` change, any edit to a
   reaction/muted lane file, or fixing a fourth contract without recording it first.
 
-- [ ] Every behavior has a named test.
-- [ ] Causal RED, focused GREEN, and every listed mutation re-red are recorded — including both
+- [x] Every behavior has a named test.
+- [x] Causal RED, focused GREEN, and every listed mutation re-red are recorded — including both
       TC-387-01 byte-appends and both TC-387-02 mutations.
-- [ ] Provenance artifacts for both drifted roots are captured in the execution log.
-- [ ] `git diff --stat project-memory/src/` is empty.
-- [ ] `sims-contracts` exits 0 having run every contract.
-- [ ] `git diff --check` is clean.
-- [ ] The Scope Contract And Guard is respected.
+- [x] Provenance artifacts for both drifted roots are captured in the execution log.
+- [x] `git diff --stat project-memory/src/` is empty.
+- [ ] `sims-contracts` exits 0 having run every contract. **NOT MET, and not claimed.** It now *runs*
+      every contract (43 of 44 PASS, versus aborting at #4 before this plan), but exits 1 on H4 —
+      the fourth red, out of scope by this plan's own hard `Do not`. Closing this box needs the H4
+      behavior decision, not more work on H1-H3.
+- [x] `git diff --check` is clean.
+- [x] The Scope Contract And Guard is respected — no `lib/`, no `project-memory/src/`, no
+      reaction/muted lane file, and the fourth red recorded rather than fixed.
 
 ## Handoff
 - First causal RED command:
@@ -288,4 +304,8 @@ assertion above; `git diff --stat project-memory/src/` prints nothing.
 ## Execution Progress
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | contract extraction |
+| 2026-08-19 | Step 1 — measure | none (read-only) | `run_test_gates.sh sims-contracts --continue-on-failure` -> exit 1, 40 PASS / 4 FAIL | #4 `DTR13-AUTH-01 byte lock changed: lib/smoke_test_main.dart`; #13 bare `AssertionError` at `<stdin>`:11 (= file line 42); #20 `AssertionError: 2 != 0` at `test_project_memory.py:912`; #26 `normal launch did not build the cached image` | **Stop-if FIRED**: a 4th red exists. Diagnosed to `ed7e07284` and recorded as H4; NOT fixed, per the hard `Do not` | provenance for H1 |
+| 2026-08-19 | Step 2 — H1 provenance | `lib/smoke_test_main.dart`, `lib/smoke_test_restore.dart` | `git log -1 --format=%h` -> `87f0f7ba0` for BOTH; `git show 87f0f7ba0` -> one line each, `identity/domain/repositories` -> `identity/data/repositories` | old path absent, new path present, so revert would not compile | Re-pin authorized; stop-if not triggered | edit contract |
+| 2026-08-19 | Steps 2-4 — fix | the three files in Affected files | H1 re-pin + key-set assertion; H2 helper slice; H3 both prefixes resolved | `git diff --stat project-memory/src/` EMPTY (wrong-fix guard) | All three contracts exit 0 individually on host-run | mutations |
+| 2026-08-19 | Mutations | as above, each reverted | 7 mutations, all re-red their own row | TC-387-01: `smoke_test_main` append -> reds naming it; `smoke_test_restore` append -> reds naming **it** (the previously-shadowed pin is live); entry deletion -> `DTR13-AUTH-01 byte-lock key set changed`. TC-387-02: helper regex widened -> reds at `<stdin>`:20 (helper slice); call deleted from `_launchAll` -> reds at `<stdin>`:11 (launch slice). TC-387-03: unresolved `:910` under symlinked TMPDIR -> `2 != 0`; **wrong-fix mutation passes the suite (`OK`)**, caught only by the `project-memory/src/` diff guard | Every listed mutation recorded | closure |
+| 2026-08-19 | Step 5 — closure | - | plain `sims-contracts` -> #1-#25 PASS, aborts at #26, exit 1 (was: aborted at #4). `--continue-on-failure` -> **43 PASS / 1 FAIL**, exit 1 | `git diff --check` clean; tree = exactly the 3 intended files | TC-387-01/02/03 CLOSED. TC-387-04 partially met: runs every contract, does not exit 0, blocked solely by H4 | H4 needs an owner decision |

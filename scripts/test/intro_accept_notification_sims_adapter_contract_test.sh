@@ -39,8 +39,17 @@ launch = source[start:end]
 assert "'am'" in launch and "'start'" in launch and "'-W'" in launch
 assert "'-n'" in launch and "'$_appPackage/.MainActivity'" in launch
 assert 'final output = await _adbShell' in launch
-assert r"r'^Status:[ \t]+ok[ \t]*\r?$'" in launch
+assert 'isAndroidActivityStartAccepted(' in launch
 assert 'monkey' not in launch
+
+# The launch-acceptance rule itself moved to a top-level helper, so pin the
+# exact regex where it now lives. Slicing only _launchAll() would let a widened
+# rule pass simply by living outside the slice.
+start = source.index('bool isAndroidActivityStartAccepted(')
+end = source.index('final class IntroCampaignDeadline', start)
+launch_acceptance = source[start:end]
+assert r"r'^Status:[ \t]+(?:ok|timeout)[ \t]*\r?$'" in launch_acceptance
+assert 'multiLine: true' in launch_acceptance
 
 start = source.index('Future<void> _installPreparedArtifactIfPresent(')
 end = source.index('// ---- Phase 1:', start)
