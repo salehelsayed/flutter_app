@@ -63,6 +63,43 @@ enum BackgroundStorageLivenessPhase {
   final String wireName;
 }
 
+/// The exact storage phase a deadline was applied to.
+///
+/// This is a SIBLING of [BackgroundStorageLivenessPhase], not a replacement.
+/// That enum deliberately collapses several phases onto one coarse family —
+/// `preview_resolution` and `durable_effect_authority` both land on
+/// [BackgroundStorageLivenessPhase.localState] — which makes two different
+/// terminal exits indistinguishable in a record. This enum keeps them apart
+/// while preserving the same privacy rule: the values are fixed, so a caller
+/// cannot persist an identifier through the phase surface. Anything outside
+/// the domain degrades to [unknown] rather than being written verbatim.
+enum BackgroundStorageDeadlinePhaseName {
+  directPostShowValidation('direct_post_show_validation'),
+  directStage('direct_stage'),
+  displayEligibility('display_eligibility'),
+  durableEffectAuthority('durable_effect_authority'),
+  groupPostShowValidation('group_post_show_validation'),
+  pendingOverlay('pending_overlay'),
+  previewResolution('preview_resolution'),
+  recentBackgroundMark('recent_background_mark'),
+  recentBackgroundRead('recent_background_read'),
+  recentRemoteMark('recent_remote_mark'),
+  resolvedStage('resolved_stage'),
+  unknown('unknown');
+
+  const BackgroundStorageDeadlinePhaseName(this.wireName);
+  final String wireName;
+
+  /// Validates a raw phase identifier against the closed domain. An
+  /// unrecognised value can only ever become [unknown]; it is never persisted.
+  static BackgroundStorageDeadlinePhaseName fromWireName(String value) {
+    for (final candidate in values) {
+      if (candidate.wireName == value) return candidate;
+    }
+    return unknown;
+  }
+}
+
 enum BackgroundStorageTerminalOutcome {
   storageDeferred('storage_deferred'),
   notificationSuppressed('notification_suppressed'),
@@ -174,8 +211,11 @@ class BackgroundStorageLivenessJournal {
   Future<void> recordTerminal({
     required BackgroundStorageMessageKind kind,
     required BackgroundStorageLivenessPhase phase,
+    required BackgroundStorageDeadlinePhaseName phaseName,
     required BackgroundStorageTerminalOutcome outcome,
     required Duration elapsed,
+    required Duration phaseElapsed,
+    required Duration budget,
     BackgroundStorageEngineRole engineRole =
         BackgroundStorageEngineRole.flutterfireBackground,
   }) async {
@@ -183,8 +223,11 @@ class BackgroundStorageLivenessJournal {
       () => _persistTerminal(
         kind: kind,
         phase: phase,
+        phaseName: phaseName,
         outcome: outcome,
         elapsed: elapsed,
+        phaseElapsed: phaseElapsed,
+        budget: budget,
         engineRole: engineRole,
       ),
     );
@@ -200,8 +243,11 @@ class BackgroundStorageLivenessJournal {
   Future<void> _persistTerminal({
     required BackgroundStorageMessageKind kind,
     required BackgroundStorageLivenessPhase phase,
+    required BackgroundStorageDeadlinePhaseName phaseName,
     required BackgroundStorageTerminalOutcome outcome,
     required Duration elapsed,
+    required Duration phaseElapsed,
+    required Duration budget,
     required BackgroundStorageEngineRole engineRole,
   }) async {
     final directory = await _directoryResolver();
@@ -233,11 +279,18 @@ class BackgroundStorageLivenessJournal {
       '${directory.path}${Platform.pathSeparator}'
       '$stem.tmp',
     );
+    // Exact milliseconds ride ALONGSIDE the bucket, never instead of it: the
+    // bucket is what existing readers already key off. Values stay decimal
+    // strings so the record type is still <String, String>.
     final record = <String, String>{
       'kind': kind.wireName,
       'phase': phase.wireName,
+      'phaseName': phaseName.wireName,
       'outcome': outcome.wireName,
       'elapsedBucket': bucketBackgroundStorageElapsed(elapsed).wireName,
+      'elapsedMs': elapsed.inMilliseconds.toString(),
+      'phaseElapsedMs': phaseElapsed.inMilliseconds.toString(),
+      'budgetMs': budget.inMilliseconds.toString(),
       'buildMode': _buildMode.wireName,
       'engineRole': engineRole.wireName,
     };

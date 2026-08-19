@@ -98,14 +98,29 @@ final class BackgroundStorageDeadlineExceeded implements Exception {
   const BackgroundStorageDeadlineExceeded({
     required this.phase,
     required this.elapsed,
+    required this.phaseElapsed,
+    required this.budget,
   });
 
   final String phase;
+
+  /// Time since the whole wake's deadline was constructed.
   final Duration elapsed;
+
+  /// Time spent inside the phase that tripped, measured from that phase's own
+  /// start stamp. This is what tells a comfortable phase from a near miss;
+  /// [elapsed] cannot, because it also carries every earlier phase.
+  final Duration phaseElapsed;
+
+  /// The bound actually applied to the tripping phase — `min(remaining, phase)`
+  /// — NOT the configured phase constant. Zero on the aggregate-exhausted
+  /// branch, where no bound was ever installed.
+  final Duration budget;
 
   @override
   String toString() =>
-      'BackgroundStorageDeadlineExceeded($phase, ${elapsed.inMilliseconds}ms)';
+      'BackgroundStorageDeadlineExceeded($phase, ${elapsed.inMilliseconds}ms, '
+      'phase ${phaseElapsed.inMilliseconds}ms of ${budget.inMilliseconds}ms)';
 }
 
 final class _BackgroundStorageDeadline {
@@ -123,18 +138,39 @@ final class _BackgroundStorageDeadline {
   final BackgroundStorageMonotonicClock _elapsed;
   final Duration _startedAt;
 
+  /// The clock reading when the phase currently in flight began. One deadline
+  /// instance serves every phase of one wake, and all of them are sequentially
+  /// awaited (no `Future.wait`, `unawaited`, `.then(`, `scheduleMicrotask` or
+  /// `Timer(` in the background handler), so a single mutable stamp cannot be
+  /// corrupted by overlap.
+  Duration? _phaseStartedAt;
+
   Duration get elapsed {
     final value = _elapsed() - _startedAt;
     return value.isNegative ? Duration.zero : value;
   }
 
+  Duration get _phaseElapsed {
+    final startedAt = _phaseStartedAt;
+    if (startedAt == null) return Duration.zero;
+    final value = _elapsed() - startedAt;
+    return value.isNegative ? Duration.zero : value;
+  }
+
   Future<T> run<T>(String phaseName, Future<T> Function() action) {
     if (!enabled) return action();
+    // Stamped BEFORE the remaining check on purpose. `run` is not `async`, so
+    // the aggregate-exhausted branch below throws synchronously; stamping
+    // after it would make that branch report the PREVIOUS phase's offset.
+    _phaseStartedAt = _elapsed();
     final remaining = aggregate - elapsed;
     if (remaining <= Duration.zero) {
       throw BackgroundStorageDeadlineExceeded(
         phase: phaseName,
         elapsed: elapsed,
+        phaseElapsed: _phaseElapsed,
+        // No bound was installed: the phase never started.
+        budget: Duration.zero,
       );
     }
     final bound = remaining < phase ? remaining : phase;
@@ -143,6 +179,8 @@ final class _BackgroundStorageDeadline {
       onTimeout: () => throw BackgroundStorageDeadlineExceeded(
         phase: phaseName,
         elapsed: elapsed,
+        phaseElapsed: _phaseElapsed,
+        budget: bound,
       ),
     );
   }
@@ -1691,6 +1729,12 @@ Future<void> _recordBackgroundStorageDeferred(
     'pending_overlay' => BackgroundStorageLivenessPhase.pendingOverlay,
     _ => BackgroundStorageLivenessPhase.localState,
   };
+  // The mapping above collapses several phases onto `local_state`. Carry the
+  // raw identifier as well, validated against a closed domain so the journal's
+  // no-caller-strings rule survives the widening.
+  final phaseName = BackgroundStorageDeadlinePhaseName.fromWireName(
+    error.phase,
+  );
   final terminalOutcome = switch (outcome) {
     'post_show_unknown' => BackgroundStorageTerminalOutcome.shownStateUnknown,
     'notification_suppressed' =>
@@ -1703,8 +1747,12 @@ Future<void> _recordBackgroundStorageDeferred(
     details: <String, Object?>{
       'kind': kind.wireName,
       'phase': phase.wireName,
+      'phaseName': phaseName.wireName,
       'outcome': terminalOutcome.wireName,
       'elapsedBucket': bucketBackgroundStorageElapsed(error.elapsed).wireName,
+      'elapsedMs': error.elapsed.inMilliseconds.toString(),
+      'phaseElapsedMs': error.phaseElapsed.inMilliseconds.toString(),
+      'budgetMs': error.budget.inMilliseconds.toString(),
       'buildMode': kReleaseMode
           ? 'release'
           : kProfileMode
@@ -1716,8 +1764,11 @@ Future<void> _recordBackgroundStorageDeferred(
   await _backgroundStorageLivenessJournal.recordTerminal(
     kind: kind,
     phase: phase,
+    phaseName: phaseName,
     outcome: terminalOutcome,
     elapsed: error.elapsed,
+    phaseElapsed: error.phaseElapsed,
+    budget: error.budget,
   );
 }
 

@@ -208,6 +208,11 @@ final class _AndroidNotificationCampaign {
   Process? _deviceLogProcess;
   File? _deviceLogFile;
   String? _deviceLogFailure;
+  // Plan 388 (G21): the cold leg's own log cursor, kept on the instance so a
+  // failure raised INSIDE the leg can still be classified against the graded
+  // wake window. The leg dies 48 lines before it reads that window itself.
+  String? _coldWakeLogcatCursor;
+  bool _coldWakeWindowScannedClean = false;
 
   Future<AndroidNotificationCampaignResult> run() async {
     await _preflight();
@@ -253,7 +258,7 @@ final class _AndroidNotificationCampaign {
         ..add(await _writeScenarioArtifact(warm.b11))
         ..add(await _writeScenarioArtifact(warm.b12));
 
-      final cold = await _runColdPayloadLeg();
+      final cold = await _runColdPayloadLegClassified();
       captured.add(await _writeScenarioArtifact(cold));
 
       final dualPath = await _runB13DualPathLeg();
@@ -803,6 +808,7 @@ final class _AndroidNotificationCampaign {
     );
     await _terminateReceiver();
     final logcatCursor = await _deviceLogcatCursor();
+    _coldWakeLogcatCursor = logcatCursor;
 
     final toneGap = await _awaitToneWindow();
     final sentAt = DateTime.now().toUtc();
@@ -818,6 +824,35 @@ final class _AndroidNotificationCampaign {
 
     await _setNetworkAvailable(false);
     _networkMutated = true;
+    // Plan 388 (G21). The graded push IS the first wake after the kill above:
+    // nothing touches the receiver between them (`_awaitToneWindow` is a pure
+    // host-side delay and `_deviceLogcatCursor` reads a host-side file length),
+    // so this window is exactly the cold-start budget G21 measured on device.
+    //
+    // The window closes HERE rather than at `preRestoreLog`, which also spans
+    // the tap, the cold relaunch, the observer action and the UI wait — about
+    // a minute. `engineRole` on the deferral record is a hard-coded constant,
+    // so a later wake's deferral read from that wider span would be
+    // misattributed to the graded one.
+    final coldWakeDeferrals = await _coldWakeDeferralsSince(logcatCursor);
+    if (coldWakeDeferrals.isNotEmpty) {
+      throw _Failure(
+        '$_coldWakeDeferralFailure'
+        '${coldWakeDeferrals.map(_describeColdWakeDeferral).join('; ')}',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    // Latched only once the graded window has been read and found clean. It is
+    // what stops the failure-path classifier from re-reading a window that has
+    // already been cleared and blaming the graded wake for a LATER failure —
+    // `_restartAndDrain` brings the app back up after the network is restored
+    // and wakes the isolate again inside the same unbounded cursor range.
+    _coldWakeWindowScannedClean = true;
+    // Knowable a priori on the clean path, so this is a presence-and-provenance
+    // guard, not a measurement: what proves the scan actually ran is the source
+    // contract (notification_tap_campaign_adapter_contract_test.sh), exactly as
+    // tool/sims/device_criteria.dart describes for every claimed-true check.
+    const coldWakeDeferralScan = 'clean';
     await _waitFor(
       'cold receiver airplane mode',
       const Duration(seconds: 30),
@@ -901,6 +936,7 @@ final class _AndroidNotificationCampaign {
         'newPidObservedAfterTap': true,
         'networkUnavailableAtTap': true,
         'coldAlertChannel': coldAlertChannel,
+        'coldWakeDeferralScan': coldWakeDeferralScan,
         'toneWindowGapMs': toneGap.inMilliseconds,
         'messageCountBeforeDrain': observed['messageCount'],
         'messageCountAfterDrain': drain['messageCount'],
@@ -1281,6 +1317,107 @@ final class _AndroidNotificationCampaign {
 
   Future<List<AndroidFlowRecord>> _flowRecordsSince(String cursor) async =>
       androidNotificationFlowRecords(await _logcatSince(cursor));
+
+  // ---------------------------------------------------------------------
+  // Plan 388 (G21) — classify a cold-leg failure against the graded wake.
+  //
+  // These live here, NOT between `_runColdPayloadLeg` and `_restartAndDrain`:
+  // that span is source-frozen by
+  // test/integration/android_notification_payload_campaign_support_test.dart.
+  // ---------------------------------------------------------------------
+
+  /// Deferral outcomes that mean the wake returned WITHOUT publishing a card.
+  ///
+  /// `PUSH_BACKGROUND_STORAGE_DEFERRED` carries three outcomes and only these
+  /// two can be why an alert is missing. The third, `shown_state_unknown`, is
+  /// recorded by the post-show validators and the recent-shown mark, which run
+  /// AFTER the notification is out. NOTE the wire spelling: the handler's
+  /// caller-side argument is `post_show_unknown`, but what reaches the record
+  /// is the enum's `wireName`, `shown_state_unknown`
+  /// (`background_storage_liveness_journal.dart`). Filtering on the caller-side
+  /// spelling matches nothing.
+  static const Set<String> _alertLosingDeferralOutcomes = <String>{
+    'storage_deferred',
+    'custody_write_pending',
+  };
+
+  /// Every deferral in the window starting at [cursor] that could have cost
+  /// this wake its notification.
+  Future<List<AndroidFlowRecord>> _coldWakeDeferralsSince(String cursor) async {
+    final records = await _flowRecordsSince(cursor);
+    return records
+        .where((record) => record.event == 'PUSH_BACKGROUND_STORAGE_DEFERRED')
+        .where(
+          (record) => _alertLosingDeferralOutcomes.contains(
+            record.details['outcome'],
+          ),
+        )
+        // `pending_overlay` is the ONE `storage_deferred` site that records and
+        // then FALLS THROUGH instead of returning: the encrypted overlay is
+        // enrichment, so the card is still published
+        // (`background_message_handler.dart`, the overlay catch). Keying on
+        // `phase` rather than the new `phaseName` keeps this correct against an
+        // APK built before the raw identifier existed.
+        .where((record) => record.details['phase'] != 'pending_overlay')
+        .toList(growable: false);
+  }
+
+  /// The named prefix of a cold-wake deferral failure. Shared so the
+  /// classifier can recognise the leg's OWN diagnosis and not re-wrap it.
+  static const String _coldWakeDeferralFailure =
+      'Cold graded wake was storage-deferred: ';
+
+  String _describeColdWakeDeferral(AndroidFlowRecord record) {
+    final phaseName =
+        record.details['phaseName'] ?? record.details['phase'] ?? 'unknown';
+    final phaseElapsedMs = record.details['phaseElapsedMs'] ?? 'unknown';
+    final budgetMs = record.details['budgetMs'] ?? 'unknown';
+    // Total elapsed is carried too: on the aggregate-exhausted branch the
+    // phase never started, so the first two numbers are both zero and only
+    // the whole-wake total says how far over the 8 s aggregate it ran.
+    final elapsedMs = record.details['elapsedMs'] ?? 'unknown';
+    return '$phaseName ${phaseElapsedMs}ms of ${budgetMs}ms '
+        '(wake total ${elapsedMs}ms)';
+  }
+
+  /// Runs the cold leg and re-types a failure a storage-deferred first wake
+  /// caused. Without this the leg dies inside `_waitForNotification` as an
+  /// untyped timeout and the run reports "no card" instead of "the first wake
+  /// after the kill exhausted its storage phase budget".
+  Future<Map<String, Object?>> _runColdPayloadLegClassified() async {
+    try {
+      return await _runColdPayloadLeg();
+    } on _Failure catch (error) {
+      // Deliberately narrow. A `_Blocked` is an environment blocker that must
+      // keep exit 78; re-typing it as a product failure would misreport the
+      // run. Every wait in the cold leg raises `_Failure` on timeout, which is
+      // exactly how a deferred wake surfaces today.
+      final cursor = _coldWakeLogcatCursor;
+      if (cursor == null) rethrow;
+      // The graded window was already read and found clean, so this failure is
+      // downstream of it — the tap, the cold relaunch, the network restore or
+      // the drain. Re-reading from the cold cursor would sweep up a LATER
+      // wake's deferral and mistitle an unrelated failure.
+      if (_coldWakeWindowScannedClean) rethrow;
+      // The leg's own scan already named this one; re-wrapping would print the
+      // same sentence twice.
+      if (error.detail.startsWith(_coldWakeDeferralFailure)) rethrow;
+      var deferrals = const <AndroidFlowRecord>[];
+      try {
+        deferrals = await _coldWakeDeferralsSince(cursor);
+      } on Object {
+        // The classifier must never replace the real failure with its own.
+        deferrals = const <AndroidFlowRecord>[];
+      }
+      if (deferrals.isEmpty) rethrow;
+      throw _Failure(
+        '$_coldWakeDeferralFailure'
+        '${deferrals.map(_describeColdWakeDeferral).join('; ')} '
+        '(surfaced as: ${_describeFailure(error)})',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+  }
 
   // ---------------------------------------------------------------------
   // TC-380-07 — PRD 13 permission denied.

@@ -59,7 +59,7 @@ void main() {
         final artifact = _notificationArtifact(
           scenario: 'payload_fast_path_cold_kill',
           checks: _coldChecks,
-          evidence: <String, Object?>{'coldAlertChannel': 'mknoon_messages'},
+          evidence: _coldEvidence,
         );
         expect(validateNotificationArtifact(artifact).ok, isTrue);
       },
@@ -114,10 +114,13 @@ void main() {
         scenario: 'payload_fast_path_cold_kill',
         checks: _coldChecks,
         evidence: <String, Object?>{
+          ..._coldEvidence,
           'coldAlertChannel': 'mknoon_messages_silent',
         },
       );
-      expect(validateNotificationArtifact(cold).ok, isFalse);
+      final coldResult = validateNotificationArtifact(cold);
+      expect(coldResult.ok, isFalse);
+      expect(coldResult.detail, contains('coldAlertChannel'));
     });
 
     test('b12 cold artifact without its measured channel evidence is rejected', () {
@@ -134,9 +137,56 @@ void main() {
         checks: _coldChecks
             .where((check) => check != 'b12.cold_audible_channel')
             .toList(growable: false),
-        evidence: <String, Object?>{'coldAlertChannel': 'mknoon_messages'},
+        evidence: _coldEvidence,
       );
       expect(validateNotificationArtifact(missingCheck).ok, isFalse);
+    });
+
+    // Plan 388 (TC-388-11). The cold leg's graded push is the FIRST wake after
+    // an app kill, so it sits in the exact slot where the 2 s
+    // display_eligibility budget can be exhausted. The leg already captures
+    // that window; requiring the scan result is what stops an artifact from
+    // claiming a clean cold wake it never looked for.
+    test('cold-kill artifacts must carry a wake deferral scan result', () {
+      final clean = _notificationArtifact(
+        scenario: 'payload_fast_path_cold_kill',
+        checks: _coldChecks,
+        evidence: _coldEvidence,
+      );
+      expect(validateNotificationArtifact(clean).ok, isTrue);
+
+      final missingScan = _notificationArtifact(
+        scenario: 'payload_fast_path_cold_kill',
+        checks: _coldChecks,
+        evidence: <String, Object?>{'coldAlertChannel': 'mknoon_messages'},
+      );
+      final missingResult = validateNotificationArtifact(missingScan);
+      expect(missingResult.ok, isFalse);
+      expect(missingResult.detail, contains('coldWakeDeferralScan'));
+
+      // Only a scan that found nothing counts. A deferred wake, an unscanned
+      // wake, and a blank value are all rejections, not softer passes.
+      for (final value in <Object?>[
+        'deferred',
+        'skipped',
+        'unknown',
+        '',
+        false,
+      ]) {
+        final other = _notificationArtifact(
+          scenario: 'payload_fast_path_cold_kill',
+          checks: _coldChecks,
+          evidence: <String, Object?>{
+            ..._coldEvidence,
+            'coldWakeDeferralScan': value,
+          },
+        );
+        expect(
+          validateNotificationArtifact(other).ok,
+          isFalse,
+          reason: 'coldWakeDeferralScan "$value" must not validate',
+        );
+      }
     });
 
     test('G7 permission-denied proof binds attempt, custody, and recovery', () {
@@ -585,6 +635,11 @@ const List<String> _warmChecks = <String>[
   'noRelayDrainBeforeVisibility',
   'b12.warm_audible_channel',
 ];
+
+const Map<String, Object?> _coldEvidence = <String, Object?>{
+  'coldAlertChannel': 'mknoon_messages',
+  'coldWakeDeferralScan': 'clean',
+};
 
 const List<String> _coldChecks = <String>[
   'receiverTerminatedBeforeTap',

@@ -629,6 +629,12 @@ _notificationEvidenceRequirements = <String, Map<String, Set<Object>>>{
   },
   'payload_fast_path_cold_kill': <String, Set<Object>>{
     'coldAlertChannel': <Object>{'mknoon_messages'},
+    // Plan 388 (G21). This leg's graded push is the FIRST wake after an app
+    // kill, so it sits in the exact slot where a cold SQLCipher open can blow
+    // the 2 s display_eligibility budget. Until now the leg captured that
+    // window and threw it away. Requiring the scan result is what stops an
+    // artifact from claiming a clean cold wake it never looked for.
+    'coldWakeDeferralScan': <Object>{'clean'},
   },
   'tc_b13_dual_path_single_alert': <String, Set<Object>>{
     'activeCardCount': <Object>{1},

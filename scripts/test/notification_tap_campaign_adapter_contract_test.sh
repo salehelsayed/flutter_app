@@ -265,6 +265,126 @@ if grep -Eq "Process\.(run|start)\([^\n]*(flutter|gradle|xcodebuild)" "$adapter"
   fail 'Android notification adapter contains a child-build process call'
 fi
 
+# --- Plan 388 (G21): the cold graded wake is classified, not just timed out ---
+# The cold leg's graded push is the FIRST wake after the kill, so a wake that
+# exhausts a storage phase budget shows NO card: the leg dies inside
+# `_waitForNotification`, 48 lines before it reads its own log window, as an
+# untyped timeout. Classification has to happen where the cursor is still
+# reachable, and the graded window has to close before the tap.
+#
+# Every assertion about the LEG is scoped to the leg slice on purpose. The
+# classifier further down repeats the same literals, so a file-wide `grep -Fq`
+# would stay green after the leg's own scan or throw was deleted.
+cold_start="$(grep -Fn 'Future<Map<String, Object?>> _runColdPayloadLeg()' \
+  "$adapter" | head -1 | cut -d: -f1)"
+cold_end="$(grep -Fn 'Future<Map<String, Object?>> _restartAndDrain' \
+  "$adapter" | head -1 | cut -d: -f1)"
+[ -n "$cold_start" ] && [ -n "$cold_end" ] && [ "$cold_end" -gt "$cold_start" ] ||
+  fail 'could not delimit the cold payload leg in the adapter'
+cold_leg="$tmp_dir/cold-leg.dart"
+sed -n "${cold_start},${cold_end}p" "$adapter" >"$cold_leg"
+
+grep -Fq '_coldWakeLogcatCursor = logcatCursor;' "$cold_leg" ||
+  fail 'cold leg does not keep its graded-wake log cursor on the instance'
+grep -Fq 'await _coldWakeDeferralsSince(logcatCursor);' "$cold_leg" ||
+  fail 'the cold leg does not scan its own graded-wake window'
+grep -Fq 'if (coldWakeDeferrals.isNotEmpty) {' "$cold_leg" ||
+  fail 'the cold leg does not act on its own scan result'
+grep -Fq 'throw _Failure(' "$cold_leg" ||
+  fail 'the cold leg does not raise a failure on its own scan result'
+grep -Fq '$_coldWakeDeferralFailure' "$cold_leg" ||
+  fail 'a storage-deferred cold wake is not raised as a named failure by the leg'
+grep -Fq \
+  "_coldWakeDeferralFailure =" "$adapter" ||
+  fail 'the named storage-deferral failure prefix is not a shared constant'
+grep -Fq \
+  "'Cold graded wake was storage-deferred: '" "$adapter" ||
+  fail 'the storage-deferral failure prefix lost its diagnostic wording'
+grep -Fq '_coldWakeWindowScannedClean = true;' "$cold_leg" ||
+  fail 'the cold leg does not latch a clean graded window'
+grep -Fq "'coldWakeDeferralScan': coldWakeDeferralScan," "$cold_leg" ||
+  fail 'the cold artifact does not record its wake-deferral scan result'
+
+# Order inside the leg: scan -> act on the scan -> latch/record -> tap, and the
+# whole thing strictly before the wide pre-restore window read. `preRestoreLog`
+# spans the tap, the cold relaunch, the observer action and the UI wait — about
+# a minute — and `engineRole` on the deferral record is a hard-coded constant,
+# so a later wake read from that span would be misattributed to the graded one.
+leg_line() {
+  grep -Fn "$1" "$cold_leg" | head -1 | cut -d: -f1
+}
+scan_at="$(leg_line 'await _coldWakeDeferralsSince(logcatCursor);' || true)"
+throw_at="$(leg_line '$_coldWakeDeferralFailure' || true)"
+latch_at="$(leg_line '_coldWakeWindowScannedClean = true;' || true)"
+tap_at="$(leg_line '_tapNotification(marker)' || true)"
+prerestore_at="$(leg_line 'preRestoreLog = await _logcatSince' || true)"
+for probe in "$scan_at" "$throw_at" "$latch_at" "$tap_at" "$prerestore_at"; do
+  [ -n "$probe" ] ||
+    fail 'could not order the cold-wake scan against the tap and the wide window'
+done
+[ "$scan_at" -lt "$throw_at" ] ||
+  fail 'the named storage-deferral failure must follow the graded-wake scan'
+[ "$throw_at" -lt "$latch_at" ] ||
+  fail 'the clean-window latch must come after the deferral failure'
+[ "$latch_at" -lt "$tap_at" ] ||
+  fail 'the cold-wake deferral scan must close its window before the tap'
+[ "$scan_at" -lt "$prerestore_at" ] ||
+  fail 'the cold-wake deferral scan must not read the wide pre-restore window'
+
+# The scan's predicate. The record's `outcome` is the enum WIRE name, so the
+# handler's caller-side spelling `post_show_unknown` matches nothing — the
+# post-show family is `shown_state_unknown`. And `pending_overlay` is the one
+# `storage_deferred` site that records and then falls through, so the card is
+# still published; keeping it would fail a run that delivered correctly.
+grep -Fq "record.event == 'PUSH_BACKGROUND_STORAGE_DEFERRED'" "$adapter" ||
+  fail 'the cold-wake scan does not filter the storage-deferral event'
+grep -Fq 'await _flowRecordsSince(cursor)' "$adapter" ||
+  fail 'the cold-wake scan does not read the cursor-scoped flow records'
+grep -Fq "'storage_deferred'," "$adapter" ||
+  fail 'the cold-wake scan does not accept the storage_deferred outcome'
+grep -Fq "'custody_write_pending'," "$adapter" ||
+  fail 'the cold-wake scan does not accept the custody_write_pending outcome'
+if grep -Fq "'post_show_unknown'" "$adapter"; then
+  fail 'the cold-wake scan filters a caller-side spelling the record never carries'
+fi
+grep -Fq "record.details['phase'] != 'pending_overlay'" "$adapter" ||
+  fail 'the cold-wake scan does not exclude the fall-through overlay phase'
+
+# The diagnosis has to name the phase and the exact milliseconds, otherwise the
+# classifier is just a rename of the untyped timeout it replaces.
+grep -Fq "record.details['phaseName']" "$adapter" ||
+  fail 'the storage-deferral diagnosis does not name the phase'
+grep -Fq "record.details['phaseElapsedMs']" "$adapter" ||
+  fail 'the storage-deferral diagnosis does not name the exact phase-local ms'
+grep -Fq "record.details['budgetMs']" "$adapter" ||
+  fail 'the storage-deferral diagnosis does not name the budget it overran'
+# On the aggregate-exhausted branch the phase never started, so phase-local ms
+# and the budget are BOTH zero and only the whole-wake total carries a number.
+grep -Fq "record.details['elapsedMs']" "$adapter" ||
+  fail 'the storage-deferral diagnosis cannot describe an exhausted aggregate'
+grep -Fq 'if (error.detail.startsWith(_coldWakeDeferralFailure)) rethrow;' \
+  "$adapter" ||
+  fail 'the classifier re-wraps the diagnosis the leg already named'
+
+# run() must dispatch through the classifier, the classifier must not re-type
+# an environment blocker (a `_Blocked` keeps exit 78), and it must stand down
+# once the graded window has already been cleared.
+grep -Fq 'await _runColdPayloadLegClassified();' "$adapter" ||
+  fail 'run() still dispatches the cold leg without a deferral classifier'
+classifier_at="$(grep -Fn \
+  'Future<Map<String, Object?>> _runColdPayloadLegClassified()' \
+  "$adapter" | head -1 | cut -d: -f1)"
+[ -n "$classifier_at" ] ||
+  fail 'the cold-wake deferral classifier is missing'
+classifier="$tmp_dir/cold-classifier.dart"
+sed -n "${classifier_at},$((classifier_at + 40))p" "$adapter" >"$classifier"
+first_catch="$(grep -o 'on _Failure catch\|on Object catch' "$classifier" \
+  | head -1 || true)"
+[ "$first_catch" = 'on _Failure catch' ] ||
+  fail 'the cold-wake classifier must not re-type environment blockers'
+grep -Fq 'if (_coldWakeWindowScannedClean) rethrow;' "$classifier" ||
+  fail 'the classifier can blame the graded wake for a later failure'
+
 ios_output="$tmp_dir/ios.list"
 "${runner[@]}" --scenario payload_fast_path_ios_receiver --list-scenarios \
   >"$ios_output"

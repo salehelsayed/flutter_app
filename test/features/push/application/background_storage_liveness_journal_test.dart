@@ -50,8 +50,11 @@ void main() {
         await journal.recordTerminal(
           kind: BackgroundStorageMessageKind.groupMessage,
           phase: BackgroundStorageLivenessPhase.displayEligibility,
+          phaseName: BackgroundStorageDeadlinePhaseName.displayEligibility,
           outcome: BackgroundStorageTerminalOutcome.storageDeferred,
           elapsed: const Duration(milliseconds: 2300),
+          phaseElapsed: const Duration(milliseconds: 2001),
+          budget: const Duration(seconds: 2),
         );
       }
 
@@ -78,8 +81,12 @@ void main() {
       const allowedKeys = <String>{
         'kind',
         'phase',
+        'phaseName',
         'outcome',
         'elapsedBucket',
+        'elapsedMs',
+        'phaseElapsedMs',
+        'budgetMs',
         'buildMode',
         'engineRole',
       };
@@ -91,8 +98,12 @@ void main() {
         expect(record, <String, dynamic>{
           'kind': 'group_message',
           'phase': 'display_eligibility',
+          'phaseName': 'display_eligibility',
           'outcome': 'storage_deferred',
           'elapsedBucket': '2s_to_8s',
+          'elapsedMs': '2300',
+          'phaseElapsedMs': '2001',
+          'budgetMs': '2000',
           'buildMode': 'release',
           'engineRole': 'flutterfire_background',
         });
@@ -130,8 +141,11 @@ void main() {
           (_) => journal.recordTerminal(
             kind: BackgroundStorageMessageKind.directMessage,
             phase: BackgroundStorageLivenessPhase.localState,
+            phaseName: BackgroundStorageDeadlinePhaseName.previewResolution,
             outcome: BackgroundStorageTerminalOutcome.notificationSuppressed,
             elapsed: const Duration(milliseconds: 10),
+            phaseElapsed: const Duration(milliseconds: 10),
+            budget: const Duration(seconds: 2),
           ),
         ),
       );
@@ -162,8 +176,11 @@ void main() {
         (index) => journals[index % journals.length].recordTerminal(
           kind: BackgroundStorageMessageKind.groupMessage,
           phase: BackgroundStorageLivenessPhase.localState,
+          phaseName: BackgroundStorageDeadlinePhaseName.durableEffectAuthority,
           outcome: BackgroundStorageTerminalOutcome.storageDeferred,
           elapsed: Duration.zero,
+          phaseElapsed: Duration.zero,
+          budget: const Duration(seconds: 2),
         ),
       ),
     );
@@ -202,8 +219,11 @@ void main() {
         await journal.recordTerminal(
           kind: BackgroundStorageMessageKind.directMessage,
           phase: BackgroundStorageLivenessPhase.localState,
+          phaseName: BackgroundStorageDeadlinePhaseName.previewResolution,
           outcome: BackgroundStorageTerminalOutcome.storageDeferred,
           elapsed: Duration.zero,
+          phaseElapsed: Duration.zero,
+          budget: const Duration(seconds: 2),
         );
       }
 
@@ -233,8 +253,11 @@ void main() {
       await seed.recordTerminal(
         kind: BackgroundStorageMessageKind.groupMessage,
         phase: BackgroundStorageLivenessPhase.localState,
+        phaseName: BackgroundStorageDeadlinePhaseName.durableEffectAuthority,
         outcome: BackgroundStorageTerminalOutcome.storageDeferred,
         elapsed: Duration.zero,
+        phaseElapsed: Duration.zero,
+        budget: const Duration(seconds: 2),
       );
     }
     final before = <String, String>{
@@ -258,8 +281,11 @@ void main() {
     await failing.recordTerminal(
       kind: BackgroundStorageMessageKind.directReaction,
       phase: BackgroundStorageLivenessPhase.recentGate,
+      phaseName: BackgroundStorageDeadlinePhaseName.recentBackgroundRead,
       outcome: BackgroundStorageTerminalOutcome.notificationSuppressed,
       elapsed: Duration.zero,
+      phaseElapsed: Duration.zero,
+      budget: const Duration(seconds: 2),
     );
 
     final after = <String, String>{
@@ -296,8 +322,11 @@ void main() {
       final write = journal.recordTerminal(
         kind: BackgroundStorageMessageKind.groupReaction,
         phase: BackgroundStorageLivenessPhase.encryptedOpen,
+        phaseName: BackgroundStorageDeadlinePhaseName.unknown,
         outcome: BackgroundStorageTerminalOutcome.storageDeferred,
         elapsed: const Duration(seconds: 8),
+        phaseElapsed: const Duration(seconds: 8),
+        budget: const Duration(seconds: 2),
       );
       await writerEntered.future;
       await write;
@@ -323,8 +352,11 @@ void main() {
         await seedJournal.recordTerminal(
           kind: BackgroundStorageMessageKind.groupMessage,
           phase: BackgroundStorageLivenessPhase.localState,
+          phaseName: BackgroundStorageDeadlinePhaseName.previewResolution,
           outcome: BackgroundStorageTerminalOutcome.storageDeferred,
           elapsed: Duration.zero,
+          phaseElapsed: Duration.zero,
+          budget: const Duration(seconds: 2),
         );
       }
       final releasePrune = Completer<void>();
@@ -337,8 +369,11 @@ void main() {
       await stalledPrune.recordTerminal(
         kind: BackgroundStorageMessageKind.directReaction,
         phase: BackgroundStorageLivenessPhase.recentGate,
+        phaseName: BackgroundStorageDeadlinePhaseName.recentRemoteMark,
         outcome: BackgroundStorageTerminalOutcome.notificationSuppressed,
         elapsed: const Duration(milliseconds: 100),
+        phaseElapsed: const Duration(milliseconds: 100),
+        budget: const Duration(seconds: 2),
       );
       stopwatch.stop();
       expect(stopwatch.elapsed, lessThan(const Duration(milliseconds: 150)));
@@ -361,13 +396,217 @@ void main() {
         failedJournal.recordTerminal(
           kind: BackgroundStorageMessageKind.unknown,
           phase: BackgroundStorageLivenessPhase.displayEligibility,
+          phaseName: BackgroundStorageDeadlinePhaseName.displayEligibility,
           outcome: BackgroundStorageTerminalOutcome.notificationSuppressed,
           elapsed: Duration.zero,
+          phaseElapsed: Duration.zero,
+          budget: const Duration(seconds: 2),
         ),
         completes,
       );
     },
   );
+
+  // ---------------------------------------------------------------------
+  // Plan 388 (G21/G22) — exact timings on the durable surface, and a raw
+  // phase identifier that stays inside a closed domain.
+  // ---------------------------------------------------------------------
+
+  test('terminal records carry exact timings across the atomic publish', () async {
+    final journal = BackgroundStorageLivenessJournal(
+      directoryResolver: () async => root,
+      randomNonce: () => 3,
+      buildMode: BackgroundStorageBuildMode.release,
+    );
+
+    // The three durations mirror the real device sample recomputed for plan
+    // 388: a 2.170 s total that overran a 2.000 s phase budget by ~170 ms.
+    // Nothing in the six-key record could tell that from an 8 s stall.
+    await journal.recordTerminal(
+      kind: BackgroundStorageMessageKind.groupReaction,
+      phase: BackgroundStorageLivenessPhase.displayEligibility,
+      phaseName: BackgroundStorageDeadlinePhaseName.displayEligibility,
+      outcome: BackgroundStorageTerminalOutcome.storageDeferred,
+      elapsed: const Duration(milliseconds: 2170),
+      phaseElapsed: const Duration(milliseconds: 2001),
+      budget: const Duration(seconds: 2),
+    );
+
+    final published = root
+        .listSync(followLinks: false)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('.json'))
+        .toList(growable: false);
+    expect(published, hasLength(1));
+    // Read back off disk AFTER the temporary -> atomic rename publish.
+    expect(jsonDecode(published.single.readAsStringSync()), <String, dynamic>{
+      'kind': 'group_reaction',
+      'phase': 'display_eligibility',
+      'phaseName': 'display_eligibility',
+      'outcome': 'storage_deferred',
+      'elapsedBucket': '2s_to_8s',
+      'elapsedMs': '2170',
+      'phaseElapsedMs': '2001',
+      'budgetMs': '2000',
+      'buildMode': 'release',
+      'engineRole': 'flutterfire_background',
+    });
+    expect(
+      root.listSync().where((entity) => entity.path.endsWith('.tmp')),
+      isEmpty,
+    );
+  });
+
+  test('the raw phase identifier is closed-domain and tells local_state phases apart', () async {
+    // 1. Closed domain. The journal's own doc comment states the invariant:
+    //    values are fixed rather than caller-provided strings so an identifier
+    //    cannot accidentally be persisted. The raw phase name re-opens that
+    //    surface, so every `storageDeadline.run(` first argument in the handler
+    //    must still be a compile-time literal drawn from the enum.
+    final handlerSource = File(
+      'lib/features/push/application/background_message_handler.dart',
+    ).readAsStringSync();
+    final runSiteArguments =
+        RegExp(r'storageDeadline\.run(?:<[^>]*>)?\(\s*([^,]+),')
+            .allMatches(handlerSource)
+            .map((match) => match.group(1)!.trim())
+            .toList(growable: false);
+    expect(
+      runSiteArguments.length,
+      greaterThanOrEqualTo(11),
+      reason:
+          'the census must still find every deadline-guarded phase; a smaller '
+          'count means the regex stopped matching, not that phases vanished',
+    );
+    final domain = BackgroundStorageDeadlinePhaseName.values
+        .map((value) => value.wireName)
+        .toSet();
+    for (final argument in runSiteArguments) {
+      expect(
+        RegExp(r"^'[a-z0-9_]+'$").hasMatch(argument),
+        isTrue,
+        reason: 'phase names must stay compile-time literals, found: $argument',
+      );
+      expect(
+        domain,
+        contains(argument.substring(1, argument.length - 1)),
+        reason: 'every run-site phase name must be a declared domain member',
+      );
+    }
+
+    // 2. EVERY member round-trips, and an out-of-domain value degrades
+    //    instead of throwing or leaking. Asserting only the handful of phases
+    //    the behavioural tests exercise would let a three-case mapping — or a
+    //    transposition of two never-driven members — pass.
+    for (final member in BackgroundStorageDeadlinePhaseName.values) {
+      expect(
+        BackgroundStorageDeadlinePhaseName.fromWireName(member.wireName),
+        member,
+        reason: '${member.wireName} must map back to itself',
+      );
+    }
+    expect(
+      BackgroundStorageDeadlinePhaseName.values
+          .map((member) => member.wireName)
+          .toSet(),
+      hasLength(BackgroundStorageDeadlinePhaseName.values.length),
+      reason: 'two members sharing a wire name would make the map ambiguous',
+    );
+    // The domain, frozen member-by-member. Round-tripping alone cannot see a
+    // transposition — swap two members' wire names and every `fromWireName`
+    // assertion still holds — but a caller that names a member explicitly
+    // (as the fixtures above do) would then persist the wrong phase.
+    expect(<String, String>{
+      for (final member in BackgroundStorageDeadlinePhaseName.values)
+        member.name: member.wireName,
+    }, <String, String>{
+      'directPostShowValidation': 'direct_post_show_validation',
+      'directStage': 'direct_stage',
+      'displayEligibility': 'display_eligibility',
+      'durableEffectAuthority': 'durable_effect_authority',
+      'groupPostShowValidation': 'group_post_show_validation',
+      'pendingOverlay': 'pending_overlay',
+      'previewResolution': 'preview_resolution',
+      'recentBackgroundMark': 'recent_background_mark',
+      'recentBackgroundRead': 'recent_background_read',
+      'recentRemoteMark': 'recent_remote_mark',
+      'resolvedStage': 'resolved_stage',
+      'unknown': 'unknown',
+    });
+    expect(
+      BackgroundStorageDeadlinePhaseName.fromWireName('peer-abc123'),
+      BackgroundStorageDeadlinePhaseName.unknown,
+    );
+    // Every run-site literal censused above must also resolve to a member that
+    // is not the fallback — the domain check alone is satisfied by a mapping
+    // that degrades a real phase to `unknown`.
+    for (final argument in runSiteArguments) {
+      final wireName = argument.substring(1, argument.length - 1);
+      expect(
+        BackgroundStorageDeadlinePhaseName.fromWireName(wireName).wireName,
+        wireName,
+        reason: '$wireName must resolve to its own member, not the fallback',
+      );
+    }
+
+    // 3. Discrimination on the persisted record. `preview_resolution` and
+    //    `durable_effect_authority` are the only two phases the liveness enum
+    //    does not name, so both still map to `local_state`.
+    final journal = BackgroundStorageLivenessJournal(
+      directoryResolver: () async => root,
+      randomNonce: () => 0,
+      buildMode: BackgroundStorageBuildMode.release,
+    );
+    for (final phaseName in <BackgroundStorageDeadlinePhaseName>[
+      BackgroundStorageDeadlinePhaseName.previewResolution,
+      BackgroundStorageDeadlinePhaseName.durableEffectAuthority,
+    ]) {
+      await journal.recordTerminal(
+        kind: BackgroundStorageMessageKind.directMessage,
+        phase: BackgroundStorageLivenessPhase.localState,
+        phaseName: phaseName,
+        outcome: BackgroundStorageTerminalOutcome.storageDeferred,
+        elapsed: const Duration(milliseconds: 2170),
+        phaseElapsed: const Duration(milliseconds: 2001),
+        budget: const Duration(seconds: 2),
+      );
+    }
+    final decoded = root
+        .listSync(followLinks: false)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('.json'))
+        .map((file) => jsonDecode(file.readAsStringSync()))
+        .cast<Map<String, dynamic>>()
+        .toList(growable: false);
+    expect(decoded, hasLength(2));
+    for (final record in decoded) {
+      // Both facts bound on ONE record: the mapped enum still collapses and
+      // the raw identifier still discriminates.
+      expect(record['phase'], 'local_state');
+      expect(record['phaseName'], isNot('local_state'));
+    }
+    expect(
+      decoded.map((record) => record['phaseName']).toSet(),
+      <String>{'preview_resolution', 'durable_effect_authority'},
+    );
+    // 4. The redaction contract still holds over the widened record.
+    for (final record in decoded) {
+      final serialized = jsonEncode(record);
+      for (final forbidden in <String>[
+        'groupId',
+        'peerId',
+        'eventId',
+        'messageId',
+        'ciphertext',
+        'nonce',
+        'dbPath',
+        'filename',
+        'encryptionKey',
+      ]) {
+        expect(serialized, isNot(contains(forbidden)));
+      }
+    }
+  });
 
   test('elapsed bucketing is boundary exact', () {
     expect(
