@@ -1,6 +1,6 @@
 # 380 - Notification Device Matrix (PRD §13) And b12 Sound Assertions (G7 + G12)
 
-Status: **Device tier CLOSED (run 7, 2026-08-19, 9 of 9, exit 0)** — the second clean full run, and this one after the leg-6 flake had a MEASURED cause removed rather than a lucky pass. **G12 closed** (b12 warm/cold audible-channel evidence). **G7 closed** for Doze, permission denied, channel disabled and mid-session token refresh; OEM stays a typed N/A (carved out as G23 in the PRD map). TWO caveats that are deliberately NOT closure blockers but must not be forgotten: (1) `tc_g7_permission_denied` does NOT exercise Plan 385's NM override on this image — firebase_messaging answered `status=denied` honestly 3x with ZERO `PUSH_PERMISSION_OS_STATE_OVERRIDE` events, so the leg proves the coordinator's denied branch, not the 385 fix (F15); (2) the silent-channel leak did NOT reproduce in run 7, so it is INTERMITTENT, not fixed (F16).
+Status: **Device tier CLOSED (run 7, 2026-08-19, 9 of 9, exit 0)** — the second clean full run, and this one after the leg-6 flake had a MEASURED cause removed rather than a lucky pass. **G12 closed** (b12 warm/cold audible-channel evidence). **G7 closed** for Doze, permission denied, channel disabled and mid-session token refresh; OEM stays a typed N/A (carved out as G23 in the PRD map). TWO caveats that are deliberately NOT closure blockers but must not be forgotten: (1) `tc_g7_permission_denied` does NOT exercise Plan 385's NM override on this image — firebase_messaging answered `status=denied` honestly 3x with ZERO `PUSH_PERMISSION_OS_STATE_OVERRIDE` events, so the leg proves the coordinator's denied branch, not the 385 fix (F15); (2) the silent-channel leak seen on 08-18 is FIXED (another session's G25 read-back), not intermittent — my first reading of run 7 missed that its APK had changed (F16).
 Type: Modification
 Spec: free-text intent (no formal spec) — closes gaps **G12** and the closable part of **G7** from the [UI-23 E2E map](../UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md) §4.2; PRD clauses at `Mknoon_Private_Reliable_Notifications_PRD_v1.2.md:411` (Android device cases), `:277` (expedited WorkManager + generic fallback), `:390` (AC-04), `:396` (AC-10)
 Classification: evidence-gated
@@ -397,13 +397,20 @@ stay the typed N/A this plan always scoped them as). Rows 3-4 double as the devi
   for 385, whose device path remains only statically proven (385 F4). Constructing the real
   divergence needs `appops set <pkg> POST_NOTIFICATION ignore` — permission granted, NotificationManager
   off — which is a separate leg, not a change to this one.
-- **F16 — the silent-channel leak is INTERMITTENT and was not reproduced in run 7.** The
-  channel-disabled leg now blocks only the audible channel and requires
-  `mknoon_messages_silent` to stay OPEN (`channelDisabledSilentImportance == 2`) so a leak stays
-  observable; run 7 measured `channelDisabledCardCount: 0`, i.e. no card escaped. Combined with the
-  2026-08-18 observation of a surviving silent card, the leak depends on the same tone/reconcile
-  race as B13 rather than being deterministic. The leg is currently GREEN, which means it is not
-  yet a reliable detector — do NOT read this pass as "the leak is fixed".
+- **F16 — CORRECTED. The silent-channel leak was FIXED by a concurrent session, not intermittent.**
+  My first reading of run 7 was wrong: I saw `channelDisabledCardCount: 0` with the silent channel
+  deliberately left open and concluded the leak had simply failed to reproduce. It did not
+  reproduce because the APK had changed. Run 4 used artifact `1e0de3238478…`; run 7 used
+  `1235650e4340…`, a different build carrying another session's **G25** fix —
+  `resolveMknoonMessagePublicationSilence` + `mknoonPrimaryMessageChannelEnabled`
+  (`local_notification_support.dart`), which read live channel importance via
+  `AndroidFlutterLocalNotificationsPlugin.getNotificationChannels()` — the only read-back that can
+  see a single blocked channel, since neither `areNotificationsEnabled()` nor POST_NOTIFICATIONS
+  moves — and withdraw the silent downgrade while the primary channel is blocked. The publication
+  then stays on the blocked channel and the OS refuses it, which deliberately keeps the post
+  ATTEMPT real so `channelDisabledPostAttemptEvent` still has something to assert. That session
+  replicated the leak on a pre-fix build first. So the leg IS a working detector, and the earlier
+  entry in this plan recording the leak as a deferred product decision is superseded: it is fixed.
 
 
 - **F13 — `tc_g7_permission_denied` is NOT deterministic; the 9/9 run is one sample, not closure.**
