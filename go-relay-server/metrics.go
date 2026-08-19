@@ -349,6 +349,14 @@ var groupReactionWakeCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Group reaction wake decisions by outcome.",
 }, []string{"outcome"})
 
+// G26: strict-authority group content never reached the group topic, so it had
+// NO wake counter of any kind — the silence was invisible. Every decision this
+// lane makes, including the declines, increments here.
+var groupContentWakeCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_group_content_wake_total",
+	Help: "Strict-authority group content wake decisions by outcome.",
+}, []string{"outcome"})
+
 // Rendezvous counters
 
 var rendezvousRegisteredCounter = promauto.NewCounter(prometheus.CounterOpts{

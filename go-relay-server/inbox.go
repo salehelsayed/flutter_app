@@ -1756,10 +1756,20 @@ type InboxStore struct {
 	// Plan 370: the paired durable wake-outcome admission is default-off and is
 	// enabled by bootstrap only for the Redis authority.
 	wakeOutcomeAdmissionEnabled bool
+	// G26: strict-authority group content wake, default-off like every sibling
+	// push flag. Custody admission and delivery are unchanged by this flag —
+	// only whether a stored group message also wakes the recipient.
+	groupContentPushEnabled bool
 }
 
 func (is *InboxStore) SetDirectReactionPushEnabled(enabled bool) {
 	is.directReactionPushEnabled = enabled
+}
+
+func (is *InboxStore) SetGroupContentPushEnabled(enabled bool) {
+	if is != nil {
+		is.groupContentPushEnabled = enabled
+	}
 }
 
 func (is *InboxStore) SetWakeOutcomeAdmissionEnabled(enabled bool) {
@@ -2119,6 +2129,51 @@ func (is *InboxStore) launchStoredDirectPush(toPeerId string, entry inboxMessage
 			toPeerId,
 			*route,
 			entry.From,
+			entry.Message,
+		)
+		return
+	}
+
+	// G26: strict-authority group content. Placed BEFORE the chat-metadata
+	// switch because a replay envelope has no `type` field and would otherwise
+	// fall to that switch's default and be silently dropped. Recognized-but-
+	// ineligible shapes return here rather than falling through, so a reaction
+	// can never be routed onto the group-message audience.
+	if metadata, recognizedContent, eligibleContent := extractGroupContentPushMetadata(entry.Message); recognizedContent {
+		if !eligibleContent || !is.groupContentPushEnabled {
+			groupContentWakeCounter.WithLabelValues("invalid_or_disabled").Inc()
+			return
+		}
+		// Same fail-open wake-token gate as an ordinary direct message, and for
+		// the same reason: this envelope IS the group's ordinary message
+		// traffic, only carried per recipient instead of over the topic.
+		if is.wakeTokens != nil && wakeTokenGateEnforced &&
+			!is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken) {
+			pushSentCounter.WithLabelValues("unauthorized_wake").Inc()
+			groupContentWakeCounter.WithLabelValues("unauthorized_wake").Inc()
+			log.Printf("[GROUP_CONTENT_WAKE] outcome=unauthorized_wake")
+			return
+		}
+		if is.push == nil {
+			groupContentWakeCounter.WithLabelValues("push_unavailable").Inc()
+			return
+		}
+		route, err := is.push.selectPushRoute(toPeerId, "")
+		if err != nil {
+			groupContentWakeCounter.WithLabelValues("route_error").Inc()
+			return
+		}
+		if route == nil {
+			groupContentWakeCounter.WithLabelValues("incapable_skipped").Inc()
+			return
+		}
+		groupContentWakeCounter.WithLabelValues("attempted").Inc()
+		log.Printf("[GROUP_CONTENT_WAKE] outcome=attempted")
+		go is.push.sendGroupContentNotificationForRoute(
+			context.Background(),
+			toPeerId,
+			*route,
+			metadata,
 			entry.Message,
 		)
 		return

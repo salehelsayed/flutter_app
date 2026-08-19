@@ -1707,12 +1707,15 @@ func TestRelayNotificationClosure_PushRouteEncryptedResolutionFeedsEveryRichSend
 		wantCallers := []string{
 			"SendGroupNotification",
 			"SendNotification",
+			// G26: strict-authority group content never reaches the group
+			// topic, so it needs its own adapter onto the shared gateway.
+			"sendGroupContentNotificationForRoute",
 			"sendGroupReactionNotificationForRoute",
 			"sendOpaqueWakeThroughGateway",
 			"sendReactionNotificationForRoute",
 		}
 		if !reflect.DeepEqual(gatewayCallers, wantCallers) {
-			t.Fatalf("selection gateway callers = %#v, want four adapters plus outcome gateway %#v", gatewayCallers, wantCallers)
+			t.Fatalf("selection gateway callers = %#v, want five adapters plus outcome gateway %#v", gatewayCallers, wantCallers)
 		}
 		if groupSelect == token.NoPos || groupAttempted == token.NoPos || groupGo == token.NoPos ||
 			!(groupSelect < groupAttempted && groupAttempted < groupGo) {

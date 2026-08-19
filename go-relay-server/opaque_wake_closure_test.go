@@ -753,13 +753,16 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 		wantCallers := []string{
 			"SendGroupNotification",
 			"SendNotification",
+			// G26: strict-authority group content never reaches the group
+			// topic, so it needs its own adapter onto the shared gateway.
+			"sendGroupContentNotificationForRoute",
 			"sendGroupReactionNotificationForRoute",
 			"sendOpaqueWakeThroughGateway",
 			"sendReactionNotificationForRoute",
 		}
 		if !reflect.DeepEqual(selectionCallers, wantCallers) {
 			t.Fatalf(
-				"selection callers = %#v, want four adapters plus outcome gateway %#v",
+				"selection callers = %#v, want five adapters plus outcome gateway %#v",
 				selectionCallers,
 				wantCallers,
 			)

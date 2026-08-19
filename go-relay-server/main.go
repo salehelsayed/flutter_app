@@ -119,6 +119,13 @@ func main() {
 		inbox.directReactionPushEnabled,
 		directReactionPushEnabledEnv,
 	)
+	inbox.SetGroupContentPushEnabled(loadGroupContentPushEnabledFromEnv())
+	log.Printf(
+		"[INBOX] strict group content push enabled=%v (default off; %s) — "+
+			"off means strict-authority group messages are stored but never wake the recipient",
+		inbox.groupContentPushEnabled,
+		groupContentPushEnabledEnv,
+	)
 	groupInbox := stores.GroupInbox
 	if stores.WakeOutcomeCoordinator != nil {
 		stores.WakeOutcomeCoordinator.Start(ctx)

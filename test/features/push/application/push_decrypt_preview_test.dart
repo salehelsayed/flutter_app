@@ -1638,6 +1638,135 @@ void main() {
       },
     );
 
+    // ------------------------------------------------------------------
+    // G26: the STRICT-authority group lane never reaches the Go group
+    // topic. It signs one `group_offline_replay` envelope per recipient
+    // into the DIRECT inbox under `group_content_v1` custody, and the relay
+    // used to store it without ever pushing — §1.3's killed-path row was
+    // unreachable on that lane by construction.
+    //
+    // The relay now routes it through the SAME `buildGroupPushMessage` the
+    // topic lane uses (`go-relay-server/group_content_push.go`), so the
+    // recipient needs no change. This row is the proof of that claim: it
+    // feeds the exact 10 data keys the relay emits and the exact plaintext
+    // the strict sender encrypts, and asserts a real card comes back.
+    //
+    // Byte-shape anchors (re-derive if either side moves):
+    //   outer keys     go-relay-server/inbox.go:854-899,:1221-1256
+    //   inner payload  send_group_message_use_case.dart:2567-2589
+    //                  (`inboxPayload`, also the strict replay plaintext)
+    // Unlike the default lane's Go LIVE envelope, this plaintext IS
+    // id-complete — which is why the sender clause agrees rather than
+    // needing 384's null guard. Both shapes now card.
+    // ------------------------------------------------------------------
+    test(
+      'strict-lane group content push renders the trusted group card',
+      () async {
+        final events = captureFlowEvents();
+        final resolved = await resolveBackgroundPushNotification(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-team',
+              'sender_transport_peer_id': 'transport-admin-phone',
+              'message_id': 'msg-strict-content',
+              'kind': 'group_offline_replay',
+              'envelope_version': '1',
+              'payloadType': 'group_message',
+              'keyEpoch': '7',
+              'ciphertext': 'ciphertext',
+              'nonce': 'nonce',
+            },
+          ),
+          groupMessageContext: const GroupMessageNotificationContext(
+            groupId: 'group-team',
+            groupName: 'Team from groups DB',
+            localPeerId: 'peer-local',
+            senderPeerId: 'peer-admin',
+            senderTransportPeerId: 'transport-admin-phone',
+            senderUsername: 'Admin from members DB',
+            expectedMessageId: 'msg-strict-content',
+          ),
+          decryptGroup:
+              ({
+                required groupId,
+                required keyEpoch,
+                required ciphertext,
+                required nonce,
+              }) async => jsonEncode(<String, Object?>{
+                'groupId': 'group-team',
+                'groupName': 'ATTACKER GROUP',
+                'senderId': 'peer-admin',
+                'senderDeviceId': 'device-admin-phone',
+                'transportPeerId': 'transport-admin-phone',
+                'senderUsername': 'ATTACKER ACTOR',
+                'keyEpoch': 7,
+                'text': 'Strict group standup',
+                'timestamp': '2026-08-19T09:41:12.481931Z',
+                'messageId': 'msg-strict-content',
+                'logicalDeliveryId': 'logical-delivery-strict',
+              }),
+        );
+
+        expect(resolved.title, 'Team from groups DB');
+        expect(resolved.body, 'Admin from members DB: Strict group standup');
+        final comparand =
+            resolved.groupComparand
+                as BackgroundGroupMessageNotificationComparand;
+        expect(comparand.groupId, 'group-team');
+        expect(comparand.messageId, 'msg-strict-content');
+        expect(comparand.senderPeerId, 'peer-admin');
+        expect(eventsNamed(events, 'PUSH_ANDROID_DATA_DECRYPT_FAIL'), isEmpty);
+      },
+    );
+
+    // The relay degrades an unusable epoch to a routing-only push rather than
+    // dropping the wake. The recipient must still card, generically.
+    test(
+      'strict-lane routing-only fallback still returns a trusted card',
+      () async {
+        final events = captureFlowEvents();
+        final resolved = await resolveBackgroundPushNotification(
+          const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-team',
+              'sender_transport_peer_id': 'transport-admin-phone',
+              'message_id': 'msg-strict-fallback',
+              'preview_unavailable': '1',
+            },
+          ),
+          groupMessageContext: const GroupMessageNotificationContext(
+            groupId: 'group-team',
+            groupName: 'Team from groups DB',
+            localPeerId: 'peer-local',
+            senderPeerId: 'peer-admin',
+            senderTransportPeerId: 'transport-admin-phone',
+            senderUsername: 'Admin from members DB',
+            expectedMessageId: 'msg-strict-fallback',
+          ),
+          decryptGroup:
+              ({
+                required groupId,
+                required keyEpoch,
+                required ciphertext,
+                required nonce,
+              }) async => throw StateError('must not decrypt a stripped push'),
+        );
+
+        expect(resolved.title, 'Team from groups DB');
+        expect(resolved.body, isNotEmpty);
+        expect(resolved.body, isNot(contains('ATTACKER')));
+        expect(
+          eventsNamed(
+            events,
+            'PUSH_ANDROID_DATA_DECRYPT_FAIL',
+          ).map((event) => (event['details']! as Map)['reason']).toList(),
+          contains('missing_group_decrypt_input'),
+        );
+      },
+    );
+
     test(
       'trusted group context with no local group name stays generic',
       () async {
