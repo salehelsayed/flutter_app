@@ -1,6 +1,6 @@
 # 389 - Reaction lane: a post-kill warm-up the graded assertions can survive
 
-Status: **EXECUTED (host tier) 2026-08-19** — all ten host rows green, 6 causal REDs recorded against HEAD in a worktree, 7/7 mutations re-red, `lib/` diff empty. **Device tier (TC-389-11) pending** — see Execution Progress.
+Status: **EXECUTED AND CLOSED AT DEVICE TIER 2026-08-19** — `groups.reaction_notification_campaign` **PASS, assertions=5, 5 of 5**. Both previously blocked scenarios validate, each with 3 post-kill wakes served by ONE resident isolate pid and zero storage deferrals. Host tier: all ten rows green, 6 causal REDs recorded against HEAD in a worktree, 7/7 mutations re-red, `lib/` diff empty. **This also takes plan 386's TC-386-11 from 3/5 to 5/5 and unblocks plan 388's Wave 3.**
 Type: Bug
 Spec: free-text intent (no formal spec) — gap **G11** of `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md` §4.8, taken from Plan 386's `Residual And Handoff`
 Classification: implementation-ready
@@ -253,12 +253,12 @@ git diff --check
 - **Environment blocker (NOT a product blocker):** the device pair or the `android.production_fcm` APK slot held by a Plan 388 run.
 - **Scope drift (BLOCKING):** any `lib/` edit; a new file under `integration_test/scripts/`; a new scenario id, measurement key or evidence kind; an unconditional widening of `:2843-2852` or `:2869-2877`; any change to `_waitForNotificationCard()` at `:2284`/`:2297`.
 
-- [ ] Every behavior has a named test or a justified proof.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded — including TC-389-02's kill of the accumulated-list widening and TC-389-07's kill of the ported `>= 2` rule.
-- [ ] The allow-list is closed (TC-389-03), so the widening loses no leaked-card coverage.
-- [ ] `git diff --name-only -- lib/` is empty and no file was added under `integration_test/scripts/`.
-- [ ] Both blocked scenarios validate on device with `>= 3` post-kill wakes and the graded pushes served by the warm-up's pid.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
+- [x] Every behavior has a named test or a justified proof.
+- [x] Causal RED, focused GREEN, and representative mutation re-red are recorded — 6 REDs at HEAD in a worktree, 55/55 GREEN, 7/7 mutations re-red including TC-389-02's kill of the accumulated-list widening (m1) and TC-389-07's kill of the ported `>= 2` rule (m6).
+- [x] The allow-list is closed (TC-389-03); mutation m2 opens it and TC-389-03 reds.
+- [x] `git diff --name-only -- lib/` is empty and no file was added under `integration_test/scripts/`.
+- [x] Both blocked scenarios validate on device with exactly 3 post-kill wakes and the graded pushes served by the warm-up's pid (11332 and 17297).
+- [x] `flutter analyze` has no new issues; `git diff --check` is clean.
 
 ## Device/Relay Proof Profile
 
@@ -312,6 +312,8 @@ Each is a deliberate departure with its reason. None widens scope; two were forc
 5. **The warm-up card is dismissed at the end of the lane, unconditionally and best-effort.** The plan left this as unresolved-verify. It is a real hazard, not a maybe: `AndroidAppStateGuard.prepareFreshInstall` runs `pm install -r` plus a `run-as rm -rf` of the private entries (`android_app_state_guard.dart:549-597`), and neither cancels a posted notification — while both blocked ids sit in the MIDDLE of the campaign catalog. Dismissal costs two adb calls. It is best-effort because every graded observation is already captured by then: failing a good run over housekeeping would cost more than the blocked slate it prevents.
 6. **An eighth host row was added — the background-connected lane's exemption from the wake floor.** TC-389-07 names only the killed lanes, so nothing in the contract would have caught a floor wrongly applied to `android_group_reaction_recipient_background_connected` until the device campaign reached it. The row asserts both that its artifact validates and that its `recipient_app` carries no `PUSH_BACKGROUND_MESSAGE_RECEIVED` at all, so it cannot pass by accident.
 7. **TC-389-06's extra card is the WARM-UP-titled one.** The plan's cell says "graded + foreign card", but a foreign-titled card is rejected by the reaction form too — that fixture cannot kill the mutation the row exists for. The test runs both sub-cases; mutation m5 confirms the warm-up-titled one is the kill.
+8. **Orbit navigation had to be routed through the Inner Circle.** Not predicted by the plan and only findable on device: accepting a group invite lands Orbit on the all-chats `Intros` filter, which EXCLUDES active group nodes (`capture:100-107`). One group hid this; the second accept leaves the device on that filter and `_ensureOrbit`'s `Open group <name>` probe finds nothing. `_ensureGradedGroupOrbitRow` / `_openGradedGroup` adopt the helper the muted and Plan-330 lanes already use, and only when a warm-up group exists.
+9. **The warm-up group is always a CHAT group.** Also device-found: `_createAndAcceptGroup` inherited `scenario.groupType`, so in the announcement scenario the warm-up group was an announcement group — admin-only posting, admin = the creator = the recipient, the device this lane kills. The sender had no composer. `_createAndAcceptGroup` now takes a `groupType`.
 
 ## Execution Progress
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
@@ -332,4 +334,5 @@ Each is a deliberate departure with its reason. None widens scope; two were forc
 | 2026-08-19 | **device run 2 — `android_group_reaction_recipient` VALID** | — | `VALID [TC-15/android_group_reaction_recipient]: authoritative artifact contract accepted` | **3** post-kill wakes; all three served by the **same pid 11332** (warm-up 19:22:50, graded ADD 19:23:26, re-ADD 19:23:51); a card SHOWN 3.1–5.6 s after each receipt; **zero** `PUSH_BACKGROUND_STORAGE_DEFERRED` in the window | blocked since plan 386 — now closed | announcement |
 | 2026-08-19 | device run 3 — **FAILED** | — | `run_reaction_scenario_386.sh android_announcement_reaction_recipient` → `CAPTURE_FAILED … group_compose_marker_editorUnavailable_on_emulator-5554` | user-supplied screenshot: the emulator sat in `Warmup3d0cbd8e1760` carrying the **Announce** badge, with "Only admins can send messages in this group". Alice IS a member — the join row renders — so this is correct product behaviour, not a membership defect | **second structural find:** `_createAndAcceptGroup` inherited `scenario.groupType`, so the warm-up group was an ANNOUNCEMENT group whose admin is the creator — the recipient, the device this lane kills. The only device left to send the warm-up had no composer | make it a chat group |
 | 2026-08-19 | warm-up group type | `capture_group_reaction_notification_device.dart` | `_createAndAcceptGroup({String? name, String? groupType})`, warm-up pinned to `'chat'`; contract shell + 69 host tests still green | the warm-up group's type proves nothing — it exists only to fork the recipient's background isolate | — | re-run |
+| 2026-08-19 | **FULL CAMPAIGN — 5 of 5** | — | `/claude-host-bin/host-run bash docker-ws/run_reaction_campaign_386.sh` → `PASS groups.reaction_notification_campaign assertions=5`, exit 0 | every scenario's validation verdict `ok=true`: both message lanes, both reaction recipients, and the background-connected reaction. The background-connected lane gets NO warm-up and still validates, so the widening did not quietly become the only path that works | **TC-389-11 CLOSED. Plan 386's TC-386-11 goes 3/5 → 5/5** | plan 388 Wave 3 |
 | 2026-08-19 | **device run 4 — `android_announcement_reaction_recipient` VALID** | — | `VALID [TC-15/android_announcement_reaction_recipient]: authoritative artifact contract accepted` | **3** post-kill wakes; all three on the **same pid 17297** (19:38:52 / 19:39:49 / 19:40:13); **zero** storage deferrals. Warm-up → replacement gap **81.2 s**, vs **61.1 s** on the group run — both ABOVE the plan's 40–55 s estimate and inside the muted lane's measured 57–114 s residency band | **TC-389-11 closed for both blocked ids** | full campaign |
