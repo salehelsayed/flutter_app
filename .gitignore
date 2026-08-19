@@ -187,3 +187,10 @@ graphify-arch/graphify-out/20*/
 
 # Device log captures — large, session-local.
 /docker-ws/iphone13_syslog.txt
+
+# Signing credentials - never commit.
+# Removed from tracking 2026-08-19: readable anonymously in this public repo.
+APPLE/*.p8
+APPLE/*.jks
+APPLE/*.keystore
+/backup/
