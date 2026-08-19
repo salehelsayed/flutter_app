@@ -1,6 +1,6 @@
 # 386 - Reaction-Lane Evidence Repair (G16 + G20) And The Provable Half Of The Audience Rule (G18)
 
-Status: execution-ready
+Status: EXECUTED 2026-08-19 — source waves landed (`4040feb82`, `9c6874e25`, `59ce6b818`); TC-386-01..10 CLOSED, TC-386-11 at **3/5**. One residual, handed off: see Residual And Handoff.
 Type: Bug
 Spec: free-text intent (no formal spec) — gaps G16/G20/G18 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md` §4.6
 Classification: implementation-ready
@@ -517,6 +517,56 @@ write and validator acceptance for every scenario they own. The only pinned nume
 - [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
 - [ ] The Scope Contract And Guard is respected.
 
+## Residual And Handoff (2026-08-19)
+
+**Landed and closed.** W1 (G16), W2 (G20) and W3 (G18-partial) are implemented, gated and committed.
+Ten of the eleven contract rows are proven; TC-386-10 closed on device. Nothing is uncommitted, and
+no `lib/` or `go-relay-server/` file was touched.
+
+**The one residual: TC-386-11 is 3/5.**
+
+| Scenario | Device result |
+|---|---|
+| `android_group_message_unread_lifecycle` | PASSED |
+| `android_announcement_message_unread_lifecycle` | PASSED |
+| `android_group_reaction_recipient_background_connected` | PASSED (2nd run; the 1st overran the 60 s window at 82 s — 74 s of that was waiting for the OS card, 8.4 s was the harness) |
+| `android_group_reaction_recipient` | **BLOCKED** — cold-wake storage deferral |
+| `android_announcement_reaction_recipient` | **BLOCKED** — same, not yet run (campaign fails fast) |
+
+**Why the two are blocked, verified not assumed.** The first FCM wake after a kill opens SQLCipher
+cold and exceeds the 2 s `display_eligibility` budget, so the isolate returns at
+`PUSH_BACKGROUND_STORAGE_DEFERRED` **upstream of the presenter** and no card is posted. Measured this
+run: push received 12:15:24.952, deferral 12:15:27.340, `elapsedBucket=2s_to_8s`,
+`kind=group_reaction`. This is latent, not introduced — before this plan the lane died two minutes
+earlier at the provider wait and never reached the card.
+
+**Why the known fix does not drop in.** Plan 383 solved this elsewhere with a throwaway warm-up push.
+Here the recipient AUTHORS the target (`capture:2593`), so its unread is 0 and the lane pins
+`unread=0,0,0` plus `expectedUnread: 0` UI snapshots and exactly-two card assertions. Warmth is
+per-process, so the warm-up must land AFTER the kill — and the only thing that wakes a killed
+recipient is an incoming group MESSAGE, which creates exactly the unread and card those rows assert
+the absence of. Both alternatives were checked and ruled out in source:
+- **A warm-up REACTION cannot work.** `fanOutGroupReactionPush` pushes only to
+  `NotificationRecipientTransportPeerIDs`, and a non-author is never nominated — the rule TC-386-10
+  just proved. A killed non-author therefore receives no push and never wakes.
+- **A warm-up 1:1 message would have to be built.** No 1:1 send helper exists in this capture.
+
+**Cost to close, for whoever picks it up.** Re-scope those two scenarios' evidence contract: the
+unread pins, the UI unread snapshots and the card assertions, across `capture_…_device.dart`,
+`group_reaction_notification_device_criteria.dart` and the host fixture builder, plus two device runs.
+It is a scope change, which is why this plan stopped rather than improvising it.
+
+**Coordinate before starting.** [Plan 388](388-killed-path-cold-wake-deferral-observability-tdd-plan.md)
+Wave 3 already claims re-running these same two scenarios and states it waits for 386's device legs.
+388 **measures** the deferral, it does not fix it — its own hard `Do not` reads *"Do not add a fallback
+card, a retry, or any alerting change for `storage_deferred`. This plan measures."* The actual alerting
+fix is deferred there to the dropped-push-recovery activation wave. Agree ownership with 388 before
+editing this lane.
+
+**Re-running one scenario without the whole campaign:**
+`/claude-host-bin/host-run bash docker-ws/run_reaction_scenario_386.sh <scenario-id>` — the campaign
+fails fast, so a scenario after the first failure otherwise never gets a turn.
+
 ## Handoff
 - First causal RED command:
   `flutter test test/integration/group_reaction_notification_device_criteria_test.dart --plain-name 'reaction provider evidence accepts the v1.8.0 outcome journal'`.
@@ -527,9 +577,11 @@ write and validator acceptance for every scenario they own. The only pinned nume
   W3 deliberately adds no scenario id.
 - Migration: none.
 - Boundary closure: two device campaign runs, via wrappers authored in step 8.
-- Unresolved evidence: emulator-5554's ring size in its sender role (measured and recorded in step 6,
-  no contract row depends on it); and the live counter-delta values for this topology, which the first
-  reaction-campaign run establishes.
+- Unresolved evidence: **both resolved 2026-08-19.** Ring sizes measured: `emulator-5554` main =
+  **2 MiB**, `21071FDF600CSC` main = **256 KiB** — eight times smaller than this plan's prose assumed.
+  At the ~800 KB/min observed during the campaign, every `logcat -d` read on the graded PHYSICAL
+  recipient was a **~19-second** window, so G20 was more severe than assessed. Live counter-delta
+  values for this topology are recorded in Execution Progress.
 
 ## Execution Progress
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
