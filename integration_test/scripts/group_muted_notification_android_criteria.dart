@@ -8,6 +8,7 @@ import 'reaction_notification_proof_support.dart'
         extractActiveContentNotificationCards,
         parseRelayMetricsWindow,
         relayMetricsBaselinePhase,
+        relayMetricsLivenessSentinel,
         relayMetricsFinalPhase,
         relayMetricsPhaseMarker,
         relayCounterSeries,
@@ -1216,6 +1217,12 @@ Future<void> _validateSelfReactionAudience(
     failures.add(
       '$path.relayMetrics is not an ordered baseline/final pair of raw relay '
       'counter scrapes',
+    );
+    return;
+  }
+  if (window.isProcessContinuous != true) {
+    failures.add(
+      '$path.relayMetrics does not span one continuous relay process',
     );
     return;
   }
@@ -2891,18 +2898,26 @@ String selfReactionRelayMetricsFixture({
   double noWakeRecipientsDelta = 1,
   double attemptedDelta = 0,
   bool includeFinalPhase = true,
+  bool relayRestarted = false,
 }) {
-  String scrape(double noWake, double attempted) =>
+  String scrape(double noWake, double attempted, double sentinel) =>
+      '$relayMetricsLivenessSentinel $sentinel\n'
       'relay_group_reaction_wake_total{outcome="no_wake_recipients"} $noWake\n'
       'relay_group_reaction_wake_total{outcome="attempted"} $attempted\n'
       'relay_push_sent_total{result="success"} 900.0\n';
   final buffer = StringBuffer()
     ..write('$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n')
-    ..write(scrape(7, 40));
+    ..write(scrape(7, 40, 2320));
   if (includeFinalPhase) {
     buffer
       ..write('$relayMetricsPhaseMarker$relayMetricsFinalPhase\n')
-      ..write(scrape(7 + noWakeRecipientsDelta, 40 + attemptedDelta));
+      ..write(
+        scrape(
+          7 + noWakeRecipientsDelta,
+          40 + attemptedDelta,
+          relayRestarted ? 4 : 2323,
+        ),
+      );
   }
   return buffer.toString();
 }

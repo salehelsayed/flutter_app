@@ -4720,9 +4720,16 @@ class _Plan257Capture {
         'http://127.0.0.1:2112/metrics',
       ], allowFail: true),
       succeeded: (value) =>
-          value.exitCode == 0 && value.stdout.contains(relayPushSentCounter),
+          value.exitCode == 0 &&
+          value.stdout.contains(relayMetricsLivenessSentinel),
     );
-    if (result.exitCode != 0 || !result.stdout.contains(relayPushSentCounter)) {
+    // Liveness is keyed on a PLAIN counter, never on the two graded families:
+    // both are labelled `CounterVec`s, which Prometheus does not export at all
+    // until some label combination has been incremented. Measured 2026-08-19
+    // against the production box after the v1.9.0 restart — a healthy endpoint
+    // returned 53 KB with zero `relay_group_reaction_wake_total` lines.
+    if (result.exitCode != 0 ||
+        !result.stdout.contains(relayMetricsLivenessSentinel)) {
       throw _CaptureFailure.environment(
         stage,
         'relay_metrics_endpoint_unreadable: ${_lastLine(result.combined)}',
@@ -4733,7 +4740,8 @@ class _Plan257Capture {
         .where(
           (line) =>
               line.startsWith(relayGroupReactionWakeCounter) ||
-              line.startsWith(relayPushSentCounter),
+              line.startsWith(relayPushSentCounter) ||
+              line.startsWith(relayMetricsLivenessSentinel),
         )
         .join('\n');
     return '$kept\n';

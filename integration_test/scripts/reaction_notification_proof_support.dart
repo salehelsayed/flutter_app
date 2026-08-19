@@ -6630,6 +6630,23 @@ const String relayMetricsFinalPhase = 'final';
 const String relayGroupReactionWakeCounter = 'relay_group_reaction_wake_total';
 const String relayPushSentCounter = 'relay_push_sent_total';
 
+/// Liveness sentinel for a `/metrics` scrape.
+///
+/// Neither counter above can serve as one. Both are `promauto.NewCounterVec`s,
+/// and Prometheus exports NOTHING for a labelled family until some label
+/// combination has actually been incremented — so on a freshly restarted relay
+/// (v1.9.0 went out 2026-08-19) a perfectly healthy endpoint returns a 53 KB
+/// exposition with zero `relay_group_reaction_wake_total` lines. Keying
+/// liveness on their presence blocks the lane on a working relay; measured
+/// 2026-08-19 against the production box.
+///
+/// `relay_group_inbox_retrieves_total` (`go-relay-server/metrics.go:384`) is a
+/// PLAIN counter, so it is exported from registration onward, and it is
+/// monotonic within a process — which makes it a process-continuity oracle as
+/// well as a liveness one: if it goes backwards between the two phases the
+/// relay restarted and no delta in the file means anything.
+const String relayMetricsLivenessSentinel = 'relay_group_inbox_retrieves_total';
+
 /// One parsed Prometheus sample: the metric name plus its label set, mapped to
 /// a value.
 ///
@@ -6688,6 +6705,17 @@ class RelayMetricsWindow {
   /// relay process RESTARTED mid-window; the delta is then meaningless and this
   /// returns null so the caller fails closed rather than reading a reset as a
   /// decrease.
+  /// Whether both phases come from the SAME relay process.
+  ///
+  /// Null when the sentinel is missing from either phase (a truncated or
+  /// hand-assembled file), false when it went backwards (a restart).
+  bool? get isProcessContinuous {
+    final before = baseline[relayMetricsLivenessSentinel];
+    final after = finalScrape[relayMetricsLivenessSentinel];
+    if (before == null || after == null) return null;
+    return after >= before;
+  }
+
   double? delta(String series) {
     final after = finalScrape[series];
     final before = baseline[series] ?? 0;

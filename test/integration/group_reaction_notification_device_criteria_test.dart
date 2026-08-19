@@ -321,14 +321,16 @@ void main() {
         // A truncated file with only a baseline — must never grade as "no
         // growth", which is exactly what a lenient parser would do.
         groupReactionRelayMetricsFixture(includeFinalPhase: false),
-        // A relay restart: the counter went backwards, so no delta in the file
-        // can be trusted.
+        // A relay RESTART. The graded deltas here look perfect in isolation
+        // (attempted +2); only the sentinel going backwards reveals that the
+        // two phases came from different processes.
+        groupReactionRelayMetricsFixture(relayRestarted: true),
+        // A scrape with no liveness sentinel at all — a truncated or
+        // hand-assembled file, which must never grade as a clean window.
         '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n'
             'relay_group_reaction_wake_total{outcome="attempted"} 40.0\n'
-            'relay_push_sent_total{result="success"} 900.0\n'
             '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n'
-            'relay_group_reaction_wake_total{outcome="attempted"} 2.0\n'
-            'relay_push_sent_total{result="success"} 2.0\n',
+            'relay_group_reaction_wake_total{outcome="attempted"} 42.0\n',
       ]) {
         final artifact = await _writeArtifactFixture(
           Directory('${tempDirectory.path}/empty-${broken.hashCode}')
@@ -1140,12 +1142,23 @@ String groupReactionRelayMetricsFixture({
   double incapableSkippedDelta = 0,
   double pushSentDelta = 2,
   bool includeFinalPhase = true,
+  bool relayRestarted = false,
 }) {
   const attemptedBase = 40.0;
   const routeErrorBase = 3.0;
   const incapableBase = 1.0;
   const pushSentBase = 900.0;
-  String scrape(double attempted, double routeError, double incapable, double push) =>
+  String scrape(
+    double attempted,
+    double routeError,
+    double incapable,
+    double push,
+    double sentinel,
+  ) =>
+      // The liveness sentinel is a PLAIN counter, so it is exported from
+      // registration; the two graded families are labelled CounterVecs and are
+      // absent entirely until first increment.
+      '$relayMetricsLivenessSentinel $sentinel\n'
       'relay_group_reaction_wake_total{outcome="attempted"} $attempted\n'
       'relay_group_reaction_wake_total{outcome="route_error"} $routeError\n'
       'relay_group_reaction_wake_total{outcome="incapable_skipped"} $incapable\n'
@@ -1153,7 +1166,9 @@ String groupReactionRelayMetricsFixture({
       'relay_push_sent_total{result="success"} $push\n';
   final buffer = StringBuffer()
     ..write('$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n')
-    ..write(scrape(attemptedBase, routeErrorBase, incapableBase, pushSentBase));
+    ..write(
+      scrape(attemptedBase, routeErrorBase, incapableBase, pushSentBase, 2320),
+    );
   if (includeFinalPhase) {
     buffer
       ..write('$relayMetricsPhaseMarker$relayMetricsFinalPhase\n')
@@ -1163,6 +1178,7 @@ String groupReactionRelayMetricsFixture({
           routeErrorBase + routeErrorDelta,
           incapableBase + incapableSkippedDelta,
           pushSentBase + pushSentDelta,
+          relayRestarted ? 4 : 2325,
         ),
       );
   }

@@ -2249,6 +2249,14 @@ void _validateAuthoritativeEvidence({
       r'$.evidence[relay_metrics] is not an ordered baseline/final pair of raw '
       'relay counter scrapes',
     );
+  } else if (metrics.isProcessContinuous != true) {
+    // Both phases must come from the SAME relay process. The sentinel is a
+    // plain counter, exported from registration and monotonic within a process,
+    // so a missing or regressed one means the file is truncated or the relay
+    // restarted mid-capture — either way no delta below means anything.
+    failures.add(
+      r'$.evidence[relay_metrics] does not span one continuous relay process',
+    );
   } else if (messageScenario) {
     // The message lane has NO wake counter and no per-recipient journal line of
     // any kind: `fanOutPush` contains zero `log.Printf`. Its relay-side

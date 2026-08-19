@@ -18,7 +18,7 @@ cd "$REPO"
 export MKNOON_RELAY_ADDRESSES='/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g'
 export MKNOON_257_RELAY_TARGET='ubuntu@mknoun.xyz'
 export MKNOON_257_RELAY_KEY="$REPO/se.pem"
-export FIREBASE_SERVICE_ACCOUNT="$REPO/mknoun-c6e62-firebase-adminsdk-fbsvc-70e1a8d4fb.json"
+export FIREBASE_SERVICE_ACCOUNT="$REPO/mknoon-c6e62-firebase-adminsdk-fbsvc-70e1a8d4fb.json"
 export MKNOON_257_STAGING_MANIFEST="$REPO/docker-ws/group-reaction-staging-manifest-315.json"
 # 21071FDF600CSC = physical Pixel 6 (scenario RECIPIENT); emulator-5554 =
 # sdk_gphone16k_arm64 (scenario SENDER). Both pinned by Plan 379.

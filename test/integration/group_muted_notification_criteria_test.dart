@@ -366,6 +366,28 @@ void main() {
       expect(validation.detail, contains('SENDER-authored warm-up'));
     });
 
+    test('rejects a self-reaction window spanning a relay restart', () async {
+      // The graded deltas look perfect in isolation; only the liveness
+      // sentinel going backwards reveals that the two phases came from
+      // different relay processes.
+      final happy = happyMutedReactionCaptureInput();
+      final validation = await validate(
+        happy.copyWith(
+          selfReactionAudience: GroupMutedSelfReactionAudienceInput(
+            targetMarker: happy.selfReactionAudience!.targetMarker,
+            recipientCardCountBefore: 1,
+            recipientCardCountAfter: 1,
+            senderCardCountBefore: 0,
+            senderCardCountAfter: 0,
+            relayMetrics: selfReactionRelayMetricsFixture(relayRestarted: true),
+          ),
+        ),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(validation.detail, contains('continuous relay process'));
+    });
+
     test('rejects a truncated self-reaction counter window', () async {
       final happy = happyMutedReactionCaptureInput();
       final validation = await validate(

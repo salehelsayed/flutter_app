@@ -20,7 +20,7 @@ cd "$REPO"
 export MKNOON_RELAY_ADDRESSES='/dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,/dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g'
 export MKNOON_257_RELAY_TARGET='ubuntu@mknoun.xyz'
 export MKNOON_257_RELAY_KEY="$REPO/se.pem"
-export FIREBASE_SERVICE_ACCOUNT="$REPO/mknoun-c6e62-firebase-adminsdk-fbsvc-70e1a8d4fb.json"
+export FIREBASE_SERVICE_ACCOUNT="$REPO/mknoon-c6e62-firebase-adminsdk-fbsvc-70e1a8d4fb.json"
 export MKNOON_257_STAGING_MANIFEST="$REPO/docker-ws/group-reaction-staging-manifest-315.json"
 # 21071FDF600CSC = physical Pixel 6 (scenario RECIPIENT); emulator-5554 =
 # sdk_gphone16k_arm64 (scenario SENDER).
@@ -34,10 +34,16 @@ export SIMS_ANDROID_EMULATOR_DEVICE_ID='emulator-5554'
 # The relay's `/metrics` endpoint is the provider oracle now. If it is not
 # readable over the capture's own ssh channel, every counter delta would be
 # unattributable and the lane would red for an environment reason.
+#
+# Keyed on `relay_group_inbox_retrieves_total`, a PLAIN counter that is exported
+# from registration onward — never on the graded families. Both of those are
+# labelled CounterVecs, and Prometheus exports nothing for a labelled family
+# until some label combination has been incremented, so a freshly restarted
+# relay serves a healthy 53 KB exposition with zero wake-counter lines.
 ssh -o BatchMode=yes -o ConnectTimeout=15 -i "$MKNOON_257_RELAY_KEY" \
   "$MKNOON_257_RELAY_TARGET" 'curl -sS --max-time 15 http://127.0.0.1:2112/metrics' |
-  grep -q relay_group_reaction_wake_total || {
-    echo "BLOCKED(environment): relay :2112/metrics did not expose relay_group_reaction_wake_total"
+  grep -q relay_group_inbox_retrieves_total || {
+    echo "BLOCKED(environment): relay :2112/metrics is not serving a Prometheus exposition"
     exit 2
   }
 
