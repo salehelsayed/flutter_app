@@ -163,3 +163,10 @@ output/
 
 # Claude Code scheduler state
 .claude/scheduled_tasks.lock
+
+# Signing credentials - never commit.
+# Removed from tracking 2026-08-19: readable anonymously in this public repo.
+APPLE/*.p8
+APPLE/*.jks
+APPLE/*.keystore
+/backup/
