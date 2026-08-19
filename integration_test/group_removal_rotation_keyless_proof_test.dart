@@ -28,9 +28,16 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_group_repository.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'group-removal-rotation-keyless-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   group('real-crypto removal-rotation fails-closed (Finding 03 Slice 1)', () {
     late GoBridgeClient bridge;

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../_support/canonical_runtime_device_test_lease.dart';
 import '../feed_performance_test.dart';
 import 'android_critical_performance_evidence.dart';
 import 'sims_runtime_protocol.dart';
@@ -130,6 +131,15 @@ Map<String, Object?> _budgetAssertion({
 };
 
 Future<_BridgePerformanceResult> _measureProductionGoBridge() async {
+  // Self-guarded here rather than at `sims_dispatcher.dart`, which is the
+  // shared prebuilt-APK entrypoint for EVERY sims scenario. Only this one
+  // crosses the Go bridge; leasing the dispatcher would attach the Go runtime
+  // and open the probe database for `android.voice_recorder_native_smoke` too,
+  // which needs neither.
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'android-critical-performance-device-test',
+  );
+  await runtimeLease.acquire();
   final bridge = GoBridgeClient();
   try {
     await bridge.initialize();
@@ -155,6 +165,7 @@ Future<_BridgePerformanceResult> _measureProductionGoBridge() async {
     );
   } finally {
     bridge.dispose();
+    await runtimeLease.release();
   }
 }
 

@@ -41,6 +41,7 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/signal_files.dart';
 
@@ -115,6 +116,12 @@ void main() {
     });
     return;
   }
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'soak-e2e-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   testWidgets('soak E2E — signal-driven loop', (tester) async {
     // 1. Read CLI peer fixture

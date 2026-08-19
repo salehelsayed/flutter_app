@@ -7,10 +7,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '_support/canonical_runtime_device_test_lease.dart';
 import 'benchmark_helpers.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'cold-start-sendable-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();

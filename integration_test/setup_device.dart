@@ -73,10 +73,18 @@ import 'package:flutter_app/features/identity/application/generate_identity_use_
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 
+import '_support/canonical_runtime_device_test_lease.dart';
+
 const _username = String.fromEnvironment('USERNAME', defaultValue: 'test');
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'setup-device-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   testWidgets('Setup device with username "$_username"', (tester) async {
     print('\n=== Setting up device with username: $_username ===\n');

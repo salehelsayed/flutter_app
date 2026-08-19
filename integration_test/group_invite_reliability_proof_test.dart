@@ -40,9 +40,16 @@ import '../test/core/services/fake_p2p_service.dart';
 import '../test/features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../test/shared/fakes/in_memory_group_repository.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'group-invite-reliability-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   group('real-crypto invite/join reliability (Review-08)', () {
     late GoBridgeClient bridge;

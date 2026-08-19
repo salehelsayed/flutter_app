@@ -17,6 +17,7 @@ library;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import '_support/canonical_runtime_device_test_lease.dart';
 import 'benchmark_1_1_send_harness.dart';
 import 'benchmark_ack_harness.dart';
 import 'benchmark_background_resume_harness.dart';
@@ -37,6 +38,12 @@ import 'benchmark_voice_harness.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'benchmark-harness-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   final key = const String.fromEnvironment('BENCHMARK');
 

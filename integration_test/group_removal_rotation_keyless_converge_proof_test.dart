@@ -38,9 +38,16 @@ import '../test/shared/fakes/in_memory_group_message_repository.dart';
 import '../test/shared/fakes/in_memory_group_pending_key_repair_repository.dart';
 import '../test/shared/fakes/in_memory_group_repository.dart';
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'group-removal-rotation-keyless-converge-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   group('real-crypto deferred-distribution convergence (Finding 03 Slice 2)', () {
     late GoBridgeClient bridge;

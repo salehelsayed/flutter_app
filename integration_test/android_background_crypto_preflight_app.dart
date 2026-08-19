@@ -37,6 +37,7 @@ import 'package:flutter_app/features/push/application/push_envelope_staging.dart
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '_support/canonical_runtime_device_test_lease.dart';
 import 'scripts/reaction_notification_proof_support.dart';
 
 const _requestFileName = 'tc256_reaction_preflight_request.json';
@@ -88,6 +89,24 @@ void _marker(String event, [Map<String, Object?> details = const {}]) {
   print(
     'MKNOON_256_CRYPTO_PREFLIGHT ${jsonEncode({'event': event, ...details})}',
   );
+}
+
+/// This target is built as a real APK (`flutter build apk --debug --target`),
+/// not run under `flutter test`, so there is no `setUpAll`/`tearDownAll` pair
+/// to hang the lease on. It takes the canonical-runtime lease directly, once,
+/// before first bridge use and holds it for the life of the process — the same
+/// shape the production bootstrap uses. The guard is required: `acquire()`
+/// throws `StateError` if called twice, and the two bridge constructions below
+/// sit on branches that a re-executed `main()` can reach in either order.
+CanonicalRuntimeDeviceTestLease? _canonicalRuntimeLease;
+
+Future<void> _ensureCanonicalRuntimeLeased() async {
+  if (_canonicalRuntimeLease != null) return;
+  final lease = CanonicalRuntimeDeviceTestLease(
+    binding: 'background-crypto-preflight-device-test',
+  );
+  await lease.acquire();
+  _canonicalRuntimeLease = lease;
 }
 
 Future<void> main() async {
@@ -220,6 +239,7 @@ Future<void> main() async {
       );
       _marker('cleanup_complete', cleanup);
 
+      await _ensureCanonicalRuntimeLeased();
       final bridge = GoBridgeClient();
       await bridge.initialize();
       final started = await callP2PNodeStart(
@@ -373,6 +393,7 @@ Future<void> main() async {
       });
     }
 
+    await _ensureCanonicalRuntimeLeased();
     final bridge = GoBridgeClient();
     await bridge.initialize();
     Map<String, dynamic>? reactionEncrypted;

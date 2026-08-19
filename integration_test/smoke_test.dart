@@ -31,6 +31,7 @@ import 'dart:io';
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_post_repository.dart';
 import '../test/shared/fakes/in_memory_posts_privacy_settings_repository.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/fake_secure_key_store.dart';
 import '_support/test_db_seeder.dart';
@@ -38,6 +39,12 @@ import '../test/shared/fakes/in_memory_feed_cleared_repository.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'smoke-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   Future<void> pumpUntilFound(
     WidgetTester tester,

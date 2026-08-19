@@ -61,6 +61,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/fake_secure_key_store.dart' show FakeSecureKeyStore;
 import '_support/test_db_seeder.dart';
@@ -733,6 +734,12 @@ Future<void> _runSender(_Stack stack) async {
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'transport-census-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();

@@ -107,6 +107,7 @@ import 'package:flutter_app/features/groups/data/repositories/group_repository_i
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 import '_support/cli_peer_fixture.dart';
 import '_support/fake_secure_key_store.dart';
 import '_support/signal_files.dart';
@@ -607,6 +608,12 @@ Map<String, dynamic> _groupConfigFromModel(
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'group-recovery-cli-device-test',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
 
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     sqfliteFfiInit();
