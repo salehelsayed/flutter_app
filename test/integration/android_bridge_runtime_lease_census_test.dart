@@ -130,6 +130,12 @@ final RegExp _leaseOwnerConstruction = RegExp(
   r'\bCanonicalRuntimeDeviceTestLease\s*\(',
 );
 
+/// The variable a lease owner is bound to, so acquire/release can be counted
+/// on that owner rather than on every `.acquire` token in the file.
+final RegExp _ownerVariable = RegExp(
+  r'(?:late\s+)?(?:final|var)\s+(\w+)\s*=\s*CanonicalRuntimeDeviceTestLease\s*\(',
+);
+
 /// Any bridge client construction, including subclasses such as
 /// `RecordingGoBridgeClient` — a subclass needs the same native channel.
 final RegExp _bridgeConstruction = RegExp(r'\b\w*GoBridgeClient\s*\(');
@@ -232,21 +238,40 @@ class _Census {
   }
 
   /// Files whose lease owner is acquired without being released, or acquired
-  /// more than once. A `runApp` entrypoint has no test teardown, so a missing
-  /// release is only a finding for files that use the `flutter_test` lifecycle.
+  /// more than once.
+  ///
+  /// Counted on the owner's own variable, never on a bare `.acquire` /
+  /// `.release` token: `group_multi_device_real_harness.dart` alone holds an
+  /// unrelated `traceLease.release()` and the joiner's `gateway.acquire(...)`,
+  /// and a loose count charges both.
+  ///
+  /// A release is required only where a `flutter_test` lifecycle can run one.
+  /// A `runApp` entrypoint has no teardown, so its lease is held for the life
+  /// of the process — the same shape production uses.
   List<String> unpairedLeaseFiles() {
     final findings = <String>[];
     for (final file in scannedFiles) {
       final source = sources[file]!;
       if (_ownersConstructedIn(file) == 0) continue;
-      final acquires = RegExp(r'\.acquire\b').allMatches(source).length;
-      final releases = RegExp(r'\.release\b').allMatches(source).length;
       final hasTestLifecycle = source.contains('setUpAll(');
-      if (acquires != 1) {
-        findings.add('$file: expected 1 lease acquire, found $acquires');
-      }
-      if (hasTestLifecycle && releases != 1) {
-        findings.add('$file: expected 1 lease release, found $releases');
+      for (final owner in _ownerVariable.allMatches(source)) {
+        final name = RegExp.escape(owner.group(1)!);
+        final acquires = RegExp(
+          r'\b' + name + r'\.acquire\b',
+        ).allMatches(source).length;
+        final releases = RegExp(
+          r'\b' + name + r'\.release\b',
+        ).allMatches(source).length;
+        if (acquires != 1) {
+          findings.add(
+            '$file: expected 1 acquire on ${owner.group(1)}, found $acquires',
+          );
+        }
+        if (hasTestLifecycle && releases != 1) {
+          findings.add(
+            '$file: expected 1 release on ${owner.group(1)}, found $releases',
+          );
+        }
       }
     }
     return findings;
@@ -596,8 +621,11 @@ void main() {
         1,
         reason: '$harness must construct exactly one lease owner',
       );
-      expect(RegExp(r'\.acquire\b').allMatches(source).length, 1);
-      expect(RegExp(r'\.release\b').allMatches(source).length, 1);
+      expect(
+        census.unpairedLeaseFiles().where((f) => f.startsWith(harness)),
+        isEmpty,
+        reason: '$harness must acquire once and release once',
+      );
       expect(census.multiOwnerEntrypoints(), isEmpty);
     }
 

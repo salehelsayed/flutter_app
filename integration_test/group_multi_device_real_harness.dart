@@ -552,17 +552,31 @@ class RecordingGoBridgeClient extends GoBridgeClient {
 ///
 /// The broker re-returns the current token only for an identical
 /// (ownerId, binding, role) triple, so repeated setups in one process must
-/// use the same fixed binding.
+/// use the same fixed binding — and an entrypoint that already owns the lease
+/// under a DIFFERENT binding is joined, never acquired over.
 Future<void> ensureCanonicalRuntimeAttachedForTest() async {
   if (!Platform.isAndroid) return;
   const binding =
       'v1:0000000000000000000000000000000000000000000000000000000000000000';
   final gateway = MethodChannelCanonicalRuntimeLeaseGateway();
-  final snapshot = await gateway.acquire(binding);
-  if (snapshot.state != CanonicalRuntimeLeaseState.active) {
-    throw StateError(
-      'canonical-runtime test lease acquire left state ${snapshot.state}',
-    );
+  // JOIN an existing owner rather than acquiring over it. Entrypoints reach
+  // this function on two different kinds of path: some already hold the
+  // process-wide writable lease through a `CanonicalRuntimeDeviceTestLease`
+  // (this file's own `main()`, `benchmark_harness.dart` under
+  // BENCHMARK=GROUP_PUBLISH), and some hold nothing. The broker re-returns a
+  // live token only for an identical (ownerId, binding, role) triple, so on
+  // the first kind an unconditional acquire under the fixed binding above is
+  // rejected with `lease_unavailable` — and the gateway does not catch that
+  // PlatformException, so it kills setUpAll before any bridge call.
+  final existing = await gateway.status();
+  final alreadyOwned = existing.state == CanonicalRuntimeLeaseState.active;
+  if (!alreadyOwned) {
+    final snapshot = await gateway.acquire(binding);
+    if (snapshot.state != CanonicalRuntimeLeaseState.active) {
+      throw StateError(
+        'canonical-runtime test lease acquire left state ${snapshot.state}',
+      );
+    }
   }
   final attached = await gateway.attachRuntime();
   if (!attached) {
@@ -571,7 +585,10 @@ Future<void> ensureCanonicalRuntimeAttachedForTest() async {
       'did not construct; go_bridge channel calls would all MISSING_PLUGIN',
     );
   }
-  print('[STACK-DIAG] canonical runtime lease acquired + Go runtime attached');
+  print(
+    '[STACK-DIAG] canonical runtime lease '
+    '${alreadyOwned ? 'joined' : 'acquired'} + Go runtime attached',
+  );
 }
 
 Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
