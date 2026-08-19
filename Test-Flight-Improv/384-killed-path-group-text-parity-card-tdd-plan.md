@@ -1,6 +1,6 @@
 # 384 - Killed-Path Group Notifications: The Parity False-Positive (G19) And The Strict Lane's Missing Push (G26)
 
-Status: executed 2026-08-19 — Wave 1 (G19) host green + DEVICE CLOSED; Wave 2 (G26) host green, NOT deployed
+Status: executed 2026-08-19 — Wave 1 (G19) host green + DEVICE CLOSED; Wave 2 (G26) host green + DEPLOYED AND ENABLED in production (relay v1.9.0), device leg still open
 Type: Bug
 Spec: free-text intent (no formal spec) — closes **G19** and **G26** from the [UI-23 E2E map](../UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md) §4.6; PRD clauses at `Mknoon_Private_Reliable_Notifications_PRD_v1.2.md:172` (§6 "Suspended / terminated … render locally or leave the generic fallback"), `:290` ("Post a generic local fallback if private rendering cannot complete")
 Classification: implementation-ready
@@ -210,9 +210,9 @@ git diff --check
 
 ## Wave 2 — G26: Strict-Authority Group Content Never Woke The Recipient
 
-Status: executed 2026-08-19 (host green, mutation-verified; **NOT deployed — behaviour is OFF in production**)
-Closure tier: host (no device leg exists — see Deferred below)
-Landed: `37dd2eb20`
+Status: executed 2026-08-19 (host green, mutation-verified; **DEPLOYED AND ENABLED in production 2026-08-19T10:11:54Z**)
+Closure tier: host + live deploy (no device leg exists — see Deferred below)
+Landed: `37dd2eb20`; relay **v1.9.0**, sha `3bdf81f66127c4fcd9318582a1d75e40f8363114def69b47c7b1b3c297359dbc`, backup `/usr/local/bin/relay-server.pre-1.9.0-20260819T101139Z`
 
 This wave closes the finding Wave 1's producer census surfaced and recorded under Deferred ("the STRICT
 lane produces no `type=group_message` FCM push at all"). It was implemented directly on request, so
@@ -347,13 +347,25 @@ git diff --check
   recognized-but-ineligible so they can never fall through, and TC-384-14 pins that. The natural fix is
   a strict-custody sibling of `fanOutGroupReactionPush` reusing the group-topic reaction's audience
   resolution. Unowned.
-- **Deployment.** `GROUP_CONTENT_PUSH_ENABLED` is default-OFF, so deploying the binary alone changes
-  nothing. Enabling needs a relay deploy plus the env var, on a PRODUCTION box with no staging twin.
-  Not done here. Sibling landmine on record: the Plan-344 custody admission flag sat default-off and
-  silently killed every offline send until it was flipped on 2026-08-16.
-- **Device leg.** None exists. No registered scenario creates a strict-authority group, so
-  `groups.muted_notification_campaign` cannot reach this path. A device proof needs a new fixture branch
-  that forces the strict lane, and it can only run after the deploy above.
+- ~~**Deployment.**~~ **DONE 2026-08-19T10:11:54Z.** Relay v1.9.0 deployed to the production box and
+  `GROUP_CONTENT_PUSH_ENABLED=true` added to `/etc/mknoon/relay-server.env`. Verified live:
+  `Starting relay-server v1.9.0`, `strict group content push enabled=true`,
+  `Control-plane: backend=redis durable=true`, `relay_backend_durable 1`, push tokens preserved exactly
+  (563 android / 1226 ios across the restart), `NRestarts=0` at t+108s, zero panics, zero
+  `Refusing oversized`, client traffic resumed. Prerequisite confirmed already on:
+  `DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED=true` — without it strict content is never stored and
+  this lane is never reached. Rollback (drill is on record as working):
+  `sudo install -m0755 /usr/local/bin/relay-server.pre-1.9.0-20260819T101139Z /usr/local/bin/relay-server && sudo systemctl restart relay-server`.
+  **The version const was bumped to 1.9.0 as step 1** — the banner has lied across multiple past deploys
+  and a build must be identified by sha + symbol probe (`grep -c GROUP_CONTENT_PUSH_ENABLED
+  /usr/local/bin/relay-server`; 1 = v1.9.0, 0 = v1.8.0 or older — note `group_content_v1` is NOT a
+  discriminator, it already existed in v1.8.0's custody admission).
+- **Device leg — STILL OPEN, and now the only thing between this and a closed device promise.** No
+  registered scenario creates a strict-authority group, so `groups.muted_notification_campaign` cannot
+  reach this path; a device proof needs a new fixture branch that forces the strict lane. The deploy
+  blocker is gone, so this is now runnable. **Until it runs, the live behaviour is unobserved:** every
+  claim about production is inference from host rows plus a clean startup, not from a card on a phone.
+  Watch `relay_group_content_wake_total{outcome="attempted"}` for the first real evidence.
 - **Durable wake-outcome ledger.** Strict group content does not participate in the Plan-370
   wake-outcome admission (`directWakeOutcomeProducer` still declines it), so there is no durable
   delivery-outcome row for these wakes. Not a regression — today there is no wake at all — but it is
