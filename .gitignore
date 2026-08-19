@@ -167,3 +167,10 @@ output/
 # Graphify AST/stat cache — content-keyed, per-host scratch regenerated on every
 # build/update. Tracking it produces constant churn and drowns real diffs.
 **/graphify-out/cache/
+
+# Signing credentials - never commit.
+# Removed from tracking 2026-08-19: readable anonymously in this public repo.
+APPLE/*.p8
+APPLE/*.jks
+APPLE/*.keystore
+/backup/
