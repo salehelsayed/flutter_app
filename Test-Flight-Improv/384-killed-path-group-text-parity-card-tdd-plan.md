@@ -1,10 +1,10 @@
-# 384 - Killed-Path Group Text: Clause-6 Null-Sender Parity False-Positive Kills The Card (G19)
+# 384 - Killed-Path Group Notifications: The Parity False-Positive (G19) And The Strict Lane's Missing Push (G26)
 
-Status: executed 2026-08-19 (host green + device closure; G19 closed)
+Status: executed 2026-08-19 — Wave 1 (G19) host green + DEVICE CLOSED; Wave 2 (G26) host green, NOT deployed
 Type: Bug
-Spec: free-text intent (no formal spec) — closes **G19** from the [UI-23 E2E map](../UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md) §4.4; PRD clauses at `Mknoon_Private_Reliable_Notifications_PRD_v1.2.md:172` (§6 "Suspended / terminated … render locally or leave the generic fallback"), `:290` ("Post a generic local fallback if private rendering cannot complete")
+Spec: free-text intent (no formal spec) — closes **G19** and **G26** from the [UI-23 E2E map](../UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md) §4.6; PRD clauses at `Mknoon_Private_Reliable_Notifications_PRD_v1.2.md:172` (§6 "Suspended / terminated … render locally or leave the generic fallback"), `:290` ("Post a generic local fallback if private rendering cannot complete")
 Classification: implementation-ready
-Closure tier: device
+Closure tier: device (Wave 1, G19) / host (Wave 2, G26 — no device leg exists)
 
 ## Planning Progress
 | Time | Role | Files inspected | Decision/blocker | Next action |
@@ -70,7 +70,7 @@ Hard `Do not`:
 - Do not touch `mUserLockedFields`/fingerprint machinery or anything Plan-380 owns.
 
 Deferred / accepted difference:
-- **Strict-lane killed-path notification** (no `group_message` push exists at all on that lane) → owner GAP-N02/N08 activation wave; record in the map at execution so it is not re-derived.
+- ~~**Strict-lane killed-path notification** (no `group_message` push exists at all on that lane) → owner GAP-N02/N08 activation wave.~~ **DISCHARGED by Wave 2 below** (G26), at host tier and behind a default-off flag. Its reaction half remains deferred as G27.
 - **Sibling collapsed-reason decomposition** (direct/reaction) → unowned, optional diagnosability; the typed factories already fail distinctly on absent fields.
 - **Producer self-describing payload** (inner sender/group keys in the live envelope) → GAP-N02 payload shape work.
 - **1:1 killed-path device evidence** → G22 / Plan 380 b12 rows (unchanged by this plan).
@@ -208,7 +208,168 @@ git diff --check
 - Closure command: `/claude-host-bin/host-run bash docker-ws/run_muted_campaign_383.sh` → PASS, 3 validated artifacts.
 - Deferred device work: strict-lane killed-path (no push exists — GAP-N02/N08); 1:1 killed-path (G22/Plan 380); real-radio/Doze variants (GAP-N12).
 
-## Reviewer Findings (wf_cf1112fb-b22, 2026-08-18 — fixes applied same session)
+## Wave 2 — G26: Strict-Authority Group Content Never Woke The Recipient
+
+Status: executed 2026-08-19 (host green, mutation-verified; **NOT deployed — behaviour is OFF in production**)
+Closure tier: host (no device leg exists — see Deferred below)
+Landed: `37dd2eb20`
+
+This wave closes the finding Wave 1's producer census surfaced and recorded under Deferred ("the STRICT
+lane produces no `type=group_message` FCM push at all"). It was implemented directly on request, so
+there is no separate pre-execution planning record and none is invented here.
+
+### Problem And Evidence
+
+- Behavior improved: a strict/fresh-authority group (Plan 377) delivered its messages to relay custody
+  and then went completely silent — no push, no wake, no counter. §1.3's
+  `Suspended/killed → FCM wake → Card` row was unreachable on that lane **by construction**. Unlike
+  Wave 1's G19 this is not a parity failure: there was no push at all.
+- Impact: total for that lane, for backgrounded and killed recipients alike. A strict group's messages
+  became visible only when the recipient's app next ran and drained the inbox. The messages themselves
+  were never lost — only the wake.
+- **Root cause (two halves, both re-verified in source at execution rather than inherited from the
+  planning-time census):**
+  1. **Strict sends never reach the group topic.** `sendGroupMessage` returns before
+     `callGroupSendReliable` (`send_group_message_use_case.dart:3040-3072`) and instead signs ONE
+     `group_offline_replay` envelope per recipient into the DIRECT inbox under the `group_content_v1`
+     ack-custody namespace (`group_offline_replay_envelope.dart:1286-1325`; custody kind at
+     `inbox_store_outcome.dart:23`). The relay admits and stores it (`ack_custody.go:331-440`).
+  2. **The direct push seam could not see that shape.** `launchStoredDirectPush`
+     (`go-relay-server/inbox.go:2090`) recognized exactly two things: a `type: message_reaction` direct
+     reaction, and `extractChatPushMetadata`'s switch on `envelope["type"]` (`inbox.go:1358-1468`). A
+     replay envelope has **no `type` field at all**, so it fell to that switch's `default:` and produced
+     `ShouldNotify: false`. `directWakeOutcomeProducer` reached the same verdict, so the durable
+     wake-outcome path declined too. Nothing incremented.
+- Why it stayed invisible: none of those declines had a counter. The lane produced no metric and no log
+  line — the only observable was a user not getting a notification.
+- **Facts that made the fix small, each verified before writing code:**
+  - The envelope already carries every field `buildGroupPushMessage` needs (`groupId`, `keyEpoch`,
+    top-level `ciphertext`/`nonce`, `messageId`, `senderTransportPeerId`), and
+    `addGroupEncryptedPushData` (`inbox.go:1221-1256`) already falls back to top-level ciphertext/nonce.
+  - **The recipient needed no change.** It routes on `data['type']` alone and ignores `kind`
+    (`background_message_handler.dart:2579,:2683,:3030`).
+  - **Plaintext parity agrees.** The strict plaintext is the id-complete `inboxPayload`
+    (`send_group_message_use_case.dart:2567-2589`) and
+    `contentEventId == resolvedMessageId == plaintext.messageId == outer message_id`. This is exactly
+    the shape that never needed Wave 1's null guard — the two waves are the two halves of the same
+    seam.
+  - **The route resolves.** Strict custody recipients are `device.transportPeerId`
+    (`send_group_message_use_case.dart:431-457`); `register_token` keys push tokens by the
+    authenticated `remotePeer` (`inbox.go:3699-3708`) — the same namespace.
+  - Both the plain `Store` path and the ack-custody path converge on `launchStoredDirectPush`
+    (`inbox.go:1930`, `ack_custody.go:1029-1033`), so one branch covers both.
+- Refuted during execution (do NOT re-introduce):
+  - "The recipient must learn a new push type" — refuted: it routes on `type`, and this push IS
+    `type: group_message`.
+  - "The group-reaction wake already covers this" — refuted: `fanOutGroupReactionPush` is on the GROUP
+    INBOX path (`s.store(groupId, …)`), which strict content never touches.
+  - "A `case` in `extractChatPushMetadata` is enough" — refuted: that function switches on `type`, and
+    a `kind` case there would entangle the strict lane's audience rules with the chat grammar.
+
+### Scope Contract And Guard (Wave 2)
+
+In scope:
+- **W5:** recognize strict group content at the direct push seam and route `payloadType:
+  group_message` through the existing `buildGroupPushMessage`.
+- **W6:** a wake counter for every decision this lane makes, including the declines.
+- **W7:** a default-off kill switch matching every sibling push flag.
+
+Must preserve:
+- Custody is never affected by the flag — only the wake (pinned by TC-384-11, which asserts the row is
+  still stored).
+- The ordinary chat, direct-reaction and group-topic push lanes stay byte-unchanged.
+- The oversized/unusable-envelope fallbacks keep applying, so a bad key epoch degrades to a
+  routing-only push rather than to silence.
+
+Hard `Do not`:
+- Do not route `payloadType: group_reaction` onto the group-message push. Its audience is author-only
+  (PRD §6.5) and its copy comes from a separate notification-extension grammar; the group-message
+  fanout would alert every member. → deferred as **G27**.
+- Do not change the envelope, the custody admission, or any wire format — the producer already emits
+  everything needed.
+- Do not weaken the wake-token gate. This lane uses the ordinary-message gate (fail-open when the
+  recipient registered no set), because this envelope IS the group's ordinary message traffic.
+
+### Test Contract (Wave 2)
+
+| Case | Behavior | Named test/proof | Tier | HEAD state → GREEN | Mutation that re-reds |
+|---|---|---|---|---|---|
+| TC-384-09 | The generic extractor cannot see strict group content — the root cause itself | `group_content_push_test.go::TestExtractChatPushMetadata_StrictGroupContentIsInvisible` | host (Go) | GREEN sentinel — documents why a dedicated lane is required, not optional | n/a (sentinel) |
+| TC-384-10 | A complete strict group message is recognized AND eligible; a reaction is recognized and DECLINED; a non-custody replay envelope is not recognized at all; missing routing fields decline | `…::TestExtractGroupContentPushMetadata` (6 subtests) | host (Go) | causal RED by construction → green | reactions-eligible; drop the custody check; drop the routing-field guard — each reds its own subtest |
+| TC-384-11 | The kill switch suppresses the wake and never drops custody | `…::TestInboxStore_StrictGroupContentStaysSilentWhenDisabled` | host (Go) | causal RED by construction → green | ignore the flag → red |
+| TC-384-12 | **Causal row:** a stored strict group message wakes the recipient with the 7 data keys it routes on | `…::TestInboxStore_StrictGroupContentWakesTheRecipient` | host (Go) | causal RED (HEAD sends nothing) → green | delete the branch → red |
+| TC-384-13 | **Production path:** the same wake through the ACK-CUSTODY store, whose admission validates signature, canonical signed payload and recipient set | `…::TestStoreAckCustody_StrictGroupContentWakesTheRecipient` + its disabled sibling | host (Go) | causal RED → green | delete the branch → red |
+| TC-384-14 | Strict group reactions stay silent custody | `…::TestInboxStore_StrictGroupReactionStaysSilentCustody` | host (Go) | GREEN by construction | make reactions eligible → red |
+| TC-384-15 | An unusable key epoch degrades to a routing-only push, never to silence | `…::TestInboxStore_StrictGroupContentWithUnusableEpochStillWakes` | host (Go) | causal RED → green | delete the branch → red |
+| TC-384-16 | The flag is default-OFF and accepts only `1`/`true` | `…::TestLoadGroupContentPushEnabledFromEnv` | host (Go) | GREEN by construction | flip the default → red |
+| TC-384-17 | **Recipient half:** the exact 10 data keys the relay now emits render a trusted card with ZERO `PUSH_ANDROID_DATA_DECRYPT_FAIL`; the routing-only fallback still cards generically | `push_decrypt_preview_test.dart::'strict-lane group content push renders the trusted group card'` + `'strict-lane routing-only fallback still returns a trusted card'` | host (Dart) | GREEN on first run — which IS the finding: **no client change was needed** | n/a — the row exists to prove the no-change claim, not to drive one |
+
+#### Test Notes (Wave 2)
+- TC-384-13 is load-bearing and was added after TC-384-12 already passed. Strict content never reaches
+  `InboxStore.Store`; proving the wake only there would be the same class of gap that let G19 ship — a
+  host row green on a path the real traffic does not take.
+- TC-384-17's fixture is the relay's own output shape, not an invented one; the anchors are pinned in a
+  comment so a future relay change tells the reader which side moved.
+- Two closure gates census the EXACT caller set of `sendSelectedPushThroughGateway`
+  (`opaque_wake_closure_test.go`, `push_token_vault_closure_test.go`). Any new push adapter reds both
+  until it is declared in their `wantCallers` lists. By design, and easy to mistake for a real break.
+
+### Affected Files (Wave 2)
+- `go-relay-server/group_content_push.go` (**new** — extractor, gateway adapter, flag loader)
+- `go-relay-server/group_content_push_test.go` (**new**)
+- `go-relay-server/inbox.go` (the branch + `groupContentPushEnabled` field and setter)
+- `go-relay-server/main.go` (flag wiring + startup log)
+- `go-relay-server/metrics.go` (`relay_group_content_wake_total`)
+- `go-relay-server/opaque_wake_closure_test.go`, `go-relay-server/push_token_vault_closure_test.go`
+- `test/features/push/application/push_decrypt_preview_test.dart` (recipient rows)
+
+### Gate Cadence (Wave 2)
+- `cd go-relay-server && gofmt -l . && go vet ./... && go test ./...` — the authoritative gate. The
+  `groups` lane runs the same Go suite at its end.
+- `flutter test test/features/push/application/push_decrypt_preview_test.dart`.
+- `./scripts/run_test_gates.sh groups` carries a KNOWN INTERMITTENT red in
+  `group_conversation_wired_test.dart`'s voice block (a different row each run; all pass in isolation).
+  Unrelated — this wave touches zero `lib/` files; verify with `git diff --stat HEAD -- lib/` before
+  investigating.
+- No `host-all` sweep: no production Dart changed.
+
+### Acceptance Gates — Wave 2  (literal — copy/paste)
+```bash
+cd go-relay-server && gofmt -l . && go vet ./... && go test ./...   # exit 0, gofmt silent
+cd .. && flutter test test/features/push/application/push_decrypt_preview_test.dart   # exit 0
+flutter analyze            # 0 new issues
+git diff --check
+```
+
+### Deferred / Accepted Difference (Wave 2)
+- **G27 — strict group REACTIONS stay silent custody.** Deliberate: author-only audience (PRD §6.5)
+  plus a separate notification-extension grammar. `extractGroupContentPushMetadata` returns them
+  recognized-but-ineligible so they can never fall through, and TC-384-14 pins that. The natural fix is
+  a strict-custody sibling of `fanOutGroupReactionPush` reusing the group-topic reaction's audience
+  resolution. Unowned.
+- **Deployment.** `GROUP_CONTENT_PUSH_ENABLED` is default-OFF, so deploying the binary alone changes
+  nothing. Enabling needs a relay deploy plus the env var, on a PRODUCTION box with no staging twin.
+  Not done here. Sibling landmine on record: the Plan-344 custody admission flag sat default-off and
+  silently killed every offline send until it was flipped on 2026-08-16.
+- **Device leg.** None exists. No registered scenario creates a strict-authority group, so
+  `groups.muted_notification_campaign` cannot reach this path. A device proof needs a new fixture branch
+  that forces the strict lane, and it can only run after the deploy above.
+- **Durable wake-outcome ledger.** Strict group content does not participate in the Plan-370
+  wake-outcome admission (`directWakeOutcomeProducer` still declines it), so there is no durable
+  delivery-outcome row for these wakes. Not a regression — today there is no wake at all — but it is
+  the next observability step after the deploy.
+
+### Handoff (Wave 2)
+- Turning it on: deploy the relay binary, then set `GROUP_CONTENT_PUSH_ENABLED=1`. The startup log
+  prints the resolved value — confirm it there rather than assuming.
+- Watch `relay_group_content_wake_total` after enabling. `attempted` should track strict-group sends; a
+  spike in `invalid_or_disabled` means the flag never took or an envelope shape drifted.
+- First device experiment: force a strict-authority group on the pinned pair, kill the recipient, send
+  one text, and read the recipient's own flow log for
+  `PUSH_BACKGROUND_MESSAGE_RECEIVED → PUSH_ANDROID_DATA_DECRYPT_OK → PUSH_BACKGROUND_NOTIFICATION_SHOWN`.
+- Unresolved: no device evidence exists for this lane at any tier, and none can until the deploy lands.
+
+## Reviewer Findings — Wave 1 (wf_cf1112fb-b22, 2026-08-18 — fixes applied same session)
 - Verdict was **plan-fixes-required / apply-plan-fixes**; core bet **CONFIRMED** end-to-end by an independent wire-domain re-derivation (payload struct `group_envelope.go:42-47`; single extra producer `pubsub.go:1860-1876` with the messageId overwrite at `:1874`; bridge opts never carry a sender-account key; relay 9-key mapping byte-matches the archived failing push; the null-guard is forward-correct — a future present inner sender re-arms the cross-check). The clause-4-dead derivation, the TC-384-06 muted-campaign tolerance (verified rule-by-rule: contains-based, no SHOWN-count/ERROR pins, one conversation-keyed id), the G17 commit dependency, the one-group else-branch fixture, append-LAST ordering, the scenario-id traps, and the zero reason-literal pins all **survived attack**. Deleting clause 6 is caught twice (the new tag row AND existing loop row `:1314-1318`).
 - Blockers fixed: (1) **hoisted-guard escape** — `decodedSender != null &&` wrapped around clauses 3-6 (or the whole condition) passed every row as originally authored while silently disabling tamper checks for sender-absent payloads → the clause-1 and clause-3 tag fixtures are now pinned sender-ABSENT (the clause-3 row cards under any hoist and reds); (2) **guard-the-throw escape** — keeping clause 6 firing but skipping only the throw (emit-FAIL-then-card) passed every row → TC-384-01/02 now assert ZERO `PUSH_ANDROID_DATA_DECRYPT_FAIL`; (3) **runner validator dispatch** — "runner needs ZERO edits" was refuted in source: the loop hard-codes the muted validator (`run_group_muted_notification_android.dart:302-308`) whose admission rejects a third id, so the campaign would red at runner-validation after a green capture → TC-384-07 now carries the dispatch edit (+ `--validate-artifact` mirror) and the runner joined the Affected files.
 - Plan-fixes applied: the id-bound ERROR negative was unimplementable (`PUSH_BACKGROUND_NOTIFICATION_ERROR` details = `{'error': …}` only, source + archived log) → window-scoped zero-ERROR rule; SHOWN binding pinned contains-based (warm-up SHOWNs too post-fix; `single`/`last`/exact-count forbidden; the non-durable-branch id-presence rationale + durable-activation re-derive note recorded); extra-shape description corrected (~10 keys, full opts minus timestamp + messageId + publishedAtNano — fixture anchors widened); TC-384-02's media premise corrected (extra.media IS a List of attachment maps; typed media body; oversized-media relay strip note added); device closure commands routed through the env wrapper (`docker-ws/run_muted_campaign_383.sh` — a bare `run_with_devices.sh` from the container self-blocks on missing env); graded card wait hardened to marker-CONTAINS with baseline+warm-up in the stale set (bare body-change latches on the warm-up card); observation-kind enum deliberately NOT extended (zero consumers — over-engineering avoided); citation drifts fixed (`run_test_gates.sh:285,:824`; `bmh:3061`; foreground malformed row is nonce-gated pre-decrypt, not clause-1-shaped; `:490-542`/`:1480-1667` sentinel relabels; clause-4 wording "clause 1 or 2 fires first").
@@ -225,3 +386,10 @@ git diff --check
 | 2026-08-19 | W4 registration | criteria/dispatch/capture/runner/proof/contract-sh/critical_features + 2 byte-pins | criteria host suite `+62`; registry `+8`; both sh contracts PASS on host | third scenario `android_group_text_killed_app_card` with its own validator kind, artifact grammar and per-scenario runner dispatch; 7 validator-rule mutations each red exactly their own row | census grep is 1 not >=2 because the id list references the CONST, not a repeated literal — enrollment is pinned by an exact-list host row instead | lane |
 | 2026-08-19 | `groups` lane | - | first run `+4378 -1` -> fixed -> re-run green | the one red was REAL and mine: DTR10-PAYLOAD-01 forbids the retired Dart type's identifier anywhere under `lib/`, and the new production comment named it | census gates that match by path string stay invisible to the graph — the lane is still the final word | device closure |
 | 2026-08-19 | TC-384-05/06/07 device closure | `docker-ws/plan384_g19_device_evidence.txt` | `host-run bash docker-ws/run_muted_campaign_383.sh` -> `PASS groups.muted_notification_campaign assertions=6` | all 3 artifacts validated (capture-1787125915764845-93175). New scenario: both post-kill wakes `RECEIVED -> DECRYPT_OK -> DURABLE_EFFECT_DEFERRED -> SHOWN`, graded card body `Alice: Plan384Grad9d466ffff3` (roster username). Muted lane's warm-up group TEXT — the 3/3 G19 casualty from Plan 379 runs 13/14/15 — now cards. ZERO DECRYPT_FAIL and ZERO NOTIFICATION_ERROR in every post-kill window | G19 CLOSED at device tier; TC-384-06 confirmed by the same run | docs + memory |
+| 2026-08-19 | W2 re-verify (G26) | send use case, replay envelope, `inbox.go`, `ack_custody.go`, `reaction_push.go` | source read end to end | strict lane returns before `callGroupSendReliable`; envelope has no `type`; `extractChatPushMetadata` default -> `ShouldNotify:false`; the direct-reaction extractor also requires `type` | G26 confirmed and BROADER than Wave 1 recorded — reactions are unpushed on this lane too | feasibility |
+| 2026-08-19 | W2 feasibility | `addGroupEncryptedPushData`, bmh type routing, `inboxPayload`, `_strictPhysicalGroupRecipientPeerIds`, `register_token` | source read | the group push builder reads this shape unmodified; the client routes on `type` only; inner/outer ids agree; recipient ids share the push-token namespace | recipient needs NO change — the fix is relay-only | implement |
+| 2026-08-19 | W5+W6+W7 | `group_content_push.go` (new), `inbox.go`, `main.go`, `metrics.go` | `go build` / `go vet` clean | branch placed BEFORE the chat switch; declines return rather than fall through | reactions deliberately declined (G27) | tests |
+| 2026-08-19 | TC-384-09..16 | `group_content_push_test.go` (new) | `go test -run 'GroupContent\|StrictGroup'` green | 9 Go rows incl. two on the ack-custody path | TC-384-13 added after noticing TC-384-12 proved a path the traffic never takes | mutations |
+| 2026-08-19 | W2 mutation walk (5) | same | every mutation caught | drop branch -> wake rows red on BOTH paths; reactions-eligible -> 2 red; ignore flag -> 1 red; drop custody check -> 1 red; drop routing-field guard -> 2 red | causality established | recipient half |
+| 2026-08-19 | TC-384-17 | `push_decrypt_preview_test.dart` | `+44 All tests passed` | both rows green on FIRST run | confirms the no-client-change claim rather than driving a change | W2 gates |
+| 2026-08-19 | W2 gates | two closure census gates | full relay suite green after declaring the new adapter; `flutter analyze` clean; `git diff --check` clean | the `groups` lane red is the pre-existing `group_conversation_wired_test.dart` voice flake — zero `lib/` files changed | landed as `37dd2eb20` | relay deploy + device leg (both OPEN) |
