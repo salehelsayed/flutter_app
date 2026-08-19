@@ -35,6 +35,24 @@ bool groupReactionNotificationKeepsRecipientProcessAlive(String scenarioId) =>
 String groupReactionNotificationExpectedAndroidReactionBody(String actorName) =>
     '$actorName reacted to your message';
 
+/// The throwaway group a killed-recipient reaction lane warms its background
+/// isolate through.
+///
+/// DERIVED from the graded group's name rather than measured. `$.measurements`
+/// is exact-keyed (`_expectExactKeys` at the bottom of this file), so a new
+/// measurement key would reject every artifact this lane has ever written. The
+/// capture driver and the validator both call this one function, so the two
+/// sides cannot drift.
+///
+/// The digest is what keeps the two names free of any substring relation. A
+/// plain prefix or suffix of the graded name would make the warm-up group's
+/// Orbit row — `Open group <warm-up>, 1 unread message` — satisfy a
+/// `contains('Open group <graded>')` test, both in this file's raw UI checks
+/// and in `findSemanticNodeCenter`, whose fallback arm matches on containment.
+String groupReactionNotificationWarmupGroupName(String gradedGroupName) =>
+    'Warmup'
+    '${sha256.convert(utf8.encode(gradedGroupName)).toString().substring(0, 12)}';
+
 /// Builds a least-disclosure probe for the rollout flag inherited by the
 /// running relay process. `systemctl show --property=Environment` omits values
 /// loaded through EnvironmentFile, which is how the deployed relay is wired.
@@ -2352,6 +2370,36 @@ void _validateAuthoritativeEvidence({
         scenario: requirement.id,
         failures: failures,
       );
+    } else {
+      // Plan 389 / G11. The graded reaction must not ride the FIRST wake after
+      // the kill. That one spawns the background isolate cold, and its first
+      // touch — ART profile install, the `libgojni` dlopen, the first encrypted
+      // -store open — outruns the 2 s `display_eligibility` phase budget, so no
+      // card is posted and the lane grades nothing. The lane absorbs that cost
+      // with a throwaway warm-up text, which makes THREE post-kill wakes the
+      // floor: warm-up, reaction ADD, reaction re-ADD. Two is exactly what the
+      // lane emitted before the warm-up existed, so a ported `>= 2` rule would
+      // pass with no warm-up at all.
+      //
+      // No cursor is needed to make these post-kill. The capture clears the
+      // recipient's log at the kill, and `recipient_app` IS that accumulator's
+      // text, so every occurrence in this evidence is after the kill by
+      // construction.
+      //
+      // Cardinal, not identity-bound: the reaction push's flow event carries
+      // `details: {'kind': 'group_reaction'}` and NO message id, so nothing in
+      // `recipient_app` can bind a particular wake to the graded reaction. The
+      // same-pid assertion that proves the resident-isolate mechanism rather
+      // than luck lives at device tier.
+      final postKillWakes = _flowEventNames(
+        recipientApp,
+      ).where((event) => event == 'PUSH_BACKGROUND_MESSAGE_RECEIVED').length;
+      if (postKillWakes < 3) {
+        failures.add(
+          r'$.evidence[recipient_app] records fewer than three post-kill '
+          'background wakes, so the graded reaction rode a cold first wake',
+        );
+      }
     }
     _validateExactDuplicateRedrive(
       senderApp,
@@ -2829,6 +2877,17 @@ void _validateNotificationRaw(
           'notification_reaction_first.log',
           'notification_reaction_replacement.log',
         ];
+  // Plan 389. A killed-recipient reaction lane deliberately posts a card into a
+  // SECOND, throwaway group: the first FCM wake after the kill opens SQLCipher
+  // cold and outruns the 2 s `display_eligibility` budget, so a warm-up push has
+  // to take that hit before the graded reaction arrives. That card is ADMITTED
+  // BY NAME, never dismissed — anything outside {graded, warm-up} still reds.
+  //
+  // The selector below is not optional. `messageScenario` picks only the two
+  // file names above; everything from here down is SHARED with the message
+  // branch, so widening unconditionally would silently relax the two message
+  // scenarios that already pass on device.
+  final warmupGroupName = groupReactionNotificationWarmupGroupName(groupName);
   final cards = <({int id, String title, String body})>[];
   for (final name in required) {
     final block = blocks[name];
@@ -2844,13 +2903,50 @@ void _validateNotificationRaw(
       block,
       packageName: appPackage,
     );
-    if (contentCards.length != 1) {
-      failures.add(
-        r'$.evidence[android_notification_records] has malformed raw card',
-      );
-      continue;
+    final ActiveNotificationCard card;
+    if (messageScenario) {
+      if (contentCards.length != 1) {
+        failures.add(
+          r'$.evidence[android_notification_records] has malformed raw card',
+        );
+        continue;
+      }
+      card = contentCards.single;
+    } else {
+      final unexpected = contentCards
+          .where(
+            (candidate) =>
+                candidate.title != groupName &&
+                candidate.title != warmupGroupName,
+          )
+          .toList(growable: false);
+      if (unexpected.isNotEmpty) {
+        // The allow-list is CLOSED. Without this arm the widening would also
+        // stop seeing a duplicate card in an unrelated conversation, a leaked
+        // card, and a card posted by a path the lane never exercises.
+        failures.add(
+          r'$.evidence[android_notification_records] holds a card outside the '
+          'graded and warm-up groups',
+        );
+        continue;
+      }
+      final gradedCards = contentCards
+          .where((candidate) => candidate.title == groupName)
+          .toList(growable: false);
+      // Exactly one graded card per BLOCK, not "at least one across the
+      // accumulated list". The replacement-identity check below is guarded by
+      // `cards.length == 2`; an accumulated-list shape can leave it at 1, so an
+      // artifact proving the lane posted one card and never replaced it would
+      // validate.
+      if (gradedCards.length != 1) {
+        failures.add(
+          r'$.evidence[android_notification_records] does not hold exactly one '
+          'graded group card',
+        );
+        continue;
+      }
+      card = gradedCards.single;
     }
-    final card = contentCards.single;
     final id = card.id;
     if (id == null || id < 0 || card.title.isEmpty || card.body.isEmpty) {
       failures.add(
@@ -2866,6 +2962,10 @@ void _validateNotificationRaw(
       'group card',
     );
   }
+  // Scoped to graded cards by CONSTRUCTION: for a reaction the loop above adds
+  // only the graded-group card, so a warm-up TEXT card legitimately carrying
+  // this copy is never scanned. The message branch is unchanged — it still adds
+  // the block's single card.
   if (cards.any(
     (card) =>
         card.title.toLowerCase().contains('new message') ||
@@ -2875,12 +2975,14 @@ void _validateNotificationRaw(
       r'$.evidence[android_notification_records] exposed New Message copy',
     );
   }
+  // Body equality only. The title is what SELECTED these cards, so re-testing
+  // it here would be an unreachable disjunct; a wrongly-titled card is rejected
+  // by the closed allow-list above, not by this line.
   if (!messageScenario &&
       cards.any(
         (card) =>
-            card.title != groupName ||
             card.body !=
-                groupReactionNotificationExpectedAndroidReactionBody(actorName),
+            groupReactionNotificationExpectedAndroidReactionBody(actorName),
       )) {
     failures.add(
       r'$.evidence[android_notification_records] reaction title/body mismatch',
@@ -2947,7 +3049,16 @@ void _validateUiRaw(
         );
       }
     }
-    if (blocks.values.any((block) => block.contains('unread message'))) {
+    // Plan 389. Group-qualified, and as ONE whole-label match rather than two
+    // independent scans. A killed-recipient lane leaves its warm-up group
+    // holding one unread row, and on device that row is a SIBLING NODE of the
+    // graded group's zero-state row inside a single `<hierarchy>` — so both
+    // `contains('Open group <graded>')` and `contains('unread message')` are
+    // satisfied by the pair, and the two-scan form would red a correct capture.
+    final gradedUnreadLabel = RegExp(
+      'Open group ${RegExp.escape(groupName)}, \\d+ unread message',
+    );
+    if (blocks.values.any(gradedUnreadLabel.hasMatch)) {
       failures.add(
         r'$.evidence[ui_automation] reaction created unread semantics',
       );

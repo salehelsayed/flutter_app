@@ -560,6 +560,9 @@ class _Plan257Capture {
   String _firstMarker = '';
   String _secondMarker = '';
   String _targetMarker = '';
+  // Plan 389 killed-reaction warm-up group. Created in `group_fixture_setup`
+  // and read only by `_sendPostKillWarmupText` and the end-of-lane dismissal.
+  String _reactionWarmupGroupName = '';
   final List<int> _uiUnreadTimeline = <int>[];
   final List<File> _uiSnapshots = <File>[];
   final List<File> _notificationSnapshots = <File>[];
@@ -659,6 +662,16 @@ class _Plan257Capture {
       _dispatch.lifecycleStage ==
       GroupReactionCaptureLifecycleStage.mutedReactionBackgroundSuppression;
 
+  /// Whether this lane terminates the recipient and therefore needs a second
+  /// group to absorb the cold-start storage deferral with a throwaway push.
+  ///
+  /// The background-connected reaction scenario keeps its process alive, pays
+  /// no cold-isolate cost, and is deliberately excluded.
+  bool get _needsPostKillWarmupGroup =>
+      _dispatch.lifecycleStage ==
+          GroupReactionCaptureLifecycleStage.reactionRecipient &&
+      !groupReactionNotificationKeepsRecipientProcessAlive(scenario.id);
+
   Future<void> cleanupTransientState() => _transientCleanup.run();
 
   Future<void> run() async {
@@ -756,6 +769,22 @@ class _Plan257Capture {
       _groupName = _mutedGroupName;
     } else {
       await _createAndAcceptGroup();
+      if (_needsPostKillWarmupGroup) {
+        // Plan 389. Both groups must exist BEFORE the kill. For these two ids
+        // `_createAndAcceptGroup` picks the RECIPIENT as creator (`:2170`),
+        // immediately calls `_launchAndroid(creator.deviceId)` and then runs a
+        // three-minute invite/accept round trip — creating this group after the
+        // kill would relaunch the very process the lane just terminated. The
+        // muted lane does not do it later either: it creates both groups here.
+        final gradedGroupName = _groupName;
+        _reactionWarmupGroupName = groupReactionNotificationWarmupGroupName(
+          gradedGroupName,
+        );
+        await _createAndAcceptGroup(name: _reactionWarmupGroupName);
+        // `_createAndAcceptGroup` overwrites `_groupName` unconditionally
+        // (`:2165`); both existing two-group lanes restore it the same way.
+        _groupName = gradedGroupName;
+      }
     }
 
     stage = 'provider_registration';
@@ -2619,6 +2648,14 @@ class _Plan257Capture {
       await _backgroundAndroidRecipientConnected();
     } else {
       await _terminateAndroidRecipient();
+      // Plan 389. Same as the muted (`:3728`) and killed-text (`:3967`) lanes:
+      // the post-kill wake COUNT is this lane's own evidence now, so the window
+      // has to start at the kill. `_adb` intercepts a `logcat -c` and moves the
+      // live stream's byte floor plus the flow accumulator (`:6199-6207`), so
+      // `recipient_app` carries only post-kill lines and the validator's wake
+      // floor is readable without a cursor.
+      await _adb(recipientId, const <String>['logcat', '-c']);
+      await _sendPostKillWarmupText();
     }
 
     if (!keepRecipientProcessAlive) {
@@ -2631,7 +2668,7 @@ class _Plan257Capture {
     }
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 1);
     await _waitForRelayWakeAttempts(_relayMetricsBaseline, 1);
-    final firstCard = await _waitForNotificationCard();
+    final firstCard = await _waitForGradedGroupNotificationCard();
     if (keepRecipientProcessAlive) {
       _completeBackgroundConnectedObservation(DateTime.now().toUtc());
     }
@@ -2662,7 +2699,7 @@ class _Plan257Capture {
     await _tapText(senderId, _reactionEmoji);
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 2);
     await _waitForRelayWakeAttempts(_relayMetricsBaseline, 2);
-    final replacementCard = await _waitForNotificationCard();
+    final replacementCard = await _waitForGradedGroupNotificationCard();
     _notificationSnapshots.add(
       await _writeNotificationSnapshot(
         'reaction_replacement',
@@ -2709,7 +2746,117 @@ class _Plan257Capture {
       const Duration(seconds: 45),
     );
     await _captureUiSnapshot('reaction_unread_0_after', expectedUnread: 0);
+    if (!keepRecipientProcessAlive) {
+      await _dismissWarmupGroupNotificationCard();
+    }
     await _collectBoundedLogs();
+  }
+
+  /// Absorbs the cold-start storage deferral with a throwaway push.
+  ///
+  /// The FIRST wake after a kill spawns the background isolate cold, and its
+  /// first touch can outrun the 2 s `display_eligibility` phase budget
+  /// (`background_message_handler.dart:78-81`). Measured on the pinned Pixel
+  /// 2026-08-19 for THIS lane: ProfileInstaller +0.19 s, the `libgojni` dlopen
+  /// +1.09 s, SQLCipher keying +1.46 s, the store read +2.05 s, the deferral
+  /// +2.33 s. A graded reaction in that position presents nothing, for a reason
+  /// that has nothing to do with the reaction boundary under test.
+  ///
+  /// A TEXT, not a reaction: `relay_group_reaction_wake_total` is a
+  /// reaction-only family and this lane grades its provider evidence on an
+  /// EXACT delta of it (`expectedRelayWakeAttempts == 2`), so a warm-up
+  /// reaction would move the very number it is being graded on.
+  ///
+  /// Into a SECOND group, not the graded one: the warm-up's card stays in the
+  /// package dump for the rest of the run, and only a different title keeps it
+  /// distinguishable from the graded card.
+  ///
+  /// Gated on storage WARMTH, never on the warm-up's own disposition. That was
+  /// tried on the muted lane and was wrong: run 12 (2026-08-18) saw a warm-up
+  /// end outside every enumerated disposition with a perfectly normal SQLCipher
+  /// open behind it.
+  Future<void> _sendPostKillWarmupText() async {
+    if (_reactionWarmupGroupName.isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'post_kill_warmup_group_missing_for_${scenario.id}',
+      );
+    }
+    final gradedGroupName = _groupName;
+    final token = _runtimeToken('warmup').replaceAll('-', '');
+    final warmupMarker = 'TC389Warm${token.substring(6, 18)}';
+    await _openPlan330Group(senderId, _reactionWarmupGroupName);
+    await _sendGroupText(senderId, warmupMarker);
+    await _waitForBackgroundPushWakes(1);
+    await _waitForRecipientStorageWarm();
+    // The opens the first wake started keep running briefly after it gives up
+    // (measured: ~1s more), so settle wide of that before grading anything.
+    await Future<void>.delayed(const Duration(seconds: 15));
+    // `_openPlan330Group` retargets `_groupName`, and the graded half of the
+    // lane reads it: the card waits, the shade tap, the Orbit labels and the
+    // SQLCipher probe's `MKNOON_257_PROBE_GROUP_NAME`.
+    _groupName = gradedGroupName;
+  }
+
+  /// Waits for exactly one content card attributed to the GRADED group.
+  ///
+  /// `_waitForNotificationCard()` counts records across the WHOLE app package
+  /// and returns `null` — not a failure — when the count is not one, so in a
+  /// lane that deliberately posts a warm-up card into a second group it does
+  /// not fail: it hangs for the full two minutes. Its two message-lane callers
+  /// are unaffected and deliberately left alone.
+  ///
+  /// The title is now part of the WAIT rather than only of the assertion after
+  /// it, so a card posted under the wrong title surfaces as this wait's typed
+  /// timeout instead of `reaction_card_copy_mismatch`. The validator still
+  /// names it exactly, on any artifact that gets written.
+  Future<(int, ActiveNotificationCard)> _waitForGradedGroupNotificationCard() {
+    final gradedGroupName = _groupName;
+    return _waitForValue<(int, ActiveNotificationCard)>(
+      'one active $gradedGroupName notification card',
+      const Duration(minutes: 2),
+      () async {
+        final cards = _mutedAttributableCards(
+          await _notificationDump(recipientId),
+          groupName: gradedGroupName,
+        );
+        if (cards.length != 1) return null;
+        final id = cards.single.id;
+        return id == null ? null : (id, cards.single);
+      },
+    );
+  }
+
+  /// Swipes the warm-up group's card away before the lane ends.
+  ///
+  /// `_requireCleanNotificationSlate()` (`:4794`) demands ZERO app records and
+  /// runs at the start of EVERY catalog scenario, with the note that unrelated
+  /// cards are never cancelled. The graded card is already gone by here —
+  /// `_tapNotificationCard()` consumed it — so the warm-up's is the one record
+  /// this lane would otherwise hand to the next scenario as a typed environment
+  /// block.
+  ///
+  /// Best effort on purpose. Every graded observation is already captured at
+  /// this point, so failing the whole run over housekeeping would cost more
+  /// than the blocked slate it is preventing.
+  Future<void> _dismissWarmupGroupNotificationCard() async {
+    final gradedGroupName = _groupName;
+    try {
+      if (_mutedAttributableCards(
+        await _notificationDump(recipientId),
+        groupName: _reactionWarmupGroupName,
+      ).isEmpty) {
+        return;
+      }
+      // `_dismissNotificationCard` locates the card by `_groupName` in the
+      // shade, so the retarget is how it is pointed at the warm-up card.
+      _groupName = _reactionWarmupGroupName;
+      await _dismissNotificationCard();
+    } on Object {
+      // Swallowed deliberately; see the doc comment.
+    } finally {
+      _groupName = gradedGroupName;
+    }
   }
 
   Future<void> _redriveExactStoredAdd() async {

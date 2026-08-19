@@ -999,6 +999,369 @@ void main() {
       expect(decoded['status'], 'configuration_blocked');
       expect(decoded['detail'], 'staging_manifest_required');
     });
+
+    // -----------------------------------------------------------------------
+    // Plan 389 (G11) — the killed reaction lanes post a deliberate warm-up card
+    // into a second group, so the graded assertions are group-scoped instead of
+    // package-wide. The widening is a gate RELAXATION, so every row below that
+    // proves a rejection is load-bearing, not decoration.
+    // -----------------------------------------------------------------------
+
+    const reactionScenario = 'android_group_reaction_recipient';
+    const appPackage = 'com.mknoon.app';
+    const gradedGroup = 'Garden Club';
+    const foreignGroup = 'Other Club';
+    const warmupBody = 'TC389Warm0f1e2d3c4b5a';
+    final warmupGroup = groupReactionNotificationWarmupGroupName(gradedGroup);
+    final reactionBody = groupReactionNotificationExpectedAndroidReactionBody(
+      'Alice',
+    );
+    ({int id, String title, String body}) card(
+      int id,
+      String title,
+      String body,
+    ) => (id: id, title: title, body: body);
+
+    // TC-389-01.
+    test('a warm-up-group card alongside the graded card validates', () async {
+      final artifact = await _writeArtifactFixture(
+        tempDirectory,
+        reactionScenario,
+      );
+      _rewriteEvidence(
+        artifact,
+        'android_notification_records',
+        _notificationRecordBlocks(
+          appPackage: appPackage,
+          blocks: <String, List<({int id, String title, String body})>>{
+            'notification_reaction_first.log': <
+              ({int id, String title, String body})
+            >[
+              card(257, gradedGroup, reactionBody),
+              card(389, warmupGroup, warmupBody),
+            ],
+            'notification_reaction_replacement.log': <
+              ({int id, String title, String body})
+            >[
+              card(257, gradedGroup, reactionBody),
+              card(389, warmupGroup, warmupBody),
+            ],
+          },
+        ),
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: reactionScenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isTrue, reason: result.detail);
+    });
+
+    // TC-389-02. The kill for the naive widening — "at least one graded card
+    // across the accumulated list". That shape leaves `cards.length == 1`, so
+    // the replacement-identity guard never fires and an artifact proving the
+    // lane posted ONE card and never replaced it would validate.
+    test('a replacement block without a graded card is rejected', () async {
+      final artifact = await _writeArtifactFixture(
+        tempDirectory,
+        reactionScenario,
+      );
+      _rewriteEvidence(
+        artifact,
+        'android_notification_records',
+        _notificationRecordBlocks(
+          appPackage: appPackage,
+          blocks: <String, List<({int id, String title, String body})>>{
+            'notification_reaction_first.log': <
+              ({int id, String title, String body})
+            >[
+              card(257, gradedGroup, reactionBody),
+              card(389, warmupGroup, warmupBody),
+            ],
+            'notification_reaction_replacement.log': <
+              ({int id, String title, String body})
+            >[card(389, warmupGroup, warmupBody)],
+          },
+        ),
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: reactionScenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isFalse);
+      expect(result.detail, contains('exactly one graded group card'));
+    });
+
+    // TC-389-03. The allow-list is CLOSED. A widening that merely EXCLUDED the
+    // warm-up group would accept any third card, and with it a duplicate card
+    // in an unrelated conversation, a leaked card, and a card posted by a path
+    // the lane never exercises.
+    test('an app card outside the graded and warm-up groups is rejected', () async {
+      final artifact = await _writeArtifactFixture(
+        tempDirectory,
+        reactionScenario,
+      );
+      _rewriteEvidence(
+        artifact,
+        'android_notification_records',
+        _notificationRecordBlocks(
+          appPackage: appPackage,
+          blocks: <String, List<({int id, String title, String body})>>{
+            'notification_reaction_first.log': <
+              ({int id, String title, String body})
+            >[
+              card(257, gradedGroup, reactionBody),
+              card(389, warmupGroup, warmupBody),
+              card(701, foreignGroup, 'unrelated conversation copy'),
+            ],
+            'notification_reaction_replacement.log': <
+              ({int id, String title, String body})
+            >[
+              card(257, gradedGroup, reactionBody),
+              card(389, warmupGroup, warmupBody),
+            ],
+          },
+        ),
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: reactionScenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isFalse);
+      expect(result.detail, contains('outside the graded and warm-up groups'));
+    });
+
+    // TC-389-04. The graded card is still pinned exactly. At HEAD this gate was
+    // unreachable: the per-block count `continue`d before the card was ever
+    // collected, so it only becomes operative once the count is widened.
+    // Deliberately NOT "New Message" copy, so the failure isolates the body
+    // equality rather than the copy scan.
+    test('a graded-group card with the wrong body still reds', () async {
+      final artifact = await _writeArtifactFixture(
+        tempDirectory,
+        reactionScenario,
+      );
+      _rewriteEvidence(
+        artifact,
+        'android_notification_records',
+        _notificationRecordBlocks(
+          appPackage: appPackage,
+          blocks: <String, List<({int id, String title, String body})>>{
+            'notification_reaction_first.log': <
+              ({int id, String title, String body})
+            >[
+              card(257, gradedGroup, 'TC257Target1755600000000000'),
+              card(389, warmupGroup, warmupBody),
+            ],
+            'notification_reaction_replacement.log': <
+              ({int id, String title, String body})
+            >[
+              card(257, gradedGroup, reactionBody),
+              card(389, warmupGroup, warmupBody),
+            ],
+          },
+        ),
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: reactionScenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isFalse);
+      expect(result.detail, contains('reaction title/body mismatch'));
+    });
+
+    // TC-389-05. On device the two Orbit rows are SIBLING NODES of one
+    // `<hierarchy>`, so the fixture is single-block on purpose: the most likely
+    // wrong qualifier — two independent `contains` on the same block — passes a
+    // two-block fixture and reds this one.
+    test('unread semantics are graded per group', () async {
+      final tolerated = await _writeArtifactFixture(
+        Directory('${tempDirectory.path}/unread-tolerated')
+          ..createSync(recursive: true),
+        reactionScenario,
+      );
+      _rewriteEvidence(
+        tolerated,
+        'ui_automation',
+        _uiHierarchyBlocks(<String, List<String>>{
+          'ui_reaction_unread_0_before.xml': <String>[
+            'Open group $gradedGroup',
+          ],
+          'ui_reaction_target_after_tap.xml': <String>[
+            'plan257-target-message',
+          ],
+          'ui_reaction_unread_0_after.xml': <String>[
+            'Open group $gradedGroup',
+            'Open group $warmupGroup, 1 unread message',
+          ],
+        }),
+      );
+
+      final toleratedResult = await validateGroupReactionNotificationArtifact(
+        scenario: reactionScenario,
+        artifactFile: tolerated,
+      );
+
+      expect(toleratedResult.ok, isTrue, reason: toleratedResult.detail);
+
+      final leaked = await _writeArtifactFixture(
+        Directory('${tempDirectory.path}/unread-leaked')
+          ..createSync(recursive: true),
+        reactionScenario,
+      );
+      _rewriteEvidence(
+        leaked,
+        'ui_automation',
+        _uiHierarchyBlocks(<String, List<String>>{
+          'ui_reaction_unread_0_before.xml': <String>[
+            'Open group $gradedGroup',
+          ],
+          'ui_reaction_target_after_tap.xml': <String>[
+            'plan257-target-message',
+          ],
+          'ui_reaction_unread_0_after.xml': <String>[
+            'Open group $gradedGroup, 2 unread messages',
+            'Open group $warmupGroup, 1 unread message',
+          ],
+        }),
+      );
+
+      final leakedResult = await validateGroupReactionNotificationArtifact(
+        scenario: reactionScenario,
+        artifactFile: leaked,
+      );
+
+      expect(leakedResult.ok, isFalse);
+      expect(leakedResult.detail, contains('reaction created unread semantics'));
+    });
+
+    // TC-389-06. The message branch keeps today's PACKAGE-WIDE card contract.
+    // The warm-up-titled card is the sub-case that matters: a truly foreign
+    // card is rejected by the reaction form too, so only this one kills the
+    // mutation that drops the `messageScenario` selector.
+    test('the message branch still rejects a foreign card', () async {
+      const messageScenario = 'android_group_message_unread_lifecycle';
+      for (final extra in <({int id, String title, String body})>[
+        card(389, warmupGroup, warmupBody),
+        card(701, foreignGroup, 'unrelated conversation copy'),
+      ]) {
+        final artifact = await _writeArtifactFixture(
+          Directory('${tempDirectory.path}/message-${extra.id}')
+            ..createSync(recursive: true),
+          messageScenario,
+        );
+        _rewriteEvidence(
+          artifact,
+          'android_notification_records',
+          _notificationRecordBlocks(
+            appPackage: appPackage,
+            blocks: <String, List<({int id, String title, String body})>>{
+              'notification_message_first.log': <
+                ({int id, String title, String body})
+              >[card(257, gradedGroup, 'plan257-first-message'), extra],
+              'notification_message_second.log': <
+                ({int id, String title, String body})
+              >[card(257, gradedGroup, 'plan257-second-message')],
+            },
+          ),
+        );
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: messageScenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isFalse, reason: extra.title);
+        expect(
+          result.detail,
+          contains('malformed raw card'),
+          reason: extra.title,
+        );
+      }
+    });
+
+    // TC-389-07. The warm-up is machine-enforced. A ported `>= 2` rule would be
+    // vacuous: the lane already emitted two post-kill wakes (ADD and re-ADD)
+    // with no warm-up at all, and `expectedRelayWakeAttempts` is pinned to 2.
+    test('the graded reaction may not ride the first post-kill wake', () async {
+      for (final wakes in const <int>[0, 1, 2]) {
+        final artifact = await _writeArtifactFixture(
+          Directory('${tempDirectory.path}/wakes-$wakes')
+            ..createSync(recursive: true),
+          reactionScenario,
+        );
+        _rewriteEvidence(
+          artifact,
+          'recipient_app',
+          _killedReactionRecipientApp(
+            wakes: wakes,
+            targetMarker: 'plan257-target-message',
+          ),
+        );
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: reactionScenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isFalse, reason: '$wakes wakes');
+        expect(
+          result.detail,
+          contains('fewer than three post-kill'),
+          reason: '$wakes wakes',
+        );
+      }
+
+      final warmed = await _writeArtifactFixture(
+        Directory('${tempDirectory.path}/wakes-3')..createSync(recursive: true),
+        reactionScenario,
+      );
+      _rewriteEvidence(
+        warmed,
+        'recipient_app',
+        _killedReactionRecipientApp(
+          wakes: 3,
+          targetMarker: 'plan257-target-message',
+        ),
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: reactionScenario,
+        artifactFile: warmed,
+      );
+
+      expect(result.ok, isTrue, reason: result.detail);
+    });
+
+    // TC-389-07, negative half of the gate: the background-connected reaction
+    // keeps its process alive, pays no cold-isolate cost, sends no warm-up, and
+    // must NOT be held to the post-kill floor.
+    test('the background-connected lane is exempt from the wake floor', () async {
+      final artifact = await _writeArtifactFixture(
+        tempDirectory,
+        groupReactionBackgroundConnectedScenarioId,
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: groupReactionBackgroundConnectedScenarioId,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isTrue, reason: result.detail);
+      expect(
+        File(
+          '${artifact.parent.path}${Platform.pathSeparator}recipient_app.log',
+        ).readAsStringSync(),
+        isNot(contains('PUSH_BACKGROUND_MESSAGE_RECEIVED')),
+      );
+    });
   });
 
   group('Plan 257 staging declaration contract', () {
@@ -1791,11 +2154,10 @@ String _rawEvidence({
           'pid_present_before_delivery=true connectivity_event=P2P_RELAY_PRESENCE_SET_RESPONSE home_to_react_delay_ms=$groupReactionBackgroundConnectedHomeToReactDelayMs notification_observation_window_ms=$groupReactionBackgroundConnectedObservationWindowMs',
         ].join('\n')}\n';
       }
-      return '${<String>[
-        _flowLine('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK', <String, Object?>{'processState': 'killed'}),
-        _flowLine('PUSH_ANDROID_DATA_DECRYPT_OK', <String, Object?>{'parity': true}),
-        _flowLine('GROUP_NOTIFICATION_ROUTE_TARGET_MATCHED', <String, Object?>{'targetMarker': targetMarker}),
-      ].join('\n')}\n';
+      // Plan 389. THREE post-kill wakes — the throwaway warm-up text, the
+      // reaction ADD and the reaction re-ADD. The lane emitted two before the
+      // warm-up existed, which is why the validator's floor is three.
+      return _killedReactionRecipientApp(wakes: 3, targetMarker: targetMarker);
     case 'android_logcat':
       return '${<String>[
         _flowLine('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK', <String, Object?>{'engine': 'background'}),
@@ -1843,6 +2205,79 @@ String _rawEvidence({
           "testAnnouncementReactionNotificationTap]' passed (8.000 seconds)."].join('\n')}\n';
   }
   throw StateError('Unhandled evidence kind $kind');
+}
+
+/// The killed-recipient reaction lane's `recipient_app` evidence.
+///
+/// [wakes] is how many background pushes the isolate took AFTER the kill. The
+/// capture clears the recipient's log at the kill, so every wake in this
+/// evidence is post-kill by construction and no cursor is involved.
+String _killedReactionRecipientApp({
+  required int wakes,
+  required String targetMarker,
+}) {
+  return '${<String>[
+    for (var index = 0; index < wakes; index++)
+      // No `messageId`: the real group-reaction push carries only
+      // `{'kind': 'group_reaction'}`, which is exactly why the rule that reads
+      // this evidence is cardinal rather than identity-bound.
+      _flowLine('PUSH_BACKGROUND_MESSAGE_RECEIVED', <String, Object?>{'kind': index == 0 ? 'group_message' : 'group_reaction'}),
+    _flowLine('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK', <String, Object?>{'processState': 'killed'}),
+    _flowLine('PUSH_ANDROID_DATA_DECRYPT_OK', <String, Object?>{'parity': true}),
+    _flowLine('GROUP_NOTIFICATION_ROUTE_TARGET_MATCHED', <String, Object?>{'targetMarker': targetMarker}),
+  ].join('\n')}\n';
+}
+
+/// One `android_notification_records` evidence body, block by block.
+///
+/// [blocks] maps a source file name to the cards that block holds. The
+/// per-block card list is open so a warm-up card, a foreign card, or a block
+/// with no graded card at all can be posed — shapes the fixed two-card
+/// [_notificationRecords] builder cannot express.
+String _notificationRecordBlocks({
+  required String appPackage,
+  required Map<String, List<({int id, String title, String body})>> blocks,
+}) {
+  final buffer = StringBuffer();
+  var second = 4;
+  for (final entry in blocks.entries) {
+    buffer.writeln('source_file=${entry.key}');
+    for (final card in entry.value) {
+      buffer
+        ..writeln(
+          'NotificationRecord(pkg=$appPackage id=${card.id} '
+          'tag=group-${card.id} user=0)',
+        )
+        ..writeln('  android.title=String (${card.title})')
+        ..writeln('  android.text=String (${card.body})')
+        ..writeln('  android.groupKey=String (group-${card.id})')
+        ..writeln(
+          '  postTime=2026-07-12T12:00:'
+          '${second.toString().padLeft(2, '0')}.000Z',
+        );
+      second += 1;
+    }
+  }
+  return buffer.toString();
+}
+
+/// One `ui_automation` evidence body, block by block.
+///
+/// Each label becomes its OWN `<node>` inside the block's single `<hierarchy>`,
+/// which is how the recipient's Orbit really renders two group rows. The
+/// packed-into-one-node form [_uiHierarchySnapshots] uses cannot pose that.
+String _uiHierarchyBlocks(Map<String, List<String>> blocks) {
+  final buffer = StringBuffer();
+  for (final entry in blocks.entries) {
+    buffer
+      ..writeln('source_file=${entry.key}')
+      ..writeln('<hierarchy rotation="0">');
+    for (final label in entry.value) {
+      buffer.writeln('  <node text="$label" content-desc="$label"/>');
+    }
+    buffer.writeln('</hierarchy>');
+  }
+  return buffer.toString();
 }
 
 String _flowLine(String event, Map<String, Object?> fields) {

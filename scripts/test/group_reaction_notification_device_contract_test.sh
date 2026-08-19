@@ -166,8 +166,12 @@ for read in re.findall(r"'logcat',\s*'-d',(.*?)\]", source, re.S):
 
 # The clears stay. The stream turns each one into a floor instead of destroying
 # evidence, so the destructive-action ban stays green.
-if source.count("const <String>['logcat', '-c']") != 8:
-    fail('the eight non-destructive log clear sites changed without repinning')
+#
+# Repinned 8 -> 9 by Plan 389: the reaction lane now clears at the kill, exactly
+# as the muted and killed-text lanes already do, so its post-kill wake COUNT is
+# readable from `recipient_app` without a cursor. Repinned, never weakened.
+if source.count("const <String>['logcat', '-c']") != 9:
+    fail('the nine non-destructive log clear sites changed without repinning')
 STREAM_SEAM
 
 set +e
