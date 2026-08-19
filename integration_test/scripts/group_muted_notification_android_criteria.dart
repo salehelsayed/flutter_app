@@ -17,8 +17,17 @@ const String groupMutedMessageSuppressionScenarioId =
     'android_group_muted_message_suppression';
 const String groupMutedReactionBackgroundScenarioId =
     'android_group_muted_reaction_background_suppression';
+
+/// Plan 384 (G19). Deliberately shares neither a prefix nor the
+/// `_message_unread_lifecycle` suffix with the two muted ids: the Plan-257
+/// runner selects proof rows with an anchored `--name`, and the shared capture
+/// driver routes any id carrying that suffix into the reaction grammar.
+const String groupTextKilledAppCardScenarioId =
+    'android_group_text_killed_app_card';
 const String groupMutedNotificationArtifactSchema =
     'mknoon.plan379.android-group-muted-notification.v1';
+const String groupKilledTextCardArtifactSchema =
+    'mknoon.plan384.android-group-text-killed-app-card.v1';
 const String groupMutedNotificationCommandJournalSchema =
     'mknoon.plan379.android-command-journal.v1';
 const String plan379PhysicalAndroidDeviceId = '21071FDF600CSC';
@@ -30,16 +39,20 @@ const List<String> groupMutedNotificationCriteria = <String>[
   'groups.muted_unread_preserved',
   'groups.muted_excluded_from_canonical_badge',
   'groups.muted_delivery_unharmed',
+  'groups.killed_app_group_text_card',
 ];
 
-/// The two ids this lane owns, in runner declaration order.
+/// The ids this lane owns, in runner declaration order.
 ///
-/// Neither is a prefix of the other: the Plan-257 runner selects proof rows
-/// with an anchored `--name`, and a prefix pair is exactly what made
-/// `--plain-name` run two blocks against one artifact.
+/// No id is a prefix of another: the Plan-257 runner selects proof rows with
+/// an anchored `--name`, and a prefix pair is exactly what made `--plain-name`
+/// run two blocks against one artifact. Plan 384's id is appended LAST so the
+/// shipped pair's declaration order — and the shell census pinned against it —
+/// stays byte-stable.
 const List<String> groupMutedNotificationScenarioIds = <String>[
   groupMutedMessageSuppressionScenarioId,
   groupMutedReactionBackgroundScenarioId,
+  groupTextKilledAppCardScenarioId,
 ];
 
 // ---------------------------------------------------------------------------
@@ -137,6 +150,7 @@ final class GroupMutedProjectionInput {
 
   final bool groupIsMuted;
   final String underTestMarker;
+
   /// Already hashed, for the same reason as the group digests above.
   final String underTestMessageIdSha256;
   final bool underTestReadAtNull;
@@ -267,8 +281,7 @@ final class GroupMutedBackgroundDeliveryInput {
     String? suppressionReason,
     String? backgroundFlowLog,
   }) => GroupMutedBackgroundDeliveryInput(
-    recipientProcessState:
-        recipientProcessState ?? this.recipientProcessState,
+    recipientProcessState: recipientProcessState ?? this.recipientProcessState,
     mutedFcmMessageId: mutedFcmMessageId ?? this.mutedFcmMessageId,
     controlFcmMessageId: controlFcmMessageId ?? this.controlFcmMessageId,
     suppressionReason: suppressionReason ?? this.suppressionReason,
@@ -593,7 +606,8 @@ validateGroupMutedNotificationAndroidArtifact({
       failures,
     );
     mutedGroupName =
-        _requiredString(fixture, 'mutedGroupName', r'$.fixture', failures) ?? '';
+        _requiredString(fixture, 'mutedGroupName', r'$.fixture', failures) ??
+        '';
     controlGroupName =
         _requiredString(fixture, 'controlGroupName', r'$.fixture', failures) ??
         '';
@@ -686,7 +700,13 @@ String _validateBuild(
     r'$.build',
     failures,
   );
-  _expectValue(build, 'profile', 'android.production_fcm', r'$.build', failures);
+  _expectValue(
+    build,
+    'profile',
+    'android.production_fcm',
+    r'$.build',
+    failures,
+  );
   _expectValue(build, 'provenance', 'central_prebuilt', r'$.build', failures);
   _expectValue(build, 'childBuildCount', 0, r'$.build', failures);
   final apkSha = _requiredString(build, 'apkSha256', r'$.build', failures);
@@ -1175,9 +1195,7 @@ Future<void> _validateBackgroundDelivery(
     );
   }
   if (mutedDigest is String && shownDigests.contains(mutedDigest)) {
-    failures.add(
-      '$path.backgroundFlowLog presented a card for the muted push',
-    );
+    failures.add('$path.backgroundFlowLog presented a card for the muted push');
   }
   if (controlDigest is String && suppressedDigests.contains(controlDigest)) {
     failures.add(
@@ -1248,8 +1266,13 @@ Future<void> _validateAutomation(
     if (command == null) continue;
     _expectExactKeys(
       command,
-      const <String>{'stage', 'target', 'action', 'semanticTarget',
-        'recordedAt'},
+      const <String>{
+        'stage',
+        'target',
+        'action',
+        'semanticTarget',
+        'recordedAt',
+      },
       commandPath,
       failures,
     );
@@ -1301,9 +1324,7 @@ List<String> flowEventMessageIdsInOrder(String log, String eventName) {
   final ids = <String>[];
   for (final line in log.split('\n')) {
     if (!line.contains(eventName)) continue;
-    final match = RegExp(
-      r'"messageId"\s*:\s*"([^"]+)"',
-    ).firstMatch(line);
+    final match = RegExp(r'"messageId"\s*:\s*"([^"]+)"').firstMatch(line);
     if (match == null) continue;
     final id = match.group(1)!;
     if (!ids.contains(id)) ids.add(id);
@@ -1531,6 +1552,720 @@ bool _isRegularFile(File file) =>
 
 String _sha256Text(String value) =>
     sha256.convert(utf8.encode(value)).toString();
+
+// ===========================================================================
+// Plan 384 (G19) — killed-app group TEXT card.
+//
+// Same lane, same pinned pair, same prebuilt APK, its own artifact grammar.
+// The muted validator asserts the ABSENCE of a card for the group under test;
+// this scenario asserts its PRESENCE, so the two cannot share a validator and
+// the muted admission is deliberately left untouched.
+//
+// What it closes: a killed Android app receiving a default-lane group text
+// posted no OS card at all. The push died at
+// `PUSH_ANDROID_DATA_DECRYPT_FAIL{group_parity_mismatch}` because the Go live
+// envelope carries no inner sender key and the parity predicate's sender
+// clause had no null guard.
+// ===========================================================================
+
+/// The two post-kill wakes this lane grades, resolved from the recipient's own
+/// raw flow log.
+///
+/// [warmupFcmMessageId] is the cold-start absorber: the FIRST wake after a kill
+/// spawns the background isolate cold, and its first-touch warm-up can outrun
+/// the 2s `display_eligibility` phase budget, so that push exits at
+/// `PUSH_BACKGROUND_STORAGE_DEFERRED` upstream of everything this lane grades.
+/// It is deliberately not graded.
+final class KilledTextCardPushBinding {
+  const KilledTextCardPushBinding({
+    required this.warmupFcmMessageId,
+    required this.gradedFcmMessageId,
+  });
+
+  final String warmupFcmMessageId;
+  final String gradedFcmMessageId;
+}
+
+/// Binds the graded killed-path push, or returns null when the log cannot
+/// distinguish it.
+///
+/// Fails closed rather than guessing: the caller turns null into a capture
+/// failure carrying the raw counts. The graded push may never be the warm-up,
+/// and it must be the one the presenter actually showed.
+KilledTextCardPushBinding? resolveKilledTextCardPushBinding(String flowLog) {
+  final received = flowEventMessageIdsInOrder(
+    flowLog,
+    'PUSH_BACKGROUND_MESSAGE_RECEIVED',
+  );
+  if (received.length < 2) return null;
+  final warmup = received.first;
+  final graded = received.skip(1).toSet();
+
+  final shown = flowEventMessageIdsInOrder(
+    flowLog,
+    'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
+  ).where(graded.contains).toList(growable: false);
+  if (shown.isEmpty) return null;
+
+  return KilledTextCardPushBinding(
+    warmupFcmMessageId: warmup,
+    gradedFcmMessageId: shown.last,
+  );
+}
+
+/// Counts raw log lines carrying [eventName].
+///
+/// `PUSH_BACKGROUND_NOTIFICATION_ERROR` details are `{'error': …}` only — the
+/// event carries no message id — so an id-bound rule is unimplementable and
+/// the lane grades the accumulated post-kill window instead. The window holds
+/// exactly the warm-up and the graded wake, and post-fix neither may error.
+int countFlowEventLines(String log, String eventName) =>
+    log.split('\n').where((line) => line.contains(eventName)).length;
+
+final class GroupKilledTextCardFixtureInput {
+  const GroupKilledTextCardFixtureInput({
+    required this.groupName,
+    required this.baselineMarker,
+    required this.warmupMarker,
+    required this.gradedMarker,
+  });
+
+  final String groupName;
+
+  /// Pre-kill, alive-lane control: proves this build/install can card at all
+  /// before the process is terminated.
+  final String baselineMarker;
+
+  /// The throwaway push that absorbs the cold-start storage deferral.
+  final String warmupMarker;
+  final String gradedMarker;
+
+  GroupKilledTextCardFixtureInput copyWith({
+    String? groupName,
+    String? baselineMarker,
+    String? warmupMarker,
+    String? gradedMarker,
+  }) => GroupKilledTextCardFixtureInput(
+    groupName: groupName ?? this.groupName,
+    baselineMarker: baselineMarker ?? this.baselineMarker,
+    warmupMarker: warmupMarker ?? this.warmupMarker,
+    gradedMarker: gradedMarker ?? this.gradedMarker,
+  );
+}
+
+final class GroupKilledTextCardDeliveryInput {
+  const GroupKilledTextCardDeliveryInput({
+    required this.recipientProcessState,
+    required this.warmupFcmMessageId,
+    required this.gradedFcmMessageId,
+    required this.backgroundFlowLog,
+  });
+
+  final String recipientProcessState;
+  final String warmupFcmMessageId;
+  final String gradedFcmMessageId;
+  final String backgroundFlowLog;
+
+  GroupKilledTextCardDeliveryInput copyWith({
+    String? recipientProcessState,
+    String? warmupFcmMessageId,
+    String? gradedFcmMessageId,
+    String? backgroundFlowLog,
+  }) => GroupKilledTextCardDeliveryInput(
+    recipientProcessState: recipientProcessState ?? this.recipientProcessState,
+    warmupFcmMessageId: warmupFcmMessageId ?? this.warmupFcmMessageId,
+    gradedFcmMessageId: gradedFcmMessageId ?? this.gradedFcmMessageId,
+    backgroundFlowLog: backgroundFlowLog ?? this.backgroundFlowLog,
+  );
+}
+
+final class GroupKilledTextCardCardInput {
+  const GroupKilledTextCardCardInput({
+    required this.preKillCardCount,
+    required this.preKillNotificationDump,
+    required this.gradedCardCount,
+    required this.gradedNotificationDump,
+  });
+
+  final int preKillCardCount;
+  final String preKillNotificationDump;
+  final int gradedCardCount;
+  final String gradedNotificationDump;
+
+  GroupKilledTextCardCardInput copyWith({
+    int? preKillCardCount,
+    String? preKillNotificationDump,
+    int? gradedCardCount,
+    String? gradedNotificationDump,
+  }) => GroupKilledTextCardCardInput(
+    preKillCardCount: preKillCardCount ?? this.preKillCardCount,
+    preKillNotificationDump:
+        preKillNotificationDump ?? this.preKillNotificationDump,
+    gradedCardCount: gradedCardCount ?? this.gradedCardCount,
+    gradedNotificationDump:
+        gradedNotificationDump ?? this.gradedNotificationDump,
+  );
+}
+
+final class GroupKilledTextCardCaptureInput {
+  const GroupKilledTextCardCaptureInput({
+    required this.recordedAt,
+    required this.build,
+    required this.topology,
+    required this.fixture,
+    required this.delivery,
+    required this.card,
+    required this.commandJournal,
+  });
+
+  final String recordedAt;
+  final GroupMutedNotificationBuildInput build;
+  final GroupMutedNotificationTopologyInput topology;
+  final GroupKilledTextCardFixtureInput fixture;
+  final GroupKilledTextCardDeliveryInput delivery;
+  final GroupKilledTextCardCardInput card;
+  final String commandJournal;
+
+  GroupKilledTextCardCaptureInput copyWith({
+    String? recordedAt,
+    GroupMutedNotificationBuildInput? build,
+    GroupMutedNotificationTopologyInput? topology,
+    GroupKilledTextCardFixtureInput? fixture,
+    GroupKilledTextCardDeliveryInput? delivery,
+    GroupKilledTextCardCardInput? card,
+    String? commandJournal,
+  }) => GroupKilledTextCardCaptureInput(
+    recordedAt: recordedAt ?? this.recordedAt,
+    build: build ?? this.build,
+    topology: topology ?? this.topology,
+    fixture: fixture ?? this.fixture,
+    delivery: delivery ?? this.delivery,
+    card: card ?? this.card,
+    commandJournal: commandJournal ?? this.commandJournal,
+  );
+}
+
+/// Writes every raw evidence blob next to the artifact and returns the artifact
+/// map that references them by relative path + SHA-256.
+Future<Map<String, Object?>> buildGroupKilledTextCardArtifact({
+  required Directory proofDirectory,
+  required GroupKilledTextCardCaptureInput input,
+}) async {
+  if (!proofDirectory.existsSync()) {
+    await proofDirectory.create(recursive: true);
+  }
+
+  Future<Map<String, Object?>> evidence(String name, String contents) async {
+    final relative = '${groupTextKilledAppCardScenarioId}_$name';
+    final file = File(
+      '${proofDirectory.path}${Platform.pathSeparator}$relative',
+    );
+    final bytes = utf8.encode(contents);
+    await file.writeAsBytes(bytes, flush: true);
+    return <String, Object?>{
+      'path': relative,
+      'sha256': sha256.convert(bytes).toString(),
+    };
+  }
+
+  final delivery = input.delivery;
+  final card = input.card;
+
+  return <String, Object?>{
+    'schema': groupKilledTextCardArtifactSchema,
+    'version': 1,
+    'capabilityId': groupMutedNotificationCapabilityId,
+    'scenario': groupTextKilledAppCardScenarioId,
+    'recordedAt': input.recordedAt,
+    'build': <String, Object?>{
+      'profile': 'android.production_fcm',
+      'provenance': 'central_prebuilt',
+      'apkSha256': input.build.apkSha256,
+      'childBuildCount': 0,
+      'packageName': input.build.packageName,
+    },
+    'topology': <String, Object?>{
+      'physical': <String, Object?>{
+        'deviceId': input.topology.physicalDeviceId,
+        'platform': 'android',
+        'kind': 'physical',
+      },
+      'emulator': <String, Object?>{
+        'deviceId': input.topology.emulatorDeviceId,
+        'platform': 'android',
+        'kind': 'emulator',
+      },
+    },
+    'fixture': <String, Object?>{
+      'groupName': input.fixture.groupName,
+      'baselineMarker': input.fixture.baselineMarker,
+      'warmupMarker': input.fixture.warmupMarker,
+      'gradedMarker': input.fixture.gradedMarker,
+    },
+    'killedDelivery': <String, Object?>{
+      'recipientProcessState': delivery.recipientProcessState,
+      'warmupFcmMessageIdSha256': _sha256Text(delivery.warmupFcmMessageId),
+      'gradedFcmMessageIdSha256': _sha256Text(delivery.gradedFcmMessageId),
+      'backgroundFlowLog': await evidence(
+        'background_flow.log',
+        delivery.backgroundFlowLog,
+      ),
+    },
+    'card': <String, Object?>{
+      'preKillCardCount': card.preKillCardCount,
+      'preKillNotificationDump': await evidence(
+        'pre_kill_notification_dump.txt',
+        card.preKillNotificationDump,
+      ),
+      'gradedCardCount': card.gradedCardCount,
+      'gradedNotificationDump': await evidence(
+        'graded_notification_dump.txt',
+        card.gradedNotificationDump,
+      ),
+    },
+    'automation': <String, Object?>{
+      'manualTaps': 0,
+      'notificationCardTaps': 0,
+      'commandJournal': await evidence(
+        'command_journal.json',
+        input.commandJournal,
+      ),
+    },
+  };
+}
+
+/// Builds and writes `<scenario>.json` into [proofDirectory].
+Future<File> writeGroupKilledTextCardArtifact({
+  required Directory proofDirectory,
+  required GroupKilledTextCardCaptureInput input,
+}) async {
+  final artifact = await buildGroupKilledTextCardArtifact(
+    proofDirectory: proofDirectory,
+    input: input,
+  );
+  final file = File(
+    '${proofDirectory.path}${Platform.pathSeparator}'
+    '$groupTextKilledAppCardScenarioId.json',
+  );
+  await file.writeAsString(
+    const JsonEncoder.withIndent('  ').convert(artifact),
+    flush: true,
+  );
+  return file;
+}
+
+/// Validates a Plan-384 killed-app group-text card proof.
+///
+/// Every summary counter is re-derived from a content-addressed raw capture
+/// stored next to [artifactFile]: a summary claiming "the graded push carded"
+/// while the raw dump only holds the warm-up's card is rejected.
+Future<GroupMutedNotificationArtifactValidation>
+validateGroupKilledTextCardAndroidArtifact({
+  required File artifactFile,
+  String expectedPhysicalDeviceId = plan379PhysicalAndroidDeviceId,
+  String expectedEmulatorDeviceId = plan379AndroidEmulatorDeviceId,
+  String? expectedApkSha256,
+  String? expectedPackageName,
+}) async {
+  final failures = <String>[];
+  if (!_isRegularFile(artifactFile)) {
+    return GroupMutedNotificationArtifactValidation(<String>[
+      'proof artifact is not a regular file: ${artifactFile.path}',
+    ]);
+  }
+
+  final artifact = _decodeObject(
+    await artifactFile.readAsString(),
+    r'$',
+    failures,
+  );
+  if (artifact == null) {
+    return GroupMutedNotificationArtifactValidation(failures);
+  }
+
+  if (artifact['scenario'] != groupTextKilledAppCardScenarioId) {
+    failures.add(r'$.scenario is not the Plan 384 killed-app card scenario');
+    return GroupMutedNotificationArtifactValidation(failures);
+  }
+
+  _expectExactKeys(
+    artifact,
+    const <String>{
+      'schema',
+      'version',
+      'capabilityId',
+      'scenario',
+      'recordedAt',
+      'build',
+      'topology',
+      'fixture',
+      'killedDelivery',
+      'card',
+      'automation',
+    },
+    r'$',
+    failures,
+  );
+  _expectValue(
+    artifact,
+    'schema',
+    groupKilledTextCardArtifactSchema,
+    r'$',
+    failures,
+  );
+  _expectValue(artifact, 'version', 1, r'$', failures);
+  _expectValue(
+    artifact,
+    'capabilityId',
+    groupMutedNotificationCapabilityId,
+    r'$',
+    failures,
+  );
+  _expectUtcTimestamp(artifact['recordedAt'], r'$.recordedAt', failures);
+
+  final packageName = _validateBuild(
+    artifact['build'],
+    expectedApkSha256: expectedApkSha256,
+    expectedPackageName: expectedPackageName,
+    failures: failures,
+  );
+  _validateTopology(
+    artifact['topology'],
+    expectedPhysicalDeviceId: expectedPhysicalDeviceId,
+    expectedEmulatorDeviceId: expectedEmulatorDeviceId,
+    failures: failures,
+  );
+
+  final fixture = _object(artifact['fixture'], r'$.fixture', failures);
+  var groupName = '';
+  var baselineMarker = '';
+  var warmupMarker = '';
+  var gradedMarker = '';
+  if (fixture != null) {
+    _expectExactKeys(
+      fixture,
+      const <String>{
+        'groupName',
+        'baselineMarker',
+        'warmupMarker',
+        'gradedMarker',
+      },
+      r'$.fixture',
+      failures,
+    );
+    groupName =
+        _requiredString(fixture, 'groupName', r'$.fixture', failures) ?? '';
+    baselineMarker =
+        _requiredString(fixture, 'baselineMarker', r'$.fixture', failures) ??
+        '';
+    warmupMarker =
+        _requiredString(fixture, 'warmupMarker', r'$.fixture', failures) ?? '';
+    gradedMarker =
+        _requiredString(fixture, 'gradedMarker', r'$.fixture', failures) ?? '';
+    final markers = <String>[
+      baselineMarker,
+      warmupMarker,
+      gradedMarker,
+    ].where((marker) => marker.isNotEmpty).toList(growable: false);
+    if (markers.toSet().length != markers.length) {
+      failures.add(
+        r'$.fixture markers must be pairwise distinct — a shared marker makes '
+        'the graded card indistinguishable from the baseline or warm-up card',
+      );
+    }
+  }
+
+  await _validateKilledDelivery(
+    artifact['killedDelivery'],
+    artifactFile: artifactFile,
+    failures: failures,
+  );
+  await _validateKilledCardEvidence(
+    artifact['card'],
+    artifactFile: artifactFile,
+    packageName: packageName,
+    groupName: groupName,
+    baselineMarker: baselineMarker,
+    gradedMarker: gradedMarker,
+    failures: failures,
+  );
+  await _validateKilledAutomation(
+    artifact['automation'],
+    artifactFile: artifactFile,
+    failures: failures,
+  );
+
+  return GroupMutedNotificationArtifactValidation(failures);
+}
+
+Future<void> _validateKilledDelivery(
+  Object? value, {
+  required File artifactFile,
+  required List<String> failures,
+}) async {
+  const path = r'$.killedDelivery';
+  final delivery = _object(value, path, failures);
+  if (delivery == null) return;
+  _expectExactKeys(
+    delivery,
+    const <String>{
+      'recipientProcessState',
+      'warmupFcmMessageIdSha256',
+      'gradedFcmMessageIdSha256',
+      'backgroundFlowLog',
+    },
+    path,
+    failures,
+  );
+  if (delivery['recipientProcessState'] != 'terminated') {
+    failures.add(
+      '$path.recipientProcessState must be terminated — the whole point of '
+      'this lane is the killed-process wake',
+    );
+  }
+  final warmupDigest = delivery['warmupFcmMessageIdSha256'];
+  final gradedDigest = delivery['gradedFcmMessageIdSha256'];
+  for (final entry in <(String, Object?)>[
+    ('warmupFcmMessageIdSha256', warmupDigest),
+    ('gradedFcmMessageIdSha256', gradedDigest),
+  ]) {
+    if (!_isSha256(entry.$2)) {
+      failures.add('$path.${entry.$1} must be a SHA-256 digest');
+    }
+  }
+  if (warmupDigest == gradedDigest) {
+    failures.add('$path warm-up and graded push digests must differ');
+  }
+
+  final log = await _readEvidence(
+    delivery['backgroundFlowLog'],
+    artifactFile: artifactFile,
+    path: '$path.backgroundFlowLog',
+    failures: failures,
+  );
+  if (log == null) return;
+
+  final receivedDigests = _flowEventMessageDigests(
+    log,
+    'PUSH_BACKGROUND_MESSAGE_RECEIVED',
+  );
+  if (receivedDigests.length < 2) {
+    failures.add(
+      '$path.backgroundFlowLog records ${receivedDigests.length} post-kill '
+      'wakes; the lane must land a warm-up wake BEFORE the graded push so the '
+      'graded push does not absorb the cold-start storage deferral',
+    );
+  }
+  if (warmupDigest is String && !receivedDigests.contains(warmupDigest)) {
+    failures.add(
+      '$path.backgroundFlowLog lacks a PUSH_BACKGROUND_MESSAGE_RECEIVED event '
+      'for the warm-up push, so the cold-start cost is not proven paid',
+    );
+  }
+  if (gradedDigest is String && !receivedDigests.contains(gradedDigest)) {
+    failures.add(
+      '$path.backgroundFlowLog lacks a PUSH_BACKGROUND_MESSAGE_RECEIVED event '
+      'for the graded push, so the background isolate is not proven to have '
+      'run for it',
+    );
+  }
+  if (receivedDigests.isNotEmpty && gradedDigest == receivedDigests.first) {
+    failures.add(
+      '$path the graded push is the FIRST post-kill wake, so its disposition '
+      'is the cold-start storage deferral rather than the killed-path card '
+      'this lane grades',
+    );
+  }
+
+  // CONTAINS, never `single`/`last`/an exact count: post-fix the warm-up push
+  // presents a card too, so any count or positional rule over SHOWN would be
+  // asserting an accident of ordering rather than the graded push's card.
+  final shownDigests = _flowEventMessageDigests(
+    log,
+    'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
+  );
+  if (gradedDigest is String && !shownDigests.contains(gradedDigest)) {
+    failures.add(
+      '$path.backgroundFlowLog lacks a PUSH_BACKGROUND_NOTIFICATION_SHOWN '
+      'event bound to the graded push, so the observed card is not '
+      'attributable to the push under observation',
+    );
+  }
+
+  // Window-scoped, not id-bound: PUSH_BACKGROUND_NOTIFICATION_ERROR details
+  // are `{'error': …}` only. The accumulated window holds exactly the warm-up
+  // and the graded wake, and post-fix neither may fail closed. Storage
+  // deferral is a different event, so the warm-up's own cold-start exit does
+  // not trip this.
+  final errorLines = countFlowEventLines(
+    log,
+    'PUSH_BACKGROUND_NOTIFICATION_ERROR',
+  );
+  if (errorLines > 0) {
+    failures.add(
+      '$path.backgroundFlowLog carries $errorLines '
+      'PUSH_BACKGROUND_NOTIFICATION_ERROR lines in the post-kill window; a '
+      'killed-path group text must not fail closed',
+    );
+  }
+}
+
+Future<void> _validateKilledCardEvidence(
+  Object? value, {
+  required File artifactFile,
+  required String packageName,
+  required String groupName,
+  required String baselineMarker,
+  required String gradedMarker,
+  required List<String> failures,
+}) async {
+  const path = r'$.card';
+  final card = _object(value, path, failures);
+  if (card == null) return;
+  _expectExactKeys(
+    card,
+    const <String>{
+      'preKillCardCount',
+      'preKillNotificationDump',
+      'gradedCardCount',
+      'gradedNotificationDump',
+    },
+    path,
+    failures,
+  );
+  _expectValue(card, 'preKillCardCount', 1, path, failures);
+  _expectAtLeast(card, 'gradedCardCount', 1, path, failures);
+
+  final preKillDump = await _readEvidence(
+    card['preKillNotificationDump'],
+    artifactFile: artifactFile,
+    path: '$path.preKillNotificationDump',
+    failures: failures,
+  );
+  if (preKillDump != null && packageName.isNotEmpty && groupName.isNotEmpty) {
+    final baselineCards = extractActiveContentNotificationCards(
+      preKillDump,
+      packageName: packageName,
+    ).where((entry) => entry.title == groupName).toList(growable: false);
+    if (baselineCards.length != 1 ||
+        !baselineCards.single.body.contains(baselineMarker)) {
+      failures.add(
+        '$path.preKillNotificationDump must show exactly one card for '
+        '$groupName carrying the pre-kill baseline marker — without that '
+        'alive-lane control, a dead notification install is '
+        'indistinguishable from the killed-path regression',
+      );
+    }
+  }
+
+  final gradedDump = await _readEvidence(
+    card['gradedNotificationDump'],
+    artifactFile: artifactFile,
+    path: '$path.gradedNotificationDump',
+    failures: failures,
+  );
+  if (gradedDump != null && packageName.isNotEmpty && groupName.isNotEmpty) {
+    final graded =
+        extractActiveContentNotificationCards(
+          gradedDump,
+          packageName: packageName,
+        ).where(
+          (entry) =>
+              entry.title == groupName && entry.body.contains(gradedMarker),
+        );
+    if (graded.isEmpty) {
+      failures.add(
+        '$path.gradedNotificationDump shows no card for $groupName carrying '
+        'the graded marker; Android replaces a conversation card in place, so '
+        'a card that still reads the baseline or warm-up body means the '
+        'killed-path push posted nothing',
+      );
+    }
+  }
+}
+
+/// Automation validator for the killed-card lane.
+///
+/// Deliberately not [_validateAutomation]: that one hard-requires the Group
+/// Info mute toggle, which this scenario never performs. What both share is
+/// the invariant that matters — zero human taps and zero notification-card
+/// interactions, so the card under observation was posted by the OS rather
+/// than provoked by the harness.
+Future<void> _validateKilledAutomation(
+  Object? value, {
+  required File artifactFile,
+  required List<String> failures,
+}) async {
+  const path = r'$.automation';
+  final automation = _object(value, path, failures);
+  if (automation == null) return;
+  _expectExactKeys(
+    automation,
+    const <String>{'manualTaps', 'notificationCardTaps', 'commandJournal'},
+    path,
+    failures,
+  );
+  _expectValue(automation, 'manualTaps', 0, path, failures);
+  _expectValue(automation, 'notificationCardTaps', 0, path, failures);
+
+  final text = await _readEvidence(
+    automation['commandJournal'],
+    artifactFile: artifactFile,
+    path: '$path.commandJournal',
+    failures: failures,
+  );
+  if (text == null) return;
+  final journal = _decodeObject(text, '$path.commandJournal', failures);
+  if (journal == null) return;
+  _expectExactKeys(
+    journal,
+    const <String>{'schema', 'commands'},
+    '$path.commandJournal',
+    failures,
+  );
+  _expectValue(
+    journal,
+    'schema',
+    groupMutedNotificationCommandJournalSchema,
+    '$path.commandJournal',
+    failures,
+  );
+  final commands = journal['commands'];
+  if (commands is! List || commands.isEmpty) {
+    failures.add('$path.commandJournal.commands must be non-empty');
+    return;
+  }
+  for (var index = 0; index < commands.length; index += 1) {
+    final commandPath = '$path.commandJournal.commands[$index]';
+    final command = _object(commands[index], commandPath, failures);
+    if (command == null) continue;
+    _expectExactKeys(
+      command,
+      const <String>{
+        'stage',
+        'target',
+        'action',
+        'semanticTarget',
+        'recordedAt',
+      },
+      commandPath,
+      failures,
+    );
+    _expectUtcTimestamp(
+      command['recordedAt'],
+      '$commandPath.recordedAt',
+      failures,
+    );
+    final stage = '${command['stage'] ?? ''}';
+    final action = '${command['action'] ?? ''}';
+    final semanticTarget = '${command['semanticTarget'] ?? ''}';
+    if (action == 'tap_notification' ||
+        stage.contains('notification_shade') ||
+        semanticTarget.contains('notification card')) {
+      failures.add('$commandPath records a forbidden notification-card action');
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Group Info mute-row UI targeting.
@@ -1863,28 +2598,27 @@ String sqlcipherObservationFixture({
   },
 });
 
-String _commandJournalFixture({required bool includeControlVisit}) => jsonEncode(
-  <String, Object?>{
-    'schema': groupMutedNotificationCommandJournalSchema,
-    'commands': <Map<String, Object?>>[
-      <String, Object?>{
-        'stage': 'mute_toggle',
-        'target': plan379PhysicalAndroidDeviceId,
-        'action': 'tap',
-        'semanticTarget': 'Mute Notifications',
-        'recordedAt': '2026-08-17T19:20:00.000Z',
-      },
-      if (includeControlVisit)
+String _commandJournalFixture({required bool includeControlVisit}) =>
+    jsonEncode(<String, Object?>{
+      'schema': groupMutedNotificationCommandJournalSchema,
+      'commands': <Map<String, Object?>>[
         <String, Object?>{
-          'stage': 'control_visit',
+          'stage': 'mute_toggle',
           'target': plan379PhysicalAndroidDeviceId,
           'action': 'tap',
-          'semanticTarget': 'Open group $_fixtureControlGroupName',
-          'recordedAt': '2026-08-17T19:22:00.000Z',
+          'semanticTarget': 'Mute Notifications',
+          'recordedAt': '2026-08-17T19:20:00.000Z',
         },
-    ],
-  },
-);
+        if (includeControlVisit)
+          <String, Object?>{
+            'stage': 'control_visit',
+            'target': plan379PhysicalAndroidDeviceId,
+            'action': 'tap',
+            'semanticTarget': 'Open group $_fixtureControlGroupName',
+            'recordedAt': '2026-08-17T19:22:00.000Z',
+          },
+      ],
+    });
 
 /// The accepted live-path (muted message) artifact input.
 GroupMutedNotificationCaptureInput happyMutedMessageCaptureInput() =>
@@ -2012,6 +2746,191 @@ GroupMutedNotificationCaptureInput happyMutedReactionCaptureInput() {
         controlFcmMessageId: 'plan379-fcm-control-push',
         suppressionReason: 'group_reaction_local_state_ineligible',
         suppressedFcmMessageId: 'plan379-fcm-muted-push',
+      ),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Plan 384 killed-app card fixtures.
+// ---------------------------------------------------------------------------
+
+const String _fixtureKilledGroupName = 'TC257Group1787055431430779';
+const String _fixtureKilledBaselineMarker = 'Plan384Base9f8e7d6c5b';
+const String _fixtureKilledWarmupMarker = 'Plan384Warm4a3b2c1d0e';
+const String _fixtureKilledGradedMarker = 'Plan384Grad7e6d5c4b3a';
+const String _fixtureKilledWarmupFcmMessageId = 'plan384-fcm-warmup-push';
+const String _fixtureKilledGradedFcmMessageId = 'plan384-fcm-graded-push';
+
+/// Raw recipient flow-log slice for the killed-app card lane.
+///
+/// The received/shown id lists are passed in whole so each host negative moves
+/// exactly one rule: a fixture that had to imply ordering from booleans would
+/// trip two rules at once and stop being a unique pin.
+String killedTextCardFlowLogFixture({
+  required List<String> receivedFcmMessageIds,
+  required List<String> shownFcmMessageIds,
+  bool includeWindowError = false,
+}) {
+  final lines = <String>[
+    for (final id in receivedFcmMessageIds) ...<String>[
+      '{"event":"PUSH_BACKGROUND_MESSAGE_RECEIVED",'
+          '"messageId":"$id","type":"group_message"}',
+      if (id == receivedFcmMessageIds.first)
+        '{"event":"PUSH_BACKGROUND_STORAGE_DEFERRED","kind":"group_message",'
+            '"phase":"display_eligibility","outcome":"storage_deferred"}',
+    ],
+    '{"event":"PUSH_ANDROID_DATA_DECRYPT_OK","details":{"kind":"group"}}',
+    for (final id in shownFcmMessageIds)
+      '{"event":"PUSH_BACKGROUND_NOTIFICATION_SHOWN",'
+          '"messageId":"$id","silent":true}',
+    if (includeWindowError)
+      '{"event":"PUSH_BACKGROUND_NOTIFICATION_ERROR","details":{"error":'
+          '"OrdinaryMessageNotificationIntegrityException"}}',
+  ];
+  return '${lines.join('\n')}\n';
+}
+
+String _killedCommandJournalFixture() => jsonEncode(<String, Object?>{
+  'schema': groupMutedNotificationCommandJournalSchema,
+  'commands': <Map<String, Object?>>[
+    <String, Object?>{
+      'stage': 'killed_app_group_text',
+      'target': plan379AndroidEmulatorDeviceId,
+      'action': 'tap',
+      'semanticTarget': 'Open group $_fixtureKilledGroupName',
+      'recordedAt': '2026-08-19T09:10:00.000Z',
+    },
+    <String, Object?>{
+      'stage': 'killed_app_group_text',
+      'target': plan379PhysicalAndroidDeviceId,
+      'action': 'terminate',
+      'semanticTarget': 'recipient process',
+      'recordedAt': '2026-08-19T09:11:00.000Z',
+    },
+  ],
+});
+
+/// The accepted killed-app card artifact input.
+GroupKilledTextCardCaptureInput happyKilledTextCardCaptureInput() =>
+    GroupKilledTextCardCaptureInput(
+      recordedAt: '2026-08-19T09:12:00.000Z',
+      build: const GroupMutedNotificationBuildInput(
+        apkSha256: _fixtureApkSha256,
+        packageName: _fixturePackageName,
+      ),
+      topology: const GroupMutedNotificationTopologyInput(
+        physicalDeviceId: plan379PhysicalAndroidDeviceId,
+        emulatorDeviceId: plan379AndroidEmulatorDeviceId,
+      ),
+      fixture: const GroupKilledTextCardFixtureInput(
+        groupName: _fixtureKilledGroupName,
+        baselineMarker: _fixtureKilledBaselineMarker,
+        warmupMarker: _fixtureKilledWarmupMarker,
+        gradedMarker: _fixtureKilledGradedMarker,
+      ),
+      delivery: GroupKilledTextCardDeliveryInput(
+        recipientProcessState: 'terminated',
+        warmupFcmMessageId: _fixtureKilledWarmupFcmMessageId,
+        gradedFcmMessageId: _fixtureKilledGradedFcmMessageId,
+        backgroundFlowLog: killedTextCardFlowLogFixture(
+          receivedFcmMessageIds: const <String>[
+            _fixtureKilledWarmupFcmMessageId,
+            _fixtureKilledGradedFcmMessageId,
+          ],
+          shownFcmMessageIds: const <String>[
+            _fixtureKilledWarmupFcmMessageId,
+            _fixtureKilledGradedFcmMessageId,
+          ],
+        ),
+      ),
+      card: GroupKilledTextCardCardInput(
+        preKillCardCount: 1,
+        preKillNotificationDump: singleCardNotificationDumpFixture(
+          packageName: _fixturePackageName,
+          groupName: _fixtureKilledGroupName,
+          marker: _fixtureKilledBaselineMarker,
+        ),
+        gradedCardCount: 1,
+        gradedNotificationDump: singleCardNotificationDumpFixture(
+          packageName: _fixturePackageName,
+          groupName: _fixtureKilledGroupName,
+          marker: _fixtureKilledGradedMarker,
+        ),
+      ),
+      commandJournal: _killedCommandJournalFixture(),
+    );
+
+/// Rejected: the flow log carries no SHOWN event for the graded push, so the
+/// observed card cannot be attributed to it.
+GroupKilledTextCardCaptureInput
+missingShownBindingKilledTextCardCaptureInput() {
+  final happy = happyKilledTextCardCaptureInput();
+  return happy.copyWith(
+    delivery: happy.delivery.copyWith(
+      backgroundFlowLog: killedTextCardFlowLogFixture(
+        receivedFcmMessageIds: const <String>[
+          _fixtureKilledWarmupFcmMessageId,
+          _fixtureKilledGradedFcmMessageId,
+        ],
+        shownFcmMessageIds: const <String>[_fixtureKilledWarmupFcmMessageId],
+      ),
+    ),
+  );
+}
+
+/// Rejected: a `PUSH_BACKGROUND_NOTIFICATION_ERROR` line inside the post-kill
+/// window — the exact pre-fix shape, where the parity throw killed the card.
+GroupKilledTextCardCaptureInput windowErrorKilledTextCardCaptureInput() {
+  final happy = happyKilledTextCardCaptureInput();
+  return happy.copyWith(
+    delivery: happy.delivery.copyWith(
+      backgroundFlowLog: killedTextCardFlowLogFixture(
+        receivedFcmMessageIds: const <String>[
+          _fixtureKilledWarmupFcmMessageId,
+          _fixtureKilledGradedFcmMessageId,
+        ],
+        shownFcmMessageIds: const <String>[
+          _fixtureKilledWarmupFcmMessageId,
+          _fixtureKilledGradedFcmMessageId,
+        ],
+        includeWindowError: true,
+      ),
+    ),
+  );
+}
+
+/// Rejected: the graded push is the FIRST post-kill wake, so its disposition
+/// is the cold-start storage deferral rather than the boundary under test.
+GroupKilledTextCardCaptureInput gradedPushIsFirstWakeCaptureInput() {
+  final happy = happyKilledTextCardCaptureInput();
+  return happy.copyWith(
+    delivery: happy.delivery.copyWith(
+      backgroundFlowLog: killedTextCardFlowLogFixture(
+        receivedFcmMessageIds: const <String>[
+          _fixtureKilledGradedFcmMessageId,
+          _fixtureKilledWarmupFcmMessageId,
+        ],
+        shownFcmMessageIds: const <String>[
+          _fixtureKilledGradedFcmMessageId,
+          _fixtureKilledWarmupFcmMessageId,
+        ],
+      ),
+    ),
+  );
+}
+
+/// Rejected: the shade still shows the warm-up card. Android replaces a
+/// conversation card in place, so "a card exists" is satisfied by the warm-up
+/// alone — this is the exact false positive a bare presence check would pass.
+GroupKilledTextCardCaptureInput staleCardKilledTextCardCaptureInput() {
+  final happy = happyKilledTextCardCaptureInput();
+  return happy.copyWith(
+    card: happy.card.copyWith(
+      gradedNotificationDump: singleCardNotificationDumpFixture(
+        packageName: _fixturePackageName,
+        groupName: _fixtureKilledGroupName,
+        marker: _fixtureKilledWarmupMarker,
       ),
     ),
   );

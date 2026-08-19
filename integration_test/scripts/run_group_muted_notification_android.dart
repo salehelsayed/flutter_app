@@ -75,6 +75,64 @@ _AdapterResult _passed(SimsArtifactEvidence evidence) =>
       'artifactEvidence': evidence.toJson(),
     }, 0);
 
+/// Routes an artifact to the validator its scenario id owns.
+///
+/// The loop used to hard-code the muted validator for EVERY id, whose
+/// admission check rejects anything outside the two muted scenarios — so a
+/// third scenario would red at runner-validation even after its own capture
+/// child self-validated green. The routing decision lives in
+/// `groupReactionCaptureDispatchFor`, the same value the capture driver's four
+/// dispatch sites read, so runner and capture cannot disagree.
+Future<GroupMutedNotificationArtifactValidation> _validateScenarioArtifact({
+  required String scenarioId,
+  required File artifact,
+  required String expectedPhysicalDeviceId,
+  required String expectedEmulatorDeviceId,
+  required String? expectedApkSha256,
+  required String? expectedPackageName,
+}) async {
+  final dispatch = groupReactionCaptureDispatchFor(scenarioId);
+  if (dispatch == null) {
+    return GroupMutedNotificationArtifactValidation(<String>[
+      'no capture dispatch is registered for $scenarioId',
+    ]);
+  }
+  return switch (dispatch.validatorKind) {
+    GroupReactionCaptureValidatorKind.killedTextCard =>
+      validateGroupKilledTextCardAndroidArtifact(
+        artifactFile: artifact,
+        expectedPhysicalDeviceId: expectedPhysicalDeviceId,
+        expectedEmulatorDeviceId: expectedEmulatorDeviceId,
+        expectedApkSha256: expectedApkSha256,
+        expectedPackageName: expectedPackageName,
+      ),
+    _ => validateGroupMutedNotificationAndroidArtifact(
+      artifactFile: artifact,
+      expectedPhysicalDeviceId: expectedPhysicalDeviceId,
+      expectedEmulatorDeviceId: expectedEmulatorDeviceId,
+      expectedApkSha256: expectedApkSha256,
+      expectedPackageName: expectedPackageName,
+    ),
+  };
+}
+
+/// The `scenario` an artifact claims, or the empty string when unreadable.
+///
+/// Returning empty rather than throwing keeps the failure a VALIDATOR verdict
+/// ("no capture dispatch is registered for ") instead of a stack trace.
+String _artifactScenarioId(File artifact) {
+  try {
+    final decoded = jsonDecode(artifact.readAsStringSync());
+    if (decoded is Map && decoded['scenario'] is String) {
+      return decoded['scenario'] as String;
+    }
+  } catch (_) {
+    // Fall through: an unreadable or non-JSON artifact is the validator's
+    // problem to report, not this helper's.
+  }
+  return '';
+}
+
 Future<_AdapterResult> _run(Map<String, String> environment) async {
   final sourceScenarios = <GroupReactionNotificationScenario>[];
   for (final id in groupMutedNotificationScenarioIds) {
@@ -299,8 +357,9 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
       final artifact = File(
         '${captureDirectory.path}${Platform.pathSeparator}$scenarioId.json',
       );
-      final validation = await validateGroupMutedNotificationAndroidArtifact(
-        artifactFile: artifact,
+      final validation = await _validateScenarioArtifact(
+        scenarioId: scenarioId,
+        artifact: artifact,
         expectedPhysicalDeviceId: assignedPhysical,
         expectedEmulatorDeviceId: assignedEmulator,
         expectedApkSha256: preparedSha,
@@ -383,9 +442,7 @@ void _purgeScenarioArtifacts(Directory directory, String scenarioId) {
     '$scenarioId.json',
     '${scenarioId}_capture_failure.json',
   ]) {
-    final file = File(
-      '${directory.path}${Platform.pathSeparator}$name',
-    );
+    final file = File('${directory.path}${Platform.pathSeparator}$name');
     if (FileSystemEntity.typeSync(file.path, followLinks: false) ==
         FileSystemEntityType.file) {
       file.deleteSync();
@@ -521,18 +578,29 @@ Future<void> main(List<String> args) async {
       'unread-unchanged' => unreadUnchangedMutedMessageCaptureInput(),
       _ => null,
     };
-    if (input == null) {
+    final killedInput = switch (fixtureKind) {
+      'happy-killed-text-card' => happyKilledTextCardCaptureInput(),
+      'killed-text-card-stale-card' => staleCardKilledTextCardCaptureInput(),
+      _ => null,
+    };
+    if (input == null && killedInput == null) {
       stderr.writeln(
         'Unknown --emit-fixture $fixtureKind; expected happy-message, '
-        'happy-reaction, or unread-unchanged.',
+        'happy-reaction, unread-unchanged, happy-killed-text-card, or '
+        'killed-text-card-stale-card.',
       );
       exitCode = 64;
       return;
     }
-    final file = await writeGroupMutedNotificationArtifact(
-      proofDirectory: Directory(output).absolute,
-      input: input,
-    );
+    final file = killedInput != null
+        ? await writeGroupKilledTextCardArtifact(
+            proofDirectory: Directory(output).absolute,
+            input: killedInput,
+          )
+        : await writeGroupMutedNotificationArtifact(
+            proofDirectory: Directory(output).absolute,
+            input: input!,
+          );
     // Same leading-newline guard as --list-scenarios: `dart run` emits build
     // hook progress on stdout without a trailing newline.
     stdout
@@ -542,15 +610,25 @@ Future<void> main(List<String> args) async {
   }
   final validationPath = _valueFor(args, '--validate-artifact');
   if (validationPath != null) {
-    final validation = await validateGroupMutedNotificationAndroidArtifact(
-      artifactFile: File(validationPath),
+    final artifactFile = File(validationPath);
+    // Mirrors the capture loop: the artifact names its own scenario, and that
+    // id selects the validator. Reading it here rather than assuming the muted
+    // grammar is what lets the shell contract exercise every scenario the lane
+    // owns through one entry point.
+    final validation = await _validateScenarioArtifact(
+      scenarioId: _artifactScenarioId(artifactFile),
+      artifact: artifactFile,
+      expectedPhysicalDeviceId: plan379PhysicalAndroidDeviceId,
+      expectedEmulatorDeviceId: plan379AndroidEmulatorDeviceId,
+      expectedApkSha256: null,
+      expectedPackageName: null,
     );
     if (!validation.ok) {
       stderr.writeln('INVALID: ${validation.detail}');
       exitCode = 65;
       return;
     }
-    stdout.writeln('VALID: Plan-379 Android muted-group artifact accepted.');
+    stdout.writeln('VALID: Android muted-group lane artifact accepted.');
     return;
   }
   if (args.isNotEmpty) {

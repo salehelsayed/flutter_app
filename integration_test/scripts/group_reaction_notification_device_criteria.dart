@@ -733,18 +733,41 @@ groupMutedMessageSuppressionSourceScenario = GroupReactionNotificationScenario(
 );
 
 const GroupReactionNotificationScenario
-groupMutedReactionBackgroundSourceScenario =
+groupMutedReactionBackgroundSourceScenario = GroupReactionNotificationScenario(
+  id: 'android_group_muted_reaction_background_suppression',
+  testCase: 'PLAN-379',
+  summary:
+      'muted group suppresses the FCM/background-isolate reaction card '
+      'while an unmuted control reaction still posts',
+  groupType: 'chat',
+  senderRole: 'member_reactor',
+  senderPlatform: 'android',
+  senderDeviceKind: 'emulator',
+  recipientRole: 'muted_group_target_author',
+  recipientPlatform: 'android',
+  recipientDeviceKind: 'physical',
+  evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[],
+);
+
+/// Plan 384 killed-app group-text source extension (G19 closure).
+///
+/// Rides the muted lane's runner, pinned pair, and prebuilt APK, but asserts
+/// the opposite observable: a card that MUST be present. It therefore owns its
+/// own validator kind rather than joining the muted grammar, and it uses the
+/// shared capture driver's DEFAULT one-group fixture — no mute toggle, no
+/// control group, no reaction.
+const GroupReactionNotificationScenario groupTextKilledAppCardSourceScenario =
     GroupReactionNotificationScenario(
-      id: 'android_group_muted_reaction_background_suppression',
-      testCase: 'PLAN-379',
+      id: 'android_group_text_killed_app_card',
+      testCase: 'PLAN-384',
       summary:
-          'muted group suppresses the FCM/background-isolate reaction card '
-          'while an unmuted control reaction still posts',
+          'a killed recipient posts an OS card for a default-lane group text '
+          'after a warm-up wake absorbs the cold-start storage deferral',
       groupType: 'chat',
-      senderRole: 'member_reactor',
+      senderRole: 'message_sender',
       senderPlatform: 'android',
       senderDeviceKind: 'emulator',
-      recipientRole: 'muted_group_target_author',
+      recipientRole: 'killed_app_message_recipient',
       recipientPlatform: 'android',
       recipientDeviceKind: 'physical',
       evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[],
@@ -754,6 +777,7 @@ const List<GroupReactionNotificationScenario>
 groupMutedNotificationSourceScenarios = <GroupReactionNotificationScenario>[
   groupMutedMessageSuppressionSourceScenario,
   groupMutedReactionBackgroundSourceScenario,
+  groupTextKilledAppCardSourceScenario,
 ];
 
 GroupReactionNotificationScenario? groupReactionNotificationScenario(
@@ -778,6 +802,7 @@ enum GroupReactionCaptureLifecycleStage {
   notificationProjection,
   mutedMessageSuppression,
   mutedReactionBackgroundSuppression,
+  groupTextKilledAppCard,
 }
 
 /// Which SQLCipher probe shape a scenario id asks the installed app for.
@@ -797,6 +822,7 @@ enum GroupReactionCaptureValidatorKind {
   reaction,
   notificationProjection,
   muted,
+  killedTextCard,
 }
 
 final class GroupReactionCaptureDispatch {
@@ -838,6 +864,16 @@ GroupReactionCaptureDispatch? groupReactionCaptureDispatchFor(
           GroupReactionCaptureLifecycleStage.mutedReactionBackgroundSuppression,
       observationKind: GroupReactionCaptureObservationKind.mutedTarget,
       validatorKind: GroupReactionCaptureValidatorKind.muted,
+    );
+  }
+  if (scenarioId == groupTextKilledAppCardSourceScenario.id) {
+    // Reuses `mutedTarget`: the in-app probe's marker-shape gate only cares
+    // that a single `targetMarker` is sent, which is exactly this lane's
+    // shape. A dedicated enum case would have zero consumers.
+    return const GroupReactionCaptureDispatch(
+      lifecycleStage: GroupReactionCaptureLifecycleStage.groupTextKilledAppCard,
+      observationKind: GroupReactionCaptureObservationKind.mutedTarget,
+      validatorKind: GroupReactionCaptureValidatorKind.killedTextCard,
     );
   }
   if (scenarioId == groupNotificationProjectionAndroidSourceScenario.id) {

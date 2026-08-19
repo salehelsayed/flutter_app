@@ -1,0 +1,49 @@
+Plan 384 (G19) device closure — groups.muted_notification_campaign
+Run: 2026-08-19, capture-1787125915764845-93175
+Pair: recipient 21071FDF600CSC (Pixel 6) / sender emulator-5554
+APK: prepared android.production_fcm sha256 cb7819306dc0e51e55e0b9374fd703428720f669a45db14b2e0b2eb2573189a3, childBuildCount=0
+Runner verdict: PASS  groups.muted_notification_campaign  assertions=6  (3 validated artifacts)
+
+== scenario verdicts ==
+--- android_group_muted_message_suppression
+{"schema":"mknoon.plan257.orchestrator-verdict.v1","version":1,"scenario":"android_group_muted_message_suppression","ok":true,"stage":"capture","status":"passed","detail":"real device roles, staging relay/provider, SQLCipher, OS card, and automated UI evidence captured and self-validated","recordedAt":"2026-08-19T07:59:15.736547Z"}
+--- android_group_muted_reaction_background_suppression
+{"schema":"mknoon.plan257.orchestrator-verdict.v1","version":1,"scenario":"android_group_muted_reaction_background_suppression","ok":true,"stage":"capture","status":"passed","detail":"real device roles, staging relay/provider, SQLCipher, OS card, and automated UI evidence captured and self-validated","recordedAt":"2026-08-19T08:06:59.627775Z"}
+--- android_group_text_killed_app_card
+{"schema":"mknoon.plan257.orchestrator-verdict.v1","version":1,"scenario":"android_group_text_killed_app_card","ok":true,"stage":"capture","status":"passed","detail":"real device roles, staging relay/provider, SQLCipher, OS card, and automated UI evidence captured and self-validated","recordedAt":"2026-08-19T08:10:13.116102Z"}
+
+== android_group_text_killed_app_card: post-kill dispositions (recipient own flow log) ==
+PUSH_BACKGROUND_MESSAGE_RECEIVED id=0:1787126975006460%1d5344bef9fd7ecd
+PUSH_BACKGROUND_MESSAGE_CRYPTO_PLUGIN_OK
+PUSH_ANDROID_DATA_DECRYPT_OK
+PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED
+PUSH_BACKGROUND_NOTIFICATION_SHOWN id=0:1787126975006460%1d5344bef9fd7ecd
+PUSH_BACKGROUND_MESSAGE_RECEIVED id=0:1787127008993422%1d5344bef9fd7ecd
+PUSH_BACKGROUND_MESSAGE_CRYPTO_PLUGIN_OK
+PUSH_ANDROID_DATA_DECRYPT_OK
+PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED
+PUSH_BACKGROUND_NOTIFICATION_SHOWN id=0:1787127008993422%1d5344bef9fd7ecd
+
+== android_group_text_killed_app_card: artifact summary ==
+schema = mknoon.plan384.android-group-text-killed-app-card.v1
+scenario = android_group_text_killed_app_card
+recordedAt = 2026-08-19T08:10:13.045367Z
+fixture = {'groupName': 'TC257Group1787126880040806', 'baselineMarker': 'Plan384Basemarkerb4d7', 'warmupMarker': 'Plan384Warmb88ac5411c', 'gradedMarker': 'Plan384Grad9d466ffff3'}
+killedDelivery = {'recipientProcessState': 'terminated', 'warmupFcmMessageIdSha256': '55f3ecd384f3ca03bafb77678c3a37b29fff5525fead27793da0a4b94df04267', 'gradedFcmMessageIdSha256': '4332168e98f2b39e807d405dbd2251379892469a15f5d7f0075ae3c69be5a0be'}
+card = {'preKillCardCount': 1, 'gradedCardCount': 1}
+automation = {'manualTaps': 0, 'notificationCardTaps': 0}
+
+== graded OS card as dumpsys saw it ==
+                android.text=String (Alice: Plan384Grad9d466ffff3)
+
+== TC-384-06: the muted background lane with the now-carding warm-up ==
+PUSH_BACKGROUND_MESSAGE_RECEIVED id=0:1787126730392882%1d5344bef9fd7ecd
+PUSH_ANDROID_DATA_DECRYPT_OK
+PUSH_BACKGROUND_NOTIFICATION_SHOWN id=0:1787126730392882%1d5344bef9fd7ecd
+PUSH_BACKGROUND_MESSAGE_RECEIVED id=0:1787126775758071%1d5344bef9fd7ecd
+PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED id=0:1787126775758071%1d5344bef9fd7ecd
+PUSH_BACKGROUND_MESSAGE_RECEIVED id=0:1787126793178577%1d5344bef9fd7ecd
+PUSH_ANDROID_DATA_DECRYPT_OK
+PUSH_BACKGROUND_NOTIFICATION_SHOWN id=0:1787126793178577%1d5344bef9fd7ecd
+
+Zero PUSH_ANDROID_DATA_DECRYPT_FAIL and zero PUSH_BACKGROUND_NOTIFICATION_ERROR across every post-kill window in this run.

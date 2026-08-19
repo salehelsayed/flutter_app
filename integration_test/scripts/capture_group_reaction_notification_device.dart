@@ -596,6 +596,16 @@ class _Plan257Capture {
   bool _mutedBadgeIncludesControlGroup = false;
   int _mutedBadgeGroupIdentityCount = 0;
   GroupMutedBackgroundDeliveryInput? _mutedBackgroundDelivery;
+  // Plan 384 killed-app card lane state. Populated only by
+  // `_runAndroidGroupTextKilledAppCardLifecycle` and consumed only by
+  // `_writeKilledTextCardAndroidArtifact`.
+  final List<Map<String, Object?>> _killedCommands = <Map<String, Object?>>[];
+  String _killedBaselineMarker = '';
+  String _killedWarmupMarker = '';
+  String _killedGradedMarker = '';
+  String _killedPreKillNotificationDump = '';
+  String _killedGradedNotificationDump = '';
+  GroupKilledTextCardDeliveryInput? _killedDelivery;
   String _iosE2eAppSha256 = '';
   String _iosNormalAppSha256 = '';
   final Map<String, File> _iosInstallReceipts = <String, File>{};
@@ -767,9 +777,13 @@ class _Plan257Capture {
       case GroupReactionCaptureLifecycleStage.mutedMessageSuppression:
         stage = 'android_muted_message_suppression';
         await _runAndroidMutedMessageSuppressionLifecycle();
-      case GroupReactionCaptureLifecycleStage.mutedReactionBackgroundSuppression:
+      case GroupReactionCaptureLifecycleStage
+          .mutedReactionBackgroundSuppression:
         stage = 'android_muted_reaction_background_suppression';
         await _runAndroidMutedReactionBackgroundLifecycle();
+      case GroupReactionCaptureLifecycleStage.groupTextKilledAppCard:
+        stage = 'android_group_text_killed_app_card';
+        await _runAndroidGroupTextKilledAppCardLifecycle();
       case GroupReactionCaptureLifecycleStage.reactionRecipient:
         stage = 'android_reaction_lifecycle';
         await _runAndroidReactionLifecycle();
@@ -794,6 +808,8 @@ class _Plan257Capture {
         await _writePlan330AndroidArtifact();
       case GroupReactionCaptureValidatorKind.muted:
         await _writeMutedAndroidArtifact();
+      case GroupReactionCaptureValidatorKind.killedTextCard:
+        await _writeKilledTextCardAndroidArtifact();
       case GroupReactionCaptureValidatorKind.reaction:
         await _writeAndroidArtifact(sqlCipherEvidence!);
     }
@@ -818,6 +834,16 @@ class _Plan257Capture {
         artifactValidationDetail = result.detail;
       case GroupReactionCaptureValidatorKind.muted:
         final result = await validateGroupMutedNotificationAndroidArtifact(
+          artifactFile: artifact,
+          expectedPhysicalDeviceId: recipientId,
+          expectedEmulatorDeviceId: senderId,
+          expectedApkSha256: _androidBuilds!.e2eSha256,
+          expectedPackageName: appPackage,
+        );
+        artifactAccepted = result.ok;
+        artifactValidationDetail = result.detail;
+      case GroupReactionCaptureValidatorKind.killedTextCard:
+        final result = await validateGroupKilledTextCardAndroidArtifact(
           artifactFile: artifact,
           expectedPhysicalDeviceId: recipientId,
           expectedEmulatorDeviceId: senderId,
@@ -3014,11 +3040,32 @@ class _Plan257Capture {
       // baseline message card rather than replacing it in place, and both
       // shapes prove an in-window arrival equally well.
       final refreshed = cards
-          .where(
-            (card) => !staleBodies.any((body) => card.body.contains(body)),
-          )
+          .where((card) => !staleBodies.any((body) => card.body.contains(body)))
           .toList(growable: false);
       return refreshed.isEmpty ? null : dump;
+    },
+  );
+
+  /// Waits until [groupName]'s card body carries [marker].
+  ///
+  /// Stronger than "the body changed": post-384 the warm-up push cards too,
+  /// under the SAME conversation-keyed notification id, so card presence — and
+  /// even "the body is no longer the baseline" — can latch on the warm-up's
+  /// card. Binding the wait to the graded marker is what makes the observation
+  /// the graded push's own.
+  Future<String> _waitForGroupNotificationBodyContaining(
+    String groupName,
+    String marker,
+  ) => _waitForValue<String>(
+    'notification card for $groupName carrying $marker',
+    const Duration(seconds: 180),
+    () async {
+      final dump = await _notificationDump(recipientId);
+      final matched = _mutedAttributableCards(
+        dump,
+        groupName: groupName,
+      ).where((card) => card.body.contains(marker));
+      return matched.isEmpty ? null : dump;
     },
   );
 
@@ -3042,17 +3089,21 @@ class _Plan257Capture {
   /// Enumerating was tried and was wrong: run 12 (2026-08-18) saw the warm-up
   /// text end at `PUSH_ANDROID_DATA_DECRYPT_FAIL{group_parity_mismatch}` ->
   /// `PUSH_BACKGROUND_NOTIFICATION_ERROR`, a disposition outside the list,
-  /// even though its SQLCipher open had completed normally. The warm-up's own
-  /// outcome is deliberately NOT graded — only that it paid the cold cost.
+  /// even though its SQLCipher open had completed normally. That parity death
+  /// was G19 and Plan 384 fixed it (`push_decrypt_preview.dart`, sender-clause
+  /// null guard), so the warm-up text now CARDS — which is exactly why the
+  /// storage-warmth signal, not a disposition list, is the right oracle here.
+  /// The warm-up's own outcome stays deliberately NOT graded; only that it
+  /// paid the cold cost.
   Future<void> _waitForRecipientStorageWarm() => _waitFor(
     'the background isolate to open and read the encrypted group store',
     const Duration(minutes: 2),
-    () async => (await _accumulatedRecipientFlowLines()).contains(
-      _groupStoreReadEvent,
-    ),
+    () async =>
+        (await _accumulatedRecipientFlowLines()).contains(_groupStoreReadEvent),
   );
 
-  static const String _groupStoreReadEvent = 'GROUP_MESSAGES_DB_LOAD_ALL_SUCCESS';
+  static const String _groupStoreReadEvent =
+      'GROUP_MESSAGES_DB_LOAD_ALL_SUCCESS';
 
   /// Waits until no card remains for [groupName].
   ///
@@ -3197,8 +3248,7 @@ class _Plan257Capture {
       await _waitFor(
         'mute switch checked after the Group Info tap',
         const Duration(seconds: 30),
-        () async =>
-            groupMuteSwitchChecked(await _uiDump(recipientId)) == true,
+        () async => groupMuteSwitchChecked(await _uiDump(recipientId)) == true,
       );
     }
 
@@ -3516,11 +3566,10 @@ class _Plan257Capture {
     //    requiring the body to be neither the liveness baseline nor the
     //    warm-up is what makes this prove an in-window arrival rather than
     //    re-observing a card posted before the window opened.
-    _mutedPostMuteNotificationDump =
-        await _waitForGroupNotificationBodyChange(
-          _mutedControlGroupName,
-          <String>[baselineMarker, warmupMarker],
-        );
+    _mutedPostMuteNotificationDump = await _waitForGroupNotificationBodyChange(
+      _mutedControlGroupName,
+      <String>[baselineMarker, warmupMarker],
+    );
     await Future<void>.delayed(const Duration(seconds: 10));
 
     _mutedNotificationDump = await _notificationDump(recipientId);
@@ -3571,6 +3620,171 @@ class _Plan257Capture {
 
     await _captureMutedSqlCipherObservation();
     await _captureMutedControlGroupDigest();
+  }
+
+  void _recordKilledCommand({
+    required String commandStage,
+    required String target,
+    required String action,
+    required String semanticTarget,
+  }) {
+    _killedCommands.add(<String, Object?>{
+      'stage': commandStage,
+      'target': target,
+      'action': action,
+      'semanticTarget': semanticTarget,
+      'recordedAt': DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
+  /// Plan 384 (G19): a killed recipient must post an OS card for a
+  /// default-lane group TEXT.
+  ///
+  /// Deliberately the simplest shape that reaches the boundary — one group, an
+  /// alive-lane baseline card, a kill, a throwaway warm-up push, then one
+  /// graded text. No mute, no control group, no reaction: each of those would
+  /// add a way for the lane to go red for a reason that is not G19. The
+  /// fixture is the capture driver's DEFAULT one-group branch, so nothing in
+  /// the muted lane's two-group setup is touched.
+  Future<void> _runAndroidGroupTextKilledAppCardLifecycle() async {
+    final token = _runtimeToken('marker').replaceAll('-', '');
+    _killedBaselineMarker = 'Plan384Base${token.substring(0, 10)}';
+    _killedWarmupMarker = 'Plan384Warm${token.substring(10, 20)}';
+    _killedGradedMarker = 'Plan384Grad${token.substring(20, 30)}';
+
+    // 1. Alive-lane control. The recipient goes HOME so the live path is not
+    //    holding the conversation open, then the sender posts a text. A card
+    //    here proves this build, install and permission state can card at all,
+    //    so a silent graded push later cannot be blamed on the install.
+    await _pressAndroidKey(recipientId, 'KEYCODE_HOME');
+    _recordKilledCommand(
+      commandStage: 'killed_app_group_text',
+      target: recipientId,
+      action: 'keyevent',
+      semanticTarget: 'KEYCODE_HOME',
+    );
+    await _openGroup(senderId);
+    _recordKilledCommand(
+      commandStage: 'killed_app_group_text',
+      target: senderId,
+      action: 'tap',
+      semanticTarget: 'Open group $_groupName',
+    );
+    await _sendGroupText(senderId, _killedBaselineMarker);
+    _killedPreKillNotificationDump = await _waitForGroupNotificationDump(
+      _groupName,
+    );
+
+    // 2. Terminate the recipient so the next pushes must wake the background
+    //    isolate rather than being handled by a live foreground listener.
+    await _terminateAndroidRecipient();
+    _recordKilledCommand(
+      commandStage: 'killed_app_group_text',
+      target: recipientId,
+      action: 'terminate',
+      semanticTarget: 'recipient process',
+    );
+    await _adb(recipientId, const <String>['logcat', '-c']);
+    _resetRecipientFlowAccumulator();
+
+    // 3. Absorb the cold-start storage deferral with a throwaway push. Same
+    //    reasoning as the muted background lane: the FIRST wake after a kill
+    //    opens SQLCipher cold and can blow the 2s `display_eligibility` phase
+    //    budget, so a graded push in that position is silent for a reason that
+    //    has nothing to do with the boundary under test. Gated on storage
+    //    WARMTH, never on the warm-up's own disposition.
+    await _openGroup(senderId);
+    await _sendGroupText(senderId, _killedWarmupMarker);
+    await _waitForBackgroundPushWakes(1);
+    await _waitForRecipientStorageWarm();
+    // The opens the first wake started keep running briefly after it gives up
+    // (measured: ~1s more), so settle wide of that before grading anything.
+    await Future<void>.delayed(const Duration(seconds: 15));
+
+    // 4. The graded push: one ordinary default-lane group text.
+    await _openGroup(senderId);
+    await _sendGroupText(senderId, _killedGradedMarker);
+    await _waitForBackgroundPushWakes(2);
+    _killedGradedNotificationDump =
+        await _waitForGroupNotificationBodyContaining(
+          _groupName,
+          _killedGradedMarker,
+        );
+
+    // 5. Bind the card to the graded push by fcm message id. The binding is a
+    //    pure function with host rows: it excludes the warm-up wake and takes
+    //    the graded push from the SHOWN event, failing closed rather than
+    //    guessing.
+    final flowLog = await _accumulatedRecipientFlowLines();
+    final binding = resolveKilledTextCardPushBinding(flowLog);
+    if (binding == null) {
+      await _writeMutedDiagnosticDump(
+        'killed_text_card_binding_unresolvable',
+        flowLog,
+      );
+      throw _CaptureFailure.capture(
+        stage,
+        'killed_text_card_flow_evidence_incomplete: '
+        'received=${flowEventMessageIdsInOrder(flowLog, 'PUSH_BACKGROUND_MESSAGE_RECEIVED').length} '
+        'shown=${flowEventMessageIdsInOrder(flowLog, 'PUSH_BACKGROUND_NOTIFICATION_SHOWN').length}',
+      );
+    }
+    _killedDelivery = GroupKilledTextCardDeliveryInput(
+      recipientProcessState: 'terminated',
+      warmupFcmMessageId: binding.warmupFcmMessageId,
+      gradedFcmMessageId: binding.gradedFcmMessageId,
+      backgroundFlowLog: flowLog,
+    );
+  }
+
+  Future<void> _writeKilledTextCardAndroidArtifact() async {
+    final delivery = _killedDelivery;
+    if (_killedPreKillNotificationDump.isEmpty ||
+        _killedGradedNotificationDump.isEmpty ||
+        delivery == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'killed_text_card_capture_inventory_incomplete',
+      );
+    }
+    final input = GroupKilledTextCardCaptureInput(
+      recordedAt: DateTime.now().toUtc().toIso8601String(),
+      build: GroupMutedNotificationBuildInput(
+        apkSha256: _androidBuilds!.e2eSha256,
+        packageName: appPackage,
+      ),
+      topology: GroupMutedNotificationTopologyInput(
+        physicalDeviceId: recipientId,
+        emulatorDeviceId: senderId,
+      ),
+      fixture: GroupKilledTextCardFixtureInput(
+        groupName: _groupName,
+        baselineMarker: _killedBaselineMarker,
+        warmupMarker: _killedWarmupMarker,
+        gradedMarker: _killedGradedMarker,
+      ),
+      delivery: delivery,
+      card: GroupKilledTextCardCardInput(
+        preKillCardCount: _mutedAttributableCards(
+          _killedPreKillNotificationDump,
+          groupName: _groupName,
+        ).length,
+        preKillNotificationDump: _killedPreKillNotificationDump,
+        gradedCardCount: _mutedAttributableCards(
+          _killedGradedNotificationDump,
+          groupName: _groupName,
+        ).length,
+        gradedNotificationDump: _killedGradedNotificationDump,
+      ),
+      commandJournal: jsonEncode(<String, Object?>{
+        'schema': groupMutedNotificationCommandJournalSchema,
+        'commands': _killedCommands,
+      }),
+    );
+    await writeGroupKilledTextCardArtifact(
+      proofDirectory: artifactDirectory,
+      input: input,
+    );
   }
 
   /// Second probe, keyed by the CONTROL group's name.

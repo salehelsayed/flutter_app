@@ -999,21 +999,22 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
       _trimToNull(extra['senderPeerId']?.toString()) ??
       _trimToNull(extra['senderId']?.toString()) ??
       _trimToNull(extra['sender_id']?.toString());
-  if ((decodedMessageId == null && context != null) ||
-      (decodedMessageId != null &&
-          outerMessageId != null &&
-          decodedMessageId != outerMessageId) ||
-      (context != null &&
-          ((decodedGroupId != null && decodedGroupId != context.groupId) ||
-              (context.expectedMessageId != null &&
-                  decodedMessageId != context.expectedMessageId) ||
-              decodedSender == context.localPeerId ||
-              (context.senderPeerId != null &&
-                  decodedSender != context.senderPeerId)))) {
+  final parityClause = _groupPlaintextParityClause(
+    context: context,
+    decodedGroupId: decodedGroupId,
+    decodedMessageId: decodedMessageId,
+    decodedSender: decodedSender,
+    outerMessageId: outerMessageId,
+  );
+  if (parityClause != null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
-      details: {'kind': 'group', 'reason': 'group_parity_mismatch'},
+      details: {
+        'kind': 'group',
+        'reason': 'group_parity_mismatch',
+        'clause': parityClause,
+      },
     );
     throw const OrdinaryMessageNotificationIntegrityException(
       'group_plaintext_parity_mismatch',
@@ -1117,6 +1118,64 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
     groupComparand: resolvedGroupComparand,
     resolvedEventIdentity: resolvedEventIdentity,
   );
+}
+
+/// First-true clause of the group plaintext parity check, or null when the
+/// decrypted payload is consistent with the outer push and the
+/// recipient-owned [context].
+///
+/// The returned tag rides the `group_parity_mismatch` flow event as
+/// `details.clause`. It exists because the collapsed `||` chain reported one
+/// reason for six different failures, which made a live parity red cost a
+/// multi-agent bisect (G19). Evaluation order is the original chain's order,
+/// so the tag names the clause that actually fired first.
+String? _groupPlaintextParityClause({
+  required GroupMessageNotificationContext? context,
+  required String? decodedGroupId,
+  required String? decodedMessageId,
+  required String? decodedSender,
+  required String? outerMessageId,
+}) {
+  if (decodedMessageId == null && context != null) {
+    return 'inner_message_id_missing';
+  }
+  if (decodedMessageId != null &&
+      outerMessageId != null &&
+      decodedMessageId != outerMessageId) {
+    return 'inner_id_outer_mismatch';
+  }
+  if (context == null) {
+    return null;
+  }
+  if (decodedGroupId != null && decodedGroupId != context.groupId) {
+    return 'inner_group_id_mismatch';
+  }
+  // Defense in depth. The outer-context check above already forces
+  // `outerMessageId == context.expectedMessageId` whenever both exist, so
+  // this cannot be the first true clause today.
+  if (context.expectedMessageId != null &&
+      decodedMessageId != context.expectedMessageId) {
+    return 'inner_id_context_mismatch';
+  }
+  if (decodedSender == context.localPeerId) {
+    return 'inner_sender_is_local';
+  }
+  // 384/G19: the default group send lane ships the Go LIVE envelope, whose
+  // encrypted payload struct carries no sender key at all — see the Go source
+  // at `go-mknoon/internal/group_envelope.go:42-47` (named here by file, not
+  // by type: the DTR10 removal contract forbids the retired Dart type's
+  // identifier anywhere under `lib/`). Cross-checking an ABSENT
+  // inner sender against the trusted context is a false positive that killed
+  // every killed-app group text and media card. The null guard mirrors the
+  // group-id clause above: an omitted inner field is checked against nothing
+  // and the card renders from trusted context facts. A sender that is
+  // PRESENT but wrong still throws.
+  if (decodedSender != null &&
+      context.senderPeerId != null &&
+      decodedSender != context.senderPeerId) {
+    return 'inner_sender_context_mismatch';
+  }
+  return null;
 }
 
 ResolvedPushEventIdentity _resolvedAuthenticatedPushEventIdentity({

@@ -1345,6 +1345,299 @@ void main() {
       },
     );
 
+    // ------------------------------------------------------------------
+    // 384/G19: the DEFAULT group send lane never pushes the Dart replay
+    // envelope. `sendGroupMessage` -> `callGroupSendReliable` reaches the Go
+    // producer, which stores a LIVE envelope whose encrypted
+    // `GroupMessagePayload` is `{text, timestamp, username, extra}` — no
+    // `senderId`/`senderPeerId`/`sender_id`, and no `groupId` key anywhere.
+    // Byte-shape anchors (re-derive these if the Go side moves):
+    //   payload struct        go-mknoon/internal/group_envelope.go:42-47
+    //   extra builder         go-mknoon/node/pubsub.go:1860-1876
+    //                         (+ :496 publishedAtNano, :1874 messageId)
+    //   opts source           go-mknoon/bridge/bridge.go:2698-2741
+    //   relay data mapping    go-relay-server/inbox.go:854-899,:1221-1256
+    // Every other context-bearing fixture in this file uses the Dart
+    // `inboxPayload` shape, which is id-complete. That is exactly why the
+    // null-`decodedSender` arm of the parity check had zero coverage and
+    // shipped a false positive that killed every killed-app group card.
+    // ------------------------------------------------------------------
+
+    /// The 9 FCM data keys the relay emits for a live Go group envelope.
+    ///
+    /// No `kind` (the live envelope carries no such field) and no outer
+    /// sender-ACCOUNT key — `sender_transport_peer_id` is the only sender
+    /// fact on the wire, and it is what resolves the context that arms the
+    /// sender parity clause.
+    Map<String, dynamic> liveEnvelopeOuterData({
+      String messageId = 'msg-live-envelope',
+    }) => <String, dynamic>{
+      'type': 'group_message',
+      'groupId': 'group-team',
+      'sender_transport_peer_id': 'transport-admin-phone',
+      'message_id': messageId,
+      'envelope_version': '3',
+      'payloadType': 'group_message',
+      'keyEpoch': '7',
+      'ciphertext': 'ciphertext',
+      'nonce': 'nonce',
+    };
+
+    /// The decrypted live-envelope plaintext, with the full default-lane
+    /// `extra` key set (bridge opts minus `timestamp`, plus the producer's
+    /// `messageId` overwrite and `publishedAtNano`).
+    String liveEnvelopePlaintext({
+      String messageId = 'msg-live-envelope',
+      String text = 'Ready for the standup?',
+      List<Object?>? media,
+    }) => jsonEncode(<String, Object?>{
+      'text': text,
+      'timestamp': '2026-08-18T09:41:12.481931Z',
+      // Sender-authored display name. The copy path must refuse it whenever
+      // a recipient-owned context exists.
+      'username': 'Admin from the sender device',
+      'extra': <String, Object?>{
+        'senderDeviceId': 'device-admin-phone',
+        'senderTransportPeerId': 'transport-admin-phone',
+        'senderDevicePublicKey': 'device-public-key-base64',
+        'senderKeyPackageId': 'key-package-admin-1',
+        'logicalDeliveryId': 'logical-delivery-live-envelope',
+        // Sender-authored group name. The trusted context name must win.
+        'groupName': 'ATTACKER GROUP',
+        'recipientPeerIds': const <String>['peer-local', 'peer-admin'],
+        'preserveRecipientPeerIds': true,
+        'media': ?media,
+        'messageId': messageId,
+        'publishedAtNano': '1787053468061245000',
+      },
+    });
+
+    const liveEnvelopeContext = GroupMessageNotificationContext(
+      groupId: 'group-team',
+      groupName: 'Team from groups DB',
+      localPeerId: 'peer-local',
+      senderPeerId: 'peer-admin',
+      senderTransportPeerId: 'transport-admin-phone',
+      senderUsername: 'Admin from members DB',
+      expectedMessageId: 'msg-live-envelope',
+    );
+
+    List<Map<String, dynamic>> captureFlowEvents() {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      return events;
+    }
+
+    Iterable<Map<String, dynamic>> eventsNamed(
+      List<Map<String, dynamic>> events,
+      String name,
+    ) => events.where((event) => event['event'] == name);
+
+    test(
+      'live Go envelope without inner sender key renders the trusted group card',
+      () async {
+        final events = captureFlowEvents();
+        final resolved = await resolveBackgroundPushNotification(
+          RemoteMessage(data: liveEnvelopeOuterData()),
+          groupMessageContext: liveEnvelopeContext,
+          decryptGroup:
+              ({
+                required groupId,
+                required keyEpoch,
+                required ciphertext,
+                required nonce,
+              }) async => liveEnvelopePlaintext(),
+        );
+
+        expect(resolved.title, 'Team from groups DB');
+        expect(resolved.body, 'Admin from members DB: Ready for the standup?');
+
+        // The card must bind to the TRUSTED comparand: with the inner sender
+        // absent there is nothing to promote, so the context facts stand.
+        final comparand =
+            resolved.groupComparand
+                as BackgroundGroupMessageNotificationComparand;
+        expect(comparand.groupId, 'group-team');
+        expect(comparand.messageId, 'msg-live-envelope');
+        expect(comparand.senderPeerId, 'peer-admin');
+        expect(comparand.senderTransportPeerId, 'transport-admin-phone');
+
+        expect(
+          eventsNamed(
+            events,
+            'PUSH_ANDROID_DATA_DECRYPT_OK',
+          ).map((event) => event['details']).toList(),
+          contains(containsPair('kind', 'group')),
+        );
+        // A fix that keeps the clause firing and merely skips the THROW would
+        // still emit the failure. It must not fire at all.
+        expect(eventsNamed(events, 'PUSH_ANDROID_DATA_DECRYPT_FAIL'), isEmpty);
+      },
+    );
+
+    test(
+      'live Go envelope media flavor renders a card instead of throwing',
+      () async {
+        final events = captureFlowEvents();
+        const media = <Object?>[
+          <String, Object?>{
+            'mediaType': 'image',
+            'mediaId': 'media-live-envelope-1',
+            'mimeType': 'image/jpeg',
+          },
+        ];
+        final resolved = await resolveBackgroundPushNotification(
+          RemoteMessage(data: liveEnvelopeOuterData()),
+          groupMessageContext: liveEnvelopeContext,
+          decryptGroup:
+              ({
+                required groupId,
+                required keyEpoch,
+                required ciphertext,
+                required nonce,
+              }) async => liveEnvelopePlaintext(text: '', media: media),
+        );
+
+        expect(resolved.title, 'Team from groups DB');
+        // Typed media copy, sender-prefixed from the roster. Bound to the shared
+        // preview helper rather than a copy literal.
+        expect(
+          resolved.body,
+          'Admin from members DB: ${pushPreviewBody('', media)}',
+        );
+        expect(resolved.body, isNot(endsWith(': ')));
+        expect(eventsNamed(events, 'PUSH_ANDROID_DATA_DECRYPT_FAIL'), isEmpty);
+      },
+    );
+
+    // Per-clause discriminator rows. `reason` stays byte-identical; `clause`
+    // names the FIRST true clause in evaluation order so the next parity red
+    // is diagnosable from one log line.
+    Future<Map<String, dynamic>> captureParityFailure({
+      required Map<String, dynamic> data,
+      required GroupMessageNotificationContext? context,
+      required String plaintext,
+    }) async {
+      final events = captureFlowEvents();
+      await expectLater(
+        resolveBackgroundPushNotification(
+          RemoteMessage(data: data),
+          groupMessageContext: context,
+          decryptGroup:
+              ({
+                required groupId,
+                required keyEpoch,
+                required ciphertext,
+                required nonce,
+              }) async => plaintext,
+        ),
+        throwsA(isA<OrdinaryMessageNotificationIntegrityException>()),
+      );
+      final failures = eventsNamed(
+        events,
+        'PUSH_ANDROID_DATA_DECRYPT_FAIL',
+      ).toList(growable: false);
+      expect(failures, hasLength(1));
+      final details = Map<String, dynamic>.from(
+        failures.single['details'] as Map,
+      );
+      expect(details['kind'], 'group');
+      expect(details['reason'], 'group_parity_mismatch');
+      return details;
+    }
+
+    test('parity mismatch reports inner_message_id_missing clause', () async {
+      // Sender-ABSENT on purpose: a field-complete payload here would let a
+      // guard hoisted above the whole clause chain pass this row.
+      final details = await captureParityFailure(
+        data: liveEnvelopeOuterData(),
+        context: liveEnvelopeContext,
+        plaintext: jsonEncode(<String, Object?>{
+          'text': 'no ids anywhere',
+          'timestamp': '2026-08-18T09:41:12.481931Z',
+          'extra': <String, Object?>{'groupName': 'Team'},
+        }),
+      );
+      expect(details['clause'], 'inner_message_id_missing');
+    });
+
+    test('parity mismatch reports inner_id_outer_mismatch clause', () async {
+      // The no-context protection arm: without a recipient-owned context the
+      // inner/outer id agreement is the only thing standing.
+      final details = await captureParityFailure(
+        data: liveEnvelopeOuterData(),
+        context: null,
+        plaintext: liveEnvelopePlaintext(messageId: 'msg-other-envelope'),
+      );
+      expect(details['clause'], 'inner_id_outer_mismatch');
+    });
+
+    test('parity mismatch reports inner_group_id_mismatch clause', () async {
+      // Sender-ABSENT live-envelope shape with a tampered inner group id.
+      // This is the row that kills a hoisted `decodedSender != null` guard:
+      // under any hoist the tamper check is skipped and the push CARDS.
+      final details = await captureParityFailure(
+        data: liveEnvelopeOuterData(),
+        context: liveEnvelopeContext,
+        plaintext: jsonEncode(<String, Object?>{
+          'text': 'must stay silent',
+          'timestamp': '2026-08-18T09:41:12.481931Z',
+          'extra': <String, Object?>{
+            'groupId': 'group-attacker',
+            'messageId': 'msg-live-envelope',
+          },
+        }),
+      );
+      expect(details['clause'], 'inner_group_id_mismatch');
+    });
+
+    test('parity mismatch reports inner_sender_is_local clause', () async {
+      // `senderPeerId == localPeerId` is unreachable through the production
+      // context builder (`background_message_handler.dart:3061` rejects a
+      // self-sender). The row pins the predicate, not a production state —
+      // and the equality is what keeps the sender-context clause quiet so
+      // this stays a UNIQUE pin for the self-sender clause.
+      const selfSenderContext = GroupMessageNotificationContext(
+        groupId: 'group-team',
+        groupName: 'Team from groups DB',
+        localPeerId: 'peer-local',
+        senderPeerId: 'peer-local',
+        senderTransportPeerId: 'transport-admin-phone',
+        senderUsername: 'Admin from members DB',
+        expectedMessageId: 'msg-live-envelope',
+      );
+      final details = await captureParityFailure(
+        data: liveEnvelopeOuterData(),
+        context: selfSenderContext,
+        plaintext: jsonEncode(<String, Object?>{
+          'text': 'must stay silent',
+          'timestamp': '2026-08-18T09:41:12.481931Z',
+          'senderId': 'peer-local',
+          'extra': <String, Object?>{'messageId': 'msg-live-envelope'},
+        }),
+      );
+      expect(details['clause'], 'inner_sender_is_local');
+    });
+
+    test(
+      'parity mismatch reports inner_sender_context_mismatch clause',
+      () async {
+        // Present-but-wrong inner sender: genuine tamper, still throws.
+        final details = await captureParityFailure(
+          data: liveEnvelopeOuterData(),
+          context: liveEnvelopeContext,
+          plaintext: jsonEncode(<String, Object?>{
+            'text': 'must stay silent',
+            'timestamp': '2026-08-18T09:41:12.481931Z',
+            'senderId': 'peer-attacker',
+            'extra': <String, Object?>{'messageId': 'msg-live-envelope'},
+          }),
+        );
+        expect(details['clause'], 'inner_sender_context_mismatch');
+      },
+    );
+
     test(
       'trusted group context with no local group name stays generic',
       () async {

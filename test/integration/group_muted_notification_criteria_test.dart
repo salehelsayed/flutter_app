@@ -71,19 +71,22 @@ void main() {
       expect(validation.detail, contains('unread'));
     });
 
-    test('rejects a background artifact with no persisted reaction row', () async {
-      final happy = happyMutedReactionCaptureInput();
-      final validation = await validate(
-        happy.copyWith(
-          mutedProjection: happy.mutedProjection.copyWith(
-            reactionRowsObserved: 0,
+    test(
+      'rejects a background artifact with no persisted reaction row',
+      () async {
+        final happy = happyMutedReactionCaptureInput();
+        final validation = await validate(
+          happy.copyWith(
+            mutedProjection: happy.mutedProjection.copyWith(
+              reactionRowsObserved: 0,
+            ),
           ),
-        ),
-      );
+        );
 
-      expect(validation.ok, isFalse);
-      expect(validation.detail, contains('reactionRowsObserved'));
-    });
+        expect(validation.ok, isFalse);
+        expect(validation.detail, contains('reactionRowsObserved'));
+      },
+    );
 
     test('rejects any artifact whose unread regressed below the '
         'baseline', () async {
@@ -119,19 +122,22 @@ void main() {
       expect((await validate(happy)).ok, isTrue);
     });
 
-    test('rejects an artifact whose message under test was marked read', () async {
-      final happy = happyMutedMessageCaptureInput();
-      final validation = await validate(
-        happy.copyWith(
-          mutedProjection: happy.mutedProjection.copyWith(
-            underTestReadAtNull: false,
+    test(
+      'rejects an artifact whose message under test was marked read',
+      () async {
+        final happy = happyMutedMessageCaptureInput();
+        final validation = await validate(
+          happy.copyWith(
+            mutedProjection: happy.mutedProjection.copyWith(
+              underTestReadAtNull: false,
+            ),
           ),
-        ),
-      );
+        );
 
-      expect(validation.ok, isFalse);
-      expect(validation.detail, contains('read_at'));
-    });
+        expect(validation.ok, isFalse);
+        expect(validation.detail, contains('read_at'));
+      },
+    );
 
     test('rejects a declared active card for the muted group', () async {
       final happy = happyMutedMessageCaptureInput();
@@ -166,26 +172,29 @@ void main() {
       expect(validation.detail, contains('raw'));
     });
 
-    test('rejects a raw dump that no longer contains the control card', () async {
-      final happy = happyMutedMessageCaptureInput();
-      final validation = await validate(
-        happy.copyWith(
-          mutedProjection: happy.mutedProjection.copyWith(
-            // A real dump with a real app card — just not the control
-            // group's. Without this the "no control card" branch would be
-            // unreachable behind the empty-dump guard.
-            notificationDump: mutedNotificationDumpFixture(
-              packageName: happy.build.packageName,
-              controlGroupName: 'Plan379Z-Decoy77',
-              controlMarker: 'Plan379DecoyMarker',
+    test(
+      'rejects a raw dump that no longer contains the control card',
+      () async {
+        final happy = happyMutedMessageCaptureInput();
+        final validation = await validate(
+          happy.copyWith(
+            mutedProjection: happy.mutedProjection.copyWith(
+              // A real dump with a real app card — just not the control
+              // group's. Without this the "no control card" branch would be
+              // unreachable behind the empty-dump guard.
+              notificationDump: mutedNotificationDumpFixture(
+                packageName: happy.build.packageName,
+                controlGroupName: 'Plan379Z-Decoy77',
+                controlMarker: 'Plan379DecoyMarker',
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      expect(validation.ok, isFalse);
-      expect(validation.detail, contains('control'));
-    });
+        expect(validation.ok, isFalse);
+        expect(validation.detail, contains('control'));
+      },
+    );
 
     test('rejects a badge state that still contains the muted group', () async {
       final happy = happyMutedMessageCaptureInput();
@@ -215,19 +224,22 @@ void main() {
       expect(validation.detail, contains('badge'));
     });
 
-    test('rejects a badge state that dropped the unmuted control group', () async {
-      final happy = happyMutedMessageCaptureInput();
-      final validation = await validate(
-        happy.copyWith(
-          mutedProjection: happy.mutedProjection.copyWith(
-            badgeIncludesControlGroup: false,
+    test(
+      'rejects a badge state that dropped the unmuted control group',
+      () async {
+        final happy = happyMutedMessageCaptureInput();
+        final validation = await validate(
+          happy.copyWith(
+            mutedProjection: happy.mutedProjection.copyWith(
+              badgeIncludesControlGroup: false,
+            ),
           ),
-        ),
-      );
+        );
 
-      expect(validation.ok, isFalse);
-      expect(validation.detail, contains('badge'));
-    });
+        expect(validation.ok, isFalse);
+        expect(validation.detail, contains('badge'));
+      },
+    );
 
     test('rejects a false groupIsMuted observation', () async {
       final happy = happyMutedMessageCaptureInput();
@@ -248,10 +260,7 @@ void main() {
           final projection = Map<String, Object?>.from(
             artifact['mutedProjection']! as Map<String, Object?>,
           )..remove('groupIsMuted');
-          return <String, Object?>{
-            ...artifact,
-            'mutedProjection': projection,
-          };
+          return <String, Object?>{...artifact, 'mutedProjection': projection};
         },
       );
 
@@ -262,9 +271,7 @@ void main() {
     test('rejects a missing pre-mute control card', () async {
       final happy = happyMutedMessageCaptureInput();
       final validation = await validate(
-        happy.copyWith(
-          control: happy.control.copyWith(preMuteCardCount: 0),
-        ),
+        happy.copyWith(control: happy.control.copyWith(preMuteCardCount: 0)),
       );
 
       expect(validation.ok, isFalse);
@@ -274,35 +281,36 @@ void main() {
     test('rejects a missing post-mute lane-liveness control card', () async {
       final happy = happyMutedMessageCaptureInput();
       final validation = await validate(
-        happy.copyWith(
-          control: happy.control.copyWith(postMuteCardCount: 0),
-        ),
+        happy.copyWith(control: happy.control.copyWith(postMuteCardCount: 0)),
       );
 
       expect(validation.ok, isFalse);
       expect(validation.detail, contains('postMuteCardCount'));
     });
 
-    test('rejects a background artifact missing PUSH_BACKGROUND_MESSAGE_RECEIVED '
-        'for the control push', () async {
-      final happy = happyMutedReactionCaptureInput();
-      final delivery = happy.backgroundDelivery!;
-      final validation = await validate(
-        happy.copyWith(
-          backgroundDelivery: delivery.copyWith(
-            backgroundFlowLog: backgroundFlowLogFixture(
-              mutedFcmMessageId: delivery.mutedFcmMessageId,
-              controlFcmMessageId: null,
-              suppressionReason: delivery.suppressionReason,
-              suppressedFcmMessageId: delivery.mutedFcmMessageId,
+    test(
+      'rejects a background artifact missing PUSH_BACKGROUND_MESSAGE_RECEIVED '
+      'for the control push',
+      () async {
+        final happy = happyMutedReactionCaptureInput();
+        final delivery = happy.backgroundDelivery!;
+        final validation = await validate(
+          happy.copyWith(
+            backgroundDelivery: delivery.copyWith(
+              backgroundFlowLog: backgroundFlowLogFixture(
+                mutedFcmMessageId: delivery.mutedFcmMessageId,
+                controlFcmMessageId: null,
+                suppressionReason: delivery.suppressionReason,
+                suppressedFcmMessageId: delivery.mutedFcmMessageId,
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      expect(validation.ok, isFalse);
-      expect(validation.detail, contains('PUSH_BACKGROUND_MESSAGE_RECEIVED'));
-    });
+        expect(validation.ok, isFalse);
+        expect(validation.detail, contains('PUSH_BACKGROUND_MESSAGE_RECEIVED'));
+      },
+    );
 
     test('rejects a background artifact whose suppression event binds a '
         'different message id', () async {
@@ -417,10 +425,7 @@ void main() {
       );
 
       expect(validation.ok, isFalse);
-      expect(
-        validation.detail,
-        contains('PUSH_BACKGROUND_NOTIFICATION_SHOWN'),
-      );
+      expect(validation.detail, contains('PUSH_BACKGROUND_NOTIFICATION_SHOWN'));
     });
 
     test('rejects a background artifact that presented a card for the muted '
@@ -463,17 +468,20 @@ void main() {
       expect(validation.detail, contains('recipientProcessState'));
     });
 
-    test('rejects the live scenario carrying background-delivery evidence', () async {
-      final happy = happyMutedMessageCaptureInput();
-      final validation = await validate(
-        happy.copyWith(
-          backgroundDelivery: happyMutedReactionCaptureInput()
-              .backgroundDelivery,
-        ),
-      );
+    test(
+      'rejects the live scenario carrying background-delivery evidence',
+      () async {
+        final happy = happyMutedMessageCaptureInput();
+        final validation = await validate(
+          happy.copyWith(
+            backgroundDelivery:
+                happyMutedReactionCaptureInput().backgroundDelivery,
+          ),
+        );
 
-      expect(validation.ok, isFalse);
-    });
+        expect(validation.ok, isFalse);
+      },
+    );
 
     test('rejects an unregistered scenario id', () async {
       final happy = happyMutedMessageCaptureInput();
@@ -497,10 +505,11 @@ void main() {
       );
       await artifactFile.writeAsString(jsonEncode(artifact));
 
-      final reactionValidation = await validateGroupReactionNotificationArtifact(
-        scenario: input.scenario,
-        artifactFile: artifactFile,
-      );
+      final reactionValidation =
+          await validateGroupReactionNotificationArtifact(
+            scenario: input.scenario,
+            artifactFile: artifactFile,
+          );
 
       expect(reactionValidation.ok, isFalse);
     });
@@ -565,11 +574,213 @@ void main() {
     });
   });
 
+  group('Plan 384 killed-app card artifact validator', () {
+    Future<GroupMutedNotificationArtifactValidation> validateKilled(
+      GroupKilledTextCardCaptureInput input, {
+      Map<String, Object?> Function(Map<String, Object?> artifact)? mutate,
+    }) async {
+      var artifact = await buildGroupKilledTextCardArtifact(
+        proofDirectory: proofDirectory,
+        input: input,
+      );
+      if (mutate != null) artifact = mutate(artifact);
+      final artifactFile = File(
+        '${proofDirectory.path}${Platform.pathSeparator}'
+        '$groupTextKilledAppCardScenarioId.json',
+      );
+      await artifactFile.writeAsString(jsonEncode(artifact));
+      return validateGroupKilledTextCardAndroidArtifact(
+        artifactFile: artifactFile,
+      );
+    }
+
+    test('accepts the killed-app card happy artifact', () async {
+      final validation = await validateKilled(
+        happyKilledTextCardCaptureInput(),
+      );
+
+      expect(validation.ok, isTrue, reason: validation.detail);
+    });
+
+    test(
+      'rejects an artifact whose graded push has no SHOWN binding',
+      () async {
+        final validation = await validateKilled(
+          missingShownBindingKilledTextCardCaptureInput(),
+        );
+
+        expect(validation.ok, isFalse);
+        expect(
+          validation.detail,
+          contains('PUSH_BACKGROUND_NOTIFICATION_SHOWN'),
+        );
+      },
+    );
+
+    test('rejects any PUSH_BACKGROUND_NOTIFICATION_ERROR in the post-kill '
+        'window', () async {
+      final validation = await validateKilled(
+        windowErrorKilledTextCardCaptureInput(),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(
+        validation.detail,
+        contains('PUSH_BACKGROUND_NOTIFICATION_ERROR lines in the post-kill'),
+      );
+    });
+
+    test('rejects an artifact whose graded push is the FIRST post-kill '
+        'wake', () async {
+      final validation = await validateKilled(
+        gradedPushIsFirstWakeCaptureInput(),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(
+        validation.detail,
+        contains('the graded push is the FIRST post-kill wake'),
+      );
+    });
+
+    test(
+      'rejects a graded dump that still shows only the warm-up card',
+      () async {
+        final validation = await validateKilled(
+          staleCardKilledTextCardCaptureInput(),
+        );
+
+        expect(validation.ok, isFalse);
+        expect(validation.detail, contains('carrying the graded marker'));
+      },
+    );
+
+    test('rejects a missing pre-kill alive-lane baseline card', () async {
+      final happy = happyKilledTextCardCaptureInput();
+      final validation = await validateKilled(
+        happy.copyWith(
+          card: happy.card.copyWith(
+            preKillNotificationDump: mutedNotificationDumpFixture(
+              packageName: 'com.mknoon.app',
+              controlGroupName: null,
+              controlMarker: null,
+            ),
+          ),
+        ),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(validation.detail, contains('alive-lane control'));
+    });
+
+    test('rejects a summary claiming a graded card while the raw dump has '
+        'none', () async {
+      final happy = happyKilledTextCardCaptureInput();
+      // Summary still says one graded card; the raw dump holds none. The
+      // count rule alone would pass this — only re-deriving from the raw
+      // capture catches it.
+      final validation = await validateKilled(
+        happy.copyWith(
+          card: happy.card.copyWith(
+            gradedNotificationDump: mutedNotificationDumpFixture(
+              packageName: 'com.mknoon.app',
+              controlGroupName: null,
+              controlMarker: null,
+            ),
+          ),
+        ),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(validation.detail, contains('carrying the graded marker'));
+    });
+
+    test('rejects a recipient that was never terminated', () async {
+      final happy = happyKilledTextCardCaptureInput();
+      final validation = await validateKilled(
+        happy.copyWith(
+          delivery: happy.delivery.copyWith(
+            recipientProcessState: 'backgrounded',
+          ),
+        ),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(validation.detail, contains('must be terminated'));
+    });
+
+    test(
+      'the killed-card artifact is rejected by the muted validator',
+      () async {
+        final artifactFile = File(
+          '${proofDirectory.path}${Platform.pathSeparator}'
+          '$groupTextKilledAppCardScenarioId.json',
+        );
+        await writeGroupKilledTextCardArtifact(
+          proofDirectory: proofDirectory,
+          input: happyKilledTextCardCaptureInput(),
+        );
+
+        final crossed = await validateGroupMutedNotificationAndroidArtifact(
+          artifactFile: artifactFile,
+        );
+
+        expect(
+          crossed.ok,
+          isFalse,
+          reason:
+              'the muted grammar asserts the ABSENCE of the card this '
+              'scenario proves present; it must never accept this artifact',
+        );
+      },
+    );
+  });
+
+  group('Plan 384 killed-text-card push binding', () {
+    String log({required List<String> received, required List<String> shown}) =>
+        killedTextCardFlowLogFixture(
+          receivedFcmMessageIds: received,
+          shownFcmMessageIds: shown,
+        );
+
+    test('binds the graded push and never the warm-up wake', () {
+      final binding = resolveKilledTextCardPushBinding(
+        log(
+          received: <String>['warm', 'graded'],
+          shown: <String>['warm', 'graded'],
+        ),
+      );
+
+      expect(binding, isNotNull);
+      expect(binding!.warmupFcmMessageId, 'warm');
+      expect(binding.gradedFcmMessageId, 'graded');
+    });
+
+    test('fails closed when only the warm-up wake is recorded', () {
+      expect(
+        resolveKilledTextCardPushBinding(
+          log(received: <String>['warm'], shown: <String>['warm']),
+        ),
+        isNull,
+      );
+    });
+
+    test('fails closed when nothing beyond the warm-up was presented', () {
+      expect(
+        resolveKilledTextCardPushBinding(
+          log(received: <String>['warm', 'graded'], shown: <String>['warm']),
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('Plan 379 out-of-catalog registration', () {
     test('muted ids resolve via lookup and stay out of the catalog', () {
       for (final id in const <String>[
         groupMutedMessageSuppressionScenarioId,
         groupMutedReactionBackgroundScenarioId,
+        groupTextKilledAppCardScenarioId,
       ]) {
         final scenario = groupReactionNotificationScenario(id);
         expect(scenario, isNotNull, reason: '$id must resolve out-of-catalog');
@@ -591,6 +802,10 @@ void main() {
         groupReactionNotificationScenarios.map((scenario) => scenario.id),
         isNot(contains(groupMutedReactionBackgroundScenarioId)),
       );
+      expect(
+        groupReactionNotificationScenarios.map((scenario) => scenario.id),
+        isNot(contains(groupTextKilledAppCardScenarioId)),
+      );
     });
 
     test('muted id consts match their shared source scenarios', () {
@@ -602,12 +817,40 @@ void main() {
         groupMutedReactionBackgroundScenarioId,
         groupMutedReactionBackgroundSourceScenario.id,
       );
+      expect(
+        groupTextKilledAppCardScenarioId,
+        groupTextKilledAppCardSourceScenario.id,
+      );
     });
 
-    test('neither muted id carries the message-lifecycle suffix', () {
+    test('the lane census carries all three ids with 384 LAST', () {
+      expect(groupMutedNotificationScenarioIds, <String>[
+        groupMutedMessageSuppressionScenarioId,
+        groupMutedReactionBackgroundScenarioId,
+        groupTextKilledAppCardScenarioId,
+      ]);
+    });
+
+    test('no lane id is a prefix of another', () {
+      for (final outer in groupMutedNotificationScenarioIds) {
+        for (final inner in groupMutedNotificationScenarioIds) {
+          if (outer == inner) continue;
+          expect(
+            inner.startsWith(outer),
+            isFalse,
+            reason:
+                '$outer is a prefix of $inner; the anchored --name '
+                'selector cannot separate them',
+          );
+        }
+      }
+    });
+
+    test('no lane id carries the message-lifecycle suffix', () {
       for (final id in const <String>[
         groupMutedMessageSuppressionScenarioId,
         groupMutedReactionBackgroundScenarioId,
+        groupTextKilledAppCardScenarioId,
       ]) {
         expect(id.endsWith('_message_unread_lifecycle'), isFalse);
       }
@@ -669,7 +912,10 @@ void main() {
     });
 
     test('locates the unique mute switch by its own bounds', () {
-      expect(findGroupMuteSwitchCenter(groupInfoDump(muted: false)), (916, 710));
+      expect(findGroupMuteSwitchCenter(groupInfoDump(muted: false)), (
+        916,
+        710,
+      ));
     });
 
     test('reads mute state from the switch checked attribute', () {
@@ -681,7 +927,9 @@ void main() {
     test('fails closed when the switch is ambiguous or absent', () {
       // A second switch must NOT be silently mis-tapped.
       expect(
-        findGroupMuteSwitchCenter(groupInfoDump(muted: false, secondSwitch: true)),
+        findGroupMuteSwitchCenter(
+          groupInfoDump(muted: false, secondSwitch: true),
+        ),
         isNull,
       );
       expect(findGroupMuteSwitchCenter('<hierarchy />'), isNull);
@@ -714,57 +962,67 @@ void main() {
 
   group('Plan 379 capture dispatch', () {
     test('capture dispatch routes every registered scenario id', () {
-      const expected = <String, (
-        GroupReactionCaptureLifecycleStage,
-        GroupReactionCaptureObservationKind,
-        GroupReactionCaptureValidatorKind,
-      )>{
-        'android_group_message_unread_lifecycle': (
-          GroupReactionCaptureLifecycleStage.messageUnreadLifecycle,
-          GroupReactionCaptureObservationKind.messageMarkers,
-          GroupReactionCaptureValidatorKind.reaction,
-        ),
-        'android_announcement_message_unread_lifecycle': (
-          GroupReactionCaptureLifecycleStage.messageUnreadLifecycle,
-          GroupReactionCaptureObservationKind.messageMarkers,
-          GroupReactionCaptureValidatorKind.reaction,
-        ),
-        'android_group_reaction_recipient': (
-          GroupReactionCaptureLifecycleStage.reactionRecipient,
-          GroupReactionCaptureObservationKind.reactionTarget,
-          GroupReactionCaptureValidatorKind.reaction,
-        ),
-        'android_announcement_reaction_recipient': (
-          GroupReactionCaptureLifecycleStage.reactionRecipient,
-          GroupReactionCaptureObservationKind.reactionTarget,
-          GroupReactionCaptureValidatorKind.reaction,
-        ),
-        'android_group_reaction_recipient_background_connected': (
-          GroupReactionCaptureLifecycleStage.reactionRecipient,
-          GroupReactionCaptureObservationKind.reactionTarget,
-          GroupReactionCaptureValidatorKind.reaction,
-        ),
-        'ios_announcement_reaction_recipient': (
-          GroupReactionCaptureLifecycleStage.reactionRecipient,
-          GroupReactionCaptureObservationKind.reactionTarget,
-          GroupReactionCaptureValidatorKind.reaction,
-        ),
-        'android_group_notification_projection_durability': (
-          GroupReactionCaptureLifecycleStage.notificationProjection,
-          GroupReactionCaptureObservationKind.reactionTarget,
-          GroupReactionCaptureValidatorKind.notificationProjection,
-        ),
-        'android_group_muted_message_suppression': (
-          GroupReactionCaptureLifecycleStage.mutedMessageSuppression,
-          GroupReactionCaptureObservationKind.mutedTarget,
-          GroupReactionCaptureValidatorKind.muted,
-        ),
-        'android_group_muted_reaction_background_suppression': (
-          GroupReactionCaptureLifecycleStage.mutedReactionBackgroundSuppression,
-          GroupReactionCaptureObservationKind.mutedTarget,
-          GroupReactionCaptureValidatorKind.muted,
-        ),
-      };
+      const expected =
+          <
+            String,
+            (
+              GroupReactionCaptureLifecycleStage,
+              GroupReactionCaptureObservationKind,
+              GroupReactionCaptureValidatorKind,
+            )
+          >{
+            'android_group_message_unread_lifecycle': (
+              GroupReactionCaptureLifecycleStage.messageUnreadLifecycle,
+              GroupReactionCaptureObservationKind.messageMarkers,
+              GroupReactionCaptureValidatorKind.reaction,
+            ),
+            'android_announcement_message_unread_lifecycle': (
+              GroupReactionCaptureLifecycleStage.messageUnreadLifecycle,
+              GroupReactionCaptureObservationKind.messageMarkers,
+              GroupReactionCaptureValidatorKind.reaction,
+            ),
+            'android_group_reaction_recipient': (
+              GroupReactionCaptureLifecycleStage.reactionRecipient,
+              GroupReactionCaptureObservationKind.reactionTarget,
+              GroupReactionCaptureValidatorKind.reaction,
+            ),
+            'android_announcement_reaction_recipient': (
+              GroupReactionCaptureLifecycleStage.reactionRecipient,
+              GroupReactionCaptureObservationKind.reactionTarget,
+              GroupReactionCaptureValidatorKind.reaction,
+            ),
+            'android_group_reaction_recipient_background_connected': (
+              GroupReactionCaptureLifecycleStage.reactionRecipient,
+              GroupReactionCaptureObservationKind.reactionTarget,
+              GroupReactionCaptureValidatorKind.reaction,
+            ),
+            'ios_announcement_reaction_recipient': (
+              GroupReactionCaptureLifecycleStage.reactionRecipient,
+              GroupReactionCaptureObservationKind.reactionTarget,
+              GroupReactionCaptureValidatorKind.reaction,
+            ),
+            'android_group_notification_projection_durability': (
+              GroupReactionCaptureLifecycleStage.notificationProjection,
+              GroupReactionCaptureObservationKind.reactionTarget,
+              GroupReactionCaptureValidatorKind.notificationProjection,
+            ),
+            'android_group_muted_message_suppression': (
+              GroupReactionCaptureLifecycleStage.mutedMessageSuppression,
+              GroupReactionCaptureObservationKind.mutedTarget,
+              GroupReactionCaptureValidatorKind.muted,
+            ),
+            'android_group_muted_reaction_background_suppression': (
+              GroupReactionCaptureLifecycleStage
+                  .mutedReactionBackgroundSuppression,
+              GroupReactionCaptureObservationKind.mutedTarget,
+              GroupReactionCaptureValidatorKind.muted,
+            ),
+            'android_group_text_killed_app_card': (
+              GroupReactionCaptureLifecycleStage.groupTextKilledAppCard,
+              GroupReactionCaptureObservationKind.mutedTarget,
+              GroupReactionCaptureValidatorKind.killedTextCard,
+            ),
+          };
 
       for (final entry in expected.entries) {
         final dispatch = groupReactionCaptureDispatchFor(entry.key);
@@ -791,8 +1049,7 @@ void main() {
       final registered = <String>[
         ...groupReactionNotificationScenarios.map((scenario) => scenario.id),
         groupNotificationProjectionAndroidSourceScenario.id,
-        groupMutedMessageSuppressionScenarioId,
-        groupMutedReactionBackgroundScenarioId,
+        ...groupMutedNotificationScenarioIds,
       ];
 
       for (final id in registered) {
@@ -810,12 +1067,12 @@ void main() {
     });
 
     test('only the muted ids select the muted validator', () {
-      final muted = <String>[
+      final registered = <String>[
         ...groupReactionNotificationScenarios.map((scenario) => scenario.id),
         groupNotificationProjectionAndroidSourceScenario.id,
-        groupMutedMessageSuppressionScenarioId,
-        groupMutedReactionBackgroundScenarioId,
-      ].where(
+        ...groupMutedNotificationScenarioIds,
+      ];
+      final muted = registered.where(
         (id) =>
             groupReactionCaptureDispatchFor(id)!.validatorKind ==
             GroupReactionCaptureValidatorKind.muted,
@@ -825,6 +1082,17 @@ void main() {
         groupMutedMessageSuppressionScenarioId,
         groupMutedReactionBackgroundScenarioId,
       ]);
+
+      // The killed-card scenario must NOT ride the muted grammar: its
+      // validator asserts a card is present where the muted one asserts the
+      // absence of exactly that card.
+      final killed = registered.where(
+        (id) =>
+            groupReactionCaptureDispatchFor(id)!.validatorKind ==
+            GroupReactionCaptureValidatorKind.killedTextCard,
+      );
+
+      expect(killed, <String>[groupTextKilledAppCardScenarioId]);
     });
   });
 }

@@ -236,7 +236,8 @@ jq -e '
       "groups.muted_background_reaction_no_card",
       "groups.muted_unread_preserved",
       "groups.muted_excluded_from_canonical_badge",
-      "groups.muted_delivery_unharmed"
+      "groups.muted_delivery_unharmed",
+      "groups.killed_app_group_text_card"
     ],
     "lane": "reliability",
     "modes": ["major", "full"],

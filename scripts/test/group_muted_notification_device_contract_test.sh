@@ -71,6 +71,63 @@ grep -q 'unread must grow past the pre-send baseline' "$tmp_dir/unread.stderr" |
 }
 
 # ---------------------------------------------------------------------------
+# Case 1b - Plan 384's killed-app card scenario rides the SAME entry point.
+#
+# `--validate-artifact` dispatches on the artifact's own `scenario`, so this
+# also pins that a third scenario is not silently handed to the muted
+# validator, whose admission rejects it. The negative is the happy artifact
+# with the graded dump replaced by the WARM-UP's card: Android replaces a
+# conversation card in place, so a bare "a card exists" check would pass it.
+# ---------------------------------------------------------------------------
+mkdir -p "$tmp_dir/killed_happy" "$tmp_dir/killed_stale"
+
+killed_happy_artifact="$(
+  dart run "$runner" --emit-fixture happy-killed-text-card \
+    --output "$tmp_dir/killed_happy" |
+    awk '/^\// { print }'
+)"
+[ -f "$killed_happy_artifact" ] || {
+  printf 'FAIL: --emit-fixture happy-killed-text-card wrote no artifact\n' >&2
+  exit 1
+}
+
+killed_stale_artifact="$(
+  dart run "$runner" --emit-fixture killed-text-card-stale-card \
+    --output "$tmp_dir/killed_stale" |
+    awk '/^\// { print }'
+)"
+[ -f "$killed_stale_artifact" ] || {
+  printf 'FAIL: --emit-fixture killed-text-card-stale-card wrote no artifact\n' >&2
+  exit 1
+}
+
+set +e
+dart run "$runner" --validate-artifact "$killed_happy_artifact" \
+  >"$tmp_dir/killed_happy.stdout" 2>"$tmp_dir/killed_happy.stderr"
+killed_happy_status=$?
+set -e
+[ "$killed_happy_status" -eq 0 ] || {
+  printf 'FAIL: the killed-card validator rejected its own happy artifact\n' >&2
+  cat "$tmp_dir/killed_happy.stderr" >&2
+  exit 1
+}
+
+set +e
+dart run "$runner" --validate-artifact "$killed_stale_artifact" \
+  >"$tmp_dir/killed_stale.stdout" 2>"$tmp_dir/killed_stale.stderr"
+killed_stale_status=$?
+set -e
+[ "$killed_stale_status" -ne 0 ] || {
+  printf 'FAIL: a killed-card artifact showing only the warm-up card was accepted\n' >&2
+  exit 1
+}
+grep -q 'carrying the graded marker' "$tmp_dir/killed_stale.stderr" || {
+  printf 'FAIL: stale-card rejection was not attributed to the graded-marker rule\n' >&2
+  cat "$tmp_dir/killed_stale.stderr" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
 # Case 2 - adapter stdout purity in the blocked lane.
 #
 # `tool/sims/executor.dart` scans every stdout line for the SIMS_RESULT_JSON
@@ -106,12 +163,14 @@ grep -q '"blocker":"missingArtifact"' "$tmp_dir/blocked.stdout" || {
 # ---------------------------------------------------------------------------
 # Case 3 - ordered census of the scenarios this lane owns.
 #
-# Both ids are OUT of `groupReactionNotificationScenarios`, so the Plan-257
-# six-row censuses stay byte-identical; this is the muted lane's own pin.
+# Every id is OUT of `groupReactionNotificationScenarios`, so the Plan-257
+# six-row censuses stay byte-identical; this is this lane's own pin. Plan 384's
+# id is LAST so the shipped muted pair's declaration order never moves.
 # ---------------------------------------------------------------------------
 expected="$({
   printf '%s\n' android_group_muted_message_suppression
   printf '%s\n' android_group_muted_reaction_background_suppression
+  printf '%s\n' android_group_text_killed_app_card
 })"
 
 actual="$(
@@ -124,12 +183,32 @@ actual="$(
   exit 1
 }
 
-# Neither id may carry the message-lifecycle suffix: that suffix is what routes
-# a scenario into the reaction grammar, whose assertions contradict mute.
+# No id may carry the message-lifecycle suffix: that suffix is what routes a
+# scenario into the reaction grammar, whose assertions contradict both mute and
+# the killed-app card.
 if printf '%s\n' "$actual" | grep -q '_message_unread_lifecycle$'; then
   printf 'FAIL: a muted id carries the reaction-grammar lifecycle suffix\n' >&2
   exit 1
 fi
 
-printf 'PASS: Plan 379 muted-group lane is discoverable, fail-closed, and '
-printf 'raw-evidence bound\n'
+# No id may be a prefix of another: the Plan-257 runner selects proof rows with
+# an anchored `--name`, and a prefix pair is what made `--plain-name` run two
+# blocks against one artifact.
+while read -r outer; do
+  while read -r inner; do
+    [ "$outer" = "$inner" ] && continue
+    case "$inner" in
+      "$outer"*)
+        printf 'FAIL: scenario id %s is a prefix of %s\n' "$outer" "$inner" >&2
+        exit 1
+        ;;
+    esac
+  done <<EOF
+$actual
+EOF
+done <<EOF
+$actual
+EOF
+
+printf 'PASS: the Android muted-group lane is discoverable, fail-closed, and '
+printf 'raw-evidence bound across all 3 scenarios\n'
