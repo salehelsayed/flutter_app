@@ -268,6 +268,140 @@ void main() {
       expect(validation.detail, contains('groupIsMuted'));
     });
 
+    // -------------------------------------------------------------------
+    // Plan 386 TC-386-10 — PRD §6.5 / AC-13: a group self-reaction narrows
+    // the wake audience to nobody. The device leg asserts the same two
+    // counter deltas this section grades.
+    // -------------------------------------------------------------------
+
+    test('rejects a self-reaction that woke somebody', () async {
+      final happy = happyMutedReactionCaptureInput();
+      final validation = await validate(
+        happy.copyWith(
+          selfReactionAudience: GroupMutedSelfReactionAudienceInput(
+            targetMarker: happy.selfReactionAudience!.targetMarker,
+            recipientCardCountBefore: 1,
+            recipientCardCountAfter: 1,
+            senderCardCountBefore: 0,
+            senderCardCountAfter: 0,
+            // Exactly what removing the nomination guard
+            // (`send_group_reaction_use_case.dart:1314`) produces: the
+            // audience is populated, so the relay dispatches instead of
+            // returning at `no_wake_recipients`.
+            relayMetrics: selfReactionRelayMetricsFixture(
+              noWakeRecipientsDelta: 0,
+              attemptedDelta: 1,
+            ),
+          ),
+        ),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(validation.detail, contains('wake attempt'));
+    });
+
+    test('rejects a self-reaction with no empty nomination at all', () async {
+      final happy = happyMutedReactionCaptureInput();
+      final validation = await validate(
+        happy.copyWith(
+          selfReactionAudience: GroupMutedSelfReactionAudienceInput(
+            targetMarker: happy.selfReactionAudience!.targetMarker,
+            recipientCardCountBefore: 1,
+            recipientCardCountAfter: 1,
+            senderCardCountBefore: 0,
+            senderCardCountAfter: 0,
+            relayMetrics: selfReactionRelayMetricsFixture(
+              noWakeRecipientsDelta: 0,
+            ),
+          ),
+        ),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(validation.detail, contains('empty wake nomination'));
+    });
+
+    test('rejects a self-reaction that posted a card on either device', () async {
+      final happy = happyMutedReactionCaptureInput();
+      for (final counts in const <(int, int, int, int)>[
+        (1, 2, 0, 0),
+        (1, 1, 0, 1),
+      ]) {
+        final validation = await validate(
+          happy.copyWith(
+            selfReactionAudience: GroupMutedSelfReactionAudienceInput(
+              targetMarker: happy.selfReactionAudience!.targetMarker,
+              recipientCardCountBefore: counts.$1,
+              recipientCardCountAfter: counts.$2,
+              senderCardCountBefore: counts.$3,
+              senderCardCountAfter: counts.$4,
+              relayMetrics: selfReactionRelayMetricsFixture(),
+            ),
+          ),
+        );
+
+        expect(validation.ok, isFalse, reason: '$counts');
+        expect(validation.detail, contains('changed the card count'));
+      }
+    });
+
+    test('rejects a self-reaction target the reactor did not author', () async {
+      final happy = happyMutedReactionCaptureInput();
+      final validation = await validate(
+        happy.copyWith(
+          selfReactionAudience: GroupMutedSelfReactionAudienceInput(
+            // The recipient authors this one, so reacting to it is an ordinary
+            // reaction and its empty nomination would mean something else.
+            targetMarker: 'Plan379Ctl1234567890',
+            recipientCardCountBefore: 1,
+            recipientCardCountAfter: 1,
+            senderCardCountBefore: 0,
+            senderCardCountAfter: 0,
+            relayMetrics: selfReactionRelayMetricsFixture(),
+          ),
+        ),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(validation.detail, contains('SENDER-authored warm-up'));
+    });
+
+    test('rejects a truncated self-reaction counter window', () async {
+      final happy = happyMutedReactionCaptureInput();
+      final validation = await validate(
+        happy.copyWith(
+          selfReactionAudience: GroupMutedSelfReactionAudienceInput(
+            targetMarker: happy.selfReactionAudience!.targetMarker,
+            recipientCardCountBefore: 1,
+            recipientCardCountAfter: 1,
+            senderCardCountBefore: 0,
+            senderCardCountAfter: 0,
+            relayMetrics: selfReactionRelayMetricsFixture(
+              includeFinalPhase: false,
+            ),
+          ),
+        ),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(validation.detail, contains('baseline/final pair'));
+    });
+
+    test('rejects a live-lane artifact carrying self-reaction evidence', () async {
+      final validation = await validate(
+        happyMutedMessageCaptureInput().copyWith(
+          selfReactionAudience:
+              happyMutedReactionCaptureInput().selfReactionAudience,
+        ),
+      );
+
+      expect(validation.ok, isFalse);
+      expect(
+        validation.detail,
+        contains('must be absent on the live suppression lane'),
+      );
+    });
+
     test('rejects a missing pre-mute control card', () async {
       final happy = happyMutedMessageCaptureInput();
       final validation = await validate(

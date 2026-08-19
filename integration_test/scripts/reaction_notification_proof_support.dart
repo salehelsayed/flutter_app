@@ -6587,3 +6587,240 @@ String _xmlAttribute(String node, String name) {
     int.parse(bounds.group(4)!),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 386 — sound evidence primitives for the reaction catalog lane.
+//
+// Three defects motivated this section:
+//
+// * G16: relay `8d86501e4` (v1.8.0) deleted every attributed `[PUSH]` line, so
+//   every client predicate that grepped `[PUSH] Notification sent to <prefix>`
+//   became permanently false. Counting an attribution-free journal literal is
+//   not a repair — on a PRODUCTION relay `[PUSH] outcome=success` is emitted by
+//   the single shared provider path for every push type and every user. The
+//   repair is to grade on the relay's own Prometheus counters, which ARE
+//   reaction-scoped.
+// * G20: single `adb logcat -d` reads graded with exact counts and a positional
+//   index. `logcat -d` returns only what survives in the device ring buffer, so
+//   an aged-out event is indistinguishable from an event that never happened.
+// * The graded send outcome was selected by position
+//   (`observations[baselineOutcomeCount]`), which silently returns the WRONG
+//   observation once the baseline-length prefix rotates away.
+// ---------------------------------------------------------------------------
+
+/// Section header written into the `relay_metrics` evidence file.
+///
+/// The evidence is the RAW Prometheus scrape, twice: once before the graded
+/// transitions and once after quiescence. Keeping the raw exposition (rather
+/// than a computed delta) means the validator re-derives the delta from
+/// primary evidence instead of trusting a number the capture wrote.
+const String relayMetricsPhaseMarker = 'MKNOON_386_RELAY_METRICS_PHASE ';
+
+/// The phase names, in the order they must appear.
+const String relayMetricsBaselinePhase = 'baseline';
+const String relayMetricsFinalPhase = 'final';
+
+/// Relay counter families this lane grades on.
+///
+/// `relay_group_reaction_wake_total` (`go-relay-server/metrics.go:348`) is
+/// incremented once per wake DECISION, including every decline, so the
+/// per-transition accounting identity holds. `relay_push_sent_total`
+/// (`metrics.go:337`) is the provider-attempt counter; its label is `result`,
+/// not `outcome`.
+const String relayGroupReactionWakeCounter = 'relay_group_reaction_wake_total';
+const String relayPushSentCounter = 'relay_push_sent_total';
+
+/// One parsed Prometheus sample: the metric name plus its label set, mapped to
+/// a value.
+///
+/// Keys are canonical `name{label="value",...}` strings with labels sorted, so
+/// a scrape that reorders labels between two reads still subtracts correctly.
+Map<String, double> parsePrometheusCounters(String scrape) {
+  final samples = <String, double>{};
+  for (final rawLine in scrape.split('\n')) {
+    final line = rawLine.trim();
+    if (line.isEmpty || line.startsWith('#')) continue;
+    final match = RegExp(
+      r'^([A-Za-z_:][A-Za-z0-9_:]*)(\{[^}]*\})?\s+([0-9eE+.\-]+)$',
+    ).firstMatch(line);
+    if (match == null) continue;
+    final value = double.tryParse(match.group(3)!);
+    if (value == null) continue;
+    samples[_canonicalPrometheusKey(match.group(1)!, match.group(2))] = value;
+  }
+  return Map<String, double>.unmodifiable(samples);
+}
+
+String _canonicalPrometheusKey(String name, String? rawLabels) {
+  if (rawLabels == null || rawLabels.length <= 2) return name;
+  final inner = rawLabels.substring(1, rawLabels.length - 1);
+  final pairs =
+      RegExp(r'([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\]|\\.)*)"')
+          .allMatches(inner)
+          .map((match) => '${match.group(1)}="${match.group(2)}"')
+          .toList()
+        ..sort();
+  if (pairs.isEmpty) return name;
+  return '$name{${pairs.join(',')}}';
+}
+
+/// Canonical key for one labelled counter series.
+String relayCounterSeries(String name, Map<String, String> labels) =>
+    _canonicalPrometheusKey(
+      name,
+      labels.isEmpty
+          ? null
+          : '{${labels.entries.map((e) => '${e.key}="${e.value}"').join(',')}}',
+    );
+
+/// The two raw scrapes carried by one `relay_metrics` evidence file.
+class RelayMetricsWindow {
+  const RelayMetricsWindow({required this.baseline, required this.finalScrape});
+
+  final Map<String, double> baseline;
+  final Map<String, double> finalScrape;
+
+  /// Growth of [series] across the window.
+  ///
+  /// An absent baseline sample means the counter had never been incremented on
+  /// the running process, which Prometheus does not export at all — treating it
+  /// as 0 is correct. An absent FINAL sample after a present baseline means the
+  /// relay process RESTARTED mid-window; the delta is then meaningless and this
+  /// returns null so the caller fails closed rather than reading a reset as a
+  /// decrease.
+  double? delta(String series) {
+    final after = finalScrape[series];
+    final before = baseline[series] ?? 0;
+    if (after == null) return before == 0 ? 0 : null;
+    if (after < before) return null;
+    return after - before;
+  }
+}
+
+/// Splits a `relay_metrics` evidence file into its two raw scrapes.
+///
+/// Returns null when either phase header is missing or out of order, so a
+/// truncated or hand-assembled evidence file can never grade as "no growth".
+RelayMetricsWindow? parseRelayMetricsWindow(String evidence) {
+  final baselineHeader = '$relayMetricsPhaseMarker$relayMetricsBaselinePhase';
+  final finalHeader = '$relayMetricsPhaseMarker$relayMetricsFinalPhase';
+  final baselineAt = evidence.indexOf(baselineHeader);
+  final finalAt = evidence.indexOf(finalHeader);
+  if (baselineAt < 0 || finalAt <= baselineAt) return null;
+  if (evidence.indexOf(baselineHeader, baselineAt + 1) >= 0 ||
+      evidence.indexOf(finalHeader, finalAt + 1) >= 0) {
+    return null;
+  }
+  return RelayMetricsWindow(
+    baseline: parsePrometheusCounters(
+      evidence.substring(baselineAt + baselineHeader.length, finalAt),
+    ),
+    finalScrape: parsePrometheusCounters(
+      evidence.substring(finalAt + finalHeader.length),
+    ),
+  );
+}
+
+/// Growth of every labelled series in one counter family across the window.
+///
+/// Used where a family has no reaction-scoped label to select on — the message
+/// lane's `relay_push_sent_total` is shared by every push type and every user,
+/// so only its total movement is meaningful. Returns null when any series in
+/// the family went backwards, which means the relay process restarted and no
+/// delta in the file can be trusted.
+double? relayCounterFamilyDelta(RelayMetricsWindow window, String name) {
+  final prefix = '$name{';
+  final series = <String>{
+    ...window.baseline.keys,
+    ...window.finalScrape.keys,
+  }.where((key) => key == name || key.startsWith(prefix));
+  var total = 0.0;
+  for (final key in series) {
+    final delta = window.delta(key);
+    if (delta == null) return null;
+    total += delta;
+  }
+  return total;
+}
+
+/// Prefix of the harness-minted breadcrumb that binds one send to its terminal
+/// `GROUP_SEND_MSG_TIMING` observation.
+///
+/// `GroupSendTimingObservation` carries no identity of any kind — four fields,
+/// none of them an id — and adding one to the production FLOW details is out of
+/// scope for a harness plan. So the harness mints the identity itself: it
+/// writes this breadcrumb into the device's own log immediately before the send
+/// tap, using the unique compose marker it already typed and already waited to
+/// observe in the UI. Selection then reads forward from THIS send's breadcrumb
+/// instead of counting how many observations existed beforehand.
+const String groupSendMarkerBreadcrumbTag = 'MKNOON386';
+const String groupSendMarkerBreadcrumbPrefix = 'send_marker=';
+
+/// The terminal group-send observation belonging to [marker].
+///
+/// Fails closed (null) when the breadcrumb is absent, so a caller can never
+/// silently grade a different send's outcome. The LAST breadcrumb for the
+/// marker wins: `_sendGroupText` re-taps after a group-recovery-pending
+/// outcome and mints a fresh breadcrumb each attempt, and only the final
+/// attempt's outcome is the one under test.
+GroupSendTimingObservation? selectGroupSendObservationForMarker(
+  String logcat,
+  String marker,
+) {
+  if (marker.isEmpty) return null;
+  final needle = '$groupSendMarkerBreadcrumbPrefix$marker';
+  final at = logcat.lastIndexOf(needle);
+  if (at < 0) return null;
+  final observations = extractGroupSendTimingObservations(
+    logcat.substring(at + needle.length),
+  );
+  return observations.isEmpty ? null : observations.first;
+}
+
+/// A monotonically growing view of one device's log.
+///
+/// Two properties matter and the previous `Set<String>` implementation had
+/// neither:
+///
+/// * **Monotonic.** Windows are folded in, never replaced, so a lane can still
+///   answer "what has this device emitted so far" after an earlier window is
+///   gone.
+/// * **Multiplicity-preserving.** Two DISTINCT events that happen to render to
+///   the same text — the same FLOW event for two different ids, or two
+///   identical retries — are two observations, not one. Set semantics collapsed
+///   them, which silently deflated every count taken over the accumulator.
+///
+/// The fold is a multiset union rather than a plain append so that re-absorbing
+/// an overlapping window (the same bytes read twice) is idempotent, while a
+/// window that genuinely contains a second copy still contributes it.
+class DeviceFlowAccumulator {
+  final List<String> _lines = <String>[];
+  final Map<String, int> _counts = <String, int>{};
+
+  int get length => _lines.length;
+
+  /// Folds one freshly read window into the accumulated log.
+  void absorb(String window) {
+    final observed = <String, int>{};
+    for (final rawLine in window.split('\n')) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+      final seen = (observed[line] ?? 0) + 1;
+      observed[line] = seen;
+      // `seen` is the occurrence ORDINAL of this line inside this window. It is
+      // the identity that distinguishes a genuine second occurrence from a
+      // re-read of the first. Dropping it degrades this back to set semantics.
+      if (seen > (_counts[line] ?? 0)) {
+        _counts[line] = seen;
+        _lines.add(line);
+      }
+    }
+  }
+
+  String get text => _lines.isEmpty ? '' : '${_lines.join('\n')}\n';
+
+  void reset() {
+    _lines.clear();
+    _counts.clear();
+  }
+}

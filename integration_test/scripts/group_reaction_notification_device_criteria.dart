@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import '../support/android_notification_payload_campaign.dart'
+    show relayJournalContainsAndroidProviderSend;
 import 'reaction_notification_proof_support.dart';
 
 const String groupReactionNotificationArtifactSchema =
@@ -273,6 +275,17 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
         kind: 'provider_fcm',
         markers: <String>['event=group_message', 'delivery_matched=true'],
       ),
+      // Plan 386 / TC-386-02. The relay's own counters, scraped raw before the
+      // graded transitions and again after quiescence. This is the only
+      // provider evidence relay v1.8.0 can still attribute to this lane.
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'relay_metrics',
+        markers: <String>[
+          'MKNOON_386_RELAY_METRICS_PHASE baseline',
+          'MKNOON_386_RELAY_METRICS_PHASE final',
+          'relay_group_reaction_wake_total',
+        ],
+      ),
       GroupReactionNotificationEvidenceRequirement(
         kind: 'sender_app',
         markers: <String>['role=message_sender', 'two_messages_committed=true'],
@@ -331,6 +344,17 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
       GroupReactionNotificationEvidenceRequirement(
         kind: 'provider_fcm',
         markers: <String>['event=group_message', 'delivery_matched=true'],
+      ),
+      // Plan 386 / TC-386-02. The relay's own counters, scraped raw before the
+      // graded transitions and again after quiescence. This is the only
+      // provider evidence relay v1.8.0 can still attribute to this lane.
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'relay_metrics',
+        markers: <String>[
+          'MKNOON_386_RELAY_METRICS_PHASE baseline',
+          'MKNOON_386_RELAY_METRICS_PHASE final',
+          'relay_group_reaction_wake_total',
+        ],
       ),
       GroupReactionNotificationEvidenceRequirement(
         kind: 'sender_app',
@@ -395,6 +419,17 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
       GroupReactionNotificationEvidenceRequirement(
         kind: 'provider_fcm',
         markers: <String>['event=group_reaction', 'delivery_matched=true'],
+      ),
+      // Plan 386 / TC-386-02. The relay's own counters, scraped raw before the
+      // graded transitions and again after quiescence. This is the only
+      // provider evidence relay v1.8.0 can still attribute to this lane.
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'relay_metrics',
+        markers: <String>[
+          'MKNOON_386_RELAY_METRICS_PHASE baseline',
+          'MKNOON_386_RELAY_METRICS_PHASE final',
+          'relay_group_reaction_wake_total',
+        ],
       ),
       GroupReactionNotificationEvidenceRequirement(
         kind: 'sender_app',
@@ -474,6 +509,17 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
         kind: 'provider_fcm',
         markers: <String>['event=group_reaction', 'delivery_matched=true'],
       ),
+      // Plan 386 / TC-386-02. The relay's own counters, scraped raw before the
+      // graded transitions and again after quiescence. This is the only
+      // provider evidence relay v1.8.0 can still attribute to this lane.
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'relay_metrics',
+        markers: <String>[
+          'MKNOON_386_RELAY_METRICS_PHASE baseline',
+          'MKNOON_386_RELAY_METRICS_PHASE final',
+          'relay_group_reaction_wake_total',
+        ],
+      ),
       GroupReactionNotificationEvidenceRequirement(
         kind: 'sender_app',
         markers: <String>[
@@ -552,6 +598,17 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
       GroupReactionNotificationEvidenceRequirement(
         kind: 'provider_fcm',
         markers: <String>['event=group_reaction', 'delivery_matched=true'],
+      ),
+      // Plan 386 / TC-386-02. The relay's own counters, scraped raw before the
+      // graded transitions and again after quiescence. This is the only
+      // provider evidence relay v1.8.0 can still attribute to this lane.
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'relay_metrics',
+        markers: <String>[
+          'MKNOON_386_RELAY_METRICS_PHASE baseline',
+          'MKNOON_386_RELAY_METRICS_PHASE final',
+          'relay_group_reaction_wake_total',
+        ],
       ),
       GroupReactionNotificationEvidenceRequirement(
         kind: 'sender_app',
@@ -1326,7 +1383,7 @@ void _validateMeasurements(
       'firstMarker',
       'secondMarker',
       'targetMarker',
-      'expectedProviderSendCount',
+      'expectedRelayWakeAttempts',
     },
     r'$.measurements',
     failures,
@@ -1345,7 +1402,7 @@ void _validateMeasurements(
   }
   _expectValue(
     measurements,
-    'expectedProviderSendCount',
+    'expectedRelayWakeAttempts',
     2,
     r'$.measurements',
     failures,
@@ -2107,8 +2164,8 @@ void _validateAuthoritativeEvidence({
   final groupName = measurements['groupName'] as String? ?? '';
   final actorName = measurements['actorName'] as String? ?? '';
   final appPackage = measurements['appPackage'] as String? ?? '';
-  final expectedProviderSends =
-      measurements['expectedProviderSendCount'] as int? ?? -1;
+  final expectedRelayWakeAttempts =
+      measurements['expectedRelayWakeAttempts'] as int? ?? -1;
   final relay = evidenceTexts['relay'] ?? '';
   final provider = evidenceTexts['provider_fcm'] ?? '';
   final senderApp = evidenceTexts['sender_app'] ?? '';
@@ -2141,11 +2198,19 @@ void _validateAuthoritativeEvidence({
   final processAliveReaction = _processAliveReactionScenarioIds.contains(
     requirement.id,
   );
+  // TC-386-03. Relay v1.8.0 emits `[GROUP_REACTION_WAKE] outcome=<word>` and
+  // nothing else: the `remote_type=` attribute this used to require was deleted
+  // with the rest of the attributed `[PUSH]`/wake vocabulary by `8d86501e4`, so
+  // the old conjunct rejected every real journal. `outcome=dispatched` is the
+  // line the relay prints once per recipient it actually hands to the provider
+  // (`go-relay-server/inbox.go:2797`), which is the same discrimination the old
+  // attribute carried. The recipient-side push-origin marker is unchanged and
+  // still required, so this stays a three-way discrimination.
   if (processAliveReaction &&
       (!rawRelayLines.any(
             (line) =>
                 line.contains('[GROUP_REACTION_WAKE]') &&
-                line.contains('remote_type=group_reaction'),
+                line.contains('outcome=dispatched'),
           ) ||
           !provider.contains('event=group_reaction') ||
           !provider.contains('delivery_matched=true') ||
@@ -2157,21 +2222,85 @@ void _validateAuthoritativeEvidence({
       'push-origin discrimination',
     );
   }
-  final providerMarker = messageScenario
-      ? '[PUSH] Group notification sent to'
-      : '[PUSH] Notification sent to';
-  final providerLines = provider
-      .split('\n')
-      .where((line) => line.contains(providerMarker))
-      .toList(growable: false);
-  if (providerLines.length != expectedProviderSends ||
-      providerLines.any(
-        (line) => !RegExp(r'^\d{4}-\d{2}-\d{2}').hasMatch(line),
-      )) {
+
+  // TC-386-01/04. Qualitative half: the relay journal must record a real
+  // provider acceptance in the capture window. The predicate is Plan 380 W0's,
+  // imported rather than re-derived, so exactly one definition of the v1.8.0
+  // acceptance grammar exists in the repository.
+  if (!relayJournalContainsAndroidProviderSend(provider)) {
     failures.add(
-      r'$.evidence[provider_fcm] must contain exactly the final raw provider '
-      'send count after quiescence',
+      r'$.evidence[provider_fcm] records no v1.8.0 provider acceptance',
     );
+  }
+
+  // TC-386-02. Quantitative half: an exact RELAY COUNTER DELTA, per lane.
+  //
+  // Counting journal lines cannot work on v1.8.0. What survives is
+  // `[PUSH] outcome=success attempt=N total_attempts=N`, which carries no
+  // attribution at all and is emitted by the single shared provider path for
+  // every push type and every user on a PRODUCTION box. The relay's own
+  // Prometheus counters are reaction-scoped, already exported on
+  // `:2112/metrics` (`go-relay-server/main.go:261-266`), and already scraped
+  // over ssh by five `docker-ws/` scripts, so grading on their growth across
+  // the capture window is both sound and existing repo practice.
+  final metrics = parseRelayMetricsWindow(evidenceTexts['relay_metrics'] ?? '');
+  if (metrics == null) {
+    failures.add(
+      r'$.evidence[relay_metrics] is not an ordered baseline/final pair of raw '
+      'relay counter scrapes',
+    );
+  } else if (messageScenario) {
+    // The message lane has NO wake counter and no per-recipient journal line of
+    // any kind: `fanOutPush` contains zero `log.Printf`. Its relay-side
+    // observables are `[GROUP_INBOX] Stored message for group` (asserted above,
+    // and the window-liveness oracle) plus growth of the shared provider
+    // counter. A floor is the strongest honest rule here — the counter is not
+    // group-scoped.
+    final pushDelta = relayCounterFamilyDelta(metrics, relayPushSentCounter);
+    if (pushDelta == null || pushDelta < 1) {
+      failures.add(
+        r'$.evidence[relay_metrics] shows no provider attempt across the '
+        'group-message capture window',
+      );
+    }
+  } else {
+    final attempted = metrics.delta(
+      relayCounterSeries(relayGroupReactionWakeCounter, const <String, String>{
+        'outcome': 'attempted',
+      }),
+    );
+    final routeError = metrics.delta(
+      relayCounterSeries(relayGroupReactionWakeCounter, const <String, String>{
+        'outcome': 'route_error',
+      }),
+    );
+    final incapableSkipped = metrics.delta(
+      relayCounterSeries(relayGroupReactionWakeCounter, const <String, String>{
+        'outcome': 'incapable_skipped',
+      }),
+    );
+    if (attempted == null || attempted != expectedRelayWakeAttempts) {
+      failures.add(
+        r'$.evidence[relay_metrics] wake attempts across the capture window '
+        'are not exactly the expected count',
+      );
+    }
+    // A recipient the relay silently declined is the failure mode a bare
+    // "at least one dispatch" rule cannot see: `route_error` emits NO journal
+    // line at all, and `incapable_skipped` means the recipient advertised no
+    // usable route. Both must be zero for the count above to mean what it says.
+    if (routeError == null || routeError != 0) {
+      failures.add(
+        r'$.evidence[relay_metrics] records a wake route error in the capture '
+        'window',
+      );
+    }
+    if (incapableSkipped == null || incapableSkipped != 0) {
+      failures.add(
+        r'$.evidence[relay_metrics] records an incapable-skipped wake in the '
+        'capture window',
+      );
+    }
   }
 
   final senderEvents = _flowEventNames(senderApp);
@@ -2420,8 +2549,8 @@ void _validateIosAuthoritativeEvidence({
   final groupName = measurements['groupName'] as String? ?? '';
   final actorName = measurements['actorName'] as String? ?? '';
   final targetMarker = measurements['targetMarker'] as String? ?? '';
-  final expectedProviderSends =
-      measurements['expectedProviderSendCount'] as int? ?? -1;
+  final expectedRelayWakeAttempts =
+      measurements['expectedRelayWakeAttempts'] as int? ?? -1;
   final relay = evidenceTexts['relay'] ?? '';
   final provider = evidenceTexts['provider_apns'] ?? '';
   final senderApp = evidenceTexts['sender_app'] ?? '';
@@ -2448,7 +2577,7 @@ void _validateIosAuthoritativeEvidence({
       .split('\n')
       .where((line) => line.contains('[PUSH] Notification sent to'))
       .toList(growable: false);
-  if (providerLines.length != expectedProviderSends ||
+  if (providerLines.length != expectedRelayWakeAttempts ||
       providerLines.any(
         (line) => !RegExp(r'^\d{4}-\d{2}-\d{2}').hasMatch(line),
       )) {
@@ -2492,7 +2621,7 @@ void _validateIosAuthoritativeEvidence({
 
   final nseEvents = _flowEventNames(nseLog);
   if (nseEvents.where((event) => event == 'PUSH_NSE_DECRYPT_OK').length !=
-          expectedProviderSends ||
+          expectedRelayWakeAttempts ||
       nseEvents.any(
         (event) =>
             event == 'PUSH_NSE_DECRYPT_FAIL' || event == 'PUSH_NSE_TIMEOUT',

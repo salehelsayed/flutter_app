@@ -7,6 +7,8 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
+import '../support/android_notification_payload_campaign.dart'
+    show relayJournalContainsAndroidProviderSend;
 import '_android_app_package.dart';
 import 'group_muted_notification_android_criteria.dart';
 import 'group_notification_projection_android_criteria.dart';
@@ -623,6 +625,7 @@ class _Plan257Capture {
         _deleteTransientFixtureFiles,
         _collapseAndroidStatusBars,
         _deletePendingProofResidue,
+        _stopDeviceLogStreams,
       ]);
 
   Map<String, Object?> get _iosCapture =>
@@ -720,6 +723,11 @@ class _Plan257Capture {
     await _resetAndInstallAndroidRoles(_androidBuilds!);
 
     stage = 'android_identity_setup';
+    // Plan 386 W2: the graded windows must come from a live reader, and it has
+    // to be running before the first app launch or the earliest events are
+    // simply not in the file.
+    await _startDeviceLogStream(senderId);
+    await _startDeviceLogStream(recipientId);
     await _prepareAndroidIdentity(sender);
     await _prepareAndroidIdentity(recipient);
     await _launchAndroid(senderId);
@@ -764,6 +772,10 @@ class _Plan257Capture {
     await _requireCleanNotificationSlate();
 
     _captureWindowStart = DateTime.now().toUtc();
+    // Plan 386 W1. The relay counter baseline opens with the capture window, so
+    // every graded delta below is scoped to exactly the transitions this run
+    // performs.
+    await _captureRelayMetricsBaseline();
     await _adb(senderId, const <String>['logcat', '-c']);
     await _adb(recipientId, const <String>['logcat', '-c']);
     // Dispatch site 1 of 4: lifecycle stage select.
@@ -1342,6 +1354,10 @@ class _Plan257Capture {
 
     stage = 'ios_candidate_build';
     final normalApp = await _buildIosCandidate(e2eMode: false);
+    // The recipient is iOS, but the sender is an Android device whose log this
+    // lane still reads; it needs the same live stream.
+    await _startDeviceLogStream(senderId);
+
     stage = 'ios_candidate_install';
     await _installIosCandidate(normalApp, mode: 'normal');
     final tokenWindow = DateTime.now().toUtc();
@@ -1720,16 +1736,17 @@ class _Plan257Capture {
   Future<void> _runIosReactionLifecycle(File tapConfig) async {
     await _openGroup(senderId);
     final firstWindow = DateTime.now().toUtc();
+    await _captureRelayMetricsBaseline();
     await _longPressText(senderId, _targetMarker);
     await _tapText(senderId, _reactionEmoji);
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 1);
-    await _waitForProviderSendCount(firstWindow, 1);
+    await _waitForRelayWakeAttempts(_relayMetricsBaseline, 1);
 
     await _longPressText(senderId, _targetMarker);
     await _tapText(senderId, _reactionEmoji);
     await _waitForSenderEventCount('GROUP_REACTION_REMOVE_QUEUED', 1);
     await Future<void>.delayed(const Duration(seconds: 8));
-    if (_countProviderSends(await _relayJournalSince(firstWindow)) != 1) {
+    if (await _relayWakeAttemptsSince(_relayMetricsBaseline) != 1) {
       throw _CaptureFailure.capture(
         stage,
         'ios_remove_transition_woke_provider',
@@ -1739,7 +1756,7 @@ class _Plan257Capture {
     await _longPressText(senderId, _targetMarker);
     await _tapText(senderId, _reactionEmoji);
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 2);
-    await _waitForProviderSendCount(firstWindow, 2);
+    await _waitForRelayWakeAttempts(_relayMetricsBaseline, 2);
     await Future<void>.delayed(const Duration(seconds: 10));
     _iosXcuitestOutput += await _runIosUiSelector(_iosTapSelector, tapConfig);
 
@@ -1748,7 +1765,8 @@ class _Plan257Capture {
     _relayJournal = await _relayJournalSince(
       _captureWindowStart ?? firstWindow,
     );
-    if (_countProviderSends(_relayJournal) != 2) {
+    await _captureRelayMetricsFinal();
+    if (await _relayWakeAttemptsSince(_relayMetricsBaseline) != 2) {
       throw _CaptureFailure.capture(
         stage,
         'ios_provider_send_count_mismatch_after_quiescence',
@@ -2606,14 +2624,13 @@ class _Plan257Capture {
     if (!keepRecipientProcessAlive) {
       await _openGroup(senderId);
     }
-    final firstWindow = DateTime.now().toUtc();
     await _longPressText(senderId, _targetMarker);
     await _tapText(senderId, _reactionEmoji);
     if (keepRecipientProcessAlive) {
       _backgroundConnectedReactionAt = DateTime.now().toUtc();
     }
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 1);
-    await _waitForProviderSendCount(firstWindow, 1);
+    await _waitForRelayWakeAttempts(_relayMetricsBaseline, 1);
     final firstCard = await _waitForNotificationCard();
     if (keepRecipientProcessAlive) {
       _completeBackgroundConnectedObservation(DateTime.now().toUtc());
@@ -2626,8 +2643,13 @@ class _Plan257Capture {
     await _tapText(senderId, _reactionEmoji);
     await _waitForSenderEventCount('GROUP_REACTION_REMOVE_QUEUED', 1);
     await Future<void>.delayed(const Duration(seconds: 8));
-    final afterRemove = await _relayJournalSince(firstWindow);
-    final providerAfterRemove = _countProviderSends(afterRemove);
+    // A REMOVE must not wake anybody. On v1.8.0 the relay declines it at
+    // `outcome=invalid_or_disabled` (`inbox.go:2496`), which never reaches the
+    // `attempted` counter — so the ADD's single attempt must still be the only
+    // one on the board.
+    final providerAfterRemove = await _relayWakeAttemptsSince(
+      _relayMetricsBaseline,
+    );
     if (providerAfterRemove != 1) {
       throw _CaptureFailure.capture(
         stage,
@@ -2639,7 +2661,7 @@ class _Plan257Capture {
     await _longPressText(senderId, _targetMarker);
     await _tapText(senderId, _reactionEmoji);
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 2);
-    await _waitForProviderSendCount(firstWindow, 2);
+    await _waitForRelayWakeAttempts(_relayMetricsBaseline, 2);
     final replacementCard = await _waitForNotificationCard();
     _notificationSnapshots.add(
       await _writeNotificationSnapshot(
@@ -2667,7 +2689,7 @@ class _Plan257Capture {
       );
     }
 
-    await _redriveExactStoredAdd(firstWindow);
+    await _redriveExactStoredAdd();
 
     await _tapNotificationCard();
     await _waitForUiText(
@@ -2690,7 +2712,7 @@ class _Plan257Capture {
     await _collectBoundedLogs();
   }
 
-  Future<void> _redriveExactStoredAdd(DateTime providerWindow) async {
+  Future<void> _redriveExactStoredAdd() async {
     final observation = noChildBuilds
         ? await _runInstalledGroupReactionProbe(
             deviceId: senderId,
@@ -2715,23 +2737,19 @@ class _Plan257Capture {
       await _installApk(senderId, _androidBuilds!.normalApk);
       await _startAndroid(senderId);
     }
+    // Cursor-scoped: the replay marker must be emitted by THIS restart, not
+    // found anywhere in whatever the ring still held.
+    final replayCursor = await _deviceLogcatCursor(senderId);
     await _waitFor(
       'production exact group reaction duplicate retry',
       const Duration(minutes: 3),
-      () async {
-        final log = await _adb(senderId, const <String>[
-          'logcat',
-          '-d',
-          '-v',
-          'brief',
-        ]);
-        return log.stdout.contains('RETRY_FAILED_GROUP_REACTION_REPLAY_OK');
-      },
+      () async => (await _deviceLogSince(
+        senderId,
+        replayCursor,
+      )).contains('RETRY_FAILED_GROUP_REACTION_REPLAY_OK'),
     );
     await Future<void>.delayed(const Duration(seconds: 10));
-    final providerCount = _countProviderSends(
-      await _relayJournalSince(providerWindow),
-    );
+    final providerCount = await _relayWakeAttemptsSince(_relayMetricsBaseline);
     if (providerCount != 2) {
       throw _CaptureFailure.capture(
         stage,
@@ -2810,23 +2828,57 @@ class _Plan257Capture {
 
   Future<void> _collectBoundedLogs() async {
     // The provider count is an eventual boundary. Wait through a bounded
-    // quiescence interval, then require the final raw relay window to contain
-    // exactly the two expected sends (first ADD/message and replacement). A
-    // late third send can no longer pass an earlier `>= 2` wait.
+    // quiescence interval, then take the FINAL relay counter scrape and require
+    // exactly the expected growth. A late third wake can no longer pass an
+    // earlier `>= 2` wait.
+    //
+    // Plan 386 W2: both device logs now come from the monotonic accumulators
+    // rather than a single `logcat -d` read each. The old body took exactly ONE
+    // such read per device after a fixed 10 s delay, and those two values became
+    // `sender_app`, `recipient_app` AND `android_logcat` — three evidence kinds
+    // from two observations, each of which could be an empty rotated window.
     await Future<void>.delayed(const Duration(seconds: 10));
-    final senderLog = await _readAndroidLogcat(senderId);
-    final recipientLog = await _readAndroidLogcat(recipientId);
-    _senderLogcat = _flowLines(senderLog.stdout);
-    _recipientLogcat = _flowLines(recipientLog.stdout);
+    _senderLogcat = await _accumulatedSenderFlowLines();
+    _recipientLogcat = await _accumulatedRecipientFlowLines();
     _relayJournal = await _relayJournalSince(
       _captureWindowStart ?? DateTime.now().toUtc(),
     );
-    final providerSendCount = _countProviderSends(_relayJournal);
-    if (providerSendCount != 2) {
+    await _captureRelayMetricsFinal();
+    final metrics = parseRelayMetricsWindow(_relayMetricsEvidence());
+    if (metrics == null) {
+      throw _CaptureFailure.environment(
+        stage,
+        'relay_counter_window_unusable_after_quiescence: the relay process '
+        'restarted mid-capture or a scrape was truncated',
+      );
+    }
+    if (scenario.id.endsWith('_message_unread_lifecycle')) {
+      // Plan 386 TC-386-02, message lane. `fanOutPush` emits NO journal line of
+      // any kind and has no wake counter: per recipient it only increments a
+      // Prometheus counter, records a missing route, or dispatches. The shared
+      // provider counter is not group-scoped, so a floor is the strongest
+      // honest rule; `[GROUP_INBOX] Stored message for group` carries the
+      // custody claim and the window-liveness oracle.
+      final pushDelta = relayCounterFamilyDelta(metrics, relayPushSentCounter);
+      if (pushDelta == null || pushDelta < 1) {
+        throw _CaptureFailure.capture(
+          stage,
+          'group_message_provider_attempt_missing_after_quiescence: '
+          'observed=$pushDelta',
+        );
+      }
+      return;
+    }
+    final attempted = metrics.delta(
+      relayCounterSeries(relayGroupReactionWakeCounter, const <String, String>{
+        'outcome': 'attempted',
+      }),
+    );
+    if (attempted != 2) {
       throw _CaptureFailure.capture(
         stage,
         'provider_send_count_mismatch_after_quiescence: expected=2 '
-        'observed=$providerSendCount',
+        'observed=$attempted',
       );
     }
   }
@@ -3279,43 +3331,56 @@ class _Plan257Capture {
     await _ensureOrbit(recipientId);
   }
 
-  /// Reads the recipient's flow-event lines without foregrounding the app.
-  Future<String> _recipientFlowLines() async {
-    final log = await _readAndroidLogcat(recipientId);
-    return _flowLines(log.stdout);
-  }
-
-  final List<String> _recipientFlowAccumulator = <String>[];
-  final Set<String> _recipientFlowSeen = <String>{};
-
-  /// Folds every `logcat -d` read into a monotonically growing flow log.
+  /// Per-device monotonic flow logs.
   ///
-  /// `logcat -d` returns only what is still in the device ring buffer. On the
-  /// pinned Pixel under campaign load that window is a couple of minutes —
-  /// shorter than a lane — so polling the raw dump makes event counts go DOWN
-  /// as older lines rotate out. Run 11 (2026-08-18) stalled exactly there: the
-  /// live lane's `count > baseline` arrival wait could never fire because the
-  /// baseline occurrences had rotated away. Accumulating is what makes "what
-  /// has this lane seen so far" answerable at all, and it is also what keeps
-  /// the artifact's raw flow log complete rather than "whatever survived to
-  /// the last read".
-  Future<String> _accumulatedRecipientFlowLines() async {
-    final fresh = await _recipientFlowLines();
-    for (final line in fresh.split('\n')) {
-      final trimmed = line.trim();
-      if (trimmed.isEmpty) continue;
-      if (_recipientFlowSeen.add(trimmed)) {
-        _recipientFlowAccumulator.add(trimmed);
-      }
-    }
-    return '${_recipientFlowAccumulator.join('\n')}\n';
+  /// Folding every read in is what makes "what has this device emitted so far"
+  /// answerable at all, and it is also what keeps the artifact's raw flow log
+  /// complete rather than "whatever survived to the last read". Run 11
+  /// (2026-08-18) stalled on exactly the opposite behaviour: a `count > baseline`
+  /// arrival wait could never fire because the baseline occurrences had rotated
+  /// away.
+  ///
+  /// Plan 386 W2 changed the fold from a `Set<String>` to
+  /// [DeviceFlowAccumulator]. Set semantics silently COLLAPSED two distinct
+  /// events that render to the same text — the same FLOW event for two
+  /// different ids, or two identical retries — which deflated every count taken
+  /// over the accumulator. The accumulator now folds as a multiset, so a
+  /// re-read of the same window is still idempotent while a genuine second
+  /// occurrence still contributes.
+  final Map<String, DeviceFlowAccumulator> _deviceFlowAccumulators =
+      <String, DeviceFlowAccumulator>{};
+
+  DeviceFlowAccumulator _flowAccumulatorFor(String deviceId) =>
+      _deviceFlowAccumulators.putIfAbsent(deviceId, DeviceFlowAccumulator.new);
+
+  /// Folds this device's current window into its monotonic flow log.
+  Future<String> _accumulatedFlowLines(String deviceId) async {
+    final accumulator = _flowAccumulatorFor(deviceId);
+    accumulator.absorb(
+      _flowLines((await _readAndroidLogcat(deviceId)).stdout),
+    );
+    return accumulator.text;
   }
 
-  /// Drops accumulated lines; call immediately after clearing the device log.
-  void _resetRecipientFlowAccumulator() {
-    _recipientFlowAccumulator.clear();
-    _recipientFlowSeen.clear();
-  }
+  Future<String> _accumulatedRecipientFlowLines() =>
+      _accumulatedFlowLines(recipientId);
+
+  /// The SENDER's monotonic flow log.
+  ///
+  /// Plan 386 W2: the sender path used to read a raw one-shot window every
+  /// time, so `_waitForSenderEventCount` counted over a rotating ring on the
+  /// device that does most of the typing in this lane. `_sendGroupText` is
+  /// called on the PHYSICAL device three times (`:2593`, `:3496`, `:3498`), so
+  /// this is not an emulator-only concern.
+  Future<String> _accumulatedSenderFlowLines() =>
+      _accumulatedFlowLines(senderId);
+
+  /// Drops accumulated lines; called automatically whenever a device log is
+  /// cleared, so a clear can never leave a stale accumulator behind.
+  void _resetFlowAccumulator(String deviceId) =>
+      _deviceFlowAccumulators[deviceId]?.reset();
+
+  void _resetRecipientFlowAccumulator() => _resetFlowAccumulator(recipientId);
 
   /// The id of the message the SENDER most recently published.
   Future<String> _latestSenderGroupMessageId() async {
@@ -3618,9 +3683,82 @@ class _Plan257Capture {
     );
     _mutedUnreadBaseline = 0;
 
+    // 9. Plan 386 TC-386-10 — PRD §6.5 on the wire: a group SELF-reaction is
+    //    nominated to nobody.
+    //
+    //    Placed AFTER the muted binding above on purpose. The binding is order
+    //    -sensitive (`suppressed.first` / `shown.last`), so nothing that could
+    //    add a graded push may run before it. A self-reaction sends no push at
+    //    all, which is exactly the point, but ordering it here keeps that a
+    //    fact rather than an assumption.
+    //
+    //    The target must be authored by the REACTOR. Every other target in
+    //    this lane is authored by the recipient (step 1), so the only usable
+    //    one is the sender's own warm-up message in the CONTROL group.
+    await _captureMutedSelfReactionAudience(warmupMarker);
+
     await _captureMutedSqlCipherObservation();
     await _captureMutedControlGroupDigest();
   }
+
+  /// Reacts to the sender's OWN message and records what the relay did.
+  ///
+  /// Card observations are taken BEFORE any probe: `_runInstalledGroupReactionProbe`
+  /// foregrounds the app and a foreground open can clear delivered cards. This
+  /// step deliberately runs no reactor-side storage probe at all — every muted
+  /// -lane probe targets `recipientId` and builds its request from shared
+  /// mutable capture fields, so adding a sender probe risks corrupting the
+  /// existing muted claims for no additional audience evidence.
+  Future<void> _captureMutedSelfReactionAudience(String targetMarker) async {
+    final recipientBefore = _mutedAttributableCards(
+      await _notificationDump(recipientId),
+      groupName: _mutedControlGroupName,
+    ).length;
+    final senderBefore = _mutedAttributableCards(
+      await _notificationDump(senderId),
+      groupName: _mutedControlGroupName,
+    ).length;
+
+    final baseline = await _scrapeRelayMetrics();
+    final queuedBefore = countFlowEventOccurrences(
+      await _accumulatedSenderFlowLines(),
+      'GROUP_REACTION_SEND_QUEUED',
+    );
+
+    await _openPlan330Group(senderId, _mutedControlGroupName);
+    await _longPressText(senderId, targetMarker);
+    await _tapText(senderId, _reactionEmoji);
+    // The transition has to be PUBLISHED before its absence of a wake means
+    // anything: a reaction that never left the device would show the same two
+    // counter deltas.
+    await _waitForSenderEventCount(
+      'GROUP_REACTION_SEND_QUEUED',
+      queuedBefore + 1,
+    );
+    // The relay decides synchronously on receipt; settle wide of that before
+    // closing the counter window.
+    await Future<void>.delayed(const Duration(seconds: 15));
+    final finalScrape = await _scrapeRelayMetrics();
+
+    _mutedSelfReactionAudience = GroupMutedSelfReactionAudienceInput(
+      targetMarker: targetMarker,
+      recipientCardCountBefore: recipientBefore,
+      recipientCardCountAfter: _mutedAttributableCards(
+        await _notificationDump(recipientId),
+        groupName: _mutedControlGroupName,
+      ).length,
+      senderCardCountBefore: senderBefore,
+      senderCardCountAfter: _mutedAttributableCards(
+        await _notificationDump(senderId),
+        groupName: _mutedControlGroupName,
+      ).length,
+      relayMetrics:
+          '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n$baseline'
+          '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n$finalScrape',
+    );
+  }
+
+  GroupMutedSelfReactionAudienceInput? _mutedSelfReactionAudience;
 
   void _recordKilledCommand({
     required String commandStage,
@@ -3821,6 +3959,15 @@ class _Plan257Capture {
         'muted_capture_inventory_incomplete',
       );
     }
+    // Plan 386 TC-386-10. The validator's exact-key set requires this section
+    // on the background lane, so a missing one would surface as an opaque key
+    // mismatch after the artifact was written. Fail here with the real reason.
+    if (_isMutedBackgroundLane && _mutedSelfReactionAudience == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'muted_self_reaction_audience_evidence_missing',
+      );
+    }
     if (_mutedGroupIdSha256.isEmpty || _mutedControlGroupIdSha256.isEmpty) {
       await _writeMutedDiagnosticDump(
         'identity_digests_incomplete',
@@ -3875,6 +4022,7 @@ class _Plan257Capture {
         notificationDump: _mutedNotificationDump,
         sqlcipherObservation: _mutedSqlCipherObservation,
       ),
+      selfReactionAudience: _mutedSelfReactionAudience,
       control: GroupMutedControlInput(
         controlMarker: _mutedControlMarker,
         preMuteCardGroup: _mutedPreMuteCardGroup,
@@ -4035,9 +4183,23 @@ class _Plan257Capture {
           exactText: marker,
         ),
       );
-      final baselineOutcomeCount = (await _groupSendTimingObservations(
-        deviceId,
-      )).length;
+      // Plan 386 TC-386-06. The graded outcome is selected by a send-scoped
+      // identity the harness MINTS, never by position.
+      //
+      // The old rule indexed the observation list at however many
+      // observations existed before the tap. Fed a rotated window it does not
+      // fail, it returns the WRONG observation: once that pre-tap prefix ages
+      // out of the source, the index points past this send's outcome. The
+      // census in `reaction_notification_proof_support_test.dart` is a plain
+      // substring scan over this file, so the old selector's name deliberately
+      // does not appear even in prose. `GroupSendTimingObservation` carries no
+      // identity of its own (four fields, none an id) and adding one to the
+      // production FLOW details is a `lib/` change this plan forbids, so the
+      // harness writes its own breadcrumb into the device's log immediately
+      // before the tap, using the unique compose marker it already typed and
+      // already waited to see in the UI. Selection then reads FORWARD from this
+      // send's breadcrumb and fails closed when the breadcrumb is absent.
+      await _mintGroupSendBreadcrumb(deviceId, marker);
       await _adbShell(deviceId, <String>[
         'input',
         'tap',
@@ -4048,12 +4210,10 @@ class _Plan257Capture {
       final outcome = await _waitForValue<GroupSendTimingObservation>(
         'terminal group send FLOW outcome on $deviceId',
         const Duration(seconds: 30),
-        () async {
-          final observations = await _groupSendTimingObservations(deviceId);
-          return observations.length > baselineOutcomeCount
-              ? observations[baselineOutcomeCount]
-              : null;
-        },
+        () async => selectGroupSendObservationForMarker(
+          await _deviceLogWindow(deviceId),
+          marker,
+        ),
       );
       if (outcome.isCommitted) {
         if (!outcome.hasRequiredInboxCustody(recipientCount: 1)) {
@@ -4100,17 +4260,30 @@ class _Plan257Capture {
     }
   }
 
-  Future<List<GroupSendTimingObservation>> _groupSendTimingObservations(
-    String deviceId,
-  ) async {
-    final logcat = await _adb(deviceId, const <String>[
-      'logcat',
-      '-d',
-      '-v',
-      'brief',
-    ]);
-    return extractGroupSendTimingObservations(
-      '${logcat.stdout}\n${logcat.stderr}',
+  /// Writes this send's identity into the device's own log.
+  ///
+  /// `log` is the platform's own logger, so the breadcrumb lands in the same
+  /// stream as the app's FLOW records, in causal order with them, and is
+  /// visible to the live reader without any extra channel. It is written once
+  /// per send ATTEMPT — `_sendGroupText` re-taps after a group-recovery-pending
+  /// outcome — so the last breadcrumb for a marker is the attempt under test.
+  Future<void> _mintGroupSendBreadcrumb(String deviceId, String marker) async {
+    await _adbShell(deviceId, <String>[
+      'log',
+      '-p',
+      'i',
+      '-t',
+      groupSendMarkerBreadcrumbTag,
+      '$groupSendMarkerBreadcrumbPrefix$marker',
+    ], environmentFailure: true);
+    // The breadcrumb must be IN the stream before the tap, or the send's
+    // outcome could be logged ahead of its own identity.
+    await _waitFor(
+      'group send breadcrumb for $marker on $deviceId',
+      const Duration(seconds: 15),
+      () async => (await _deviceLogWindow(
+        deviceId,
+      )).contains('$groupSendMarkerBreadcrumbPrefix$marker'),
     );
   }
 
@@ -4322,17 +4495,16 @@ class _Plan257Capture {
       );
     }
 
+    // Cursor-scoped: "the app reported background presence AFTER the HOME
+    // press" is the claim; a stale line from an earlier backgrounding in the
+    // same ring would satisfy a whole-buffer read.
+    final presenceCursor = await _deviceLogcatCursor(recipientId);
     await _waitForValue<Map<String, dynamic>>(
       'post-HOME recipient relay presence flow event',
       const Duration(seconds: 15),
       () async {
-        final log = await _adb(recipientId, const <String>[
-          'logcat',
-          '-d',
-          '-v',
-          'brief',
-        ]);
-        for (final line in log.stdout.split('\n').reversed) {
+        final window = await _deviceLogSince(recipientId, presenceCursor);
+        for (final line in window.split('\n').reversed) {
           final marker = line.indexOf('[FLOW] ');
           if (marker < 0) continue;
           try {
@@ -4491,36 +4663,121 @@ class _Plan257Capture {
     }
   }
 
+  /// Waits until the sender's MONOTONIC flow log holds [count] of [event].
+  ///
+  /// Plan 386 W2. The old body counted matches in a single `adb logcat -d`
+  /// window, which is a count over a rotating ring: on the pinned physical
+  /// device an earlier occurrence can age out between two polls, so the count
+  /// goes DOWN and the wait times out on events that really did happen. The
+  /// accumulator makes the count monotonic, and the live stream means nothing
+  /// is lost to rotation in the first place.
   Future<void> _waitForSenderEventCount(String event, int count) async {
     await _waitFor(
       '$count sender $event event(s)',
       const Duration(seconds: 60),
-      () async {
-        final log = await _adb(senderId, const <String>[
-          'logcat',
-          '-d',
-          '-v',
-          'brief',
-        ]);
-        return RegExp(RegExp.escape(event)).allMatches(log.stdout).length >=
-            count;
-      },
+      () async =>
+          countFlowEventOccurrences(await _accumulatedSenderFlowLines(), event) >=
+          count,
     );
   }
 
-  Future<void> _waitForProviderSendCount(DateTime since, int count) async {
+  // -------------------------------------------------------------------------
+  // Plan 386 W1 (G16) — provider evidence is a RELAY COUNTER DELTA.
+  //
+  // The old count grepped `[PUSH] Notification sent to <recipientPrefix>`,
+  // which relay `8d86501e4` (v1.8.0) deleted along with the whole attributed
+  // `[PUSH]` vocabulary — doubly dead, since it was also bound to a peer prefix
+  // that no surviving line carries. It read 0 on every fresh capture and every
+  // `_waitForProviderSendCount` timed out after two minutes.
+  //
+  // Re-adding the lines relay-side is the known-wrong fix: the vocabulary is
+  // frozen by `push_permanent_error_closure_test.go:237-300`. Counting the line
+  // that DID survive, `[PUSH] outcome=success attempt=N total_attempts=N`, is
+  // also wrong: it carries no attribution at all and the single shared provider
+  // path emits it for every push type and every user on a PRODUCTION box.
+  //
+  // `relay_group_reaction_wake_total` is reaction-scoped, is incremented once
+  // per wake DECISION including every decline, and is already exported on
+  // `:2112/metrics`. Its growth across a bounded window is exactly the quantity
+  // the old grep was reaching for, and it is attributable.
+  // -------------------------------------------------------------------------
+
+  String _relayMetricsBaseline = '';
+  String _relayMetricsFinal = '';
+
+  /// The raw `/metrics` exposition for the two counter families this lane
+  /// grades on.
+  ///
+  /// Raw and unaggregated on purpose: the validator re-derives every delta from
+  /// primary evidence rather than trusting a number the capture computed.
+  Future<String> _scrapeRelayMetrics() async {
+    final result = await retryBoundedFixtureRead<_CommandOutput>(
+      attempt: () => _ssh(const <String>[
+        'curl',
+        '-sS',
+        '--max-time',
+        '15',
+        'http://127.0.0.1:2112/metrics',
+      ], allowFail: true),
+      succeeded: (value) =>
+          value.exitCode == 0 && value.stdout.contains(relayPushSentCounter),
+    );
+    if (result.exitCode != 0 || !result.stdout.contains(relayPushSentCounter)) {
+      throw _CaptureFailure.environment(
+        stage,
+        'relay_metrics_endpoint_unreadable: ${_lastLine(result.combined)}',
+      );
+    }
+    final kept = result.stdout
+        .split('\n')
+        .where(
+          (line) =>
+              line.startsWith(relayGroupReactionWakeCounter) ||
+              line.startsWith(relayPushSentCounter),
+        )
+        .join('\n');
+    return '$kept\n';
+  }
+
+  Future<void> _captureRelayMetricsBaseline() async {
+    _relayMetricsBaseline = await _scrapeRelayMetrics();
+  }
+
+  Future<void> _captureRelayMetricsFinal() async {
+    _relayMetricsFinal = await _scrapeRelayMetrics();
+  }
+
+  String _relayMetricsEvidence() =>
+      '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n'
+      '$_relayMetricsBaseline'
+      '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n'
+      '$_relayMetricsFinal';
+
+  /// Group-reaction wakes the relay handed to the provider since [baseline].
+  ///
+  /// Returns null when the relay process restarted mid-window (a counter that
+  /// went backwards), so every caller fails closed instead of reading a reset
+  /// as a decrease.
+  Future<double?> _relayWakeAttemptsSince(String baseline) async {
+    final window = parseRelayMetricsWindow(
+      '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n$baseline'
+      '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n'
+      '${await _scrapeRelayMetrics()}',
+    );
+    return window?.delta(
+      relayCounterSeries(relayGroupReactionWakeCounter, const <String, String>{
+        'outcome': 'attempted',
+      }),
+    );
+  }
+
+  Future<void> _waitForRelayWakeAttempts(String baseline, int count) async {
     await _waitFor(
-      '$count real provider send(s)',
+      '$count relay group-reaction wake attempt(s)',
       const Duration(minutes: 2),
-      () async => _countProviderSends(await _relayJournalSince(since)) >= count,
+      () async => (await _relayWakeAttemptsSince(baseline) ?? -1) >= count,
     );
   }
-
-  int _countProviderSends(String journal) => RegExp(
-    RegExp.escape(_providerSuccessMarker) +
-        RegExp.escape(recipient.peerPrefix) +
-        r'\b',
-  ).allMatches(journal).length;
 
   Future<Map<String, dynamic>> _runPlan330Endpoint({
     required String deviceId,
@@ -5025,7 +5282,7 @@ class _Plan257Capture {
         )
         .join('\n');
     if (!relayLines.contains('[GROUP_INBOX] Stored message for group') ||
-        !relayLines.contains(_providerSuccessMarker)) {
+        !relayJournalContainsAndroidProviderSend(relayLines)) {
       throw _CaptureFailure.capture(
         stage,
         'relay_or_provider_window_missing_group_store_or_send',
@@ -5058,6 +5315,7 @@ class _Plan257Capture {
       evidenceText.addAll(<String, String>{
         'relay': '${_redact(relayLines)}\n',
         'provider_fcm': _providerEvidenceLines(_relayJournal),
+        'relay_metrics': _relayMetricsEvidence(),
         'sender_app': '${_redact(_senderLogcat)}\n',
         'recipient_app': '${_redact(_recipientLogcat)}\n',
         'sqlcipher_state': sqlCipherObservation,
@@ -5079,6 +5337,7 @@ class _Plan257Capture {
       evidenceText.addAll(<String, String>{
         'relay': '${_redact(relayLines)}\n',
         'provider_fcm': _providerEvidenceLines(_relayJournal),
+        'relay_metrics': _relayMetricsEvidence(),
         'sender_app':
             '${_redact(_senderLogcat)}\n$_exactDuplicateRedriveObservation',
         'recipient_app':
@@ -5144,7 +5403,7 @@ class _Plan257Capture {
         'firstMarker': _firstMarker,
         'secondMarker': _secondMarker,
         'targetMarker': _targetMarker,
-        'expectedProviderSendCount': 2,
+        'expectedRelayWakeAttempts': 2,
       },
       'topology': <String, Object?>{
         'groupType': scenario.groupType,
@@ -5174,9 +5433,7 @@ class _Plan257Capture {
         'candidateBuildInstalled':
             build.e2eSha256.isNotEmpty && build.normalSha256.isNotEmpty,
         'stagingRelay': _relay.sha256 == _staging['candidateRelaySha256'],
-        'realProvider': _providerLines(
-          _relayJournal,
-        ).contains(_providerSuccessMarker),
+        'realProvider': relayJournalContainsAndroidProviderSend(_relayJournal),
       },
       'evidence': evidence,
       'redaction': const <String, Object?>{
@@ -5293,7 +5550,7 @@ class _Plan257Capture {
         'firstMarker': '',
         'secondMarker': '',
         'targetMarker': _targetMarker,
-        'expectedProviderSendCount': 2,
+        'expectedRelayWakeAttempts': 2,
       },
       'topology': <String, Object?>{
         'groupType': scenario.groupType,
@@ -5324,12 +5581,11 @@ class _Plan257Capture {
             _iosE2eAppSha256 != _iosNormalAppSha256 &&
             _iosInstallReceipts.length == 2,
         'stagingRelay': _relay.sha256 == _staging['candidateRelaySha256'],
-        'realProvider':
-            _providerLines(_relayJournal)
-                .split('\n')
-                .where((line) => line.contains(_providerSuccessMarker))
-                .length ==
-            2,
+        // The exact count moved onto the relay's own counters
+        // (`_relayWakeAttemptsSince`), which is asserted inside the lifecycle.
+        // What the journal can still attest is that a provider acceptance
+        // happened at all.
+        'realProvider': relayJournalContainsAndroidProviderSend(_relayJournal),
       },
       'evidence': evidence,
       'redaction': const <String, Object?>{
@@ -5405,13 +5661,17 @@ class _Plan257Capture {
     };
   }
 
-  String get _providerSuccessMarker =>
-      scenario.id.endsWith('_message_unread_lifecycle')
-      ? '[PUSH] Group notification sent to '
-      : '[PUSH] Notification sent to ';
-
+  /// The relay journal lines that record a provider acceptance.
+  ///
+  /// Plan 386 W1 / TC-386-04. The old filter matched
+  /// `[PUSH] (Group )?Notification sent to `, both of which relay `8d86501e4`
+  /// deleted, so `provider_fcm.log` was written empty on every fresh capture.
+  /// The surviving grammar is defined in exactly ONE place —
+  /// `relayJournalContainsAndroidProviderSend`, Plan 380 W0's predicate — and
+  /// is applied here per line rather than re-derived, so no second definition
+  /// of the acceptance regex can drift away from it.
   String _providerLines(String journal) =>
-      '${journal.split('\n').where((line) => line.contains(_providerSuccessMarker)).map(_redact).join('\n')}\n';
+      '${journal.split('\n').where(relayJournalContainsAndroidProviderSend).map(_redact).join('\n')}\n';
 
   String _providerEvidenceLines(String journal) {
     final raw = _providerLines(journal);
@@ -5776,33 +6036,188 @@ class _Plan257Capture {
     List<String> args, {
     bool allowFail = false,
     bool environmentFailure = false,
-  }) {
-    return _run(
+  }) async {
+    final output = await _run(
       'adb',
       <String>['-s', deviceId, ...args],
       allowFail: allowFail,
       environmentFailure: environmentFailure,
     );
-  }
-
-  Future<_CommandOutput> _readAndroidLogcat(String deviceId) async {
-    final output = await retryBoundedFixtureRead<_CommandOutput>(
-      attempt: () => _adb(deviceId, const <String>[
-        'logcat',
-        '-d',
-        '-v',
-        'threadtime',
-      ], allowFail: true),
-      succeeded: (value) => value.exitCode == 0,
-    );
-    if (output.exitCode != 0) {
-      throw _CaptureFailure.capture(
-        stage,
-        'adb logcat remained unavailable on $deviceId after bounded retry: '
-        '${_lastLine(output.combined)}',
-      );
+    // Plan 386 W2. A clear wipes the DEVICE ring, which the live stream has
+    // already consumed, so the bytes stay on disk. Reproduce the caller's
+    // intent — "forget everything before this point" — by raising the stream
+    // FLOOR instead. Intercepting here rather than at each of the eight clear
+    // sites is deliberate: a new clear can never be added without its floor.
+    if (args.length >= 2 &&
+        args[0] == 'logcat' &&
+        args[1] == '-c' &&
+        _deviceLogFiles.containsKey(deviceId)) {
+      _deviceLogFloors[deviceId] = await _deviceLogFiles[deviceId]!.length();
+      _resetFlowAccumulator(deviceId);
     }
     return output;
+  }
+
+  // -------------------------------------------------------------------------
+  // Plan 386 W2 (G20) — live device log streams with byte-offset cursors.
+  //
+  // Every graded read used to be a one-shot `adb logcat -d`, whose retry
+  // predicate was `exitCode == 0` only: a rotated, empty-but-successful window
+  // was ACCEPTED and never retried. `logcat -d` returns just what is still in
+  // the device ring buffer, so an aged-out event is indistinguishable from an
+  // event that never happened — and this lane then graded that window with
+  // exact counts and a positional index. The repo already bans the pattern in
+  // writing (`reaction_notification_proof_support_test.dart:151-155`); G20 is
+  // that rule being violated where the rule's own test cannot reach.
+  //
+  // A live reader cannot rotate: bytes are captured as they are produced and
+  // land on disk incrementally, so a failing run also leaves its log behind.
+  // `-T 1` starts at the newest line, so no historical backlog is dumped into
+  // the file where an early cursor could see stale text.
+  //
+  // The eight `['logcat', '-c']` clears stay exactly where they are. They clear
+  // the DEVICE ring, which the stream has already consumed; `_adb` turns each
+  // one into a FLOOR on the stream instead, which reproduces the old "forget
+  // everything before this point" semantics without destroying evidence.
+  // -------------------------------------------------------------------------
+
+  final Map<String, File> _deviceLogFiles = <String, File>{};
+  final Map<String, Process> _deviceLogProcesses = <String, Process>{};
+  final Map<String, String> _deviceLogFailures = <String, String>{};
+  final Map<String, int> _deviceLogFloors = <String, int>{};
+
+  String _deviceLogSlug(String deviceId) =>
+      deviceId.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '_');
+
+  Future<void> _startDeviceLogStream(String deviceId) async {
+    if (_deviceLogProcesses.containsKey(deviceId)) return;
+    final file = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'device_logcat_${_deviceLogSlug(deviceId)}.log',
+    );
+    if (await file.exists()) await file.delete();
+    // `adb` writes the file itself through a shell redirect, so Dart never owns
+    // the byte stream. Piping `process.stdout` into an `IOSink` is the obvious
+    // implementation and is WRONG under load: `IOSink.flush` sets `_isBound`,
+    // so every cursor read races the stdout listener and throws
+    // `Bad state: StreamSink is bound to a stream`.
+    //
+    // Positional parameters, never interpolation: the device id and path go in
+    // as argv, so nothing here is shell-quoted or injectable.
+    final process = await Process.start('/bin/sh', <String>[
+      '-c',
+      'exec adb -s "\$1" logcat -T 1 -v threadtime >"\$2"',
+      'plan386-device-log',
+      deviceId,
+      file.path,
+    ]);
+    _deviceLogFiles[deviceId] = file;
+    _deviceLogProcesses[deviceId] = process;
+    _deviceLogFloors[deviceId] = 0;
+    unawaited(process.stderr.drain<void>());
+    unawaited(
+      process.exitCode.then((code) {
+        // Only an exit we did not ask for is a failure; the stop helper clears
+        // the handle before killing.
+        if (_deviceLogProcesses[deviceId] != null) {
+          _deviceLogFailures[deviceId] = 'adb logcat exited with code $code';
+        }
+      }),
+    );
+    // `-T 1` emits immediately and an installed, running app is never silent
+    // for long, so a stream that produces nothing is broken rather than merely
+    // quiet. Failing here is the whole point: every window read afterwards
+    // would otherwise be vacuous.
+    final started = await retryBoundedFixtureRead<bool>(
+      attempt: () async =>
+          await file.exists() &&
+          await file.length() > 0 &&
+          _deviceLogFailures[deviceId] == null,
+      succeeded: (value) => value,
+      maximumAttempts: 120,
+      retryDelay: const Duration(milliseconds: 250),
+    );
+    if (!started) {
+      throw _CaptureFailure.environment(
+        stage,
+        'device_log_stream_produced_no_output_on_$deviceId'
+        '${_deviceLogFailures[deviceId] == null ? '' : ': ${_deviceLogFailures[deviceId]}'}',
+      );
+    }
+  }
+
+  Future<void> _stopDeviceLogStreams() async {
+    for (final deviceId in _deviceLogProcesses.keys.toList(growable: false)) {
+      final process = _deviceLogProcesses.remove(deviceId);
+      process?.kill();
+    }
+  }
+
+  Future<File> _requireDeviceLogStream(String deviceId) async {
+    final failure = _deviceLogFailures[deviceId];
+    if (failure != null) {
+      throw _CaptureFailure.environment(
+        stage,
+        'device_log_stream_stopped_mid_run_on_$deviceId: $failure; every log '
+        'window from here on would be silently truncated',
+      );
+    }
+    final file = _deviceLogFiles[deviceId];
+    if (file == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'device_log_stream_never_started_on_$deviceId',
+      );
+    }
+    return file;
+  }
+
+  /// A cursor is a BYTE OFFSET into the live stream, never a device timestamp
+  /// and never an event count.
+  Future<String> _deviceLogcatCursor(String deviceId) async =>
+      '${await (await _requireDeviceLogStream(deviceId)).length()}';
+
+  Future<String> _deviceLogSince(String deviceId, String cursor) async {
+    final file = await _requireDeviceLogStream(deviceId);
+    final start = int.tryParse(cursor);
+    if (start == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'device_log_cursor_is_not_a_stream_offset_on_$deviceId: $cursor',
+      );
+    }
+    final length = await file.length();
+    if (start >= length) return '';
+    final handle = await file.open();
+    try {
+      await handle.setPosition(start);
+      return utf8.decode(
+        await handle.read(length - start),
+        allowMalformed: true,
+      );
+    } finally {
+      await handle.close();
+    }
+  }
+
+  /// Everything this device has emitted since the last `logcat -c`.
+  Future<String> _deviceLogWindow(String deviceId) =>
+      _deviceLogSince(deviceId, '${_deviceLogFloors[deviceId] ?? 0}');
+
+  /// Reads the device's log from the live stream.
+  ///
+  /// Signature preserved so every existing caller keeps working; only the
+  /// substrate underneath changed. `stderr` is empty because a live stream has
+  /// no per-read command channel, and `exitCode` is 0 because a broken stream
+  /// throws rather than returning a failed read — the old
+  /// `exitCode == 0`-means-good predicate is exactly what made a rotated empty
+  /// window look successful.
+  Future<_CommandOutput> _readAndroidLogcat(String deviceId) async {
+    return _CommandOutput(
+      exitCode: 0,
+      stdout: await _deviceLogWindow(deviceId),
+      stderr: '',
+    );
   }
 
   Future<String> _adbShell(

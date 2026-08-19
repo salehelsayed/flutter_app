@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../integration_test/scripts/capture_group_reaction_notification_device.dart'
     as fixture_driver;
 import '../../integration_test/scripts/group_reaction_notification_device_criteria.dart';
+import '../../integration_test/scripts/reaction_notification_proof_support.dart';
 
 void main() {
   testWidgets('Orbit create FAB exposes its exact automation semantics', (
@@ -192,6 +193,240 @@ void main() {
         },
       );
     }
+
+    // -----------------------------------------------------------------------
+    // Plan 386 W1 (G16) — the lane grades on grammar relay v1.8.0 emits, and
+    // on the relay's own counters rather than on a journal substring.
+    // -----------------------------------------------------------------------
+
+    test('reaction provider evidence accepts the v1.8.0 outcome journal', () async {
+      const scenario = 'android_group_reaction_recipient';
+      final artifact = await _writeArtifactFixture(tempDirectory, scenario);
+      _rewriteEvidence(
+        artifact,
+        'provider_fcm',
+        '2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
+            'total_attempts=3\n'
+            '2026-07-12T12:00:05.000Z [PUSH] outcome=success '
+            'fallback=strict\n',
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: scenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isTrue, reason: result.detail);
+    });
+
+    test('reaction provider evidence rejects a journal with no accepted send', () async {
+      const scenario = 'android_group_reaction_recipient';
+      // Reused VERBATIM from the payload lane's rejection list
+      // (`android_notification_payload_campaign_support_test.dart:401-417`),
+      // plus `[PUSH] outcome=registered`. `registered` is named here rather
+      // than left to the executor because it is the one negative that a lazy
+      // repair — `contains('[PUSH]')` — would let through.
+      for (final journal in const <String>[
+        '2026-07-12T12:00:04.000Z [PUSH] outcome=failed attempts=3',
+        '2026-07-12T12:00:04.000Z [PUSH] outcome=retrying attempt=1 '
+            'total_attempts=3',
+        '2026-07-12T12:00:04.000Z [PUSH] outcome=invalid_token '
+            'reason=typed_unregistered',
+        '2026-07-12T12:00:04.000Z [PUSH] provider unavailable '
+            'outcome=provider_unavailable',
+        '2026-07-12T12:00:04.000Z [PUSH] outcome=success_but_not_really',
+        '2026-07-12T12:00:04.000Z [PUSH] outcome=registered',
+        // The pre-v1.8.0 recipient-bearing line `8d86501e4` deleted. Accepting
+        // it would let a rolled-back relay pass the repaired grammar.
+        '2026-07-12T12:00:04.000Z [PUSH] Notification sent to '
+            '12D3KooWRecipientPee (attempt 1/3)',
+      ]) {
+        final artifact = await _writeArtifactFixture(
+          Directory('${tempDirectory.path}/${journal.hashCode}')
+            ..createSync(recursive: true),
+          scenario,
+        );
+        _rewriteEvidence(artifact, 'provider_fcm', '$journal\n');
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isFalse, reason: journal);
+        expect(result.detail, contains('provider acceptance'), reason: journal);
+      }
+    });
+
+    test('provider evidence is graded by counter delta, per lane', () async {
+      for (final scenario in const <String>[
+        'android_group_reaction_recipient',
+        'android_group_message_unread_lifecycle',
+      ]) {
+        final artifact = await _writeArtifactFixture(
+          Directory('${tempDirectory.path}/delta-$scenario')
+            ..createSync(recursive: true),
+          scenario,
+        );
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isTrue, reason: '$scenario: ${result.detail}');
+      }
+    });
+
+    test('a declined recipient reds', () async {
+      // `route_error` emits NO journal line at all, so "at least one dispatch
+      // happened" cannot see a recipient the relay silently dropped. The
+      // attempted delta alone still reads 2 here — only the zero-decline
+      // conjuncts catch it.
+      for (final rejection in const <(String, double, double)>[
+        ('route error', 1, 0),
+        ('incapable skipped', 0, 1),
+      ]) {
+        const scenario = 'android_group_reaction_recipient';
+        final artifact = await _writeArtifactFixture(
+          Directory('${tempDirectory.path}/declined-${rejection.$1}')
+            ..createSync(recursive: true),
+          scenario,
+        );
+        _rewriteEvidence(
+          artifact,
+          'relay_metrics',
+          groupReactionRelayMetricsFixture(
+            routeErrorDelta: rejection.$2,
+            incapableSkippedDelta: rejection.$3,
+          ),
+        );
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isFalse, reason: rejection.$1);
+      }
+    });
+
+    test('an empty window reds', () async {
+      const scenario = 'android_group_reaction_recipient';
+      for (final broken in <String>[
+        // No growth at all: the relay never woke anybody.
+        groupReactionRelayMetricsFixture(attemptedDelta: 0),
+        // One transition instead of two.
+        groupReactionRelayMetricsFixture(attemptedDelta: 1),
+        // A truncated file with only a baseline — must never grade as "no
+        // growth", which is exactly what a lenient parser would do.
+        groupReactionRelayMetricsFixture(includeFinalPhase: false),
+        // A relay restart: the counter went backwards, so no delta in the file
+        // can be trusted.
+        '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n'
+            'relay_group_reaction_wake_total{outcome="attempted"} 40.0\n'
+            'relay_push_sent_total{result="success"} 900.0\n'
+            '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n'
+            'relay_group_reaction_wake_total{outcome="attempted"} 2.0\n'
+            'relay_push_sent_total{result="success"} 2.0\n',
+      ]) {
+        final artifact = await _writeArtifactFixture(
+          Directory('${tempDirectory.path}/empty-${broken.hashCode}')
+            ..createSync(recursive: true),
+          scenario,
+        );
+        _rewriteEvidence(artifact, 'relay_metrics', broken);
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isFalse, reason: broken);
+      }
+    });
+
+    test('background-connected push origin is proven by the v1.8.0 wake line', () async {
+      const scenario = groupReactionBackgroundConnectedScenarioId;
+      final artifact = await _writeArtifactFixture(tempDirectory, scenario);
+
+      final accepted = await validateGroupReactionNotificationArtifact(
+        scenario: scenario,
+        artifactFile: artifact,
+      );
+      expect(accepted.ok, isTrue, reason: accepted.detail);
+
+      // The deleted `remote_type=` attribute must not come back as a
+      // requirement: a real v1.8.0 journal does not carry it.
+      final withoutDispatch = await _writeArtifactFixture(
+        Directory('${tempDirectory.path}/no-dispatch')
+          ..createSync(recursive: true),
+        scenario,
+      );
+      _rewriteEvidence(
+        withoutDispatch,
+        'relay',
+        '2026-07-12T12:00:01.000Z [GROUP_INBOX] Stored message for group '
+            'group_hash=group-257\n'
+            '2026-07-12T12:00:03.500Z [GROUP_REACTION_WAKE] '
+            'outcome=no_wake_recipients\n'
+            '2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
+            'total_attempts=3\n',
+      );
+
+      final rejected = await validateGroupReactionNotificationArtifact(
+        scenario: scenario,
+        artifactFile: withoutDispatch,
+      );
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('push-origin discrimination'));
+    });
+
+    test('the reaction lane calls the shared v1.8.0 predicate', () {
+      final criteria = File(
+        'integration_test/scripts/'
+        'group_reaction_notification_device_criteria.dart',
+      ).readAsStringSync();
+      expect(
+        criteria,
+        contains('relayJournalContainsAndroidProviderSend('),
+        reason: 'the reaction lane must reuse Plan 380 W0\'s predicate',
+      );
+
+      // Exactly one file may DEFINE the acceptance grammar. Without this a
+      // local copy passes every other row here and then drifts away from the
+      // payload lane's three host pins the first time either side is edited.
+      //
+      // The needle is assembled at runtime from two halves so it never appears
+      // verbatim in THIS file. A census that had to exclude its own path would
+      // leave a hole exactly the size of a test file.
+      // Joined rather than written adjacent: adjacent literals are folded by
+      // the compiler AND by a plain source scan, which would put the needle
+      // verbatim in this file and make the census match itself.
+      final needle = <String>[
+        'RegExp(',
+        r"r'\[PUSH\]\s+outcome=success",
+      ].join();
+      final definingFiles = <String>[];
+      for (final entity in Directory('integration_test')
+          .listSync(recursive: true)
+          .followedBy(Directory('lib').listSync(recursive: true))
+          .followedBy(Directory('test').listSync(recursive: true))) {
+        if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        if (entity.readAsStringSync().replaceAll(RegExp(r'\s+'), '').contains(
+          needle,
+        )) {
+          definingFiles.add(entity.path);
+        }
+      }
+      expect(
+        definingFiles,
+        <String>[
+          'integration_test/support/android_notification_payload_campaign.dart',
+        ],
+        reason: 'the v1.8.0 acceptance regex must have exactly one definition',
+      );
+    });
 
     test(
       'background-connected reaction proof rejects process termination',
@@ -892,6 +1127,64 @@ Map<String, Object?> _validStagingManifest({
     },
 };
 
+/// A raw `/metrics` scrape pair whose deltas are exactly what a clean
+/// two-transition reaction capture produces.
+///
+/// Values are absolute and large on purpose: on the production relay these
+/// counters carry every other user's traffic too, so a validator that read the
+/// FINAL value instead of the delta would be trivially wrong and this fixture
+/// makes that mistake fail.
+String groupReactionRelayMetricsFixture({
+  double attemptedDelta = 2,
+  double routeErrorDelta = 0,
+  double incapableSkippedDelta = 0,
+  double pushSentDelta = 2,
+  bool includeFinalPhase = true,
+}) {
+  const attemptedBase = 40.0;
+  const routeErrorBase = 3.0;
+  const incapableBase = 1.0;
+  const pushSentBase = 900.0;
+  String scrape(double attempted, double routeError, double incapable, double push) =>
+      'relay_group_reaction_wake_total{outcome="attempted"} $attempted\n'
+      'relay_group_reaction_wake_total{outcome="route_error"} $routeError\n'
+      'relay_group_reaction_wake_total{outcome="incapable_skipped"} $incapable\n'
+      'relay_group_reaction_wake_total{outcome="no_wake_recipients"} 7.0\n'
+      'relay_push_sent_total{result="success"} $push\n';
+  final buffer = StringBuffer()
+    ..write('$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n')
+    ..write(scrape(attemptedBase, routeErrorBase, incapableBase, pushSentBase));
+  if (includeFinalPhase) {
+    buffer
+      ..write('$relayMetricsPhaseMarker$relayMetricsFinalPhase\n')
+      ..write(
+        scrape(
+          attemptedBase + attemptedDelta,
+          routeErrorBase + routeErrorDelta,
+          incapableBase + incapableSkippedDelta,
+          pushSentBase + pushSentDelta,
+        ),
+      );
+  }
+  return buffer.toString();
+}
+
+/// Replaces one evidence file's contents and re-pins its digest/length in the
+/// artifact, so a rewritten fixture still passes the integrity checks that run
+/// before the rule under test.
+void _rewriteEvidence(File artifact, String kind, String contents) {
+  final decoded = _readArtifact(artifact);
+  final record = (decoded['evidence'] as List<dynamic>)
+      .cast<Map<String, dynamic>>()
+      .firstWhere((entry) => entry['kind'] == kind);
+  final file = File(
+    '${artifact.parent.path}${Platform.pathSeparator}${record['path']}',
+  );
+  file.writeAsStringSync(contents, flush: true);
+  _updateEvidenceDigest(record, file);
+  _writeArtifact(artifact, decoded);
+}
+
 Future<File> _writeArtifactFixture(
   Directory root,
   String scenarioId, {
@@ -1003,7 +1296,7 @@ Map<String, Object?> _measurementsFor(
     'firstMarker': messageScenario ? 'plan257-first-message' : '',
     'secondMarker': messageScenario ? 'plan257-second-message' : '',
     'targetMarker': messageScenario ? '' : 'plan257-target-message',
-    'expectedProviderSendCount': 2,
+    'expectedRelayWakeAttempts': 2,
   };
 }
 
@@ -1396,20 +1689,32 @@ String _rawEvidence({
             'event=$event action=add relay_store_matched=true',
         '2026-07-12T12:00:03.000Z [GROUP_INBOX] Stored message for group '
             'group_hash=group-257 remote_type=$event action=add',
+        // Plan 386. Relay v1.8.0 (`8d86501e4`) emits a BARE
+        // `[GROUP_REACTION_WAKE] outcome=<word>`; the `remote_type=` attribute
+        // this fixture used to carry was deleted with the rest of the
+        // attributed vocabulary, and `outcome=dispatched` is the word the relay
+        // prints once per recipient it hands to the provider
+        // (`go-relay-server/inbox.go:2797`).
         if (groupReactionNotificationKeepsRecipientProcessAlive(scenario.id))
-          '2026-07-12T12:00:03.500Z [GROUP_REACTION_WAKE] '
-              'remote_type=group_reaction outcome=attempted',
+          '2026-07-12T12:00:03.500Z [GROUP_REACTION_WAKE] outcome=dispatched',
+        '2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
+            'total_attempts=3',
       ];
       return '${lines.join('\n')}\n';
     case 'provider_fcm':
-      final providerMarker = messageScenario
-          ? 'Group notification sent to'
-          : 'Notification sent to';
-      return '${<String>['2026-07-12T12:00:04.000Z [PUSH] $providerMarker '
-          'recipient_hash=device-a event=$event delivery_matched=true '
-          'transition=1', '2026-07-12T12:00:05.000Z [PUSH] $providerMarker '
-          'recipient_hash=device-a event=$event delivery_matched=true '
-          'transition=2'].join('\n')}\n';
+      // Plan 386. `[PUSH] (Group )?Notification sent to <prefix>` no longer
+      // exists on any relay: `8d86501e4` deleted every attributed `[PUSH]`
+      // line, and the vocabulary is frozen that way by the relay's own private
+      // -value closure test. What survives is the attribution-free acceptance,
+      // which is why the COUNT moved onto the relay's counters.
+      return '${<String>[
+        '2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
+            'total_attempts=3 event=$event delivery_matched=true',
+        '2026-07-12T12:00:05.000Z [PUSH] outcome=success attempt=1 '
+            'total_attempts=3 event=$event delivery_matched=true',
+      ].join('\n')}\n';
+    case 'relay_metrics':
+      return groupReactionRelayMetricsFixture();
     case 'provider_apns':
       return '${<String>['2026-07-12T12:00:04.000Z relay[257]: [PUSH] Notification sent to '
           '[peer] (attempt 1/3)', '2026-07-12T12:00:05.000Z relay[257]: [PUSH] Notification sent to '

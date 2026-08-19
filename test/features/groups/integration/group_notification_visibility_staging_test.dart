@@ -921,6 +921,89 @@ Future<void> _exerciseVisibilityCase({
   listener.dispose();
 }
 
+/// Builds the protected/replay reaction display row for one seeded target.
+///
+/// Plan 386 TC-386-09. The staging case above is the ONLY exercise the
+/// protected twin has, and it seeds an author-owned target
+/// (`senderPeerId: _localPeerId`, `isIncoming: false`), so the author-only
+/// clause at `group_message_listener.dart:3651` could be deleted without
+/// reddening anything. These rows drive the twin directly with the two
+/// audiences PRD §6.5 says must stay silent.
+Future<Map<String, Object?>?> _protectedReactionRowFor({
+  required Database database,
+  required _ReplayAuthority replay,
+  required DurableConversationNotificationIdRegistry durableRegistry,
+  required String targetSenderPeerId,
+  required bool targetIsIncoming,
+  required String reactorPeerId,
+  required String caseToken,
+}) async {
+  final messageId = 'audience-target-$caseToken';
+  final target = GroupMessage(
+    id: messageId,
+    groupId: _groupId,
+    senderPeerId: targetSenderPeerId,
+    senderUsername: targetSenderPeerId == _localPeerId ? 'Local' : 'Sender',
+    text: 'Audience rule target',
+    timestamp: DateTime.utc(2026, 8, 15, 10, 10),
+    isIncoming: targetIsIncoming,
+    createdAt: DateTime.utc(2026, 8, 15, 10, 10),
+  );
+  expect(await dbInsertGroupMessage(database, target.toMap()), isTrue);
+
+  final notifications = _DurableFakeNotificationService(durableRegistry);
+  final outbox = _SqlDisplayOutbox(database);
+  final listener = GroupMessageListener(
+    groupRepo: replay.groupRepository,
+    msgRepo: _SqlMessageRepository(database),
+    bridge: replay.bridge,
+    getSelfPeerId: () async => _localPeerId,
+    notificationService: notifications,
+    appVisibility: _MutableVisibility(
+      expectedGroupId: _groupId,
+      evaluation: _backgroundVisibility,
+    ),
+    reactionRepo: _SqlReactionRepository(database),
+    remoteNotificationGate: _NoopRecentRemoteNotificationGate(),
+    notificationDisplayOutbox: outbox.repository,
+    resolveCompletedOutcomePhysicalPeerId: () async => _physicalPeerId,
+    resolveCurrentOpaqueBinding: () async => _currentOpaqueBinding,
+    durableLocalNotificationEffectRegistry: durableRegistry,
+    durableNotificationCoordinatorResolver: () async {
+      throw StateError('durable tone claims are outside TC-386-09');
+    },
+  );
+  addTearDown(() async {
+    await listener.stop();
+    listener.dispose();
+  });
+
+  final reactionAt = DateTime.parse(_eventTimestamp);
+  return listener.buildProtectedReactionDisplayReadyRow(
+    _groupId,
+    GroupReactionPayload(
+      id: deterministicGroupReactionStateId(
+        groupId: _groupId,
+        messageId: messageId,
+        logicalActorPeerId: reactorPeerId,
+      ),
+      messageId: messageId,
+      emoji: '👍',
+      action: GroupReactionPayload.actionAdd,
+      senderPeerId: reactorPeerId,
+      timestamp: _eventTimestamp,
+      eventId: buildGroupReactionTransitionId(
+        groupId: _groupId,
+        messageId: messageId,
+        logicalActorPeerId: reactorPeerId,
+        action: GroupReactionPayload.actionAdd,
+        emoji: '👍',
+        timestamp: reactionAt,
+      ),
+    ),
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -990,4 +1073,151 @@ void main() {
       }
     },
   );
+
+  // ---------------------------------------------------------------------
+  // Plan 386 W3 (G18, partial) — PRD §6.5 / AC-13: a group reaction alerts
+  // ONLY the target's author, and never the reactor.
+  //
+  // The live twin is covered at host tier (`group_message_listener_test.dart`
+  // :17159-17258, :16983, :17074, :17033). The PROTECTED/replay twin was not:
+  // its only exercise seeds an author-owned target, so both guards were dead
+  // weight the suite could not see.
+  // ---------------------------------------------------------------------
+  group('Plan 386 protected reaction audience', () {
+    late Database database;
+    late _ReplayAuthority replay;
+    late DurableConversationNotificationIdRegistry durableRegistry;
+
+    setUp(() async {
+      final previousFlowLogging = flowEventLoggingEnabled;
+      flowEventLoggingEnabled = false;
+      addTearDown(() {
+        debugSetFlowEventSink(null);
+        flowEventLoggingEnabled = previousFlowLogging;
+      });
+      database = await databaseFactoryFfi.openDatabase(
+        inMemoryDatabasePath,
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+        ),
+      );
+      addTearDown(() async {
+        if (database.isOpen) await database.close();
+      });
+      replay = await _buildReplayAuthority(database);
+      final ledgerRoot = await Directory.systemTemp.createTemp(
+        'plan386-protected-audience-',
+      );
+      addTearDown(() async {
+        if (await ledgerRoot.exists()) {
+          await ledgerRoot.delete(recursive: true);
+        }
+      });
+      final ledgerDirectory = Directory(
+        '${ledgerRoot.path}${Platform.pathSeparator}'
+        '${DurableConversationNotificationIdRegistry.directoryName}',
+      );
+      final ledgerStore = LocalNotificationLedgerStore(
+        directory: ledgerDirectory,
+        nowUtc: () => _projectionNow,
+      );
+      expect(
+        await ledgerStore.initializeOrRebind(
+          currentOpaqueBinding: _currentOpaqueBinding,
+        ),
+        isNotNull,
+      );
+      durableRegistry = DurableConversationNotificationIdRegistry(
+        directory: ledgerDirectory,
+        localNotificationEffectCoordinator:
+            DurableLocalNotificationEffectCoordinator(
+              ledgerStore: ledgerStore,
+              nowUtc: () => _projectionNow,
+            ),
+      );
+    });
+
+    test('protected reaction row is staged for the target author', () async {
+      // The positive control. Without it "returns null" is satisfied by a
+      // twin that returns null for everything, including a real alert.
+      expect(
+        await _protectedReactionRowFor(
+          database: database,
+          replay: replay,
+          durableRegistry: durableRegistry,
+          targetSenderPeerId: _localPeerId,
+          targetIsIncoming: false,
+          reactorPeerId: _senderPeerId,
+          caseToken: 'author',
+        ),
+        isNotNull,
+      );
+    });
+
+    test('protected reaction row is null for a non-author target', () async {
+      // Someone else's message was reacted to. The local device must still
+      // RECEIVE and store the reaction (PRD :226/:229/:232) — it just must not
+      // alert. This is the shape the audience rule actually meets in
+      // production: a foreign author and an incoming row.
+      expect(
+        await _protectedReactionRowFor(
+          database: database,
+          replay: replay,
+          durableRegistry: durableRegistry,
+          targetSenderPeerId: _senderPeerId,
+          targetIsIncoming: true,
+          reactorPeerId: _senderPeerId,
+          caseToken: 'non-author',
+        ),
+        isNull,
+      );
+    });
+
+    test(
+      'protected reaction row is null for a non-author target that is not '
+      'flagged incoming',
+      () async {
+        // The row above is ALSO caught by the `target.isIncoming` guard, so on
+        // its own it cannot tell whether the author check does any work:
+        // deleting `target.senderPeerId != selfPeerId` leaves it green
+        // (verified by mutation). This row separates the two by asserting on
+        // authorship alone — a foreign author whose row is not flagged
+        // incoming. Deleting the author-only clause at
+        // `group_message_listener.dart:3651` turns this null into a staged
+        // row, which is the whole point of keeping the clause.
+        expect(
+          await _protectedReactionRowFor(
+            database: database,
+            replay: replay,
+            durableRegistry: durableRegistry,
+            targetSenderPeerId: _senderPeerId,
+            targetIsIncoming: false,
+            reactorPeerId: _senderPeerId,
+            caseToken: 'non-author-not-incoming',
+          ),
+          isNull,
+        );
+      },
+    );
+
+    test('protected reaction row is null for a self-reaction', () async {
+      // The local device authored the target AND the reaction. Deleting the
+      // self clause at `group_message_listener.dart:3648` makes the device
+      // alert its own user about their own reaction.
+      expect(
+        await _protectedReactionRowFor(
+          database: database,
+          replay: replay,
+          durableRegistry: durableRegistry,
+          targetSenderPeerId: _localPeerId,
+          targetIsIncoming: false,
+          reactorPeerId: _localPeerId,
+          caseToken: 'self',
+        ),
+        isNull,
+      );
+    });
+  });
 }

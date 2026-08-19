@@ -119,6 +119,57 @@ for required_seam in \
   }
 done
 
+# ---------------------------------------------------------------------------
+# Plan 386 TC-386-05 - every GRADED capture read comes from a live stream with
+# byte-offset cursors, never a post-hoc `logcat -d` window.
+#
+# Deliberately SCOPED rather than the tap-campaign's file-wide seam
+# (`notification_tap_campaign_adapter_contract_test.sh:239-252`). Ported
+# verbatim that seam is UNSATISFIABLE here: it bans `['logcat', '-c']` outright
+# and tests `'logcat',` x `'-d',` co-occurrence across the whole file, while
+# this capture legitimately keeps eight `logcat -c` clears and two
+# process-scoped `logcat -d --pid=<pid>` readiness polls. A permanent red is
+# not a causal red, so the assertions below name the exact graded shapes.
+python3 - "$capture_driver" <<'STREAM_SEAM'
+import re
+import sys
+
+source = open(sys.argv[1], encoding='utf-8').read()
+
+
+def fail(message):
+    print('FAIL: ' + message, file=sys.stderr)
+    sys.exit(1)
+
+
+for required in (
+    '_startDeviceLogStream',
+    '_deviceLogcatCursor',
+    '_deviceLogSince',
+):
+    if required not in source:
+        fail('capture driver lacks the live log stream seam ' + required)
+
+# The exact 4-element post-hoc reads the graded paths used before Plan 386.
+# Compared whitespace-insensitively so a reformat cannot smuggle one back.
+compact = re.sub(r'\s+', '', source)
+for banned in ("'logcat','-d','-v','threadtime'", "'logcat','-d','-v','brief'"):
+    if banned in compact:
+        fail('a graded capture read still uses a post-hoc logcat -d window')
+
+# The two surviving `logcat -d` reads are process-scoped setup polls: they must
+# observe only the CURRENT pid, which a whole-device stream cannot express, and
+# they gate fixture readiness rather than producing artifact evidence.
+for read in re.findall(r"'logcat',\s*'-d',(.*?)\]", source, re.S):
+    if '--pid=' not in read:
+        fail('an ungated post-hoc logcat -d read remains on a graded path')
+
+# The clears stay. The stream turns each one into a floor instead of destroying
+# evidence, so the destructive-action ban stays green.
+if source.count("const <String>['logcat', '-c']") != 8:
+    fail('the eight non-destructive log clear sites changed without repinning')
+STREAM_SEAM
+
 set +e
 dart run "$runner" \
   --scenario android_group_reaction_recipient \

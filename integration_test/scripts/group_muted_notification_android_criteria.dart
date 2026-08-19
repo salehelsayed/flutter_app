@@ -4,7 +4,14 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 
 import 'reaction_notification_proof_support.dart'
-    show extractActiveContentNotificationCards;
+    show
+        extractActiveContentNotificationCards,
+        parseRelayMetricsWindow,
+        relayMetricsBaselinePhase,
+        relayMetricsFinalPhase,
+        relayMetricsPhaseMarker,
+        relayCounterSeries,
+        relayGroupReactionWakeCounter;
 
 const String groupMutedNotificationCapabilityId =
     'groups.muted_notification_campaign';
@@ -289,6 +296,43 @@ final class GroupMutedBackgroundDeliveryInput {
   );
 }
 
+/// Plan 386 TC-386-10 — the device evidence for PRD §6.5's self-reaction rule.
+///
+/// A group self-reaction (reactor == the target's author) is nominated to
+/// NOBODY: `send_group_reaction_use_case.dart:1314` populates
+/// `notificationRecipients` only when `reactorPeerId != targetAuthorPeerId`, so
+/// an empty list is published, the relay replaces the wake audience with it
+/// wholesale, and it returns at `outcome=no_wake_recipients`
+/// (`go-relay-server/inbox.go:2752`) without attempting anybody.
+///
+/// The observable is the NOMINATION decision, not a zero card: no push is sent
+/// to anyone, so zero cards is entailed and proves nothing on its own. The two
+/// counter deltas are what a removed guard would flip.
+final class GroupMutedSelfReactionAudienceInput {
+  const GroupMutedSelfReactionAudienceInput({
+    required this.targetMarker,
+    required this.recipientCardCountBefore,
+    required this.recipientCardCountAfter,
+    required this.senderCardCountBefore,
+    required this.senderCardCountAfter,
+    required this.relayMetrics,
+  });
+
+  /// The sender's OWN message in the control group. The muted lane's other
+  /// targets are authored by the recipient, so only this one makes the reactor
+  /// and the target author the same peer.
+  final String targetMarker;
+  final int recipientCardCountBefore;
+  final int recipientCardCountAfter;
+  final int senderCardCountBefore;
+  final int senderCardCountAfter;
+
+  /// The raw `/metrics` scrape pair spanning the self-reaction transition. The
+  /// validator re-derives both deltas from this rather than trusting a number
+  /// the capture computed.
+  final String relayMetrics;
+}
+
 final class GroupMutedNotificationCaptureInput {
   const GroupMutedNotificationCaptureInput({
     required this.scenario,
@@ -300,6 +344,7 @@ final class GroupMutedNotificationCaptureInput {
     required this.control,
     required this.commandJournal,
     this.backgroundDelivery,
+    this.selfReactionAudience,
   });
 
   final String scenario;
@@ -311,6 +356,7 @@ final class GroupMutedNotificationCaptureInput {
   final GroupMutedControlInput control;
   final String commandJournal;
   final GroupMutedBackgroundDeliveryInput? backgroundDelivery;
+  final GroupMutedSelfReactionAudienceInput? selfReactionAudience;
 
   GroupMutedNotificationCaptureInput copyWith({
     String? scenario,
@@ -322,6 +368,7 @@ final class GroupMutedNotificationCaptureInput {
     GroupMutedControlInput? control,
     String? commandJournal,
     GroupMutedBackgroundDeliveryInput? backgroundDelivery,
+    GroupMutedSelfReactionAudienceInput? selfReactionAudience,
   }) => GroupMutedNotificationCaptureInput(
     scenario: scenario ?? this.scenario,
     recordedAt: recordedAt ?? this.recordedAt,
@@ -332,6 +379,7 @@ final class GroupMutedNotificationCaptureInput {
     control: control ?? this.control,
     commandJournal: commandJournal ?? this.commandJournal,
     backgroundDelivery: backgroundDelivery ?? this.backgroundDelivery,
+    selfReactionAudience: selfReactionAudience ?? this.selfReactionAudience,
   );
 }
 
@@ -370,6 +418,7 @@ Future<Map<String, Object?>> buildGroupMutedNotificationArtifact({
   final projection = input.mutedProjection;
   final control = input.control;
   final delivery = input.backgroundDelivery;
+  final selfReaction = input.selfReactionAudience;
 
   return <String, Object?>{
     'schema': groupMutedNotificationArtifactSchema,
@@ -451,6 +500,18 @@ Future<Map<String, Object?>> buildGroupMutedNotificationArtifact({
         'backgroundFlowLog': await evidence(
           'background_flow.log',
           delivery.backgroundFlowLog,
+        ),
+      },
+    if (selfReaction != null)
+      'selfReactionAudience': <String, Object?>{
+        'targetMarker': selfReaction.targetMarker,
+        'recipientCardCountBefore': selfReaction.recipientCardCountBefore,
+        'recipientCardCountAfter': selfReaction.recipientCardCountAfter,
+        'senderCardCountBefore': selfReaction.senderCardCountBefore,
+        'senderCardCountAfter': selfReaction.senderCardCountAfter,
+        'relayMetrics': await evidence(
+          'self_reaction_relay_metrics.txt',
+          selfReaction.relayMetrics,
         ),
       },
     'automation': <String, Object?>{
@@ -554,6 +615,7 @@ validateGroupMutedNotificationAndroidArtifact({
       'mutedProjection',
       'control',
       if (isBackgroundLane) 'backgroundDelivery',
+      if (isBackgroundLane) 'selfReactionAudience',
       'automation',
     },
     r'$',
@@ -663,10 +725,22 @@ validateGroupMutedNotificationAndroidArtifact({
       artifactFile: artifactFile,
       failures: failures,
     );
-  } else if (artifact.containsKey('backgroundDelivery')) {
-    failures.add(
-      r'$.backgroundDelivery must be absent on the live suppression lane',
+    await _validateSelfReactionAudience(
+      artifact['selfReactionAudience'],
+      artifactFile: artifactFile,
+      failures: failures,
     );
+  } else {
+    if (artifact.containsKey('backgroundDelivery')) {
+      failures.add(
+        r'$.backgroundDelivery must be absent on the live suppression lane',
+      );
+    }
+    if (artifact.containsKey('selfReactionAudience')) {
+      failures.add(
+        r'$.selfReactionAudience must be absent on the live suppression lane',
+      );
+    }
   }
 
   await _validateAutomation(
@@ -1072,6 +1146,104 @@ Future<void> _validateControl(
         '$path.postMuteNotificationDump still shows a muted-group card',
       );
     }
+  }
+}
+
+/// Plan 386 TC-386-10 — PRD §6.5: a group self-reaction wakes NOBODY.
+///
+/// Both deltas are re-derived from the raw scrape pair. A claimed number the
+/// validator merely echoed would let a capture assert its own conclusion.
+Future<void> _validateSelfReactionAudience(
+  Object? value, {
+  required File artifactFile,
+  required List<String> failures,
+}) async {
+  const path = r'$.selfReactionAudience';
+  final audience = _object(value, path, failures);
+  if (audience == null) return;
+  _expectExactKeys(
+    audience,
+    const <String>{
+      'targetMarker',
+      'recipientCardCountBefore',
+      'recipientCardCountAfter',
+      'senderCardCountBefore',
+      'senderCardCountAfter',
+      'relayMetrics',
+    },
+    path,
+    failures,
+  );
+  final marker = _requiredString(audience, 'targetMarker', path, failures);
+  if (marker != null && !RegExp(r'^Plan379Warm[A-Za-z0-9]{6,32}$').hasMatch(marker)) {
+    failures.add(
+      '$path.targetMarker must be the SENDER-authored warm-up message — the '
+      'lane\'s other targets are authored by the recipient, so reacting to '
+      'them is not a self-reaction at all',
+    );
+  }
+
+  // Card counts are compared as a DELTA across the transition, never against
+  // zero: both devices legitimately hold cards from earlier steps of this lane,
+  // so "no cards" would be unsatisfiable while "no NEW card" is the claim.
+  for (final pair in const <(String, String)>[
+    ('recipientCardCountBefore', 'recipientCardCountAfter'),
+    ('senderCardCountBefore', 'senderCardCountAfter'),
+  ]) {
+    final before = audience[pair.$1];
+    final after = audience[pair.$2];
+    if (before is! int || before < 0 || after is! int || after < 0) {
+      failures.add('$path.${pair.$1}/${pair.$2} must be non-negative integers');
+      continue;
+    }
+    if (after != before) {
+      failures.add(
+        '$path a self-reaction changed the card count '
+        '(${pair.$1} $before -> $after)',
+      );
+    }
+  }
+
+  final scrape = await _readEvidence(
+    audience['relayMetrics'],
+    artifactFile: artifactFile,
+    path: '$path.relayMetrics',
+    failures: failures,
+  );
+  if (scrape == null) return;
+  final window = parseRelayMetricsWindow(scrape);
+  if (window == null) {
+    failures.add(
+      '$path.relayMetrics is not an ordered baseline/final pair of raw relay '
+      'counter scrapes',
+    );
+    return;
+  }
+  final noWakeRecipients = window.delta(
+    relayCounterSeries(relayGroupReactionWakeCounter, const <String, String>{
+      'outcome': 'no_wake_recipients',
+    }),
+  );
+  final attempted = window.delta(
+    relayCounterSeries(relayGroupReactionWakeCounter, const <String, String>{
+      'outcome': 'attempted',
+    }),
+  );
+  // Exactly one empty nomination, and nobody attempted. A substring assertion
+  // over the journal would NOT re-red under the mutation: another user's self
+  // -reaction keeps `outcome=no_wake_recipients` present in the same window.
+  if (noWakeRecipients != 1) {
+    failures.add(
+      '$path.relayMetrics must record exactly one empty wake nomination '
+      'across the self-reaction transition (observed $noWakeRecipients)',
+    );
+  }
+  if (attempted != 0) {
+    failures.add(
+      '$path.relayMetrics records $attempted wake attempt(s) across a '
+      'self-reaction — the reactor is the target author, so the audience is '
+      'empty by construction',
+    );
   }
 }
 
@@ -2709,6 +2881,36 @@ GroupMutedNotificationCaptureInput unreadUnchangedMutedMessageCaptureInput() {
 }
 
 /// The accepted FCM/background-path (muted reaction) artifact input.
+/// Raw `/metrics` scrape pair for a self-reaction transition.
+///
+/// Values are absolute and large because the production relay's counters carry
+/// every other user's traffic too: a validator that read the FINAL value
+/// instead of the delta would be trivially wrong, and this fixture makes that
+/// mistake fail.
+String selfReactionRelayMetricsFixture({
+  double noWakeRecipientsDelta = 1,
+  double attemptedDelta = 0,
+  bool includeFinalPhase = true,
+}) {
+  String scrape(double noWake, double attempted) =>
+      'relay_group_reaction_wake_total{outcome="no_wake_recipients"} $noWake\n'
+      'relay_group_reaction_wake_total{outcome="attempted"} $attempted\n'
+      'relay_push_sent_total{result="success"} 900.0\n';
+  final buffer = StringBuffer()
+    ..write('$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n')
+    ..write(scrape(7, 40));
+  if (includeFinalPhase) {
+    buffer
+      ..write('$relayMetricsPhaseMarker$relayMetricsFinalPhase\n')
+      ..write(scrape(7 + noWakeRecipientsDelta, 40 + attemptedDelta));
+  }
+  return buffer.toString();
+}
+
+/// The SENDER-authored warm-up message the self-reaction targets. Every other
+/// target in this lane is authored by the recipient.
+const String _fixtureSelfReactionTargetMarker = 'Plan379Warm4a3b2c1d0e';
+
 GroupMutedNotificationCaptureInput happyMutedReactionCaptureInput() {
   final live = happyMutedMessageCaptureInput();
   return live.copyWith(
@@ -2747,6 +2949,16 @@ GroupMutedNotificationCaptureInput happyMutedReactionCaptureInput() {
         suppressionReason: 'group_reaction_local_state_ineligible',
         suppressedFcmMessageId: 'plan379-fcm-muted-push',
       ),
+    ),
+    // Plan 386 TC-386-10. The reactor is the target's author, so nomination is
+    // empty and no push exists for either device to card.
+    selfReactionAudience: GroupMutedSelfReactionAudienceInput(
+      targetMarker: _fixtureSelfReactionTargetMarker,
+      recipientCardCountBefore: 1,
+      recipientCardCountAfter: 1,
+      senderCardCountBefore: 0,
+      senderCardCountAfter: 0,
+      relayMetrics: selfReactionRelayMetricsFixture(),
     ),
   );
 }

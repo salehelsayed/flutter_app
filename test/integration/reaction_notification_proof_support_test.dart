@@ -891,6 +891,258 @@ void main() {
     expect(method, contains('await _waitForNotificationCardInShade()'));
   });
 
+  // -------------------------------------------------------------------------
+  // Plan 386 W2 (G20) — graded selection is identity-bound and the device flow
+  // log is accumulated monotonically.
+  // -------------------------------------------------------------------------
+
+  group('Plan 386 graded send selection', () {
+    String breadcrumb(String marker) =>
+        '08-19 10:00:00.000  1000  1000 I $groupSendMarkerBreadcrumbTag: '
+        '$groupSendMarkerBreadcrumbPrefix$marker';
+
+    String timing(String outcome, {int recipients = 1, bool stored = true}) =>
+        '08-19 10:00:01.000  2000  2000 I flutter : [FLOW] '
+        '${jsonEncode(<String, Object?>{
+          'event': 'GROUP_SEND_MSG_TIMING',
+          'details': <String, Object?>{
+            'outcome': outcome,
+            'expectedRecipientCount': recipients,
+            'inboxStored': stored,
+            'inboxPending': false,
+          },
+        })}';
+
+    test(
+      'the graded send outcome is selected by its own marker, never by position',
+      () {
+        // A ROTATED window: the first two sends' outcomes aged out of the
+        // source, so only the third send's breadcrumb and outcome survive.
+        // Today's positional rule computed `baselineOutcomeCount` from a read
+        // that still held those two, then indexed `observations[2]` — which in
+        // this window does not exist, and in a partially rotated window points
+        // at the WRONG send.
+        final rotated = <String>[
+          timing('group_recovery_pending'),
+          breadcrumb('plan386-graded'),
+          timing('success'),
+        ].join('\n');
+
+        final selected = selectGroupSendObservationForMarker(
+          rotated,
+          'plan386-graded',
+        );
+
+        expect(selected, isNotNull);
+        expect(selected!.outcome, 'success');
+        expect(selected.isCommitted, isTrue);
+        expect(
+          selected.hasRequiredInboxCustody(recipientCount: 1),
+          isTrue,
+        );
+
+        // The positional rule on the same window: two observations exist and
+        // the pre-tap baseline was 2, so `observations[2]` is out of range and
+        // an index of 1 would return the WRONG send's outcome.
+        final positional = extractGroupSendTimingObservations(rotated);
+        expect(positional.length, 2);
+        expect(positional[0].outcome, 'group_recovery_pending');
+      },
+    );
+
+    test('the marker selector fails closed on a foreign or absent breadcrumb', () {
+      final window = <String>[
+        breadcrumb('plan386-other'),
+        timing('success'),
+      ].join('\n');
+
+      expect(
+        selectGroupSendObservationForMarker(window, 'plan386-graded'),
+        isNull,
+        reason: 'a different send must never grade this one',
+      );
+      expect(selectGroupSendObservationForMarker(window, ''), isNull);
+      expect(
+        selectGroupSendObservationForMarker(breadcrumb('plan386-graded'), 'plan386-graded'),
+        isNull,
+        reason: 'a breadcrumb with no outcome after it is not a result',
+      );
+    });
+
+    test('the last breadcrumb for a marker wins', () {
+      // `_sendGroupText` re-taps after a group-recovery-pending outcome and
+      // mints a fresh breadcrumb each attempt; only the final attempt is the
+      // send under test.
+      final window = <String>[
+        breadcrumb('plan386-graded'),
+        timing('group_recovery_pending'),
+        breadcrumb('plan386-graded'),
+        timing('success'),
+      ].join('\n');
+
+      expect(
+        selectGroupSendObservationForMarker(window, 'plan386-graded')!.outcome,
+        'success',
+      );
+    });
+
+    test('the capture file contains no positional or count-delta selector', () {
+      // The fixture rows above cannot see the capture file, so a repair that
+      // fixed the helper and left the old rule in place would pass them all.
+      final capture = File(
+        'integration_test/scripts/'
+        'capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+
+      expect(capture, isNot(contains('baselineOutcomeCount')));
+      expect(capture, isNot(contains('observations.length >')));
+      expect(capture, contains('selectGroupSendObservationForMarker('));
+      expect(capture, contains('_mintGroupSendBreadcrumb('));
+    });
+  });
+
+  group('Plan 386 device flow accumulator', () {
+    test('the accumulator keeps id-distinct events that render identically', () {
+      final accumulator = DeviceFlowAccumulator();
+      const line = '08-19 10:00:00.000 I flutter : [FLOW] '
+          '{"event":"GROUP_REACTION_SEND_QUEUED"}';
+
+      // Two genuinely distinct sends whose raw lines render identically. The
+      // previous `Set<String>` fold collapsed them to one, which silently
+      // deflated every count taken over the accumulator — including the
+      // `GROUP_REACTION_SEND_QUEUED == 2` transition assertion this lane makes.
+      accumulator.absorb('$line\n$line\n');
+      expect(accumulator.length, 2);
+
+      // Re-absorbing an overlapping window is still idempotent.
+      accumulator.absorb('$line\n$line\n');
+      expect(accumulator.length, 2);
+
+      // A third genuine occurrence still contributes.
+      accumulator.absorb('$line\n$line\n$line\n');
+      expect(accumulator.length, 3);
+    });
+
+    test('the accumulator is monotonic across a rotated window', () {
+      final accumulator = DeviceFlowAccumulator();
+      accumulator.absorb('first\nsecond\n');
+      // The next read no longer contains the earlier lines at all — exactly
+      // what a rotated ring returns, and what made `count > baseline` waits
+      // hang forever.
+      accumulator.absorb('third\n');
+
+      expect(accumulator.text, 'first\nsecond\nthird\n');
+      accumulator.reset();
+      expect(accumulator.text, '');
+    });
+
+    test('the sender path and the bounded collector both fold through it', () {
+      final capture = File(
+        'integration_test/scripts/'
+        'capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+
+      final waitStart = capture.indexOf(
+        'Future<void> _waitForSenderEventCount(',
+      );
+      final waitEnd = capture.indexOf(
+        'Future<double?> _relayWakeAttemptsSince(',
+        waitStart,
+      );
+      expect(waitStart, greaterThan(0));
+      expect(waitEnd, greaterThan(waitStart));
+      final wait = capture.substring(waitStart, waitEnd);
+      expect(wait, contains('_accumulatedSenderFlowLines()'));
+      expect(wait, isNot(contains("'logcat'")));
+
+      final collectStart = capture.indexOf('Future<void> _collectBoundedLogs()');
+      final collectEnd = capture.indexOf(
+        'Future<void> _tapOrbitCreateFab(',
+        collectStart,
+      );
+      expect(collectStart, greaterThan(0));
+      expect(collectEnd, greaterThan(collectStart));
+      final collect = capture.substring(collectStart, collectEnd);
+      expect(collect, contains('_accumulatedSenderFlowLines()'));
+      expect(collect, contains('_accumulatedRecipientFlowLines()'));
+      expect(collect, isNot(contains('_readAndroidLogcat(')));
+    });
+  });
+
+  group('Plan 386 relay counter evidence', () {
+    test('a scrape pair parses into per-series deltas', () {
+      final window = parseRelayMetricsWindow(
+        '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n'
+        '# HELP relay_group_reaction_wake_total ignored\n'
+        '# TYPE relay_group_reaction_wake_total counter\n'
+        'relay_group_reaction_wake_total{outcome="attempted"} 40\n'
+        'relay_push_sent_total{result="success"} 900\n'
+        '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n'
+        // Labels deliberately reordered and re-spaced: a canonical key must
+        // still subtract correctly.
+        'relay_group_reaction_wake_total{outcome="attempted"}  42\n'
+        'relay_push_sent_total{result="success"} 903\n',
+      );
+
+      expect(window, isNotNull);
+      expect(
+        window!.delta(
+          relayCounterSeries(
+            relayGroupReactionWakeCounter,
+            const <String, String>{'outcome': 'attempted'},
+          ),
+        ),
+        2,
+      );
+      // A series absent from the baseline has never been incremented on this
+      // process, which Prometheus does not export — treating it as 0 is right.
+      expect(
+        window.delta(
+          relayCounterSeries(
+            relayGroupReactionWakeCounter,
+            const <String, String>{'outcome': 'route_error'},
+          ),
+        ),
+        0,
+      );
+      expect(relayCounterFamilyDelta(window, relayPushSentCounter), 3);
+    });
+
+    test('a truncated or restarted window is null, never zero', () {
+      expect(
+        parseRelayMetricsWindow(
+          '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n'
+          'relay_push_sent_total{result="success"} 900\n',
+        ),
+        isNull,
+        reason: 'a missing final phase must not read as "no growth"',
+      );
+      expect(
+        parseRelayMetricsWindow(
+          '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n'
+          'relay_push_sent_total{result="success"} 900\n'
+          '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n'
+          'relay_push_sent_total{result="success"} 800\n',
+        ),
+        isNull,
+        reason: 'phases out of order are not a window',
+      );
+
+      final restarted = parseRelayMetricsWindow(
+        '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n'
+        'relay_push_sent_total{result="success"} 900\n'
+        '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n'
+        'relay_push_sent_total{result="success"} 4\n',
+      );
+      expect(restarted, isNotNull);
+      expect(
+        relayCounterFamilyDelta(restarted!, relayPushSentCounter),
+        isNull,
+        reason: 'a counter that went backwards means the relay restarted',
+      );
+    });
+  });
+
   test('Plan 257 group sends require a committed FLOW outcome', () {
     final source = File(
       'integration_test/scripts/'
@@ -917,8 +1169,14 @@ void main() {
     expect(method, contains('findEnabledFocusableGroupComposeEditorBounds('));
     expect(method, contains('requireFocused: true'));
     expect(method, contains('exactText: marker'));
-    expect(method, contains('baselineOutcomeCount'));
-    expect(method, contains('extractGroupSendTimingObservations('));
+    // Plan 386 TC-386-06 re-pin. This slice used to require
+    // `baselineOutcomeCount` and `extractGroupSendTimingObservations(` — the
+    // positional selector and its raw extractor. Selection is now bound to a
+    // send-scoped identity the harness mints, so the pinned literals move with
+    // it rather than being deleted.
+    expect(method, contains('_mintGroupSendBreadcrumb(deviceId, marker)'));
+    expect(method, contains('selectGroupSendObservationForMarker('));
+    expect(method, isNot(contains('baselineOutcomeCount')));
     expect(method, contains('outcome.isRecoveryPending'));
     expect(method, contains('outcome.hasRequiredInboxCustody('));
     expect(method, contains('findNodeBoundsByClassContainingText('));

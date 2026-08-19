@@ -648,6 +648,12 @@ readonly GROUP_TESTS=(
   "test/features/groups/integration/group_reaction_notification_pipeline_test.dart"
   "test/features/orbit/presentation/screens/orbit_group_unread_notification_wired_test.dart"
   "test/integration/group_reaction_notification_device_criteria_test.dart"
+  # 386: the reaction catalog lane's evidence substrate. The proof-support
+  # slice pins the marker-bound send selection, the monotonic device-flow
+  # accumulator, and the relay counter-delta primitives; the muted criteria
+  # slice pins the self-reaction audience rule (PRD 6.5) the device leg proves.
+  "test/integration/reaction_notification_proof_support_test.dart"
+  "test/integration/group_muted_notification_criteria_test.dart"
   # 235 persistence slice: v98 deletion journal (atomic delete-prepare +
   # exact reaction cleanup), the file->key->DB cleanup saga with restart
   # convergence, the guarded incoming final write / journal-aware download
