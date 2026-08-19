@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
@@ -15,6 +17,7 @@ export 'package:flutter_app/core/debug/android_notification_payload_e2e_protocol
 typedef AndroidNotificationE2EProgressWriter =
     Future<void> Function(Map<String, dynamic> value);
 typedef AndroidNotificationFcmTokenProvider = Future<String?> Function();
+typedef AndroidNotificationFcmTokenInvalidator = Future<void> Function();
 
 /// Runs a production notification proof action inside the already-installed
 /// main application. This never builds, installs, injects ciphertext, or
@@ -27,6 +30,7 @@ Future<Map<String, dynamic>> runAndroidNotificationPayloadE2EAction({
   required PushEnvelopeStagingStore pushEnvelopeStagingStore,
   required AndroidNotificationE2EProgressWriter writeProgress,
   AndroidNotificationFcmTokenProvider? fcmTokenProvider,
+  AndroidNotificationFcmTokenInvalidator? fcmTokenInvalidator,
 }) async {
   final request = AndroidNotificationPayloadE2ERequest.fromConfig(config);
   Map<String, dynamic> receipt(Map<String, Object?> values) =>
@@ -111,6 +115,15 @@ Future<Map<String, dynamic>> runAndroidNotificationPayloadE2EAction({
         receipt: receipt,
       );
 
+    case androidNotificationDeletePushTokenAction:
+      return _rotatePushToken(
+        request: request,
+        tokenProvider: fcmTokenProvider ?? FirebaseMessaging.instance.getToken,
+        tokenInvalidator:
+            fcmTokenInvalidator ?? FirebaseMessaging.instance.deleteToken,
+        receipt: receipt,
+      );
+
     case androidNotificationDrainObserveAction:
       return _observeDrainConvergence(
         request: request,
@@ -123,6 +136,55 @@ Future<Map<String, dynamic>> runAndroidNotificationPayloadE2EAction({
 
   throw StateError('unreachable Android notification action');
 }
+
+/// Deletes the installed app's FCM token and waits for the provider to mint a
+/// DIFFERENT one.
+///
+/// `deleteToken` on its own is not proof of rotation — the next `getToken` can
+/// legitimately return the same value — so the action polls until the token
+/// hash actually changes and fails closed if it never does. Only hash
+/// PREFIXES leave this function; the raw provider token never appears in a
+/// receipt.
+Future<Map<String, dynamic>> _rotatePushToken({
+  required AndroidNotificationPayloadE2ERequest request,
+  required AndroidNotificationFcmTokenProvider tokenProvider,
+  required AndroidNotificationFcmTokenInvalidator tokenInvalidator,
+  required Map<String, dynamic> Function(Map<String, Object?>) receipt,
+}) async {
+  final before = (await tokenProvider())?.trim();
+  if (before == null || before.isEmpty) {
+    throw StateError('production FCM token unavailable before rotation');
+  }
+
+  await tokenInvalidator();
+
+  String? rotated;
+  final deadline = DateTime.now().add(request.timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    final candidate = (await tokenProvider())?.trim();
+    if (candidate != null && candidate.isNotEmpty && candidate != before) {
+      rotated = candidate;
+      break;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+  }
+  if (rotated == null) {
+    throw StateError('production FCM token did not rotate after deletion');
+  }
+
+  return receipt(<String, Object?>{
+    'status': 'complete',
+    'success': true,
+    'tokenRotated': true,
+    'tokenHashPrefixBefore': _tokenHashPrefix(before),
+    'tokenHashPrefixAfter': _tokenHashPrefix(rotated),
+  });
+}
+
+/// Hash prefix wide enough to distinguish two tokens, narrow enough that the
+/// receipt carries no recoverable provider material.
+String _tokenHashPrefix(String token) =>
+    sha256.convert(utf8.encode(token)).toString().substring(0, 12);
 
 Future<Map<String, dynamic>> _observeDrainConvergence({
   required AndroidNotificationPayloadE2ERequest request,
@@ -277,13 +339,29 @@ Future<Map<String, dynamic>> _observeReplayBeforeAck({
       if (messages.length == 1 && replayIndex >= 0 && ackIndex > replayIndex) {
         await p2pService.drainOfflineInbox();
         final afterSecondDrain = await _matchingMessages(request, messageRepo);
+        if (afterSecondDrain.length != 1) {
+          throw StateError('relay replay/ack did not remain exactly once');
+        }
         final pending = await callP2PInboxRetrievePending(bridge);
         final pendingMessages =
             (pending['messages'] as List?) ?? const <Object?>[];
-        if (afterSecondDrain.length != 1 ||
-            pending['ok'] != true ||
-            pendingMessages.isNotEmpty) {
-          throw StateError('relay replay/ack did not remain exactly once');
+        if (pending['ok'] != true || pendingMessages.isNotEmpty) {
+          // Neither reading is a custody verdict, and this is the same
+          // contract `_observeDrainConvergence` already applies to these two
+          // fields (`:243-250`, where both are convergence inputs, not
+          // throws). `ok != true` is libp2p dial backoff moments after the
+          // receiver's radio returns. A NON-EMPTY list is the relay still
+          // re-serving an entry whose ACK has not landed yet: the relay keeps
+          // offering an entry until it is purged, so a single sample taken
+          // inside a replay window reads non-empty for a delivery that is
+          // converging exactly once. Measured on device 2026-08-19 — two
+          // `P2P_SERVICE_INBOX_ACK_AFTER_STAGE_SUCCESS {requested:1,acked:1}`
+          // 0.8 s apart against ONE `INBOX_STAGED_CHAT_COMMITTED` — which
+          // failed A6 as a relay-custody defect on a correct delivery.
+          // Duplicate COMMITS above still fail closed on the first sample,
+          // and the action deadline still enforces convergence.
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          continue;
         }
         final ackDetails = events[ackIndex]['details'];
         final acked = ackDetails is Map ? ackDetails['acked'] : null;

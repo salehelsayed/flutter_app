@@ -19,6 +19,12 @@ const String androidNotificationPostTapObserveAction =
 const String androidNotificationDrainObserveAction =
     'notification_drain_observe';
 
+/// Rotates the installed app's FCM registration token in place: delete it,
+/// then poll until the provider hands back a DIFFERENT one. Deleting alone is
+/// not proof of rotation, so the receipt reports both token hash prefixes.
+const String androidNotificationDeletePushTokenAction =
+    'notification_delete_push_token';
+
 const Set<String> _actions = <String>{
   androidNotificationUnregisterPushAction,
   androidNotificationRestorePushAction,
@@ -27,6 +33,7 @@ const Set<String> _actions = <String>{
   androidNotificationA6ObserveAction,
   androidNotificationPostTapObserveAction,
   androidNotificationDrainObserveAction,
+  androidNotificationDeletePushTokenAction,
 };
 
 bool isAndroidNotificationPayloadE2EAction(Object? action) =>

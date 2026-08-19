@@ -11,6 +11,7 @@ const _captureOwnedBindings = <String>{
   'integration_test/notification_tap_message_visible_proof_test.dart',
   'integration_test/intro_accept_notification_android_proof_test.dart',
   'integration_test/group_notification_projection_android_proof_test.dart',
+  'integration_test/group_muted_notification_proof_test.dart',
   'integration_test/android_notification_recovery_completion_proof_test.dart',
   'integration_test/scripts/validate_group_reaction_notification_artifacts.dart',
 };
@@ -34,6 +35,13 @@ const _groupNotificationProjectionSupport = <String, String>{
       'typed Sims adapter for Android group notification projection durability; manifest owns execution',
   'integration_test/scripts/group_notification_projection_android_criteria.dart':
       '330 strict Android group notification projection raw-evidence criteria',
+};
+
+const _groupMutedNotificationSupport = <String, String>{
+  'integration_test/scripts/run_group_muted_notification_android.dart':
+      'typed Sims adapter for Android muted-group notification suppression; manifest owns execution',
+  'integration_test/scripts/group_muted_notification_android_criteria.dart':
+      '379 strict Android muted-group notification suppression raw-evidence criteria',
 };
 
 const _androidRecoveryCompletionSupport = <String, String>{
@@ -402,6 +410,89 @@ void main() {
       expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
     },
   );
+
+  test('muted-group notification campaign is manifest-owned and '
+      'discoverable', () {
+    const capabilityId = 'groups.muted_notification_campaign';
+    const runner =
+        'integration_test/scripts/run_group_muted_notification_android.dart';
+    final capability = manifest.capabilityById(capabilityId);
+
+    expect(capability, isNotNull);
+    expect(capability!.toJson(), <String, Object?>{
+      'id': capabilityId,
+      'owner': 'groups',
+      'proofBoundary': 'android.group-muted-notification-suppression',
+      'assertions': <String>[
+        'groups.muted_live_message_no_card',
+        'groups.muted_background_reaction_no_card',
+        'groups.muted_unread_preserved',
+        'groups.muted_excluded_from_canonical_badge',
+        'groups.muted_delivery_unharmed',
+      ],
+      'lane': 'reliability',
+      'modes': <String>['full', 'major'],
+      'families': <String>['group', 'notifications'],
+      'required': true,
+      'command': <String>['dart', 'run', runner],
+      'buildProfile': 'android.production_fcm',
+      'dependencies': <String>['build.android.production_fcm'],
+      'resources': <Map<String, String>>[
+        <String, String>{
+          'name': 'build:android.production_fcm',
+          'access': 'read',
+        },
+        <String, String>{
+          'name': 'device:android-physical',
+          'access': 'exclusive',
+        },
+        <String, String>{
+          'name': 'device:android-emulator',
+          'access': 'exclusive',
+        },
+        <String, String>{
+          'name': 'relay-mutation:staging',
+          'access': 'exclusive',
+        },
+        <String, String>{
+          'name': 'artifact:group-muted-notification',
+          'access': 'write',
+        },
+      ],
+      'targetCapabilities': <String>[
+        'android.physical',
+        'android.emulator',
+        'credentials.fcm',
+        'relay.staging',
+      ],
+      'allowedNaReason': targetUnavailableNaReason,
+      'artifactRequired': true,
+      'artifactValidator':
+          'integration_test/group_muted_notification_proof_test.dart',
+      'active': true,
+      'declaredBuildException': false,
+      'automationReady': true,
+    });
+
+    for (final entry in _groupMutedNotificationSupport.entries) {
+      expect(
+        discovery.where(
+          (record) =>
+              record.path == entry.key &&
+              record.category == 'support' &&
+              record.kind == 'support' &&
+              record.note == entry.value,
+        ),
+        hasLength(1),
+        reason: '${entry.key} must remain one exact support-only record',
+      );
+      expect(_executableDiscoveryRecords(discovery, entry.key), isEmpty);
+    }
+
+    final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
+    expect(major.selectedIds, contains(capabilityId));
+    expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
+  });
 
   test(
     'Android notification recovery completion is manifest-owned and fail-closed',

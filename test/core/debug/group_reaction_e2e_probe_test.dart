@@ -47,8 +47,12 @@ void main() {
     database = await openDatabase(inMemoryDatabasePath);
     keyStore = _MemoryKeyStore();
     await database.execute(
+      // `is_muted` mirrors production migration 050. The rest of the schema
+      // stays deliberately partial so the canonical badge projection keeps
+      // exercising its `available: false` branch.
       'CREATE TABLE groups ('
-      'id TEXT PRIMARY KEY, name TEXT, type TEXT, my_role TEXT)',
+      'id TEXT PRIMARY KEY, name TEXT, type TEXT, my_role TEXT, '
+      'is_muted INTEGER NOT NULL DEFAULT 0)',
     );
     await database.execute(
       'CREATE TABLE group_keys ('
@@ -212,6 +216,102 @@ void main() {
         },
       ),
       throwsA(isA<FormatException>()),
+    );
+  });
+
+  // Plan 379 TC-379-04: the muted device lane's two ids must be allow-listed
+  // (the probe's scenario allow-list is a registration surface) and must send
+  // the REACTION marker shape — target only. The in-app marker gate keys off
+  // the `_message_unread_lifecycle` suffix, which neither muted id carries.
+  for (final scenario in const <String>[
+    'android_group_muted_message_suppression',
+    'android_group_muted_reaction_background_suppression',
+  ]) {
+    test('muted scenario $scenario is allow-listed for target-only '
+        'markers', () async {
+      await database.insert('groups', <String, Object?>{
+        'id': 'raw-muted-group-id',
+        'name': 'Plan379M-Fixture',
+        'type': 'chat',
+        'my_role': 'member',
+        'is_muted': 1,
+      });
+
+      final result = await runGroupReactionE2EProbeAction(
+        database: database,
+        secureKeyStore: keyStore,
+        config: <String, Object?>{
+          'schema': groupReactionE2EProbeRequestSchema,
+          'transport_action': groupReactionE2EObserveAction,
+          'scenario': scenario,
+          'stepId': 'plan257-$groupReactionE2EObserveAction-plan379-1',
+          'runId': 'plan379-1',
+          'nonce': 'nonce-plan379-1',
+          'groupName': 'Plan379M-Fixture',
+          'firstMarker': '',
+          'secondMarker': '',
+          'targetMarker': 'Plan379MutedMarker',
+        },
+      );
+
+      expect(result, containsPair('success', true));
+      final observation = result['observation']! as Map<String, Object?>;
+      expect(observation['scenario'], scenario);
+      expect(
+        observation.containsKey('groupIsMuted'),
+        isTrue,
+        reason: 'the muted lane reads mute state from the probe observation',
+      );
+    });
+
+    test('muted scenario $scenario rejects message-shaped markers', () async {
+      expect(
+        () => runGroupReactionE2EProbeAction(
+          database: database,
+          secureKeyStore: keyStore,
+          config: <String, Object?>{
+            'schema': groupReactionE2EProbeRequestSchema,
+            'transport_action': groupReactionE2EObserveAction,
+            'scenario': scenario,
+            'stepId': 'plan257-$groupReactionE2EObserveAction-plan379-2',
+            'runId': 'plan379-2',
+            'nonce': 'nonce-plan379-2',
+            'groupName': 'Plan379M-Fixture',
+            'firstMarker': 'Plan379First',
+            'secondMarker': 'Plan379Second',
+            'targetMarker': '',
+          },
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  }
+
+  test('an un-allow-listed scenario id is still rejected outright', () async {
+    expect(
+      () => runGroupReactionE2EProbeAction(
+        database: database,
+        secureKeyStore: keyStore,
+        config: const <String, Object?>{
+          'schema': groupReactionE2EProbeRequestSchema,
+          'transport_action': groupReactionE2EObserveAction,
+          'scenario': 'android_group_muted_not_registered',
+          'stepId': 'plan257-group_reaction_sqlcipher_observe-plan379-3',
+          'runId': 'plan379-3',
+          'nonce': 'nonce-plan379-3',
+          'groupName': 'Plan379M-Fixture',
+          'firstMarker': '',
+          'secondMarker': '',
+          'targetMarker': 'Plan379MutedMarker',
+        },
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          'Plan 257 runtime probe request rejected',
+        ),
+      ),
     );
   });
 

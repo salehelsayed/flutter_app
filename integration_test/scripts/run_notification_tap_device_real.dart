@@ -83,6 +83,7 @@ const List<_Scenario> _scenarios = <_Scenario>[
       'airplaneModeBeforeTap',
       'messageVisibleFromStagedEnvelope',
       'noRelayDrainBeforeVisibility',
+      'b12.warm_audible_channel',
     ],
   ),
   _Scenario(
@@ -97,6 +98,69 @@ const List<_Scenario> _scenarios = <_Scenario>[
       'startupIngestRan',
       'messageVisibleFromStagedEnvelope',
       'noRelayDrainBeforeVisibility',
+      'b12.cold_audible_channel',
+    ],
+  ),
+  _Scenario(
+    id: 'tc_b13_dual_path_single_alert',
+    testCase: 'TC-B13',
+    mode: 'android-dual-path-device',
+    summary:
+        'backgrounded-but-connected receiver races live bridge and real FCM; exactly one audible card, losing path typed-suppressed',
+    requiredChecks: <String>[
+      'b13.dual_attempt',
+      'b13.single_card',
+      'b13.single_audible_channel',
+      'b13.losing_path_typed_suppression',
+    ],
+  ),
+  _Scenario(
+    id: 'tc_g7_permission_denied',
+    testCase: 'TC-380-07',
+    mode: 'android-permission-denied-device',
+    summary:
+        'POST_NOTIFICATIONS denied receiver drops the post but keeps custody; re-grant recovers an audible card',
+    requiredChecks: <String>[
+      'g7.permission_denied_no_post',
+      'g7.permission_denied_typed_health',
+      'g7.permission_custody_preserved',
+      'g7.permission_regrant_recovery',
+    ],
+  ),
+  _Scenario(
+    id: 'tc_g7_token_refresh_mid_session',
+    testCase: 'TC-380-06',
+    mode: 'android-token-refresh-device',
+    summary:
+        'mid-session FCM token rotation re-registers in the SAME process and the new token still delivers an audible card',
+    requiredChecks: <String>[
+      'g7.token_refresh_event_observed',
+      'g7.token_refresh_reregistered_same_process',
+      'g7.token_refresh_new_token_delivery',
+    ],
+  ),
+  _Scenario(
+    id: 'tc_g7_channel_disabled',
+    testCase: 'TC-380-08',
+    mode: 'android-channel-disabled-device',
+    summary:
+        'user-blocked mknoon_messages channel posts no card on any channel, keeps custody, and recovers on re-enable',
+    requiredChecks: <String>[
+      'g7.channel_disabled_no_post',
+      'g7.channel_custody_preserved',
+      'g7.channel_reenable_recovery',
+    ],
+  ),
+  _Scenario(
+    id: 'tc_g7_doze_delivery',
+    testCase: 'TC-380-09',
+    mode: 'android-doze-device',
+    summary:
+        'deep-idle receiver typed as delivered-during-idle or deferred-until-maintenance, converging to exactly one card',
+    requiredChecks: <String>[
+      'g7.doze_forced_idle_proven',
+      'g7.doze_disposition_typed',
+      'g7.doze_no_duplicate_render',
     ],
   ),
 ];
@@ -106,6 +170,11 @@ const _androidPayloadCampaignIds = <String>{
   'tc_b11_payload_persist_pre_drain',
   'payload_fast_path_android_receiver',
   'payload_fast_path_cold_kill',
+  'tc_b13_dual_path_single_alert',
+  'tc_g7_permission_denied',
+  'tc_g7_token_refresh_mid_session',
+  'tc_g7_channel_disabled',
+  'tc_g7_doze_delivery',
 };
 
 Future<void> main(List<String> args) async {
@@ -224,7 +293,7 @@ Future<void> main(List<String> args) async {
     'detail':
         'Executable capture is campaign-owned. Select '
         '--scenario android_payload_campaign so setup/build/device state is '
-        'shared across A6, B11, and B12.',
+        'shared across A6, B11, B12, B13, and the PRD 13 Android matrix.',
   });
   exitCode = 78;
 }

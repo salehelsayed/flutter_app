@@ -6335,6 +6335,127 @@ Future<GroupComposeMarkerEntryOutcome> enterGroupComposeMarkerOnce({
   return (candidates.first.$1, candidates.first.$2);
 }
 
+/// Number of `[FLOW]` lines in [logcat] whose decoded `event` equals [event].
+///
+/// Decodes rather than substring-matching so unrelated prose mentioning the
+/// event name cannot inflate the count. A capture binds a newly written row by
+/// requiring this count to GROW across an action, which works even when the
+/// same event fires for earlier messages in the same window.
+/// The message id of the most recent successful group send in [flowLog].
+///
+/// `GROUP_SEND_MSG_USE_CASE_SUCCESS` carries the SAME redacted id the
+/// recipient later records in `GROUP_MESSAGES_DB_INSERT_SUCCESS` — incoming
+/// group messages are stored under the envelope's `stableMessageId`
+/// (`handle_incoming_group_message_use_case.dart:225-228`), which is also what
+/// its duplicate gate keys on. Binding a device arrival to this id is what
+/// lets a lane assert THE message under test landed instead of counting
+/// "some message landed".
+String? latestGroupSendMessageId(String flowLog) {
+  String? found;
+  for (final line in flowLog.split('\n')) {
+    if (!line.contains('GROUP_SEND_MSG_USE_CASE_SUCCESS')) continue;
+    final match = RegExp(
+      r'"messageId"\s*:\s*"([^"]+)"',
+    ).firstMatch(line);
+    if (match != null) found = match.group(1);
+  }
+  return found;
+}
+
+/// Whether [flowLog] shows the recipient holding a persisted group-message row
+/// for [messageId].
+///
+/// Deliberately id-bound rather than a count delta over the whole dump:
+/// `adb logcat -d` returns only what is still in the ring buffer, so on a busy
+/// device a count can go DOWN between polls as older lines rotate out, and a
+/// `count > baseline` wait then never fires even though the row was written.
+///
+/// Two shapes count, because both mean the row is on disk:
+/// * `GROUP_MESSAGES_DB_INSERT_SUCCESS` — the row was just written. Its `id` is
+///   the redacted 8-char form.
+/// * `GROUP_HANDLE_INCOMING_MSG_DUPLICATE` carrying a non-empty
+///   `existingLocalRowId` — a later replay of the same envelope found the row
+///   already stored, which is the same fact observed one delivery later. This
+///   matters when the live-fanout insert happened before the poll window.
+bool groupMessageStoredWithId(String flowLog, String messageId) {
+  if (messageId.isEmpty) return false;
+  final escaped = RegExp.escape(messageId);
+  final inserted = RegExp('"id"\\s*:\\s*"$escaped"');
+  final existing = RegExp('"existingLocalRowId"\\s*:\\s*"$escaped');
+  for (final line in flowLog.split('\n')) {
+    if (line.contains('GROUP_MESSAGES_DB_INSERT_SUCCESS') &&
+        inserted.hasMatch(line)) {
+      return true;
+    }
+    if (line.contains('GROUP_HANDLE_INCOMING_MSG_DUPLICATE') &&
+        existing.hasMatch(line)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+int countFlowEventOccurrences(String logcat, String event) {
+  var count = 0;
+  for (final line in logcat.split('\n')) {
+    final marker = line.indexOf('[FLOW] ');
+    if (marker < 0) continue;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(line.substring(marker + '[FLOW] '.length).trim());
+    } on FormatException {
+      continue;
+    }
+    if (decoded is Map && decoded['event'] == event) count += 1;
+  }
+  return count;
+}
+
+/// True when [logcat] shows the relay ACCEPTED this device's Android push
+/// token registration.
+///
+/// This exists because relay v1.8.0 (`8d86501e4`) made the `[PUSH]` journal
+/// vocabulary deliberately content-free: `inbox.go:191` now logs a bare
+/// `[PUSH] outcome=registered` with no peer and no platform, and Plan 368
+/// pins that vocabulary. No relay-side grep can attribute a registration to a
+/// device any more, so attribution moves to the recipient boundary — whose
+/// logcat is unambiguously that device's, unlike the 20-char peer prefix the
+/// old relay line carried.
+///
+/// Both accepted anchors are derived from the bridge's `ok`, which the Go node
+/// sets only after the relay replied `Status:"OK"` — that is, only after the
+/// relay persisted the route. They are read from two channels because their
+/// build gating differs: `[PUSH_DIAG]` is an unconditional `print` that
+/// survives release builds, while `[FLOW]` needs `kDebugMode` or
+/// `--dart-define=FDC_FLOW_LOG=1`.
+///
+/// `PUSH_REGISTER_TOKEN_SENDING` is deliberately NOT accepted: it is emitted
+/// before the frame leaves the device and would pass with the relay down.
+///
+/// Deliberately does NOT claim to prove the advertised capability set — no
+/// channel logs it, and the old relay line never did either.
+bool androidRelayPushRegistrationAccepted(String logcat) {
+  for (final line in logcat.split('\n')) {
+    if (line.contains('[PUSH_DIAG] relay_push_registration_success') &&
+        line.contains('platform=android')) {
+      return true;
+    }
+    final marker = line.indexOf('[FLOW] ');
+    if (marker < 0) continue;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(line.substring(marker + '[FLOW] '.length).trim());
+    } on FormatException {
+      continue;
+    }
+    if (decoded is! Map) continue;
+    if (decoded['event'] != 'PUSH_REGISTER_TOKEN_SUCCESS') continue;
+    final details = decoded['details'];
+    if (details is Map && details['platform'] == 'android') return true;
+  }
+  return false;
+}
+
 List<ActiveNotificationCard> extractActiveNotificationCards(
   String dump, {
   required String packageName,

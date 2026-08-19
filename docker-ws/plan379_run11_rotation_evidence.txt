@@ -1,0 +1,21 @@
+# Plan 379 run 11 (2026-08-18) — why the LIVE muted lane timed out, and why it was never a mute defect.
+# Recipient 21071FDF600CSC, sender emulator-5554, APK 0a8c93f6 (plan 383 fixed build).
+# Harness verdict: timed_out_waiting_for_muted group message stored by the recipient (180s).
+
+## 1. The sender published all three messages; msg2 = 6e4e1d63, inboxStored + full live fanout.
+08-18 13:09:17.358 I/flutter (32573): [FLOW] {"ts":"2026-08-18T11:09:17.358448Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_SEND_MSG_USE_CASE_SUCCESS","details":{"messageId":"377e0377","deliveryMode":"live_and_inbox","expectedRecipientCount":1,"liveFanoutState":"full_peers","inboxSto
+08-18 13:10:22.218 I/flutter (32573): [FLOW] {"ts":"2026-08-18T11:10:22.218490Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_SEND_MSG_USE_CASE_SUCCESS","details":{"messageId":"1b7af9a3","deliveryMode":"live_and_inbox","expectedRecipientCount":1,"liveFanoutState":"full_peers","inboxSto
+08-18 13:10:48.327 I/flutter (32573): [FLOW] {"ts":"2026-08-18T11:10:48.327092Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_SEND_MSG_USE_CASE_SUCCESS","details":{"messageId":"6e4e1d63","deliveryMode":"live_and_inbox","expectedRecipientCount":1,"liveFanoutState":"full_peers","inboxSto
+
+## 2. The recipient HAD stored msg2 at 11:10:52.034Z — 3s after the send, ~3min before the harness gave up.
+08-18 13:10:57.179 I/flutter (13817): [FLOW] {"ts":"2026-08-18T11:10:53.951141Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GROUP_HANDLE_INCOMING_MSG_DUPLICATE","details":{"groupId":"072b8143-4bf4-4ab8-a9fa-d98378e1963a","senderId":"[redacted:peerid]","text":"Plan379Mut1674fed86e","timestamp":"2026-08-18T11:10:48.072327Z","deliverySource":"replay","dedupeBy":"messageId","rawMessageId":"6e4e1d63-bb8f-43fd-90a8-116ea10f34a9","logicalDeliveryId":"6e4e1d63-bb8f-43fd-90a8-116ea10f34a9","candidateLocalRowId":"6e4e1d63-bb8f-43fd-90a8-116ea10f34a9","messageId":"6e4e1d63-bb8f-43fd-90a8-116ea10f34a9","localRowId":"6e4e1d63-bb8f-43fd-90a8-116ea10f34a9","createdAt":"2026-08-18T11:10:52.034882Z","incoming":true,"rowTimestamp":"2026-08-18T11:10:48.072327Z","existingLocalRowId":"6e4e1d63-bb8f-43fd-90a8-116ea10f34a9"}}
+
+## 3. Why the harness could not see it: the logcat ring had rotated. The dump pulled at 13:15 local
+##    starts its main buffer at 13:10:56 and contains ZERO GROUP_MESSAGES_DB_INSERT_SUCCESS lines,
+##    so the lane's 'count > baseline' delta could never rise above a baseline that had aged out.
+591:--------- beginning of main
+GROUP_MESSAGES_DB_INSERT_SUCCESS occurrences in the final dump: 0
+
+## Fix: bind arrival to the id the sender published (accepting a replayed duplicate that reports an
+##      existing local row), and fold every logcat read into a monotonic accumulator.
+##      Replayed against these exact files, the new predicate returns true for 6e4e1d63.

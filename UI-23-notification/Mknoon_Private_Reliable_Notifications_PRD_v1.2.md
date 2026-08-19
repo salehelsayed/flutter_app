@@ -11,6 +11,8 @@
 
 > **Implementation-economy addendum (8 August 2026):** Close the requirements through the smallest dependency-ordered vertical slices that produce usable behavior. Reuse existing custody, retry, ledger, platform-adapter and test-harness owners by default. A new durable owner requires evidence of a different authority, lifetime or atomic transition; a new protocol, scheduler, queue or harness requires a concrete compatibility or otherwise unprovable execution boundary.
 
+> **Reaction-audience addendum (18 August 2026):** §6.5 makes the author-only reaction alert audience normative (AC-13): only the reacted-to message's author is eligible for a reaction alert; every other member receives silent state; self-reactions and reaction removals alert no one.
+
 > **Privacy limit:** Apple or Google must receive a device push token to route a push. They can observe that this app sent a push to a device at a certain time. This design prevents the push payload from revealing sender, conversation, group, message type, content or media URL. It does not eliminate timing correlation.
 
 ## 1. Executive summary
@@ -219,6 +221,17 @@ When the user presses Home or switches apps:
 - A delayed push must not recreate a notification for an event already read, deleted, expired or handled.
 - Badge count, unread state and notification presence are related views, not the same database field.
 
+### 6.5 Reaction notification audience (addendum, 18 August 2026)
+
+Reaction events and reaction alerts have different audiences. The encrypted reaction event is delivered to every conversation member so state stays in sync; only the author of the reacted-to message is eligible for an alert.
+
+- 1:1: when A reacts to B's message, B is eligible. A reaction to the reactor's own message alerts no one; the peer receives a silent update.
+- Group and announcement: author-only — when B reacts to A's message, only A is eligible; every other member receives the reaction silently (timeline state updates; no OS notification, no sound).
+- Self-reactions alert no one on any conversation type.
+- Eligibility is necessary, not sufficient: the §6 matrix, block policy and the OQ-05 mute policy still govern the author's own presentation. This clause defines "eligible group reactions" wherever mute behavior uses it.
+- Audience narrowing is decided at event/wake nomination and local presentation, never by varying the provider payload (AC-11 shape unchanged).
+- Removing a reaction must not produce a new alert (§6.4 applies).
+
 ## 7. Platform payloads
 
 ### 7.1 iOS
@@ -396,6 +409,7 @@ For each item, record status, exact file/function, current behaviour, risk, requ
 - **AC-10:** Direct, push and inbox arrival orders produce one local event, one unread transition, one current conversation notification and normally one audible alert.
 - **AC-11:** Captured APNs/FCM requests contain none of the forbidden fields and have the same shape for text, image, voice, reaction and group events.
 - **AC-12:** On app launch after missed pushes, all retained inbox events synchronize without duplicate local events.
+- **AC-13:** A reaction alerts only the reacted-to message's author, subject to the §6 matrix, block and mute policy; non-author members receive silent state updates; self-reactions and reaction removals alert no one.
 
 ## 13. Required tests
 

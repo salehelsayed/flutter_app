@@ -8,9 +8,22 @@ const String androidNotificationCapabilityId =
 const String androidNotificationBuildProfileId = 'android.production_fcm';
 
 /// Content-safe fingerprint of the package's durable notification-channel
-/// configuration. Per-channel last-post timestamps are intentionally removed:
-/// posting and dismissing a campaign card advances that counter without
-/// changing user-visible channel policy.
+/// configuration. Two fields are intentionally removed:
+///
+/// * `mLastNotificationUpdateTimeMs` — posting and dismissing a campaign card
+///   advances that counter without changing user-visible channel policy.
+/// * `mUserLockedFields` — measured on `emulator-5554` (Android 17 / SDK 37)
+///   for plan 380's
+///   mandatory pre-authoring probe: toggling a channel OFF in Settings and
+///   back ON restores `mImportance` exactly (4 -> 0 -> 4) but leaves
+///   `mUserLockedFields=4` behind permanently. That residue is user-lock
+///   PROVENANCE, not policy. `mImportance` stays hashed, so a leg that fails
+///   to re-enable the channel still reds the end-of-campaign state verify.
+///
+/// The same probe measured `pm revoke` + `pm set-permission-flags user-fixed`
+/// followed by `pm clear-permission-flags user-fixed` + `pm grant`: that cycle
+/// leaves ZERO residue (`importance=DEFAULT userSet=false` is restored byte for
+/// byte), so the permission leg needs no redaction of its own.
 String androidNotificationChannelStateSha256(
   String dumpsys, {
   required String packageName,
@@ -36,10 +49,15 @@ String androidNotificationChannelStateSha256(
         line.startsWith('NotificationChannel{') ||
         line.startsWith('NotificationChannelGroup{')) {
       stableChildren.add(
-        line.replaceAll(
-          RegExp(r'mLastNotificationUpdateTimeMs=-?\d+'),
-          'mLastNotificationUpdateTimeMs=<volatile>',
-        ),
+        line
+            .replaceAll(
+              RegExp(r'mLastNotificationUpdateTimeMs=-?\d+'),
+              'mLastNotificationUpdateTimeMs=<volatile>',
+            )
+            .replaceAll(
+              RegExp(r'mUserLockedFields=-?\d+'),
+              'mUserLockedFields=<user-provenance>',
+            ),
       );
     }
   }
@@ -114,20 +132,332 @@ AndroidStagedEnvelopeObservation parseAndroidStagedEnvelopeObservation(
   );
 }
 
-bool relayJournalContainsAndroidProviderSend(
-  String journal, {
-  required String recipientPeerId,
-}) {
-  final prefix = recipientPeerId.length <= 20
-      ? recipientPeerId
-      : recipientPeerId.substring(0, 20);
-  return RegExp(
-    r'\[PUSH\] Notification sent to\s+' + RegExp.escape(prefix) + r'\b',
-  ).hasMatch(journal);
-}
+/// The two `[PUSH]` lines that mean "the provider accepted this wake".
+///
+/// `8d86501e4` (relay v1.8.0, production since 2026-08-16) deleted every
+/// recipient-bearing `[PUSH]` line. What remains is
+/// `[PUSH] outcome=success attempt=%d total_attempts=%d` (`inbox.go:626`, the
+/// ordinary retry path) and `[PUSH] outcome=success fallback=strict`
+/// (`inbox.go:664`, the payload-too-large strict-minimal path). Both are
+/// attribution-free BY DESIGN and frozen that way by the relay's own
+/// private-value closure test, so no recipient binding can be recovered from
+/// the journal at all.
+final RegExp _androidProviderAcceptedPattern = RegExp(
+  r'\[PUSH\]\s+outcome=success\s+'
+  r'(?:attempt=\d+\s+total_attempts=\d+|fallback=strict)\b',
+);
+
+/// True when the relay journal slice records a provider acceptance.
+///
+/// Recipient binding is the CALLER's job and is deliberately not attempted
+/// here: every call site passes a slice scoped with
+/// `journalctl --since <sentAt>` for a send the campaign itself just made, on
+/// a topology with one receiver. Matching only `outcome=success` inside that window is the
+/// strongest predicate the v1.8.0 grammar can still support.
+bool relayJournalContainsAndroidProviderSend(String journal) =>
+    _androidProviderAcceptedPattern.hasMatch(journal);
 
 bool notificationWindowContainsRelayDrain(String logcat) =>
     logcat.contains('P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS');
+
+// ---------------------------------------------------------------------------
+// TC-B13 — dual-path (live bridge + real FCM) single-alert predicates.
+//
+// All three are pure functions over one CURSOR-SCOPED logcat window so the
+// campaign never has to clear the shared device log.
+// ---------------------------------------------------------------------------
+
+/// Live 1:1 listener arrival marker, emitted immediately before the listener
+/// calls `maybeShowNotification`
+/// (`lib/features/conversation/application/chat_message_listener.dart:721-732`).
+const String androidNotificationLivePathAttemptEvent =
+    'CHAT_LISTENER_NEW_MESSAGE';
+
+/// FCM background-isolate receipt marker, emitted at the top of the background
+/// handler (`lib/features/push/application/background_message_handler.dart:611-620`).
+const String androidNotificationFcmPathAttemptEvent =
+    'PUSH_BACKGROUND_MESSAGE_RECEIVED';
+
+/// Event names the LIVE path uses to record that it stood down.
+///
+/// The reconcile variants were originally excluded on the reading that they
+/// require a `durableEffectContext` the 1:1 live listener never passes. The
+/// first device run of this leg (2026-08-18, `emulator-5554`) REFUTED that:
+/// the 1:1 direct path runs durable in the shipped build — its own
+/// `NOTIFICATION_SHOWN` carries `{"durable":true,"producer":"direct_message"}`
+/// — and the losing side emitted
+/// `NOTIFICATION_LEGACY_CLAIM_RECONCILE {"reason":"message_event_already_claimed"}`
+/// three times while emitting `NOTIFICATION_SUPPRESSED` zero times. Excluding
+/// it made the assertion unsatisfiable on real hardware.
+///
+/// The REASON allow-list below is deliberately unchanged, so an unexplained or
+/// novel stand-down still fails the leg.
+const Set<String> androidNotificationLivePathSuppressionEvents = <String>{
+  'NOTIFICATION_SUPPRESSED',
+  'NOTIFICATION_LEGACY_CLAIM_RECONCILE',
+  'NOTIFICATION_LEGACY_DEDUPE_RECONCILE',
+};
+
+/// Reasons the LIVE path emits when it loses the race.
+const Set<String> androidNotificationLivePathLosingReasons = <String>{
+  'recent_remote_push',
+  'message_event_already_claimed',
+};
+
+/// Reasons the FCM background isolate emits when it loses the race for a
+/// `type == 'new_message'` push
+/// (`background_message_handler.dart:797`, `:940`).
+const Set<String> androidNotificationFcmPathLosingReasons = <String>{
+  'recent_duplicate_background_push',
+  'message_event_already_claimed',
+};
+
+/// True only when BOTH delivery legs demonstrably ATTEMPTED inside the window.
+///
+/// Without this, a run in which only one path ever fired would satisfy
+/// "exactly one card" and pass as a dual-path proof.
+bool notificationWindowProvesDualPathAttempt(String logcat) =>
+    logcat.contains(androidNotificationLivePathAttemptEvent) &&
+    logcat.contains(androidNotificationFcmPathAttemptEvent);
+
+/// The typed suppression the LOSING delivery path emitted, as
+/// `'<EVENT>:<reason>'`, or null when the window carries no such record.
+///
+/// A discriminator UNION is required because either path may win the race: the
+/// live listener emits `NOTIFICATION_SUPPRESSED` and the background isolate
+/// emits `PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED`.
+String? androidNotificationLosingPathSuppression(String logcat) {
+  for (final line in const LineSplitter().convert(logcat)) {
+    final flowIndex = line.indexOf('[FLOW] ');
+    if (flowIndex < 0) continue;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(line.substring(flowIndex + '[FLOW] '.length));
+    } on FormatException {
+      continue;
+    }
+    if (decoded is! Map) continue;
+    final event = decoded['event'];
+    final details = decoded['details'];
+    final reason = details is Map ? details['reason'] : null;
+    if (reason is! String) continue;
+    if (event is String &&
+        androidNotificationLivePathSuppressionEvents.contains(event) &&
+        androidNotificationLivePathLosingReasons.contains(reason)) {
+      return '$event:$reason';
+    }
+    if (event == 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED' &&
+        androidNotificationFcmPathLosingReasons.contains(reason)) {
+      return 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED:$reason';
+    }
+  }
+  return null;
+}
+
+/// Markers proving a delivery path actually CALLED the native show, unioned
+/// across both paths because either may win the race.
+///
+/// * `NOTIFICATION_SHOWN` — the live/foreground service, emitted after
+///   `publishNative` (`lib/core/notifications/flutter_notification_service.dart:473-492`,
+///   `:523-527`).
+/// * `PUSH_BACKGROUND_NOTIFICATION_SHOWN` — the FCM background isolate,
+///   emitted unconditionally after its show block
+///   (`lib/features/push/application/background_message_handler.dart:1529-1543`).
+///
+/// Both fire even when the OS then DROPS the card, which is exactly what a
+/// permission-denied or blocked-channel proof needs: the app must be shown to
+/// have tried. The receipt marker
+/// [androidNotificationFcmPathAttemptEvent] is NOT a substitute — it is
+/// emitted at the top of the handler, upstream of staging, the display
+/// eligibility gate, and every suppression return, so a wake that never
+/// reached a post decision satisfies it.
+const Set<String> androidNotificationPostAttemptEvents = <String>{
+  'NOTIFICATION_SHOWN',
+  'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
+};
+
+/// The first post-attempt marker in a cursor-scoped window, or null.
+String? androidNotificationPostAttemptEvent(String logcat) {
+  for (final record in androidNotificationFlowRecords(logcat)) {
+    if (androidNotificationPostAttemptEvents.contains(record.event)) {
+      return record.event;
+    }
+  }
+  return null;
+}
+
+/// The `silent` flag reported by the FIRST post attempt in [logcat].
+///
+/// Returns null when the window records no post attempt, or when the attempt
+/// reported no native show at all (the key is absent in that case). A dumpsys
+/// channel read cannot answer this question: when both delivery paths reach
+/// one message the loser reconciles and publishes a silent SAME-ID update,
+/// which moves the record to `mknoon_messages_silent` about 2.6 s after the
+/// winning post — faster than a dumpsys poll can sample.
+bool? androidNotificationFirstPostAttemptSilent(String logcat) {
+  for (final record in androidNotificationFlowRecords(logcat)) {
+    if (!androidNotificationPostAttemptEvents.contains(record.event)) continue;
+    final silent = record.details['silent'];
+    return silent is bool ? silent : null;
+  }
+  return null;
+}
+
+/// Per-record `Notification(channel=…)` for the app's active cards whose
+/// `android.text` equals [body].
+///
+/// Reads the raw dumpsys slice directly: `ActiveNotificationCard` carries no
+/// channel field, and plan 378 deliberately does NOT add one to that shared
+/// parser. Mirrors the extraction in
+/// `integration_test/scripts/run_notification_sound_smoke.dart:308-341`.
+List<String> androidNotificationChannelsForBody(
+  String dump, {
+  required String packageName,
+  required String body,
+}) {
+  final activeSection = dump.split(RegExp(r'\nRanking Config:')).first;
+  final packagePattern = RegExp(r'\bpkg=' + RegExp.escape(packageName) + r'\b');
+  final bodyPattern = RegExp(
+    r'^\s*android\.text=(?:[A-Za-z]*String \()?' +
+        RegExp.escape(body) +
+        r'\)?\s*$',
+    multiLine: true,
+  );
+  return RegExp(r'NotificationRecord\([\s\S]*?(?=\n\s*NotificationRecord\(|$)')
+      .allMatches(activeSection)
+      .map((match) => match.group(0)!)
+      .where(packagePattern.hasMatch)
+      .where(bodyPattern.hasMatch)
+      .map(
+        (record) =>
+            RegExp(
+              r'Notification\(channel=([^\s\)]+)',
+            ).firstMatch(record)?.group(1) ??
+            '',
+      )
+      .toList(growable: false);
+}
+
+/// One `[FLOW] {…}` diagnostic record recovered from a logcat window.
+final class AndroidFlowRecord {
+  const AndroidFlowRecord({required this.event, required this.details});
+
+  final String event;
+  final Map<String, Object?> details;
+
+  /// True when every entry of [expected] is present with an equal value.
+  /// Extra details are ignored: the coordinator's SUCCESS record also carries
+  /// registration-proof digests that legs must not have to enumerate.
+  bool hasDetails(Map<String, Object?> expected) =>
+      expected.entries.every((entry) => details[entry.key] == entry.value);
+}
+
+/// Every `[FLOW]` record in a cursor-scoped logcat window, in emission order.
+///
+/// Non-JSON tails and non-object payloads are skipped rather than thrown on:
+/// the window is a shared device log and carries unrelated traffic.
+List<AndroidFlowRecord> androidNotificationFlowRecords(String logcat) {
+  final records = <AndroidFlowRecord>[];
+  for (final line in const LineSplitter().convert(logcat)) {
+    final flowIndex = line.indexOf('[FLOW] ');
+    if (flowIndex < 0) continue;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(line.substring(flowIndex + '[FLOW] '.length).trim());
+    } on FormatException {
+      continue;
+    }
+    if (decoded is! Map) continue;
+    final event = decoded['event'];
+    if (event is! String || event.isEmpty) continue;
+    final details = decoded['details'];
+    records.add(
+      AndroidFlowRecord(
+        event: event,
+        details: details is Map
+            ? details.map<String, Object?>(
+                (key, value) => MapEntry('$key', value),
+              )
+            : const <String, Object?>{},
+      ),
+    );
+  }
+  return List<AndroidFlowRecord>.unmodifiable(records);
+}
+
+/// Center point and checked state of a uiautomator node addressed by its
+/// `resource-id`.
+///
+/// The Settings channel screen's master toggle carries no text and no
+/// content-desc, so [findSemanticNodeCenter] cannot address it. Measured on
+/// `emulator-5554` (Android 17 / SDK 37): the channel master switch is
+/// `android:id/switch_widget`, while every secondary row on the same screen
+/// uses `com.android.settings:id/switchWidget` — the two ids are distinct, so
+/// an exact-id match cannot pick up "Pop on screen" or "Vibration" by mistake.
+({int x, int y, bool checked})? androidUiSwitchNodeByResourceId(
+  String uiXml, {
+  required String resourceId,
+}) {
+  for (final match in RegExp(r'<node\b[^>]*/?>').allMatches(uiXml)) {
+    final node = match.group(0)!;
+    final id = RegExp(r'resource-id="([^"]*)"').firstMatch(node)?.group(1);
+    if (id != resourceId) continue;
+    final bounds = RegExp(
+      r'bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"',
+    ).firstMatch(node);
+    if (bounds == null) continue;
+    final left = int.parse(bounds.group(1)!);
+    final top = int.parse(bounds.group(2)!);
+    final right = int.parse(bounds.group(3)!);
+    final bottom = int.parse(bounds.group(4)!);
+    if (right <= left || bottom <= top) continue;
+    return (
+      x: (left + right) ~/ 2,
+      y: (top + bottom) ~/ 2,
+      checked:
+          RegExp(r'checked="([^"]*)"').firstMatch(node)?.group(1) == 'true',
+    );
+  }
+  return null;
+}
+
+/// The `mImportance` recorded for [channelId] in the package's durable channel
+/// configuration, or null when the channel is absent from the dump.
+///
+/// Read from the same `dumpsys notification --noredact` slice the campaign's
+/// end-state fingerprint hashes, so a channel the leg failed to re-enable is
+/// visible to BOTH the leg and the restoration verify.
+int? androidNotificationChannelImportance(
+  String dumpsys, {
+  required String packageName,
+  required String channelId,
+}) {
+  final lines = dumpsys.split('\n');
+  final packageHeader = RegExp(
+    r'^\s+AppSettings:\s+' + RegExp.escape(packageName) + r'\s+\(',
+  );
+  final nextPackageHeader = RegExp(r'^\s+AppSettings:\s+');
+  var inPackage = false;
+  for (final raw in lines) {
+    if (!inPackage) {
+      if (!packageHeader.hasMatch(raw)) continue;
+      inPackage = true;
+      continue;
+    }
+    if (nextPackageHeader.hasMatch(raw)) break;
+    final line = raw.trim();
+    if (!line.startsWith('NotificationChannel{')) continue;
+    if (!RegExp(
+      r"mId='" + RegExp.escape(channelId) + r"'",
+    ).hasMatch(line)) {
+      continue;
+    }
+    final importance = RegExp(r'mImportance=(-?\d+)').firstMatch(line);
+    if (importance == null) return null;
+    return int.parse(importance.group(1)!);
+  }
+  return null;
+}
 
 String safeNotificationIdPrefix(String value) =>
     value.length <= 8 ? value : value.substring(0, 8);

@@ -8,6 +8,265 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../integration_test/scripts/reaction_notification_proof_support.dart';
 
 void main() {
+  // Replaces the relay-journal token-registration wait, which greps a line
+  // relay v1.8.0 no longer emits. The relay's [PUSH] vocabulary is now
+  // deliberately content-free, so registration is attributed at the RECIPIENT
+  // boundary instead — the device's own log is unambiguously that device's.
+  group('android relay push registration acceptance', () {
+    String flow(String event, Map<String, Object?> details) =>
+        'I/flutter: [FLOW] '
+        '${jsonEncode(<String, Object?>{
+          'ts': '2026-08-17T20:00:00.000Z',
+          'milestone': 'M1_IDENTITY_INIT',
+          'layer': 'FL',
+          'event': event,
+          'details': details,
+        })}';
+
+    test('accepts the unconditional PUSH_DIAG success line', () {
+      expect(
+        androidRelayPushRegistrationAccepted(
+          'I/flutter: [PUSH_DIAG] relay_push_registration_success '
+          'platform=android',
+        ),
+        isTrue,
+      );
+    });
+
+    test('accepts the gated FLOW success event', () {
+      expect(
+        androidRelayPushRegistrationAccepted(
+          flow('PUSH_REGISTER_TOKEN_SUCCESS', <String, Object?>{
+            'platform': 'android',
+          }),
+        ),
+        isTrue,
+      );
+    });
+
+    test('rejects intent without acceptance', () {
+      // PUSH_REGISTER_TOKEN_SENDING is emitted BEFORE the frame leaves the
+      // device. Accepting it would make the gate pass while the relay is down.
+      expect(
+        androidRelayPushRegistrationAccepted(
+          flow('PUSH_REGISTER_TOKEN_SENDING', <String, Object?>{
+            'platform': 'android',
+            'tokenLength': 163,
+          }),
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects a failed registration on either channel', () {
+      expect(
+        androidRelayPushRegistrationAccepted(
+          flow('PUSH_REGISTER_TOKEN_FAILED', <String, Object?>{
+            'platform': 'android',
+          }),
+        ),
+        isFalse,
+      );
+      expect(
+        androidRelayPushRegistrationAccepted(
+          'I/flutter: [PUSH_DIAG] relay_push_registration_failed '
+          'platform=android',
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects a non-android platform', () {
+      expect(
+        androidRelayPushRegistrationAccepted(
+          '${flow('PUSH_REGISTER_TOKEN_SUCCESS', <String, Object?>{'platform': 'ios'})}\n'
+          'I/flutter: [PUSH_DIAG] relay_push_registration_success '
+          'platform=ios',
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects unrelated, empty, and malformed logs', () {
+      expect(androidRelayPushRegistrationAccepted(''), isFalse);
+      expect(
+        androidRelayPushRegistrationAccepted('I/flutter: [FLOW] {not json'),
+        isFalse,
+      );
+      expect(
+        androidRelayPushRegistrationAccepted(
+          'I/flutter: [FLOW] {"layer":"FL","event":"PUSH_REGISTER_TOKEN_BEGIN",'
+          '"details":{}}',
+        ),
+        isFalse,
+      );
+    });
+
+    test('finds the success line among surrounding noise', () {
+      final log = <String>[
+        'I/flutter: [FLOW] {"layer":"FL","event":"PUSH_REGISTER_TOKEN_BEGIN","details":{}}',
+        flow('PUSH_REGISTER_TOKEN_SENDING', <String, Object?>{
+          'platform': 'android',
+          'tokenLength': 163,
+        }),
+        'D/AudioSystem: unrelated device chatter',
+        flow('P2P_INBOX_REGISTER_TOKEN_RESPONSE', <String, Object?>{
+          'ok': true,
+        }),
+        flow('PUSH_REGISTER_TOKEN_SUCCESS', <String, Object?>{
+          'platform': 'android',
+        }),
+      ].join('\n');
+
+      expect(androidRelayPushRegistrationAccepted(log), isTrue);
+    });
+  });
+
+  group('flow event occurrence counting', () {
+    String flow(String event, Map<String, Object?> details) =>
+        'I/flutter: [FLOW] '
+        '${jsonEncode(<String, Object?>{
+          'layer': 'DB',
+          'event': event,
+          'details': details,
+        })}';
+
+    test('counts only exact event matches', () {
+      final log = <String>[
+        flow('GROUP_MESSAGES_DB_INSERT_SUCCESS', <String, Object?>{'id': 'aaaa1111'}),
+        flow('GROUP_MESSAGES_DB_INSERT_START', <String, Object?>{'id': 'bbbb2222'}),
+        flow('GROUP_MESSAGES_DB_INSERT_SUCCESS', <String, Object?>{'id': 'cccc3333'}),
+        'D/unrelated: GROUP_MESSAGES_DB_INSERT_SUCCESS in prose',
+      ].join('\n');
+
+      expect(
+        countFlowEventOccurrences(log, 'GROUP_MESSAGES_DB_INSERT_SUCCESS'),
+        2,
+      );
+      expect(countFlowEventOccurrences('', 'ANYTHING'), 0);
+    });
+
+    test('an id-bound arrival survives a rotated logcat ring; a count '
+        'delta does not', () {
+      // Device evidence, run 11 (2026-08-18): `adb logcat -d` returns only
+      // what is still in the ring buffer, so a later dump can hold FEWER
+      // occurrences than the baseline even though the row under test was
+      // written. `count > baseline` is therefore unsound as an arrival
+      // predicate and must not be reintroduced.
+      final baseline = <String>[
+        flow('GROUP_MESSAGES_DB_INSERT_SUCCESS', <String, Object?>{
+          'id': 'aaaa1111',
+        }),
+        flow('GROUP_MESSAGES_DB_INSERT_SUCCESS', <String, Object?>{
+          'id': 'bbbb2222',
+        }),
+      ].join('\n');
+      // The ring rotated both baseline lines away and kept only the new row.
+      final rotated = flow('GROUP_MESSAGES_DB_INSERT_SUCCESS',
+          <String, Object?>{'id': 'dddd4444'});
+
+      expect(
+        countFlowEventOccurrences(
+              rotated,
+              'GROUP_MESSAGES_DB_INSERT_SUCCESS',
+            ) >
+            countFlowEventOccurrences(
+              baseline,
+              'GROUP_MESSAGES_DB_INSERT_SUCCESS',
+            ),
+        isFalse,
+        reason: 'the unsound delta predicate misses the arrival',
+      );
+      expect(groupMessageStoredWithId(rotated, 'dddd4444'), isTrue);
+      expect(groupMessageStoredWithId(baseline, 'dddd4444'), isFalse);
+    });
+
+    test('an insert for a different id is not the message under test', () {
+      final log = flow('GROUP_MESSAGES_DB_INSERT_SUCCESS', <String, Object?>{
+        'id': 'aaaa1111',
+      });
+
+      expect(groupMessageStoredWithId(log, 'dddd4444'), isFalse);
+      expect(groupMessageStoredWithId(log, ''), isFalse);
+      expect(
+        groupMessageStoredWithId(
+          'D/unrelated: GROUP_MESSAGES_DB_INSERT_SUCCESS id aaaa1111',
+          'aaaa1111',
+        ),
+        isFalse,
+        reason: 'prose mentioning the event is not a structured insert',
+      );
+    });
+
+    test('a replayed duplicate with an existing row also proves arrival', () {
+      // Device evidence, run 11: the live-fanout insert happened at 11:10:52Z
+      // and had rotated out of the ring by the time the dump was pulled, but
+      // every later inbox replay still reported the row as already stored.
+      final duplicate = 'I/flutter: [FLOW] '
+          '${jsonEncode(<String, Object?>{
+            'layer': 'FL',
+            'event': 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+            'details': <String, Object?>{
+              'incoming': true,
+              'messageId': '6e4e1d63-bb8f-43fd-90a8-116ea10f34a9',
+              'existingLocalRowId': '6e4e1d63-bb8f-43fd-90a8-116ea10f34a9',
+            },
+          })}';
+
+      expect(groupMessageStoredWithId(duplicate, '6e4e1d63'), isTrue);
+      expect(groupMessageStoredWithId(duplicate, 'dddd4444'), isFalse);
+    });
+
+    test('the sender publish id is the last successful group send', () {
+      final log = <String>[
+        'I/flutter: [FLOW] '
+            '${jsonEncode(<String, Object?>{
+              'layer': 'FL',
+              'event': 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
+              'details': <String, Object?>{'messageId': 'aaaa1111'},
+            })}',
+        'I/flutter: [FLOW] '
+            '${jsonEncode(<String, Object?>{
+              'layer': 'FL',
+              'event': 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
+              'details': <String, Object?>{'messageId': 'dddd4444'},
+            })}',
+      ].join('\n');
+
+      expect(latestGroupSendMessageId(log), 'dddd4444');
+      expect(latestGroupSendMessageId(''), isNull);
+    });
+
+    // Census guard. The relay outage this lane hit — and one bug in this very
+    // harness — both came from grepping a literal that no longer existed.
+    // Anything the capture waits on must be pinned to its real emission site.
+    test('the awaited literals still exist in production source', () {
+      expect(
+        File(
+          'lib/core/database/helpers/group_messages_db_helpers.dart',
+        ).readAsStringSync(),
+        contains("event: 'GROUP_MESSAGES_DB_INSERT_SUCCESS'"),
+      );
+      expect(
+        File(
+          'lib/core/database/helpers/group_messages_db_helpers.dart',
+        ).readAsStringSync(),
+        contains("event: 'GROUP_MESSAGES_DB_LOAD_ALL_SUCCESS'"),
+      );
+      final registration = File(
+        'lib/features/push/application/register_push_token_use_case.dart',
+      ).readAsStringSync();
+      expect(registration, contains("'relay_push_registration_success'"));
+      expect(registration, contains("'PUSH_REGISTER_TOKEN_SUCCESS'"));
+      expect(
+        File(
+          'lib/features/groups/application/send_group_message_use_case.dart',
+        ).readAsStringSync(),
+        contains("'GROUP_SEND_MSG_USE_CASE_SUCCESS'"),
+      );
+    });
+  });
+
   group('direct-text relay token receipt', () {
     final now = DateTime.utc(2026, 7, 13, 3, 30);
     const commandId = 'direct-text-relay-1783913400000000-12345';

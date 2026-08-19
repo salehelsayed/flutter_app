@@ -154,6 +154,8 @@ support_paths=(
   integration_test/scripts/run_group_multi_party_sims.dart
   integration_test/scripts/run_group_notification_projection_android.dart
   integration_test/scripts/group_notification_projection_android_criteria.dart
+  integration_test/scripts/run_group_muted_notification_android.dart
+  integration_test/scripts/group_muted_notification_android_criteria.dart
   integration_test/scripts/run_notification_tap_device_real.dart
   integration_test/scripts/notification_ios_payload_campaign.dart
   integration_test/scripts/ios_notification_payload_xcui_driver.dart
@@ -176,6 +178,7 @@ support_paths=(
   lib/core/debug/group_media_reliability_e2e_main_actions.dart
   integration_test/scripts/validate_group_reaction_notification_artifacts.dart
   integration_test/group_notification_projection_android_proof_test.dart
+  integration_test/group_muted_notification_proof_test.dart
   integration_test/inbox_replay_before_ack_custody_harness.dart
   integration_test/intro_accept_notification_android_proof_test.dart
   integration_test/notif_push_payload_persist_harness.dart
@@ -222,6 +225,50 @@ jq -e '
   }]
 ' tool/sims/critical_features.json >/dev/null ||
   fail 'Plan 330 notification projection capability is incomplete or duplicated'
+
+jq -e '
+  [.capabilities[] | select(.id == "groups.muted_notification_campaign")] == [{
+    "id": "groups.muted_notification_campaign",
+    "owner": "groups",
+    "proofBoundary": "android.group-muted-notification-suppression",
+    "assertions": [
+      "groups.muted_live_message_no_card",
+      "groups.muted_background_reaction_no_card",
+      "groups.muted_unread_preserved",
+      "groups.muted_excluded_from_canonical_badge",
+      "groups.muted_delivery_unharmed"
+    ],
+    "lane": "reliability",
+    "modes": ["major", "full"],
+    "families": ["group", "notifications"],
+    "required": true,
+    "command": ["dart", "run", "integration_test/scripts/run_group_muted_notification_android.dart"],
+    "buildProfile": "android.production_fcm",
+    "dependencies": ["build.android.production_fcm"],
+    "resources": [
+      {"name": "build:android.production_fcm", "access": "read"},
+      {"name": "device:android-physical", "access": "exclusive"},
+      {"name": "device:android-emulator", "access": "exclusive"},
+      {"name": "relay-mutation:staging", "access": "exclusive"},
+      {"name": "artifact:group-muted-notification", "access": "write"}
+    ],
+    "targetCapabilities": ["android.physical", "android.emulator", "credentials.fcm", "relay.staging"],
+    "allowedNaReason": "target_unavailable_by_project_policy",
+    "artifactRequired": true,
+    "artifactValidator": "integration_test/group_muted_notification_proof_test.dart",
+    "automationReady": true,
+    "active": true,
+    "declaredBuildException": false
+  }]
+' tool/sims/critical_features.json >/dev/null ||
+  fail 'Plan 379 muted-group capability is incomplete or duplicated'
+
+# The muted capability must stay LAST: six runtime-roots keyPaths select
+# capabilities by ARRAY INDEX (capabilities.33/34/36/40), and a mid-array
+# insert silently repoints them at the wrong row.
+jq -e '.capabilities[-1].id == "groups.muted_notification_campaign"' \
+  tool/sims/critical_features.json >/dev/null ||
+  fail 'the muted capability must remain the last capabilities entry'
 
 # Plan 269 keeps one discoverable prepared-artifact runner with exactly two
 # independently listable target-bounded scenarios. The manifest owns only the

@@ -26,6 +26,30 @@ void main() {
   late Directory notificationIdDirectory;
   late String? launchPayload;
   late int launchNotificationId;
+  // Platform reply for `getNotificationChannels`. Null (the default) is the
+  // plugin's "no channel information" answer, which the publication path
+  // treats as fail-open — so every pre-existing test keeps its behaviour.
+  late List<Map<String, Object?>>? notificationChannelsReply;
+
+  /// One entry of a `getNotificationChannels` reply. Every key the plugin's
+  /// mapper dereferences is supplied; it calls `Color(a['ledColor'])` and
+  /// `Importance.values.firstWhere(...)` unguarded.
+  Map<String, Object?> channelReply(String id, int importance) =>
+      <String, Object?>{
+        'id': id,
+        'name': id,
+        'description': null,
+        'groupId': null,
+        'showBadge': true,
+        'importance': importance,
+        'playSound': true,
+        'soundSource': null,
+        'enableLights': false,
+        'enableVibration': true,
+        'vibrationPattern': null,
+        'ledColor': 0,
+        'audioAttributesUsage': 5,
+      };
 
   FlutterNotificationService buildService({
     DurableConversationNotificationIdRegistry? registry,
@@ -54,6 +78,7 @@ void main() {
     log.clear();
     launchPayload = 'peer-123';
     launchNotificationId = 7;
+    notificationChannelsReply = null;
     notificationIdDirectory = Directory.systemTemp.createTempSync(
       'flutter-notification-service-id-registry-',
     );
@@ -64,6 +89,8 @@ void main() {
           switch (call.method) {
             case 'initialize':
               return true;
+            case 'getNotificationChannels':
+              return notificationChannelsReply;
             case 'getNotificationAppLaunchDetails':
               return <String, Object?>{
                 'notificationLaunchedApp': true,
@@ -1178,6 +1205,116 @@ void main() {
       hasLength(cancelCount),
     );
   });
+
+  // -------------------------------------------------------------------------
+  // Per-channel disablement, wired end to end through the real publication
+  // path. The pure decision is covered in local_notification_support_test;
+  // these two rows exist because a correct decision that the publication path
+  // never calls is inert on device.
+  // -------------------------------------------------------------------------
+  test('a blocked mknoon_messages channel withdraws the silent channel from a '
+      'silent publication', () async {
+    notificationChannelsReply = <Map<String, Object?>>[
+      // 0 = IMPORTANCE_NONE: the user switched "Messages" off in Settings.
+      channelReply(mknoonMessagesChannelId, 0),
+      // Still open, and therefore still a live route for the very card the
+      // user just switched off — this is the leak being closed.
+      channelReply(mknoonMessagesSilentChannelId, Importance.low.value),
+    ];
+    final service = buildService();
+
+    await service.initialize();
+    await service.showMessageNotification(
+      contactPeerId: 'peer-blocked',
+      senderUsername: 'Alice',
+      messageText: 'follow-up',
+      silent: true,
+    );
+
+    final showCall = log.lastWhere((call) => call.method == 'show');
+    final platformSpecifics =
+        (showCall.arguments as Map)['platformSpecifics'] as Map;
+    // Back onto the blocked primary channel, where the OS refuses the post.
+    expect(platformSpecifics['channelId'], mknoonMessagesChannelId);
+  });
+
+  test('an open mknoon_messages channel leaves silent publications on the '
+      'silent channel', () async {
+    notificationChannelsReply = <Map<String, Object?>>[
+      channelReply(mknoonMessagesChannelId, Importance.high.value),
+      channelReply(mknoonMessagesSilentChannelId, Importance.low.value),
+    ];
+    final service = buildService();
+
+    await service.initialize();
+    await service.showMessageNotification(
+      contactPeerId: 'peer-open',
+      senderUsername: 'Alice',
+      messageText: 'follow-up',
+      silent: true,
+    );
+
+    final showCall = log.lastWhere((call) => call.method == 'show');
+    final platformSpecifics =
+        (showCall.arguments as Map)['platformSpecifics'] as Map;
+    expect(platformSpecifics['channelId'], mknoonMessagesSilentChannelId);
+  });
+
+  // The canonical rebuild is a THIRD publication site with its own hardcoded
+  // `silent: true`. Its open-channel sibling above
+  // ('canonical rebuild silently replaces only the expected managed
+  // generation') stays on the silent channel, so only a blocked-channel row
+  // can tell a wired rebuild apart from an unwired one.
+  test('a blocked mknoon_messages channel withdraws the silent channel from a '
+      'canonical rebuild', () async {
+    notificationChannelsReply = <Map<String, Object?>>[
+      channelReply(mknoonMessagesChannelId, 0),
+      channelReply(mknoonMessagesSilentChannelId, Importance.low.value),
+    ];
+    final generations = <String>[
+      'generation-before',
+      'generation-rebuilt',
+      'generation-unused',
+    ];
+    final service = buildService(
+      registry: DurableConversationNotificationIdRegistry(
+        directory: notificationIdDirectory,
+      ),
+      generationFactory: () => generations.removeAt(0),
+    );
+    await service.initialize();
+    const key = 'group:blocked-rebuild';
+
+    await service.showMessageNotification(
+      contactPeerId: key,
+      senderUsername: 'Family',
+      messageText: 'Reaction',
+      payload: 'group:blocked-rebuild|message:target',
+      contentKind: ConversationNotificationContentKind.reaction,
+      contentEventIdentity: 'removed-reaction',
+    );
+
+    expect(
+      await service.replaceConversationNotificationGeneration(
+        key,
+        'generation-before',
+        const CanonicalConversationNotificationReplacement(
+          senderUsername: 'Family',
+          messageText: 'Alice: Photo',
+          routePayload: 'group:blocked-rebuild|message:older',
+          contentKind: ConversationNotificationContentKind.message,
+          eventIdentity: 'older',
+        ),
+      ),
+      isTrue,
+    );
+
+    final rebuilt = log.lastWhere((call) => call.method == 'show');
+    final specifics = (rebuilt.arguments as Map)['platformSpecifics'] as Map;
+    expect(specifics['channelId'], mknoonMessagesChannelId);
+    // The rebuild's other semantics are untouched by the withdrawal.
+    expect(specifics['autoCancel'], isFalse);
+  });
 }
 
 final class _BackgroundVisibility extends AppVisibilitySuppressionReader {
@@ -1223,4 +1360,5 @@ Future<void> _waitForAsyncNotificationWork({
     if (until == null || await until()) return;
   } while (DateTime.now().isBefore(deadline));
   throw StateError('timed out waiting for notification callback work');
+
 }

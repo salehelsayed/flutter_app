@@ -6,11 +6,15 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 runner="integration_test/scripts/run_group_reaction_notification_device.dart"
+# Ordered census of every scenario `groupReactionNotificationScenarios` exposes.
+# Plan 315 added the backgrounded-but-connected row without repinning this
+# contract, which left the gate red; keep this list in declaration order.
 expected="$({
   printf '%s\n' android_group_message_unread_lifecycle
   printf '%s\n' android_announcement_message_unread_lifecycle
   printf '%s\n' android_group_reaction_recipient
   printf '%s\n' android_announcement_reaction_recipient
+  printf '%s\n' android_group_reaction_recipient_background_connected
   printf '%s\n' ios_announcement_reaction_recipient
 })"
 
@@ -19,7 +23,7 @@ actual="$(
     awk '/^[[:alnum:]_]+$/ { print }'
 )"
 [ "$actual" = "$expected" ] || {
-  printf 'FAIL: Plan 257 scenario listing differs from the five-row contract\n' >&2
+  printf 'FAIL: Plan 257 scenario listing differs from the pinned scenario census\n' >&2
   exit 1
 }
 

@@ -404,15 +404,21 @@ class FlutterNotificationService
               metadata: metadata,
             );
       var publishedSilently = silent;
-      Future<void> show({required bool silent}) {
-        publishedSilently = silent;
+      Future<void> show({required bool silent}) async {
+        // A user who blocked "Messages" must not receive this card through the
+        // silent continuation channel.
+        final effectiveSilent = await resolveMknoonMessagePublicationSilence(
+          silent: silent,
+          plugin: _plugin,
+        );
+        publishedSilently = effectiveSilent;
         return _plugin.show(
           notificationId,
           senderUsername,
           messageText,
           mknoonConversationNotificationDetails(
             conversationKey: contactPeerId,
-            silent: silent,
+            silent: effectiveSilent,
             autoCancel: metadata == null,
             snapshot: snapshot,
           ),
@@ -668,18 +674,27 @@ class FlutterNotificationService
         expectedGeneration: expectedGeneration,
         metadata: metadata,
         retireCurrent: () => _plugin.cancel(notificationId),
-        replace: () => _plugin.show(
-          notificationId,
-          replacement.senderUsername,
-          replacement.messageText,
-          mknoonConversationNotificationDetails(
-            conversationKey: conversationKey,
+        // Same withdrawal as the publication path: a same-ID rebuild is still
+        // a post, and on a blocked primary channel it would otherwise CREATE a
+        // card on the silent channel rather than refresh an existing one.
+        replace: () async {
+          final effectiveSilent = await resolveMknoonMessagePublicationSilence(
             silent: true,
-            autoCancel: false,
-            snapshot: replacement.snapshot,
-          ),
-          payload: payload,
-        ),
+            plugin: _plugin,
+          );
+          await _plugin.show(
+            notificationId,
+            replacement.senderUsername,
+            replacement.messageText,
+            mknoonConversationNotificationDetails(
+              conversationKey: conversationKey,
+              silent: effectiveSilent,
+              autoCancel: false,
+              snapshot: replacement.snapshot,
+            ),
+            payload: payload,
+          );
+        },
       );
       if (!replaced) {
         emitFlowEvent(

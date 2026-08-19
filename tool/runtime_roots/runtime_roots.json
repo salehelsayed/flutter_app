@@ -360,6 +360,21 @@
       ]
     },
     {
+      "path": "integration_test/scripts/run_group_muted_notification_android.dart",
+      "owner": "groups / Sims",
+      "reason": "The Plan 379 Sims capability selects this exact executable Android proof tool.",
+      "condition": "Remove only with the owning Sims capability and equivalent muted-group Android suppression proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.40.command.2",
+          "value": "integration_test/scripts/run_group_muted_notification_android.dart"
+        }
+      ]
+    },
+    {
       "path": "integration_test/scripts/run_group_notification_projection_android.dart",
       "owner": "groups / Sims",
       "reason": "The Plan 330 Sims capability selects this exact executable Android proof tool.",
@@ -1194,6 +1209,10 @@
       "rootKind": "headless-plugin"
     },
     {
+      "id": "tooling.group-muted-notification-android",
+      "rootKind": "tooling"
+    },
+    {
       "id": "tooling.group-notification-projection-android",
       "rootKind": "tooling"
     },
@@ -1474,6 +1493,22 @@
           "source": "packages/background_push_crypto/android/src/main/kotlin/com/mknoon/background_push_crypto/BackgroundPushCryptoPlugin.kt",
           "callee": "MethodChannel",
           "argument": "CHANNEL_NAME"
+        }
+      ]
+    },
+    {
+      "id": "tooling.group-muted-notification-android",
+      "path": "integration_test/scripts/run_group_muted_notification_android.dart",
+      "rootKind": "tooling",
+      "owner": "groups / Sims",
+      "reason": "The Plan 379 Sims capability selects this exact executable Android proof tool.",
+      "condition": "Remove only with the capability and equivalent muted-group Android proof-driver replacement.",
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.40.command.2",
+          "value": "integration_test/scripts/run_group_muted_notification_android.dart"
         }
       ]
     },

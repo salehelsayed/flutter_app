@@ -4,6 +4,7 @@ import 'package:background_push_crypto/background_push_crypto.dart';
 import 'package:crypto/crypto.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../database/helpers/canonical_notification_badge_state_db_helpers.dart';
 import '../secure_storage/secret_storage_references.dart';
 import '../secure_storage/secure_key_store.dart';
 
@@ -27,6 +28,15 @@ const Set<String> groupReactionE2EAndroidScenarios = <String>{
   // non-conforming result and the capture fails with
   // group_reaction_runtime_result_contract_mismatch.
   'android_group_reaction_recipient_background_connected',
+  // Plan 379 G4: the muted-group device lane. These ids are out-of-catalog
+  // (their harness registrations live in the Plan-379 criteria/validator and
+  // their own Sims capability), but this in-app allow-list is not optional —
+  // an id missing here makes the runtime echo a non-conforming result and the
+  // capture fails with group_reaction_runtime_result_contract_mismatch.
+  // Neither id carries the `_message_unread_lifecycle` suffix, so the marker
+  // gate below requires them to send a target-only probe request.
+  'android_group_muted_message_suppression',
+  'android_group_muted_reaction_background_suppression',
 };
 
 bool isGroupReactionE2EProbeAction(Object? value) =>
@@ -174,7 +184,7 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
 
   final groups = await database.query(
     'groups',
-    columns: <String>['id', 'name', 'type', 'my_role'],
+    columns: <String>['id', 'name', 'type', 'my_role', 'is_muted'],
     where: 'name = ?',
     whereArgs: <Object?>[request.groupName],
   );
@@ -265,6 +275,11 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
       })
       .toList(growable: false);
 
+  final canonicalBadgeState = await _observeCanonicalBadgeState(
+    database,
+    groupId,
+  );
+
   return <String, Object?>{
     'schema': 'mknoon.plan257.sqlcipher-observation.v1',
     'scenario': request.scenario,
@@ -273,6 +288,12 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
     'groupIdSha256': groupId == null ? null : _sha256Text(groupId),
     'groupType': group?['type'],
     'localRole': group?['my_role'],
+    // Plan 379: read from the same encrypted `groups` row as the rest of this
+    // observation. The muted device lane fails closed when this is not `true`,
+    // so a Group Info switch tap that missed its target REDs the capture
+    // instead of proving "no notification" against a still-unmuted group.
+    // `null` (no such group row) is deliberately distinct from `false`.
+    'groupIsMuted': group == null ? null : group['is_muted'] == 1,
     'latestGroupKeyEpoch': latestGroupKey?['key_generation'],
     'latestGroupKeySha256': groupKey == null ? null : _sha256Text(groupKey),
     'markers': markerObservations,
@@ -287,6 +308,60 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
     'reactionTargetIdSha256': reactions.length == 1
         ? _sha256Text(reactions.single['message_id'] as String)
         : null,
+    'canonicalBadgeState': canonicalBadgeState,
+  };
+}
+
+/// Redacted projection of the PRODUCTION canonical notification badge state.
+///
+/// Deliberately delegates to [dbLoadCanonicalNotificationBadgeState] rather
+/// than re-deriving the predicate here: a hand-rolled probe query would not
+/// re-red when a production exclusion (mute, archive, dissolve, self-removal)
+/// is dropped, which is the whole point of observing it.
+///
+/// Conversation/event ids are hashed before they leave the probe, matching the
+/// rest of `mknoon.plan257.sqlcipher-observation.v1`.
+///
+/// `available: false` is reported when the badge projection cannot run against
+/// the open database (a fixture with a partial schema). Device captures assert
+/// `available == true`, so a real regression cannot hide behind this branch.
+Future<Map<String, Object?>> _observeCanonicalBadgeState(
+  Database database,
+  String? groupId,
+) async {
+  final CanonicalNotificationBadgeState badgeState;
+  try {
+    badgeState = await dbLoadCanonicalNotificationBadgeState(database);
+  } on DatabaseException {
+    return <String, Object?>{
+      'available': false,
+      'reason': 'badge_projection_unavailable',
+    };
+  }
+
+  final groupIdentities = badgeState.identities
+      .where(
+        (identity) => identity.lane == CanonicalNotificationLane.group,
+      )
+      .toList(growable: false);
+  final observedGroupIdentities = groupId == null
+      ? const <CanonicalNotificationIdentity>[]
+      : groupIdentities
+            .where((identity) => identity.conversationId == groupId)
+            .toList(growable: false);
+
+  return <String, Object?>{
+    'available': true,
+    'unreadCount': badgeState.unreadCount,
+    'groupIdentityCount': groupIdentities.length,
+    'includesObservedGroup': observedGroupIdentities.isNotEmpty,
+    'observedGroupIdentityCount': observedGroupIdentities.length,
+    'groupConversationIdSha256':
+        (groupIdentities
+              .map((identity) => _sha256Text(identity.conversationId))
+              .toSet()
+              .toList(growable: false)
+          ..sort()),
   };
 }
 

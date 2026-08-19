@@ -1,0 +1,299 @@
+{
+  "_about": "Machine-checkable form of project-memory/QUESTIONS.md (plans 381 + 382). `required` entries are case-insensitive substrings that must appear in recall's OUTPUT (never in the query -- see TC-381-10's vacuity guard). `v1_scope: true` marks the 12 questions the plan-381 plan-corpus extractor is contracted to answer; `v2_scope: true` marks the 6 questions plan 382's session-memory pass closes, each carrying TWO gold fragments because a single loose keyword (`custody`, `deploy`, `host-all`) proves only that related facts surfaced, not that the question was answered. `--gate` enforces v1 OR v2; the remaining 12 are reported, not gated, and are the phase-3 ingestion decision input.",
+  "questions": [
+    {
+      "id": "Q1",
+      "category": "A. Plan status & supersession",
+      "query": "plan 377 fresh-group strict-authority send lockout status executed or planning-only",
+      "required": [
+        "377",
+        "closed"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q2",
+      "category": "A. Plan status & supersession",
+      "query": "status of plan 263 plan 264 plan 265 plan 266 plan 267 group-exit reliability",
+      "required": [
+        "263",
+        "267",
+        "executed"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q3",
+      "category": "A. Plan status & supersession",
+      "query": "plan 302 sender protected reopen unlimited one-more-look budget executed",
+      "required": [
+        "302",
+        "executed"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q4",
+      "category": "A. Plan status & supersession",
+      "query": "plan 303 view-once minimal presentation landed",
+      "required": [
+        "303",
+        "executed"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q5",
+      "category": "A. Plan status & supersession",
+      "query": "plan 259 private-media feedback copy edits state",
+      "required": [
+        "259",
+        "execution-ready"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q6",
+      "category": "A. Plan status & supersession",
+      "query": "which plan closed the state-guard order-insensitive verify campaign-red problem",
+      "required": [
+        "317",
+        "state-guard"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q7",
+      "category": "A. Plan status & supersession",
+      "query": "what superseded the host-all is not runnable from the container limitation",
+      "required": [
+        "host-all"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q8",
+      "category": "A. Plan status & supersession",
+      "query": "is test/unit still invisible to per-plan gates",
+      "required": [
+        "core-host-all",
+        "test/unit"
+      ],
+      "v1_scope": false,
+      "v2_scope": true
+    },
+    {
+      "id": "Q9",
+      "category": "B. Refuted findings",
+      "query": "is writing a genesis authority proof at plain creation a valid fix for the fresh-group send lockout",
+      "required": [
+        "genesis",
+        "refuted"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q10",
+      "category": "B. Refuted findings",
+      "query": "is the multi-device group-push divergence transportPeerId accountPeerId a real bug",
+      "required": [
+        "transportPeerId"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q11",
+      "category": "B. Refuted findings",
+      "query": "was the group self-reaction empty nomination envelopes a defect",
+      "required": [
+        "nomination",
+        "refuted"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q12",
+      "category": "B. Refuted findings",
+      "query": "did skia cache churn cause the state-guard campaign reds",
+      "required": [
+        "skia",
+        "refuted"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q13",
+      "category": "B. Refuted findings",
+      "query": "is narrowing the disappearing-message application predicate to match the storage predicate safe",
+      "required": [
+        "disappearing"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q14",
+      "category": "B. Refuted findings",
+      "query": "was the pending contact requests invisible in E2E builds behavior the 171 bug",
+      "required": [
+        "171"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q15",
+      "category": "C. Constraints, flags & rationale",
+      "query": "why do post-344 clients require DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED true",
+      "required": [
+        "DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED",
+        "offline"
+      ],
+      "v1_scope": false,
+      "v2_scope": true
+    },
+    {
+      "id": "Q16",
+      "category": "C. Constraints, flags & rationale",
+      "query": "which linked-device features are compiled out of shipped builds kDirectLinkedDevicesEnabled kMultiDeviceSyncEnabled",
+      "required": [
+        "linked"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q17",
+      "category": "C. Constraints, flags & rationale",
+      "query": "why is the private-media failure copy reassuring and sender-attributed rather than technical",
+      "required": [
+        "private-media"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q18",
+      "category": "C. Constraints, flags & rationale",
+      "query": "why must avoid_print file_names analyzer suppressions stay and why is dart fix --apply forbidden",
+      "required": [
+        "analyze"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q19",
+      "category": "C. Constraints, flags & rationale",
+      "query": "why does the relay ACL govern delete-ack and what does a wrong ACL leak",
+      "required": [
+        "leaks blobs",
+        "TTL"
+      ],
+      "v1_scope": false,
+      "v2_scope": true
+    },
+    {
+      "id": "Q20",
+      "category": "C. Constraints, flags & rationale",
+      "query": "which relay version is live and which is burned",
+      "required": [
+        "relay"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q21",
+      "category": "D. Proof & evidence requirements",
+      "query": "what proof is required before claiming a phone deploy succeeded versionName stamp",
+      "required": [
+        "versionName",
+        "post-install"
+      ],
+      "v1_scope": false,
+      "v2_scope": true
+    },
+    {
+      "id": "Q22",
+      "category": "D. Proof & evidence requirements",
+      "query": "why did plan 377 require a device-tier closure that host tests cannot substitute",
+      "required": [
+        "377"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q23",
+      "category": "D. Proof & evidence requirements",
+      "query": "what is the pinned device pair for group Android device proofs Pixel emulator",
+      "required": [
+        "device"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q24",
+      "category": "D. Proof & evidence requirements",
+      "query": "what must never be run against a stamped release install on a phone",
+      "required": [
+        "release"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q25",
+      "category": "D. Proof & evidence requirements",
+      "query": "which host-all failures are pre-existing baggage rather than regressions",
+      "required": [
+        "9 long-standing",
+        "concurrency-4-only"
+      ],
+      "v1_scope": false,
+      "v2_scope": true
+    },
+    {
+      "id": "Q26",
+      "category": "E. Deferred items & ownership",
+      "query": "who owns the linked-surface silent drop linked_group_conversation_wired collapses results to bool",
+      "required": [
+        "linked-device UX"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q27",
+      "category": "E. Deferred items & ownership",
+      "query": "what was deferred from plan 377 remove-reaction notMember lane and to which wave",
+      "required": [
+        "multi-device wave",
+        "notMember"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q28",
+      "category": "E. Deferred items & ownership",
+      "query": "where is the persisted terminal-failure reason gap tracked group_message.dart has no reason field",
+      "required": [
+        "future plan",
+        "376"
+      ],
+      "v1_scope": true
+    },
+    {
+      "id": "Q29",
+      "category": "E. Deferred items & ownership",
+      "query": "which standing program owns the next aggregate host-all run",
+      "required": [
+        "host-all"
+      ],
+      "v1_scope": false
+    },
+    {
+      "id": "Q30",
+      "category": "F. Process policies",
+      "query": "why must /workspace never be stashed and what is the alternative git worktree",
+      "required": [
+        "worktree",
+        "concurrent"
+      ],
+      "v1_scope": false,
+      "v2_scope": true
+    }
+  ]
+}

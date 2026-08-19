@@ -23,9 +23,14 @@ printf '%s\n' \
   tc_a6_replay_before_ack_custody \
   tc_b11_payload_persist_pre_drain \
   payload_fast_path_android_receiver \
-  payload_fast_path_cold_kill >"$expected"
+  payload_fast_path_cold_kill \
+  tc_b13_dual_path_single_alert \
+  tc_g7_permission_denied \
+  tc_g7_token_refresh_mid_session \
+  tc_g7_channel_disabled \
+  tc_g7_doze_delivery >"$expected"
 cmp -s "$expected" "$list_output" ||
-  fail 'android payload campaign does not expand to the four exact Android phases'
+  fail 'android payload campaign does not expand to the nine exact Android phases'
 grep -Fq payload_fast_path_ios_receiver "$list_output" &&
   fail 'Android payload campaign incorrectly included the iOS APNs/NSE phase'
 
@@ -79,6 +84,9 @@ printf '%s\n' \
   '  printf "Activities:\\n"' \
   'elif [[ "$*" == *"shell am force-stop com.mknoon.app" ]]; then' \
   '  exit 0' \
+  'elif [[ "$*" == *"logcat -T 1 -v brief" ]]; then' \
+  '  printf "I/flutter( 1): campaign log stream started\\n"' \
+  '  exec sleep 120' \
   'else' \
   '  exit 23' \
   'fi' >"$fake_bin/adb"
@@ -204,6 +212,11 @@ for required in \
   notification_stop_node_and_clear_staging \
   notification_post_tap_observe \
   notification_drain_observe \
+  notification_delete_push_token \
+  'force-idle' \
+  'deviceidle' \
+  'set-permission-flags' \
+  'CHANNEL_NOTIFICATION_SETTINGS' \
   'airplane-mode' \
   'am' \
   'kill' \
@@ -228,6 +241,15 @@ grep -Fq "['logcat', '-c']" "$adapter" &&
   fail 'Android notification campaign destructively clears shared device logs'
 grep -Fq '_deviceLogcatCursor' "$adapter" ||
   fail 'Android notification campaign lacks a non-destructive log window'
+# The window must come from a LIVE reader started before the legs. A post-hoc
+# `logcat -d -t <cursor>` read is unsound here: the emulator's main ring is
+# 2 MiB and a busy campaign minute emits ~1.6 MB, so an aged-out event returns
+# an EMPTY window that reads as "the app never emitted it".
+grep -Fq '_startDeviceLogStream' "$adapter" ||
+  fail 'Android notification campaign reads log windows without a live stream'
+if grep -Fq "'logcat'," "$adapter" && grep -Fq "'-d'," "$adapter"; then
+  fail 'Android notification campaign still uses a post-hoc logcat -d window'
+fi
 grep -Fq 'runAndroidNotificationPayloadE2EAction' "$app_runner" ||
   fail 'installed app poller does not dispatch notification actions'
 grep -Fq 'startIntroPollerAfterColdRecovery(' "$app_bootstrap" ||

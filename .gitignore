@@ -183,6 +183,10 @@ graphify-arch/tdd-overlay.json
 
 # SIMS iOS notification external inputs (credential-adjacent) — never commit.
 /docker-ws/sims-ios-notification/
+
+# Local credential backups (APNs auth key, relay SSH key, upload keystore).
+# Secret-bearing — never commit.
+/backup/
 graphify-arch/graphify-out/20*/
 
 # Device log captures — large, session-local.
@@ -190,3 +194,10 @@ graphify-arch/graphify-out/20*/
 docker-ws/xiaomi-state-guard-backup-*/
 go-relay-server/relay-server-linux-*
 docker-ws/pixel6-state-guard-backup-*/
+
+# project-memory graph — derived from the plan corpus, rebuilt by
+# scripts/test/project_memory_recall_contract_test.sh.
+project-memory/graph.db
+project-memory/recall_stats.jsonl
+/docker-ws/plan380_emu_logcat_run.txt
+/docker-ws/plan380_e2e_receipts.txt

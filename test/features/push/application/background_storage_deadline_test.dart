@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
@@ -1120,6 +1121,84 @@ void main() {
           firstHandler,
           secondHandler,
         ]).timeout(cleanupBudget);
+      }
+    },
+  );
+
+  // Plan 383 (G17) — the killed-app fallback lane deliberately does NOT cover
+  // the deadline variant. Every OTHER exit of the durable-effect block now
+  // falls through and presents; a storage-deadline exceed still records
+  // `storage_deferred` and shows nothing, because deadline exhaustion signals
+  // storage liveness trouble whose retry vehicle is the recovery worker.
+  test(
+    'durable effect authority timeout stays storage-deferred with no fallback card',
+    () async {
+      const message = RemoteMessage(
+        messageId: 'transport-durable-authority-deadline',
+        data: <String, dynamic>{
+          'type': 'new_message',
+          'sender_id': 'peer-durable-deadline',
+          'message_id': 'durable-authority-deadline-event',
+        },
+      );
+      debugSetBackgroundPushNotificationResolver(
+        (_) async => const BackgroundPushNotificationFallback(
+          title: 'Alice',
+          body: 'Alice: hello',
+          payload: 'peer-durable-deadline',
+          resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+            kind: ConversationNotificationContentKind.message,
+            canonicalEventId: 'durable-authority-deadline-event',
+          ),
+        ),
+      );
+      final authorityEntered = Completer<void>();
+      final releaseAuthority =
+          Completer<DurableLocalNotificationEffectContext?>();
+      debugSetBackgroundDurableLocalNotificationEffectResolver(({
+        required routeTarget,
+        required fallback,
+        required metadata,
+      }) {
+        if (!authorityEntered.isCompleted) authorityEntered.complete();
+        return releaseAuthority.future;
+      });
+      addTearDown(debugResetBackgroundDurableLocalNotificationEffectResolver);
+
+      final handler = firebaseMessagingBackgroundHandler(message);
+      try {
+        await _awaitSignal(authorityEntered.future, 'durable authority reader');
+        expect(
+          await _completesWithin(handler, observationBudget),
+          isTrue,
+          reason: 'a held authority read must consume a bounded phase',
+        );
+        expect(_notificationEffects(notificationCalls), isEmpty);
+
+        final journalFiles = livenessJournalDirectory
+            .listSync()
+            .whereType<File>()
+            .toList(growable: false);
+        expect(journalFiles, hasLength(1));
+        final record =
+            jsonDecode(await journalFiles.single.readAsString())
+                as Map<String, dynamic>;
+        // `durable_effect_authority` has no dedicated liveness bucket; it
+        // falls into `local_state` (background_message_handler.dart phase
+        // switch). Pinning the truthful current mapping, not a wished one.
+        expect(record['phase'], 'local_state');
+        expect(record['outcome'], 'storage_deferred');
+
+        releaseAuthority.complete(null);
+        await Future<void>.delayed(lateEffectWindow);
+        expect(
+          _notificationEffects(notificationCalls),
+          isEmpty,
+          reason: 'a late authority answer must not resurrect the card',
+        );
+      } finally {
+        if (!releaseAuthority.isCompleted) releaseAuthority.complete(null);
+        await handler.timeout(cleanupBudget);
       }
     },
   );

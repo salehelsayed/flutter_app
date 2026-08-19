@@ -1,8 +1,10 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/android_notification_payload_e2e.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -41,6 +43,19 @@ ConversationMessage _message(String id) => ConversationMessage(
   transport: 'inbox',
 );
 
+Future<Map<String, dynamic>> _runReplay({
+  required _DrainP2PService p2pService,
+  required _PendingBridge bridge,
+  required MessageRepository messageRepo,
+}) => runAndroidNotificationPayloadE2EAction(
+  config: _request(action: androidNotificationA6ObserveAction),
+  p2pService: p2pService,
+  bridge: bridge,
+  messageRepo: messageRepo,
+  pushEnvelopeStagingStore: _UnusedPushEnvelopeStagingStore(),
+  writeProgress: (_) async {},
+);
+
 Future<Map<String, dynamic>> _runDrain({
   required _DrainP2PService p2pService,
   required _PendingBridge bridge,
@@ -66,6 +81,7 @@ void main() {
         androidNotificationA6ObserveAction,
         androidNotificationPostTapObserveAction,
         androidNotificationDrainObserveAction,
+        androidNotificationDeletePushTokenAction,
       ]) {
         expect(isAndroidNotificationPayloadE2EAction(action), isTrue);
       }
@@ -253,6 +269,165 @@ void main() {
   });
 
   test(
+    'A6 replay observation retries a non-empty pending list instead of '
+    'reporting a custody failure',
+    () async {
+      final message = _message('message-notification-1');
+      final p2pService = _DrainP2PService(_inboxReady);
+      final messageRepo = _ReplayEventMessageRepository(
+        <List<ConversationMessage>>[
+          <ConversationMessage>[message],
+        ],
+      );
+      // The relay re-serves an entry until its ACK purges it, so a sample
+      // taken inside a replay window reads non-empty for a delivery that is
+      // converging exactly once (device-measured 2026-08-19).
+      final bridge = _PendingBridge(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'ok': true,
+          'messages': <Object?>[
+            <String, dynamic>{'id': 'entry-still-being-replayed'},
+          ],
+        },
+        <String, dynamic>{'ok': true, 'messages': <Object?>[]},
+      ]);
+
+      final receipt = await _runReplay(
+        p2pService: p2pService,
+        bridge: bridge,
+        messageRepo: messageRepo,
+      );
+
+      expect(receipt['status'], 'complete');
+      expect(receipt['success'], isTrue);
+      expect(receipt['pendingRelayEntries'], 0);
+      expect(bridge.pendingCalls, 2);
+    },
+  );
+
+  test(
+    'A6 replay observation fails closed on a duplicate commit before it ever '
+    'polls the relay',
+    () async {
+      final message = _message('message-notification-1');
+      final p2pService = _DrainP2PService(_inboxReady);
+      final messageRepo = _ReplayEventMessageRepository(
+        <List<ConversationMessage>>[
+          <ConversationMessage>[message],
+          <ConversationMessage>[message, message],
+        ],
+      );
+      final bridge = _PendingBridge(<Map<String, dynamic>>[
+        <String, dynamic>{'ok': true, 'messages': <Object?>[]},
+      ]);
+
+      await expectLater(
+        _runReplay(
+          p2pService: p2pService,
+          bridge: bridge,
+          messageRepo: messageRepo,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'relay replay/ack did not remain exactly once',
+          ),
+        ),
+      );
+      // Duplicate commits are a custody verdict on the first sample; the
+      // relay is never consulted to reach it.
+      expect(bridge.pendingCalls, 0);
+    },
+  );
+
+  test('delete-push-token action dispatches', () async {
+    final messaging = _RotatingFakeMessaging(<String>[
+      'token-before-rotation',
+      'token-after-rotation',
+    ]);
+
+    final receipt = await runAndroidNotificationPayloadE2EAction(
+      config: _tokenRotationRequest(),
+      p2pService: _DrainP2PService(_inboxReady),
+      bridge: _PendingBridge(<Map<String, dynamic>>[]),
+      messageRepo: _SequenceMessageRepository(const <List<ConversationMessage>>[
+        <ConversationMessage>[],
+      ]),
+      pushEnvelopeStagingStore: _UnusedPushEnvelopeStagingStore(),
+      writeProgress: (_) async {},
+      fcmTokenProvider: messaging.getToken,
+      fcmTokenInvalidator: messaging.deleteToken,
+    );
+
+    expect(receipt['status'], 'complete');
+    expect(receipt['success'], isTrue);
+    expect(receipt['tokenRotated'], isTrue);
+    expect(messaging.deleteCalls, 1);
+    expect(receipt['tokenHashPrefixBefore'], isA<String>());
+    expect(receipt['tokenHashPrefixAfter'], isA<String>());
+    expect(
+      receipt['tokenHashPrefixBefore'],
+      isNot(receipt['tokenHashPrefixAfter']),
+    );
+    // The receipt must never echo raw provider material.
+    expect(receipt.toString(), isNot(contains('token-before-rotation')));
+    expect(receipt.toString(), isNot(contains('token-after-rotation')));
+  });
+
+  test('delete-push-token action polls past a stale unrotated read', () async {
+    // `deleteToken` returning does NOT mean the next `getToken` already sees
+    // the new token. Accepting the first read would report a rotation that
+    // never happened.
+    final messaging = _RotatingFakeMessaging(<String>[
+      'token-before-rotation',
+      'token-after-rotation',
+    ], staleReadsAfterDelete: 2);
+
+    final receipt = await runAndroidNotificationPayloadE2EAction(
+      config: _tokenRotationRequest(),
+      p2pService: _DrainP2PService(_inboxReady),
+      bridge: _PendingBridge(<Map<String, dynamic>>[]),
+      messageRepo: _SequenceMessageRepository(const <List<ConversationMessage>>[
+        <ConversationMessage>[],
+      ]),
+      pushEnvelopeStagingStore: _UnusedPushEnvelopeStagingStore(),
+      writeProgress: (_) async {},
+      fcmTokenProvider: messaging.getToken,
+      fcmTokenInvalidator: messaging.deleteToken,
+    );
+
+    expect(receipt['tokenRotated'], isTrue);
+    expect(messaging.getCalls, greaterThanOrEqualTo(4));
+    expect(
+      receipt['tokenHashPrefixAfter'],
+      _hashPrefix('token-after-rotation'),
+    );
+  });
+
+  test('delete-push-token action fails closed with no token to rotate', () async {
+    final messaging = _RotatingFakeMessaging(const <String>['']);
+
+    await expectLater(
+      runAndroidNotificationPayloadE2EAction(
+        config: _tokenRotationRequest(),
+        p2pService: _DrainP2PService(_inboxReady),
+        bridge: _PendingBridge(<Map<String, dynamic>>[]),
+        messageRepo: _SequenceMessageRepository(
+          const <List<ConversationMessage>>[<ConversationMessage>[]],
+        ),
+        pushEnvelopeStagingStore: _UnusedPushEnvelopeStagingStore(),
+        writeProgress: (_) async {},
+        fcmTokenProvider: messaging.getToken,
+        fcmTokenInvalidator: messaging.deleteToken,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    // The provider is never mutated when there was nothing to rotate.
+    expect(messaging.deleteCalls, 0);
+  });
+
+  test(
     'transient drain and pending failures retry within the action budget',
     () async {
       final message = _message('message-notification-1');
@@ -289,6 +464,45 @@ void main() {
     },
   );
 }
+
+Map<String, dynamic> _tokenRotationRequest() =>
+    _request(action: androidNotificationDeletePushTokenAction)
+      ..remove('contactPeerId')
+      ..remove('expectedText')
+      ..remove('expectedMessageId')
+      ..remove('requireStagedBeforeTap')
+      ..['timeoutMs'] = 30000;
+
+/// Mirrors the real provider side effect: `deleteToken` is what makes the next
+/// `getToken` return a different value.
+class _RotatingFakeMessaging {
+  _RotatingFakeMessaging(this._tokens, {this.staleReadsAfterDelete = 0});
+
+  final List<String> _tokens;
+  final int staleReadsAfterDelete;
+  int _index = 0;
+  int _staleRemaining = 0;
+  int deleteCalls = 0;
+  int getCalls = 0;
+
+  Future<String?> getToken() async {
+    getCalls++;
+    if (_staleRemaining > 0) {
+      _staleRemaining--;
+      return _tokens.first;
+    }
+    return _tokens[_index];
+  }
+
+  Future<void> deleteToken() async {
+    deleteCalls++;
+    _staleRemaining = staleReadsAfterDelete;
+    if (_index + 1 < _tokens.length) _index++;
+  }
+}
+
+String _hashPrefix(String token) =>
+    sha256.convert(utf8.encode(token)).toString().substring(0, 12);
 
 class _DrainP2PService implements P2PService {
   _DrainP2PService(
@@ -336,7 +550,10 @@ class _PendingBridge implements Bridge {
       throw StateError('unexpected bridge command');
     }
     final payload = request['payload'] as Map<String, dynamic>;
-    timeoutMsValues.add((payload['timeoutMs'] as num).toInt());
+    // The A6 replay probe calls `callP2PInboxRetrievePending` with no explicit
+    // budget, so the field is genuinely absent on that path.
+    final timeoutMs = payload['timeoutMs'] as num?;
+    if (timeoutMs != null) timeoutMsValues.add(timeoutMs.toInt());
     final index = pendingCalls < responses.length
         ? pendingCalls
         : responses.length - 1;
@@ -344,6 +561,41 @@ class _PendingBridge implements Bridge {
     final outcome = responses[index];
     if (outcome is! Map<String, dynamic>) throw outcome;
     return jsonEncode(outcome);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Emits the staged->ack pair the A6 probe looks for from INSIDE the action.
+///
+/// `_observeReplayBeforeAck` installs its own E2E flow-event sink as its first
+/// statement, so events emitted before the action starts are never seen.
+class _ReplayEventMessageRepository implements MessageRepository {
+  _ReplayEventMessageRepository(this.observations);
+
+  final List<List<ConversationMessage>> observations;
+  int reads = 0;
+
+  @override
+  Future<List<ConversationMessage>> getMessagesForContact(
+    String contactPeerId,
+  ) async {
+    if (reads == 0) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_STAGED_CHAT_COMMITTED',
+        details: <String, dynamic>{'entryId': 'entry-1', 'reasonCode': 'stored'},
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_SUCCESS',
+        details: <String, dynamic>{'requested': 1, 'acked': 1},
+      );
+    }
+    final index = reads < observations.length ? reads : observations.length - 1;
+    reads++;
+    return observations[index];
   }
 
   @override

@@ -9,7 +9,9 @@
 //     per-scenario verdict files the orchestrator reads).
 //
 // Scenarios: S1-S3 text, S4 suppression, S5-S13 image/video/voice across
-// direct, group discussion, and group announcement lanes.
+// direct, group discussion, and group announcement lanes, S14 tone-window
+// debounce, S15 group same-chat suppression (+ post-clear control), S16
+// backgrounded-but-connected delivery.
 //
 // Launch via orchestrator:
 //   dart run integration_test/scripts/run_notification_sound_smoke.dart -d alice,bob
@@ -386,6 +388,17 @@ class _RecordedShow {
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  // G9 diagnosis: the integration_test binding routes failure details to the
+  // (absent) driver instead of stdout, so "Test failed. See exception logs
+  // above." prints with nothing above it. Mirror every reported exception to
+  // print(), which provably reaches the console here (the [EAR] lines do).
+  final prevReporter = reportTestException;
+  reportTestException = (details, testDescription) {
+    print('[SMOKE-DIAG] EXCEPTION in "$testDescription":');
+    print('[SMOKE-DIAG] ${details.exceptionAsString()}');
+    print('[SMOKE-DIAG] STACK:\n${details.stack}');
+    prevReporter(details, testDescription);
+  };
   initializeSqliteForCurrentPlatform();
 
   if (_role == 'bob') {
@@ -400,25 +413,35 @@ void main() {
 // ---------------------------------------------------------------------------
 
 void _runAlice() {
-  testWidgets('Alice(Notif) — S1..S13', (tester) async {
+  testWidgets('Alice(Notif) — S1..S16', (tester) async {
     print('\n${'═' * 60}');
     print('  ALICE (NOTIFICATION SOUND) — SMOKE E2E');
     print('${'═' * 60}\n');
 
     // ── Stack (reuse the group-capable setup; all repos we need) ──
     late final MessageRepositoryImpl messageRepo;
-    final stack = await setupGroupMultiDeviceStack(
-      dbName: _dbName,
-      username: 'AliceNotif',
-      cliPeerFixture: null,
-      publishOutgoingOrdinaryMutation:
-          ({required messageId, required outcome, required committedMedia}) =>
-              messageRepo.publishOutgoingOrdinaryMutation(
-                messageId: messageId,
-                outcome: outcome,
-                committedMedia: committedMedia,
-              ),
-    );
+    late final GroupMultiDeviceTestStack stack;
+    try {
+      stack = await setupGroupMultiDeviceStack(
+        dbName: _dbName,
+        username: 'AliceNotif',
+        cliPeerFixture: null,
+        publishOutgoingOrdinaryMutation:
+            ({
+              required messageId,
+              required outcome,
+              required committedMedia,
+            }) => messageRepo.publishOutgoingOrdinaryMutation(
+              messageId: messageId,
+              outcome: outcome,
+              committedMedia: committedMedia,
+            ),
+      );
+    } catch (e, s) {
+      print('[ALICE-DIAG] setupGroupMultiDeviceStack THREW: $e');
+      print('[ALICE-DIAG] STACK:\n$s');
+      rethrow;
+    }
     await waitForOnline(stack.p2pService, timeout: const Duration(seconds: 60));
 
     // ── 1:1 message repo (not created by setupGroupMultiDeviceStack) ──
@@ -874,6 +897,125 @@ void _runAlice() {
       );
     }
 
+    // ════════════════════════════════════════════════════════════════
+    //  S14: tone-window debounce — two 1:1 texts inside the 30s window.
+    //       The orchestrator gates the second send so it can capture the
+    //       first message's notification id before the in-place update.
+    // ════════════════════════════════════════════════════════════════
+    print('\n--- S14: tone-window debounce (1:1) ---');
+    await _signals.waitForSignal(
+      's14_go',
+      timeout: const Duration(seconds: 300),
+    );
+    final s14FirstResult = await sendChatMessage(
+      p2pService: stack.p2pService,
+      messageRepo: messageRepo,
+      targetPeerId: bobPeerId,
+      text: 'S14: first message audible',
+      senderPeerId: stack.identity.peerId,
+      senderUsername: stack.identity.username,
+      bridge: stack.bridge,
+      recipientMlKemPublicKey: bobMlKemPk,
+    );
+    _signals.writeJson('s14_alice_sent_first', {
+      'outcome': s14FirstResult.$1.name,
+    });
+    print('[ALICE-N] S14 first sent: ${s14FirstResult.$1.name}');
+    await _signals.waitForSignal(
+      's14_second_go',
+      timeout: const Duration(seconds: 300),
+    );
+    final s14SecondResult = await sendChatMessage(
+      p2pService: stack.p2pService,
+      messageRepo: messageRepo,
+      targetPeerId: bobPeerId,
+      text: 'S14: second message silent update',
+      senderPeerId: stack.identity.peerId,
+      senderUsername: stack.identity.username,
+      bridge: stack.bridge,
+      recipientMlKemPublicKey: bobMlKemPk,
+    );
+    _signals.writeJson('s14_alice_sent_second', {
+      'outcome': s14SecondResult.$1.name,
+    });
+    print('[ALICE-N] S14 second sent: ${s14SecondResult.$1.name}');
+    await _signals.waitForSignal(
+      's14_verdict_ack',
+      timeout: const Duration(seconds: 300),
+    );
+
+    // ════════════════════════════════════════════════════════════════
+    //  S15: group same-chat suppression + post-clear control.
+    // ════════════════════════════════════════════════════════════════
+    print('\n--- S15: group same-chat suppression ---');
+    await _signals.waitForSignal(
+      's15_go',
+      timeout: const Duration(seconds: 300),
+    );
+    final s15Result = await sendGroupMessage(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      msgRepo: stack.groupMsgRepo,
+      groupId: chatGroup.id,
+      text: 'S15: suppressed while viewing group',
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+    );
+    _signals.writeJson('s15_alice_sent', {'outcome': s15Result.$1.name});
+    print('[ALICE-N] S15 sent: ${s15Result.$1.name}');
+    await _signals.waitForSignal(
+      's15_control_go',
+      timeout: const Duration(seconds: 300),
+    );
+    final s15ControlResult = await sendGroupMessage(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      msgRepo: stack.groupMsgRepo,
+      groupId: chatGroup.id,
+      text: 'S15: control after tracker cleared',
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+    );
+    _signals.writeJson('s15_control_alice_sent', {
+      'outcome': s15ControlResult.$1.name,
+    });
+    print('[ALICE-N] S15 control sent: ${s15ControlResult.$1.name}');
+    await _signals.waitForSignal(
+      's15_control_ack',
+      timeout: const Duration(seconds: 300),
+    );
+
+    // ════════════════════════════════════════════════════════════════
+    //  S16: backgrounded-but-connected 1:1 delivery.
+    // ════════════════════════════════════════════════════════════════
+    print('\n--- S16: backgrounded-but-connected (1:1) ---');
+    await _signals.waitForSignal(
+      's16_go',
+      timeout: const Duration(seconds: 300),
+    );
+    final s16Result = await sendChatMessage(
+      p2pService: stack.p2pService,
+      messageRepo: messageRepo,
+      targetPeerId: bobPeerId,
+      text: 'S16: backgrounded but connected',
+      senderPeerId: stack.identity.peerId,
+      senderUsername: stack.identity.username,
+      bridge: stack.bridge,
+      recipientMlKemPublicKey: bobMlKemPk,
+    );
+    _signals.writeJson('s16_alice_sent', {'outcome': s16Result.$1.name});
+    print('[ALICE-N] S16 sent: ${s16Result.$1.name}');
+    await _signals.waitForSignal(
+      's16_verdict_ack',
+      timeout: const Duration(seconds: 300),
+    );
+
     // ── Done ──
     await _signals.waitForSignal(
       'all_done',
@@ -882,7 +1024,7 @@ void _runAlice() {
     print('\n[ALICE-N] Complete');
     await stack.teardown();
     _signals.writeSignal('alice_done', content: 'ok');
-  }, timeout: const Timeout(Duration(minutes: 35)));
+  }, timeout: const Timeout(Duration(minutes: 60)));
 }
 
 // ---------------------------------------------------------------------------
@@ -890,7 +1032,7 @@ void _runAlice() {
 // ---------------------------------------------------------------------------
 
 void _runBob() {
-  testWidgets('Bob(Notif) — S1..S13', (tester) async {
+  testWidgets('Bob(Notif) — S1..S16', (tester) async {
     print('\n${'═' * 60}');
     print('  BOB (NOTIFICATION SOUND) — SMOKE E2E');
     print('${'═' * 60}\n');
@@ -961,6 +1103,16 @@ void _runBob() {
       notificationService: notificationService,
       groupConversationTracker: groupConversationTracker,
       getAppLifecycleState: () => currentLifecycle,
+      // REQUIRED, not optional. Post-371 the compat show lane is gated on a
+      // non-null visibility reader (`group_message_listener.dart:3306-3312`,
+      // commit 3c7e704e7) and `groupConversationTracker:` is a discarded compat
+      // param (`:313-315`). Without this argument the listener posts ZERO group
+      // notifications — S2/S3/S8..S13 go silent and S15 can never suppress.
+      // Mirrors the ChatMessageListener wiring below.
+      appVisibility: TrackerBackedAppVisibility(
+        tracker: groupConversationTracker,
+        lifecycle: () => currentLifecycle,
+      ),
       inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
     );
     realGroupListener.start(stack.groupStreamController.stream);
@@ -1102,9 +1254,28 @@ void _runBob() {
       String? expectedMessageText,
       String? expectedPayload,
       String? expectedPayloadPrefix,
+      List<bool>? expectedSilentFlags,
+      int expectedCallCount = 1,
     }) {
       final calls = recording.shown.sublist(baselineCount);
-      final call = calls.length == 1 ? calls.single : null;
+      // Identity/copy are read from the call that produced the CURRENT card.
+      // Every scenario but S14 posts one card from one call; S14's second call
+      // updates the first card in place, so the last call owns the copy.
+      final call = calls.length == expectedCallCount ? calls.last : null;
+      // The production `silent` decision, captured from the parameter
+      // `maybeShowNotification` passed to the real service. A service-internal
+      // hardcode would NOT move this flag — only the upstream tone decision
+      // does — which is exactly the seam the sound contract needs to pin.
+      final silentFlags = calls.map((s) => s.silent).toList(growable: false);
+      final silentFlagsMatch = () {
+        final expected = expectedSilentFlags;
+        if (expected == null) return true;
+        if (silentFlags.length != expected.length) return false;
+        for (var i = 0; i < expected.length; i++) {
+          if (silentFlags[i] != expected[i]) return false;
+        }
+        return true;
+      }();
       final contactMatches =
           expectedContactPeerId == null ||
           call?.contactPeerId == expectedContactPeerId;
@@ -1119,12 +1290,13 @@ void _runBob() {
           (expectedPayloadPrefix == null ||
               (call?.payload?.startsWith(expectedPayloadPrefix) ?? false));
       final programmaticPass = expectSuppressed
-          ? calls.isEmpty
+          ? calls.isEmpty && silentFlagsMatch
           : call != null &&
                 contactMatches &&
                 senderMatches &&
                 bodyMatches &&
-                payloadMatches;
+                payloadMatches &&
+                silentFlagsMatch;
       return {
         'scenarioId': scenarioId,
         'state': state,
@@ -1143,6 +1315,10 @@ void _runBob() {
         'senderMatches': senderMatches,
         'bodyMatches': bodyMatches,
         'payloadMatches': payloadMatches,
+        'silentFlags': silentFlags,
+        'expectedSilentFlags': expectedSilentFlags,
+        'expectedCallCount': expectedCallCount,
+        'silentFlagsMatch': silentFlagsMatch,
         'shownCalls': calls.map((s) => s.toJson()).toList(),
       };
     }
@@ -1169,6 +1345,8 @@ void _runBob() {
       expectedSenderUsername: 'AliceNotif',
       expectedMessageText: 'S1: notification sound 1:1',
       expectedPayload: alicePeerId,
+      // First tone on a fresh conversation key -> audible.
+      expectedSilentFlags: const <bool>[false],
     );
     _signals.writeJson('s1_bob_verdict', s1Verdict);
     print(
@@ -1218,6 +1396,7 @@ void _runBob() {
       expectedSenderUsername: 'Notif Sound Discussion',
       expectedMessageText: 'AliceNotif: S2: notification sound discussion',
       expectedPayloadPrefix: 'group:$chatGroupId|message:',
+      expectedSilentFlags: const <bool>[false],
     );
     _signals.writeJson('s2_bob_verdict', s2Verdict);
     print(
@@ -1267,6 +1446,7 @@ void _runBob() {
       expectedSenderUsername: 'Notif Sound Announcement',
       expectedMessageText: 'AliceNotif: S3: notification sound announcement',
       expectedPayloadPrefix: 'group:$annGroupId|message:',
+      expectedSilentFlags: const <bool>[false],
     );
     _signals.writeJson('s3_bob_verdict', s3Verdict);
     print(
@@ -1301,6 +1481,7 @@ void _runBob() {
       baselineCount: s4Baseline,
       expectSuppressed: true,
       expectedContactPeerId: alicePeerId,
+      expectedSilentFlags: const <bool>[],
     );
     _signals.writeJson('s4_bob_verdict', s4Verdict);
     print(
@@ -1387,6 +1568,184 @@ void _runBob() {
       await notificationService.clearDeliveredNotifications();
     }
 
+    // ════════════════════════════════════════════════════════════════
+    //  S14: tone-window debounce — first text audible, second text a SILENT
+    //       in-place update of the SAME notification id.
+    // ════════════════════════════════════════════════════════════════
+    print('\n--- S14: tone-window debounce (1:1) ---');
+    final s14Baseline = recording.shown.length;
+    await _signals.waitForSignal(
+      's14_alice_sent_first',
+      timeout: const Duration(seconds: 300),
+    );
+    await waitForShown(baselineCount: s14Baseline);
+    final s14FirstVerdict = buildVerdict(
+      scenarioId: 'S14',
+      state: 'foreground_off_conversation_tone_first',
+      baselineCount: s14Baseline,
+      expectSuppressed: false,
+      expectedContactPeerId: alicePeerId,
+      expectedSenderUsername: 'AliceNotif',
+      expectedMessageText: 'S14: first message audible',
+      expectedPayload: alicePeerId,
+      expectedSilentFlags: const <bool>[false],
+    );
+    _signals.writeJson('s14_first_bob_verdict', s14FirstVerdict);
+    print(
+      '[BOB-N] S14 phase-1 verdict: pass=${s14FirstVerdict['programmaticPass']} '
+      'silentFlags=${s14FirstVerdict['silentFlags']}',
+    );
+    // Deliberately NO clearDeliveredNotifications here: the second message must
+    // land as an in-place update of the card the first message posted.
+    await _signals.waitForSignal(
+      's14_alice_sent_second',
+      timeout: const Duration(seconds: 300),
+    );
+    await waitForShown(baselineCount: s14Baseline + 1);
+    final s14Verdict = buildVerdict(
+      scenarioId: 'S14',
+      state: 'foreground_off_conversation_tone_debounce',
+      baselineCount: s14Baseline,
+      expectSuppressed: false,
+      expectedContactPeerId: alicePeerId,
+      expectedSenderUsername: 'AliceNotif',
+      expectedMessageText: 'S14: second message silent update',
+      expectedPayload: alicePeerId,
+      // The load-bearing assertion: audible THEN silent. Without it a
+      // second-message-suppressed run would pass on card count alone.
+      expectedSilentFlags: const <bool>[false, true],
+      expectedCallCount: 2,
+    );
+    _signals.writeJson('s14_bob_verdict', s14Verdict);
+    print(
+      '[BOB-N] S14 verdict: pass=${s14Verdict['programmaticPass']} '
+      'silentFlags=${s14Verdict['silentFlags']} '
+      'count=${s14Verdict['shownCount']}',
+    );
+    await _signals.waitForSignal(
+      's14_verdict_ack',
+      timeout: const Duration(seconds: 300),
+    );
+    await notificationService.clearDeliveredNotifications();
+
+    // ════════════════════════════════════════════════════════════════
+    //  S15: group same-chat suppression. Bob is resumed with the discussion
+    //       group marked active; the incoming group text must not notify.
+    //       After clearing the tracker a control message must notify — that
+    //       control is what separates "suppressed" from "lane is dead".
+    // ════════════════════════════════════════════════════════════════
+    print('\n--- S15: group same-chat suppression ---');
+    groupConversationTracker.setActive('group:$chatGroupId');
+    _signals.writeSignal('bob_viewing_group', content: 'ok');
+
+    final s15Baseline = recording.shown.length;
+    await _signals.waitForSignal(
+      's15_alice_sent',
+      timeout: const Duration(seconds: 300),
+    );
+    // Settle so any rogue showMessageNotification has time to fire (S4 pattern).
+    await Future<void>.delayed(const Duration(seconds: 6));
+    // Clear BEFORE publishing the verdict: the orchestrator releases the
+    // control message as soon as it reads this file.
+    groupConversationTracker.clear();
+    final s15Verdict = buildVerdict(
+      scenarioId: 'S15',
+      state: 'foreground_viewing_group',
+      baselineCount: s15Baseline,
+      expectSuppressed: true,
+      expectedContactPeerId: 'group:$chatGroupId',
+      expectedSilentFlags: const <bool>[],
+    );
+    _signals.writeJson('s15_bob_verdict', s15Verdict);
+    print(
+      '[BOB-N] S15 verdict: pass=${s15Verdict['programmaticPass']} '
+      'suppressed=${s15Verdict['notificationSuppressed']} '
+      'count=${s15Verdict['shownCount']}',
+    );
+    await _signals.waitForSignal(
+      's15_verdict_ack',
+      timeout: const Duration(seconds: 300),
+    );
+    await notificationService.clearDeliveredNotifications();
+
+    final s15ControlBaseline = recording.shown.length;
+    await _signals.waitForSignal(
+      's15_control_alice_sent',
+      timeout: const Duration(seconds: 300),
+    );
+    await waitForShown(
+      baselineCount: s15ControlBaseline,
+      timeout: const Duration(seconds: 60),
+    );
+    final s15ControlVerdict = buildVerdict(
+      scenarioId: 'S15',
+      state: 'foreground_group_tracker_cleared_control',
+      baselineCount: s15ControlBaseline,
+      expectSuppressed: false,
+      expectedContactPeerId: 'group:$chatGroupId',
+      expectedSenderUsername: 'Notif Sound Discussion',
+      expectedMessageText: 'AliceNotif: S15: control after tracker cleared',
+      expectedPayloadPrefix: 'group:$chatGroupId|message:',
+      // First tone on this group key since S10 — several minutes of other
+      // lanes have elapsed, so the control is deterministically audible.
+      expectedSilentFlags: const <bool>[false],
+    );
+    _signals.writeJson('s15_control_bob_verdict', s15ControlVerdict);
+    print(
+      '[BOB-N] S15 control verdict: '
+      'pass=${s15ControlVerdict['programmaticPass']} '
+      'count=${s15ControlVerdict['shownCount']}',
+    );
+    await _signals.waitForSignal(
+      's15_control_ack',
+      timeout: const Duration(seconds: 300),
+    );
+    await notificationService.clearDeliveredNotifications();
+
+    // ════════════════════════════════════════════════════════════════
+    //  S16: backgrounded-but-connected 1:1. Logical lifecycle only — the
+    //       bridge stays live, so this proves the still-connected +
+    //       non-foreground-active seam, NOT true process suspension (that
+    //       boundary is owned by the payload campaign's b12 rows).
+    // ════════════════════════════════════════════════════════════════
+    print('\n--- S16: backgrounded-but-connected (1:1) ---');
+    chatConversationTracker.clear();
+    currentLifecycle = AppLifecycleState.paused;
+    _signals.writeSignal('bob_backgrounded', content: 'ok');
+
+    final s16Baseline = recording.shown.length;
+    await _signals.waitForSignal(
+      's16_alice_sent',
+      timeout: const Duration(seconds: 300),
+    );
+    await waitForShown(
+      baselineCount: s16Baseline,
+      timeout: const Duration(seconds: 60),
+    );
+    final s16Verdict = buildVerdict(
+      scenarioId: 'S16',
+      state: 'background_connected_no_active_conversation',
+      baselineCount: s16Baseline,
+      expectSuppressed: false,
+      expectedContactPeerId: alicePeerId,
+      expectedSenderUsername: 'AliceNotif',
+      expectedMessageText: 'S16: backgrounded but connected',
+      expectedPayload: alicePeerId,
+      expectedSilentFlags: const <bool>[false],
+    );
+    _signals.writeJson('s16_bob_verdict', s16Verdict);
+    print(
+      '[BOB-N] S16 verdict: pass=${s16Verdict['programmaticPass']} '
+      'silentFlags=${s16Verdict['silentFlags']} '
+      'count=${s16Verdict['shownCount']}',
+    );
+    await _signals.waitForSignal(
+      's16_verdict_ack',
+      timeout: const Duration(seconds: 300),
+    );
+    await notificationService.clearDeliveredNotifications();
+    currentLifecycle = AppLifecycleState.resumed;
+
     // ── Done ──
     await _signals.waitForSignal(
       'all_done',
@@ -1399,5 +1758,5 @@ void _runBob() {
     notificationService.dispose();
     await stack.teardown();
     _signals.writeSignal('bob_done', content: 'ok');
-  }, timeout: const Timeout(Duration(minutes: 35)));
+  }, timeout: const Timeout(Duration(minutes: 60)));
 }

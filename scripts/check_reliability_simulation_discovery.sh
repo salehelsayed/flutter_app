@@ -243,6 +243,10 @@ classify_path() {
       record "support" "$path" "support" "330 strict Android group notification projection raw-evidence criteria"
       return
       ;;
+    integration_test/scripts/group_muted_notification_android_criteria.dart)
+      record "support" "$path" "support" "379 strict Android muted-group notification suppression raw-evidence criteria"
+      return
+      ;;
     integration_test/scripts/direct_private_media_device_local_journey_criteria.dart|\
     integration_test/direct_private_media_device_local_journey_harness.dart)
       record "support" "$path" "support" "234 deterministic device-local private-media proof support"
@@ -447,6 +451,10 @@ classify_path() {
       record "support" "$path" "support" "330 capture-owned Android projection artifact binding; manifest owns execution"
       return
       ;;
+    integration_test/group_muted_notification_proof_test.dart)
+      record "support" "$path" "support" "379 capture-owned Android muted-group artifact binding; manifest owns execution"
+      return
+      ;;
     integration_test/android_notification_recovery_completion_proof_test.dart)
       record "support" "$path" "support" "331 capture-owned paired Android recovery artifact binding; manifest owns execution"
       return
@@ -527,6 +535,10 @@ classify_path() {
       ;;
     integration_test/scripts/run_group_notification_projection_android.dart)
       record "support" "$path" "support" "typed Sims adapter for Android group notification projection durability; manifest owns execution"
+      return
+      ;;
+    integration_test/scripts/run_group_muted_notification_android.dart)
+      record "support" "$path" "support" "typed Sims adapter for Android muted-group notification suppression; manifest owns execution"
       return
       ;;
     integration_test/scripts/run_android_notification_recovery_completion.dart)

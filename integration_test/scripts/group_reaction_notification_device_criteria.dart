@@ -705,16 +705,160 @@ groupNotificationProjectionAndroidSourceScenario =
       evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[],
     );
 
+/// Plan 379 muted-group source extensions (G4 closure).
+///
+/// Like [groupNotificationProjectionAndroidSourceScenario] these deliberately
+/// stay out of [groupReactionNotificationScenarios]. The Plan-257 catalog is a
+/// *reaction* grammar: its validator hard-requires a non-zero unread count,
+/// per-branch notification cards, and relay/provider `[PUSH] … sent to`
+/// evidence. A muted group asserts the exact negation of all three, so an
+/// in-catalog row could not be expressed without rewriting the six existing
+/// scenarios' assertions. The muted lane therefore owns its own validator,
+/// runner, and Sims capability and reuses only the shared capture driver.
+const GroupReactionNotificationScenario
+groupMutedMessageSuppressionSourceScenario = GroupReactionNotificationScenario(
+  id: 'android_group_muted_message_suppression',
+  testCase: 'PLAN-379',
+  summary:
+      'muted group suppresses the live-path message card, sound, and badge '
+      'while preserving unread and delivery',
+  groupType: 'chat',
+  senderRole: 'message_sender',
+  senderPlatform: 'android',
+  senderDeviceKind: 'emulator',
+  recipientRole: 'muted_group_member',
+  recipientPlatform: 'android',
+  recipientDeviceKind: 'physical',
+  evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[],
+);
+
+const GroupReactionNotificationScenario
+groupMutedReactionBackgroundSourceScenario =
+    GroupReactionNotificationScenario(
+      id: 'android_group_muted_reaction_background_suppression',
+      testCase: 'PLAN-379',
+      summary:
+          'muted group suppresses the FCM/background-isolate reaction card '
+          'while an unmuted control reaction still posts',
+      groupType: 'chat',
+      senderRole: 'member_reactor',
+      senderPlatform: 'android',
+      senderDeviceKind: 'emulator',
+      recipientRole: 'muted_group_target_author',
+      recipientPlatform: 'android',
+      recipientDeviceKind: 'physical',
+      evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[],
+    );
+
+const List<GroupReactionNotificationScenario>
+groupMutedNotificationSourceScenarios = <GroupReactionNotificationScenario>[
+  groupMutedMessageSuppressionSourceScenario,
+  groupMutedReactionBackgroundSourceScenario,
+];
+
 GroupReactionNotificationScenario? groupReactionNotificationScenario(
   String id,
 ) {
   if (id == groupNotificationProjectionAndroidSourceScenario.id) {
     return groupNotificationProjectionAndroidSourceScenario;
   }
+  for (final scenario in groupMutedNotificationSourceScenarios) {
+    if (scenario.id == id) return scenario;
+  }
   for (final scenario in groupReactionNotificationScenarios) {
     if (scenario.id == id) return scenario;
   }
   return null;
+}
+
+/// Which capture lifecycle a scenario id drives.
+enum GroupReactionCaptureLifecycleStage {
+  messageUnreadLifecycle,
+  reactionRecipient,
+  notificationProjection,
+  mutedMessageSuppression,
+  mutedReactionBackgroundSuppression,
+}
+
+/// Which SQLCipher probe shape a scenario id asks the installed app for.
+///
+/// [messageMarkers] sends `firstMarker`/`secondMarker`; the other two send a
+/// `targetMarker` only. The in-app probe enforces exactly this split
+/// (`group_reaction_e2e_probe.dart` marker-shape gate), so this enum is the
+/// harness-side mirror of a contract the runtime already fails closed on.
+enum GroupReactionCaptureObservationKind {
+  messageMarkers,
+  reactionTarget,
+  mutedTarget,
+}
+
+/// Which artifact validator accepts the capture output for a scenario id.
+enum GroupReactionCaptureValidatorKind {
+  reaction,
+  notificationProjection,
+  muted,
+}
+
+final class GroupReactionCaptureDispatch {
+  const GroupReactionCaptureDispatch({
+    required this.lifecycleStage,
+    required this.observationKind,
+    required this.validatorKind,
+  });
+
+  final GroupReactionCaptureLifecycleStage lifecycleStage;
+  final GroupReactionCaptureObservationKind observationKind;
+  final GroupReactionCaptureValidatorKind validatorKind;
+}
+
+/// Resolves the capture driver's per-scenario behaviour from the scenario id.
+///
+/// The capture driver historically re-derived this at every branch by testing
+/// `id.endsWith('_message_unread_lifecycle')`, which silently routes any new
+/// id into the reaction branch. Centralizing the decision here makes the
+/// routing a host-testable value instead of a string coincidence, and lets a
+/// scenario that is neither "message" nor "reaction" exist at all.
+///
+/// Returns `null` for an unregistered id so callers fail closed.
+GroupReactionCaptureDispatch? groupReactionCaptureDispatchFor(
+  String scenarioId,
+) {
+  if (groupReactionNotificationScenario(scenarioId) == null) return null;
+  if (scenarioId == groupMutedMessageSuppressionSourceScenario.id) {
+    return const GroupReactionCaptureDispatch(
+      lifecycleStage:
+          GroupReactionCaptureLifecycleStage.mutedMessageSuppression,
+      observationKind: GroupReactionCaptureObservationKind.mutedTarget,
+      validatorKind: GroupReactionCaptureValidatorKind.muted,
+    );
+  }
+  if (scenarioId == groupMutedReactionBackgroundSourceScenario.id) {
+    return const GroupReactionCaptureDispatch(
+      lifecycleStage:
+          GroupReactionCaptureLifecycleStage.mutedReactionBackgroundSuppression,
+      observationKind: GroupReactionCaptureObservationKind.mutedTarget,
+      validatorKind: GroupReactionCaptureValidatorKind.muted,
+    );
+  }
+  if (scenarioId == groupNotificationProjectionAndroidSourceScenario.id) {
+    return const GroupReactionCaptureDispatch(
+      lifecycleStage: GroupReactionCaptureLifecycleStage.notificationProjection,
+      observationKind: GroupReactionCaptureObservationKind.reactionTarget,
+      validatorKind: GroupReactionCaptureValidatorKind.notificationProjection,
+    );
+  }
+  if (scenarioId.endsWith('_message_unread_lifecycle')) {
+    return const GroupReactionCaptureDispatch(
+      lifecycleStage: GroupReactionCaptureLifecycleStage.messageUnreadLifecycle,
+      observationKind: GroupReactionCaptureObservationKind.messageMarkers,
+      validatorKind: GroupReactionCaptureValidatorKind.reaction,
+    );
+  }
+  return const GroupReactionCaptureDispatch(
+    lifecycleStage: GroupReactionCaptureLifecycleStage.reactionRecipient,
+    observationKind: GroupReactionCaptureObservationKind.reactionTarget,
+    validatorKind: GroupReactionCaptureValidatorKind.reaction,
+  );
 }
 
 class GroupReactionNotificationArtifactValidation {

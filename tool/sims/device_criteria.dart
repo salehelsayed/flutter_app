@@ -607,9 +607,162 @@ DeviceCriteriaResult validateNotificationArtifact(
       '$scenario is missing required checks: ${missing.join(', ')}',
     );
   }
+  final evidence = _validateNotificationEvidence(artifact, scenario);
+  if (!evidence.ok) return evidence;
   return DeviceCriteriaResult.pass(
     '$scenario satisfies its real provider/relay/device criteria',
   );
+}
+
+/// Checks are claimed-true constants at the capture site, so a passing check
+/// alone never proves the capture ran: deleting a device capture while leaving
+/// its entry in the const list produces an artifact that validates and lies.
+/// These keys must be populated ONLY from a measured observation, and the
+/// validator is what makes their absence fail closed.
+///
+/// A non-empty value set constrains the measured value exactly; an empty set
+/// requires only that a non-null scalar was measured (counts of zero included).
+const Map<String, Map<String, Set<Object>>>
+_notificationEvidenceRequirements = <String, Map<String, Set<Object>>>{
+  'payload_fast_path_android_receiver': <String, Set<Object>>{
+    'warmAlertChannel': <Object>{'mknoon_messages'},
+  },
+  'payload_fast_path_cold_kill': <String, Set<Object>>{
+    'coldAlertChannel': <Object>{'mknoon_messages'},
+  },
+  'tc_b13_dual_path_single_alert': <String, Set<Object>>{
+    'activeCardCount': <Object>{1},
+    // Read from the cursor-scoped log, not from dumpsys: it answers "did the
+    // winning publication alert?" rather than "which channel does the record
+    // sit on now", which the losing path's silent same-ID reconcile changes
+    // ~2.6 s later.
+    'alertSilent': <Object>{false},
+    // The surviving record may legitimately have been moved to the silent
+    // channel by the losing path's same-ID reconcile, but it must still be one
+    // of the app's own two message channels — a card on anything else is not
+    // the publication this leg measured.
+    'survivingCardChannel': <Object>{
+      'mknoon_messages',
+      'mknoon_messages_silent',
+    },
+  },
+  'tc_g7_permission_denied': <String, Set<Object>>{
+    'permissionDeniedBackgroundReceiptCount': <Object>{},
+    // A post ATTEMPT, not just a wake receipt: the receipt marker is upstream
+    // of every suppression return, so gating on it alone makes "no card"
+    // vacuously true for a wake that never reached a post decision.
+    'permissionDeniedPostAttemptEvent': <Object>{
+      'NOTIFICATION_SHOWN',
+      'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
+    },
+    'permissionDeniedHealthEvent': <Object>{
+      'PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED',
+    },
+    'permissionDeniedHealthEventCount': <Object>{},
+    'permissionDeniedCardCount': <Object>{0},
+    'permissionDeniedMessageCount': <Object>{1},
+    'permissionRegrantAlertChannel': <Object>{'mknoon_messages'},
+  },
+  'tc_g7_token_refresh_mid_session': <String, Set<Object>>{
+    'tokenRefreshEvent': <Object>{'PUSH_REGISTER_TOKEN_REFRESH_EVENT'},
+    'tokenRefreshSuccessTrigger': <Object>{'token_refresh'},
+    'tokenRefreshStartupAttemptsInWindow': <Object>{0},
+    'tokenRefreshPidBefore': <Object>{},
+    'tokenRefreshPidAfter': <Object>{},
+    'tokenHashPrefixBefore': <Object>{},
+    'tokenHashPrefixAfter': <Object>{},
+    'tokenRefreshAlertChannel': <Object>{'mknoon_messages'},
+  },
+  'tc_g7_channel_disabled': <String, Set<Object>>{
+    'channelDisabledBackgroundReceiptCount': <Object>{},
+    'channelDisabledPostAttemptEvent': <Object>{
+      'NOTIFICATION_SHOWN',
+      'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
+    },
+    'channelDisabledImportance': <Object>{0},
+    // The silent channel must still be OPEN (2 = IMPORTANCE_LOW) while the
+    // user-facing one is blocked. That is the only configuration in which the
+    // zero-card assertion measures the APP's decision: block the silent
+    // channel too and the OS enforces the row for us, so a regression that
+    // re-opened the silent route would still read green.
+    'channelDisabledSilentImportance': <Object>{2},
+    'channelDisabledCardCount': <Object>{0},
+    'channelDisabledMessageCount': <Object>{1},
+    'channelReenabledImportance': <Object>{4},
+    'channelReenabledSilentImportance': <Object>{2},
+    'channelReenabledAlertChannel': <Object>{'mknoon_messages'},
+  },
+  'tc_g7_doze_delivery': <String, Set<Object>>{
+    'dozeStateBeforeSend': <Object>{'IDLE'},
+    // An ACTIVE observation means the forced idle broke before delivery, so
+    // neither arm is attributable to Doze.
+    'dozeStateAtObservation': <Object>{'IDLE', 'IDLE_MAINTENANCE'},
+    'dozeDisposition': <Object>{
+      'delivered_during_idle',
+      'deferred_until_maintenance',
+    },
+    'dozeConvergedCardCount': <Object>{1},
+    'dozeConvergedMessageCount': <Object>{1},
+  },
+};
+
+DeviceCriteriaResult _validateNotificationEvidence(
+  Map<String, Object?> artifact,
+  String scenario,
+) {
+  final required = _notificationEvidenceRequirements[scenario];
+  if (required == null || required.isEmpty) {
+    return DeviceCriteriaResult.pass('$scenario requires no measured evidence');
+  }
+  final evidenceValue = artifact['evidence'];
+  if (evidenceValue is! Map) {
+    return DeviceCriteriaResult.fail(
+      '$scenario requires measured device evidence: '
+      '${required.keys.join(', ')}',
+    );
+  }
+  final evidence = evidenceValue.map<String, Object?>(
+    (key, value) => MapEntry('$key', value),
+  );
+  for (final entry in required.entries) {
+    final value = evidence[entry.key];
+    if (value == null) {
+      return DeviceCriteriaResult.fail(
+        '$scenario is missing measured evidence ${entry.key}',
+      );
+    }
+    if (entry.value.isEmpty) {
+      final blank = value is String && value.trim().isEmpty;
+      if (blank || (value is! String && value is! num && value is! bool)) {
+        return DeviceCriteriaResult.fail(
+          '$scenario measured evidence ${entry.key} is blank',
+        );
+      }
+      continue;
+    }
+    if (!entry.value.contains(value)) {
+      return DeviceCriteriaResult.fail(
+        '$scenario measured evidence ${entry.key} is "$value", not one of '
+        '${entry.value.join(', ')}',
+      );
+    }
+  }
+  if (scenario == 'tc_g7_token_refresh_mid_session') {
+    if (evidence['tokenRefreshPidBefore'] !=
+        evidence['tokenRefreshPidAfter']) {
+      return const DeviceCriteriaResult.fail(
+        'tc_g7_token_refresh_mid_session re-registered in a different '
+        'process, which proves a relaunch rather than a mid-session refresh',
+      );
+    }
+    if (evidence['tokenHashPrefixBefore'] ==
+        evidence['tokenHashPrefixAfter']) {
+      return const DeviceCriteriaResult.fail(
+        'tc_g7_token_refresh_mid_session did not rotate the provider token',
+      );
+    }
+  }
+  return DeviceCriteriaResult.pass('$scenario carries its measured evidence');
 }
 
 DeviceCriteriaResult _validateIosNotificationDurableArtifact(
@@ -969,6 +1122,7 @@ const Map<String, Set<String>> _notificationRequirements =
         'airplaneModeBeforeTap',
         'messageVisibleFromStagedEnvelope',
         'noRelayDrainBeforeVisibility',
+        'b12.warm_audible_channel',
       },
       'payload_fast_path_cold_kill': <String>{
         'receiverTerminatedBeforeTap',
@@ -976,6 +1130,34 @@ const Map<String, Set<String>> _notificationRequirements =
         'startupIngestRan',
         'messageVisibleFromStagedEnvelope',
         'noRelayDrainBeforeVisibility',
+        'b12.cold_audible_channel',
+      },
+      'tc_b13_dual_path_single_alert': <String>{
+        'b13.dual_attempt',
+        'b13.single_card',
+        'b13.single_audible_channel',
+        'b13.losing_path_typed_suppression',
+      },
+      'tc_g7_permission_denied': <String>{
+        'g7.permission_denied_no_post',
+        'g7.permission_denied_typed_health',
+        'g7.permission_custody_preserved',
+        'g7.permission_regrant_recovery',
+      },
+      'tc_g7_token_refresh_mid_session': <String>{
+        'g7.token_refresh_event_observed',
+        'g7.token_refresh_reregistered_same_process',
+        'g7.token_refresh_new_token_delivery',
+      },
+      'tc_g7_channel_disabled': <String>{
+        'g7.channel_disabled_no_post',
+        'g7.channel_custody_preserved',
+        'g7.channel_reenable_recovery',
+      },
+      'tc_g7_doze_delivery': <String>{
+        'g7.doze_forced_idle_proven',
+        'g7.doze_disposition_typed',
+        'g7.doze_no_duplicate_render',
       },
       'payload_fast_path_ios_receiver': <String>{
         'iosReceiver',

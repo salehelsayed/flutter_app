@@ -8,6 +8,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 import '_android_app_package.dart';
+import 'group_muted_notification_android_criteria.dart';
 import 'group_notification_projection_android_criteria.dart';
 import 'group_reaction_notification_device_criteria.dart';
 import 'reaction_notification_proof_support.dart';
@@ -569,6 +570,32 @@ class _Plan257Capture {
   String _backgroundConnectedObservation = '';
   DateTime? _backgroundConnectedHomeAt;
   DateTime? _backgroundConnectedReactionAt;
+  // Plan 379 muted lane state. Populated only by the two muted stages and
+  // consumed only by `_writeMutedAndroidArtifact`.
+  String _mutedGroupName = '';
+  String _mutedControlGroupName = '';
+  String _mutedGroupIdSha256 = '';
+  String _mutedControlGroupIdSha256 = '';
+  String _mutedUnderTestMessageIdDigest = '';
+  final List<Map<String, Object?>> _mutedCommands = <Map<String, Object?>>[];
+  String _mutedUnderTestMarker = '';
+  String _mutedControlMarker = '';
+  String _mutedNotificationDump = '';
+  String _mutedPreMuteNotificationDump = '';
+  String _mutedPostMuteNotificationDump = '';
+  String _mutedPreMuteCardGroup = 'muted';
+  String _mutedSqlCipherObservation = '';
+  int _mutedUnreadBaseline = 0;
+  int _mutedUnreadAfter = 0;
+  bool _mutedUnderTestReadAtNull = false;
+  bool _mutedGroupIsMuted = false;
+  bool _mutedPersistedRowObserved = false;
+  int _mutedReactionRowsObserved = 0;
+  bool _mutedBadgeAvailable = false;
+  bool _mutedBadgeIncludesMutedGroup = true;
+  bool _mutedBadgeIncludesControlGroup = false;
+  int _mutedBadgeGroupIdentityCount = 0;
+  GroupMutedBackgroundDeliveryInput? _mutedBackgroundDelivery;
   String _iosE2eAppSha256 = '';
   String _iosNormalAppSha256 = '';
   final Map<String, File> _iosInstallReceipts = <String, File>{};
@@ -597,6 +624,27 @@ class _Plan257Capture {
   );
 
   bool get _isPlan330 => scenario.id == groupNotificationProjectionScenarioId;
+
+  /// Which lifecycle/observation/validator this scenario id selects.
+  ///
+  /// Resolved once from the shared criteria file instead of re-deriving
+  /// `id.endsWith('_message_unread_lifecycle')` at each branch, so a scenario
+  /// that is neither "message" nor "reaction" can exist without silently
+  /// falling into the reaction grammar. The lookup is total over every
+  /// registered id, so the null branch is unreachable for a resolved scenario.
+  late final GroupReactionCaptureDispatch _dispatch =
+      groupReactionCaptureDispatchFor(scenario.id) ??
+      (throw _CaptureFailure.configuration(
+        'scenario',
+        'capture_dispatch_missing_for_${scenario.id}',
+      ));
+
+  bool get _isMutedLane =>
+      _dispatch.validatorKind == GroupReactionCaptureValidatorKind.muted;
+
+  bool get _isMutedBackgroundLane =>
+      _dispatch.lifecycleStage ==
+      GroupReactionCaptureLifecycleStage.mutedReactionBackgroundSuppression;
 
   Future<void> cleanupTransientState() => _transientCleanup.run();
 
@@ -678,6 +726,16 @@ class _Plan257Capture {
       await _createAndAcceptGroup(name: _plan330GroupAName);
       await _createAndAcceptGroup(name: _plan330GroupBName);
       _groupName = _plan330GroupAName;
+    } else if (_isMutedLane) {
+      // Two groups: the one under test, which is muted mid-capture, and an
+      // always-unmuted control. Without the control, a dead notification lane
+      // and a working mute are indistinguishable.
+      final suffix = _runtimeToken('fixture').replaceAll('-', '');
+      _mutedGroupName = 'Plan379M-${suffix.substring(0, 12)}';
+      _mutedControlGroupName = 'Plan379C-${suffix.substring(12, 24)}';
+      await _createAndAcceptGroup(name: _mutedGroupName);
+      await _createAndAcceptGroup(name: _mutedControlGroupName);
+      _groupName = _mutedGroupName;
     } else {
       await _createAndAcceptGroup();
     }
@@ -688,36 +746,56 @@ class _Plan257Capture {
       await _installApk(recipientId, _androidBuilds!.normalApk);
     }
     await _grantNotificationPermission(recipientId);
-    final tokenWindow = DateTime.now().toUtc();
+    // Clear BEFORE the registration window opens: a stale success line from a
+    // previous run would otherwise satisfy the wait instantly.
+    await _adb(recipientId, const <String>['logcat', '-c']);
     await _launchAndroid(recipientId);
-    await _waitForRelayTokenRegistration(tokenWindow);
+    await _waitForRecipientPushRegistrationAccepted();
     await _requireCleanNotificationSlate();
 
     _captureWindowStart = DateTime.now().toUtc();
     await _adb(senderId, const <String>['logcat', '-c']);
     await _adb(recipientId, const <String>['logcat', '-c']);
-    if (_isPlan330) {
-      stage = 'android_group_notification_projection';
-      await _runAndroidGroupNotificationProjectionLifecycle();
-    } else if (scenario.id.endsWith('_message_unread_lifecycle')) {
-      stage = 'android_unread_lifecycle';
-      await _runAndroidUnreadLifecycle();
-    } else {
-      stage = 'android_reaction_lifecycle';
-      await _runAndroidReactionLifecycle();
+    // Dispatch site 1 of 4: lifecycle stage select.
+    switch (_dispatch.lifecycleStage) {
+      case GroupReactionCaptureLifecycleStage.notificationProjection:
+        stage = 'android_group_notification_projection';
+        await _runAndroidGroupNotificationProjectionLifecycle();
+      case GroupReactionCaptureLifecycleStage.messageUnreadLifecycle:
+        stage = 'android_unread_lifecycle';
+        await _runAndroidUnreadLifecycle();
+      case GroupReactionCaptureLifecycleStage.mutedMessageSuppression:
+        stage = 'android_muted_message_suppression';
+        await _runAndroidMutedMessageSuppressionLifecycle();
+      case GroupReactionCaptureLifecycleStage.mutedReactionBackgroundSuppression:
+        stage = 'android_muted_reaction_background_suppression';
+        await _runAndroidMutedReactionBackgroundLifecycle();
+      case GroupReactionCaptureLifecycleStage.reactionRecipient:
+        stage = 'android_reaction_lifecycle';
+        await _runAndroidReactionLifecycle();
     }
 
+    // Dispatch site 2 of 4: SQLCipher observation.
+    //
+    // Only the Plan-257 reaction grammar routes through
+    // `_captureSqlCipherObservation`, whose `_validateSqlCipherObservation`
+    // hard-pins `unreadCount == 0` — the exact opposite of what a muted
+    // scenario proves. The muted stages take their own observation inline.
     String? sqlCipherEvidence;
-    if (!_isPlan330) {
+    if (_dispatch.validatorKind == GroupReactionCaptureValidatorKind.reaction) {
       stage = 'sqlcipher_observation';
       sqlCipherEvidence = await _captureSqlCipherObservation();
     }
 
+    // Dispatch site 3 of 4: artifact write.
     stage = 'artifact_capture';
-    if (_isPlan330) {
-      await _writePlan330AndroidArtifact();
-    } else {
-      await _writeAndroidArtifact(sqlCipherEvidence!);
+    switch (_dispatch.validatorKind) {
+      case GroupReactionCaptureValidatorKind.notificationProjection:
+        await _writePlan330AndroidArtifact();
+      case GroupReactionCaptureValidatorKind.muted:
+        await _writeMutedAndroidArtifact();
+      case GroupReactionCaptureValidatorKind.reaction:
+        await _writeAndroidArtifact(sqlCipherEvidence!);
     }
 
     stage = 'artifact_self_validation';
@@ -726,25 +804,37 @@ class _Plan257Capture {
     );
     late final bool artifactAccepted;
     late final String artifactValidationDetail;
-    if (_isPlan330) {
-      final result = await validateGroupNotificationProjectionAndroidArtifact(
-        artifactFile: artifact,
-        expectedPhysicalDeviceId: recipientId,
-        expectedEmulatorDeviceId: senderId,
-        expectedApkSha256: _androidBuilds!.e2eSha256,
-        expectedPackageName: appPackage,
-      );
-      artifactAccepted = result.ok;
-      artifactValidationDetail = result.detail;
-    } else {
-      final result = await validateGroupReactionNotificationArtifact(
-        scenario: scenario.id,
-        artifactFile: artifact,
-        expectedSenderDeviceId: senderId,
-        expectedRecipientDeviceId: recipientId,
-      );
-      artifactAccepted = result.ok;
-      artifactValidationDetail = result.detail;
+    // Dispatch site 4 of 4: artifact self-validation.
+    switch (_dispatch.validatorKind) {
+      case GroupReactionCaptureValidatorKind.notificationProjection:
+        final result = await validateGroupNotificationProjectionAndroidArtifact(
+          artifactFile: artifact,
+          expectedPhysicalDeviceId: recipientId,
+          expectedEmulatorDeviceId: senderId,
+          expectedApkSha256: _androidBuilds!.e2eSha256,
+          expectedPackageName: appPackage,
+        );
+        artifactAccepted = result.ok;
+        artifactValidationDetail = result.detail;
+      case GroupReactionCaptureValidatorKind.muted:
+        final result = await validateGroupMutedNotificationAndroidArtifact(
+          artifactFile: artifact,
+          expectedPhysicalDeviceId: recipientId,
+          expectedEmulatorDeviceId: senderId,
+          expectedApkSha256: _androidBuilds!.e2eSha256,
+          expectedPackageName: appPackage,
+        );
+        artifactAccepted = result.ok;
+        artifactValidationDetail = result.detail;
+      case GroupReactionCaptureValidatorKind.reaction:
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario.id,
+          artifactFile: artifact,
+          expectedSenderDeviceId: senderId,
+          expectedRecipientDeviceId: recipientId,
+        );
+        artifactAccepted = result.ok;
+        artifactValidationDetail = result.detail;
     }
     if (!artifactAccepted) {
       throw _CaptureFailure.capture(
@@ -2816,6 +2906,800 @@ class _Plan257Capture {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Plan 379 muted-group lifecycles (TC-379-05 live, TC-379-06 FCM).
+  //
+  // Neither stage calls `_collectBoundedLogs` (it hard-requires EXACTLY two
+  // provider sends) nor `_writeAndroidArtifact` (its inventory precondition
+  // demands a `[PUSH] … sent to` relay line that relay v1.8.0 no longer emits,
+  // and `_validateSqlCipherObservation` pins `unreadCount == 0` — the exact
+  // negation of what a muted scenario proves). The relay has no mute knowledge
+  // at all, so delivery is proven at the RECIPIENT boundary: persisted rows
+  // plus cursor-scoped client flow events.
+  // -------------------------------------------------------------------------
+
+  /// Flow event emitted when a group message row is inserted
+  /// (`group_messages_db_helpers.dart:76`). Pinned by a census test so this
+  /// literal cannot silently stop existing.
+
+  Future<void> _pressAndroidKey(String deviceId, String keycode) => _adbShell(
+    deviceId,
+    <String>['input', 'keyevent', keycode],
+    environmentFailure: true,
+  );
+
+  void _recordMutedCommand({
+    required String commandStage,
+    required String target,
+    required String action,
+    required String semanticTarget,
+  }) {
+    _mutedCommands.add(<String, Object?>{
+      'stage': commandStage,
+      'target': target,
+      'action': action,
+      'semanticTarget': semanticTarget,
+      'recordedAt': DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
+  /// Content cards attributable to [groupName] or to [marker].
+  ///
+  /// Uses the id-free extractor: `_activeNotificationRecords` THROWS on any
+  /// pkg-matching record without a numeric id, so a "must be empty" assertion
+  /// built on it could raise instead of returning zero.
+  List<ActiveNotificationCard> _mutedAttributableCards(
+    String dump, {
+    required String groupName,
+    String marker = '',
+  }) => extractActiveContentNotificationCards(dump, packageName: appPackage)
+      .where(
+        (card) =>
+            card.title == groupName ||
+            (marker.isNotEmpty &&
+                (card.title.contains(marker) || card.body.contains(marker))),
+      )
+      .toList(growable: false);
+
+  Future<String> _waitForGroupNotificationDump(String groupName) =>
+      _waitForValue<String>(
+        'notification card for $groupName',
+        const Duration(seconds: 120),
+        () async {
+          final dump = await _notificationDump(recipientId);
+          return _mutedAttributableCards(dump, groupName: groupName).length == 1
+              ? dump
+              : null;
+        },
+      );
+
+  /// Waits until [groupName]'s card carries none of [staleBodies].
+  ///
+  /// Android replaces a conversation's card in place, so "a card exists for
+  /// the control group" is satisfied by a card posted BEFORE the observation
+  /// window opened. Requiring the body to have changed is what makes the
+  /// control prove that a notification arrived inside the window. The stale
+  /// set is a LIST because the lane posts more than one message to the control
+  /// group ahead of the window (the liveness baseline and the cold-start
+  /// warm-up), and either of them can be the card sitting in the shade.
+  Future<String> _waitForGroupNotificationBodyChange(
+    String groupName,
+    List<String> staleBodies,
+  ) async {
+    try {
+      return await _waitForGroupNotificationBodyChangeInner(
+        groupName,
+        staleBodies,
+      );
+    } on _CaptureFailure {
+      await _writeMutedDiagnosticDump(
+        'background_control_card_not_refreshed',
+        await _notificationDump(recipientId),
+      );
+      rethrow;
+    }
+  }
+
+  Future<String> _waitForGroupNotificationBodyChangeInner(
+    String groupName,
+    List<String> staleBodies,
+  ) => _waitForValue<String>(
+    'refreshed notification card for $groupName',
+    const Duration(seconds: 180),
+    () async {
+      final dump = await _notificationDump(recipientId);
+      final cards = _mutedAttributableCards(dump, groupName: groupName);
+      // At least one card whose body is no longer any known baseline.
+      // Deliberately not "exactly one": a reaction may post ALONGSIDE the
+      // baseline message card rather than replacing it in place, and both
+      // shapes prove an in-window arrival equally well.
+      final refreshed = cards
+          .where(
+            (card) => !staleBodies.any((body) => card.body.contains(body)),
+          )
+          .toList(growable: false);
+      return refreshed.isEmpty ? null : dump;
+    },
+  );
+
+  /// Waits until the recipient's background isolate has taken [count] wakes.
+  Future<void> _waitForBackgroundPushWakes(int count) => _waitFor(
+    'background isolate wake #$count on the recipient',
+    const Duration(minutes: 3),
+    () async =>
+        countFlowEventOccurrences(
+          await _accumulatedRecipientFlowLines(),
+          'PUSH_BACKGROUND_MESSAGE_RECEIVED',
+        ) >=
+        count,
+  );
+
+  /// Waits until the background isolate has opened and read the encrypted
+  /// group store.
+  ///
+  /// This is the cost the warm-up exists to absorb, so it is asserted directly
+  /// rather than by enumerating the warm-up's notification dispositions.
+  /// Enumerating was tried and was wrong: run 12 (2026-08-18) saw the warm-up
+  /// text end at `PUSH_ANDROID_DATA_DECRYPT_FAIL{group_parity_mismatch}` ->
+  /// `PUSH_BACKGROUND_NOTIFICATION_ERROR`, a disposition outside the list,
+  /// even though its SQLCipher open had completed normally. The warm-up's own
+  /// outcome is deliberately NOT graded — only that it paid the cold cost.
+  Future<void> _waitForRecipientStorageWarm() => _waitFor(
+    'the background isolate to open and read the encrypted group store',
+    const Duration(minutes: 2),
+    () async => (await _accumulatedRecipientFlowLines()).contains(
+      _groupStoreReadEvent,
+    ),
+  );
+
+  static const String _groupStoreReadEvent = 'GROUP_MESSAGES_DB_LOAD_ALL_SUCCESS';
+
+  /// Waits until no card remains for [groupName].
+  ///
+  /// Opening a group commits its unread to zero and the reconciler cancels its
+  /// card. The muted lane asserts zero cards later, so the pre-mute control
+  /// card must be provably gone BEFORE the observation window — otherwise a
+  /// stale card would fail the capture and be misread as a mute regression.
+  Future<void> _waitForGroupNotificationCleared(String groupName) => _waitFor(
+    'cleared notification cards for $groupName',
+    const Duration(seconds: 60),
+    () async => _mutedAttributableCards(
+      await _notificationDump(recipientId),
+      groupName: groupName,
+    ).isEmpty,
+  );
+
+  /// Saves a raw UI tree next to the artifact so an on-device targeting
+  /// failure is diagnosable without re-running the whole capture.
+  Future<void> _writeMutedDiagnosticDump(String name, String contents) async {
+    final file = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      '${scenario.id}_diagnostic_$name.xml',
+    );
+    await file.writeAsString(contents, flush: true);
+  }
+
+  /// Scrolls Group Info until the mute switch itself is reachable.
+  ///
+  /// Keyed on the switch node, not on the row label: the "Mute Notifications"
+  /// `Text` is never exposed to the accessibility tree (verified on device —
+  /// the switch carries `NAF="true"` and every `text=` is empty).
+  Future<void> _scrollGroupInfoToMuteRow() async {
+    for (var attempt = 0; attempt < 8; attempt += 1) {
+      if (findGroupMuteSwitchCenter(await _uiDump(recipientId)) != null) return;
+      await _adbShell(recipientId, const <String>[
+        'input',
+        'swipe',
+        '540',
+        '1700',
+        '540',
+        '900',
+        '400',
+      ], environmentFailure: true);
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+    }
+    await _writeMutedDiagnosticDump(
+      'group_info_mute_row_not_found',
+      await _uiDump(recipientId),
+    );
+    throw _CaptureFailure.capture(
+      stage,
+      'group_mute_switch_not_reachable_in_bounded_scroll',
+    );
+  }
+
+  /// Drives the real Group Info mute switch on the recipient.
+  ///
+  /// The switch exposes no text or content-description, so it is located by
+  /// its own bounds inside the "Mute Notifications" row. The post-tap check
+  /// reads the row's state subtitle; the authoritative read stays the
+  /// SQLCipher `groupIsMuted` observation, which the validator requires.
+  Future<void> _muteGroupThroughGroupInfo(String groupName) async {
+    await _openPlan330Group(recipientId, groupName);
+    final conversation = await _uiDump(recipientId);
+    final info = findGroupInfoEntryCenter(conversation);
+    if (info == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'group_info_entry_not_reachable_on_recipient',
+      );
+    }
+    _recordMutedCommand(
+      commandStage: 'mute_toggle',
+      target: recipientId,
+      action: 'tap',
+      semanticTarget: 'Group Info',
+    );
+    await _adbShell(recipientId, <String>[
+      'input',
+      'tap',
+      '${info.$1}',
+      '${info.$2}',
+    ], environmentFailure: true);
+
+    // Distinguish "the info control was mis-targeted" from "Group Info opened
+    // but the mute card is below the fold": leaving the conversation surface
+    // is the first, independent signal.
+    var left = false;
+    for (var attempt = 0; attempt < 20 && !left; attempt += 1) {
+      final xml = await _uiDump(recipientId);
+      left = !isGroupConversationSurface(xml, groupName);
+      if (!left) await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    if (!left) {
+      await _writeMutedDiagnosticDump(
+        'group_info_entry_tap_did_not_navigate',
+        await _uiDump(recipientId),
+      );
+      throw _CaptureFailure.capture(
+        stage,
+        'group_info_entry_tap_did_not_leave_conversation at '
+        '${info.$1},${info.$2}',
+      );
+    }
+
+    await _waitFor(
+      'group info surface on recipient',
+      const Duration(seconds: 45),
+      () async => isGroupInfoSurface(await _uiDump(recipientId)),
+    );
+
+    // `uiautomator dump` only serializes VISIBLE nodes, and the mute card sits
+    // below the member list, so it is scrolled into view rather than assumed
+    // on screen.
+    await _scrollGroupInfoToMuteRow();
+
+    final infoDump = await _uiDump(recipientId);
+    if (groupMuteSwitchChecked(infoDump) != true) {
+      final toggle = findGroupMuteSwitchCenter(infoDump);
+      if (toggle == null) {
+        await _writeMutedDiagnosticDump(
+          'group_mute_switch_not_found',
+          infoDump,
+        );
+        throw _CaptureFailure.capture(
+          stage,
+          'group_mute_switch_not_reachable_on_recipient',
+        );
+      }
+      _recordMutedCommand(
+        commandStage: 'mute_toggle',
+        target: recipientId,
+        action: 'tap',
+        semanticTarget: groupMuteRowLabel,
+      );
+      await _adbShell(recipientId, <String>[
+        'input',
+        'tap',
+        '${toggle.$1}',
+        '${toggle.$2}',
+      ], environmentFailure: true);
+      await _waitFor(
+        'mute switch checked after the Group Info tap',
+        const Duration(seconds: 30),
+        () async =>
+            groupMuteSwitchChecked(await _uiDump(recipientId)) == true,
+      );
+    }
+
+    // Back out to Orbit and STAY FOREGROUND. Orbit is not a conversation, so
+    // notifications still post normally, but no conversation is visible and
+    // nothing gets marked read. Backgrounding here would move delivery onto
+    // the push-wake path, where storage can defer to inbox-drain-on-resume —
+    // which is TC-379-06's lane, not this one.
+    await _pressAndroidKey(recipientId, 'KEYCODE_BACK');
+    await _pressAndroidKey(recipientId, 'KEYCODE_BACK');
+    await _ensureOrbit(recipientId);
+  }
+
+  /// Visits the unmuted control group, then returns to Orbit and HOME.
+  ///
+  /// This is the tracker-staleness control: visiting the control group
+  /// overwrites whatever conversation the visibility tracker last held, so a
+  /// "the group under test was considered visible" confound cannot survive.
+  Future<void> _visitControlGroupAndReturnToOrbit() async {
+    _recordMutedCommand(
+      commandStage: 'control_visit',
+      target: recipientId,
+      action: 'tap',
+      semanticTarget: 'Open group $_mutedControlGroupName',
+    );
+    await _openPlan330Group(recipientId, _mutedControlGroupName);
+    await _pressAndroidKey(recipientId, 'KEYCODE_BACK');
+    await _ensureOrbit(recipientId);
+  }
+
+  /// Reads the recipient's flow-event lines without foregrounding the app.
+  Future<String> _recipientFlowLines() async {
+    final log = await _readAndroidLogcat(recipientId);
+    return _flowLines(log.stdout);
+  }
+
+  final List<String> _recipientFlowAccumulator = <String>[];
+  final Set<String> _recipientFlowSeen = <String>{};
+
+  /// Folds every `logcat -d` read into a monotonically growing flow log.
+  ///
+  /// `logcat -d` returns only what is still in the device ring buffer. On the
+  /// pinned Pixel under campaign load that window is a couple of minutes —
+  /// shorter than a lane — so polling the raw dump makes event counts go DOWN
+  /// as older lines rotate out. Run 11 (2026-08-18) stalled exactly there: the
+  /// live lane's `count > baseline` arrival wait could never fire because the
+  /// baseline occurrences had rotated away. Accumulating is what makes "what
+  /// has this lane seen so far" answerable at all, and it is also what keeps
+  /// the artifact's raw flow log complete rather than "whatever survived to
+  /// the last read".
+  Future<String> _accumulatedRecipientFlowLines() async {
+    final fresh = await _recipientFlowLines();
+    for (final line in fresh.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      if (_recipientFlowSeen.add(trimmed)) {
+        _recipientFlowAccumulator.add(trimmed);
+      }
+    }
+    return '${_recipientFlowAccumulator.join('\n')}\n';
+  }
+
+  /// Drops accumulated lines; call immediately after clearing the device log.
+  void _resetRecipientFlowAccumulator() {
+    _recipientFlowAccumulator.clear();
+    _recipientFlowSeen.clear();
+  }
+
+  /// The id of the message the SENDER most recently published.
+  Future<String> _latestSenderGroupMessageId() async {
+    final log = await _readAndroidLogcat(senderId);
+    final id = latestGroupSendMessageId(_flowLines(log.stdout));
+    if (id == null || id.isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'sender_group_send_message_id_not_observable',
+      );
+    }
+    return id;
+  }
+
+  /// Records the SQLCipher observation for the muted group under test.
+  ///
+  /// Runs LAST in each stage: the probe transport foregrounds the installed
+  /// app, and every card assertion must already be captured by then.
+  Future<void> _captureMutedSqlCipherObservation() async {
+    _groupName = _mutedGroupName;
+    _targetMarker = _mutedUnderTestMarker;
+    _firstMarker = '';
+    _secondMarker = '';
+    // On the FCM lane the reaction arrives while the recipient process is
+    // dead, and the background isolate is read-only — the row is written by
+    // the offline-inbox drain the next time the app runs, which is the
+    // probe's own foreground start. A single-shot probe therefore races the
+    // drain and reads a suppressed-but-delivered reaction as a LOST one
+    // (run 13, 2026-08-18: `reactionRows: 0` while every other claim held).
+    // Polling bounds that race without weakening the rule: if the row never
+    // lands, delivery really was harmed and the lane still fails.
+    final observed = _isMutedBackgroundLane
+        ? await _waitForValue<Map<String, dynamic>>(
+            'the suppressed reaction row to drain onto the recipient',
+            const Duration(minutes: 3),
+            () async {
+              final probe = await _runInstalledGroupReactionProbe(
+                deviceId: recipientId,
+                action: _runtimeObserveAction,
+              );
+              final rows = (probe['reactionRows'] as num?)?.toInt() ?? 0;
+              return rows >= 1 ? probe : null;
+            },
+          )
+        : await _runInstalledGroupReactionProbe(
+            deviceId: recipientId,
+            action: _runtimeObserveAction,
+          );
+    if (observed['schema'] != 'mknoon.plan257.sqlcipher-observation.v1') {
+      throw _CaptureFailure.capture(
+        stage,
+        'muted_probe_observation_schema_mismatch',
+      );
+    }
+    _mutedSqlCipherObservation = jsonEncode(observed);
+    _mutedGroupIdSha256 = '${observed['groupIdSha256'] ?? ''}';
+    _mutedGroupIsMuted = observed['groupIsMuted'] == true;
+    _mutedUnreadAfter = (observed['unreadCount'] as num?)?.toInt() ?? -1;
+
+    final markers = observed['markers'];
+    var persisted = false;
+    var readAtNull = false;
+    if (markers is List) {
+      for (final entry in markers) {
+        if (entry is! Map) continue;
+        if (entry['marker'] != 'target') continue;
+        persisted = true;
+        readAtNull = entry['read'] != true;
+        final digest = entry['idSha256'];
+        if (digest is String) _mutedUnderTestMessageIdDigest = digest;
+      }
+    }
+    _mutedPersistedRowObserved = persisted;
+    _mutedReactionRowsObserved =
+        (observed['reactionRows'] as num?)?.toInt() ?? 0;
+    _mutedUnderTestReadAtNull = readAtNull;
+
+    final badge = observed['canonicalBadgeState'];
+    if (badge is Map) {
+      _mutedBadgeAvailable = badge['available'] == true;
+      _mutedBadgeIncludesMutedGroup = badge['includesObservedGroup'] == true;
+      _mutedBadgeGroupIdentityCount =
+          (badge['groupIdentityCount'] as num?)?.toInt() ?? 0;
+      // The fixture holds exactly two groups and the observed (muted) one is
+      // excluded, so any remaining badge identity is the unmuted control.
+      _mutedBadgeIncludesControlGroup =
+          !_mutedBadgeIncludesMutedGroup && _mutedBadgeGroupIdentityCount >= 1;
+    }
+  }
+
+  Future<void> _runAndroidMutedMessageSuppressionLifecycle() async {
+    final token = _runtimeToken('marker').replaceAll('-', '');
+    final preMuteMarker = 'Plan379Pre${token.substring(0, 10)}';
+    _mutedControlMarker = 'Plan379Ctl${token.substring(10, 20)}';
+    _mutedUnderTestMarker = 'Plan379Mut${token.substring(20, 30)}';
+    _mutedPreMuteCardGroup = 'muted';
+
+    // 1. Pre-mute control — the group under test posts a card while UNMUTED.
+    //    This is what makes a later zero-card dump attributable to mute rather
+    //    than to a group that never notified at all.
+    await _ensureOrbit(recipientId);
+    await _openPlan330Group(senderId, _mutedGroupName);
+    await _sendGroupText(senderId, preMuteMarker);
+    _mutedPreMuteNotificationDump = await _waitForGroupNotificationDump(
+      _mutedGroupName,
+    );
+
+    // 2. Mute it through the real Group Info switch. Opening the group to
+    //    reach Group Info also commits its unread to zero, which cancels the
+    //    pre-mute card; wait for that so a stale card cannot later be misread
+    //    as a mute regression.
+    await _muteGroupThroughGroupInfo(_mutedGroupName);
+    await _waitForGroupNotificationCleared(_mutedGroupName);
+
+    // 3. Overwrite the conversation tracker with the unmuted control group.
+    await _visitControlGroupAndReturnToOrbit();
+
+    // 4. Unread baseline AFTER the visits: opening the group under test in
+    //    step 2 cleared its unread, so this is the floor the suppressed
+    //    message must still grow.
+    _mutedUnreadBaseline = 0;
+
+    // 5. Post-mute lane liveness — the control group still posts a card
+    //    INSIDE the suppression window. Without it, a dead notification lane
+    //    reads exactly like a working mute.
+    await _openPlan330Group(senderId, _mutedControlGroupName);
+    await _sendGroupText(senderId, _mutedControlMarker);
+    _mutedPostMuteNotificationDump = await _waitForGroupNotificationDump(
+      _mutedControlGroupName,
+    );
+
+    // 6. The message under test, bound by the id the sender published. The
+    //    recipient stores incoming group messages under that same envelope id,
+    //    so this identifies THE message rather than counting occurrences of an
+    //    event the control messages also emit.
+    await _openPlan330Group(senderId, _mutedGroupName);
+    await _sendGroupText(senderId, _mutedUnderTestMarker);
+    final underTestMessageId = await _latestSenderGroupMessageId();
+
+    // 7. Prove it ARRIVED before proving it did not notify: without this the
+    //    zero-card dump would also pass for a message that never landed.
+    await _waitFor(
+      'muted group message $underTestMessageId stored by the recipient',
+      const Duration(seconds: 180),
+      () async => groupMessageStoredWithId(
+        await _accumulatedRecipientFlowLines(),
+        underTestMessageId,
+      ),
+    );
+    await Future<void>.delayed(const Duration(seconds: 10));
+
+    _mutedNotificationDump = await _notificationDump(recipientId);
+    final leaked = _mutedAttributableCards(
+      _mutedNotificationDump,
+      groupName: _mutedGroupName,
+      marker: _mutedUnderTestMarker,
+    );
+    if (leaked.isNotEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'muted_group_posted_${leaked.length}_notification_cards',
+      );
+    }
+
+    await _captureMutedSqlCipherObservation();
+    await _captureMutedControlGroupDigest();
+  }
+
+  Future<void> _runAndroidMutedReactionBackgroundLifecycle() async {
+    final token = _runtimeToken('marker').replaceAll('-', '');
+    _mutedControlMarker = 'Plan379Ctl${token.substring(0, 10)}';
+    _mutedUnderTestMarker = 'Plan379Mut${token.substring(10, 20)}';
+    _mutedPreMuteCardGroup = 'control';
+
+    // 1. The recipient authors the reaction targets in both groups: a group
+    //    reaction notifies the TARGET's author.
+    await _openPlan330Group(recipientId, _mutedControlGroupName);
+    await _sendGroupText(recipientId, _mutedControlMarker);
+    await _openPlan330Group(recipientId, _mutedGroupName);
+    await _sendGroupText(recipientId, _mutedUnderTestMarker);
+
+    // 2. Mute the group under test through the real Group Info switch, then
+    //    let its own card clear. This lane deliberately terminates the app
+    //    later (step 4) so the pushes must wake the background isolate.
+    await _muteGroupThroughGroupInfo(_mutedGroupName);
+    await _waitForGroupNotificationCleared(_mutedGroupName);
+
+    // 3. Baseline liveness, still foregroundable: the control group can post a
+    //    card in this build/install at all. Deliberately a TEXT message rather
+    //    than a reaction — it also leaves the control group with one unread
+    //    incoming row, which is what keeps the canonical badge non-empty while
+    //    the muted group is excluded from it.
+    final baselineMarker = 'Plan379Base${token.substring(20, 30)}';
+    await _openPlan330Group(senderId, _mutedControlGroupName);
+    await _sendGroupText(senderId, baselineMarker);
+    _mutedPreMuteNotificationDump = await _waitForGroupNotificationDump(
+      _mutedControlGroupName,
+    );
+
+    // 4. Terminate the recipient so the next pushes must wake the background
+    //    isolate rather than being handled by a live foreground listener.
+    await _terminateAndroidRecipient();
+    await _adb(recipientId, const <String>['logcat', '-c']);
+    _resetRecipientFlowAccumulator();
+
+    // 5. Absorb the cold-start storage deferral with a throwaway push.
+    //
+    //    The FIRST wake after a kill spawns the background isolate cold, and
+    //    its first-touch warm-up can outrun the 2s `display_eligibility`
+    //    phase budget (`background_message_handler.dart:78-81`). Measured
+    //    2026-08-18 on the pinned Pixel (two runs, 2.170s / 2.180s): ART
+    //    profile install, the Go-runtime dlopen and the first encrypted-store
+    //    open all land inside that window. Note the eligibility resolver's own
+    //    DB reads take only ~0.3s and FINISH ~0.2s BEFORE the timeout — so
+    //    this is generic cold-isolate cost, NOT slow SQLCipher; do not "fix"
+    //    it by tuning the database. Either way the push exits
+    //    at PUSH_BACKGROUND_STORAGE_DEFERRED *upstream of the mute gate* and
+    //    presents nothing. Whichever graded push went first was therefore
+    //    silent for a reason that has nothing to do with mute: the muted
+    //    reaction never reached the gate that would suppress it, and the
+    //    unmuted control never reached the presenter that would card it.
+    //    A throwaway text to the CONTROL group takes that hit instead, so both
+    //    graded pushes travel the warm path. The deferral itself is real
+    //    product behaviour owned elsewhere (Plan 383 defers `storage_deferred`
+    //    alerting to the dropped-push-recovery wave); this lane only declines
+    //    to be its victim.
+    final warmupMarker = 'Plan379Warm${token.substring(28, 38)}';
+    await _openPlan330Group(senderId, _mutedControlGroupName);
+    await _sendGroupText(senderId, warmupMarker);
+    await _waitForBackgroundPushWakes(1);
+    await _waitForRecipientStorageWarm();
+    // The opens the first wake started keep running briefly after it gives up
+    // (measured: ~1s more), so settle wide of that before grading anything.
+    await Future<void>.delayed(const Duration(seconds: 15));
+
+    // 6. In ONE backgrounded window: react in the muted group and in the
+    //    unmuted control group.
+    await _openPlan330Group(senderId, _mutedGroupName);
+    await _longPressText(senderId, _mutedUnderTestMarker);
+    await _tapText(senderId, _reactionEmoji);
+    await _waitForBackgroundPushWakes(2);
+    await _openPlan330Group(senderId, _mutedControlGroupName);
+    await _longPressText(senderId, _mutedControlMarker);
+    await _tapText(senderId, _reactionEmoji);
+
+    // 7. Pipeline health: the control REACTION must surface through the
+    //    background path. Android replaces a conversation's card in place, so
+    //    requiring the body to be neither the liveness baseline nor the
+    //    warm-up is what makes this prove an in-window arrival rather than
+    //    re-observing a card posted before the window opened.
+    _mutedPostMuteNotificationDump =
+        await _waitForGroupNotificationBodyChange(
+          _mutedControlGroupName,
+          <String>[baselineMarker, warmupMarker],
+        );
+    await Future<void>.delayed(const Duration(seconds: 10));
+
+    _mutedNotificationDump = await _notificationDump(recipientId);
+    final leaked = _mutedAttributableCards(
+      _mutedNotificationDump,
+      groupName: _mutedGroupName,
+    );
+    if (leaked.isNotEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'muted_group_posted_${leaked.length}_background_notification_cards',
+      );
+    }
+
+    // 8. Bind the background evidence by fcm message id. The reason is
+    //    RECORDED, never pinned: production group-reaction traffic is
+    //    intercepted before the fallback resolver, so its suppression
+    //    collapses into a catch-all rather than reason `muted`. The binding
+    //    itself is a pure function with host rows — it excludes the warm-up
+    //    wake, takes the muted push from the SUPPRESSED event and the control
+    //    push from the SHOWN event, and fails closed rather than guessing.
+    final flowLog = await _accumulatedRecipientFlowLines();
+    final binding = resolveMutedBackgroundPushBinding(flowLog);
+    if (binding == null) {
+      await _writeMutedDiagnosticDump(
+        'background_push_binding_unresolvable',
+        flowLog,
+      );
+      throw _CaptureFailure.capture(
+        stage,
+        'muted_background_flow_evidence_incomplete: '
+        'received=${flowEventMessageIdsInOrder(flowLog, 'PUSH_BACKGROUND_MESSAGE_RECEIVED').length} '
+        'suppressed=${flowEventMessageIdsInOrder(flowLog, 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED').length} '
+        'shown=${flowEventMessageIdsInOrder(flowLog, 'PUSH_BACKGROUND_NOTIFICATION_SHOWN').length}',
+      );
+    }
+    _mutedBackgroundDelivery = GroupMutedBackgroundDeliveryInput(
+      recipientProcessState: 'terminated',
+      mutedFcmMessageId: binding.mutedFcmMessageId,
+      controlFcmMessageId: binding.controlFcmMessageId,
+      suppressionReason: _mutedFlowEventReason(
+        flowLog,
+        binding.mutedFcmMessageId,
+      ),
+      backgroundFlowLog: flowLog,
+    );
+    _mutedUnreadBaseline = 0;
+
+    await _captureMutedSqlCipherObservation();
+    await _captureMutedControlGroupDigest();
+  }
+
+  /// Second probe, keyed by the CONTROL group's name.
+  ///
+  /// Yields its redacted identity digest and, in doing so, proves the control
+  /// group is a real persisted row on the recipient rather than a name that
+  /// only ever existed on the sender.
+  Future<void> _captureMutedControlGroupDigest() async {
+    _groupName = _mutedControlGroupName;
+    _targetMarker = _mutedControlMarker;
+    _firstMarker = '';
+    _secondMarker = '';
+    final observed = await _runInstalledGroupReactionProbe(
+      deviceId: recipientId,
+      action: _runtimeObserveAction,
+    );
+    _mutedControlGroupIdSha256 = '${observed['groupIdSha256'] ?? ''}';
+    if (observed['groupRows'] != 1 || _mutedControlGroupIdSha256.isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'muted_control_group_row_not_observable_on_recipient',
+      );
+    }
+    _groupName = _mutedGroupName;
+  }
+
+  Future<void> _writeMutedAndroidArtifact() async {
+    if (_mutedNotificationDump.isEmpty ||
+        _mutedPreMuteNotificationDump.isEmpty ||
+        _mutedPostMuteNotificationDump.isEmpty ||
+        _mutedSqlCipherObservation.isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'muted_capture_inventory_incomplete',
+      );
+    }
+    if (_mutedGroupIdSha256.isEmpty || _mutedControlGroupIdSha256.isEmpty) {
+      await _writeMutedDiagnosticDump(
+        'identity_digests_incomplete',
+        'mutedGroupName=$_mutedGroupName\n'
+            'controlGroupName=$_mutedControlGroupName\n'
+            'mutedGroupIdSha256=$_mutedGroupIdSha256\n'
+            'controlGroupIdSha256=$_mutedControlGroupIdSha256\n'
+            'observation=$_mutedSqlCipherObservation\n',
+      );
+      throw _CaptureFailure.capture(
+        stage,
+        'muted_group_identity_digests_incomplete',
+      );
+    }
+
+    final input = GroupMutedNotificationCaptureInput(
+      scenario: scenario.id,
+      recordedAt: DateTime.now().toUtc().toIso8601String(),
+      build: GroupMutedNotificationBuildInput(
+        apkSha256: _androidBuilds!.e2eSha256,
+        packageName: appPackage,
+      ),
+      topology: GroupMutedNotificationTopologyInput(
+        physicalDeviceId: recipientId,
+        emulatorDeviceId: senderId,
+      ),
+      fixture: GroupMutedNotificationFixtureInput(
+        mutedGroupName: _mutedGroupName,
+        controlGroupName: _mutedControlGroupName,
+        mutedGroupIdSha256: _mutedGroupIdSha256,
+        controlGroupIdSha256: _mutedControlGroupIdSha256,
+        actorName: 'Alice',
+      ),
+      mutedProjection: GroupMutedProjectionInput(
+        groupIsMuted: _mutedGroupIsMuted,
+        underTestMarker: _mutedUnderTestMarker,
+        underTestMessageIdSha256: _mutedUnderTestMessageIdDigest,
+        underTestReadAtNull: _mutedUnderTestReadAtNull,
+        mutedCardCount: _mutedAttributableCards(
+          _mutedNotificationDump,
+          groupName: _mutedGroupName,
+          marker: _mutedUnderTestMarker,
+        ).length,
+        unreadBaseline: _mutedUnreadBaseline,
+        unreadAfter: _mutedUnreadAfter,
+        persistedRowObserved: _mutedPersistedRowObserved,
+        reactionRowsObserved: _mutedReactionRowsObserved,
+        badgeAvailable: _mutedBadgeAvailable,
+        badgeIncludesMutedGroup: _mutedBadgeIncludesMutedGroup,
+        badgeIncludesControlGroup: _mutedBadgeIncludesControlGroup,
+        badgeGroupIdentityCount: _mutedBadgeGroupIdentityCount,
+        notificationDump: _mutedNotificationDump,
+        sqlcipherObservation: _mutedSqlCipherObservation,
+      ),
+      control: GroupMutedControlInput(
+        controlMarker: _mutedControlMarker,
+        preMuteCardGroup: _mutedPreMuteCardGroup,
+        preMuteCardCount: _mutedAttributableCards(
+          _mutedPreMuteNotificationDump,
+          groupName: _mutedPreMuteCardGroup == 'muted'
+              ? _mutedGroupName
+              : _mutedControlGroupName,
+        ).length,
+        preMuteNotificationDump: _mutedPreMuteNotificationDump,
+        postMuteCardCount: _mutedAttributableCards(
+          _mutedPostMuteNotificationDump,
+          groupName: _mutedControlGroupName,
+        ).length,
+        postMuteNotificationDump: _mutedPostMuteNotificationDump,
+      ),
+      commandJournal: jsonEncode(<String, Object?>{
+        'schema': groupMutedNotificationCommandJournalSchema,
+        'commands': _mutedCommands,
+      }),
+      backgroundDelivery: _mutedBackgroundDelivery,
+    );
+
+    await writeGroupMutedNotificationArtifact(
+      proofDirectory: artifactDirectory,
+      input: input,
+    );
+  }
+
+  String _mutedFlowEventReason(String log, String messageId) {
+    for (final line in log.split('\n')) {
+      if (!line.contains('PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED')) continue;
+      if (!line.contains('"messageId":"$messageId"')) continue;
+      final match = RegExp(r'"reason"\s*:\s*"([^"]+)"').firstMatch(line);
+      if (match != null) return match.group(1)!;
+    }
+    return 'unrecorded';
+  }
+
   Future<void> _openPlan330Group(String deviceId, String groupName) async {
     _groupName = groupName;
     final initial = await _uiDump(deviceId);
@@ -3335,15 +4219,45 @@ class _Plan257Capture {
     return false;
   }
 
-  Future<void> _waitForRelayTokenRegistration(DateTime since) async {
-    final platform = scenario.recipientPlatform == 'ios' ? 'ios' : 'android';
+  /// Waits until the recipient device's own log shows the relay ACCEPTED its
+  /// Android push-token registration.
+  ///
+  /// Replaces a relay-journal grep for
+  /// `[PUSH] Token registered for <peerPrefix> (<platform>)`, which relay
+  /// v1.8.0 (`8d86501e4`) deleted along with the rest of the identifying
+  /// `[PUSH]` vocabulary. That removal is deliberate and pinned by Plan 368,
+  /// so the fix is to stop asking the relay who registered and ask the device
+  /// instead — better attribution, since the log is unambiguously this
+  /// device's rather than a 20-char peer prefix.
+  ///
+  /// The old wait was named "capability-bearing", which it never was: even the
+  /// deleted relay line carried only a peer prefix and a platform, never the
+  /// advertised capability set. The name is corrected rather than carried
+  /// forward.
+  Future<void> _waitForRecipientPushRegistrationAccepted() async {
     await _waitFor(
-      'capability-bearing recipient $platform token registration',
+      'recipient android push registration accepted by the relay',
+      const Duration(minutes: 3),
+      () async => androidRelayPushRegistrationAccepted(
+        (await _readAndroidLogcat(recipientId)).stdout,
+      ),
+    );
+  }
+
+  /// iOS token registration still reads the relay journal.
+  ///
+  /// The same v1.8.0 removal applies, so this is expected to be dead — but the
+  /// iOS legs are deferred (GAP-N12) and unexercised, and rewriting them
+  /// against `idevicesyslog` without an iOS device to verify would be worse
+  /// than leaving the known-dead path clearly labelled.
+  Future<void> _waitForRelayTokenRegistration(DateTime since) async {
+    await _waitFor(
+      'recipient ios token registration (relay journal; dead on v1.8.0)',
       const Duration(minutes: 3),
       () async {
         final log = await _relayJournalSince(since);
         return log.contains(
-          '[PUSH] Token registered for ${recipient.peerPrefix} ($platform)',
+          '[PUSH] Token registered for ${recipient.peerPrefix} (ios)',
         );
       },
     );

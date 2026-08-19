@@ -1040,8 +1040,16 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         (routeTarget.kind == NotificationRouteTargetKind.conversation ||
             routeTarget.kind == NotificationRouteTargetKind.group);
     if (requiresDurableEffect) {
+      // 383/G17: deferring the DURABLE effect must never defer the ALERT. A
+      // killed app has no staged display-outbox row for a genuinely new event
+      // (only the foreground runtime writes those), and the retry vehicle is
+      // not live, so every non-deadline exit here falls through to the
+      // existing non-durable typed lane with `durableEffectContext` left null
+      // and the pre-durable `contentMetadata`/`nativePayload` intact. The
+      // provisional owners are NOT released: the show path commits them at
+      // the final barrier and the outer catch releases them on failure.
       try {
-        durableEffectContext = await storageDeadline.run(
+        final resolvedEffectContext = await storageDeadline.run(
           'durable_effect_authority',
           () => _backgroundDurableLocalNotificationEffectResolver(
             routeTarget: routeTarget,
@@ -1049,7 +1057,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             metadata: contentMetadata!,
           ),
         );
-        if (durableEffectContext == null) {
+        if (resolvedEffectContext == null) {
           // The authenticated envelope remains staged/provider-owned. A card
           // ID, bounded reaction alias or provider message ID is not enough to
           // mint SQL_READY ledger authority.
@@ -1058,34 +1066,44 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             event: 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
             details: const <String, Object?>{
               'reason': 'exact_sql_authority_unavailable',
+              'presentation': 'nondurable_fallback',
             },
           );
-          await releaseProvisionalNotificationOwners(
-            reason: 'durable_effect_authority_unavailable',
+        } else {
+          final generation = durableLocalNotificationContentGeneration(
+            resolvedEffectContext.eventCorrelation,
           );
-          return;
+          if (generation == null) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+              details: const <String, Object?>{
+                'reason': 'generation_invalid',
+                'presentation': 'nondurable_fallback',
+              },
+            );
+          } else {
+            final durableMetadata = ConversationNotificationContentMetadata(
+              kind: contentKind!,
+              eventIdentity: resolvedEffectContext.eventCorrelation,
+              generation: generation,
+            );
+            final finalVisibility = await _backgroundAppVisibilityResolver();
+            // Commit the durable upgrade only once every authority fact is in
+            // hand, so a partial failure cannot leave a half-durable card.
+            durableEffectContext = resolvedEffectContext;
+            contentMetadata = durableMetadata;
+            nativePayload = encodeConversationNotificationPayload(
+              routePayload: fallback.payload ?? conversationKey,
+              conversationKey: conversationKey,
+              metadata: durableMetadata,
+            );
+            durableFinalVisibility = finalVisibility;
+          }
         }
-        final generation = durableLocalNotificationContentGeneration(
-          durableEffectContext.eventCorrelation,
-        );
-        if (generation == null) {
-          await releaseProvisionalNotificationOwners(
-            reason: 'durable_effect_generation_invalid',
-          );
-          return;
-        }
-        contentMetadata = ConversationNotificationContentMetadata(
-          kind: contentKind!,
-          eventIdentity: durableEffectContext.eventCorrelation,
-          generation: generation,
-        );
-        nativePayload = encodeConversationNotificationPayload(
-          routePayload: fallback.payload ?? conversationKey,
-          conversationKey: conversationKey,
-          metadata: contentMetadata,
-        );
-        durableFinalVisibility = await _backgroundAppVisibilityResolver();
       } on BackgroundStorageDeadlineExceeded catch (error) {
+        // Storage-deadline exhaustion signals storage liveness trouble, not a
+        // missing row. Presentation stays deferred to the recovery worker.
         await _recordBackgroundStorageDeferred(
           message,
           error,
@@ -1102,27 +1120,36 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           details: <String, Object?>{
             'reason': 'authority_read_failed',
             'errorType': error.runtimeType.toString(),
+            'presentation': 'nondurable_fallback',
           },
         );
-        await releaseProvisionalNotificationOwners(
-          reason: 'durable_effect_authority_read_failed',
-        );
-        return;
       }
     }
-    Future<void> show({required bool publicationSilent}) =>
-        _backgroundNotificationsPlugin.show(
+    // Mirrors the live path's `publishedSilently` capture
+    // (`flutter_notification_service.dart:406-415`). Stays null when no native
+    // show happened at all, so a SHOWN event that never posted cannot report
+    // itself as an audible alert.
+    bool? publishedSilently;
+    Future<void> show({required bool publicationSilent}) async {
+      final effectiveSilent = await resolveMknoonMessagePublicationSilence(
+        silent: publicationSilent,
+        plugin: _backgroundNotificationsPlugin,
+      );
+      publishedSilently = effectiveSilent;
+      return _backgroundNotificationsPlugin.show(
           notificationId,
           fallback.title,
           fallback.body,
           mknoonConversationNotificationDetails(
             conversationKey: conversationKey,
-            silent: publicationSilent,
+            silent: effectiveSilent,
             autoCancel: contentMetadata == null,
             snapshot: fallback.snapshot,
           ),
           payload: nativePayload,
         );
+    }
+
     Future<void> publishPrepared({required bool publicationSilent}) async {
       if (contentMetadata == null) {
         await show(publicationSilent: publicationSilent);
@@ -1518,12 +1545,20 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           ? <String, Object?>{
               'messageId': message.messageId,
               'payload': fallback.payload ?? '',
+              // Whether the background isolate's own post ALERTED. The live
+              // path has always reported this; without it the background path
+              // — which wins the dual-path race whenever the app is merely
+              // backgrounded — is unprovable, and a dumpsys read cannot stand
+              // in for it (the losing path's silent same-ID reconcile lands
+              // ~2.6 s later, device-measured 2026-08-19).
+              'silent': ?publishedSilently,
             }
           : <String, Object?>{
               'durable': true,
               'producer': durableEffectContext.producerKind.wireName,
               'disposition':
                   durableEffectResult?.disposition.name ?? 'legacy_fallback',
+              'silent': ?publishedSilently,
             },
     );
   } catch (e) {

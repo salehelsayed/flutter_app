@@ -37,6 +37,27 @@ import 'package:flutter_app/features/conversation/domain/models/direct_notificat
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/fake_app_visibility.dart';
 
+/// One entry of a `getNotificationChannels` platform reply. Every key the
+/// plugin's mapper dereferences is supplied: it calls `Color(a['ledColor'])`
+/// and `Importance.values.firstWhere(...)` unguarded, so a partial fixture
+/// throws inside the plugin instead of exercising the code under test.
+Map<String, Object?> _blockedChannelReply(String id, int importance) =>
+    <String, Object?>{
+      'id': id,
+      'name': id,
+      'description': null,
+      'groupId': null,
+      'showBadge': true,
+      'importance': importance,
+      'playSound': true,
+      'soundSource': null,
+      'enableLights': false,
+      'enableVibration': true,
+      'vibrationPattern': null,
+      'ledColor': 0,
+      'audioAttributesUsage': 5,
+    };
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -770,9 +791,776 @@ void main() {
       },
     );
 
+    // ---------------------------------------------------------------------
+    // Plan 383 (G17) — a killed app must still ALERT for an authenticated
+    // typed event whose durable display-outbox authority has not been staged
+    // yet. The durable seam stays intact; only its silent exits fall through
+    // into the existing non-durable typed presentation lane.
+    // ---------------------------------------------------------------------
     test(
-      'authenticated durable-authority deferral releases provisional owners for retry',
+      'authenticated durable-authority deferral presents the non-durable '
+      'fallback card (direct message)',
       () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Alice',
+            body: 'hello',
+            payload: 'peer-fallback-direct',
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.message,
+              canonicalEventId: 'message-fallback-direct',
+            ),
+          ),
+        );
+        final db = await openEmptyBackgroundDisplayOutboxDatabase(
+          tag: 'direct-message',
+          direct: true,
+        );
+        useRealEmptyOutboxDurableEffectResolver(db);
+        final registry = await useIsolatedBackgroundNotificationRegistry(
+          'direct-message',
+        );
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fallback-direct',
+            data: <String, dynamic>{
+              'type': 'new_message',
+              'sender_id': 'peer-fallback-direct',
+              'message_id': 'message-fallback-direct',
+            },
+          ),
+        );
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(1));
+        final showArguments = shows.single.arguments as Map;
+        expect(showArguments['title'], 'Alice');
+        expect(showArguments['body'], 'hello');
+        final platformSpecifics =
+            showArguments['platformSpecifics'] as Map;
+        expect(
+          platformSpecifics['playSound'],
+          isTrue,
+          reason: 'the fallback card must alert, never post silently',
+        );
+        expect(
+          platformSpecifics['autoCancel'],
+          isFalse,
+          reason: 'managed content metadata owns retirement, not autoCancel',
+        );
+
+        final deferred = events.singleWhere(
+          (event) =>
+              event['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+        );
+        expect(
+          deferred['details'],
+          containsPair('reason', 'exact_sql_authority_unavailable'),
+        );
+        expect(
+          deferred['details'],
+          containsPair('presentation', 'nondurable_fallback'),
+        );
+        final shown = events.singleWhere(
+          (event) => event['event'] == 'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
+        );
+        expect(
+          (shown['details'] as Map).containsKey('durable'),
+          isFalse,
+          reason: 'a fallback presentation must never claim durable authority',
+        );
+
+        final notificationId = await registry.lookup('peer-fallback-direct');
+        expect(notificationId, isNotNull);
+        final metadata = await registry.lookupContentMetadata(
+          conversationKey: 'peer-fallback-direct',
+          notificationId: notificationId!,
+        );
+        expect(
+          metadata?.kind,
+          ConversationNotificationContentKind.message,
+          reason: 'the shown card stays managed typed content',
+        );
+        expect(metadata?.eventIdentity, 'message-fallback-direct');
+        expect(metadata?.generation, isNotEmpty);
+
+        expect(
+          await readBackgroundFallbackLedgerRecords(registry),
+          isEmpty,
+          reason: 'no durable authority means no ledger record',
+        );
+        expect(
+          await db.query('direct_notification_display_outbox'),
+          isEmpty,
+          reason: 'the background isolate must never stage custody rows',
+        );
+      },
+    );
+
+    test(
+      'authenticated durable-authority deferral presents the non-durable '
+      'fallback card (direct reaction)',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Reaction',
+            body: 'Alice reacted 👍 to your message',
+            payload: 'peer-fallback-reaction|message:target-fallback-reaction',
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.reaction,
+              canonicalEventId: 'reaction-fallback-direct',
+            ),
+          ),
+        );
+        final db = await openEmptyBackgroundDisplayOutboxDatabase(
+          tag: 'direct-reaction',
+          direct: true,
+        );
+        useRealEmptyOutboxDurableEffectResolver(db);
+        final registry = await useIsolatedBackgroundNotificationRegistry(
+          'direct-reaction',
+        );
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fallback-direct-reaction',
+            data: <String, dynamic>{
+              'type': 'message_reaction',
+              'sender_id': 'peer-fallback-reaction',
+              'target_message_id': 'target-fallback-reaction',
+              'action': 'add',
+              'event_id': 'reaction-fallback-direct',
+              'reaction_id': 'reaction-fallback-direct',
+            },
+          ),
+        );
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(1));
+        final showArguments = shows.single.arguments as Map;
+        expect(
+          showArguments['title'],
+          'Reaction',
+          reason: 'the resolved reaction preview copy owns the fallback card',
+        );
+        expect(showArguments['body'], 'Alice reacted 👍 to your message');
+
+        final deferred = events.singleWhere(
+          (event) =>
+              event['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+        );
+        expect(
+          deferred['details'],
+          containsPair('presentation', 'nondurable_fallback'),
+        );
+        final notificationId = await registry.lookup('peer-fallback-reaction');
+        expect(notificationId, isNotNull);
+        final metadata = await registry.lookupContentMetadata(
+          conversationKey: 'peer-fallback-reaction',
+          notificationId: notificationId!,
+        );
+        expect(metadata?.kind, ConversationNotificationContentKind.reaction);
+        expect(
+          metadata?.eventIdentity,
+          boundedReactionEventIdentity('reaction-fallback-direct'),
+        );
+        expect(await readBackgroundFallbackLedgerRecords(registry), isEmpty);
+      },
+    );
+
+    test(
+      'authenticated durable-authority deferral presents the non-durable '
+      'fallback card (group reaction)',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => BackgroundPushNotificationFallback(
+            title: 'Team Chat',
+            body: 'Alice reacted 👍 to your message',
+            payload: 'group:group-fallback-reaction|message:target-fallback',
+            groupComparand: BackgroundGroupReactionNotificationComparand(
+              groupId: 'group-fallback-reaction',
+              reactionId: 'reaction-state-fallback',
+              messageId: 'target-fallback',
+              senderPeerId: 'peer-alice',
+              timestamp: '2026-08-18T09:00:00.000Z',
+              // The comparand alias MUST equal the bounded identity the
+              // handler mints, or the post-show switch retires the card it
+              // just published.
+              notificationEventIdentity: boundedReactionEventIdentity(
+                'group-reaction-fallback',
+              ),
+            ),
+            resolvedEventIdentity:
+                const ResolvedPushEventIdentity.authenticatedInner(
+                  kind: ConversationNotificationContentKind.reaction,
+                  canonicalEventId: 'group-reaction-fallback',
+                ),
+          ),
+        );
+        final db = await openEmptyBackgroundDisplayOutboxDatabase(
+          tag: 'group-reaction',
+          group: true,
+        );
+        useRealEmptyOutboxDurableEffectResolver(db);
+        final registry = await useIsolatedBackgroundNotificationRegistry(
+          'group-reaction',
+        );
+        var postShowValidations = 0;
+        debugSetBackgroundGroupNotificationPostShowValidator((_) async {
+          postShowValidations++;
+          return BackgroundGroupNotificationPostShowDecision.keep;
+        });
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fallback-group-reaction',
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'groupId': 'group-fallback-reaction',
+              'event_id': 'group-reaction-fallback',
+              'reaction_id': 'group-reaction-fallback',
+              'reactor_peer_id': 'peer-alice',
+              'target_message_id': 'target-fallback',
+              'action': 'add',
+            },
+          ),
+        );
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(1));
+        expect(
+          (shows.single.arguments as Map)['body'],
+          'Alice reacted 👍 to your message',
+        );
+        final deferred = events.singleWhere(
+          (event) =>
+              event['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+        );
+        expect(
+          deferred['details'],
+          containsPair('reason', 'exact_sql_authority_unavailable'),
+        );
+        expect(
+          deferred['details'],
+          containsPair('presentation', 'nondurable_fallback'),
+        );
+        expect(
+          postShowValidations,
+          1,
+          reason:
+              'a matching comparand alias must reach the post-show validator '
+              'instead of short-circuiting to retire',
+        );
+        expect(
+          events.where(
+            (event) =>
+                event['event'] == 'PUSH_BACKGROUND_GROUP_POST_SHOW_RETIRED',
+          ),
+          isEmpty,
+          reason: 'the freshly shown group card must not flash-retire',
+        );
+        expect(
+          log
+              .where((call) => call.method == 'show' || call.method == 'cancel')
+              .map((call) => call.method),
+          <String>['cancel', 'show'],
+          reason:
+              'only the pre-show generation retirement may cancel; a trailing '
+              'cancel would mean the card flashed and died',
+        );
+        final notificationId = await registry.lookup(
+          'group:group-fallback-reaction',
+        );
+        expect(notificationId, isNotNull);
+        final metadata = await registry.lookupContentMetadata(
+          conversationKey: 'group:group-fallback-reaction',
+          notificationId: notificationId!,
+        );
+        expect(
+          metadata?.eventIdentity,
+          boundedReactionEventIdentity('group-reaction-fallback'),
+        );
+        expect(await readBackgroundFallbackLedgerRecords(registry), isEmpty);
+        expect(
+          await db.query('group_notification_display_outbox'),
+          isEmpty,
+          reason: 'the background isolate must never stage custody rows',
+        );
+      },
+    );
+
+    test(
+      'authority read failure still presents the non-durable fallback card',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Alice',
+            body: 'hello',
+            payload: 'peer-fallback-read-failed',
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.message,
+              canonicalEventId: 'message-fallback-read-failed',
+            ),
+          ),
+        );
+        debugSetBackgroundDurableLocalNotificationEffectResolver(({
+          required routeTarget,
+          required fallback,
+          required metadata,
+        }) async {
+          throw StateError('authority read failed');
+        });
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fallback-read-failed',
+            data: <String, dynamic>{
+              'type': 'new_message',
+              'sender_id': 'peer-fallback-read-failed',
+              'message_id': 'message-fallback-read-failed',
+            },
+          ),
+        );
+
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+        final deferred = events.singleWhere(
+          (event) =>
+              event['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+        );
+        expect(
+          deferred['details'],
+          containsPair('reason', 'authority_read_failed'),
+        );
+        expect(
+          deferred['details'],
+          containsPair('errorType', 'StateError'),
+        );
+        expect(
+          deferred['details'],
+          containsPair('presentation', 'nondurable_fallback'),
+        );
+        final shown = events.singleWhere(
+          (event) => event['event'] == 'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
+        );
+        expect((shown['details'] as Map).containsKey('durable'), isFalse);
+      },
+    );
+
+    test(
+      'invalid durable generation still presents the non-durable fallback card',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Alice',
+            body: 'hello',
+            payload: 'peer-fallback-generation',
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.message,
+              canonicalEventId: 'message-fallback-generation',
+            ),
+          ),
+        );
+        debugSetBackgroundDurableLocalNotificationEffectResolver(({
+          required routeTarget,
+          required fallback,
+          required metadata,
+        }) async {
+          // A correlation that fails the lowercase-digest contract yields a
+          // null content generation, so no durable card can be minted.
+          return DurableLocalNotificationEffectContext(
+            currentOpaqueBinding: backgroundFallbackLaneBinding,
+            eventCorrelation: 'NOT-A-LOWERCASE-DIGEST',
+            conversationDigest: 'a' * 64,
+            producerKind: LocalNotificationProducerKind.directMessage,
+            sourceCustody: LocalNotificationSourceCustody.sqlReady,
+            presentationOwner:
+                LocalNotificationPresentationOwner.androidPushService,
+            readFinalCanonicalDisposition: () async =>
+                DurableLocalNotificationCanonicalDisposition.eligible,
+          );
+        });
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fallback-generation',
+            data: <String, dynamic>{
+              'type': 'new_message',
+              'sender_id': 'peer-fallback-generation',
+              'message_id': 'message-fallback-generation',
+            },
+          ),
+        );
+
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+        final deferred = events.singleWhere(
+          (event) =>
+              event['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+        );
+        expect(
+          deferred['details'],
+          containsPair('reason', 'generation_invalid'),
+        );
+        expect(
+          deferred['details'],
+          containsPair('presentation', 'nondurable_fallback'),
+        );
+        final shown = events.singleWhere(
+          (event) => event['event'] == 'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
+        );
+        expect((shown['details'] as Map).containsKey('durable'), isFalse);
+      },
+    );
+
+    // Coverage add beyond the plan's Test Contract (the plan dropped TC-383-03
+    // as over-engineering). An independent adversarial pass showed that with no
+    // UNMUTED group-MESSAGE row a two-axis conditional
+    // (`kind == group && contentKind == message`) survives every other row —
+    // and group text is the highest-volume killed-app typed event. The seam is
+    // kind-agnostic, so this is cheap insurance, not new behavior.
+    test(
+      'authenticated durable-authority deferral presents the non-durable '
+      'fallback card (group message)',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Team Chat',
+            body: 'Alice: hello',
+            payload:
+                'group:group-fallback-message|message:message-fallback-group',
+            groupComparand: BackgroundGroupMessageNotificationComparand(
+              groupId: 'group-fallback-message',
+              messageId: 'message-fallback-group',
+              senderPeerId: 'peer-alice',
+            ),
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.message,
+              canonicalEventId: 'message-fallback-group',
+            ),
+          ),
+        );
+        final db = await openEmptyBackgroundDisplayOutboxDatabase(
+          tag: 'group-message',
+          group: true,
+        );
+        useRealEmptyOutboxDurableEffectResolver(db);
+        final registry = await useIsolatedBackgroundNotificationRegistry(
+          'group-message',
+        );
+        var postShowValidations = 0;
+        debugSetBackgroundGroupNotificationPostShowValidator((_) async {
+          postShowValidations++;
+          return BackgroundGroupNotificationPostShowDecision.keep;
+        });
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fallback-group-message',
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-fallback-message',
+              'message_id': 'message-fallback-group',
+            },
+          ),
+        );
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(1));
+        final showArguments = shows.single.arguments as Map;
+        expect(showArguments['body'], 'Alice: hello');
+        expect(
+          (showArguments['platformSpecifics'] as Map)['playSound'],
+          isTrue,
+          reason: 'group text at a killed app must alert, not post silently',
+        );
+        final deferred = events.singleWhere(
+          (event) =>
+              event['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+        );
+        expect(
+          deferred['details'],
+          containsPair('reason', 'exact_sql_authority_unavailable'),
+        );
+        expect(
+          deferred['details'],
+          containsPair('presentation', 'nondurable_fallback'),
+        );
+        expect(
+          postShowValidations,
+          1,
+          reason:
+              'the message comparand must match so the fence is consulted '
+              'rather than short-circuiting to retire',
+        );
+        expect(
+          events.where(
+            (event) =>
+                event['event'] == 'PUSH_BACKGROUND_GROUP_POST_SHOW_RETIRED',
+          ),
+          isEmpty,
+        );
+        final notificationId = await registry.lookup(
+          'group:group-fallback-message',
+        );
+        expect(notificationId, isNotNull);
+        final metadata = await registry.lookupContentMetadata(
+          conversationKey: 'group:group-fallback-message',
+          notificationId: notificationId!,
+        );
+        expect(metadata?.kind, ConversationNotificationContentKind.message);
+        expect(metadata?.eventIdentity, 'message-fallback-group');
+        expect(await readBackgroundFallbackLedgerRecords(registry), isEmpty);
+        expect(
+          await db.query('group_notification_display_outbox'),
+          isEmpty,
+          reason: 'the background isolate must never stage custody rows',
+        );
+      },
+    );
+
+    test(
+      'muted group killed-app events stay silent through the fallback lane',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (message) => resolveBackgroundPushFallbackDisplayEligibility(
+            message,
+            groupMessageDisplayEligibilityResolver: (_) async =>
+                groupMemberMessageDisplayEligibility({
+                  'type': 'chat',
+                  'is_muted': 1,
+                }),
+          ),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver((message) async {
+          final isReaction = message.data['type'] == 'group_reaction';
+          return BackgroundPushNotificationFallback(
+            title: 'Team Chat',
+            body: isReaction ? 'Alice reacted 👍' : 'Alice: hello',
+            payload: isReaction
+                ? 'group:group-fallback-muted|message:target-muted'
+                : 'group:group-fallback-muted|message:message-fallback-muted',
+            resolvedEventIdentity: isReaction
+                ? const ResolvedPushEventIdentity.authenticatedInner(
+                    kind: ConversationNotificationContentKind.reaction,
+                    canonicalEventId: 'group-reaction-fallback-muted',
+                  )
+                : const ResolvedPushEventIdentity.authenticatedInner(
+                    kind: ConversationNotificationContentKind.message,
+                    canonicalEventId: 'message-fallback-muted',
+                  ),
+          );
+        });
+        final db = await openEmptyBackgroundDisplayOutboxDatabase(
+          tag: 'group-muted',
+          group: true,
+        );
+        useRealEmptyOutboxDurableEffectResolver(db);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fallback-muted-message',
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-fallback-muted',
+              'message_id': 'message-fallback-muted',
+            },
+          ),
+        );
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-fallback-muted-reaction',
+            data: <String, dynamic>{
+              'type': 'group_reaction',
+              'groupId': 'group-fallback-muted',
+              'event_id': 'group-reaction-fallback-muted',
+              'reaction_id': 'group-reaction-fallback-muted',
+              'reactor_peer_id': 'peer-alice',
+              'target_message_id': 'target-muted',
+              'action': 'add',
+            },
+          ),
+        );
+
+        expect(
+          log.where((call) => call.method == 'show'),
+          isEmpty,
+          reason: 'a muted group is silent on every background path',
+        );
+        expect(
+          events.where(
+            (event) =>
+                event['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+          ),
+          isEmpty,
+          reason: 'muted events are stopped upstream of the durable seam',
+        );
+      },
+    );
+
+    test(
+      'redelivery after a fallback presentation does not re-alert',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (_) async => const BackgroundPushNotificationFallback(
+            title: 'Alice',
+            body: 'hello',
+            payload: 'peer-fallback-redelivery',
+            resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+              kind: ConversationNotificationContentKind.message,
+              canonicalEventId: 'message-fallback-redelivery',
+            ),
+          ),
+        );
+        final db = await openEmptyBackgroundDisplayOutboxDatabase(
+          tag: 'redelivery',
+          direct: true,
+        );
+        useRealEmptyOutboxDurableEffectResolver(db);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        const message = RemoteMessage(
+          messageId: 'provider-fallback-redelivery',
+          data: <String, dynamic>{
+            'type': 'new_message',
+            'sender_id': 'peer-fallback-redelivery',
+            'message_id': 'message-fallback-redelivery',
+          },
+        );
+        await firebaseMessagingBackgroundHandler(message);
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(
+          log.where((call) => call.method == 'show'),
+          hasLength(1),
+          reason: 'one audible presentation maximum per delivered event',
+        );
+        final suppression = events.lastWhere(
+          (event) =>
+              event['event'] == 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
+        );
+        expect(
+          suppression['details'],
+          containsPair('reason', 'recent_duplicate_background_push'),
+        );
+      },
+    );
+
+    test(
+      'authenticated durable-authority deferral presents non-durably, defers '
+      'the durable effect, and commits the claim',
+      () async {
+        // Plan 372 pinned this seam as SILENT. Plan 383 (G17) changes the
+        // intended behavior: the durable effect is still deferred, but the
+        // event must reach the user through the non-durable lane, and the
+        // event claim must COMMIT so no other producer re-alerts it.
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
         debugSetBackgroundPushNotificationDisplayEligibilityResolver(
@@ -799,6 +1587,8 @@ void main() {
           authorityReads++;
           return null;
         });
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, (MethodCall call) async {
               log.add(call);
@@ -815,10 +1605,44 @@ void main() {
           },
         );
         await firebaseMessagingBackgroundHandler(message);
+
+        expect(authorityReads, 1);
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
+        expect(
+          events
+              .singleWhere(
+                (event) =>
+                    event['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED',
+              )['details'],
+          containsPair('presentation', 'nondurable_fallback'),
+        );
+
+        // Retire the recent-shown gate (its own dedupe authority) so the next
+        // delivery must be stopped by the COMMITTED event claim alone. A
+        // fall-through that still released its provisional owners would
+        // re-claim here and alert a second time.
+        final freshGate = RecentBackgroundNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/background-fallback-claim-gate-'
+              '${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        debugSetRecentBackgroundNotificationGate(freshGate);
+        addTearDown(freshGate.clear);
+
         await firebaseMessagingBackgroundHandler(message);
 
-        expect(authorityReads, 2);
-        expect(log.where((call) => call.method == 'show'), isEmpty);
+        expect(
+          log.where((call) => call.method == 'show'),
+          hasLength(1),
+          reason: 'the committed claim is the exact background dedupe owner',
+        );
+        expect(
+          events.lastWhere(
+            (event) =>
+                event['event'] == 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
+          )['details'],
+          containsPair('reason', 'message_event_already_claimed'),
+        );
       },
     );
 
@@ -4986,6 +5810,101 @@ void main() {
       },
     );
 
+    // The same burst with the user-facing "Messages" channel switched off.
+    // The second post is the one that matters: it is the tone-debounced
+    // silent update, and `mknoon_messages_silent` is still open, so before the
+    // withdrawal it delivered a card the user had just turned off. The
+    // background isolate is asserted separately from the foreground service
+    // because it publishes through its own plugin instance.
+    test(
+      'a blocked messages channel withdraws the silent channel from the '
+      'background burst update',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        final overlayDirectory = Directory.systemTemp.createTempSync(
+          'background-direct-overlay-blocked-',
+        );
+        final overlay = PendingConversationNotificationOverlayStore(
+          directory: overlayDirectory,
+          resolveBinding: () async => 'v1:test-account',
+          secureStore: FakeSecureKeyStore(),
+        );
+        debugSetBackgroundPendingConversationNotificationOverlayResolver(
+          () async => overlay,
+        );
+        addTearDown(() {
+          if (overlayDirectory.existsSync()) {
+            overlayDirectory.deleteSync(recursive: true);
+          }
+        });
+        debugSetBackgroundDirectMessageLocalStateResolver(
+          (message) async => _authorizedDirectMessageState(message),
+        );
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              if (call.method == 'getNotificationChannels') {
+                return <Map<String, Object?>>[
+                  // 0 = IMPORTANCE_NONE: blocked by the user in Settings.
+                  _blockedChannelReply(mknoonMessagesChannelId, 0),
+                  _blockedChannelReply(
+                    mknoonMessagesSilentChannelId,
+                    Importance.low.value,
+                  ),
+                ];
+              }
+              return null;
+            });
+
+        const first = RemoteMessage(
+          messageId: 'm-blocked-a',
+          data: {
+            'type': 'new_message',
+            'sender_id': '12D3KooWPeerBlocked',
+            'message_id': 'direct-blocked-a',
+          },
+        );
+        const second = RemoteMessage(
+          messageId: 'm-blocked-b',
+          data: {
+            'type': 'new_message',
+            'sender_id': '12D3KooWPeerBlocked',
+            'message_id': 'direct-blocked-b',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(first);
+        await firebaseMessagingBackgroundHandler(second);
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(2));
+        final ps0 = (shows[0].arguments as Map)['platformSpecifics'] as Map;
+        final ps1 = (shows[1].arguments as Map)['platformSpecifics'] as Map;
+        // Both publications stay on the blocked channel, where the OS refuses
+        // them. The post attempts remain real, which is what the Android
+        // device matrix measures.
+        expect(ps0['channelId'], mknoonMessagesChannelId);
+        expect(ps1['channelId'], mknoonMessagesChannelId);
+        expect(
+          events
+              .where(
+                (event) =>
+                    event['event'] == 'NOTIFICATION_SILENT_CHANNEL_WITHHELD',
+              )
+              .length,
+          1,
+          reason: 'only the silent update had a second route to withdraw',
+        );
+      },
+    );
+
     test(
       'background group burst reuses one conversation card while the latest tap stays message-anchored',
       () async {
@@ -5618,4 +6537,126 @@ Future<void> _replaceBackgroundPendingToken(File file, String token) async {
   final decoded = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
   decoded['token'] = token;
   await file.writeAsString(jsonEncode(decoded), flush: true);
+}
+
+/// Plan 383 (G17) — killed-app typed-event fallback lane.
+///
+/// The production state a genuinely new authenticated event meets at a killed
+/// app is: the display-outbox table EXISTS (v106/v107 migrations ran) and holds
+/// NO row for this event, because only the foreground runtime stages those
+/// rows. These helpers reproduce that exact state with the real in-db resolver
+/// instead of a hand-written null-returning stub.
+const String backgroundFallbackLaneBinding =
+    'v1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+
+Future<Database> openEmptyBackgroundDisplayOutboxDatabase({
+  required String tag,
+  bool direct = false,
+  bool group = false,
+}) async {
+  final path =
+      '${Directory.systemTemp.path}/background-fallback-$tag-'
+      '${DateTime.now().microsecondsSinceEpoch}.db';
+  final db = await databaseFactoryFfi.openDatabase(path);
+  addTearDown(() async {
+    await db.close();
+    await databaseFactoryFfi.deleteDatabase(path);
+  });
+  if (direct) {
+    await db.execute('''
+      CREATE TABLE direct_notification_display_outbox (
+        event_id TEXT NOT NULL,
+        event_kind TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        actor_peer_id TEXT NOT NULL,
+        event_timestamp TEXT NOT NULL,
+        reaction_id TEXT,
+        reaction_action TEXT,
+        reaction_tombstone INTEGER,
+        readiness TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        retry_count INTEGER NOT NULL,
+        last_error_code TEXT,
+        last_attempt_at TEXT,
+        next_attempt_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(peer_id, event_kind, event_id)
+      )
+    ''');
+  }
+  if (group) {
+    await db.execute('''
+      CREATE TABLE group_notification_display_outbox (
+        event_id TEXT PRIMARY KEY,
+        event_kind TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        actor_peer_id TEXT NOT NULL,
+        event_timestamp TEXT NOT NULL,
+        reaction_id TEXT,
+        reaction_action TEXT,
+        reaction_tombstone INTEGER,
+        readiness TEXT NOT NULL DEFAULT 'not_ready',
+        revision INTEGER NOT NULL DEFAULT 1,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        last_error_code TEXT,
+        last_attempt_at TEXT,
+        next_attempt_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+  }
+  return db;
+}
+
+void useRealEmptyOutboxDurableEffectResolver(Database db) {
+  debugSetBackgroundDurableLocalNotificationEffectResolver(
+    ({required routeTarget, required fallback, required metadata}) =>
+        resolveBackgroundDurableLocalNotificationEffectInDatabase(
+          db,
+          routeTarget: routeTarget,
+          fallback: fallback,
+          metadata: metadata,
+          currentOpaqueBinding: backgroundFallbackLaneBinding,
+          physicalPeerId: 'physical-fallback-lane',
+          readFinalCanonicalDisposition: () async =>
+              DurableLocalNotificationCanonicalDisposition.eligible,
+        ),
+  );
+}
+
+/// Installs a private ledger/registry pair so a test can prove that the
+/// non-durable lane wrote NO ledger record while still reading the exact
+/// content metadata the registry retained for the shown card.
+Future<DurableConversationNotificationIdRegistry>
+useIsolatedBackgroundNotificationRegistry(String tag) async {
+  final directory = Directory.systemTemp.createTempSync(
+    'background-fallback-$tag-registry-',
+  );
+  addTearDown(() {
+    if (directory.existsSync()) directory.deleteSync(recursive: true);
+  });
+  final registry = DurableConversationNotificationIdRegistry(
+    directory: directory,
+  );
+  await LocalNotificationLedgerStore(
+    directory: directory,
+  ).initializeOrRebind(currentOpaqueBinding: backgroundFallbackLaneBinding);
+  debugSetBackgroundConversationNotificationIdRegistryResolver(
+    () async => registry,
+  );
+  return registry;
+}
+
+Future<Map<String, LocalNotificationRecordV1>>
+readBackgroundFallbackLedgerRecords(
+  DurableConversationNotificationIdRegistry registry,
+) async {
+  final envelope = await LocalNotificationLedgerStore(
+    directory: registry.directory,
+  ).read(currentOpaqueBinding: backgroundFallbackLaneBinding);
+  return envelope?.records ?? const <String, LocalNotificationRecordV1>{};
 }

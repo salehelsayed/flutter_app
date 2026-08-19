@@ -540,6 +540,40 @@ class RecordingGoBridgeClient extends GoBridgeClient {
   int get groupLeaveCommandCount => commandCount('group:leave');
 }
 
+/// Android f1b568bca (canonical-runtime ownership): MainActivity no longer
+/// constructs the native GoBridge eagerly. The `com.mknoon/go_bridge`
+/// Method/EventChannels are only registered once the Dart side acquires the
+/// canonical-runtime lease and calls attachRuntime — production bootstrap does
+/// this during M1. Without it, every bridge call fails MISSING_PLUGIN
+/// ("Native bridge method ... is not available"), which
+/// `generateNewIdentity` collapses into GenerateIdentityResult.coreLibError
+/// and setup dies ~1s in. iOS still registers GoBridge eagerly in
+/// AppDelegate, so this is Android-only.
+///
+/// The broker re-returns the current token only for an identical
+/// (ownerId, binding, role) triple, so repeated setups in one process must
+/// use the same fixed binding.
+Future<void> ensureCanonicalRuntimeAttachedForTest() async {
+  if (!Platform.isAndroid) return;
+  const binding =
+      'v1:0000000000000000000000000000000000000000000000000000000000000000';
+  final gateway = MethodChannelCanonicalRuntimeLeaseGateway();
+  final snapshot = await gateway.acquire(binding);
+  if (snapshot.state != CanonicalRuntimeLeaseState.active) {
+    throw StateError(
+      'canonical-runtime test lease acquire left state ${snapshot.state}',
+    );
+  }
+  final attached = await gateway.attachRuntime();
+  if (!attached) {
+    throw StateError(
+      'canonical-runtime attach failed after lease acquire — native GoBridge '
+      'did not construct; go_bridge channel calls would all MISSING_PLUGIN',
+    );
+  }
+  print('[STACK-DIAG] canonical runtime lease acquired + Go runtime attached');
+}
+
 Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   required String dbName,
   required String username,
@@ -569,6 +603,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     secureKeyStore: secureKeyStore,
     dbName: dbName,
   );
+  print('[STACK-DIAG] db opened; wiring repos');
 
   final identityRepo = IdentityRepositoryImpl(
     dbLoadIdentityRow: () => dbLoadIdentityRow(db),
@@ -1920,8 +1955,11 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
         dbDeleteGroupReactionReplayOutboxEntry(db, reactionId),
   );
 
+  await ensureCanonicalRuntimeAttachedForTest();
   final bridge = RecordingGoBridgeClient();
+  print('[STACK-DIAG] bridge.initialize() ...');
   await bridge.initialize();
+  print('[STACK-DIAG] bridge initialized');
 
   LinkedInstallationAuthority? setupLinkedAuthority;
   String? effectiveRestoreMnemonic = restoreMnemonic;
@@ -1987,6 +2025,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     throw StateError('Existing identity requested but none was found');
   }
   if (savedIdentity == null && !setupAsLinkedSecondary) {
+    print('[STACK-DIAG] generating identity via bridge');
     final identityResult = effectiveRestoreMnemonic == null
         ? await generateNewIdentity(
             callGenerate: () => callIdentityGenerate(bridge),
@@ -2023,7 +2062,9 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     createdAt: savedIdentity.createdAt,
     updatedAt: DateTime.now().toUtc().toIso8601String(),
   );
+  print('[STACK-DIAG] identity resolved; saving');
   await identityRepo.saveIdentity(updatedIdentity);
+  print('[STACK-DIAG] identity saved');
 
   var transportPrivateKey = updatedIdentity.privateKey;
   var transportPeerId = updatedIdentity.peerId;
@@ -2082,6 +2123,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
         ? () => updatedIdentity.peerId
         : null,
   );
+  print('[STACK-DIAG] starting p2p node');
   final started = await p2pService.startNode(
     transportPrivateKey,
     transportPeerId,
@@ -2089,6 +2131,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   if (!started) {
     throw StateError('P2P node failed to start');
   }
+  print('[STACK-DIAG] p2p node started');
 
   final notificationService = FakeNotificationService();
   await notificationService.initialize();
@@ -2243,6 +2286,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
   }
 
+  print('[STACK-DIAG] stack setup complete');
   return GroupMultiDeviceTestStack(
     db: db,
     dbName: dbName,

@@ -8,6 +8,16 @@
 //   S3: Group announcement           (expect notification + sound)
 //   S4: Suppression control          (expect NO notification — gate works)
 //   S5-S13: image/video/voice across all three conversation lanes
+//   S14: 1:1 tone-window debounce    (expect audible then SILENT in-place update)
+//   S15: group same-chat suppression (expect NO notification, then a control)
+//   S16: 1:1 backgrounded-but-connected (expect notification + sound)
+//
+// Every scenario carries a machine-readable SOUND DISPOSITION (see
+// [_dispositionContract]). The disposition — not an either-channel guess — is
+// what the OS-capture verdict enforces: an audible scenario whose card lands on
+// the silent channel is a failure, and vice versa. `--print-disposition-contract`
+// emits that table for the process contract; `--verify-os-capture` runs the same
+// pure decision function offline against a canned dumpsys record.
 //
 // For each scenario the orchestrator asks the operator "did you hear sound?"
 // so the final report combines programmatic FLOW-event verdicts with audible
@@ -71,21 +81,330 @@ late String _remoteSharedDirRelative;
 bool _stopSignalSync = false;
 Set<String>? _selectedRows;
 
-const _allScenarioIds = <String>{
-  'S1',
-  'S2',
-  'S3',
-  'S4',
-  'S5',
-  'S6',
-  'S7',
-  'S8',
-  'S9',
-  'S10',
-  'S11',
-  'S12',
-  'S13',
+/// Documented S14 fallback: if the same-id in-place update's dumpsys record
+/// does not surface the SILENT channel on a given API level, the conclusive
+/// assertion set degrades to flags `[false, true]` + one record + same id. The
+/// flags assertion stays mandatory in this mode.
+bool _toneDebounceChannelFallback = false;
+
+/// Android notification channel ids produced by the production channel mapping
+/// (`lib/core/notifications/local_notification_support.dart`).
+const _audibleChannel = 'mknoon_messages';
+const _silentChannel = 'mknoon_messages_silent';
+
+/// How a scenario's posted notification must SOUND.
+///
+/// * [audibleStrict]  — exactly one OS record on [_audibleChannel] and the
+///   production `silent` flag recorded as `false`.
+/// * [suppressed]     — zero `showMessageNotification` calls AND zero OS
+///   records.
+/// * [consistency]    — one record whose channel agrees with the recorded
+///   `silent` flag. Used where the tone window legitimately makes the
+///   disposition timing-dependent (consecutive same-lane scenarios).
+/// * [toneDebounce]   — an audible first message followed by a SILENT in-place
+///   update of the same notification id inside the tone window.
+enum _SoundDisposition { audibleStrict, suppressed, consistency, toneDebounce }
+
+class _ScenarioDisposition {
+  const _ScenarioDisposition({
+    required this.disposition,
+    required this.lane,
+    required this.expectedChannel,
+  });
+
+  final _SoundDisposition disposition;
+
+  /// Conversation lane the scenario exercises (`direct` / `group` /
+  /// `announcement`). Drives the per-lane stable-card-id assertion.
+  final String lane;
+
+  /// Printed contract token. A real channel id for the deterministic
+  /// dispositions; `none` for [_SoundDisposition.suppressed] and `silentFlag`
+  /// for [_SoundDisposition.consistency], where the expected channel is a
+  /// function of the recorded `silent` flag rather than a constant.
+  final String expectedChannel;
+}
+
+/// The ONE machine-readable scenario -> sound-disposition table.
+///
+/// Pinned byte-exactly by
+/// `scripts/test/notification_sound_disposition_contract_test.sh`. Insertion
+/// order IS the printed order, so keep it S1..S16.
+const _dispositionContract = <String, _ScenarioDisposition>{
+  'S1': _ScenarioDisposition(
+    disposition: _SoundDisposition.audibleStrict,
+    lane: 'direct',
+    expectedChannel: _audibleChannel,
+  ),
+  'S2': _ScenarioDisposition(
+    disposition: _SoundDisposition.audibleStrict,
+    lane: 'group',
+    expectedChannel: _audibleChannel,
+  ),
+  'S3': _ScenarioDisposition(
+    disposition: _SoundDisposition.audibleStrict,
+    lane: 'announcement',
+    expectedChannel: _audibleChannel,
+  ),
+  'S4': _ScenarioDisposition(
+    disposition: _SoundDisposition.suppressed,
+    lane: 'direct',
+    expectedChannel: 'none',
+  ),
+  'S5': _ScenarioDisposition(
+    disposition: _SoundDisposition.consistency,
+    lane: 'direct',
+    expectedChannel: 'silentFlag',
+  ),
+  'S6': _ScenarioDisposition(
+    disposition: _SoundDisposition.consistency,
+    lane: 'direct',
+    expectedChannel: 'silentFlag',
+  ),
+  'S7': _ScenarioDisposition(
+    disposition: _SoundDisposition.consistency,
+    lane: 'direct',
+    expectedChannel: 'silentFlag',
+  ),
+  'S8': _ScenarioDisposition(
+    disposition: _SoundDisposition.consistency,
+    lane: 'group',
+    expectedChannel: 'silentFlag',
+  ),
+  'S9': _ScenarioDisposition(
+    disposition: _SoundDisposition.consistency,
+    lane: 'group',
+    expectedChannel: 'silentFlag',
+  ),
+  'S10': _ScenarioDisposition(
+    disposition: _SoundDisposition.consistency,
+    lane: 'group',
+    expectedChannel: 'silentFlag',
+  ),
+  'S11': _ScenarioDisposition(
+    disposition: _SoundDisposition.consistency,
+    lane: 'announcement',
+    expectedChannel: 'silentFlag',
+  ),
+  'S12': _ScenarioDisposition(
+    disposition: _SoundDisposition.consistency,
+    lane: 'announcement',
+    expectedChannel: 'silentFlag',
+  ),
+  'S13': _ScenarioDisposition(
+    disposition: _SoundDisposition.consistency,
+    lane: 'announcement',
+    expectedChannel: 'silentFlag',
+  ),
+  'S14': _ScenarioDisposition(
+    disposition: _SoundDisposition.toneDebounce,
+    lane: 'direct',
+    expectedChannel: _silentChannel,
+  ),
+  'S15': _ScenarioDisposition(
+    disposition: _SoundDisposition.suppressed,
+    lane: 'group',
+    expectedChannel: 'none',
+  ),
+  'S16': _ScenarioDisposition(
+    disposition: _SoundDisposition.audibleStrict,
+    lane: 'direct',
+    expectedChannel: _audibleChannel,
+  ),
 };
+
+final _allScenarioIds = _dispositionContract.keys.toSet();
+
+void _printDispositionContract() {
+  stdout.writeln('# notification-sound-smoke disposition contract v1');
+  stdout.writeln('# scenario|disposition|lane|expectedChannel');
+  _dispositionContract.forEach((id, entry) {
+    stdout.writeln(
+      '$id|${entry.disposition.name}|${entry.lane}|${entry.expectedChannel}',
+    );
+  });
+}
+
+/// Outcome of the pure sound-disposition decision. Shared byte-for-byte between
+/// the live device path and the offline `--verify-os-capture` fixtures, so the
+/// contract test exercises the SAME predicate the device run enforces.
+class _DispositionEvaluation {
+  const _DispositionEvaluation({
+    required this.pass,
+    required this.reason,
+    required this.predicates,
+  });
+
+  final bool pass;
+  final String reason;
+  final Map<String, bool> predicates;
+}
+
+/// The pure decision function: scenario disposition + parsed OS records +
+/// recorded production `silent` flags -> verdict.
+///
+/// [priorRecordIds] carries the notification ids observed in an earlier phase of
+/// the same scenario (S14's audible first message), so the silent in-place
+/// update can be asserted as a RELATIONSHIP rather than an independent find.
+_DispositionEvaluation _evaluateDisposition({
+  required String scenarioId,
+  required List<Map<String, dynamic>> records,
+  required List<bool> silentFlags,
+  List<int> priorRecordIds = const <int>[],
+  bool toneDebounceChannelFallback = false,
+  _SoundDisposition? dispositionOverride,
+}) {
+  final disposition =
+      dispositionOverride ?? _dispositionContract[scenarioId]?.disposition;
+  if (disposition == null) {
+    return const _DispositionEvaluation(
+      pass: false,
+      reason: 'unknown_scenario',
+      predicates: <String, bool>{'dispositionRegistered': false},
+    );
+  }
+
+  String channelOf(Map<String, dynamic> record) =>
+      record['channel']?.toString() ?? '';
+
+  var cardCountMatches = true;
+  var silentFlagsMatch = true;
+  var channelMatches = true;
+  var toneDebounceIdStable = true;
+
+  switch (disposition) {
+    case _SoundDisposition.audibleStrict:
+      cardCountMatches = records.length == 1;
+      silentFlagsMatch = silentFlags.length == 1 && !silentFlags.single;
+      channelMatches =
+          cardCountMatches && channelOf(records.single) == _audibleChannel;
+    case _SoundDisposition.suppressed:
+      cardCountMatches = records.isEmpty;
+      silentFlagsMatch = silentFlags.isEmpty;
+    case _SoundDisposition.consistency:
+      cardCountMatches = records.length == 1;
+      silentFlagsMatch = silentFlags.length == 1;
+      channelMatches =
+          cardCountMatches &&
+          silentFlagsMatch &&
+          channelOf(records.single) ==
+              (silentFlags.single ? _silentChannel : _audibleChannel);
+    case _SoundDisposition.toneDebounce:
+      // The flags assertion is the load-bearing exclusion of the
+      // "second message was simply suppressed" degenerate pass; it is
+      // mandatory in BOTH the primary and the channel-fallback mode.
+      silentFlagsMatch =
+          silentFlags.length == 2 && !silentFlags[0] && silentFlags[1];
+      cardCountMatches = records.length == 1;
+      toneDebounceIdStable =
+          !cardCountMatches ||
+          priorRecordIds.isEmpty ||
+          priorRecordIds.contains(records.single['id']);
+      channelMatches =
+          toneDebounceChannelFallback ||
+          (cardCountMatches && channelOf(records.single) == _silentChannel);
+  }
+
+  final String reason;
+  if (disposition == _SoundDisposition.suppressed &&
+      (!cardCountMatches || !silentFlagsMatch)) {
+    reason = 'unexpected_notification';
+  } else if (disposition == _SoundDisposition.toneDebounce &&
+      !silentFlagsMatch) {
+    reason = 'tone_debounce_flags_mismatch';
+  } else if (!cardCountMatches) {
+    reason = 'card_count_mismatch';
+  } else if (!silentFlagsMatch) {
+    reason = 'silent_flag_contradiction';
+  } else if (!toneDebounceIdStable) {
+    reason = 'tone_debounce_id_not_stable';
+  } else if (!channelMatches) {
+    reason = 'channel_contradiction';
+  } else {
+    reason = 'ok';
+  }
+
+  final predicates = <String, bool>{
+    'dispositionRegistered': true,
+    'cardCountMatchesDisposition': cardCountMatches,
+    'silentFlagsMatchDisposition': silentFlagsMatch,
+    'channelMatchesDisposition': channelMatches,
+    'toneDebounceIdStable': toneDebounceIdStable,
+  };
+  return _DispositionEvaluation(
+    pass: predicates.values.every((value) => value),
+    reason: reason,
+    predicates: predicates,
+  );
+}
+
+List<bool> _silentFlagsFromVerdict(Map<String, dynamic> verdict) =>
+    (verdict['shownCalls'] as List<dynamic>? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((call) => call['silent'] == true)
+        .toList(growable: false);
+
+/// Offline `--verify-os-capture <scenarioId> <dumpsys-file> <verdict-json>`.
+///
+/// Parses a canned `dumpsys notification --noredact` capture with the SAME
+/// extractor the live path uses, runs [_evaluateDisposition], and emits exactly
+/// one machine-readable reason line. Returns the process exit code.
+int _verifyOsCaptureOffline(
+  List<String> operands, {
+  required bool toneDebounceChannelFallback,
+}) {
+  final positional = operands
+      .where((value) => !value.startsWith('--'))
+      .toList(growable: false);
+  if (positional.length < 3) {
+    stderr.writeln(
+      'Usage: --verify-os-capture <scenarioId> <dumpsys-file> <verdict-json>',
+    );
+    return 64;
+  }
+  final scenarioId = positional[0].toUpperCase();
+  final dumpFile = File(positional[1]);
+  final verdictFile = File(positional[2]);
+  if (!dumpFile.existsSync()) {
+    stderr.writeln('Missing dumpsys fixture: ${dumpFile.path}');
+    return 66;
+  }
+  if (!verdictFile.existsSync()) {
+    stderr.writeln('Missing verdict fixture: ${verdictFile.path}');
+    return 66;
+  }
+
+  _appPackage = resolveAndroidAppPackage();
+  final records = _activeAppNotificationRecords(dumpFile.readAsStringSync())
+      .map(_sanitizeNotificationRecord)
+      .toList(growable: false);
+  final Map<String, dynamic> verdict;
+  try {
+    verdict =
+        jsonDecode(verdictFile.readAsStringSync()) as Map<String, dynamic>;
+  } on FormatException catch (error) {
+    stderr.writeln('Invalid verdict fixture ${verdictFile.path}: $error');
+    return 65;
+  }
+
+  final evaluation = _evaluateDisposition(
+    scenarioId: scenarioId,
+    records: records,
+    silentFlags: _silentFlagsFromVerdict(verdict),
+    priorRecordIds: (verdict['priorRecordIds'] as List<dynamic>? ?? const [])
+        .whereType<int>()
+        .toList(growable: false),
+    toneDebounceChannelFallback: toneDebounceChannelFallback,
+  );
+  final disposition =
+      _dispositionContract[scenarioId]?.disposition.name ?? 'unregistered';
+  stdout.writeln(
+    'os-capture-verdict scenario=$scenarioId disposition=$disposition '
+    'result=${evaluation.pass ? 'pass' : 'fail'} reason=${evaluation.reason} '
+    'records=${records.length}',
+  );
+  return evaluation.pass ? 0 : 1;
+}
 
 bool _isSelectedRow(String id) =>
     _selectedRows == null || _selectedRows!.contains(id);
@@ -161,7 +480,7 @@ void _printChecklist() {
   );
   stdout.writeln('  [ ] Settings > <app> > Notifications > Sounds = ON');
   stdout.writeln('${'═' * 70}\n');
-  _promptOperator('Press Enter when ready to run S1..S13: ');
+  _promptOperator('Press Enter when ready to run S1..S16: ');
 }
 
 Future<bool> _isLiveAdbDevice(String deviceId) async {
@@ -340,10 +659,36 @@ Map<String, dynamic> _sanitizeNotificationRecord(String record) {
   };
 }
 
+/// Light-weight active-record capture: the dumpsys poll ONLY, with no shade
+/// expansion, uiautomator dump, or screenshot. Used for S14's phase-1 capture,
+/// which must complete well inside the 30s tone window.
+Future<List<Map<String, dynamic>>> _captureActiveRecords({
+  required int expectedCount,
+}) async {
+  if (!_bobIsAndroid) return const <Map<String, dynamic>>[];
+  List<String> records = const <String>[];
+  for (var attempt = 0; attempt < 20; attempt++) {
+    final dump = await _adb(const <String>[
+      'shell',
+      'dumpsys',
+      'notification',
+      '--noredact',
+    ]);
+    if (dump.exitCode != 0) {
+      throw StateError('dumpsys notification failed on $_bobDevice.');
+    }
+    records = _activeAppNotificationRecords(dump.stdout.toString());
+    if (records.length == expectedCount) break;
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  return records.map(_sanitizeNotificationRecord).toList(growable: false);
+}
+
 Future<Map<String, dynamic>> _captureAndroidNotificationState({
   required String scenarioId,
   required Map<String, dynamic> verdict,
   required bool expectSuppressed,
+  List<int> priorRecordIds = const <int>[],
 }) async {
   if (!_bobIsAndroid) {
     return const <String, dynamic>{
@@ -379,7 +724,18 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
       .whereType<Map>()
       .map((value) => Map<String, dynamic>.from(value))
       .toList(growable: false);
-  final expectedCall = shownCalls.length == 1 ? shownCalls.single : null;
+  // Identity/copy are read from the call that produced the CURRENT card. Every
+  // disposition but toneDebounce posts exactly one card from exactly one call;
+  // S14 posts an in-place update, so the surviving card carries the SECOND
+  // call's copy.
+  final expectedCallCount =
+      _dispositionContract[scenarioId]?.disposition ==
+          _SoundDisposition.toneDebounce
+      ? 2
+      : 1;
+  final expectedCall = shownCalls.length == expectedCallCount
+      ? shownCalls.last
+      : null;
   final expectedTitle = expectedCall?['senderUsername']?.toString() ?? '';
   final expectedBody = expectedCall?['messageText']?.toString() ?? '';
   final observed = sanitized.length == 1 ? sanitized.single : null;
@@ -502,9 +858,19 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
     await _adb(const <String>['shell', 'cmd', 'statusbar', 'collapse']);
   }
 
+  // The scenario's pinned disposition — NOT an either-channel guess — decides
+  // whether the observed channel and the recorded production `silent` flags are
+  // acceptable. Same pure function the offline `--verify-os-capture` mode runs.
+  final dispositionEvaluation = _evaluateDisposition(
+    scenarioId: scenarioId,
+    records: sanitized,
+    silentFlags: shownCalls
+        .map((call) => call['silent'] == true)
+        .toList(growable: false),
+    priorRecordIds: priorRecordIds,
+    toneDebounceChannelFallback: _toneDebounceChannelFallback,
+  );
   final channel = observed?['channel']?.toString() ?? '';
-  final channelMatches =
-      channel == 'mknoon_messages' || channel == 'mknoon_messages_silent';
   final predicates = <String, bool>{
     'cardCountMatches': expectSuppressed
         ? records.isEmpty
@@ -512,7 +878,7 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
     'packageMatches': expectSuppressed
         ? true
         : observed?['package'] == _appPackage,
-    'channelMatches': expectSuppressed ? true : channelMatches,
+    ...dispositionEvaluation.predicates,
     'notificationIdPresent': expectSuppressed ? true : observed?['id'] is int,
     'titleMatches': expectSuppressed
         ? true
@@ -545,7 +911,14 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
     'shadeTitleVisible': shadeTitleVisible,
     'shadeBodyVisible': shadeBodyVisible,
     'uiHierarchyAttempts': uiHierarchyAttempts,
-    'channelMatchesContract': channelMatches,
+    'channelMatchesContract':
+        dispositionEvaluation.predicates['channelMatchesDisposition'] ?? false,
+    'disposition':
+        _dispositionContract[scenarioId]?.disposition.name ?? 'unregistered',
+    'dispositionReason': dispositionEvaluation.reason,
+    'observedChannel': channel,
+    'priorRecordIds': priorRecordIds,
+    'toneDebounceChannelFallback': _toneDebounceChannelFallback,
     'records': sanitized,
     'screenshot': screenshotPath,
   };
@@ -608,7 +981,20 @@ Future<ScenarioOutcome> _runScenario({
   required String description,
   required bool expectAudible,
   required bool expectSuppressed,
+  List<int> priorRecordIds = const <int>[],
 }) async {
+  final contract = _dispositionContract[id];
+  if (contract == null) {
+    throw StateError('$id has no entry in the sound-disposition contract');
+  }
+  final contractSuppressed =
+      contract.disposition == _SoundDisposition.suppressed;
+  if (contractSuppressed != expectSuppressed) {
+    throw StateError(
+      '$id disposition (${contract.disposition.name}) contradicts '
+      'expectSuppressed=$expectSuppressed',
+    );
+  }
   _log('ORCH', '─── $id: $description ───');
   _signals.writeSignal(goSignal);
   final verdict = await _signals.waitForJson(
@@ -644,6 +1030,7 @@ Future<ScenarioOutcome> _runScenario({
     scenarioId: id,
     verdict: verdict,
     expectSuppressed: expectSuppressed,
+    priorRecordIds: priorRecordIds,
   );
   final osPass = osNotification['pass'] as bool? ?? false;
   final programmaticPass = harnessPass && osPass;
@@ -674,7 +1061,10 @@ Future<ScenarioOutcome> _runScenario({
     final answer = _promptOperator(
       '$id — confirm Bob\'s simulator stayed SILENT (no sound)? (y/n): ',
     );
-    audibleConfirmed = answer.startsWith('y');
+    // `audibleConfirmed` always means "the operator heard a sound". The silent
+    // prompt asks the inverse question, so invert the answer here rather than
+    // storing an expectation-shaped boolean the exit rule would misread.
+    audibleConfirmed = !answer.startsWith('y');
   }
 
   _signals.writeSignal(verdictAckSignal);
@@ -685,6 +1075,84 @@ Future<ScenarioOutcome> _runScenario({
     audibleConfirmed: audibleConfirmed,
     verdict: verdict,
     osNotification: osNotification,
+  );
+}
+
+/// S15's in-scenario control leg.
+///
+/// "Zero cards" is only evidence of SUPPRESSION if the same lane demonstrably
+/// notifies once the active-group tracker is cleared — otherwise a dead group
+/// notification lane would pass the suppression assertion. Bob clears the
+/// tracker before publishing the suppressed verdict; this drives the follow-up
+/// message and folds its result into the S15 outcome.
+///
+/// Deliberately uses the LIGHT record capture: the harness verdict already
+/// pins identity/copy/payload for the control message, so the shade dance and
+/// screenshot would add minutes of device time for no new evidence.
+Future<ScenarioOutcome> _appendGroupSuppressionControl(
+  ScenarioOutcome suppressed,
+) async {
+  _log('ORCH', '─── S15 control: post-clear group message must notify ───');
+  _signals.writeSignal('s15_control_go');
+  final verdict = await _signals.waitForJson(
+    's15_control_bob_verdict',
+    timeout: const Duration(minutes: 5),
+  );
+  final harnessPass = verdict['programmaticPass'] as bool? ?? false;
+
+  if (!suppressed.selected || !_bobIsAndroid) {
+    _signals.writeSignal('s15_control_ack');
+    if (!harnessPass) {
+      throw StateError(
+        'S15 control leg did not notify after the group tracker cleared',
+      );
+    }
+    return suppressed;
+  }
+
+  final records = await _captureActiveRecords(expectedCount: 1);
+  final evaluation = _evaluateDisposition(
+    scenarioId: 'S15_control',
+    records: records,
+    silentFlags: _silentFlagsFromVerdict(verdict),
+    dispositionOverride: _SoundDisposition.audibleStrict,
+  );
+  _signals.writeSignal('s15_control_ack');
+  _log(
+    'ORCH',
+    'S15 control: harness=${harnessPass ? 'PASS' : 'FAIL'} '
+        'os=${evaluation.pass ? 'PASS' : 'FAIL'} reason=${evaluation.reason}',
+  );
+
+  final controlPass = harnessPass && evaluation.pass;
+  final mergedPredicates = <String, dynamic>{
+    ...Map<String, dynamic>.from(
+      suppressed.osNotification['predicates'] as Map? ??
+          const <String, dynamic>{},
+    ),
+    'controlHarnessProgrammatic': harnessPass,
+    for (final entry in evaluation.predicates.entries)
+      'control_${entry.key}': entry.value,
+  };
+  return ScenarioOutcome(
+    id: suppressed.id,
+    selected: suppressed.selected,
+    programmaticPass: suppressed.programmaticPass && controlPass,
+    audibleConfirmed: suppressed.audibleConfirmed,
+    verdict: suppressed.verdict,
+    osNotification: <String, dynamic>{
+      ...suppressed.osNotification,
+      'pass':
+          (suppressed.osNotification['pass'] as bool? ?? false) && controlPass,
+      'predicates': mergedPredicates,
+      'control': <String, dynamic>{
+        'harnessProgrammatic': harnessPass,
+        'pass': evaluation.pass,
+        'reason': evaluation.reason,
+        'records': records,
+        'verdict': _redactedVerdict(verdict),
+      },
+    },
   );
 }
 
@@ -725,6 +1193,25 @@ void _recordScenarioOutcome(
 }
 
 Future<void> main(List<String> args) async {
+  // Deviceless process-contract modes. Both must resolve BEFORE the device-pair
+  // requirement below, so `scripts/test/notification_sound_disposition_contract_test.sh`
+  // can exercise them without ever attaching (or driving) a real device.
+  if (args.contains('--print-disposition-contract')) {
+    _printDispositionContract();
+    return;
+  }
+  final verifyIndex = args.indexOf('--verify-os-capture');
+  if (verifyIndex >= 0) {
+    exit(
+      _verifyOsCaptureOffline(
+        args.sublist(verifyIndex + 1),
+        toneDebounceChannelFallback: args.contains(
+          '--tone-debounce-channel-fallback',
+        ),
+      ),
+    );
+  }
+
   final devices = <String>[];
   String? artifactPath;
   String? rowFilter;
@@ -742,13 +1229,20 @@ Future<void> main(List<String> args) async {
       i++;
     } else if (args[i] == '--non-interactive') {
       _nonInteractive = true;
+    } else if (args[i] == '--tone-debounce-channel-fallback') {
+      _toneDebounceChannelFallback = true;
     }
   }
   if (devices.length != 2) {
     stderr.writeln(
       'Usage: dart run integration_test/scripts/run_notification_sound_smoke.dart '
       '-d <alice_udid>,<bob_udid> [--artifact-dir <dir>] '
-      '[--rows S6,S7] [--non-interactive]',
+      '[--rows S6,S7] [--non-interactive] '
+      '[--tone-debounce-channel-fallback]\n'
+      '       dart run integration_test/scripts/run_notification_sound_smoke.dart '
+      '--print-disposition-contract\n'
+      '       dart run integration_test/scripts/run_notification_sound_smoke.dart '
+      '--verify-os-capture <scenarioId> <dumpsys-file> <verdict-json>',
     );
     exit(1);
   }
@@ -762,7 +1256,7 @@ Future<void> main(List<String> args) async {
     if (parsed.isEmpty || invalid.isNotEmpty) {
       stderr.writeln(
         'Invalid --rows value. Expected a comma-separated subset of '
-        'S1..S13; invalid=${invalid.toList()..sort()}',
+        'S1..S16; invalid=${invalid.toList()..sort()}',
       );
       exit(64);
     }
@@ -814,6 +1308,8 @@ Future<void> main(List<String> args) async {
 
   Process? alice;
   Process? bob;
+  var runCompleted = false;
+  Object? runError;
   final outcomes = <ScenarioOutcome>[];
   final signalSync = _androidPair
       ? _syncAndroidSignalFiles(<String>[aliceDevice, bobDevice])
@@ -928,32 +1424,218 @@ Future<void> main(List<String> args) async {
       ),
     );
 
-    const mediaDescriptions = <String, String>{
-      'S5': '1:1 image-only message',
-      'S6': '1:1 video-only message',
-      'S7': '1:1 voice-only message',
-      'S8': 'group discussion image-only message',
-      'S9': 'group discussion video-only message',
-      'S10': 'group discussion voice-only message',
-      'S11': 'announcement image-only message',
-      'S12': 'announcement video-only message',
-      'S13': 'announcement voice-only message',
-    };
-    for (final entry in mediaDescriptions.entries) {
-      final signal = entry.key.toLowerCase();
-      _recordScenarioOutcome(
-        outcomes,
-        await _runScenario(
-          id: entry.key,
-          goSignal: '${signal}_go',
-          bobVerdictSignal: '${signal}_bob_verdict',
-          verdictAckSignal: '${signal}_verdict_ack',
-          description: entry.value,
-          expectAudible: true,
-          expectSuppressed: false,
-        ),
-      );
+    // S5-S13: attachment-only media notifications across the three lanes.
+    //
+    // These MUST stay literal `_runScenario` blocks. The reliability-simulation
+    // discovery gate parses this file with awk
+    // (`scripts/check_reliability_simulation_discovery.sh:1019-1039`) and can
+    // only see `id: '<Sn>'` / `description: '<text>'` single-line literals — a
+    // map loop registers ZERO rows while the gate still exits 0. The
+    // descriptions also feed the gate's family filter (`:1005-1015`): they must
+    // contain `1:1` for the 1to1 family and `Group` for the group family, and
+    // never both.
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S5',
+        goSignal: 's5_go',
+        bobVerdictSignal: 's5_bob_verdict',
+        verdictAckSignal: 's5_verdict_ack',
+        description: '1:1 image-only message',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S6',
+        goSignal: 's6_go',
+        bobVerdictSignal: 's6_bob_verdict',
+        verdictAckSignal: 's6_verdict_ack',
+        description: '1:1 video-only message',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S7',
+        goSignal: 's7_go',
+        bobVerdictSignal: 's7_bob_verdict',
+        verdictAckSignal: 's7_verdict_ack',
+        description: '1:1 voice-only message',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S8',
+        goSignal: 's8_go',
+        bobVerdictSignal: 's8_bob_verdict',
+        verdictAckSignal: 's8_verdict_ack',
+        description: 'Group discussion image-only message',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S9',
+        goSignal: 's9_go',
+        bobVerdictSignal: 's9_bob_verdict',
+        verdictAckSignal: 's9_verdict_ack',
+        description: 'Group discussion video-only message',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S10',
+        goSignal: 's10_go',
+        bobVerdictSignal: 's10_bob_verdict',
+        verdictAckSignal: 's10_verdict_ack',
+        description: 'Group discussion voice-only message',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S11',
+        goSignal: 's11_go',
+        bobVerdictSignal: 's11_bob_verdict',
+        verdictAckSignal: 's11_verdict_ack',
+        description: 'Group announcement image-only message',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S12',
+        goSignal: 's12_go',
+        bobVerdictSignal: 's12_bob_verdict',
+        verdictAckSignal: 's12_verdict_ack',
+        description: 'Group announcement video-only message',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S13',
+        goSignal: 's13_go',
+        bobVerdictSignal: 's13_bob_verdict',
+        verdictAckSignal: 's13_verdict_ack',
+        description: 'Group announcement voice-only message',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
+
+    // ════════════════════════════════════════════════════════════════
+    //  S14: tone-window debounce (1:1). Two texts inside the 30s window:
+    //       the first is audible, the second is a SILENT in-place update of
+    //       the SAME notification id.
+    // ════════════════════════════════════════════════════════════════
+    // The window anchors on the last AUDIBLE tone for this conversation key
+    // (`notification_tone_tracker.dart:31-43`), so wait it out first —
+    // otherwise msg1 inherits an open window and the pair is inconclusive.
+    _log('ORCH', 'S14: 31s tone cooldown so msg1 is deterministically audible');
+    await Future<void>.delayed(const Duration(seconds: 31));
+    _signals.writeSignal('s14_go');
+    final s14FirstVerdict = await _signals.waitForJson(
+      's14_first_bob_verdict',
+      timeout: const Duration(minutes: 5),
+    );
+    var s14PriorRecordIds = const <int>[];
+    if (_isSelectedRow('S14')) {
+      if (s14FirstVerdict['programmaticPass'] as bool? ?? false) {
+        // LIGHT capture only — the shade/uiautomator dance would burn most of
+        // the 30s window before msg2 could be sent.
+        final phase1 = await _captureActiveRecords(expectedCount: 1);
+        s14PriorRecordIds = phase1
+            .map((record) => record['id'])
+            .whereType<int>()
+            .toList(growable: false);
+        _log('ORCH', 'S14 phase-1 audible record ids: $s14PriorRecordIds');
+      } else {
+        throw StateError('S14 phase-1 audible message failed its harness predicate');
+      }
     }
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S14',
+        goSignal: 's14_second_go',
+        bobVerdictSignal: 's14_bob_verdict',
+        verdictAckSignal: 's14_verdict_ack',
+        description: '1:1 tone-window debounce (second message updates silently)',
+        expectAudible: false,
+        expectSuppressed: false,
+        priorRecordIds: s14PriorRecordIds,
+      ),
+    );
+
+    // ════════════════════════════════════════════════════════════════
+    //  S15: group same-chat suppression. Bob is resumed WITH the discussion
+    //       group marked active, so an incoming group text must not notify.
+    //       A post-clear control message in the same scenario proves the
+    //       silence came from the suppression gate and not from a dead lane.
+    // ════════════════════════════════════════════════════════════════
+    _log('ORCH', 'Waiting for Bob to simulate viewing the discussion group...');
+    await _signals.waitForSignal(
+      'bob_viewing_group',
+      timeout: const Duration(minutes: 5),
+    );
+    final s15Outcome = await _runScenario(
+      id: 'S15',
+      goSignal: 's15_go',
+      bobVerdictSignal: 's15_bob_verdict',
+      verdictAckSignal: 's15_verdict_ack',
+      description: 'Group discussion same-chat suppression (expect SILENCE)',
+      expectAudible: false,
+      expectSuppressed: true,
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _appendGroupSuppressionControl(s15Outcome),
+    );
+
+    // ════════════════════════════════════════════════════════════════
+    //  S16: backgrounded-but-connected 1:1. Bob's logical lifecycle is
+    //       `paused` with no active conversation while the bridge stays live;
+    //       delivery must still post one audible OS record.
+    // ════════════════════════════════════════════════════════════════
+    _log('ORCH', 'S16: 31s tone cooldown before the paused-lifecycle leg');
+    await Future<void>.delayed(const Duration(seconds: 31));
+    _log('ORCH', 'Waiting for Bob to report a backgrounded lifecycle...');
+    await _signals.waitForSignal(
+      'bob_backgrounded',
+      timeout: const Duration(minutes: 5),
+    );
+    _recordScenarioOutcome(
+      outcomes,
+      await _runScenario(
+        id: 'S16',
+        goSignal: 's16_go',
+        bobVerdictSignal: 's16_bob_verdict',
+        verdictAckSignal: 's16_verdict_ack',
+        description: '1:1 backgrounded-but-connected delivery (expect notification + sound)',
+        expectAudible: true,
+        expectSuppressed: false,
+      ),
+    );
 
     _signals.writeSignal('all_done');
     await _signals.waitForSignal(
@@ -964,8 +1646,17 @@ Future<void> main(List<String> args) async {
       'bob_done',
       timeout: const Duration(seconds: 60),
     );
+    runCompleted = true;
   } on _FocusedRowsComplete {
+    runCompleted = true;
     _log('ORCH', 'Focused --rows evidence complete; stopping harnesses');
+  } on Object catch (error, stackTrace) {
+    // The `finally` below calls exit(), which would otherwise swallow this
+    // exception AND its exit code — a harness that dies during setup would be
+    // reported as a clean pass with zero scenarios.
+    runError = error;
+    _log('ORCH', 'Run aborted: $error');
+    stderr.writeln(stackTrace);
   } finally {
     _log('ORCH', 'Cleaning up...');
     alice?.kill();
@@ -992,12 +1683,15 @@ Future<void> main(List<String> args) async {
       'group': 0,
       'announcement': 0,
     };
-    String? laneFor(String id) => switch (id) {
-      'S1' || 'S5' || 'S6' || 'S7' => 'direct',
-      'S2' || 'S8' || 'S9' || 'S10' => 'group',
-      'S3' || 'S11' || 'S12' || 'S13' => 'announcement',
-      _ => null,
-    };
+    // Derived from the disposition contract so a new row cannot silently skip
+    // the stable-card-id assertion. Suppressed rows are excluded: they post no
+    // record, so counting them would make their own lane look unstable.
+    String? laneFor(String id) {
+      final entry = _dispositionContract[id];
+      if (entry == null) return null;
+      if (entry.disposition == _SoundDisposition.suppressed) return null;
+      return entry.lane;
+    }
     final expectedLaneObservationCounts = <String, int>{
       'direct': 0,
       'group': 0,
@@ -1080,15 +1774,39 @@ Future<void> main(List<String> args) async {
     stdout.writeln('\n  Summary JSON: $summaryPath');
     stdout.writeln('${'═' * 70}\n');
 
-    // Exit code: non-zero if any programmatic failure, OR any S1/S2/S3 was
-    // NOT audibly confirmed, OR S4 was audible (suppression failure).
-    // In non-interactive mode, audibleConfirmed is null and does not count.
+    // A run that never produced its scenarios is a FAILURE, not a pass. Without
+    // this, a harness that dies during setup leaves `selectedOutcomes` empty,
+    // every lane trivially "stable", and the run exits 0 having proven nothing.
+    final expectedScenarioCount =
+        _selectedRows?.length ?? _dispositionContract.length;
+    final incomplete =
+        runError != null ||
+        !runCompleted ||
+        selectedOutcomes.length < expectedScenarioCount;
+    if (incomplete) {
+      stdout.writeln(
+        '  INCOMPLETE: ${selectedOutcomes.length}/$expectedScenarioCount '
+        'scenarios produced evidence'
+        '${runError == null ? '' : ' (aborted: $runError)'}',
+      );
+    }
+
+    // Exit code: non-zero if the run did not complete, OR any programmatic
+    // failure, OR an audible-expecting row was NOT heard, OR a row whose
+    // conclusive state is silence DID make a sound. `audibleConfirmed` always
+    // means "the operator heard a sound", so the polarity follows the pinned
+    // disposition. In non-interactive mode it is null and does not count.
     final failed =
+        incomplete ||
         !stableConversationCards ||
         selectedOutcomes.any((o) {
           if (!o.programmaticPass) return true;
           if (o.audibleConfirmed == null) return false;
-          if (o.id == 'S4') return o.audibleConfirmed == true;
+          final disposition = _dispositionContract[o.id]?.disposition;
+          if (disposition == _SoundDisposition.suppressed ||
+              disposition == _SoundDisposition.toneDebounce) {
+            return o.audibleConfirmed == true;
+          }
           return o.audibleConfirmed == false;
         });
     exit(failed ? 1 : 0);
