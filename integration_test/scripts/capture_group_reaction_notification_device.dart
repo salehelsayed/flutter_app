@@ -780,7 +780,13 @@ class _Plan257Capture {
         _reactionWarmupGroupName = groupReactionNotificationWarmupGroupName(
           gradedGroupName,
         );
-        await _createAndAcceptGroup(name: _reactionWarmupGroupName);
+        // A CHAT group, never the scenario's own type — see
+        // `_createAndAcceptGroup`'s doc. The warm-up group exists only to fork
+        // the recipient's background isolate; its type proves nothing.
+        await _createAndAcceptGroup(
+          name: _reactionWarmupGroupName,
+          groupType: 'chat',
+        );
         // `_createAndAcceptGroup` overwrites `_groupName` unconditionally
         // (`:2165`); both existing two-group lanes restore it the same way.
         _groupName = gradedGroupName;
@@ -2160,13 +2166,22 @@ class _Plan257Capture {
     await _launchAndroid(owner.deviceId);
   }
 
-  Future<void> _createAndAcceptGroup({String? name}) async {
+  /// Creates one group and has the invitee accept it.
+  ///
+  /// [groupType] defaults to the scenario's own type. It is a parameter because
+  /// the Plan 389 warm-up group must be a plain CHAT group even in the
+  /// announcement scenario: an announcement group only lets its ADMIN post, the
+  /// admin here is the creator, and for a reaction scenario the creator is the
+  /// recipient — the device this lane deliberately kills. Measured 2026-08-19:
+  /// with the scenario's type inherited, the warm-up send died at
+  /// `group_compose_marker_editorUnavailable_on_emulator-5554`, with the sender
+  /// looking at "Only admins can send messages in this group".
+  Future<void> _createAndAcceptGroup({String? name, String? groupType}) async {
+    final type = groupType ?? scenario.groupType;
     final now = DateTime.now().toUtc().microsecondsSinceEpoch;
     _groupName =
         name ??
-        (scenario.groupType == 'announcement'
-            ? 'TC257Ann$now'
-            : 'TC257Group$now');
+        (type == 'announcement' ? 'TC257Ann$now' : 'TC257Group$now');
     final creator = scenario.id.endsWith('_message_unread_lifecycle')
         ? sender
         : recipient;
@@ -2177,7 +2192,7 @@ class _Plan257Capture {
     await _tapOrbitCreateFab(creator.deviceId);
     await _tapText(
       creator.deviceId,
-      scenario.groupType == 'announcement' ? 'New Announce' : 'New Group',
+      type == 'announcement' ? 'New Announce' : 'New Group',
     );
     await _tapText(creator.deviceId, invitee.username);
     final groupNameField = await _retryUiCenter(
@@ -2636,11 +2651,11 @@ class _Plan257Capture {
     final stamp = DateTime.now().toUtc().microsecondsSinceEpoch;
     _targetMarker = 'TC257Target$stamp';
 
-    await _openGroup(recipientId);
+    await _openGradedGroup(recipientId);
     await _sendGroupText(recipientId, _targetMarker);
-    await _openGroup(senderId);
+    await _openGradedGroup(senderId);
     await _waitForUiText(senderId, _targetMarker, const Duration(minutes: 2));
-    await _ensureOrbit(recipientId);
+    await _ensureGradedGroupOrbitRow(recipientId);
     await _captureUiSnapshot('reaction_unread_0_before', expectedUnread: 0);
     final keepRecipientProcessAlive =
         groupReactionNotificationKeepsRecipientProcessAlive(scenario.id);
@@ -2659,7 +2674,7 @@ class _Plan257Capture {
     }
 
     if (!keepRecipientProcessAlive) {
-      await _openGroup(senderId);
+      await _openGradedGroup(senderId);
     }
     await _longPressText(senderId, _targetMarker);
     await _tapText(senderId, _reactionEmoji);
@@ -2740,6 +2755,7 @@ class _Plan257Capture {
       'keyevent',
       'KEYCODE_BACK',
     ], environmentFailure: true);
+    await _ensureGradedGroupOrbitRow(recipientId);
     await _waitForUiText(
       recipientId,
       'Open group $_groupName',
@@ -2775,6 +2791,39 @@ class _Plan257Capture {
   /// tried on the muted lane and was wrong: run 12 (2026-08-18) saw a warm-up
   /// end outside every enumerated disposition with a perfectly normal SQLCipher
   /// open behind it.
+  /// Puts [deviceId] on an Orbit surface that actually projects group rows.
+  ///
+  /// Accepting a group invite lands Orbit on the all-chats `Intros` filter, and
+  /// ACTIVE GROUP NODES ARE EXCLUDED FROM THAT FILTER (`:100-107`). With one
+  /// group this lane never noticed. With two, the second accept leaves the
+  /// device on that filter and `_ensureOrbit`'s `Open group <name>` probe finds
+  /// nothing at all — measured 2026-08-19, the first device run of this plan
+  /// died exactly there with `orbit_surface_not_reached_on_emulator-5554`,
+  /// before the kill and before the warm-up had sent anything.
+  ///
+  /// Routed only when a warm-up group exists, so the background-connected
+  /// scenario keeps the single-group path it already passes on.
+  Future<void> _ensureGradedGroupOrbitRow(String deviceId) async {
+    if (_reactionWarmupGroupName.isEmpty) {
+      await _ensureOrbit(deviceId);
+      return;
+    }
+    await _plan330InnerCircleGroupCenter(deviceId, _groupName);
+  }
+
+  /// Opens the graded group, through the Inner Circle when a second group made
+  /// the plain `Open group <name>` probe unreliable. See
+  /// [_ensureGradedGroupOrbitRow].
+  Future<void> _openGradedGroup(String deviceId) async {
+    if (_reactionWarmupGroupName.isEmpty) {
+      await _openGroup(deviceId);
+      return;
+    }
+    // `_openPlan330Group` reassigns `_groupName` to the name it is given, so
+    // passing the graded name is a no-op assignment.
+    await _openPlan330Group(deviceId, _groupName);
+  }
+
   Future<void> _sendPostKillWarmupText() async {
     if (_reactionWarmupGroupName.isEmpty) {
       throw _CaptureFailure.capture(
