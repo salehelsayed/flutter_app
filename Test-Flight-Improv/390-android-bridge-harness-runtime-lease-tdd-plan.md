@@ -1,6 +1,6 @@
 # 390 - Android integration harnesses cannot reach the Go bridge without the canonical-runtime lease
 
-Status: execution-ready
+Status: EXECUTED and CLOSED 2026-08-19 — host census 7/7, device leg green on `emulator-5554` with its mutation re-red
 Type: Bug
 Spec: free-text intent (no formal spec) — gap **G15** of `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md` §4.10
 Classification: implementation-ready
@@ -66,6 +66,38 @@ placed immediately after `IntegrationTestWidgetsFlutterBinding.ensureInitialized
 - `test/`: 5 host files, no real bridge. `tool/`: 0.
 
 **The executed/dormant split is not asserted here as a number.** Two defensible criteria give materially different answers (14/2 and 9/7), so a fixed split would be a false precision. Step 1 requires the executor to derive it and **write the list into the plan** before repairing anything; TC-390-04's allow-list is where that list lands and is reviewed.
+
+### Derived at execution (2026-08-19) — the list Step 1 asked for
+
+The census reproduced exactly: 20 files / 24 matches under `integration_test/`, one being `RecordingGoBridgeClient()`; 19 candidates / 23 sites; 16 unleased constructing files.
+
+**Attribution is per (constructing file, entrypoint) pair, not per file.** A file with no `main()` cannot repair itself, and a file that constructs the bridge next to its own lease is already covered. That yields **15 unleased entrypoints covering all 16 unleased files** — two fewer offenders than a per-file count, and two entrypoints (`cold_start_sendable_no_user_action_test.dart`, `sims_dispatcher.dart`) the plan's per-file view never named.
+
+**Executed criterion, applied uniformly.** A file is executed when one of: (a) a `run_test_gates.sh` array or gate that is actually dispatched; (b) an `active` capability in `tool/sims/critical_features.json`; (c) selection by `run_reliability_simulations.sh:164-173`'s filter over `check_reliability_simulation_discovery.sh --records-tsv` — category in {1to1, group, intro, move-feature} AND type in {runner, test} — or being the harness such a selected runner launches; (d) a repo script that `flutter test`s / `dart run`s it directly. Confirmed NOT executed by membership alone: `NIGHTLY_ONLY_TESTS`, `OPTIONAL_MANUAL_TESTS`, `OUT_OF_GATE_TESTS`, each referenced only inside `classify_path` (`run_test_gates.sh:1441`, `:1446`, `:1451`).
+
+| Entrypoint | Constructing files it reaches | Executed? | Evidence |
+|---|---|---|---|
+| `android_background_crypto_preflight_app.dart` | itself | **yes** (c) | `run_1to1_reaction_notification_device.dart` is 1to1/**runner** → `Process.start('dart', capture driver)` `:158` → `flutter build apk --debug --target` `:579-584`, installed and launched |
+| `benchmark_harness.dart` | `benchmark_helpers`, `benchmark_bridge_crossing_harness`, `benchmark_encryption_harness` | **yes** (a) | `run_test_gates.sh benchmark-sim` `:1926-1932`, once per each of 17 BENCHMARK keys |
+| `cold_start_sendable_no_user_action_test.dart` | `benchmark_helpers` | **yes** (c) | records `1to1/test`; the second `benchmark_helpers` entrypoint (`:10` imports, `:23` calls `createBenchmarkNode()`) |
+| `conversation_bridge_test.dart` | itself | **yes** (c) | records `1to1/test` |
+| `group_invite_reliability_proof_test.dart` | itself | **yes** (c) | records `group/test` |
+| `group_real_crypto_onboarding_test.dart` | itself | **yes** (c) | records `group/test` |
+| `group_recovery_cli_e2e_test.dart` | itself | **yes** (c)+(a) | records `group/test`; also `run_test_gates.sh group-real-network-nightly` `:1180`, conditional on `CLI_PEER_FIXTURE` |
+| `group_removal_rotation_keyless_converge_proof_test.dart` | itself | **yes** (c) | records `group/test` |
+| `group_removal_rotation_keyless_proof_test.dart` | itself | **yes** (c) | records `group/test` |
+| `routing_smoke_harness.dart` | itself | **yes** (c) | `run_routing_smoke_e2e.dart` is 1to1/runner AND group/runner → `Process.start('flutter', …)` `:109` with `harness: _aliceHarness`/`_bobHarness` |
+| `sims_dispatcher.dart` | `support/android_critical_performance_campaign.dart` | **yes** (b) | capability `performance.device.critical` (`active`, `required`), `buildProfile: android.e2e.standard` → `build_orchestrator.dart:1175` targets this file |
+| `transport_census_harness.dart` | itself | **yes** (d) | `scripts/run_transport_census.sh:130` `flutter test "$HARNESS"` |
+| `soak_e2e_test.dart` | itself | **yes** (c) | records `1to1/test` |
+| `setup_device.dart` | itself | **no** | records `support/support`; no gate, script or capability runs it |
+| `smoke_test.dart` | itself | **no** | records `ignored/ignored`; only in `NIGHTLY_ONLY_TESTS` |
+
+**13 executed, 2 dormant.** Both dormant files were repaired anyway rather than allow-listed — the change is four lines each and identical to the other thirteen, so the allow-list ships **empty** and there are no exemptions to argue about. `lib/smoke_test_main.dart` / `lib/smoke_test_restore.dart` stay out of scope as the plan already resolved.
+
+### What the plan did not have — self-guarding, and the seven harnesses it would have wrongly charged
+
+`setupGroupMultiDeviceStack` calls `ensureCanonicalRuntimeAttachedForTest()` immediately before constructing its bridge, so `group_multi_device_real_harness.dart` is **self-guarded**: it takes the lease in the same file that builds the bridge. Seven entrypoints reach the bridge only through it — `benchmark_group_publish_harness` (via `benchmark_harness`), `foreground_group_push_simulator_harness`, `group_multi_party_device_real_harness`, `group_multi_party_device_real_android_harness`, `group_smoke_harness`, `notification_open_during_other_chat_harness`, `notification_sound_smoke_harness`. A census that demanded a lease in every reaching entrypoint would have charged all seven and produced exactly the double acquire the plan's hard rule forbids. The census therefore accepts **self-guarded OR every reaching entrypoint**, and never accepts mere transitive reachability of a seam (which branch runs is `--dart-define`-dependent and unknowable from source).
 
 ### Four offenders cannot fix themselves — and one has two entrypoints
 
@@ -235,13 +267,13 @@ git diff --check
 - **Environment blocker (NOT a product blocker):** the emulator or the state guard held by a Plan 389 run.
 - **Scope drift (BLOCKING):** any `lib/` edit; any file added under `integration_test/scripts/`; a second acquire added to any path that already has one; a call-order-by-position census; a `_test.dart`-only walk; touching anything Plan 389 owns.
 
-- [ ] The executed/unleased list is derived and written into this plan before any repair.
-- [ ] Wave 0's choice is recorded, with its reason.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded for each causal row.
-- [ ] The allow-list contains no executed file.
-- [ ] `git diff --name-only -- lib/` is empty and nothing was added under `integration_test/scripts/`.
-- [ ] One cleanly-launchable repaired harness passes on `emulator-5554`.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
+- [x] The executed/unleased list is derived and written into this plan before any repair.
+- [x] Wave 0's choice is recorded, with its reason.
+- [x] Causal RED, focused GREEN, and representative mutation re-red are recorded for each causal row.
+- [x] The allow-list contains no executed file — it ships empty.
+- [x] `git diff --name-only -- lib/` is empty and nothing was added under `integration_test/scripts/`.
+- [x] One cleanly-launchable repaired harness passes on `emulator-5554` — `group_real_crypto_onboarding_test.dart`, 4/4.
+- [x] `flutter analyze` has no new issues; `git diff --check` is clean.
 
 ## Device/Relay Proof Profile
 
@@ -281,7 +313,62 @@ Verdict **plan-fixes-required**; core bet (the root cause) **CONFIRMED**, with e
 
 **Confirmed sound and kept:** the root cause and every native/Dart citation; the 20/24 → 19 → 16 census; the `f1b568bca` date correction and the two already-leased files; the three map corrections; the no-CI finding; and the refutation of the repo-root worry — both runners `cd` to the root and relative-root censuses are established prior art.
 
+## Execution Record (2026-08-19)
+
+### Wave 0 — the decision, and why
+
+**Chosen: make `ensureCanonicalRuntimeAttachedForTest()` tolerate an already-ACTIVE lease.** It now calls `gateway.status()` first and acquires only when nothing owns the runtime; `attachRuntime()` runs either way. `MethodChannelCanonicalRuntimeLeaseGateway` already exposed `status()` (`canonical_runtime_lease.dart:83`, `:137-140`), so **no `lib/` change was needed**. The `[STACK-DIAG]` line now says `joined` or `acquired` honestly.
+
+Three reasons this beat the alternative (dropping the `main()` `setUpAll`/`tearDownAll` pair):
+
+1. **The alternative cannot fix `benchmark_harness.dart`.** `BENCHMARK=GROUP_PUBLISH` reaches `setupGroupMultiDeviceStack` through `benchmark_group_publish_harness.dart:74`, so Wave 2 leasing that entrypoint would recreate the identical collision. Tolerance fixes both at once.
+2. **The alternative breaks a pre-existing gate.** `test/integration/group_multi_device_shared_path_test.dart:36-62` asserts, by source scan, that the group harness's `main()` contains `final runtimeLease = CanonicalRuntimeDeviceTestLease(`, `setUpAll(runtimeLease.acquire);`, `tearDownAll(runtimeLease.release);` **in that order**, before the MD-004 `testWidgets`. Dropping the pair reds it. The plan did not know this test existed — the graph's `affected` step surfaced it.
+3. **It keeps the release.** `tearDownAll(runtimeLease.release)` is what quiesces the Go runtime; dropping the pair leaves the runtime attached and the probe database on disk.
+
+`attachRuntime` is idempotent — it returns the handler's existing `runtimeAttached` (`CanonicalRuntimeLease.kt:201-204`) and requires only that the handler already holds a token, which the entrypoint's own acquire set over the same channel. The join therefore costs one extra `status` round trip and nothing else.
+
+### Wave 2 — two deviations from the plan's recipe, both narrowing risk
+
+- **`support/android_critical_performance_campaign.dart` self-guards** inside `_measureProductionGoBridge()` rather than being leased at its entrypoint. `sims_dispatcher.dart` is the shared prebuilt-APK target for **every** sims scenario; only this one crosses the bridge. Leasing the dispatcher would have made `android.voice_recorder_native_smoke` (an `active`, `required` capability) attach the Go runtime and open a probe database it does not use.
+- **`android_background_crypto_preflight_app.dart` self-guards** through a one-shot helper called before each of its two bridge constructions. It is built as a real APK (`flutter build apk --debug --target`) and has no `flutter_test` lifecycle at all, so `setUpAll` does not exist there; it holds the lease for the life of the process, the shape production uses. The guard is load-bearing — `acquire()` throws `StateError` if called twice and the two sites sit on branches a re-executed `main()` can reach in either order.
+
+Both are accepted by the census's **self-guarded** branch, which is the same branch that clears `group_multi_device_real_harness.dart`.
+
+### Evidence
+
+| Row | State at HEAD | After | Mutation re-red |
+|---|---|---|---|
+| TC-390-00 | RED — the joiner acquired unconditionally under its own fixed binding | GREEN | pre-Wave-0 tree is exactly the mutation; plus `expected 1 acquire on runtimeLease, found 2` and `owns 2 leases` both re-red on demand |
+| TC-390-01 | GREEN, non-vacuous — 227 files scanned against a pinned floor of 200 | GREEN | a root pointed at a missing directory scans 0 |
+| TC-390-02 | GREEN — fixture with `DurableNotificationToneLease` + a bare `acquire` is still reported | GREEN | a token matcher clears it; a `_test.dart` walk skips the library fixture |
+| TC-390-03 | GREEN — library cleared only when **both** entrypoints lease | GREEN | lease one of two → the other is named |
+| TC-390-04 | RED — 17 unleased (site, entrypoint) pairs | GREEN | `benchmark_harness.dart` onto the allow-list → tautology assertion reds; drop its lease → named for all 3 files it reaches |
+| TC-390-05 | RED — `benchmark_harness.dart` held no lease | GREEN | second acquire / second owner both re-red |
+| TC-390-06 | GREEN | GREEN | widening the root to `lib/` reports the production bootstrap |
+| TC-390-07 | GREEN | GREEN | discovery PASS exit 0; completeness-check PASS 1469/1469 |
+| TC-390-08 | manual/device-only | **GREEN on `emulator-5554`** | lease reverted, rebuilt and re-run on the same emulator → **4 × `GO_BRIDGE_MISSING_PLUGIN`, 0 passed / 4 failed** |
+
+**TC-390-08, `flutter test -d emulator-5554 integration_test/group_real_crypto_onboarding_test.dart`.** Chosen from the cleanly-launchable set: no `fromEnvironment` fixture, no role, no relay account (`:263`), four real-crypto `testWidgets`. Real Gradle `assembleDebug` (28.4s) and a real install, then `GO_BRIDGE_INIT_SUCCESS` with `"type":"native"` and successful `BRIDGE_CALL_TIMING` for `identity.generate` (41ms), `mlkem.keygen`, `node:start`, `group:create`, `group:updateConfig`, `payload.sign`, `message.encrypt`, `message.decrypt`, plus `"layer":"GO"` push events from the Go runtime. **4/4 passed, exit 0.**
+
+**The mutation proves the mechanism, not just correlation.** Reverting only that harness's four-line lease block and its import, then rebuilding and re-running on the same emulator, gives `GO_BRIDGE_MISSING_PLUGIN {"cmd":"identity.generate","initialized":true,"error":"No implementation found for method generateIdentity on channel com.mknoon/go_bridge"}` four times and **0 passed / 4 failed**. Note `GO_BRIDGE_INIT_SUCCESS type:native` still fires in the mutated run — `initialize()` only subscribes to the EventChannel, whose failure lands asynchronously — which is exactly why TC-390-08's oracle is the run's own pass/fail and not a log line. The tree was restored from a snapshot and the census re-verified green afterwards.
+
+The emulator is `arm64-v8a` (Apple Silicon host), not x86_64 as the plan assumed. That is still a correct target: `android/app/libs/GoMknoon.aar` ships `arm64-v8a`, `armeabi-v7a`, `x86` and `x86_64`, and the only `abiFilters` narrowing (`build.gradle.kts:274-279`) applies solely when the sims property `simsAndroidAbi` is set, which a bare `flutter test -d` does not set.
+
+### Corrections to the plan, found in source
+
+- **The plan's per-file offender view is not the actionable one.** Attribution must be per (constructing file, entrypoint): 16 unleased files map to **15** entrypoints, two of which the plan never named (`cold_start_sendable_no_user_action_test.dart`, `sims_dispatcher.dart`).
+- **Self-guarding had to be added as a coverage rule.** Without it the census charges the seven harnesses that reach the bridge only through `setupGroupMultiDeviceStack`, and repairing them would create exactly the double acquire the plan's hard rule forbids.
+- **A lease constructed inside another entrypoint's `main()` must not count.** Only one `main()` runs per process; the first draft of the census charged every importer of the group harness.
+- **The plan's own pairing idea is a loose-token trap.** Counting bare `.acquire` / `.release` charges `group_multi_device_real_harness.dart` for an unrelated `traceLease.release()` and for the joiner's own `gateway.acquire` — the very failure TC-390-02 exists to reject. The count is bound to the owner's variable.
+- **`test/integration/group_multi_device_shared_path_test.dart` was not in the plan** and constrains Wave 0's choice (see above).
+- **The Go AAR is not x86_64-only** (four ABIs), and the emulator on this host is arm64.
+
 ## Execution Progress
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | contract extraction |
+| 2026-08-19 | Step 1 — derive | census + `run_test_gates.sh`, `check_reliability_simulation_discovery.sh --records-tsv`, `critical_features.json`, `run_transport_census.sh`, `run_routing_smoke_e2e.dart` | census reproduced 20/24 → 19/23 → 16 unleased | 15 unleased entrypoints; 13 executed / 2 dormant | list written into this plan | write the census |
+| 2026-08-19 | Wave 1 — census `3e0a74f50` | `test/integration/android_bridge_runtime_lease_census_test.dart` | `flutter test` → 4 passed / 3 failed | causal RED on TC-390-00, TC-390-04 (17 pairs), TC-390-05 | fixtures caught two real model bugs while being authored | Wave 0 |
+| 2026-08-19 | Wave 0 — join `ba7707652` | `group_multi_device_real_harness.dart` | TC-390-00 GREEN | status-first joiner; no `lib/` change | tolerance chosen over dropping the pair, 3 reasons above | Wave 2 |
+| 2026-08-19 | Wave 2 — repairs `647c4efe2` | 15 entrypoints under `integration_test/` | census **7/7 GREEN**; analyze clean | allow-list ships empty; 4 mutation re-reds proven | 2 self-guard deviations recorded | Wave 3 |
+| 2026-08-19 | Wave 3 — device | `group_real_crypto_onboarding_test.dart` on `emulator-5554` | 4/4 passed, exit 0 | `GO_BRIDGE_INIT_SUCCESS type:native` + 8 successful bridge cmds | TC-390-08 GREEN | mutation re-run |
+| 2026-08-19 | Wave 3 — mutation | same harness, lease reverted then restored | 0 passed / 4 failed | 4 × `GO_BRIDGE_MISSING_PLUGIN` on `com.mknoon/go_bridge` | mechanism proven; tree restored, census re-verified 7/7 | **plan CLOSED** |
