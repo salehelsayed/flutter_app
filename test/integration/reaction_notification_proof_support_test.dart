@@ -984,6 +984,56 @@ void main() {
     );
   });
 
+  test(
+    'the 1to1 android capture attributes push registration to the recipient '
+    'device',
+    () {
+      // Plan 391 TC-391-11, found by executing the lane. The android arm
+      // waited on the relay-journal line `[PUSH] Token registered for
+      // <peerPrefix> (android)`, which relay v1.8.0 (8d86501e4) deleted with
+      // the rest of the identifying [PUSH] vocabulary — a removal Plan 368
+      // pins. Measured 2026-08-20: the recipient logged
+      // relay_push_registration_success at 07:49:06Z and the capture still
+      // failed at 07:51:12Z with "Timed out waiting for recipient FCM token
+      // registration". capture_group_reaction_notification_device.dart already
+      // moved this wait to the device boundary; this pins the same move here.
+      final source = _collapsedSource(
+        'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+      );
+      final stageStart = source.indexOf(
+        "_stage = 'recipient_push_registration'",
+      );
+      final stageEnd = source.indexOf(
+        'await _requireCleanNotificationSlate();',
+        stageStart,
+      );
+      expect(stageStart, greaterThan(0));
+      expect(stageEnd, greaterThan(stageStart));
+      expect(
+        source.substring(stageStart, stageEnd),
+        contains('await _waitForRecipientPushRegistrationAccepted();'),
+        reason:
+            'the android capture must attribute registration to the '
+            'recipient device, not to a relay line the relay no longer emits',
+      );
+
+      final methodStart = source.indexOf(
+        'Future<void> _waitForRecipientPushRegistrationAccepted()',
+      );
+      expect(methodStart, greaterThan(0));
+      final method = source.substring(
+        methodStart,
+        source.indexOf('Future<', methodStart + 1),
+      );
+      expect(method, contains('androidRelayPushRegistrationAccepted('));
+      expect(
+        method,
+        contains("_adb(recipientId, ['logcat'"),
+        reason: 'the evidence must come from the recipient device own log',
+      );
+    },
+  );
+
   test('Plan 256 notification tap scrolls to the validated card body', () {
     final source = File(
       'integration_test/scripts/'

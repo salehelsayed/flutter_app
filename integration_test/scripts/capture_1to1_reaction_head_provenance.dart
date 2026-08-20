@@ -351,8 +351,13 @@ class _HeadProvenanceCampaign {
       await _launch(recipientId);
       if (directTextOnly) {
         await _waitForDirectTextTokenProofReceipt();
+        // The direct-text artifact claims a PUBLIC RELAY observation, so its
+        // wait stays on the relay journal even though the line it greps is
+        // gone. Known dead, owned by that lane, deliberately unchanged here.
+        await _waitForRelayTokenRegistration(tokenWindowStart);
+      } else {
+        await _waitForRecipientPushRegistrationAccepted();
       }
-      await _waitForRelayTokenRegistration(tokenWindowStart);
       await _requireCleanNotificationSlate();
       await _terminateRecipient();
 
@@ -1127,6 +1132,30 @@ class _HeadProvenanceCampaign {
     'qrPayload': party.qrPayload,
     'mlKemPublicKey': party.mlKemPublicKey,
   };
+
+  /// Waits until the RECIPIENT device's own log shows the relay accepted its
+  /// Android push-token registration.
+  ///
+  /// Replaces a relay-journal grep for
+  /// `[PUSH] Token registered for <peerPrefix> (android)`, which relay v1.8.0
+  /// (`8d86501e4`) deleted along with the rest of the identifying `[PUSH]`
+  /// vocabulary. That removal is deliberate and pinned by Plan 368, so the fix
+  /// is to stop asking the relay who registered and ask the device instead —
+  /// better attribution too, since the log is unambiguously this device's
+  /// rather than a 20-char peer prefix. Measured 2026-08-20: the recipient
+  /// logged `relay_push_registration_success` at 07:49:06Z and the old wait
+  /// still failed at 07:51:12Z, which had been blocking every Android capture
+  /// on this lane. `capture_group_reaction_notification_device.dart` already
+  /// made the same move.
+  Future<void> _waitForRecipientPushRegistrationAccepted() async {
+    await _waitFor(
+      'recipient android push registration accepted by the relay',
+      const Duration(minutes: 3),
+      () async => androidRelayPushRegistrationAccepted(
+        (await _adb(recipientId, ['logcat', '-d', '-v', 'brief'])).stdout,
+      ),
+    );
+  }
 
   Future<void> _waitForRelayTokenRegistration(DateTime since) async {
     final prefix = recipient.peerPrefix;
