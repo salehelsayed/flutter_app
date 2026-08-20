@@ -6354,9 +6354,7 @@ String? latestGroupSendMessageId(String flowLog) {
   String? found;
   for (final line in flowLog.split('\n')) {
     if (!line.contains('GROUP_SEND_MSG_USE_CASE_SUCCESS')) continue;
-    final match = RegExp(
-      r'"messageId"\s*:\s*"([^"]+)"',
-    ).firstMatch(line);
+    final match = RegExp(r'"messageId"\s*:\s*"([^"]+)"').firstMatch(line);
     if (match != null) found = match.group(1);
   }
   return found;
@@ -6452,6 +6450,46 @@ bool androidRelayPushRegistrationAccepted(String logcat) {
     if (decoded['event'] != 'PUSH_REGISTER_TOKEN_SUCCESS') continue;
     final details = decoded['details'];
     if (details is Map && details['platform'] == 'android') return true;
+  }
+  return false;
+}
+
+/// Whether the RECIPIENT device's own log shows a DIRECT (1:1) reaction push
+/// decrypted in its background isolate.
+///
+/// Device-side attribution, because relay-side attribution no longer exists:
+/// `[PUSH] Notification sent to <peerPrefix>` was deleted by `8d86501e4`
+/// (relay v1.8.0), and the surviving `[PUSH]` vocabulary is `outcome=…` with no
+/// peer at all, emitted by one shared provider path for every push type and
+/// every user on a PRODUCTION box.
+///
+/// `PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK`
+/// (`background_message_handler.dart:2870`) is strictly better attribution than
+/// the line it replaces: it fires only after the background isolate decrypted a
+/// reaction addressed to THIS recipient using THIS recipient's own ML-KEM
+/// secret, and the log is unambiguously this device's rather than a 20-char
+/// peer prefix.
+///
+/// `kind: 'group_reaction'` (`:2831`) is deliberately NOT accepted — it is the
+/// arm this predicate is not testing. `PUSH_BACKGROUND_MESSAGE_RECEIVED` is not
+/// accepted either: a push that never reached the direct-reaction decrypt path
+/// cannot have produced a typed reaction card.
+bool androidDirectReactionBackgroundPushObserved(String logcat) {
+  for (final line in logcat.split('\n')) {
+    final marker = line.indexOf('[FLOW] ');
+    if (marker < 0) continue;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(line.substring(marker + '[FLOW] '.length).trim());
+    } on FormatException {
+      continue;
+    }
+    if (decoded is! Map) continue;
+    if (decoded['event'] != 'PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK') {
+      continue;
+    }
+    final details = decoded['details'];
+    if (details is Map && details['kind'] == 'reaction') return true;
   }
   return false;
 }

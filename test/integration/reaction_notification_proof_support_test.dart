@@ -1034,6 +1034,116 @@ void main() {
     },
   );
 
+  group('android direct-reaction background push observation', () {
+    // Plan 391 TC-391-12. The relay's peer-attributed push line is gone
+    // (`[PUSH] Notification sent to <peerPrefix>`, deleted by 8d86501e4), and
+    // the surviving [PUSH] vocabulary is `outcome=…` with no peer at all. The
+    // provider send is therefore attributed on the RECIPIENT device, where the
+    // evidence is unambiguously that device's: the direct-reaction decrypt
+    // marker fires only after the background isolate decrypted a reaction
+    // addressed to this recipient with this recipient's own secret key.
+    String flow(String event, Map<String, Object?> details) =>
+        'I/flutter: [FLOW] '
+        '${jsonEncode(<String, Object?>{'ts': '2026-08-20T07:49:06.000Z', 'milestone': 'M1_IDENTITY_INIT', 'layer': 'FL', 'event': event, 'details': details})}';
+
+    test('accepts the direct reaction crypto-plugin marker', () {
+      expect(
+        androidDirectReactionBackgroundPushObserved(
+          flow('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK', <String, Object?>{
+            'kind': 'reaction',
+          }),
+        ),
+        isTrue,
+      );
+    });
+
+    test('rejects the group reaction marker', () {
+      // The same event fires for group reactions. A 1:1 proof must not be
+      // satisfiable by the arm it is not testing.
+      expect(
+        androidDirectReactionBackgroundPushObserved(
+          flow('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK', <String, Object?>{
+            'kind': 'group_reaction',
+          }),
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects a bare background message receipt', () {
+      // A push that arrived but never reached the direct-reaction decrypt path
+      // cannot have produced a typed reaction card.
+      expect(
+        androidDirectReactionBackgroundPushObserved(
+          flow('PUSH_BACKGROUND_MESSAGE_RECEIVED', <String, Object?>{
+            'messageId': '0:1787212139',
+            'dataKeys': <String>['type', 'sender_id', 'kem', 'ciphertext'],
+          }),
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects an unrelated or empty log', () {
+      expect(androidDirectReactionBackgroundPushObserved(''), isFalse);
+      expect(
+        androidDirectReactionBackgroundPushObserved(
+          'I/flutter: [PUSH_DIAG] registration_success trigger=startup',
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  test('the 1to1 provider send is attributed on the recipient device', () {
+    // Plan 391 TC-391-13. Every card-attribution decision must read the
+    // effective signal, not `relayCapture.providerMatchedEvent`, which the
+    // current relay can never set. Otherwise the typed smoke throws whether or
+    // not the card was posted, and TC-00 writes a false providerConfirmedNoSend.
+    final source = _collapsedSource(
+      'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+    );
+    final stageStart = source.indexOf("_stage = 'reaction_capture'");
+    final stageEnd = source.indexOf("_stage = 'artifact'", stageStart);
+    expect(stageStart, greaterThan(0));
+    expect(stageEnd, greaterThan(stageStart));
+    final stage = source.substring(stageStart, stageEnd);
+
+    expect(
+      stage,
+      contains("_adb(recipientId, ['logcat', '-c'])"),
+      reason: 'the recipient observation window must be bounded too',
+    );
+    expect(stage, contains('_recipientDirectReactionPushWithin('));
+    for (final guard in const <String>[
+      'if (providerSendObserved && cards.length != 1)',
+      'if (!providerSendObserved && cards.isNotEmpty)',
+      'if (liveTypedSmoke && !providerSendObserved)',
+    ]) {
+      expect(
+        stage,
+        contains(guard),
+        reason: 'a card-attribution guard still reads the dead relay signal',
+      );
+    }
+
+    final attributionStart = source.indexOf("'sourceAttribution': {");
+    final attributionEnd = source.indexOf(
+      "'unreadLifecycle':",
+      attributionStart,
+    );
+    expect(attributionStart, greaterThan(0));
+    expect(attributionEnd, greaterThan(attributionStart));
+    final attribution = source.substring(attributionStart, attributionEnd);
+    expect(attribution, contains("'recipientBackgroundPushObserved':"));
+    expect(
+      attribution,
+      contains("'providerEvidenceSource':"),
+      reason: 'the artifact must name where its provider evidence came from',
+    );
+    expect(attribution, contains("'providerEvidencePath':"));
+  });
+
   test('Plan 256 notification tap scrolls to the validated card body', () {
     final source = File(
       'integration_test/scripts/'
@@ -1538,7 +1648,18 @@ void main() {
     final method = source.substring(methodStart, methodEnd);
     expect(method, contains('android.intent.action.MAIN'));
     expect(method, contains('android.intent.category.LAUNCHER'));
-    expect(method, contains('0x10008000'));
+    // Plan 391, device-measured 2026-08-20. This pin used to require
+    // 0x10008000 — NEW_TASK|CLEAR_TASK. CLEAR_TASK destroys the activity while
+    // the process lives, so a SECOND Flutter engine starts in a process whose
+    // first engine still owns the canonical Go runtime and the SQLCipher
+    // handle: GO_BRIDGE_PLATFORM_ERROR 'This Flutter engine does not own the
+    // active Go runtime', DatabaseException(database_closed), and a BLACK
+    // screen with no Orbit nodes at all. The task must be RESUMED, and the
+    // walk back to Orbit must be observed rather than assumed.
+    expect(method, contains('0x10000000'));
+    expect(method, isNot(contains('0x10008000')));
+    expect(method, contains('KEYCODE_BACK'));
+    expect(method, contains('extractOrbitUnreadCount('));
     expect(method, isNot(contains('force-stop')));
     expect(method, isNot(contains('_launch(')));
   });

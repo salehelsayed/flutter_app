@@ -383,6 +383,10 @@ class _HeadProvenanceCampaign {
       if (!directTextOnly) {
         _stage = 'reaction_capture';
         await _adb(senderId, ['logcat', '-c']);
+        // Bound the RECIPIENT's window too. The provider send is attributed on
+        // that device's own log now, so a marker left by an earlier run must
+        // not be able to satisfy this capture.
+        await _adb(recipientId, ['logcat', '-c']);
         // The killed-path premise, measured rather than assumed. Absence at
         // kill time is already established by _terminateRecipient; this is
         // absence at the moment the reaction is driven. Non-throwing on
@@ -428,29 +432,47 @@ class _HeadProvenanceCampaign {
           );
         }
 
+        // The provider send is attributed on the RECIPIENT device. The relay
+        // can no longer say who it pushed to: `[PUSH] Notification sent to
+        // <peerPrefix>` is gone and what survives carries no peer at all. The
+        // relay-journal match is kept as an accepted source in case it ever
+        // returns, but nothing depends on it.
+        final recipientPushLog = await _recipientDirectReactionPushWithin(
+          const Duration(seconds: 20),
+        );
+        final recipientBackgroundPushObserved = recipientPushLog != null;
+        final providerSendObserved =
+            relayCapture.providerMatchedEvent ||
+            recipientBackgroundPushObserved;
+        final providerEvidenceSource = recipientBackgroundPushObserved
+            ? 'recipient_background_push'
+            : relayCapture.providerMatchedEvent
+            ? 'relay_journal'
+            : 'none';
+
         final notificationDump = await _notificationDump(recipientId);
         final cards = extractActiveNotificationCards(
           notificationDump,
           packageName: appPackage,
         );
-        if (relayCapture.providerMatchedEvent && cards.length != 1) {
+        if (providerSendObserved && cards.length != 1) {
           throw _CampaignFailure(
             _stage,
-            'Relay reported a provider send, but ${cards.length} active app cards '
+            'A provider send was observed, but ${cards.length} active app cards '
             'were observed; attribution is ambiguous.',
           );
         }
-        if (!relayCapture.providerMatchedEvent && cards.isNotEmpty) {
+        if (!providerSendObserved && cards.isNotEmpty) {
           throw _CampaignFailure(
             _stage,
-            'An app card appeared without a matched relay/provider send; the card '
+            'An app card appeared without an observed provider send; the card '
             'is unrelated or locally produced and TC-00 rejects it.',
           );
         }
-        if (liveTypedSmoke && !relayCapture.providerMatchedEvent) {
+        if (liveTypedSmoke && !providerSendObserved) {
           throw _CampaignFailure(
             _stage,
-            'The live typed smoke requires one matched relay/provider send.',
+            'The live typed smoke requires one observed provider send.',
           );
         }
         if (liveTypedSmoke) {
@@ -483,6 +505,9 @@ class _HeadProvenanceCampaign {
         final notificationEvidence = File(
           '${artifactDir.path}/recipient_notification_record.txt',
         )..writeAsStringSync(_appNotificationRecords(notificationDump));
+        final providerEvidence = File(
+          '${artifactDir.path}/recipient_background_push.log',
+        )..writeAsStringSync(_backgroundPushFlowLines(recipientPushLog ?? ''));
         _writePassedArtifact(
           relayInfo: relayInfo,
           reactionId: reactionId,
@@ -490,6 +515,10 @@ class _HeadProvenanceCampaign {
           card: cards.isEmpty ? null : cards.single,
           tapRoute: tapRoute,
           recipientAbsentBeforeReaction: recipientAbsentBeforeReaction,
+          providerSendObserved: providerSendObserved,
+          recipientBackgroundPushObserved: recipientBackgroundPushObserved,
+          providerEvidenceSource: providerEvidenceSource,
+          providerEvidence: providerEvidence,
           relayCapture: relayCapture,
           relayEvidence: relayEvidence,
           senderEvidence: senderEvidence,
@@ -1147,6 +1176,26 @@ class _HeadProvenanceCampaign {
   /// still failed at 07:51:12Z, which had been blocking every Android capture
   /// on this lane. `capture_group_reaction_notification_device.dart` already
   /// made the same move.
+  /// Polls the RECIPIENT's own log for the direct-reaction background push and
+  /// returns the log that carries it, or null if the window closes first.
+  ///
+  /// Non-throwing: absence of a push is a legitimate TC-00 outcome
+  /// (`providerConfirmedNoSend`), and only the typed smoke requires one.
+  Future<String?> _recipientDirectReactionPushWithin(Duration timeout) async {
+    final deadline = DateTime.now().add(timeout);
+    while (true) {
+      final log = (await _adb(recipientId, [
+        'logcat',
+        '-d',
+        '-v',
+        'brief',
+      ])).stdout;
+      if (androidDirectReactionBackgroundPushObserved(log)) return log;
+      if (!DateTime.now().isBefore(deadline)) return null;
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+  }
+
   Future<void> _waitForRecipientPushRegistrationAccepted() async {
     await _waitFor(
       'recipient android push registration accepted by the relay',
@@ -1576,10 +1625,20 @@ class _HeadProvenanceCampaign {
   }
 
   Future<void> _reopenRecipientAtOrbit() async {
-    // A cold-start notification owns the task root, so popping its conversation
-    // has no logical parent. Reopen the launcher root without terminating the
-    // process or changing persisted message state, then assert Orbit semantics.
-    await _adbShell(recipientId, [
+    // RESUME the existing task; never clear it. FLAG_ACTIVITY_CLEAR_TASK
+    // (0x8000) destroys the activity while the process keeps living, so a
+    // SECOND Flutter engine starts in a process whose FIRST engine still owns
+    // the canonical Go runtime and the SQLCipher handle. Measured on device
+    // 2026-08-20: the relaunched engine logged GO_BRIDGE_PLATFORM_ERROR
+    // 'This Flutter engine does not own the active Go runtime' and
+    // DatabaseException(database_closed), and rendered a BLACK screen whose
+    // whole UI dump was one node with an empty content-desc — so the unread
+    // wait could never observe anything and timed out. A clean single-engine
+    // launch of the same build renders Orbit with the contact row intact.
+    // The process is still never terminated and no persisted message state
+    // changes: the two prohibitions this method has always carried are the
+    // reason it resumes rather than restarts.
+    Future<void> resumeLauncherRoot() => _adbShell(recipientId, [
       'am',
       'start',
       '-W',
@@ -1588,10 +1647,31 @@ class _HeadProvenanceCampaign {
       '-c',
       'android.intent.category.LAUNCHER',
       '-f',
-      '0x10008000',
+      '0x10000000',
       '-n',
       '$appPackage/.MainActivity',
     ]);
+
+    await resumeLauncherRoot();
+    // A notification cold start leaves the conversation on top. Walk back the
+    // way a user does and stop as soon as an Orbit row is on screen. The
+    // alternating resume covers the other case, where Back pops past the app
+    // root instead of revealing Orbit beneath the conversation.
+    for (var attempt = 0; attempt < 6; attempt++) {
+      if (extractOrbitUnreadCount(
+            await _uiDump(recipientId),
+            sender.username,
+          ) !=
+          null) {
+        return;
+      }
+      if (attempt.isOdd) {
+        await resumeLauncherRoot();
+      } else {
+        await _adbShell(recipientId, ['input', 'keyevent', 'KEYCODE_BACK']);
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
   }
 
   Future<void> _sendUiMessageFromSender(
@@ -1917,6 +1997,10 @@ class _HeadProvenanceCampaign {
     required ActiveNotificationCard? card,
     required String tapRoute,
     required bool recipientAbsentBeforeReaction,
+    required bool providerSendObserved,
+    required bool recipientBackgroundPushObserved,
+    required String providerEvidenceSource,
+    required File providerEvidence,
     required RelayCaptureClassification relayCapture,
     required File relayEvidence,
     required File senderEvidence,
@@ -1976,8 +2060,14 @@ class _HeadProvenanceCampaign {
         'relayMatchedEvent': relayCapture.relayMatchedEvent,
         'providerEvidenceCaptured': true,
         'providerObservationWindowSeconds': _providerObservationDelay.inSeconds,
-        'providerMatchedEvent': relayCapture.providerMatchedEvent,
-        'providerConfirmedNoSend': relayCapture.providerConfirmedNoSend,
+        'providerMatchedEvent': providerSendObserved,
+        'providerConfirmedNoSend':
+            relayCapture.relayMatchedEvent &&
+            !providerSendObserved &&
+            !relayCapture.providerFailureMatched,
+        'providerEvidenceSource': providerEvidenceSource,
+        'recipientBackgroundPushObserved': recipientBackgroundPushObserved,
+        'providerEvidencePath': providerEvidence.path,
       },
       'unreadLifecycle': ?unreadLifecycle,
     };
@@ -3235,6 +3325,11 @@ String _commandFailureSummary(_CommandOutput output) {
 String _reactionFlowLines(String logcat) => logcat
     .split('\n')
     .where((line) => line.contains('REACTION_SEND_'))
+    .join('\n');
+
+String _backgroundPushFlowLines(String logcat) => logcat
+    .split('\n')
+    .where((line) => line.contains('PUSH_BACKGROUND_'))
     .join('\n');
 
 String _notificationRouteLines(String logcat) =>

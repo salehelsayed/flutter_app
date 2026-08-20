@@ -154,8 +154,17 @@ void main() {
     expect(
       attribution['providerMatchedEvent'],
       isTrue,
-      reason: 'the card must be attributed to a matched relay/provider send',
+      reason: 'the card must be attributed to an observed provider send',
     );
+    expect(
+      attribution['recipientBackgroundPushObserved'],
+      isTrue,
+      reason:
+          'the send is attributed on the recipient device: the relay no longer '
+          'emits a peer-attributed push line',
+    );
+    expect(attribution['providerEvidenceSource'], 'recipient_background_push');
+    expect(_nonEmpty(attribution['providerEvidencePath']), isTrue);
 
     expect(
       artifact['unreadLifecycle'],
