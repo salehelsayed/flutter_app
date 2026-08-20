@@ -34,6 +34,14 @@ const List<_Scenario> _scenarios = <_Scenario>[
         'clean-current-build reaction producer, relay/provider, card, and tap provenance',
   ),
   _Scenario(
+    id: 'android_typed_reaction_smoke',
+    testCase: 'TC-13-core-smoke',
+    requiresSender: true,
+    summary:
+        'killed-recipient typed reaction card from a working-tree build, '
+        'driven by real sender UI',
+  ),
+  _Scenario(
     id: 'android_background_crypto_preflight',
     testCase: 'TC-07',
     requiresSender: false,
@@ -104,6 +112,7 @@ Future<void> main(List<String> args) async {
   if (!artifact.existsSync()) {
     final captureDriverPath = switch (scenario.id) {
       'head_provenance' => _headProvenanceCaptureDriver,
+      'android_typed_reaction_smoke' => _headProvenanceCaptureDriver,
       'android_background_crypto_preflight' =>
         _androidBackgroundCryptoPreflightDriver,
       'android_message_unread_lifecycle' ||
@@ -152,6 +161,7 @@ Future<void> main(List<String> args) async {
       ]) ...[
         if (_valueFor(args, option) case final value?) ...[option, value],
       ],
+      if (scenario.id == 'android_typed_reaction_smoke') '--live-typed-smoke',
       if (args.contains('--verbose')) '--verbose',
       if (args.contains('--keep-build-artifacts')) '--keep-build-artifacts',
     ];

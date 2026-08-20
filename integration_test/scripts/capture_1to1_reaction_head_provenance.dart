@@ -276,9 +276,9 @@ class _HeadProvenanceCampaign {
   String _stage = 'preflight';
 
   String get _artifactStem => directTextOnly
-      ? 'direct_text_public_relay'
+      ? 'android_direct_text_public_relay'
       : liveTypedSmoke
-      ? 'live_typed_reaction_smoke'
+      ? 'android_typed_reaction_smoke'
       : 'head_provenance';
 
   String get _scenario => directTextOnly
@@ -378,6 +378,15 @@ class _HeadProvenanceCampaign {
       if (!directTextOnly) {
         _stage = 'reaction_capture';
         await _adb(senderId, ['logcat', '-c']);
+        // The killed-path premise, measured rather than assumed. Absence at
+        // kill time is already established by _terminateRecipient; this is
+        // absence at the moment the reaction is driven. Non-throwing on
+        // purpose: this stage is shared with TC-00, whose contract must not
+        // gain a new failure mode.
+        final recipientAbsentBeforeReaction =
+            await _recipientProcessAndActivityAbsentWithin(
+              const Duration(seconds: 5),
+            );
         final reactionWindowStart = DateTime.now().toUtc();
         await _longPressText(senderId, messageMarker!);
         await _tapText(senderId, _reactionEmoji);
@@ -475,6 +484,7 @@ class _HeadProvenanceCampaign {
           messageId: messageId!,
           card: cards.isEmpty ? null : cards.single,
           tapRoute: tapRoute,
+          recipientAbsentBeforeReaction: recipientAbsentBeforeReaction,
           relayCapture: relayCapture,
           relayEvidence: relayEvidence,
           senderEvidence: senderEvidence,
@@ -1877,6 +1887,7 @@ class _HeadProvenanceCampaign {
     required String messageId,
     required ActiveNotificationCard? card,
     required String tapRoute,
+    required bool recipientAbsentBeforeReaction,
     required RelayCaptureClassification relayCapture,
     required File relayEvidence,
     required File senderEvidence,
@@ -1920,6 +1931,7 @@ class _HeadProvenanceCampaign {
       },
       'observation': {
         'cardPresent': card != null,
+        'recipientProcessAbsentBeforeReaction': recipientAbsentBeforeReaction,
         'unrelatedCardsRejected': true,
         'matchedReactionEventId': true,
         'producer': card == null ? 'none' : 'relay_fcm',

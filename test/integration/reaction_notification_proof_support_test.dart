@@ -844,6 +844,146 @@ void main() {
     expect(unreadLifecycle, greaterThan(tap));
   });
 
+  test('the 1to1 reaction runner reaches the typed smoke scenario', () {
+    // Plan 391 TC-391-01. Reaching the card-asserting variant needs THREE
+    // links, not one: the catalog row --scenario resolves, the switch case
+    // that names its capture driver, and the flag the variant is gated on.
+    // A catalog-only edit still exits 78 ENVIRONMENT BLOCKED at run time.
+    final source = _collapsedSource(
+      'integration_test/scripts/run_1to1_reaction_notification_device.dart',
+    );
+
+    final catalogStart = source.indexOf('const List<_Scenario> _scenarios');
+    final catalogEnd = source.indexOf('Future<void> main(', catalogStart);
+    expect(catalogStart, greaterThan(0));
+    expect(catalogEnd, greaterThan(catalogStart));
+    final catalog = source.substring(catalogStart, catalogEnd);
+    final entryStart = catalog.indexOf("id: 'android_typed_reaction_smoke'");
+    expect(
+      entryStart,
+      greaterThan(0),
+      reason: 'the typed smoke scenario must be selectable by --scenario',
+    );
+    final nextEntry = catalog.indexOf('_Scenario(', entryStart);
+    final entry = nextEntry < 0
+        ? catalog.substring(entryStart)
+        : catalog.substring(entryStart, nextEntry);
+    expect(entry, contains("testCase: 'TC-13-core-smoke'"));
+    expect(
+      entry,
+      contains('requiresSender: true'),
+      reason: 'a second device drives the reaction by UI automation',
+    );
+
+    expect(
+      source,
+      contains(
+        "'android_typed_reaction_smoke' => _headProvenanceCaptureDriver",
+      ),
+      reason:
+          'without the switch case the runner exits 78 ENVIRONMENT BLOCKED '
+          'instead of capturing',
+    );
+
+    final argsStart = source.indexOf('final captureArgs = <String>[');
+    final argsEnd = source.indexOf(
+      'final capture = await Process.start(',
+      argsStart,
+    );
+    expect(argsStart, greaterThan(0));
+    expect(argsEnd, greaterThan(argsStart));
+    expect(
+      source.substring(argsStart, argsEnd),
+      contains(
+        "if (scenario.id == 'android_typed_reaction_smoke') "
+        "'--live-typed-smoke'",
+      ),
+      reason:
+          'only the typed smoke variant hard-asserts one card, and only it '
+          'may receive the flag',
+    );
+  });
+
+  test('each capture branch stem matches its scenario id', () {
+    // Plan 391 TC-391-02. The runner resolves <artifact-dir>/<scenario>.json;
+    // the driver writes <artifact-dir>/<stem>.json flat. A stem that is not
+    // the id makes _validateArtifacts exit 66 "Missing artifact:" AFTER a
+    // fully successful device capture.
+    final source = _collapsedSource(
+      'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+    );
+    final stemStart = source.indexOf('String get _artifactStem');
+    final scenarioStart = source.indexOf('String get _scenario', stemStart);
+    final testCaseStart = source.indexOf('String get _testCase', scenarioStart);
+    expect(stemStart, greaterThan(0));
+    expect(scenarioStart, greaterThan(stemStart));
+    expect(testCaseStart, greaterThan(scenarioStart));
+
+    List<String> literals(String slice) => RegExp(
+      r"'([A-Za-z0-9_]+)'",
+    ).allMatches(slice).map((match) => match.group(1)!).toList(growable: false);
+
+    final stems = literals(source.substring(stemStart, scenarioStart));
+    final scenarios = literals(source.substring(scenarioStart, testCaseStart));
+    expect(stems, hasLength(3));
+    expect(scenarios, hasLength(3));
+    expect(
+      stems,
+      scenarios,
+      reason: 'every capture branch must write <scenario id>.json',
+    );
+  });
+
+  test('typed smoke measures recipient absence immediately before the reaction '
+      'drive', () {
+    // Plan 391 TC-391-03. The window is load-bearing: absence at KILL time
+    // is already established by _terminateRecipient, so only a measurement
+    // taken inside the reaction_capture stage, before the reaction is
+    // driven, proves the recipient was dead when the push was sent.
+    final source = _collapsedSource(
+      'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+    );
+    final windowStart = source.indexOf("_stage = 'reaction_capture'");
+    final windowEnd = source.indexOf('_longPressText(', windowStart);
+    expect(windowStart, greaterThan(0));
+    expect(windowEnd, greaterThan(windowStart));
+
+    final measurement = RegExp(
+      r'final (\w+) = await _recipientProcessAndActivityAbsentWithin\(',
+    ).firstMatch(source.substring(windowStart, windowEnd));
+    expect(
+      measurement,
+      isNotNull,
+      reason:
+          'the recipient absence bool must be measured in the '
+          'reaction_capture stage, before the reaction is driven',
+    );
+    final identifier = measurement!.group(1)!;
+
+    final callStart = source.indexOf('_writePassedArtifact(', windowEnd);
+    expect(callStart, greaterThan(windowEnd));
+    expect(
+      source.substring(callStart, source.indexOf(');', callStart)),
+      contains('recipientAbsentBeforeReaction: $identifier'),
+      reason: 'the measured value must reach the artifact writer',
+    );
+
+    final observationStart = source.indexOf("'observation': {");
+    final observationEnd = source.indexOf(
+      "'sourceAttribution': {",
+      observationStart,
+    );
+    expect(observationStart, greaterThan(0));
+    expect(observationEnd, greaterThan(observationStart));
+    expect(
+      source.substring(observationStart, observationEnd),
+      contains("'recipientProcessAbsentBeforeReaction': $identifier,"),
+      reason:
+          'the artifact must record the measured value, never a literal '
+          'the capture never observed',
+    );
+  });
+
   test('Plan 256 notification tap scrolls to the validated card body', () {
     final source = File(
       'integration_test/scripts/'
@@ -2623,3 +2763,8 @@ Map<String, dynamic> _validClosureArtifact(String scenario) {
   }
   return artifact;
 }
+
+/// Reads a harness source file with every run of whitespace collapsed to one
+/// space, so source-slice pins survive `dart format` line wrapping.
+String _collapsedSource(String path) =>
+    File(path).readAsStringSync().replaceAll(RegExp(r'\s+'), ' ');

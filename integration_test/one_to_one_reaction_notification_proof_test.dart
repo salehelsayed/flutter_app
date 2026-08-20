@@ -84,6 +84,86 @@ void main() {
     }
   });
 
+  // Plan 391 TC-391-10. The runner shells this test with
+  // --plain-name <scenario.id> after every successful capture, so this is the
+  // evidence oracle for the killed-path 1:1 reaction leg: it is what makes the
+  // device command's exit 0 mean the capture proved what it claims.
+  test('android_typed_reaction_smoke', () async {
+    final file = _artifactFile('android_typed_reaction_smoke');
+    if (file == null) {
+      fail(
+        'TC-13-core-smoke proof artifact is not configured. Capture the '
+        'killed-recipient typed reaction smoke, then rerun with '
+        '--dart-define=MKNOON_256_PROOF_DIR=<dir> or '
+        '--dart-define=MKNOON_256_PROOF_ARTIFACT=<file>.',
+      );
+    }
+    expect(await file.exists(), isTrue, reason: 'missing ${file.path}');
+
+    final decoded = jsonDecode(await file.readAsString());
+    expect(decoded, isA<Map<String, dynamic>>());
+    final artifact = decoded as Map<String, dynamic>;
+    expect(artifact['testCase'], 'TC-13-core-smoke');
+    expect(artifact['scenario'], 'android_typed_reaction_smoke');
+    expect(artifact['status'], 'passed');
+    expect(_nonEmpty(artifact['capturedAt']), isTrue);
+
+    final app = _object(artifact, 'app');
+    expect(_nonEmpty(app['revision']), isTrue);
+    expect(
+      app['workingTreeCandidate'],
+      isTrue,
+      reason: 'the typed smoke grades the working tree, not clean HEAD',
+    );
+    expect(_nonEmpty(app['apkSha256']), isTrue);
+
+    final relay = _object(artifact, 'relay');
+    expect(_nonEmpty(relay['revision']), isTrue);
+    expect(_nonEmpty(relay['evidencePath']), isTrue);
+
+    final reaction = _object(artifact, 'reaction');
+    expect(_nonEmpty(reaction['eventId']), isTrue);
+    expect(reaction['remoteType'], 'message_reaction');
+
+    final observation = _object(artifact, 'observation');
+    expect(
+      observation['cardPresent'],
+      isTrue,
+      reason: 'a killed recipient must still be alerted for the reaction',
+    );
+    expect(
+      observation['recipientProcessAbsentBeforeReaction'],
+      isTrue,
+      reason:
+          'the recipient app must have been measured absent at the moment the '
+          'reaction was driven, or this is not a killed-path proof',
+    );
+    expect(observation['typedCopyRequired'], isTrue);
+    expect(observation['genericNewMessageRejected'], isTrue);
+    expect(observation['unrelatedCardsRejected'], isTrue);
+    expect(observation['matchedReactionEventId'], isTrue);
+    expect(observation['producer'], isNot('none'));
+    expect(_nonEmpty(observation['lifecycle']), isTrue);
+    expect(_nonEmpty(observation['tapRoute']), isTrue);
+    expect(_nonEmpty(observation['title']), isTrue);
+    expect(_nonEmpty(observation['body']), isTrue);
+
+    final attribution = _object(artifact, 'sourceAttribution');
+    expect(attribution['relayMatchedEvent'], isTrue);
+    expect(attribution['providerEvidenceCaptured'], isTrue);
+    expect(
+      attribution['providerMatchedEvent'],
+      isTrue,
+      reason: 'the card must be attributed to a matched relay/provider send',
+    );
+
+    expect(
+      artifact['unreadLifecycle'],
+      isA<Map<String, dynamic>>(),
+      reason: 'the typed smoke captures the unread lifecycle after the tap',
+    );
+  });
+
   test('android_background_crypto_preflight', () async {
     final file = _artifactFile('android_background_crypto_preflight');
     if (file == null) {
