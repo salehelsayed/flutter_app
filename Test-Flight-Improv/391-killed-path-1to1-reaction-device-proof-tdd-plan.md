@@ -1,6 +1,6 @@
 # 391 - Killed-Path 1:1 Reaction Device Proof (G22a)
 
-Status: EXECUTED at host tier 2026-08-20 (commits `c07c3f588`, `ed1ca15c5`) — **device leg TC-391-09 BLOCKED**, see Execution Findings
+Status: **EXECUTED AND CLOSED AT DEVICE TIER 2026-08-20** (`c07c3f588`, `ed1ca15c5`, `cd2b99349`, `50898bf8e`) — TC-391-09 exits 0 on `50898bf8e`. Three pre-existing defects had to be repaired to get there, and the run produced a G21 sample that qualifies what the leg proves; see Execution Findings
 Type: Bug
 Spec: free-text intent (no formal spec) — `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md` §4.11 row **G22**
 Classification: implementation-ready
@@ -470,6 +470,11 @@ means the capture passed **and** the runner's own `_validateArtifacts` ran TC-39
 | 2026-08-20 | Device attempt 1 | — | `dart run …run_1to1_reaction_notification_device.dart --scenario android_typed_reaction_smoke --sender 21071FDF600CSC --recipient emulator-5554` → **failed at stage `wait`**, `Timed out waiting for recipient FCM token registration` | recipient logged `relay_push_registration_success` at 07:49:06Z; the capture still failed at 07:51:12Z | **Blocker 1** — the wait greps a relay line v1.8.0 deleted | repair + TC-391-11 |
 | 2026-08-20 | Repair | capture driver, support test | TC-391-11 causal RED → GREEN; mutation re-reds; support **107/107**; analyze clean | registration now attributed on the recipient device's own log, as `capture_group_reaction_notification_device.dart` already does | committed `ed1ca15c5` | re-audit before re-running |
 | 2026-08-20 | Pre-flight re-audit | relay source | `grep -rn 'Notification sent to' go-relay-server/` → **zero**; `[PUSH]` census is now `outcome=…` only | `classifyRelayCapture`'s `providerMatchedEvent` can never be true | **Blocker 2 — TC-391-09 is unpassable on any build.** Needs a scope decision | STOP, per the plan's own scope-drift rule |
+| 2026-08-20 | Blocker 2 repair | support helper, capture driver, both tests | TC-391-12 (4 cases) + TC-391-13 causal RED → GREEN; suite 112/112; 3 mutations re-red | provider send attributed on the recipient device via `androidDirectReactionBackgroundPushObserved`; artifact names its evidence source | user chose device-side attribution over a relay counter | device attempt 2 |
+| 2026-08-20 | Device attempt 2 | — | failed at `unread_lifecycle`: `Timed out waiting for Orbit unread count 0 for Bob` | **the killed-path card was posted, typed-copy validated and TAPPED** — `INITIAL_LOCAL_NOTIFICATION_ROUTE_PARSED routeKind=conversation`, `CHAT_MSG_LOAD_PAGE_SUCCESS count=2`, `NOTIFICATION_TAP_TO_MESSAGE_TIMING elapsedMs=868` | **Blocker 3** — `_reopenRecipientAtOrbit`'s `CLEAR_TASK` starts a second Flutter engine; black screen | repair + update the pinned sentinel |
+| 2026-08-20 | Blocker 3 repair | capture driver, support test | suite 112/112; mutation (restore `0x10008000`) re-reds | resume the task, walk back to Orbit, verify with `extractOrbitUnreadCount`; a clean single-engine launch of the same build renders Orbit with the row intact | committed `cd2b99349` | device attempt 3 |
+| 2026-08-20 | **Device attempt 3 — TC-391-09 GREEN** | — | runner **exit 0**: `PASS: TC-13-core-smoke android_typed_reaction_smoke captured` then `All tests passed!` and `Plan-256 proof artifact validated` | `cardPresent: true`, `recipientProcessAbsentBeforeReaction: true`, title `Bob`, body `Reacted 👍 to your message`, `tapRoute: conversation`, `providerEvidenceSource: recipient_background_push`, `unreadCounts: [0,1,1,2,0]` | closed at device tier | label fix + re-run on final code |
+| 2026-08-20 | Closure re-run + lane | — | runner **exit 0** on `50898bf8e`; `groups` **exit 0**, 4586 Flutter + Go gates | artifact `app.revision = 50898bf8e…`, `orbitObservationNavigation: launcher_resume_walk_back_no_force_stop`; the durable-effect deferral reproduces (N=2) | done | record findings |
 
 ## Execution Findings (2026-08-20)
 
@@ -484,21 +489,51 @@ the recipient device's own log through the already-host-tested `androidRelayPush
 move `capture_group_reaction_notification_device.dart:4820` already made. The `directTextOnly` arm keeps the
 relay-journal wait, because its artifact claims a public-relay observation.
 
-**Blocker 2 (OPEN — blocks TC-391-09 on any build, before or after this plan).**
-`classifyRelayCapture` (`reaction_notification_proof_support.dart:5076`) derives `providerMatchedEvent` from
+**Blocker 2 (FIXED, `cd2b99349`).**
+`classifyRelayCapture` (`reaction_notification_proof_support.dart:5076`) derived `providerMatchedEvent` from
 `[PUSH] (Group )?Notification sent to <recipientPrefix>`. A recursive census of `Notification sent to` over
 `go-relay-server/` returns **zero**: the surviving `[PUSH]` vocabulary is entirely `outcome=…` and carries no peer.
-So `providerMatchedEvent` is permanently false, and the typed smoke throws either way —
+So `providerMatchedEvent` was permanently false and the typed smoke threw either way —
 `'An app card appeared without a matched relay/provider send'` (`capture:429-435`) when the card IS posted, or
 `'The live typed smoke requires one matched relay/provider send'` (`capture:436-441`) when it is not. This plan's
-stop-if lists both strings as relay-side failures; they are in fact dead-grammar failures.
+stop-if lists both strings as relay-side failures; they were in fact dead-grammar failures.
 
-Two further consequences, recorded because they are not this plan's to fix:
-- `providerConfirmedNoSend => relayMatchedEvent && !providerMatchedEvent && !providerFailureMatched`, so **every
-  TC-00 capture on the current relay writes a false `providerConfirmedNoSend: true`** — the classifier can no
-  longer see any send at all.
-- `[INBOX] Stored message for <recipient> from <sender>` (`go-relay-server/inbox.go:2085`) **does** survive, so
-  `relayMatchedEvent` and `_waitForRelayStore` still work. Only the provider half is dead.
+The provider send is now attributed on the RECIPIENT device.
+`androidDirectReactionBackgroundPushObserved` accepts only `PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK` with
+`details.kind == 'reaction'` (`background_message_handler.dart:2870`), which fires only after the background
+isolate decrypted a reaction addressed to that recipient with that recipient's own ML-KEM secret — strictly better
+attribution than a 20-char peer prefix. It rejects `kind: 'group_reaction'` (`:2831`) and a bare
+`PUSH_BACKGROUND_MESSAGE_RECEIVED`. The recipient's logcat is cleared inside the reaction window so a stale marker
+cannot satisfy a capture, all three card-attribution guards read the effective signal, and the artifact records
+`providerEvidenceSource` / `recipientBackgroundPushObserved` / `providerEvidencePath`. This also stops TC-00
+writing a false `providerConfirmedNoSend: true`.
+
+**Blocker 3 (FIXED, `cd2b99349`).** `_reopenRecipientAtOrbit` relaunched with `NEW_TASK|CLEAR_TASK`
+(`0x10008000`). CLEAR_TASK destroys the activity while the process keeps living, so a **second Flutter engine**
+starts in a process whose first engine still owns the canonical Go runtime and the SQLCipher handle. Measured on
+device: `GO_BRIDGE_PLATFORM_ERROR … 'This Flutter engine does not own the active Go runtime'`,
+`DatabaseException(database_closed)`, `FlutterGeolocator: There is still another flutter engine connected`, and a
+**black screen** whose entire UI dump was one node with an empty `content-desc` — so the unread wait could never
+observe anything. A clean single-engine launch of the same build renders Orbit with `Open chat with Bob` and no
+unread suffix, proving the count really was 0 and the tap did commit the read. The driver now resumes the task and
+walks back to Orbit, verifying with `extractOrbitUnreadCount` rather than assuming. This is the `f1b568bca`
+one-owner-per-runtime invariant on a PRODUCT path; Plan 390 closed the harness side. It is not shown to be
+user-reachable — a launcher tap resumes a task rather than clearing it — but the failure mode is silent.
+The sentinel at `reaction_notification_proof_support_test.dart` that pinned `0x10008000` was written from
+reasoning and had never run on a device; it now pins the resume, with that evidence beside it. Its two real
+prohibitions are unchanged.
+
+**What the device leg proves, and what it does not (G21).** The graded push produced the card through the
+**non-durable fallback**, not the durable arm. Both runs logged, in order:
+`PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK kind=reaction` → `PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED
+reason=exact_sql_authority_unavailable presentation=nondurable_fallback` →
+`PUSH_BACKGROUND_DIRECT_POST_SHOW_UNKNOWN errorType=SqfliteDatabaseException` →
+`PUSH_BACKGROUND_NOTIFICATION_SHOWN silent=false`. So G22(a)'s user-visible behaviour is proven on real hardware —
+a killed 1:1 recipient IS alerted, with typed copy, and the tap routes — but the `directReaction` arm of the
+durable resolver, named in this plan's Device/Relay Proof Profile as the boundary under test, **did not execute**;
+it deferred on the cold SQLCipher open. That is the known first-wake G21 pattern and it is the **1:1-reaction
+sample the G21 row asks for, now at N=2 on this lane**. Per this plan's Hard `Do not`, no warm-up push, deferral
+scan or classifier was added here; the G21 series owns it, and the durable 1:1 reaction arm remains device-unproven.
 
 **Why the fix is a separate plan.** Plan 386 W1 hit this exact wall on the group lane and wrote the reasoning down
 (`capture_group_reaction_notification_device.dart:4880-4899`): re-adding the relay lines is the known-wrong fix
