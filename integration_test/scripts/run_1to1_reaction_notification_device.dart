@@ -42,6 +42,14 @@ const List<_Scenario> _scenarios = <_Scenario>[
         'driven by real sender UI',
   ),
   _Scenario(
+    id: 'android_durable_reaction_background_connected',
+    testCase: 'TC-DURABLE-DIRECT-REACTION',
+    requiresSender: true,
+    summary:
+        'alive-but-backgrounded recipient, durable direct-reaction arm '
+        'executed rather than deferred to the non-durable fallback',
+  ),
+  _Scenario(
     id: 'android_background_crypto_preflight',
     testCase: 'TC-07',
     requiresSender: false,
@@ -113,6 +121,8 @@ Future<void> main(List<String> args) async {
     final captureDriverPath = switch (scenario.id) {
       'head_provenance' => _headProvenanceCaptureDriver,
       'android_typed_reaction_smoke' => _headProvenanceCaptureDriver,
+      'android_durable_reaction_background_connected' =>
+        _headProvenanceCaptureDriver,
       'android_background_crypto_preflight' =>
         _androidBackgroundCryptoPreflightDriver,
       'android_message_unread_lifecycle' ||
@@ -162,6 +172,8 @@ Future<void> main(List<String> args) async {
         if (_valueFor(args, option) case final value?) ...[option, value],
       ],
       if (scenario.id == 'android_typed_reaction_smoke') '--live-typed-smoke',
+      if (scenario.id == 'android_durable_reaction_background_connected')
+        '--durable-background-connected',
       if (args.contains('--verbose')) '--verbose',
       if (args.contains('--keep-build-artifacts')) '--keep-build-artifacts',
     ];

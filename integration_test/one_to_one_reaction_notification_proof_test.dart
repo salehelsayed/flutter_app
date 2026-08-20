@@ -173,6 +173,107 @@ void main() {
     );
   });
 
+  // The alive-connected durable leg. The runner shells this test with
+  // --plain-name <scenario.id> after every successful capture, so it is the
+  // evidence oracle for the one claim the killed-path leg could not make.
+  //
+  // Read it beside android_typed_reaction_smoke: that leg proves a killed 1:1
+  // recipient IS alerted, but its card came from the NON-DURABLE FALLBACK. The
+  // durable arm resolves an exact direct_notification_display_outbox row, and
+  // only the live runtime writes those, so a killed app can never take it. This
+  // leg keeps the recipient alive and backgrounded, which is the only place the
+  // arm can execute at all.
+  test('android_durable_reaction_background_connected', () async {
+    final file = _artifactFile('android_durable_reaction_background_connected');
+    if (file == null) {
+      fail(
+        'TC-DURABLE-DIRECT-REACTION proof artifact is not configured. Capture '
+        'the alive-connected durable reaction leg, then rerun with '
+        '--dart-define=MKNOON_256_PROOF_DIR=<dir> or '
+        '--dart-define=MKNOON_256_PROOF_ARTIFACT=<file>.',
+      );
+    }
+    expect(await file.exists(), isTrue, reason: 'missing ${file.path}');
+
+    final decoded = jsonDecode(await file.readAsString());
+    expect(decoded, isA<Map<String, dynamic>>());
+    final artifact = decoded as Map<String, dynamic>;
+    expect(artifact['testCase'], 'TC-DURABLE-DIRECT-REACTION');
+    expect(
+      artifact['scenario'],
+      'android_durable_reaction_background_connected',
+    );
+    expect(artifact['status'], 'passed');
+    expect(_nonEmpty(artifact['capturedAt']), isTrue);
+
+    final app = _object(artifact, 'app');
+    expect(_nonEmpty(app['revision']), isTrue);
+    expect(app['workingTreeCandidate'], isTrue);
+    expect(_nonEmpty(app['apkSha256']), isTrue);
+
+    final relay = _object(artifact, 'relay');
+    expect(_nonEmpty(relay['revision']), isTrue);
+    expect(_nonEmpty(relay['evidencePath']), isTrue);
+
+    final reaction = _object(artifact, 'reaction');
+    expect(_nonEmpty(reaction['eventId']), isTrue);
+    expect(reaction['remoteType'], 'message_reaction');
+
+    final observation = _object(artifact, 'observation');
+    expect(
+      observation['recipientProcessAliveBeforeReaction'],
+      isTrue,
+      reason:
+          'the recipient must have been measured alive and backgrounded at the '
+          'moment the reaction was driven, or the durable arm had no live '
+          'runtime to have projected the event',
+    );
+    expect(
+      observation['recipientProcessAbsentBeforeReaction'],
+      isFalse,
+      reason:
+          'this is deliberately NOT a killed-path leg; a true here would mean '
+          'the artifact and the scenario disagree about what was proven',
+    );
+    expect(observation['cardPresent'], isTrue);
+    expect(observation['typedCopyRequired'], isTrue);
+    expect(observation['genericNewMessageRejected'], isTrue);
+    expect(observation['unrelatedCardsRejected'], isTrue);
+    expect(observation['durableEffectRequired'], isTrue);
+    expect(
+      observation['durableEffectObserved'],
+      isTrue,
+      reason:
+          'the recipient device must have logged PUSH_BACKGROUND_NOTIFICATION_'
+          'SHOWN with durable: true and the direct_reaction producer',
+    );
+    expect(
+      observation['durableEffectDisposition'],
+      'osPosted',
+      reason: 'a durable effect the OS did not post is not an alert',
+    );
+    expect(
+      observation['durableEffectDeferralReasons'],
+      isEmpty,
+      reason:
+          'exact_sql_authority_unavailable here means the arm deferred and the '
+          'card came from the non-durable fallback, which is the killed-path '
+          'outcome this leg exists to distinguish itself from',
+    );
+    expect(_nonEmpty(observation['durableEffectEvidencePath']), isTrue);
+    expect(_nonEmpty(observation['title']), isTrue);
+    expect(_nonEmpty(observation['body']), isTrue);
+    expect(_nonEmpty(observation['tapRoute']), isTrue);
+
+    final attribution = _object(artifact, 'sourceAttribution');
+    expect(attribution['relayMatchedEvent'], isTrue);
+    expect(attribution['providerEvidenceCaptured'], isTrue);
+    expect(attribution['providerMatchedEvent'], isTrue);
+    expect(attribution['recipientBackgroundPushObserved'], isTrue);
+    expect(attribution['providerEvidenceSource'], 'recipient_background_push');
+    expect(_nonEmpty(attribution['providerEvidencePath']), isTrue);
+  });
+
   test('android_background_crypto_preflight', () async {
     final file = _artifactFile('android_background_crypto_preflight');
     if (file == null) {

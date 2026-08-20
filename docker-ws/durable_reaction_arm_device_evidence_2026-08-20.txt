@@ -1,0 +1,27 @@
+# G29/G30 device evidence — alive-connected 1:1 reaction, 2026-08-20
+# scenario: android_durable_reaction_background_connected (TC-DURABLE-DIRECT-REACTION)
+# sender 21071FDF600CSC -> recipient emulator-5554 (alive + backgrounded, measured)
+# runner exit 1, capture failed at reaction_capture:
+#   The durable direct-reaction arm did not execute: durableShown=false
+#   disposition=none fallbackShown=true deferrals=[exact_sql_authority_unavailable]
+
+## ordering: the push is handled BEFORE the app's own transport delivery
+08-20 13:02:15.932 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:15.929703Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PUSH_BACKGROUND_MESSAGE_RECEIVED","details":{"messageId":"0:1787223736409181%1d5344be2e974c61","dataKeys":["ciphertext","kem","event_id","capability_version","target_message_id","action","envelope_version","type","nonce","sender_id"],"note":"local notification shown if routable; inbox drain on next resume"}}
+08-20 13:02:16.095 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:16.095573Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK","details":{"kind":"reaction"}}
+08-20 13:02:16.288 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:16.288069Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED","details":{"reason":"exact_sql_authority_unavailable","presentation":"nondurable_fallback"}}
+08-20 13:02:16.356 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:16.356897Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PUSH_BACKGROUND_DIRECT_POST_SHOW_UNKNOWN","details":{"type":"message_reaction","errorType":"SqfliteDatabaseException"}}
+08-20 13:02:16.365 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:16.365303Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PUSH_BACKGROUND_NOTIFICATION_SHOWN","details":{"messageId":"0:1787223736409181%1d5344be2e974c61","payload":"[redacted:peerid]","silent":false}}
+08-20 13:02:18.193 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:18.193252Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MSG_RECEIVED_TRANSPORT","details":{"from":"12D3KooWAu","transport":"relay"}}
+08-20 13:02:18.237 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:18.237360Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"REACTION_RECEIVE_START","details":{"from":"12D3KooWAu"}}
+08-20 13:02:18.258 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:18.258636Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"REACTION_DB_ATOMIC_APPLY_SUCCESS","details":{"mutation":"add","result":"inserted"}}
+08-20 13:02:18.282 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:18.282536Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"REACTION_RECEIVE_STORED","details":{"id":"4c059fe3","emoji":"👍"}}
+08-20 13:02:29.072 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:29.072856Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"REACTION_RECEIVE_START","details":{"from":"12D3KooWAu"}}
+08-20 13:02:29.085 I/flutter (  424): [FLOW] {"ts":"2026-08-20T11:02:29.085793Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"REACTION_DB_ATOMIC_APPLY_SUCCESS","details":{"mutation":"add","result":"exactReplay"}}
+
+## G30: background isolate closes SQLCipher under the live runtime
+08-20 13:02:16.003 I/SQLiteConnection(  424): Database keying operation returned:0
+08-20 13:02:16.064 I/SQLiteConnection(  424): Database keying operation returned:0
+08-20 13:02:16.282 I/SQLiteConnection(  424): Database keying operation returned:0
+08-20 13:02:16.351 I/SQLiteConnection(  424): Database keying operation returned:0
+08-20 13:02:16.356 E/flutter (  424): [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception: DatabaseException(error database_closed)
+08-20 13:02:16.356 E/flutter (  424): #3      dbHasDirectNotificationReadAcknowledgementsTable (package:flutter_app/core/database/helpers/direct_notification_read_acknowledgement_db_helpers.dart:10:25)

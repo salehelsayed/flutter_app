@@ -30,7 +30,8 @@ Future<void> main(List<String> args) async {
       '--sender <android-id> --recipient <android-id> '
       '--artifact-dir <dir> [--relay-target <ssh-target>] '
       '[--relay-key <key>] [--head-source-root <path>] '
-      '[--live-typed-smoke] [--direct-text-only '
+      '[--live-typed-smoke] [--durable-background-connected] '
+      '[--direct-text-only '
       '--gate-a-artifact <gate-a-pass.json> '
       '--gate-a-artifact-sha256 <sha256>] '
       '[--reuse-working-tree-apks] [--verbose]',
@@ -93,6 +94,7 @@ Future<void> main(List<String> args) async {
     verbose: args.contains('--verbose'),
     keepBuildArtifacts: args.contains('--keep-build-artifacts'),
     liveTypedSmoke: args.contains('--live-typed-smoke'),
+    durableBackgroundConnected: args.contains('--durable-background-connected'),
     reuseWorkingTreeApks: args.contains('--reuse-working-tree-apks'),
     directTextOnly: directTextOnly,
     gateAArtifact: gateAArtifact,
@@ -230,6 +232,7 @@ class _HeadProvenanceCampaign {
     required this.verbose,
     required this.keepBuildArtifacts,
     required this.liveTypedSmoke,
+    required this.durableBackgroundConnected,
     required this.reuseWorkingTreeApks,
     required this.directTextOnly,
     required this.gateAArtifact,
@@ -248,6 +251,7 @@ class _HeadProvenanceCampaign {
   final bool verbose;
   final bool keepBuildArtifacts;
   final bool liveTypedSmoke;
+  final bool durableBackgroundConnected;
   final bool reuseWorkingTreeApks;
   final bool directTextOnly;
   final File? gateAArtifact;
@@ -279,19 +283,34 @@ class _HeadProvenanceCampaign {
       ? 'android_direct_text_public_relay'
       : liveTypedSmoke
       ? 'android_typed_reaction_smoke'
+      : durableBackgroundConnected
+      ? 'android_durable_reaction_background_connected'
       : 'head_provenance';
 
   String get _scenario => directTextOnly
       ? 'android_direct_text_public_relay'
       : liveTypedSmoke
       ? 'android_typed_reaction_smoke'
+      : durableBackgroundConnected
+      ? 'android_durable_reaction_background_connected'
       : 'head_provenance';
 
   String get _testCase => directTextOnly
       ? 'TC-DIRECT-TEXT-PUBLIC-RELAY'
       : liveTypedSmoke
       ? 'TC-13-core-smoke'
+      : durableBackgroundConnected
+      ? 'TC-DURABLE-DIRECT-REACTION'
       : 'TC-00';
+
+  /// Every variant except TC-00 grades the WORKING TREE. TC-00 alone builds
+  /// clean HEAD, which is what its `cleanCurrentBuild` claim means.
+  bool get _workingTreeBuild =>
+      liveTypedSmoke || directTextOnly || durableBackgroundConnected;
+
+  /// The variants whose card must carry the typed reaction copy rather than the
+  /// generic "New Message" fallback.
+  bool get _typedCopyRequired => liveTypedSmoke || durableBackgroundConnected;
 
   Future<void> run() async {
     _CampaignFailure? primaryFailure;
@@ -305,10 +324,8 @@ class _HeadProvenanceCampaign {
         await _captureInitialDeviceState();
       }
 
-      _stage = (liveTypedSmoke || directTextOnly)
-          ? 'working_tree_build'
-          : 'clean_head_build';
-      _build = (liveTypedSmoke || directTextOnly)
+      _stage = _workingTreeBuild ? 'working_tree_build' : 'clean_head_build';
+      _build = _workingTreeBuild
           ? reuseWorkingTreeApks
                 ? await _reuseWorkingTreeApks()
                 : await _buildWorkingTreeApks()
@@ -359,7 +376,15 @@ class _HeadProvenanceCampaign {
         await _waitForRecipientPushRegistrationAccepted();
       }
       await _requireCleanNotificationSlate();
-      await _terminateRecipient();
+      // The durable arm resolves an EXACT direct_notification_display_outbox
+      // row, and only the live runtime writes those, so this variant
+      // BACKGROUNDS the recipient instead of killing it. Every other variant
+      // kills it: the killed path is the premise they grade.
+      if (durableBackgroundConnected) {
+        await _backgroundRecipient();
+      } else {
+        await _terminateRecipient();
+      }
 
       if (directTextOnly) {
         _stage = 'direct_text_public_relay';
@@ -396,6 +421,22 @@ class _HeadProvenanceCampaign {
             await _recipientProcessAndActivityAbsentWithin(
               const Duration(seconds: 5),
             );
+        // The alive-connected premise, measured the same way and in the same
+        // window: process alive with no resumed activity at the moment the
+        // reaction is driven. Only the durable variant claims it, so only the
+        // durable variant pays for the measurement.
+        final recipientAliveBeforeReaction = durableBackgroundConnected
+            ? await _recipientProcessAliveAndBackgroundedWithin(
+                const Duration(seconds: 5),
+              )
+            : false;
+        if (durableBackgroundConnected && !recipientAliveBeforeReaction) {
+          throw _CampaignFailure(
+            _stage,
+            'The recipient was not alive-and-backgrounded when the reaction '
+            'was driven; this is not an alive-connected proof.',
+          );
+        }
         final reactionWindowStart = DateTime.now().toUtc();
         await _longPressText(senderId, messageMarker!);
         await _tapText(senderId, _reactionEmoji);
@@ -469,13 +510,13 @@ class _HeadProvenanceCampaign {
             'is unrelated or locally produced and TC-00 rejects it.',
           );
         }
-        if (liveTypedSmoke && !providerSendObserved) {
+        if (_typedCopyRequired && !providerSendObserved) {
           throw _CampaignFailure(
             _stage,
             'The live typed smoke requires one observed provider send.',
           );
         }
-        if (liveTypedSmoke) {
+        if (_typedCopyRequired) {
           final typedCopyErrors = validateDirectReactionNotificationCard(
             cards.single,
             expectedTitle: sender.username,
@@ -484,6 +525,25 @@ class _HeadProvenanceCampaign {
           if (typedCopyErrors.isNotEmpty) {
             throw _CampaignFailure(_stage, typedCopyErrors.join('; '));
           }
+        }
+
+        // The whole point of this variant. The card alone does not say which
+        // arm produced it: the non-durable fallback posts an identical-looking
+        // card, which is exactly what the killed-path leg observed.
+        final durableShow = durableBackgroundConnected
+            ? await _recipientDurableDirectReactionShowWithin(
+                const Duration(seconds: 30),
+              )
+            : null;
+        if (durableShow != null && !durableShow.durableArmExecuted) {
+          throw _CampaignFailure(
+            _stage,
+            'The durable direct-reaction arm did not execute: '
+            'durableShown=${durableShow.durableShown} '
+            'disposition=${durableShow.disposition ?? 'none'} '
+            'fallbackShown=${durableShow.fallbackShown} '
+            'deferrals=[${durableShow.deferralReasons.join(', ')}].',
+          );
         }
 
         var tapRoute = 'not_applicable';
@@ -508,6 +568,15 @@ class _HeadProvenanceCampaign {
         final providerEvidence = File(
           '${artifactDir.path}/recipient_background_push.log',
         )..writeAsStringSync(_backgroundPushFlowLines(recipientPushLog ?? ''));
+        final durableEvidence = File(
+          '${artifactDir.path}/recipient_durable_effect.log',
+        )..writeAsStringSync(
+          'durableShown=${durableShow?.durableShown ?? false}\n'
+          'disposition=${durableShow?.disposition ?? 'not_observed'}\n'
+          'silent=${durableShow?.silent}\n'
+          'fallbackShown=${durableShow?.fallbackShown ?? false}\n'
+          'deferralReasons=${durableShow?.deferralReasons.join(',') ?? ''}\n',
+        );
         _writePassedArtifact(
           relayInfo: relayInfo,
           reactionId: reactionId,
@@ -515,6 +584,9 @@ class _HeadProvenanceCampaign {
           card: cards.isEmpty ? null : cards.single,
           tapRoute: tapRoute,
           recipientAbsentBeforeReaction: recipientAbsentBeforeReaction,
+          recipientAliveBeforeReaction: recipientAliveBeforeReaction,
+          durableShow: durableShow,
+          durableEvidence: durableEvidence,
           providerSendObserved: providerSendObserved,
           recipientBackgroundPushObserved: recipientBackgroundPushObserved,
           providerEvidenceSource: providerEvidenceSource,
@@ -1475,6 +1547,70 @@ class _HeadProvenanceCampaign {
     await _waitForProcessAndActivityAbsent(recipientId);
   }
 
+  /// Sends the recipient to the background WITHOUT killing it, then proves the
+  /// process survived. A recipient that died here would silently turn this leg
+  /// back into the killed-path leg, whose durable arm cannot resolve at all.
+  Future<void> _backgroundRecipient() async {
+    await _adbShell(recipientId, ['input', 'keyevent', 'KEYCODE_HOME']);
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (!await _recipientProcessAliveAndBackgroundedWithin(
+      const Duration(seconds: 15),
+    )) {
+      throw _CampaignFailure(
+        _stage,
+        'The recipient app is not alive-and-backgrounded after HOME; the '
+        'durable arm requires a live runtime that has projected the event.',
+      );
+    }
+  }
+
+  Future<bool> _recipientProcessAliveAndBackgroundedWithin(
+    Duration timeout,
+  ) async {
+    final deadline = DateTime.now().add(timeout);
+    while (true) {
+      final pid = (await _adbShell(recipientId, <String>[
+        'pidof',
+        appPackage,
+      ], allowFail: true)).trim();
+      final activities = await _adbShell(recipientId, <String>[
+        'dumpsys',
+        'activity',
+        'activities',
+      ]);
+      if (isAndroidAppProcessAliveAndBackgrounded(
+        pidOutput: pid,
+        dumpsysActivities: activities,
+        packageName: appPackage,
+      )) {
+        return true;
+      }
+      if (!DateTime.now().isBefore(deadline)) return false;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+  }
+
+  /// Polls the recipient's own log for the DURABLE direct-reaction show, and
+  /// returns whatever it last observed when the window closes so the failure
+  /// can name the deferral reason instead of just timing out.
+  Future<AndroidDurableDirectReactionShow>
+  _recipientDurableDirectReactionShowWithin(Duration timeout) async {
+    final deadline = DateTime.now().add(timeout);
+    var observed = AndroidDurableDirectReactionShow.nothingObserved;
+    while (true) {
+      // Accumulated, not snapshotted: a live recipient fills the ring fast
+      // enough that a single late read can miss what an earlier poll saw.
+      observed = observed.mergedWith(
+        androidDurableDirectReactionShow(
+          (await _adb(recipientId, ['logcat', '-d', '-v', 'brief'])).stdout,
+        ),
+      );
+      if (observed.durableArmExecuted) return observed;
+      if (!DateTime.now().isBefore(deadline)) return observed;
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+  }
+
   Future<bool> _recipientProcessAndActivityAbsentWithin(
     Duration timeout,
   ) async {
@@ -1997,6 +2133,9 @@ class _HeadProvenanceCampaign {
     required ActiveNotificationCard? card,
     required String tapRoute,
     required bool recipientAbsentBeforeReaction,
+    required bool recipientAliveBeforeReaction,
+    required AndroidDurableDirectReactionShow? durableShow,
+    required File durableEvidence,
     required bool providerSendObserved,
     required bool recipientBackgroundPushObserved,
     required String providerEvidenceSource,
@@ -2019,8 +2158,8 @@ class _HeadProvenanceCampaign {
       'capturedAt': DateTime.now().toUtc().toIso8601String(),
       'app': {
         'revision': build.revision,
-        'cleanCurrentBuild': !liveTypedSmoke,
-        'workingTreeCandidate': liveTypedSmoke,
+        'cleanCurrentBuild': !_workingTreeBuild,
+        'workingTreeCandidate': _workingTreeBuild,
         'reusedPrebuiltCandidate': reuseWorkingTreeApks,
         'apkSha256': build.normalApkSha256,
         'senderHarnessApkSha256': build.e2eApkSha256,
@@ -2052,9 +2191,17 @@ class _HeadProvenanceCampaign {
         'tapRoute': tapRoute,
         'title': card?.title ?? '',
         'body': card?.body ?? '',
-        'typedCopyRequired': liveTypedSmoke,
-        'genericNewMessageRejected': liveTypedSmoke,
+        'typedCopyRequired': _typedCopyRequired,
+        'genericNewMessageRejected': _typedCopyRequired,
         'notificationEvidencePath': notificationEvidence.path,
+        'recipientProcessAliveBeforeReaction': recipientAliveBeforeReaction,
+        'durableEffectRequired': durableBackgroundConnected,
+        'durableEffectObserved': durableShow?.durableShown ?? false,
+        'durableEffectDisposition': durableShow?.disposition ?? 'not_observed',
+        'durableEffectFallbackShown': durableShow?.fallbackShown ?? false,
+        'durableEffectDeferralReasons':
+            durableShow?.deferralReasons ?? const <String>[],
+        'durableEffectEvidencePath': durableEvidence.path,
       },
       'sourceAttribution': {
         'relayMatchedEvent': relayCapture.relayMatchedEvent,

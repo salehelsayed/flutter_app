@@ -925,8 +925,8 @@ void main() {
 
     final stems = literals(source.substring(stemStart, scenarioStart));
     final scenarios = literals(source.substring(scenarioStart, testCaseStart));
-    expect(stems, hasLength(3));
-    expect(scenarios, hasLength(3));
+    expect(stems, hasLength(4));
+    expect(scenarios, hasLength(4));
     expect(
       stems,
       scenarios,
@@ -1118,7 +1118,11 @@ void main() {
     for (final guard in const <String>[
       'if (providerSendObserved && cards.length != 1)',
       'if (!providerSendObserved && cards.isNotEmpty)',
-      'if (liveTypedSmoke && !providerSendObserved)',
+      // Widened from `liveTypedSmoke` when the alive-connected durable leg
+      // joined it: both card-asserting variants require an observed provider
+      // send. The claim this row makes is unchanged — the guard reads the
+      // EFFECTIVE signal, never relayCapture.providerMatchedEvent.
+      'if (_typedCopyRequired && !providerSendObserved)',
     ]) {
       expect(
         stage,
@@ -2679,6 +2683,377 @@ Ranking Config:
 ''';
 
       expect(findTopRightClickableNodeCenter(dump), isNull);
+    });
+  });
+
+  // The DURABLE direct-reaction arm, and the alive-connected leg that is the
+  // only place it can execute.
+  //
+  // Measured over the whole device-log corpus 2026-08-20: all 14 `durable:
+  // true` sightings came from processes running the full foreground app
+  // runtime; none came from a cold wake. That is not a coincidence of sampling
+  // — `background_message_handler.dart:1080-1087` says so in a comment, and the
+  // writer census backs it: only the foreground runtime stages the exact
+  // `direct_notification_display_outbox` row the arm resolves.
+  group('durable direct-reaction arm', () {
+    String flow(String event, Map<String, Object?> details) =>
+        'I/flutter: [FLOW] '
+        '${jsonEncode(<String, Object?>{
+          'ts': '2026-08-20T09:00:00.000Z',
+          'milestone': 'M1_IDENTITY_INIT',
+          'layer': 'FL',
+          'event': event,
+          'details': details,
+        })}';
+
+    test('reports the durable arm executed for an osPosted direct reaction', () {
+      final observed = androidDurableDirectReactionShow(
+        [
+          flow('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK', <String, Object?>{
+            'kind': 'reaction',
+          }),
+          flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
+            'durable': true,
+            'producer': 'direct_reaction',
+            'disposition': 'osPosted',
+            'silent': false,
+          }),
+        ].join('\n'),
+      );
+
+      expect(observed.durableArmExecuted, isTrue);
+      expect(observed.durableShown, isTrue);
+      expect(observed.disposition, 'osPosted');
+      expect(observed.silent, isFalse);
+      expect(observed.deferralReasons, isEmpty);
+    });
+
+    test('rejects the non-durable fallback and names the deferral reason', () {
+      // This is exactly what Plan 391's killed-path leg observed, twice. The
+      // card IS posted, so a card-only assertion goes green while the arm
+      // under test never ran.
+      final observed = androidDurableDirectReactionShow(
+        [
+          flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
+            'reason': 'exact_sql_authority_unavailable',
+            'presentation': 'nondurable_fallback',
+          }),
+          flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
+            'messageId': '0:1787100673237835%1d5344bef9fd7ecd',
+            'payload': '[redacted:peerid]',
+            'silent': false,
+          }),
+        ].join('\n'),
+      );
+
+      expect(observed.durableArmExecuted, isFalse);
+      expect(observed.durableShown, isFalse);
+      expect(observed.fallbackShown, isTrue);
+      expect(observed.deferralReasons, ['exact_sql_authority_unavailable']);
+    });
+
+    test('does not accept another producer as the direct-reaction arm', () {
+      for (final producer in const ['direct_message', 'group_reaction']) {
+        final observed = androidDurableDirectReactionShow(
+          flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
+            'durable': true,
+            'producer': producer,
+            'disposition': 'osPosted',
+          }),
+        );
+        expect(
+          observed.durableArmExecuted,
+          isFalse,
+          reason: '$producer is a different arm of the same resolver',
+        );
+      }
+    });
+
+    test('accumulates across polls so a rotated ring cannot erase evidence', () {
+      // The alive recipient's log rotates fast. Each poll re-reads the whole
+      // remaining buffer, and rotation only drops from the FRONT, so the fold
+      // must keep the per-reason maximum rather than the last snapshot.
+      final early = androidDurableDirectReactionShow(
+        [
+          flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
+            'reason': 'exact_sql_authority_unavailable',
+          }),
+          flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
+            'reason': 'exact_sql_authority_unavailable',
+          }),
+        ].join('\n'),
+      );
+      // A later read whose front has rotated away: one deferral is gone, and
+      // the durable show has since landed.
+      final late = androidDurableDirectReactionShow(
+        [
+          flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
+            'reason': 'exact_sql_authority_unavailable',
+          }),
+          flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
+            'durable': true,
+            'producer': 'direct_reaction',
+            'disposition': 'osPosted',
+            'silent': false,
+          }),
+        ].join('\n'),
+      );
+
+      expect(early.durableArmExecuted, isFalse);
+      expect(late.deferralReasons, hasLength(1));
+
+      final folded = early.mergedWith(late);
+      expect(folded.durableArmExecuted, isTrue);
+      expect(
+        folded.deferralReasons,
+        hasLength(2),
+        reason: 'the deferral the ring dropped must survive the fold',
+      );
+      expect(
+        AndroidDurableDirectReactionShow.nothingObserved
+            .mergedWith(early)
+            .mergedWith(late)
+            .deferralReasons,
+        hasLength(2),
+        reason: 'folding from the empty seed is the capture loop\'s own path',
+      );
+    });
+
+    test('does not accept a durable show the OS did not post', () {
+      final observed = androidDurableDirectReactionShow(
+        flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
+          'durable': true,
+          'producer': 'direct_reaction',
+          'disposition': 'suppressedPolicy',
+        }),
+      );
+
+      expect(observed.durableShown, isTrue);
+      expect(observed.durableArmExecuted, isFalse);
+      expect(observed.disposition, 'suppressedPolicy');
+    });
+  });
+
+  group('alive-but-backgrounded recipient', () {
+    const package = 'com.mknoon.app';
+    const backgrounded = '''
+  Task{111 #42 type=standard A=$package U=0 visible=false}
+    ActivityRecord{aaa u0 $package/.MainActivity t42}
+  mResumedActivity: ActivityRecord{bbb u0 com.android.launcher/.Launcher t1}
+  mFocusedApp=ActivityRecord{bbb u0 com.android.launcher/.Launcher t1}
+''';
+    const foreground = '''
+  Task{111 #42 type=standard A=$package U=0 visible=true}
+    ActivityRecord{aaa u0 $package/.MainActivity t42}
+  mResumedActivity: ActivityRecord{aaa u0 $package/.MainActivity t42}
+  mFocusedApp=ActivityRecord{aaa u0 $package/.MainActivity t42}
+''';
+
+    test('a backgrounded app still has an attached activity record', () {
+      // The distinction the leg depends on. KEYCODE_HOME leaves the
+      // ActivityRecord in the task stack, so the absence predicate the killed
+      // path uses cannot express "alive but backgrounded".
+      expect(hasAttachedAndroidActivity(backgrounded, package), isTrue);
+      expect(hasResumedAndroidActivity(backgrounded, package), isFalse);
+      expect(hasResumedAndroidActivity(foreground, package), isTrue);
+    });
+
+    test('alive-and-backgrounded requires a live pid and no resumed activity', () {
+      expect(
+        isAndroidAppProcessAliveAndBackgrounded(
+          pidOutput: '6130',
+          dumpsysActivities: backgrounded,
+          packageName: package,
+        ),
+        isTrue,
+      );
+      expect(
+        isAndroidAppProcessAliveAndBackgrounded(
+          pidOutput: '',
+          dumpsysActivities: backgrounded,
+          packageName: package,
+        ),
+        isFalse,
+        reason: 'a killed recipient is the other leg, and cannot go durable',
+      );
+      expect(
+        isAndroidAppProcessAliveAndBackgrounded(
+          pidOutput: '6130',
+          dumpsysActivities: foreground,
+          packageName: package,
+        ),
+        isFalse,
+        reason:
+            'a foreground app takes the in-app lane, not the background '
+            'isolate the durable arm runs in',
+      );
+    });
+  });
+
+  group('the alive-connected durable leg is reachable and honest', () {
+    test('the 1to1 reaction runner reaches the durable scenario', () {
+      // Same three links Plan 391's TC-391-01 pins for the typed smoke: the
+      // catalog row --scenario resolves, the switch case naming the capture
+      // driver, and the flag the variant is gated on. A catalog-only edit
+      // still exits 78 ENVIRONMENT BLOCKED at run time.
+      final source = _collapsedSource(
+        'integration_test/scripts/run_1to1_reaction_notification_device.dart',
+      );
+
+      final catalogStart = source.indexOf('const List<_Scenario> _scenarios');
+      final catalogEnd = source.indexOf('Future<void> main(', catalogStart);
+      expect(catalogStart, greaterThan(0));
+      expect(catalogEnd, greaterThan(catalogStart));
+      final catalog = source.substring(catalogStart, catalogEnd);
+      final entryStart = catalog.indexOf(
+        "id: 'android_durable_reaction_background_connected'",
+      );
+      expect(
+        entryStart,
+        greaterThan(0),
+        reason: 'the durable leg must be selectable by --scenario',
+      );
+      final nextEntry = catalog.indexOf('_Scenario(', entryStart);
+      final entry = nextEntry < 0
+          ? catalog.substring(entryStart)
+          : catalog.substring(entryStart, nextEntry);
+      expect(entry, contains("testCase: 'TC-DURABLE-DIRECT-REACTION'"));
+      expect(
+        entry,
+        contains('requiresSender: true'),
+        reason: 'a second device drives the reaction by UI automation',
+      );
+
+      expect(
+        source,
+        contains(
+          "'android_durable_reaction_background_connected' => "
+          '_headProvenanceCaptureDriver',
+        ),
+        reason:
+            'without the switch case the runner exits 78 ENVIRONMENT BLOCKED '
+            'instead of capturing',
+      );
+
+      final argsStart = source.indexOf('final captureArgs = <String>[');
+      final argsEnd = source.indexOf(
+        'final capture = await Process.start(',
+        argsStart,
+      );
+      expect(argsStart, greaterThan(0));
+      expect(argsEnd, greaterThan(argsStart));
+      expect(
+        source.substring(argsStart, argsEnd),
+        contains(
+          "if (scenario.id == 'android_durable_reaction_background_connected') "
+          "'--durable-background-connected'",
+        ),
+        reason:
+            'the capture driver derives its variant from flags, never from '
+            '--scenario',
+      );
+    });
+
+    test('the durable variant backgrounds the recipient instead of killing it', () {
+      // The load-bearing difference between this leg and the killed-path leg.
+      // _terminateRecipient sat on the COMMON path; if the durable variant
+      // still took it, the app would be dead, no display-outbox row would
+      // exist, and the arm under test could not run at all.
+      final source = _collapsedSource(
+        'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+      );
+
+      expect(
+        source,
+        contains(
+          'if (durableBackgroundConnected) { await _backgroundRecipient(); } '
+          'else { await _terminateRecipient(); }',
+        ),
+        reason:
+            'the durable variant must background the recipient, and every '
+            'other variant must still kill it',
+      );
+      expect(
+        source,
+        contains(
+          'Future<void> _backgroundRecipient() async { await '
+          "_adbShell(recipientId, ['input', 'keyevent', 'KEYCODE_HOME']);",
+        ),
+        reason: 'HOME backgrounds; am kill would not',
+      );
+      expect(
+        source.substring(source.indexOf('Future<void> _backgroundRecipient()')),
+        contains('_recipientProcessAliveAndBackgroundedWithin('),
+        reason:
+            'a recipient that died during HOME must fail the leg, not be '
+            'graded as if it were alive',
+      );
+    });
+
+    test('the durable verdict is measured, never assumed', () {
+      // The artifact must carry what the recipient device actually logged. A
+      // literal here would let the leg claim the durable arm ran on a run
+      // where it deferred — which is the precise failure this whole leg
+      // exists to make impossible.
+      final source = _collapsedSource(
+        'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+      );
+
+      final windowStart = source.indexOf("_stage = 'reaction_capture'");
+      final windowEnd = source.indexOf('_writePassedArtifact(', windowStart);
+      expect(windowStart, greaterThan(0));
+      expect(windowEnd, greaterThan(windowStart));
+      final window = source.substring(windowStart, windowEnd);
+
+      final measurement = RegExp(
+        r'final (\w+) = durableBackgroundConnected \? await '
+        r'_recipientDurableDirectReactionShowWithin\(',
+      ).firstMatch(window);
+      expect(
+        measurement,
+        isNotNull,
+        reason:
+            'the durable verdict must be read from the recipient log inside '
+            'the reaction window',
+      );
+      final identifier = measurement!.group(1)!;
+
+      expect(
+        window,
+        contains('!$identifier.durableArmExecuted'),
+        reason: 'a deferred run must fail the capture, not write a passed '
+            'artifact',
+      );
+
+      final observationStart = source.indexOf("'observation': {");
+      final observationEnd = source.indexOf(
+        "'sourceAttribution': {",
+        observationStart,
+      );
+      expect(observationStart, greaterThan(0));
+      expect(observationEnd, greaterThan(observationStart));
+      final observation = source.substring(observationStart, observationEnd);
+      expect(
+        observation,
+        contains("'durableEffectObserved': durableShow?.durableShown ?? false"),
+      );
+      expect(
+        observation,
+        contains(
+          "'durableEffectDisposition': durableShow?.disposition ?? "
+          "'not_observed'",
+        ),
+      );
+      expect(
+        observation,
+        contains(
+          "'durableEffectDeferralReasons': durableShow?.deferralReasons ?? "
+          'const <String>[]',
+        ),
+        reason:
+            'the deferral reasons are the diagnosis when the arm does not '
+            'run, and must survive into the artifact',
+      );
     });
   });
 }

@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 
 const String plan256ArtifactSchema = 'mknoon.plan256.device-proof.v1';
 const String backgroundCryptoPreflightBundleSchema =
@@ -1450,6 +1451,39 @@ bool isAndroidAppProcessAndActivityAbsent({
 }) =>
     pidOutput.trim().isEmpty &&
     !hasAttachedAndroidActivity(dumpsysActivities, packageName);
+
+/// Whether an activity of [packageName] is the RESUMED/focused one.
+///
+/// Deliberately narrower than [hasAttachedAndroidActivity]. An app sent to the
+/// background with KEYCODE_HOME keeps its `ActivityRecord` in the task stack,
+/// so the attached-activity predicate stays true for it. Only the resumed and
+/// focused markers separate "in the foreground" from "alive but backgrounded".
+bool hasResumedAndroidActivity(String dumpsysActivities, String packageName) {
+  final cutoff = dumpsysActivities.indexOf('mRemoteInsetsControlTarget=');
+  final activeSection = cutoff < 0
+      ? dumpsysActivities
+      : dumpsysActivities.substring(0, cutoff);
+  final package = RegExp.escape(packageName);
+  return RegExp(
+    '(?:mResumedActivity|topResumedActivity|mFocusedApp)'
+    '[^\\n]*$package(?:/|\\b)',
+  ).hasMatch(activeSection);
+}
+
+/// Whether the app process is alive while no activity of it is resumed.
+///
+/// This is the premise of the alive-connected durable leg. The durable
+/// notification arm can only resolve when the live runtime has already
+/// projected the event into `direct_notification_display_outbox`, and the
+/// graded push must still be handled by the background isolate, which requires
+/// the app not to be in the foreground.
+bool isAndroidAppProcessAliveAndBackgrounded({
+  required String pidOutput,
+  required String dumpsysActivities,
+  required String packageName,
+}) =>
+    pidOutput.trim().isNotEmpty &&
+    !hasResumedAndroidActivity(dumpsysActivities, packageName);
 
 Map<String, Object?> parseBackgroundCryptoPushRelayRegistrationReceipt(
   List<int> rawBytes, {
@@ -6492,6 +6526,149 @@ bool androidDirectReactionBackgroundPushObserved(String logcat) {
     if (details is Map && details['kind'] == 'reaction') return true;
   }
   return false;
+}
+
+/// What the RECIPIENT device's own log says about the DURABLE local-notification
+/// effect for a direct (1:1) reaction.
+///
+/// The durable arm is the one that mints SQL_READY ledger authority from an
+/// exact `direct_notification_display_outbox` row. It is structurally
+/// unreachable at a KILLED app: only the foreground runtime stages those rows
+/// (`production_application_bootstrap.dart:1030`,
+/// `production_canonical_inbox_projection_composition.dart:1915`,
+/// `direct_notification_projection_owner.dart:477`), and
+/// `background_message_handler.dart` only reads them (`:2129`), so a genuinely
+/// new event at a killed app always falls through to the non-durable fallback —
+/// which is what its own comment at `:1080-1087` says. Measured over the whole
+/// device-log corpus 2026-08-20: all 14 `durable: true` sightings came from
+/// processes running the full foreground app runtime, and none from a cold
+/// wake.
+///
+/// So this predicate belongs to the ALIVE-connected leg, and only there.
+class AndroidDurableDirectReactionShow {
+  const AndroidDurableDirectReactionShow({
+    required this.durableShown,
+    required this.fallbackShown,
+    required this.disposition,
+    required this.silent,
+    required this.deferralReasons,
+  });
+
+  /// A `PUSH_BACKGROUND_NOTIFICATION_SHOWN` carrying `durable: true` and the
+  /// `direct_reaction` producer.
+  final bool durableShown;
+
+  /// A `PUSH_BACKGROUND_NOTIFICATION_SHOWN` that carried no durable upgrade.
+  /// True alongside [durableShown] is possible across a multi-push window; the
+  /// two are independent observations, not a partition.
+  final bool fallbackShown;
+
+  /// The disposition of the durable show, `osPosted` when the OS accepted it.
+  final String? disposition;
+
+  final bool? silent;
+
+  /// Every `PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED` reason in the window, in
+  /// order. `exact_sql_authority_unavailable` means the exact SQL row the
+  /// durable arm needs did not exist when the push was handled.
+  final List<String> deferralReasons;
+
+  bool get durableArmExecuted => durableShown && disposition == 'osPosted';
+
+  /// Folds a later snapshot into this one so a rotated logcat ring cannot erase
+  /// what an earlier poll already saw.
+  ///
+  /// This leg keeps the recipient ALIVE, so its log is orders of magnitude
+  /// busier than the killed-path leg's — the emulator ring is 2 MiB against a
+  /// chatty runtime, which is a window of roughly a minute. `logcat -d` returns
+  /// the whole remaining buffer and rotation only drops from the FRONT, so
+  /// taking the per-reason MAXIMUM across snapshots reconstructs the window
+  /// exactly. Reasons are regrouped by first appearance, which is a diagnostic
+  /// field, not an ordering claim.
+  AndroidDurableDirectReactionShow mergedWith(
+    AndroidDurableDirectReactionShow other,
+  ) => AndroidDurableDirectReactionShow(
+    durableShown: durableShown || other.durableShown,
+    fallbackShown: fallbackShown || other.fallbackShown,
+    disposition: disposition ?? other.disposition,
+    silent: silent ?? other.silent,
+    deferralReasons: _mergeDeferralReasons(deferralReasons, other.deferralReasons),
+  );
+
+  static List<String> _mergeDeferralReasons(
+    List<String> first,
+    List<String> second,
+  ) {
+    final order = <String>[];
+    final counts = <String, int>{};
+    for (final snapshot in <List<String>>[first, second]) {
+      final seen = <String, int>{};
+      for (final reason in snapshot) {
+        seen[reason] = (seen[reason] ?? 0) + 1;
+        if (!order.contains(reason)) order.add(reason);
+      }
+      seen.forEach((reason, count) {
+        if ((counts[reason] ?? 0) < count) counts[reason] = count;
+      });
+    }
+    return List<String>.unmodifiable(<String>[
+      for (final reason in order)
+        ...List<String>.filled(counts[reason] ?? 0, reason),
+    ]);
+  }
+
+  static const AndroidDurableDirectReactionShow nothingObserved =
+      AndroidDurableDirectReactionShow(
+        durableShown: false,
+        fallbackShown: false,
+        disposition: null,
+        silent: null,
+        deferralReasons: <String>[],
+      );
+}
+
+AndroidDurableDirectReactionShow androidDurableDirectReactionShow(
+  String logcat,
+) {
+  var durableShown = false;
+  var fallbackShown = false;
+  String? disposition;
+  bool? silent;
+  final deferralReasons = <String>[];
+  for (final line in logcat.split('\n')) {
+    final marker = line.indexOf('[FLOW] ');
+    if (marker < 0) continue;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(line.substring(marker + '[FLOW] '.length).trim());
+    } on FormatException {
+      continue;
+    }
+    if (decoded is! Map) continue;
+    final details = decoded['details'];
+    if (decoded['event'] == 'PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED') {
+      if (details is Map) deferralReasons.add('${details['reason']}');
+      continue;
+    }
+    if (decoded['event'] != 'PUSH_BACKGROUND_NOTIFICATION_SHOWN') continue;
+    if (details is! Map) continue;
+    if (details['durable'] == true &&
+        details['producer'] ==
+            LocalNotificationProducerKind.directReaction.wireName) {
+      durableShown = true;
+      disposition = details['disposition'] as String?;
+      silent = details['silent'] as bool?;
+    } else if (details['durable'] != true) {
+      fallbackShown = true;
+    }
+  }
+  return AndroidDurableDirectReactionShow(
+    durableShown: durableShown,
+    fallbackShown: fallbackShown,
+    disposition: disposition,
+    silent: silent,
+    deferralReasons: List<String>.unmodifiable(deferralReasons),
+  );
 }
 
 List<ActiveNotificationCard> extractActiveNotificationCards(
