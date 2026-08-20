@@ -1616,7 +1616,7 @@ class _HeadProvenanceCampaign {
       'recipientKilledBeforeEachSend': publicRelayProof,
       'recipientKilledBeforeNotificationTap': publicRelayProof,
       'publicRelayStoreAndProviderSendPerMessage': publicRelayProof,
-      'orbitObservationNavigation': 'launcher_reopen_clear_task_no_force_stop',
+      'orbitObservationNavigation': 'launcher_resume_walk_back_no_force_stop',
       'firstEvidencePath':
           '${artifactDir.path}/recipient_unread_first_notification.txt',
       'secondEvidencePath':

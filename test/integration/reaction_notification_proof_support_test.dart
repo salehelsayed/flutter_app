@@ -1662,6 +1662,16 @@ void main() {
     expect(method, contains('extractOrbitUnreadCount('));
     expect(method, isNot(contains('force-stop')));
     expect(method, isNot(contains('_launch(')));
+
+    // The artifact must not describe a navigation the driver stopped using.
+    expect(
+      source,
+      contains(
+        "'orbitObservationNavigation': "
+        "'launcher_resume_walk_back_no_force_stop'",
+      ),
+    );
+    expect(source, isNot(contains('launcher_reopen_clear_task')));
   });
 
   test(
