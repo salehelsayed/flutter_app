@@ -1,6 +1,6 @@
 # 391 - Killed-Path 1:1 Reaction Device Proof (G22a)
 
-Status: execution-ready
+Status: EXECUTED at host tier 2026-08-20 (commits `c07c3f588`, `ed1ca15c5`) — **device leg TC-391-09 BLOCKED**, see Execution Findings
 Type: Bug
 Spec: free-text intent (no formal spec) — `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md` §4.11 row **G22**
 Classification: implementation-ready
@@ -463,4 +463,51 @@ means the capture passed **and** the runner's own `_validateArtifacts` ran TC-39
 ## Execution Progress
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan | contract extraction |
+| 2026-08-19 | RED-first | all four | `flutter test …proof_test.dart --plain-name android_typed_reaction_smoke` → `No tests ran.` **exit 79**; support file → 103 pass / **3 fail** | TC-391-10 red for its documented reason at HEAD; TC-391-01 on the missing catalog id, -02 on `['direct_text_public_relay', 'live_typed_reaction_smoke', …]` vs the ids, -03 on the empty `reaction_capture` window | INV-RED-FIRST satisfied | Steps 2-4 |
+| 2026-08-19 | Steps 2-4 | runner, capture driver, both tests | `flutter test …proof_support_test.dart` → **106/106**; `dart analyze` (4 files) clean; `--list-scenarios` prints 6 ids | catalog row + switch case + conditional `--live-typed-smoke`; all three stems == their ids; measured absence bound into `observation` | focused GREEN | mutations |
+| 2026-08-19 | Mutations | runner, capture driver | 4 applied, tree restored each time | switch case deleted → -01 red; stem reverted → -02 red; literal `true` → -03 red; measurement moved past `validateDirectReactionNotificationCard(` → **-03 red while -07 stays green** | 4/4 re-red; the -03/-07 pair is guarded from both sides | sentinels |
+| 2026-08-19 | Sentinels + lane | — | TC-391-06 passes on a TC-00-shaped artifact with **and** without the new key; TC-391-08 22/22 + `notification_tap_campaign_adapter_contract_test.sh` PASS; `groups` **4580 Flutter + Go gates green**; `completeness-check` 1469/1469; `git diff --check` clean; graph `affected` empty | no captured TC-00 artifact exists in this checkout, so -06 ran against a synthesized artifact matching `_writePassedArtifact`'s exact TC-00 shape | host tier complete; committed `c07c3f588` | device leg |
+| 2026-08-20 | Device attempt 1 | — | `dart run …run_1to1_reaction_notification_device.dart --scenario android_typed_reaction_smoke --sender 21071FDF600CSC --recipient emulator-5554` → **failed at stage `wait`**, `Timed out waiting for recipient FCM token registration` | recipient logged `relay_push_registration_success` at 07:49:06Z; the capture still failed at 07:51:12Z | **Blocker 1** — the wait greps a relay line v1.8.0 deleted | repair + TC-391-11 |
+| 2026-08-20 | Repair | capture driver, support test | TC-391-11 causal RED → GREEN; mutation re-reds; support **107/107**; analyze clean | registration now attributed on the recipient device's own log, as `capture_group_reaction_notification_device.dart` already does | committed `ed1ca15c5` | re-audit before re-running |
+| 2026-08-20 | Pre-flight re-audit | relay source | `grep -rn 'Notification sent to' go-relay-server/` → **zero**; `[PUSH]` census is now `outcome=…` only | `classifyRelayCapture`'s `providerMatchedEvent` can never be true | **Blocker 2 — TC-391-09 is unpassable on any build.** Needs a scope decision | STOP, per the plan's own scope-drift rule |
+
+## Execution Findings (2026-08-20)
+
+Two blockers, both **pre-existing** and neither scoped by this plan. Blocker 1 is fixed. Blocker 2 is not,
+because fixing it is a design decision this plan has no mandate for.
+
+**Blocker 1 (FIXED, `ed1ca15c5`).** `_waitForRelayTokenRegistration` greps
+`[PUSH] Token registered for <peerPrefix> (android)`. Relay v1.8.0 (`8d86501e4`) deleted it with the rest of the
+identifying `[PUSH]` vocabulary, a removal Plan 368 pins. Measured: the recipient logged
+`relay_push_registration_success` at 07:49:06Z; the capture still failed at 07:51:12Z. The android arm now waits on
+the recipient device's own log through the already-host-tested `androidRelayPushRegistrationAccepted`, which is the
+move `capture_group_reaction_notification_device.dart:4820` already made. The `directTextOnly` arm keeps the
+relay-journal wait, because its artifact claims a public-relay observation.
+
+**Blocker 2 (OPEN — blocks TC-391-09 on any build, before or after this plan).**
+`classifyRelayCapture` (`reaction_notification_proof_support.dart:5076`) derives `providerMatchedEvent` from
+`[PUSH] (Group )?Notification sent to <recipientPrefix>`. A recursive census of `Notification sent to` over
+`go-relay-server/` returns **zero**: the surviving `[PUSH]` vocabulary is entirely `outcome=…` and carries no peer.
+So `providerMatchedEvent` is permanently false, and the typed smoke throws either way —
+`'An app card appeared without a matched relay/provider send'` (`capture:429-435`) when the card IS posted, or
+`'The live typed smoke requires one matched relay/provider send'` (`capture:436-441`) when it is not. This plan's
+stop-if lists both strings as relay-side failures; they are in fact dead-grammar failures.
+
+Two further consequences, recorded because they are not this plan's to fix:
+- `providerConfirmedNoSend => relayMatchedEvent && !providerMatchedEvent && !providerFailureMatched`, so **every
+  TC-00 capture on the current relay writes a false `providerConfirmedNoSend: true`** — the classifier can no
+  longer see any send at all.
+- `[INBOX] Stored message for <recipient> from <sender>` (`go-relay-server/inbox.go:2085`) **does** survive, so
+  `relayMatchedEvent` and `_waitForRelayStore` still work. Only the provider half is dead.
+
+**Why the fix is a separate plan.** Plan 386 W1 hit this exact wall on the group lane and wrote the reasoning down
+(`capture_group_reaction_notification_device.dart:4880-4899`): re-adding the relay lines is the known-wrong fix
+(the vocabulary is frozen by `push_permanent_error_closure_test.go:237-300`), and counting the surviving
+`[PUSH] outcome=success` is **also** wrong because it carries no attribution and one shared provider path emits it
+for every push type and every user on a PRODUCTION box. Its answer was an attributable **relay counter delta**,
+`relay_group_reaction_wake_total`. There is no 1:1 equivalent: the counter census over `go-relay-server/` has
+`relay_group_reaction_wake_total` and `relay_group_content_wake_total` and **no direct/1:1 reaction wake counter**.
+So the choice — add a relay counter and deploy, move provider attribution to the recipient device's own log
+(`PUSH_BACKGROUND_MESSAGE_RECEIVED` bound to the reaction event id), or accept the unattributed predicate — changes
+`sourceAttribution`'s meaning, touches the shared classifier, its four existing host tests, and TC-00's contract.
+That is a plan, not an execution detail.
