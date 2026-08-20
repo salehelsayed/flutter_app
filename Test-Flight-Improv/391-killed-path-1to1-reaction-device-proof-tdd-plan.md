@@ -1,6 +1,6 @@
 # 391 - Killed-Path 1:1 Reaction Device Proof (G22a)
 
-Status: **EXECUTED AND CLOSED AT DEVICE TIER 2026-08-20** (`c07c3f588`, `ed1ca15c5`, `cd2b99349`, `50898bf8e`) — TC-391-09 exits 0 on `50898bf8e`. Three pre-existing defects had to be repaired to get there, and the run produced a G21 sample that qualifies what the leg proves; see Execution Findings
+Status: **EXECUTED, REVALIDATED, AND CLOSED AT DEVICE TIER 2026-08-20** (`c07c3f588`, `ed1ca15c5`, `cd2b99349`, `50898bf8e`, `5f4df8c0a`) — TC-391-09 exits 0 on a fresh `5f4df8c0a` capture. Three pre-existing harness defects had to be repaired to get there. The killed-path card is correctly the non-durable fallback; the earlier G21 attribution and durable-arm proof-profile claim are corrected in Execution Findings.
 Type: Bug
 Spec: free-text intent (no formal spec) — `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Behavior_and_E2E_Test_Map.md` §4.11 row **G22**
 Classification: implementation-ready
@@ -127,11 +127,13 @@ Closure tier: device
   - **"Add a `critical_features.json` sims capability."** Refuted at review as disproportionate — see the de-scope
     below.
 
-- **Unresolved findings:** whether the graded first wake trips G21. It sits in the G21 slot by construction and
-  the trip is intermittent. Owned by the stop-if in Implementation Step 5. Note the lane is in the **better** G21
-  position than Plan 383's samples: `_installApk(recipientId, …)` (`:346`) is followed by `_launch(recipientId)`
-  (`:351`) before the kill at `:357`, so the graded wake is the **second** process start on that install and
-  ProfileInstaller has already run — the confound both of Plan 383's deferring samples carried is absent here.
+- **Planning-time unresolved finding, resolved during execution:** whether the graded first wake trips G21. The
+  trip is intermittent, so the Step 5 stop-if remains valid for future runs, but neither closure run emitted
+  `PUSH_BACKGROUND_STORAGE_DEFERRED`. The observed `exact_sql_authority_unavailable` durable-effect deferral is a
+  different, non-timeout path and must not be counted as G21. The lane remains in the **better** G21 position than
+  Plan 383's samples: `_installApk(recipientId, …)` (`:346`) is followed by `_launch(recipientId)` (`:351`) before
+  the kill at `:357`, so the graded wake is the **second** process start on that install and ProfileInstaller has
+  already run — the confound both of Plan 383's deferring samples carried is absent here.
 
 - **Affected files.** Production-equivalent (harness/driver, **zero `lib/`**):
   `integration_test/scripts/capture_1to1_reaction_head_provenance.dart`,
@@ -169,7 +171,8 @@ Both were in the first draft. Both are removed, not deferred silently.
    lane's coverage is a runner-validated manual command, not a lane-enforced one.
 
 ## Graph Grounding Snapshot
-- Graph fingerprint / freshness: `824c063d72634284`, `freshness=current`; `graphify-arch/.needs_incremental_refresh` absent, so no rebuild was run.
+- Planning fingerprint / freshness: `824c063d72634284`, `freshness=current`; `graphify-arch/.needs_incremental_refresh` was absent during planning, so no rebuild was run then.
+- Final revalidation: one required `./graphify-arch/refresh_arch_graph.sh --incremental` refreshed five changed code files; the anchored review query is `freshness=current`, fingerprint `0c3e874a47628f55`. The fresh affected query names the four neighboring contract tests plus this plan's support suite; all 149 tests pass.
 - Query / profile: `python3 graphify-arch/tdd_context.py query "payload_fast_path_cold_kill killed-app cold wake leg _runColdPayloadLeg notification_android_payload_campaign scenario catalog" --profile tdd --budget 700` (`confidence=anchored`), plus one `--profile general --budget 600` refinement for the 1:1 reaction send path.
 - Anchors: `_runColdPayloadLeg` → `integration_test/scripts/notification_android_payload_campaign.dart:796`; `message_reaction.dart` → `lib/features/conversation/domain/models/message_reaction.dart`.
 - Graph gaps that required raw source search: the whole 1:1 reaction **device** lane. The graph's anchors pointed at the payload campaign and the domain model; `capture_1to1_reaction_head_provenance.dart` and `run_1to1_reaction_notification_device.dart` — the files this plan actually edits — were surfaced only by the refute pass. Scenario-id strings, sims manifest entries and `.sh` pins are outside the graph by construction.
@@ -425,19 +428,23 @@ means the capture passed **and** the runner's own `_validateArtifacts` ran TC-39
   `notifications.android_payload_campaign` or Plan 389's group reaction surfaces, or any edit to
   `tool/sims/device_criteria.dart` / `tool/sims/critical_features.json`.
 
-- [ ] Every behavior has a named test or a justified proof.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded.
-- [ ] Preservation sentinels and named gates pass with semantic outcomes.
-- [ ] The device run exits 0, which includes TC-391-10 validating the captured artifact.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
-- [ ] The Scope Contract And Guard is respected — no `device_criteria.dart` or `critical_features.json` edit.
+- [x] Every behavior has a named test or a justified proof.
+- [x] Causal RED, focused GREEN, and representative mutation re-red are recorded.
+- [x] Preservation sentinels and named gates pass with semantic outcomes.
+- [x] The device run exits 0, which includes TC-391-10 validating the captured artifact.
+- [x] `flutter analyze` has no new issues; `git diff --check` is clean.
+- [x] The Scope Contract And Guard is respected — no `device_criteria.dart` or `critical_features.json` edit.
 
 ## Device/Relay Proof Profile
 - **Profile:** paired-device (os-notification-device-lab).
-- **Boundary being proven:** the `directReaction` arm of the background durable-effect resolver, executing in a
-  real cold-started FCM background isolate against real SQLCipher, for a push the real relay produced from a real
-  UI-driven reaction on a second device. No host tier reaches it —
-  `background_message_handler_test.dart` stubs the eligibility resolver 28 times.
+- **Boundary being proven:** the user-visible killed-path 1:1 reaction alert: a real relay/FCM push is decrypted
+  in a cold-started background isolate for a recipient measured process/activity-absent, produces the typed OS
+  card, routes its tap to the conversation, and preserves the unread lifecycle. The visually identical card is
+  the designed non-durable fallback because a genuinely new killed-path event has no pre-staged exact display-
+  outbox row. This leg therefore does **not** claim the durable `directReaction` SQL-authority arm executed; the
+  follow-on `android_durable_reaction_background_connected` probe records that residual separately. No host tier
+  reaches the real device boundary — `background_message_handler_test.dart` stubs the eligibility resolver 28
+  times.
 - **Live availability check:** `flutter devices --machine` + `adb devices` → pin the observed ids before running.
 - **Pinned targets:** sender (reactor) = physical Android `21071FDF600CSC`; recipient (killed, graded) =
   Android emulator `emulator-5554`. The emulator is the recipient because the lane installs a working-tree APK and
@@ -475,11 +482,12 @@ means the capture passed **and** the runner's own `_validateArtifacts` ran TC-39
 | 2026-08-20 | Blocker 3 repair | capture driver, support test | suite 112/112; mutation (restore `0x10008000`) re-reds | resume the task, walk back to Orbit, verify with `extractOrbitUnreadCount`; a clean single-engine launch of the same build renders Orbit with the row intact | committed `cd2b99349` | device attempt 3 |
 | 2026-08-20 | **Device attempt 3 — TC-391-09 GREEN** | — | runner **exit 0**: `PASS: TC-13-core-smoke android_typed_reaction_smoke captured` then `All tests passed!` and `Plan-256 proof artifact validated` | `cardPresent: true`, `recipientProcessAbsentBeforeReaction: true`, title `Bob`, body `Reacted 👍 to your message`, `tapRoute: conversation`, `providerEvidenceSource: recipient_background_push`, `unreadCounts: [0,1,1,2,0]` | closed at device tier | label fix + re-run on final code |
 | 2026-08-20 | Closure re-run + lane | — | runner **exit 0** on `50898bf8e`; `groups` **exit 0**, 4586 Flutter + Go gates | artifact `app.revision = 50898bf8e…`, `orbitObservationNavigation: launcher_resume_walk_back_no_force_stop`; the durable-effect deferral reproduces (N=2) | done | record findings |
+| 2026-08-20 | Final revalidation | plan surfaces + Graphify-affected neighbors | support **122/122**; affected neighbors **149/149**; payload-campaign sentinel **22/22**; `groups` **4596/4596** plus Go bridge/relay gates; completeness **1469/1469**; focused analysis clean; runner **exit 0** on a forced-fresh capture at `5f4df8c0a` | fresh artifact: `cardPresent: true`, `recipientProcessAbsentBeforeReaction: true`, `recipientProcessAliveBeforeReaction: false`, typed body, provider source `recipient_background_push`, conversation route, `unreadCounts: [0,1,1,2,0]`; runner's TC-391-10 oracle passed | closure independently reproduced on the live Android matrix | correct the stale G21/durable-boundary wording and check the done criteria |
 
 ## Execution Findings (2026-08-20)
 
-Two blockers, both **pre-existing** and neither scoped by this plan. Blocker 1 is fixed. Blocker 2 is not,
-because fixing it is a design decision this plan has no mandate for.
+Three blockers, all **pre-existing** and all fixed in the harness while executing this plan. None required a
+`lib/` change, and the final device run plus its validator exit 0.
 
 **Blocker 1 (FIXED, `ed1ca15c5`).** `_waitForRelayTokenRegistration` greps
 `[PUSH] Token registered for <peerPrefix> (android)`. Relay v1.8.0 (`8d86501e4`) deleted it with the rest of the
@@ -523,26 +531,30 @@ The sentinel at `reaction_notification_proof_support_test.dart` that pinned `0x1
 reasoning and had never run on a device; it now pins the resume, with that evidence beside it. Its two real
 prohibitions are unchanged.
 
-**What the device leg proves, and what it does not (G21).** The graded push produced the card through the
-**non-durable fallback**, not the durable arm. Both runs logged, in order:
+**What the device leg proves, and what it does not (durable-authority correction; not G21).** The graded push
+produced the card through the **non-durable fallback**, not the durable arm. Both original runs logged, in order:
 `PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK kind=reaction` → `PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED
 reason=exact_sql_authority_unavailable presentation=nondurable_fallback` →
 `PUSH_BACKGROUND_DIRECT_POST_SHOW_UNKNOWN errorType=SqfliteDatabaseException` →
 `PUSH_BACKGROUND_NOTIFICATION_SHOWN silent=false`. So G22(a)'s user-visible behaviour is proven on real hardware —
 a killed 1:1 recipient IS alerted, with typed copy, and the tap routes — but the `directReaction` arm of the
 durable resolver, named in this plan's Device/Relay Proof Profile as the boundary under test, **did not execute**;
-it deferred on the cold SQLCipher open. That is the known first-wake G21 pattern and it is the **1:1-reaction
-sample the G21 row asks for, now at N=2 on this lane**. Per this plan's Hard `Do not`, no warm-up push, deferral
-scan or classifier was added here; the G21 series owns it, and the durable 1:1 reaction arm remains device-unproven.
+it had no exact SQL authority row. That event is the authority-null fall-through at
+`background_message_handler.dart:1098-1109`, not G21's timed
+`PUSH_BACKGROUND_STORAGE_DEFERRED{outcome: storage_deferred}` exit at `:681-693`. Neither original run logged the
+G21 event. A follow-on alive/backgrounded probe confirmed why a warm-up would not change a first-delivery event:
+the FCM push is handled before the live transport projects the same reaction into the display outbox. The killed-
+path behavior this plan owns remains closed by the fallback card; the durable-arm residual and its product choice
+are recorded as G29 in the notification behavior map.
 
-**Why the fix is a separate plan.** Plan 386 W1 hit this exact wall on the group lane and wrote the reasoning down
+**Why a relay-counter alternative remained de-scoped.** Plan 386 W1 hit the provider-attribution wall on the group
+lane and wrote the reasoning down
 (`capture_group_reaction_notification_device.dart:4880-4899`): re-adding the relay lines is the known-wrong fix
 (the vocabulary is frozen by `push_permanent_error_closure_test.go:237-300`), and counting the surviving
 `[PUSH] outcome=success` is **also** wrong because it carries no attribution and one shared provider path emits it
 for every push type and every user on a PRODUCTION box. Its answer was an attributable **relay counter delta**,
 `relay_group_reaction_wake_total`. There is no 1:1 equivalent: the counter census over `go-relay-server/` has
 `relay_group_reaction_wake_total` and `relay_group_content_wake_total` and **no direct/1:1 reaction wake counter**.
-So the choice — add a relay counter and deploy, move provider attribution to the recipient device's own log
-(`PUSH_BACKGROUND_MESSAGE_RECEIVED` bound to the reaction event id), or accept the unattributed predicate — changes
-`sourceAttribution`'s meaning, touches the shared classifier, its four existing host tests, and TC-00's contract.
-That is a plan, not an execution detail.
+The chosen repair was the recipient's own direct-reaction crypto marker, which is device-bound and kind-specific;
+it leaves the shared relay classifier and relay deployment untouched. Adding a new relay counter remains separate
+work and is not required for this plan's provider attribution.
