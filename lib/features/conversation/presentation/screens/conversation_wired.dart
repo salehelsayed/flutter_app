@@ -1383,7 +1383,7 @@ class _ConversationWiredState extends State<ConversationWired>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _appLifecycleState =
-        WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
+        WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached;
     _contact = widget.contact;
     _uploadActivityController =
         ConversationUploadActivityController<_DirectComposerSnapshot>(

@@ -146,6 +146,7 @@ void main() {
     debugSetBackgroundGroupNotificationPostShowValidator(
       (_) async => BackgroundGroupNotificationPostShowDecision.keep,
     );
+    debugResetBackgroundDirectNotificationPostShowValidator();
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(notificationsChannel, (call) async {
@@ -173,6 +174,7 @@ void main() {
     debugResetBackgroundGroupReactionLocalStateResolver();
     debugResetBackgroundNotificationLocaleResolver();
     debugResetBackgroundGroupNotificationPostShowValidator();
+    debugResetBackgroundDirectNotificationPostShowValidator();
     debugResetBackgroundMessageNotificationCoordinatorResolver();
     debugResetBackgroundReactionNotificationCoordinatorResolver();
     debugResetBackgroundConversationNotificationIdRegistryResolver();
@@ -752,7 +754,7 @@ void main() {
   );
 
   test(
-    'registry retirement remains pre-publication and stale claim is reclaimable',
+    'registry allocation remains pre-publication and stale claim is reclaimable',
     () async {
       const eventId = 'group-publication-owner-event';
       const message = RemoteMessage(
@@ -772,15 +774,17 @@ void main() {
         pendingToneReservationWait: Duration.zero,
         claimTokenFactory: () => 'publication-owner',
       );
-      final retireEntered = Completer<void>();
-      final releaseRetire = Completer<void>();
+      final registryQueryEntered = Completer<void>();
+      final releaseRegistryQuery = Completer<void>();
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(notificationsChannel, (call) async {
             notificationCalls.add(call);
             if (call.method == 'initialize') return true;
-            if (call.method == 'cancel') {
-              if (!retireEntered.isCompleted) retireEntered.complete();
-              await releaseRetire.future;
+            if (call.method == 'getActiveNotifications') {
+              if (!registryQueryEntered.isCompleted) {
+                registryQueryEntered.complete();
+              }
+              await releaseRegistryQuery.future;
             }
             return null;
           });
@@ -788,8 +792,8 @@ void main() {
       final handler = firebaseMessagingBackgroundHandler(message);
       try {
         await _awaitSignal(
-          retireEntered.future,
-          'registry retirement before native publication',
+          registryQueryEntered.future,
+          'registry allocation before native publication',
         );
         now = now.add(const Duration(seconds: 61));
         final replacement =
@@ -805,11 +809,13 @@ void main() {
         expect(
           replacement.disposition,
           DurableNotificationClaimDisposition.acquired,
-          reason: 'registry work must not move the exact owner into publishing',
+          reason:
+              'registry allocation must not move the exact owner into '
+              'publishing',
         );
         expect(await replacement.claim!.commit(), isTrue);
 
-        releaseRetire.complete();
+        releaseRegistryQuery.complete();
         await handler.timeout(cleanupBudget);
         expect(
           _shownEventIdentities(notificationCalls),
@@ -825,7 +831,9 @@ void main() {
           DurableNotificationClaimDisposition.committedOrUnavailable,
         );
       } finally {
-        if (!releaseRetire.isCompleted) releaseRetire.complete();
+        if (!releaseRegistryQuery.isCompleted) {
+          releaseRegistryQuery.complete();
+        }
         await handler.timeout(cleanupBudget);
       }
     },
@@ -1086,13 +1094,17 @@ void main() {
         conversationKey: shown.conversationKey,
       );
 
-      expect(_cancelCount(notificationCalls), 1);
+      expect(
+        _cancelCount(notificationCalls),
+        0,
+        reason: 'unknown post-show authority keeps the committed generation',
+      );
 
       releaseValidator.complete(
         BackgroundGroupNotificationPostShowDecision.retire,
       );
       await Future<void>.delayed(lateEffectWindow);
-      expect(_cancelCount(notificationCalls), 1);
+      expect(_cancelCount(notificationCalls), 0);
       expect(
         await _storedMetadata(notificationIdRegistry, shown.conversationKey),
         shown.metadata,
@@ -1172,11 +1184,15 @@ void main() {
         conversationKey: shown.conversationKey,
       );
 
-      expect(_cancelCount(notificationCalls), 1);
+      expect(
+        _cancelCount(notificationCalls),
+        0,
+        reason: 'unknown post-show authority keeps the committed generation',
+      );
 
       releaseSecureRead.complete(null);
       await Future<void>.delayed(lateEffectWindow);
-      expect(_cancelCount(notificationCalls), 1);
+      expect(_cancelCount(notificationCalls), 0);
       expect(
         await _storedMetadata(notificationIdRegistry, shown.conversationKey),
         shown.metadata,

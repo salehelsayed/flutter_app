@@ -823,8 +823,7 @@ class _LinkedGroupConversationWiredState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final lifecycleState = WidgetsBinding.instance.lifecycleState;
-    _isLifecycleResumed =
-        lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
+    _isLifecycleResumed = lifecycleState == AppLifecycleState.resumed;
     _currentGroup = widget.group;
     if (_isLifecycleResumed) {
       widget.groupConversationTracker.setActive(_activeConversationKey);

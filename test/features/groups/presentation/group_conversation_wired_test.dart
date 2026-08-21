@@ -10088,6 +10088,14 @@ void main() {
     testWidgets(
       'linked protected announcement readers react while compose and stale authority stay closed',
       (tester) async {
+        addTearDown(() {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+        });
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         final group = makeAnnouncementGroup(role: GroupRole.member);
         var message = makeMessage(id: 'linked-announcement', text: 'Update');
         var currentGroup = group;
@@ -10764,8 +10772,92 @@ void main() {
     );
 
     testWidgets(
+      'TC-394-03 linked group read treats unknown lifecycle as non-resumed authority',
+      (tester) async {
+        final group = makeChatGroup(role: GroupRole.member);
+        final visibleIncoming = makeMessage(
+          id: 'linked-null-lifecycle-incoming',
+          text: 'Visible unread row',
+        );
+        final rows = <GroupMessage>[
+          visibleIncoming,
+          makeMessage(
+            id: 'linked-null-lifecycle-self',
+            text: 'Own row',
+            isIncoming: false,
+          ),
+          makeMessage(
+            id: 'linked-null-lifecycle-hidden',
+            text: r'{"__sys":"hidden"}',
+          ),
+        ];
+        final markedRows = <({String groupId, List<String> messageIds})>[];
+        final tracker = ActiveConversationTracker();
+        addTearDown(() {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+        });
+        tester.binding.resetInternalState();
+        expect(tester.binding.lifecycleState, isNull);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: LinkedGroupConversationWired(
+              group: group,
+              loadCurrentGroup: (_) async => group,
+              loadProtectedMessages: (_) async => rows,
+              loadProtectedReactions: (_) async => const {},
+              markVisibleMessagesRead: (groupId, messageIds) async {
+                markedRows.add((groupId: groupId, messageIds: messageIds));
+              },
+              groupConversationTracker: tracker,
+              isAuthoritySettled: (_) async => true,
+              canAuthorProtectedContent: (_) async => true,
+              sendProtectedText: (_, _) async => true,
+              toggleProtectedReaction:
+                  ({
+                    required groupId,
+                    required message,
+                    required emoji,
+                    required remove,
+                  }) async => true,
+            ),
+          ),
+        );
+        await pumpFrames(tester, count: 4);
+
+        expect(tracker.activePeerId, isNull);
+        expect(
+          markedRows,
+          isEmpty,
+          reason: 'a null lifecycle cannot activate or mark the linked group',
+        );
+
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpFrames(tester, count: 4);
+        expect(tracker.activePeerId, 'group:${group.id}');
+        expect(markedRows, hasLength(1));
+        expect(markedRows.single.groupId, group.id);
+        expect(markedRows.single.messageIds, <String>[visibleIncoming.id]);
+      },
+    );
+
+    testWidgets(
       'linked protected read marking requires a visible incoming row and settled authority',
       (tester) async {
+        addTearDown(() {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+        });
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         final group = makeChatGroup(role: GroupRole.member);
         var authoritySettled = true;
         var rows = <GroupMessage>[

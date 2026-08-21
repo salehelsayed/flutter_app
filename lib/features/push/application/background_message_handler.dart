@@ -489,6 +489,12 @@ _backgroundGroupReactionLocalStateResolver =
 BackgroundGroupNotificationPostShowValidator
 _backgroundGroupNotificationPostShowValidator =
     _validateBackgroundGroupNotificationAfterShowFromEncryptedDb;
+Future<BackgroundDirectNotificationPostShowDecision> Function({
+  required String peerId,
+  required ConversationNotificationContentMetadata metadata,
+})
+_backgroundDirectNotificationPostShowValidator =
+    _validateBackgroundDirectNotificationAfterShow;
 BackgroundDurableLocalNotificationEffectResolver
 _backgroundDurableLocalNotificationEffectResolver =
     _resolveBackgroundDurableLocalNotificationEffect;
@@ -629,6 +635,23 @@ void debugSetBackgroundGroupNotificationPostShowValidator(
 void debugResetBackgroundGroupNotificationPostShowValidator() {
   _backgroundGroupNotificationPostShowValidator =
       _validateBackgroundGroupNotificationAfterShowFromEncryptedDb;
+}
+
+@visibleForTesting
+void debugSetBackgroundDirectNotificationPostShowValidator(
+  Future<BackgroundDirectNotificationPostShowDecision> Function({
+    required String peerId,
+    required ConversationNotificationContentMetadata metadata,
+  })
+  validator,
+) {
+  _backgroundDirectNotificationPostShowValidator = validator;
+}
+
+@visibleForTesting
+void debugResetBackgroundDirectNotificationPostShowValidator() {
+  _backgroundDirectNotificationPostShowValidator =
+      _validateBackgroundDirectNotificationAfterShow;
 }
 
 @visibleForTesting
@@ -1413,7 +1436,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           try {
             final decision = await storageDeadline.run(
               'direct_post_show_validation',
-              () => _validateBackgroundDirectNotificationAfterShow(
+              () => _backgroundDirectNotificationPostShowValidator(
                 peerId: peerId,
                 metadata: metadata,
               ),
@@ -1761,7 +1784,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         try {
           final decision = await storageDeadline.run(
             'direct_post_show_validation',
-            () => _validateBackgroundDirectNotificationAfterShow(
+            () => _backgroundDirectNotificationPostShowValidator(
               peerId: peerId,
               metadata: contentMetadata!,
             ),

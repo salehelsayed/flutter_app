@@ -220,6 +220,12 @@ void main() {
   testWidgets(
     'TC-159-06c coalesced 1:1 burst marks read once-per-flush + surfaces live edge',
     (tester) async {
+      addTearDown(() {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      });
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pumpWidget(buildWidget());
       await pumpFrames(tester);
 

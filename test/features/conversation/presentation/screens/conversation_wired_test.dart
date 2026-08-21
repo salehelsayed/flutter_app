@@ -1994,6 +1994,124 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1));
   });
 
+  testWidgets(
+    'TC-394-01 direct read treats unknown initial lifecycle as non-resumed authority',
+    (tester) async {
+      const timestamp = '2026-08-21T08:30:00.000Z';
+      final repository = InMemoryMessageRepository();
+      await repository.saveMessage(
+        ConversationMessage(
+          id: 'tc-394-unknown-lifecycle',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'Unread before lifecycle authority is known',
+          timestamp: timestamp,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: timestamp,
+        ),
+      );
+      final tracker = ActiveConversationTracker();
+      addTearDown(() {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      });
+      tester.binding.resetInternalState();
+      expect(tester.binding.lifecycleState, isNull);
+
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: repository,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: repository,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        conversationTracker: tracker,
+      );
+
+      expect(tracker.isViewing(makeContact().peerId), isTrue);
+      expect(
+        await repository.getUnreadCountForContact(makeContact().peerId),
+        1,
+        reason: 'a null lifecycle has no foreground read authority',
+      );
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(
+        await repository.getUnreadCountForContact(makeContact().peerId),
+        0,
+        reason: 'explicit resume plus the exact tracked peer marks the row',
+      );
+    },
+  );
+
+  testWidgets('TC-394-02 direct read rechecks the exact peer after resume', (
+    tester,
+  ) async {
+    const timestamp = '2026-08-21T08:45:00.000Z';
+    final repository = InMemoryMessageRepository();
+    final unread = ConversationMessage(
+      id: 'tc-394-peer-mismatch',
+      contactPeerId: makeContact().peerId,
+      senderPeerId: makeContact().peerId,
+      text: 'Unread after active peer changes',
+      timestamp: timestamp,
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: timestamp,
+    );
+    final tracker = ActiveConversationTracker();
+    addTearDown(() {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    });
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      messageRepo: repository,
+      chatListener: ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: repository,
+        contactRepo: FakeContactRepository(),
+      ),
+      sendFn: _instantSuccessSendFn,
+      bridge: FakeBridge(),
+      conversationTracker: tracker,
+    );
+    expect(tracker.isViewing(makeContact().peerId), isTrue);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await repository.saveMessage(unread);
+    expect(await repository.getUnreadCountForContact(makeContact().peerId), 1);
+
+    tracker.setActive('12D3KooWDifferentPeer');
+    expect(tracker.activePeerId, '12D3KooWDifferentPeer');
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    expect(tracker.activePeerId, '12D3KooWDifferentPeer');
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.pump(const Duration(milliseconds: 1));
+
+    expect(tracker.isViewing(makeContact().peerId), isFalse);
+    expect(
+      await repository.getUnreadCountForContact(makeContact().peerId),
+      1,
+      reason: 'resume must recheck the current exact tracked peer',
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
   group('Plan 343 wired reaction attempt authority', () {
     ConversationMessage reactionMessage() => ConversationMessage(
       id: 'message-343',

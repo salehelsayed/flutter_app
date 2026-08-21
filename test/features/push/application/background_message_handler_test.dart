@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show Locale;
 
+import 'package:crypto/crypto.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -553,6 +554,7 @@ void main() {
   setUp(() async {
     flowEventLoggingEnabled = false;
     log.clear();
+    debugResetBackgroundDirectNotificationPostShowValidator();
 
     final backgroundGate = RecentBackgroundNotificationGate(
       filePath:
@@ -717,6 +719,7 @@ void main() {
     debugResetBackgroundDirectReactionLocalStateResolver();
     debugResetBackgroundGroupReactionLocalStateResolver();
     debugResetBackgroundGroupNotificationPostShowValidator();
+    debugResetBackgroundDirectNotificationPostShowValidator();
     debugResetBackgroundDurableLocalNotificationEffectResolver();
     debugResetBackgroundAppVisibilityResolver();
     debugResetBackgroundMessageNotificationCoordinatorResolver();
@@ -941,6 +944,379 @@ void main() {
               'ordinary timeout must fail toward one notification before the '
               'aggregate hard stop',
         );
+      },
+    );
+
+    test(
+      'TC-394-04 nondurable direct final barrier rolls back exact message and reaction owners',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundDurableLocalNotificationEffectResolver(
+          ({
+            required routeTarget,
+            required fallback,
+            required metadata,
+          }) async => null,
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        final scenarios =
+            <
+              ({
+                _DirectFinalBarrierLeg leg,
+                ConversationNotificationContentKind kind,
+                String suffix,
+                String peerId,
+                String rawEventIdentity,
+                String eventIdentity,
+                String claimType,
+                String payload,
+                String toneKey,
+                Map<String, dynamic> data,
+              })
+            >[
+              (
+                leg: _DirectFinalBarrierLeg.canonicalRead,
+                kind: ConversationNotificationContentKind.message,
+                suffix: 'message-canonical-read',
+                peerId: 'peer-final-message-read',
+                rawEventIdentity: 'message-final-canonical-read',
+                eventIdentity: 'message-final-canonical-read',
+                claimType: 'new_message',
+                payload: 'peer-final-message-read',
+                toneKey: 'peer-final-message-read',
+                data: <String, dynamic>{
+                  'type': 'new_message',
+                  'sender_id': 'peer-final-message-read',
+                  'message_id': 'message-final-canonical-read',
+                },
+              ),
+              (
+                leg: _DirectFinalBarrierLeg.exactVisible,
+                kind: ConversationNotificationContentKind.reaction,
+                suffix: 'reaction-exact-visible',
+                peerId: 'peer-final-reaction-visible',
+                rawEventIdentity: 'reaction-final-exact-visible',
+                eventIdentity: boundedReactionEventIdentity(
+                  'reaction-final-exact-visible',
+                ),
+                claimType: 'message_reaction',
+                payload:
+                    'peer-final-reaction-visible|message:'
+                    'target-final-reaction-visible',
+                toneKey:
+                    'peer-final-reaction-visible|message:'
+                    'target-final-reaction-visible',
+                data: <String, dynamic>{
+                  'type': 'message_reaction',
+                  'sender_id': 'peer-final-reaction-visible',
+                  'target_message_id': 'target-final-reaction-visible',
+                  'action': 'add',
+                  'event_id': 'reaction-final-exact-visible',
+                  'reaction_id': 'reaction-final-exact-visible',
+                },
+              ),
+              (
+                leg: _DirectFinalBarrierLeg.visibilityUnknown,
+                kind: ConversationNotificationContentKind.message,
+                suffix: 'message-visibility-unknown',
+                peerId: 'peer-final-visibility-unknown',
+                rawEventIdentity: 'message-final-visibility-unknown',
+                eventIdentity: 'message-final-visibility-unknown',
+                claimType: 'new_message',
+                payload: 'peer-final-visibility-unknown',
+                toneKey: 'peer-final-visibility-unknown',
+                data: <String, dynamic>{
+                  'type': 'new_message',
+                  'sender_id': 'peer-final-visibility-unknown',
+                  'message_id': 'message-final-visibility-unknown',
+                },
+              ),
+            ];
+
+        Future<void> expectPublishingOwners({
+          required Directory ownerDirectory,
+          required String claimType,
+          required String eventIdentity,
+          required String toneKey,
+          required String reason,
+        }) async {
+          final eventClaim = File(
+            '${ownerDirectory.path}/'
+            '${DurableNotificationToneLease.eventClaimsDirectoryName}/'
+            '${DurableNotificationToneLease.messageEventClaimFileName(type: claimType, eventIdentity: eventIdentity)}',
+          );
+          expect(eventClaim.existsSync(), isTrue, reason: '$reason event');
+          expect(
+            jsonDecode(await eventClaim.readAsString()),
+            containsPair('state', 'publishing'),
+            reason: '$reason exact event owner',
+          );
+
+          final toneDirectory = Directory(
+            '${ownerDirectory.path}/'
+            '${DurableNotificationToneLease.toneLeasesDirectoryName}',
+          );
+          expect(toneDirectory.existsSync(), isTrue, reason: '$reason tone');
+          final pendingToneOwners = toneDirectory
+              .listSync()
+              .whereType<File>()
+              .where(
+                (file) => file.path.endsWith(
+                  DurableNotificationToneLease.tonePendingReservationFileSuffix,
+                ),
+              )
+              .toList();
+          expect(
+            pendingToneOwners,
+            hasLength(1),
+            reason: '$reason sole tone sidecar',
+          );
+          final expectedPendingToneOwner = File(
+            '${toneDirectory.path}/.'
+            '${sha256.convert(utf8.encode(toneKey.trim()))}'
+            '${DurableNotificationToneLease.tonePendingReservationFileSuffix}',
+          );
+          expect(
+            pendingToneOwners.single.path,
+            expectedPendingToneOwner.path,
+            reason: '$reason exact tone-key owner',
+          );
+          expect(
+            jsonDecode(await pendingToneOwners.single.readAsString()),
+            containsPair('state', 'publishing'),
+            reason: '$reason exact tone owner',
+          );
+        }
+
+        for (final scenario in scenarios) {
+          // The lease snapshots its platform, so pin Android before creating
+          // any per-leg owner fixture.
+          debugDefaultTargetPlatformOverride = TargetPlatform.android;
+          final ownerDirectory = Directory.systemTemp.createTempSync(
+            'tc394-direct-final-${scenario.suffix}-',
+          );
+          addTearDown(() {
+            if (ownerDirectory.existsSync()) {
+              ownerDirectory.deleteSync(recursive: true);
+            }
+          });
+          final coordinator = DurableNotificationToneLease(
+            directory: ownerDirectory,
+            pendingClaimWait: Duration.zero,
+            pendingToneReservationWait: Duration.zero,
+            platform: TargetPlatform.android,
+          );
+          expect(
+            coordinator.platform,
+            TargetPlatform.android,
+            reason: '${scenario.suffix} must exercise Android publishing',
+          );
+          if (scenario.kind == ConversationNotificationContentKind.reaction) {
+            debugSetBackgroundReactionNotificationCoordinatorResolver(
+              () async => coordinator,
+            );
+          } else {
+            debugSetBackgroundMessageNotificationCoordinatorResolver(
+              () async => coordinator,
+            );
+          }
+          await useIsolatedBackgroundNotificationRegistry(
+            'tc394-${scenario.suffix}',
+          );
+
+          final fixedVisibility = FixedAppVisibility();
+          final controlledVisibility = switch (scenario.leg) {
+            _DirectFinalBarrierLeg.canonicalRead => null,
+            _DirectFinalBarrierLeg.exactVisible =>
+              _ControlledBackgroundVisibility(
+                evaluation: const AppVisibilityEvaluation(
+                  isForegroundActive: true,
+                  maySuppress: true,
+                ),
+              ),
+            _DirectFinalBarrierLeg.visibilityUnknown =>
+              _ControlledBackgroundVisibility(
+                failure: StateError('visibility unavailable'),
+              ),
+          };
+          debugSetBackgroundAppVisibilityResolver(
+            () async => controlledVisibility ?? fixedVisibility,
+          );
+
+          final validatorEntered = Completer<void>();
+          final canonicalRead =
+              scenario.leg == _DirectFinalBarrierLeg.canonicalRead
+              ? Completer<BackgroundDirectNotificationPostShowDecision>()
+              : null;
+          final validatedPeers = <String>[];
+          final validatedMetadata = <ConversationNotificationContentMetadata>[];
+          Future<BackgroundDirectNotificationPostShowDecision> validate({
+            required String peerId,
+            required ConversationNotificationContentMetadata metadata,
+          }) {
+            validatedPeers.add(peerId);
+            validatedMetadata.add(metadata);
+            if (!validatorEntered.isCompleted) validatorEntered.complete();
+            return canonicalRead?.future ??
+                Future<BackgroundDirectNotificationPostShowDecision>.value(
+                  BackgroundDirectNotificationPostShowDecision.keep,
+                );
+          }
+
+          debugSetBackgroundDirectNotificationPostShowValidator(validate);
+          debugSetBackgroundPushNotificationResolver(
+            (_) async => BackgroundPushNotificationFallback(
+              title:
+                  scenario.kind == ConversationNotificationContentKind.reaction
+                  ? 'Reaction'
+                  : 'Alice',
+              body:
+                  scenario.kind == ConversationNotificationContentKind.reaction
+                  ? 'Alice reacted to your message'
+                  : 'final barrier message',
+              payload: scenario.payload,
+              resolvedEventIdentity:
+                  ResolvedPushEventIdentity.authenticatedInner(
+                    kind: scenario.kind,
+                    canonicalEventId: scenario.rawEventIdentity,
+                  ),
+            ),
+          );
+          final events = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(events.add);
+          final showsBefore = log.where((call) => call.method == 'show').length;
+          final handling = firebaseMessagingBackgroundHandler(
+            RemoteMessage(
+              messageId: 'provider-${scenario.suffix}',
+              data: scenario.data,
+            ),
+          );
+
+          try {
+            if (scenario.leg == _DirectFinalBarrierLeg.canonicalRead) {
+              await validatorEntered.future.timeout(const Duration(seconds: 1));
+            } else {
+              await controlledVisibility!.entered.future.timeout(
+                const Duration(seconds: 1),
+              );
+            }
+            await validatorEntered.future.timeout(const Duration(seconds: 1));
+            expect(
+              validatedPeers,
+              <String>[scenario.peerId],
+              reason: '${scenario.suffix} exact validator peer at boundary',
+            );
+            expect(
+              validatedMetadata.single.kind,
+              scenario.kind,
+              reason: '${scenario.suffix} exact validator content kind',
+            );
+            expect(
+              validatedMetadata.single.eventIdentity,
+              scenario.eventIdentity,
+              reason: '${scenario.suffix} exact validator event identity',
+            );
+            if (controlledVisibility == null) {
+              expect(
+                fixedVisibility.evaluations,
+                0,
+                reason: 'canonical read must deny before visibility',
+              );
+            } else {
+              expect(controlledVisibility.identities, hasLength(1));
+              final identity = controlledVisibility.identities.single;
+              expect(identity?.lane, AppVisibilityConversationLane.direct);
+              expect(identity?.normalizedValue, scenario.peerId);
+            }
+            expect(
+              log.where((call) => call.method == 'show').length,
+              showsBefore,
+              reason: '${scenario.suffix} must hold before native show',
+            );
+            await expectPublishingOwners(
+              ownerDirectory: ownerDirectory,
+              claimType: scenario.claimType,
+              eventIdentity: scenario.eventIdentity,
+              toneKey: scenario.toneKey,
+              reason: scenario.suffix,
+            );
+          } finally {
+            if (canonicalRead != null && !canonicalRead.isCompleted) {
+              canonicalRead.complete(
+                BackgroundDirectNotificationPostShowDecision.read,
+              );
+            }
+            controlledVisibility?.release();
+            await handling.timeout(const Duration(seconds: 3));
+          }
+
+          final showsAfter = log.where((call) => call.method == 'show').length;
+          final ownershipSuppressions = events.where((event) {
+            if (event['event'] != 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED') {
+              return false;
+            }
+            final details = event['details'];
+            return details is Map &&
+                details['reason'] == 'event_claim_ownership_lost_before_show';
+          }).toList();
+          if (scenario.leg == _DirectFinalBarrierLeg.visibilityUnknown) {
+            expect(
+              showsAfter,
+              showsBefore + 1,
+              reason: 'unknown visibility must fail toward one notification',
+            );
+            expect(ownershipSuppressions, isEmpty);
+            expect(
+              validatedPeers,
+              everyElement(scenario.peerId),
+              reason: 'both pre/post-show reads retain the exact peer',
+            );
+            expect(validatedPeers, hasLength(2));
+          } else {
+            expect(showsAfter, showsBefore, reason: scenario.suffix);
+            expect(
+              ownershipSuppressions,
+              hasLength(1),
+              reason: '${scenario.suffix} exact suppression disposition',
+            );
+            expect(validatedPeers, hasLength(1));
+
+            final reacquiredEvent = await coordinator.acquireMessageEventClaim(
+              type: scenario.claimType,
+              eventIdentity: scenario.eventIdentity,
+            );
+            expect(
+              reacquiredEvent.disposition,
+              DurableNotificationClaimDisposition.acquired,
+              reason: '${scenario.suffix} event owner must roll back',
+            );
+            final reacquiredTone = await coordinator.reserveTone(
+              scenario.toneKey,
+            );
+            expect(
+              reacquiredTone,
+              isNotNull,
+              reason: '${scenario.suffix} tone owner must roll back',
+            );
+            expect(await reacquiredEvent.claim!.release(), isTrue);
+            expect(await reacquiredTone!.release(), isTrue);
+          }
+
+          if (ownerDirectory.existsSync()) {
+            ownerDirectory.deleteSync(recursive: true);
+          }
+        }
       },
     );
 
@@ -7065,6 +7441,37 @@ class _ThrowingToneReservationCoordinator extends DurableNotificationToneLease {
     String conversationKey,
   ) async {
     throw const FileSystemException('tone storage unavailable');
+  }
+}
+
+enum _DirectFinalBarrierLeg { canonicalRead, exactVisible, visibilityUnknown }
+
+final class _ControlledBackgroundVisibility
+    extends AppVisibilitySuppressionReader {
+  _ControlledBackgroundVisibility({this.evaluation, this.failure})
+    : assert(evaluation != null || failure != null);
+
+  final AppVisibilityEvaluation? evaluation;
+  final Object? failure;
+  final Completer<void> entered = Completer<void>();
+  final Completer<void> _released = Completer<void>();
+  final List<AppVisibilityConversationIdentity?> identities =
+      <AppVisibilityConversationIdentity?>[];
+
+  @override
+  Future<AppVisibilityEvaluation> evaluate(
+    AppVisibilityConversationIdentity? identity,
+  ) async {
+    identities.add(identity);
+    if (!entered.isCompleted) entered.complete();
+    await _released.future;
+    final capturedFailure = failure;
+    if (capturedFailure != null) throw capturedFailure;
+    return evaluation!;
+  }
+
+  void release() {
+    if (!_released.isCompleted) _released.complete();
   }
 }
 

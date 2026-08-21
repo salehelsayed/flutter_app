@@ -241,6 +241,10 @@ void main() {
   testWidgets('reaction activity never increments unread-message orbit state', (
     tester,
   ) async {
+    addTearDown(() {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    });
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     try {
       _setLargeTestSurface(tester);
       _suppressExpectedWidgetHarnessErrors();

@@ -1659,6 +1659,13 @@ void main() {
   testWidgets(
     'TC-364-04a linked runtime exposes only protected blob-free group content',
     (tester) async {
+      addTearDown(() {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      });
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
       final phases = <String>[];
       final phaseQuiescence = ProtectedGroupContentRuntimeQuiescence(
         pauseInboundAdmission: () async => phases.add('pause'),
