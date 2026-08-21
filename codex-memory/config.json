@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "state": {
+    "directory": "codex-memory/state",
+    "database": "graph.db",
+    "manifest": "manifest.json",
+    "telemetry": "usage.jsonl",
+    "hook_events": "hook-events.jsonl"
+  },
+  "freshness": {
+    "auto_refresh": true,
+    "check": "stat"
+  },
+  "retrieval": {
+    "default_budget": 300,
+    "hard_cap": 900,
+    "max_seeds": 12,
+    "max_hops": 1,
+    "edges_per_seed": 2,
+    "max_facts_per_document": 2,
+    "snippet_chars": 320,
+    "fts_candidates": 80
+  },
+  "documents": {
+    "max_file_bytes": 2500000,
+    "section_chunk_chars": 12000
+  },
+  "sources": [
+    {
+      "name": "tdd-plan-facts",
+      "adapter": "project_memory_plans",
+      "root": "Test-Flight-Improv",
+      "include": [
+        "*-tdd-plan.md"
+      ],
+      "exclude": [],
+      "minimum_files": 250,
+      "priority": 100
+    },
+    {
+      "name": "architecture-and-product-documents",
+      "adapter": "markdown_sections",
+      "root": ".",
+      "include": [
+        "Network-Arch/**/*.md",
+        "docs/**/*.md",
+        "UI-*/**/*.md"
+      ],
+      "exclude": [
+        "**/00-INDEX.md",
+        "**/*session-breakdown*.md",
+        "**/graphify-out/**"
+      ],
+      "minimum_files": 80,
+      "priority": 70
+    },
+    {
+      "name": "selected-project-history",
+      "adapter": "markdown_sections",
+      "root": "Test-Flight-Improv",
+      "include": [
+        "*.md"
+      ],
+      "exclude": [
+        "*-tdd-plan.md",
+        "*session-breakdown*.md",
+        "00-INDEX.md"
+      ],
+      "path_regex": "(?i)(spec|prd|decision|architecture|roadmap|audit|runsheet|matrix|policy|contract|review|finding|gap|todo)",
+      "minimum_files": 100,
+      "priority": 60
+    },
+    {
+      "name": "knowledge-system-documents",
+      "adapter": "markdown_sections",
+      "root": ".",
+      "include": [
+        "project-memory/*.md",
+        "codex-memory/*.md"
+      ],
+      "exclude": [],
+      "minimum_files": 5,
+      "priority": 50
+    }
+  ],
+  "evaluation": {
+    "plan_questions": "project-memory/eval/expected_facts.json",
+    "document_questions": "codex-memory/eval/document_questions.json"
+  }
+}

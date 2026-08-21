@@ -42,6 +42,9 @@ GATE_SCRIPTS = (
     ROOT / "scripts" / "run_host_test_gates.sh",
 )
 STATS_PATH = ROOT / "graphify-out" / "context_query_stats.jsonl"
+REMINDER_STATS_PATH = (
+    ARCH_DIR / "graphify-out" / "cache" / "codex-reminder" / "events.jsonl"
+)
 OVERLAY_VERSION = 3
 USAGE_SCHEMA_VERSION = 3
 TRUNCATION_PREFIX = "... truncated at ~"
@@ -1787,6 +1790,79 @@ def _usage_records_for_session(
     ]
 
 
+def _reminder_records_for_session(
+    session_sha256: str,
+    *,
+    path: Path = REMINDER_STATS_PATH,
+) -> list[dict[str, Any]]:
+    if session_sha256 == "unknown":
+        return []
+    records: list[dict[str, Any]] = []
+    try:
+        handle = path.open(encoding="utf-8")
+    except OSError:
+        return records
+    with handle:
+        for line in handle:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(row, dict)
+                and row.get("schema_version") == 1
+                and row.get("session_sha256") == session_sha256
+            ):
+                records.append(row)
+    return records
+
+
+def _reminder_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize whether a new Graphify context followed each advisory."""
+    grouped: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in records:
+        grouped[str(row.get("agent_sha256") or "root")].append(row)
+
+    reminders = 0
+    initial = 0
+    ceiling = 0
+    responded = 0
+    ignored = 0
+    pending = 0
+    for agent_records in grouped.values():
+        for index, row in enumerate(agent_records):
+            reminder = row.get("reminder")
+            if reminder not in {"initial", "ceiling"}:
+                continue
+            reminders += 1
+            initial += int(reminder == "initial")
+            ceiling += int(reminder == "ceiling")
+            outcome = "pending"
+            for later in agent_records[index + 1 :]:
+                if later.get("event") == "context":
+                    outcome = "responded"
+                    break
+                if later.get("reminder") in {"initial", "ceiling"}:
+                    outcome = "ignored"
+                    break
+            responded += int(outcome == "responded")
+            ignored += int(outcome == "ignored")
+            pending += int(outcome == "pending")
+    return {
+        "hook_tracking": bool(records),
+        "hook_code_browse_events": sum(
+            row.get("event") == "code_browse" for row in records
+        ),
+        "hook_context_events": sum(row.get("event") == "context" for row in records),
+        "hook_reminders": reminders,
+        "hook_initial_reminders": initial,
+        "hook_ceiling_reminders": ceiling,
+        "hook_reminders_responded": responded,
+        "hook_reminders_ignored": ignored,
+        "hook_reminders_pending": pending,
+    }
+
+
 def _nearest_rank_p95(values: list[int]) -> int:
     if not values:
         return 0
@@ -2112,6 +2188,7 @@ def _session_audit(
     *,
     root: Path = ROOT,
     usage_path: Path = STATS_PATH,
+    reminder_path: Path = REMINDER_STATS_PATH,
 ) -> dict[str, Any]:
     tool_calls = 0
     exec_commands = 0
@@ -2329,6 +2406,9 @@ def _session_audit(
 
     session_sha256 = _session_digest(_session_id(path))
     usage_records = _usage_records_for_session(session_sha256, path=usage_path)
+    reminder_metrics = _reminder_metrics(
+        _reminder_records_for_session(session_sha256, path=reminder_path)
+    )
     canonical_queries = [
         row
         for row in usage_records
@@ -2553,6 +2633,7 @@ def _session_audit(
         else None,
         "handoff_status": handoff_status,
         "handoff_detail": handoff_detail,
+        **reminder_metrics,
         **cadence,
     }
 
@@ -2604,6 +2685,19 @@ def _session_audit_lines(audit: dict[str, Any]) -> list[str]:
         f"{audit['handoff_detail']}",
         "- output-token and whole-file counts are heuristic; plan/spec and code reads are kept separate",
     ]
+    if audit["hook_tracking"]:
+        lines.insert(
+            -1,
+            "- advisory hook: "
+            f"raw={audit['hook_code_browse_events']}; "
+            f"contexts={audit['hook_context_events']}; "
+            f"reminders={audit['hook_reminders']} "
+            f"(initial={audit['hook_initial_reminders']}, "
+            f"ceiling={audit['hook_ceiling_reminders']}); outcomes="
+            f"responded={audit['hook_reminders_responded']}, "
+            f"ignored={audit['hook_reminders_ignored']}, "
+            f"pending={audit['hook_reminders_pending']}",
+        )
     if audit.get("latest_query_id"):
         lines.append(
             "- carry forward: "
@@ -2622,7 +2716,7 @@ def _aggregate_session_audit_lines(audits: list[dict[str, Any]]) -> list[str]:
         audit for audit in audits if audit["handoff_status"] in {"pass", "fail"}
     ]
     passed = sum(audit["handoff_status"] == "pass" for audit in eligible)
-    return [
+    lines = [
         f"Codex/Graphify session audit: {len(audits)} recent sessions",
         f"- plan→code handoff: {passed}/{len(eligible)} compliant"
         if eligible
@@ -2662,6 +2756,17 @@ def _aggregate_session_audit_lines(audits: list[dict[str, Any]]) -> list[str]:
         f"{sum(a['branch_markers'] for a in audits)}",
         "- output-token and whole-file counts are heuristic; plan/spec and code reads are kept separate",
     ]
+    tracked = [audit for audit in audits if audit["hook_tracking"]]
+    if tracked:
+        lines.insert(
+            -1,
+            f"- advisory hook: tracked={len(tracked)}/{len(audits)} sessions; "
+            f"reminders={sum(a['hook_reminders'] for a in tracked)}; outcomes="
+            f"responded={sum(a['hook_reminders_responded'] for a in tracked)}, "
+            f"ignored={sum(a['hook_reminders_ignored'] for a in tracked)}, "
+            f"pending={sum(a['hook_reminders_pending'] for a in tracked)}",
+        )
+    return lines
 
 
 def _workflow_gates(
@@ -2718,6 +2823,18 @@ def _workflow_gates(
             else None,
             f"edit-calls={audit['code_change_calls']} affected="
             f"{audit['affected_queries']}",
+        ),
+        (
+            "advisory reminder response",
+            audit["hook_reminders_ignored"] == 0
+            if (
+                audit["hook_reminders_responded"]
+                + audit["hook_reminders_ignored"]
+            )
+            else None,
+            f"responded={audit['hook_reminders_responded']} "
+            f"ignored={audit['hook_reminders_ignored']} "
+            f"pending={audit['hook_reminders_pending']}",
         ),
     ]
 

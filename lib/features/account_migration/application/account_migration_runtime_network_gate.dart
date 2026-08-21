@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_app/features/account_migration/domain/repositories/account_migration_authority_repository.dart';
 
@@ -13,7 +14,20 @@ class AccountMigrationRuntimeStartupSteps {
     if (_completedSteps.contains(step)) {
       return;
     }
+    // DIAG: a step that never returns strands the whole runtime start, and
+    // therefore the node start that awaits it. Name the step on both edges so
+    // the last BEGIN without an END identifies the hang.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RUNTIME_STARTUP_STEP_BEGIN',
+      details: {'step': step},
+    );
     await action();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RUNTIME_STARTUP_STEP_END',
+      details: {'step': step},
+    );
     _completedSteps.add(step);
   }
 

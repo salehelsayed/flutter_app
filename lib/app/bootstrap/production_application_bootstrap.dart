@@ -16,6 +16,7 @@ import 'package:flutter_app/app/bootstrap/production_canonical_direct_projection
 import 'package:flutter_app/app/bootstrap/production_canonical_group_replay_composition.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
+import 'package:flutter_app/app/bootstrap/best_effort_startup_backfill.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_import_precondition.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart'
@@ -8900,19 +8901,36 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         'group_media_blob_local_cleanup',
         cleanupGroupMediaBlobCustodyLocally,
       );
+      // These two are self-healing maintenance backfills: they re-run on every
+      // launch and a re-run over an already-populated projection is a
+      // near-zero-write no-op. They must therefore NEVER be able to abort the
+      // deferred runtime start. They used to: on a fresh install the group
+      // notification projection has no owner yet, the sender-authority mirror
+      // threw `group notification projection owner is unavailable`, and that
+      // error propagated out of startLiveServices -> RoleAwareDeferredRuntimeStart
+      // -> the startup latch -> `StartupRouter._doStartP2P`, whose
+      // `await ensureRuntimeServicesReady()` then threw before ever reaching
+      // `startP2PNode`. The node stayed down and the badge read "Offline" until
+      // the app was relaunched (device-reproduced 2026-08-21, iPhone 11 + 13).
       final groupContextBackfill = keychainMirrorBackfill;
       if (groupContextBackfill != null) {
         await liveServiceStartupSteps.runAsync(
           'group_context_backfill',
           () async {
-            await groupContextBackfill;
+            await runBestEffortStartupBackfill(
+              'group_context_backfill',
+              () => groupContextBackfill,
+            );
           },
         );
       }
       await liveServiceStartupSteps.runAsync(
         'group_reaction_comparand_backfill',
         () async {
-          await groupReactionComparandBackfill;
+          await runBestEffortStartupBackfill(
+            'group_reaction_comparand_backfill',
+            () => groupReactionComparandBackfill,
+          );
         },
       );
       if (liveServicesStarted) {

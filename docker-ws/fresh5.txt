@@ -1,0 +1,111 @@
+[connected:00008030-001A6D2801BB802E]
+Aug 21 18:22:40.950133 Runner(UIKitCore)[5155] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x157568040>
+Aug 21 18:22:40.950308 Runner(UIKitCore)[5155] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:22:40.950339 Runner(UIKitCore)[5155] <Notice>: Creating new background assertion
+Aug 21 18:22:40.950372 Runner(UIKitCore)[5155] <Notice>: Created new background assertion <BKSProcessAssertion: 0x1573c0550>
+Aug 21 18:22:40.950393 Runner(RunningBoardServices)[5155] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 26 for com.mknoon.app" ID:(null) target:5155>
+Aug 21 18:22:40.951137 Runner(RunningBoardServices)[5155] <Debug>: Adding assertion 34-5155-36334 to dictionary
+Aug 21 18:22:40.951180 Runner(UIKitCore)[5155] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:22:40.951211 Runner(UIKitCore)[5155] <Notice>: Created background task <private>.
+Aug 21 18:22:40.953484 Runner(UIKitCore)[5155] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 38
+Aug 21 18:22:40.953537 Runner(UIKitCore)[5155] <Notice>: Ending task with identifier 38 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x157568040>
+Aug 21 18:22:40.953562 Runner(UIKitCore)[5155] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x1575680c0>
+Aug 21 18:22:40.953634 Runner(UIKitCore)[5155] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 38: <private>)
+Aug 21 18:22:40.953682 Runner(UIKitCore)[5155] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x1573c0550> for task identifier: 38
+Aug 21 18:22:40.953710 Runner(UIKitCore)[5155] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:22:40.953731 Runner(UIKitCore)[5155] <Notice>: Creating new background assertion
+Aug 21 18:22:40.953850 Runner(UIKitCore)[5155] <Notice>: Created new background assertion <BKSProcessAssertion: 0x1573c0550>
+Aug 21 18:22:40.953871 Runner(RunningBoardServices)[5155] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 27 for com.mknoon.app" ID:(null) target:5155>
+Aug 21 18:22:40.954448 Runner(RunningBoardServices)[5155] <Debug>: Adding assertion 34-5155-36335 to dictionary
+Aug 21 18:22:40.954482 Runner(UIKitCore)[5155] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:22:40.954548 Runner(UIKitCore)[5155] <Notice>: Created background task <private>.
+Aug 21 18:22:40.956342 Runner(UIKitCore)[5155] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 39
+Aug 21 18:22:40.956384 Runner(UIKitCore)[5155] <Notice>: Ending task with identifier 39 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x157568080>
+Aug 21 18:22:40.956406 Runner(UIKitCore)[5155] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 39: <private>)
+Aug 21 18:22:40.956449 Runner(UIKitCore)[5155] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x157568300>
+Aug 21 18:22:40.956473 Runner(UIKitCore)[5155] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x1573c0550> for task identifier: 39
+Aug 21 18:22:40.956493 Runner(UIKitCore)[5155] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:22:40.956624 Runner(UIKitCore)[5155] <Notice>: Creating new background assertion
+Aug 21 18:22:40.956650 Runner(UIKitCore)[5155] <Notice>: Created new background assertion <BKSProcessAssertion: 0x1573c0550>
+Aug 21 18:22:40.956675 Runner(RunningBoardServices)[5155] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 28 for com.mknoon.app" ID:(null) target:5155>
+Aug 21 18:22:40.957222 Runner(RunningBoardServices)[5155] <Debug>: Adding assertion 34-5155-36336 to dictionary
+Aug 21 18:22:40.957291 Runner(UIKitCore)[5155] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:22:40.957327 Runner(UIKitCore)[5155] <Notice>: Created background task <private>.
+Aug 21 18:22:40.959257 Runner(UIKitCore)[5155] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 40
+Aug 21 18:22:40.959387 Runner(UIKitCore)[5155] <Notice>: Ending task with identifier 40 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x1575680c0>
+Aug 21 18:22:40.959427 Runner(UIKitCore)[5155] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x157568080>
+Aug 21 18:22:40.959446 Runner(UIKitCore)[5155] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 40: <private>)
+Aug 21 18:22:40.959497 Runner(UIKitCore)[5155] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x1573c0550> for task identifier: 40
+Aug 21 18:22:40.959531 Runner(UIKitCore)[5155] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:22:40.959662 Runner(UIKitCore)[5155] <Notice>: Creating new background assertion
+Aug 21 18:22:40.959686 Runner(UIKitCore)[5155] <Notice>: Created new background assertion <BKSProcessAssertion: 0x1573c0550>
+Aug 21 18:22:40.959702 Runner(RunningBoardServices)[5155] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 29 for com.mknoon.app" ID:(null) target:5155>
+Aug 21 18:22:40.959884 Runner(RunningBoardServices)[5155] <Debug>: Adding assertion 34-5155-36337 to dictionary
+Aug 21 18:22:40.959930 Runner(UIKitCore)[5155] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:22:40.960091 Runner(UIKitCore)[5155] <Notice>: Created background task <private>.
+Aug 21 18:22:40.961674 Runner(UIKitCore)[5155] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 41
+Aug 21 18:22:40.961717 Runner(UIKitCore)[5155] <Notice>: Ending task with identifier 41 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x157568300>
+Aug 21 18:22:40.961740 Runner(UIKitCore)[5155] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 41: <private>)
+Aug 21 18:22:40.961759 Runner(UIKitCore)[5155] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x1573c0550> for task identifier: 41
+Aug 21 18:23:10.226101 Runner(CoreServicesInternal)[5155] <Notice>: kExcludedFromBackupXattrName set on path: <private>
+Aug 21 18:23:10.230166 Runner(Flutter)[5155] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:23:10.229929Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PRESENCE_SELF_PUBLISH","details":{"state":"foreground"}}
+Aug 21 18:23:10.230682 Runner(Security)[5155] <Info>: SecItemCopyMatching_ios
+Aug 21 18:23:10.231778 Runner(Security)[5155] <Info>: SecItemCopyMatching_ios
+Aug 21 18:23:10.232427 Runner(Flutter)[5155] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:23:10.232175Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_SERVICE_SET_PRESENCE_BEGIN","details":{"state":"foreground","ttlMs":180000}}
+Aug 21 18:23:10.232466 Runner(Flutter)[5155] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:23:10.232321Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_RELAY_PRESENCE_SET_REQUEST","details":{"state":"foreground","ttlMs":180000}}
+Aug 21 18:23:10.232585 Runner(Flutter)[5155] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:23:10.232439Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GO_BRIDGE_SEND","details":{"cmd":"relay:presence_set","method":"relayPresenceSet"}}
+Aug 21 18:23:10.233084 Runner(Flutter)[5155] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:23:10.232853Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"BRIDGE_CALL_TIMING","details":{"cmd":"relay:presence_set","bridgeMs":0,"outcome":"success"}}
+Aug 21 18:23:10.233119 Runner(Flutter)[5155] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:23:10.232942Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_RELAY_PRESENCE_SET_RESPONSE","details":{"ok":false,"unsupported":false,"state":"foreground"}}
+Aug 21 18:23:10.233141 Runner(Flutter)[5155] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:23:10.233006Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_SERVICE_SET_PRESENCE_FAILED","details":{"state":"foreground","ok":false}}
+Aug 21 18:23:11.250553 Runner(UIKitCore)[5155] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x1575680c0>
+Aug 21 18:23:11.250734 Runner(UIKitCore)[5155] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:23:11.250814 Runner(UIKitCore)[5155] <Notice>: Creating new background assertion
+Aug 21 18:23:11.250896 Runner(UIKitCore)[5155] <Notice>: Created new background assertion <BKSProcessAssertion: 0x1573c05f0>
+Aug 21 18:23:11.250952 Runner(RunningBoardServices)[5155] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 30 for com.mknoon.app" ID:(null) target:5155>
+Aug 21 18:23:11.251339 Runner(RunningBoardServices)[5155] <Debug>: Adding assertion 34-5155-36338 to dictionary
+Aug 21 18:23:11.251384 Runner(UIKitCore)[5155] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:23:11.251406 Runner(UIKitCore)[5155] <Notice>: Created background task <private>.
+Aug 21 18:23:11.253874 Runner(UIKitCore)[5155] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 42
+Aug 21 18:23:11.256328 Runner(UIKitCore)[5155] <Notice>: Ending task with identifier 42 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x1575680c0>
+Aug 21 18:23:11.256518 Runner(UIKitCore)[5155] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 42: <private>)
+Aug 21 18:23:11.256556 Runner(UIKitCore)[5155] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x157568080>
+Aug 21 18:23:11.256579 Runner(UIKitCore)[5155] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x1573c05f0> for task identifier: 42
+Aug 21 18:23:11.256608 Runner(UIKitCore)[5155] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:23:11.256623 Runner(UIKitCore)[5155] <Notice>: Creating new background assertion
+Aug 21 18:23:11.256712 Runner(UIKitCore)[5155] <Notice>: Created new background assertion <BKSProcessAssertion: 0x1573c05f0>
+Aug 21 18:23:11.256929 Runner(RunningBoardServices)[5155] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 31 for com.mknoon.app" ID:(null) target:5155>
+Aug 21 18:23:11.256975 Runner(RunningBoardServices)[5155] <Debug>: Adding assertion 34-5155-36339 to dictionary
+Aug 21 18:23:11.256990 Runner(UIKitCore)[5155] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:23:11.257039 Runner(UIKitCore)[5155] <Notice>: Created background task <private>.
+Aug 21 18:23:11.257132 Runner(UIKitCore)[5155] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 43
+Aug 21 18:23:11.257188 Runner(UIKitCore)[5155] <Notice>: Ending task with identifier 43 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x157568300>
+Aug 21 18:23:11.257361 Runner(UIKitCore)[5155] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x1575680c0>
+Aug 21 18:23:11.257379 Runner(UIKitCore)[5155] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 43: <private>)
+Aug 21 18:23:11.257395 Runner(UIKitCore)[5155] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x1573c05f0> for task identifier: 43
+Aug 21 18:23:11.257426 Runner(UIKitCore)[5155] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:23:11.257472 Runner(UIKitCore)[5155] <Notice>: Creating new background assertion
+Aug 21 18:23:11.257546 Runner(UIKitCore)[5155] <Notice>: Created new background assertion <BKSProcessAssertion: 0x1573c05f0>
+Aug 21 18:23:11.257593 Runner(RunningBoardServices)[5155] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 32 for com.mknoon.app" ID:(null) target:5155>
+Aug 21 18:23:11.258139 Runner(RunningBoardServices)[5155] <Debug>: Adding assertion 34-5155-36340 to dictionary
+Aug 21 18:23:11.258247 Runner(UIKitCore)[5155] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:23:11.258481 Runner(UIKitCore)[5155] <Notice>: Created background task <private>.
+Aug 21 18:23:11.260080 Runner(UIKitCore)[5155] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 44
+Aug 21 18:23:11.260238 Runner(UIKitCore)[5155] <Notice>: Ending task with identifier 44 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x157568080>
+Aug 21 18:23:11.260282 Runner(UIKitCore)[5155] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 44: <private>)
+Aug 21 18:23:11.260301 Runner(UIKitCore)[5155] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x1573c05f0> for task identifier: 44
+Aug 21 18:23:11.260316 Runner(UIKitCore)[5155] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x157568100>
+Aug 21 18:23:11.260330 Runner(UIKitCore)[5155] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:23:11.260343 Runner(UIKitCore)[5155] <Notice>: Creating new background assertion
+Aug 21 18:23:11.260365 Runner(UIKitCore)[5155] <Notice>: Created new background assertion <BKSProcessAssertion: 0x1573c05f0>
+Aug 21 18:23:11.260449 Runner(RunningBoardServices)[5155] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 33 for com.mknoon.app" ID:(null) target:5155>
+Aug 21 18:23:11.261050 Runner(RunningBoardServices)[5155] <Debug>: Adding assertion 34-5155-36341 to dictionary
+Aug 21 18:23:11.261132 Runner(UIKitCore)[5155] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:23:11.261274 Runner(UIKitCore)[5155] <Notice>: Created background task <private>.
+Aug 21 18:23:11.263011 Runner(UIKitCore)[5155] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 45
+Aug 21 18:23:11.263445 Runner(UIKitCore)[5155] <Notice>: Ending task with identifier 45 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x157568100>
+Aug 21 18:23:11.263509 Runner(UIKitCore)[5155] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 45: <private>)
+Aug 21 18:23:11.263533 Runner(UIKitCore)[5155] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x1573c05f0> for task identifier: 45
+Aug 21 18:23:25.016487 Runner(libxpc.dylib)[5155] <Notice>: [0x156eb0640] Re-initialization successful; calling out to event handler with XPC_ERROR_CONNECTION_INTERRUPTED
+
+Exiting...
+[disconnected:00008030-001A6D2801BB802E]

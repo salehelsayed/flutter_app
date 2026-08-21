@@ -1,0 +1,341 @@
+[connected:00008030-001A6D2801BB802E]
+Aug 21 18:24:40.501410 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.501918 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.502034 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.502165 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.502244 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.502317 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.502413 Runner(Network)[5160] <Debug>: nw_channel_purge_idle_block_invoke Purging channel packet pool after going idle
+Aug 21 18:24:40.502489 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.502561 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.502611 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.502667 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.502716 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.502758 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.502954 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.503006 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.503062 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.503107 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.503150 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.503192 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.503235 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.503279 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.503323 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.503365 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:40.503411 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:24:40.503473 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:24:55.658835 Runner(CoreFoundation)[5160] <Debug>: Resource lookup at <private>
+	Request       : InfoPlist type: strings
+	Result        : None
+Aug 21 18:24:55.659006 Runner(CoreFoundation)[5160] <Debug>: Resource lookup at <private>
+	Request       : InfoPlist type: stringsdict
+	Result        : None
+Aug 21 18:24:55.660972 Runner(CoreAnalytics)[5160] <Info>: Dropping "com.apple.metal.agx" as it isn't used in any transform (not in the config or budgeted?)
+Aug 21 18:24:56.196847 Runner(CoreServicesInternal)[5160] <Notice>: kExcludedFromBackupXattrName set on path: <private>
+Aug 21 18:24:56.201292 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:24:56.200713Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PRESENCE_SELF_PUBLISH","details":{"state":"foreground"}}
+Aug 21 18:24:56.201464 Runner(Security)[5160] <Info>: SecItemCopyMatching_ios
+Aug 21 18:24:56.201878 Runner(Security)[5160] <Notice>: SecSecurityClientGet new thread!
+Aug 21 18:24:56.204764 Runner(Security)[5160] <Info>: SecItemCopyMatching_ios
+Aug 21 18:24:56.205635 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:24:56.205330Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_SERVICE_SET_PRESENCE_BEGIN","details":{"state":"foreground","ttlMs":180000}}
+Aug 21 18:24:56.205804 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:24:56.205567Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_RELAY_PRESENCE_SET_REQUEST","details":{"state":"foreground","ttlMs":180000}}
+Aug 21 18:24:56.205904 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:24:56.205740Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GO_BRIDGE_SEND","details":{"cmd":"relay:presence_set","method":"relayPresenceSet"}}
+Aug 21 18:24:56.206435 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:24:56.206279Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"BRIDGE_CALL_TIMING","details":{"cmd":"relay:presence_set","bridgeMs":0,"outcome":"success"}}
+Aug 21 18:24:56.206571 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:24:56.206386Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_RELAY_PRESENCE_SET_RESPONSE","details":{"ok":false,"unsupported":false,"state":"foreground"}}
+Aug 21 18:24:56.206646 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:24:56.206474Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_SERVICE_SET_PRESENCE_FAILED","details":{"state":"foreground","ok":false}}
+Aug 21 18:24:56.411746 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x159645580>
+Aug 21 18:24:56.412094 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:24:56.412200 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:24:56.412278 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd5540>
+Aug 21 18:24:56.412403 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 4 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:24:56.412457 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36385 to dictionary
+Aug 21 18:24:56.412635 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:24:56.412736 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:24:56.414910 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 11
+Aug 21 18:24:56.414956 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 11 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x159645580>
+Aug 21 18:24:56.414991 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x159645740>
+Aug 21 18:24:56.415051 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 11: <private>)
+Aug 21 18:24:56.415162 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd5540> for task identifier: 11
+Aug 21 18:24:56.415182 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:24:56.415294 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:24:56.415317 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd5540>
+Aug 21 18:24:56.415333 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 5 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:24:56.415745 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36386 to dictionary
+Aug 21 18:24:56.415820 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:24:56.415868 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:24:56.417668 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 12
+Aug 21 18:24:56.417713 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 12 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x1596442c0>
+Aug 21 18:24:56.417767 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 12: <private>)
+Aug 21 18:24:56.417792 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd5540> for task identifier: 12
+Aug 21 18:24:56.417834 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x1596458c0>
+Aug 21 18:24:56.417881 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:24:56.417926 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:24:56.417986 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd5540>
+Aug 21 18:24:56.418040 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 6 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:24:56.418397 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36387 to dictionary
+Aug 21 18:24:56.418506 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:24:56.418528 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:24:56.420394 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 13
+Aug 21 18:24:56.420505 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 13 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x159645740>
+Aug 21 18:24:56.420544 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 13: <private>)
+Aug 21 18:24:56.420601 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x1596455c0>
+Aug 21 18:24:56.420658 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd5540> for task identifier: 13
+Aug 21 18:24:56.420763 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:24:56.420835 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:24:56.420889 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd5540>
+Aug 21 18:24:56.420947 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 7 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:24:56.421443 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36388 to dictionary
+Aug 21 18:24:56.421495 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:24:56.421548 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:24:56.422892 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 14
+Aug 21 18:24:56.422935 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 14 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x1596458c0>
+Aug 21 18:24:56.422959 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 14: <private>)
+Aug 21 18:24:56.422980 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd5540> for task identifier: 14
+Aug 21 18:25:10.500812 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.501075 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.501142 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.501295 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.501383 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.501532 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.501596 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.501642 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.501706 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.501754 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.501800 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.501847 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.501892 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.501977 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.502021 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.502061 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.502100 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.502158 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.502204 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.502254 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.502340 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.502378 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:10.502417 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:10.502611 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:26.308150 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x1596455c0>
+Aug 21 18:25:26.308340 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:25:26.308378 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:25:26.309899 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd5400>
+Aug 21 18:25:26.309959 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 8 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:25:26.310742 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36389 to dictionary
+Aug 21 18:25:26.310867 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:25:26.310937 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:25:26.313042 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 15
+Aug 21 18:25:26.313086 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 15 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x159645ac0>
+Aug 21 18:25:26.313110 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x159644280>
+Aug 21 18:25:26.313136 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 15: <private>)
+Aug 21 18:25:26.313284 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd5400> for task identifier: 15
+Aug 21 18:25:26.313313 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:25:26.313450 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:25:26.313484 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd5400>
+Aug 21 18:25:26.313500 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 9 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:25:26.313944 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36390 to dictionary
+Aug 21 18:25:26.313981 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:25:26.314045 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:25:26.315939 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 16
+Aug 21 18:25:26.315986 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 16 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x1596458c0>
+Aug 21 18:25:26.316008 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x159645740>
+Aug 21 18:25:26.316129 Runner(UIKitCore)[5160] <Notice>: Reusing background assertion <BKSProcessAssertion: 0x158cd5400>
+Aug 21 18:25:26.316161 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:25:26.316178 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 16: <private>)
+Aug 21 18:25:26.316197 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:25:26.317495 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 17
+Aug 21 18:25:26.317618 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 17 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x159645740>
+Aug 21 18:25:26.317654 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x1596457c0>
+Aug 21 18:25:26.317679 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 17: <private>)
+Aug 21 18:25:26.317869 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd5400> for task identifier: 17
+Aug 21 18:25:26.317901 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:25:26.317915 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:25:26.317983 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd5400>
+Aug 21 18:25:26.318080 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 10 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:25:26.318127 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36391 to dictionary
+Aug 21 18:25:26.318258 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:25:26.318289 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:25:26.320032 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 18
+Aug 21 18:25:26.320075 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 18 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x1596458c0>
+Aug 21 18:25:26.320099 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 18: <private>)
+Aug 21 18:25:26.320118 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd5400> for task identifier: 18
+Aug 21 18:25:40.504144 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.504328 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.504348 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.504363 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.504456 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.504917 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.504948 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.505247 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.505271 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.505286 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.505299 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.505312 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.505324 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.505458 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.505474 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.505609 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.505629 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.505667 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.505682 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.505815 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.505849 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.505864 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:40.505964 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:40.506045 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.156645 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x159644340>
+Aug 21 18:25:56.156813 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:25:56.156850 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:25:56.156890 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd6760>
+Aug 21 18:25:56.156917 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 11 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:25:56.157623 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36392 to dictionary
+Aug 21 18:25:56.157664 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:25:56.157757 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:25:56.159976 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 19
+Aug 21 18:25:56.160025 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 19 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x159644340>
+Aug 21 18:25:56.160049 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x159644280>
+Aug 21 18:25:56.160153 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 19: <private>)
+Aug 21 18:25:56.160190 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd6760> for task identifier: 19
+Aug 21 18:25:56.160205 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:25:56.160343 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:25:56.160384 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd6760>
+Aug 21 18:25:56.160401 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 12 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:25:56.160863 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36393 to dictionary
+Aug 21 18:25:56.160964 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:25:56.161025 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:25:56.162887 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 20
+Aug 21 18:25:56.162930 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 20 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x159644440>
+Aug 21 18:25:56.162953 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 20: <private>)
+Aug 21 18:25:56.162994 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x159644300>
+Aug 21 18:25:56.163065 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd6760> for task identifier: 20
+Aug 21 18:25:56.163203 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:25:56.163256 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:25:56.163330 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd6760>
+Aug 21 18:25:56.163365 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 13 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:25:56.163848 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36394 to dictionary
+Aug 21 18:25:56.163880 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:25:56.163895 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:25:56.165955 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 21
+Aug 21 18:25:56.165998 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 21 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x159644280>
+Aug 21 18:25:56.166020 Runner(UIKitCore)[5160] <Notice>: Will add backgroundTask with taskName: <private>, expirationHandler: <__NSMallocBlock__: 0x159645740>
+Aug 21 18:25:56.166062 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 21: <private>)
+Aug 21 18:25:56.166151 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd6760> for task identifier: 21
+Aug 21 18:25:56.166171 Runner(UIKitCore)[5160] <Notice>: Creating new assertion because there is no existing background assertion.
+Aug 21 18:25:56.166317 Runner(UIKitCore)[5160] <Notice>: Creating new background assertion
+Aug 21 18:25:56.166353 Runner(UIKitCore)[5160] <Notice>: Created new background assertion <BKSProcessAssertion: 0x158cd6760>
+Aug 21 18:25:56.166370 Runner(RunningBoardServices)[5160] <Info>: Acquiring assertion: <RBSAssertionDescriptor| "Shared Background Assertion 14 for com.mknoon.app" ID:(null) target:5160>
+Aug 21 18:25:56.166825 Runner(RunningBoardServices)[5160] <Debug>: Adding assertion 34-5160-36395 to dictionary
+Aug 21 18:25:56.166856 Runner(UIKitCore)[5160] <Notice>: Incrementing reference count for background assertion <private>
+Aug 21 18:25:56.166985 Runner(UIKitCore)[5160] <Notice>: Created background task <private>.
+Aug 21 18:25:56.168371 Runner(UIKitCore)[5160] <Notice>: Ending background task with UIBackgroundTaskIdentifier: 22
+Aug 21 18:25:56.168415 Runner(UIKitCore)[5160] <Notice>: Ending task with identifier 22 and description: <private>, _expireHandler: <__NSMallocBlock__: 0x159644440>
+Aug 21 18:25:56.168443 Runner(UIKitCore)[5160] <Notice>: Decrementing reference count for assertion <private> (used by background task with identifier 22: <private>)
+Aug 21 18:25:56.168504 Runner(UIKitCore)[5160] <Notice>: Will invalidate assertion: <BKSProcessAssertion: 0x158cd6760> for task identifier: 22
+Aug 21 18:25:56.191261 Runner(CoreServicesInternal)[5160] <Notice>: kExcludedFromBackupXattrName set on path: <private>
+Aug 21 18:25:56.195495 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:25:56.195006Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"PRESENCE_SELF_PUBLISH","details":{"state":"foreground"}}
+Aug 21 18:25:56.195650 Runner(Security)[5160] <Info>: SecItemCopyMatching_ios
+Aug 21 18:25:56.195725 Runner(Security)[5160] <Notice>: SecSecurityClientGet new thread!
+Aug 21 18:25:56.196577 Runner(Security)[5160] <Info>: SecItemCopyMatching_ios
+Aug 21 18:25:56.197426 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:25:56.197036Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_SERVICE_SET_PRESENCE_BEGIN","details":{"state":"foreground","ttlMs":180000}}
+Aug 21 18:25:56.197459 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:25:56.197200Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_RELAY_PRESENCE_SET_REQUEST","details":{"state":"foreground","ttlMs":180000}}
+Aug 21 18:25:56.197474 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:25:56.197313Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"GO_BRIDGE_SEND","details":{"cmd":"relay:presence_set","method":"relayPresenceSet"}}
+Aug 21 18:25:56.198000 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:25:56.197715Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"BRIDGE_CALL_TIMING","details":{"cmd":"relay:presence_set","bridgeMs":0,"outcome":"success"}}
+Aug 21 18:25:56.198036 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:25:56.197814Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_RELAY_PRESENCE_SET_RESPONSE","details":{"ok":false,"unsupported":false,"state":"foreground"}}
+Aug 21 18:25:56.198058 Runner(Flutter)[5160] <Notice>: flutter: [FLOW] {"ts":"2026-08-21T16:25:56.197867Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_SERVICE_SET_PRESENCE_FAILED","details":{"state":"foreground","ok":false}}
+Aug 21 18:25:56.618922 Runner(CFNetwork)[5160] <Debug>: success removing entry for host <private> config 0x158dce560
+Aug 21 18:25:56.622402 Runner(CFNetwork)[5160] <Notice>: Connection 2: cleaning up
+Aug 21 18:25:56.622556 Runner(Network)[5160] <Notice>: [C2 C7E2A4E2-44A9-4E37-ABC8-581317422863 Hostname#40e8186b:443 quic-connection, url hash: 43973118, definite, attribution: developer] cancel
+Aug 21 18:25:56.622694 Runner(Network)[5160] <Debug>: nw_protocol_copy_swift_tls_record_definition_if_present SwiftTLS record protocol definition 0x1591d5500
+Aug 21 18:25:56.622775 Runner(Network)[5160] <Debug>: nw_protocol_copy_swift_tls_record_definition_if_present SwiftTLS record protocol definition 0x1591d5500
+Aug 21 18:25:56.622811 Runner(Network)[5160] <Debug>: nw_protocol_copy_swift_tls_record_definition_if_present SwiftTLS record protocol definition 0x1591d5500
+Aug 21 18:25:56.622970 Runner(Network)[5160] <Notice>: [C2 C7E2A4E2-44A9-4E37-ABC8-581317422863 Hostname#40e8186b:443 quic-connection, url hash: 43973118, definite, attribution: developer] cancelled
+	[C2.1.1.1 4507D49E-C3D2-4688-BD2E-E6B89F2E70F6 2a02:8070:8880:7480:34e1:367:8b01:483a.64352<->IPv6#f5630973.443]
+	Connected Path: satisfied (Path is satisfied), viable, interface: en0[802.11], ipv4, ipv6, dns, uses wifi, LQM: good
+	Privacy Stance: Not Eligible
+	Duration: 120.178s, DNS @0.000s took 0.003s, TCP @0.003s took 0.023s,  took 0.045s
+	bytes in/out: 5425/2447, packets in/out: 10/15, rtt: 0.021s, retransmitted bytes: 0, out-of-order bytes: 0
+	ecn packets sent/acked/marked/lost: 0/0/0/0
+Aug 21 18:25:56.623062 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2 IPv6#f5630973.443 ready parent-flow (satisfied (Path is satisfied), interface: en0[802.11], ipv4, ipv6, dns, uses wifi, LQM: good)]
+Aug 21 18:25:56.623198 Runner(libboringssl.dylib)[5160] <Debug>: began nw_protocol_boringssl_disconnect: boringssl session state is: connected
+Aug 21 18:25:56.623259 Runner(libboringssl.dylib)[5160] <Debug>: boringssl_session_set_state(877) [C2.1.1.1:2][0x1594a0560] boringssl session state changed from connected to disconnecting
+Aug 21 18:25:56.623295 Runner(libboringssl.dylib)[5160] <Debug>: boringssl_session_disconnect(696) [C2.1.1.1:2][0x1594a0560] calling SSL_shutdown.
+Aug 21 18:25:56.623527 Runner(libboringssl.dylib)[5160] <Debug>: boringssl_context_log_message(2886) [C2.1.1.1:2][0x1594a0560] Writing SSL3_RT_ALERT 2 bytes
+Aug 21 18:25:56.623553 Runner(libboringssl.dylib)[5160] <Info>: boringssl_context_handle_warning_alert(2764) [C2.1.1.1:2][0x1594a0560] write alert, level: warning, description: close notify
+Aug 21 18:25:56.623619 Runner(libboringssl.dylib)[5160] <Debug>: boringssl_session_disconnect(698) [C2.1.1.1:2][0x1594a0560] SSL_shutdown returned. Disconnect successful? yes
+Aug 21 18:25:56.623640 Runner(libboringssl.dylib)[5160] <Debug>: boringssl_session_set_state(877) [C2.1.1.1:2][0x1594a0560] boringssl session state changed from disconnecting to disconnecting
+Aug 21 18:25:56.623658 Runner(libboringssl.dylib)[5160] <Debug>: boringssl_session_set_state(877) [C2.1.1.1:2][0x1594a0560] boringssl session state changed from disconnecting to disconnected
+Aug 21 18:25:56.623674 Runner(libusrtcp.dylib)[5160] <Info>: nw_protocol_tcp_disconnect [C2.1.1.1:3] input protocol initiated disconnect
+Aug 21 18:25:56.623690 Runner(libusrtcp.dylib)[5160] <Info>: __nw_protocol_tcp_disconnect [C2.1.1.1:3] disconnect tcp
+Aug 21 18:25:56.623832 Runner(libusrtcp.dylib)[5160] <Notice>: nw_protocol_tcp_log_summary [C2.1.1.1:3] 
+	[0FBCE6D4-434F-48F4-80D3-687DA600E2CA <private>:64352<-><private>:443]
+	Init: 1, Conn_Time: 23.081ms, SYNs: 1, WR_T: 0/0, RD_T: 0/0, TFO: 0/0/0, ECN: 0/1/1, Accurate ECN (client/server): Disabled/Disabled, TS: 1, TSO: 0
+	rtt_cache: kernel, rtt_upd: 8, rtt: 21.656ms, rtt_var: 5.375ms rtt_nc: 21.656ms, rtt_var_nc: 5.375ms base rtt: 15ms
+	ACKs-compressed: 0, ACKs delayed: 0 delayed ACKs sent: 0
+Aug 21 18:25:56.623865 Runner(libusrtcp.dylib)[5160] <Info>: nw_protocol_tcp_disconnect [C2.1.1.1:3] send disconnect to input protocol
+Aug 21 18:25:56.623885 Runner(Network)[5160] <Debug>: nw_flow_passthrough_disconnected [C2.1.1.1 IPv6#f5630973.443 ready channel-flow (satisfied (Path is satisfied), viable, interface: en0[802.11], ipv4, ipv6, dns, uses wifi, LQM: good)] deferring fail on disconnected
+Aug 21 18:25:56.623906 Runner(libboringssl.dylib)[5160] <Debug>: boringssl called disconnect down the stack
+Aug 21 18:25:56.623970 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1 Hostname#40e8186b:443 ready transform (satisfied (Path is satisfied), interface: en0[802.11], ipv4, ipv6, dns, uses wifi, LQM: good)]
+Aug 21 18:25:56.626077 Runner(Network)[5160] <Info>: nw_association_schedule_deactivation <nw_association Hostname#40e8186b:443> will become dormant after 10000ms of inactivity
+Aug 21 18:25:56.626133 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1 Hostname#40e8186b:443 ready resolver (satisfied (Path is satisfied), interface: en0[802.11], ipv4, ipv6, dns, uses wifi, LQM: good)]
+Aug 21 18:25:56.626341 Runner(Network)[5160] <Info>: nw_association_schedule_deactivation <nw_association Hostname#40e8186b:443> will become dormant after 10000ms of inactivity
+Aug 21 18:25:56.626561 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.1 IPv6#f5630973.443 ready channel-flow (satisfied (Path is satisfied), viable, interface: en0[802.11], ipv4, ipv6, dns, uses wifi, LQM: good)]
+Aug 21 18:25:56.626597 Runner(Network)[5160] <Info>: nw_association_schedule_deactivation <nw_association IPv6#f5630973.443> will become dormant after 10000ms of inactivity
+Aug 21 18:25:56.626744 Runner(Network)[5160] <Debug>: nw_endpoint_flow_stitch_stack_without_passthrough [C2.1.1.1 IPv6#f5630973.443 cancelled channel-flow ((null))] Not stitching the stack since passthrough is directly below a flow
+Aug 21 18:25:56.626772 Runner(libboringssl.dylib)[5160] <Debug>: began nw_protocol_boringssl_disconnect: boringssl session state is: disconnected
+Aug 21 18:25:56.626832 Runner(libboringssl.dylib)[5160] <Debug>: boringssl_session_set_state(877) [C2.1.1.1:2][0x1594a0560] boringssl session state changed from disconnected to disconnected
+Aug 21 18:25:56.626941 Runner(libusrtcp.dylib)[5160] <Info>: nw_protocol_tcp_disconnect [C2.1.1.1:3] input protocol initiated disconnect
+Aug 21 18:25:56.626971 Runner(libboringssl.dylib)[5160] <Debug>: boringssl called disconnect down the stack
+Aug 21 18:25:56.627050 Runner(Network)[5160] <Debug>: nw_flow_cancel_read_write_requests [C2.1.1.1 IPv6#f5630973.443 cancelled channel-flow ((null))] cancelling read/write requests
+Aug 21 18:25:56.627178 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.17 IPv6#5880438f.443 cancelled path ((null))]
+Aug 21 18:25:56.627303 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.18 IPv6#ef87b9f5.443 cancelled path ((null))]
+Aug 21 18:25:56.627403 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.19 IPv4#3240e472:443 cancelled path ((null))]
+Aug 21 18:25:56.627530 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.20 IPv6#ff9b8217.443 cancelled path ((null))]
+Aug 21 18:25:56.627568 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.21 IPv6#54aa9339.443 cancelled path ((null))]
+Aug 21 18:25:56.627705 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.22 IPv6#a5c6e6bf.443 cancelled path ((null))]
+Aug 21 18:25:56.627823 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.23 IPv6#8d8f0b7d.443 cancelled path ((null))]
+Aug 21 18:25:56.627849 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.24 IPv6#2aba8113.443 cancelled path ((null))]
+Aug 21 18:25:56.627867 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.25 IPv4#d9b6355f:443 cancelled path ((null))]
+Aug 21 18:25:56.628029 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.26 IPv4#ebb42abe:443 cancelled path ((null))]
+Aug 21 18:25:56.628062 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.27 IPv4#e849c97b:443 cancelled path ((null))]
+Aug 21 18:25:56.628080 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.28 IPv4#f21dfaa7:443 cancelled path ((null))]
+Aug 21 18:25:56.628099 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.29 IPv4#c0c83db0:443 cancelled path ((null))]
+Aug 21 18:25:56.628174 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.30 IPv4#1f701d40:443 cancelled path ((null))]
+Aug 21 18:25:56.628216 Runner(Network)[5160] <Info>: nw_endpoint_handler_cancel [C2.1.1.31 IPv4#0ab77f67:443 cancelled path ((null))]
+Aug 21 18:25:56.628552 Runner(Network)[5160] <Debug>: nw_resolver_cancel [C2.1.1] 0x1594cb480
+Aug 21 18:25:56.628607 Runner(Network)[5160] <Debug>: nw_flow_cancel_read_write_requests [C2 Hostname#40e8186b:443 cancelled parent-flow ((null))] cancelling read/write requests
+Aug 21 18:25:56.628640 Runner(Network)[5160] <Notice>: nw_connection_report_state_with_handler_on_nw_queue [C2] reporting state cancelled
+Aug 21 18:25:56.628816 Runner(libusrtcp.dylib)[5160] <Notice>: tcp_output [C2.1.1.1:3] flags=[F.] seq=61730708, ack=1051893204, win=2048 state=FIN_WAIT_1 rcv_nxt=1051893204, snd_una=61730645
+Aug 21 18:25:56.629903 Runner(libboringssl.dylib)[5160] <Debug>: boringssl_bio_destroy(196)
+Aug 21 18:25:56.630722 Runner(Network)[5160] <Info>: [C2 Hostname#40e8186b:443 quic-connection, url hash: 43973118, definite, attribution: developer] dealloc
+Aug 21 18:25:56.630990 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.631056 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.631088 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.631110 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.631190 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.631222 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.631301 Runner(Network)[5160] <Debug>: nw_channel_purge_idle_block_invoke Purging channel packet pool after going idle
+Aug 21 18:25:56.631326 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.631396 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.631426 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.631460 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.631483 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.631572 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.631690 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.631772 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.631811 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.631953 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.631971 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.631984 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.649167 Runner(libusrtcp.dylib)[5160] <Notice>: tcp_input [C2.1.1.1:3] flags=[F.] seq=1051893204, ack=61730709, win=1047 state=FIN_WAIT_1 rcv_nxt=1051893204, snd_una=61730708
+Aug 21 18:25:56.758384 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.758535 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.758561 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.758656 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:25:56.758684 Runner(Network)[5160] <Debug>: endpoint <private> has nothing to cleanup, no protocol instance registrars
+Aug 21 18:25:56.758719 Runner(Network)[5160] <Debug>: endpoint <private> has associations
+Aug 21 18:26:06.635761 Runner(Network)[5160] <Debug>: nw_association_schedule_deactivation_block_invoke <nw_association Hostname#40e8186b:443> becoming dormant
+Aug 21 18:26:06.635931 Runner(Network)[5160] <Debug>: -[NWConcrete_nw_path_evaluator dealloc] 723BA1EE-5FC8-4161-939C-BCA41BA1F1FE
+Aug 21 18:26:06.636120 Runner(Network)[5160] <Debug>: nw_association_schedule_deactivation_block_invoke <nw_association Hostname#40e8186b:443> becoming dormant
+Aug 21 18:26:06.636151 Runner(Network)[5160] <Debug>: -[NWConcrete_nw_path_evaluator dealloc] 31FA36B5-1B49-4E42-832A-65979F3A9D3E
+Aug 21 18:26:06.636170 Runner(Network)[5160] <Debug>: nw_association_schedule_deactivation_block_invoke <nw_association IPv6#f5630973.443> becoming dormant
+
+Exiting...
+[disconnected:00008030-001A6D2801BB802E]

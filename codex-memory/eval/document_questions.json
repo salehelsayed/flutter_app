@@ -1,0 +1,30 @@
+{
+  "questions": [
+    {
+      "id": "D1",
+      "query": "private reliable notifications delivery acknowledgement is not notification outcome",
+      "required": [
+        "delivery acknowledgement is not notification outcome"
+      ],
+      "source": "UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md"
+    },
+    {
+      "id": "D2",
+      "query": "fast direct connection presence online-ish never foreground architecture",
+      "required": [
+        "online-ish",
+        "foreground"
+      ],
+      "source": "Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md"
+    },
+    {
+      "id": "D3",
+      "query": "QA_XS_02 restore identity pass criteria",
+      "required": [
+        "restore identity",
+        "pass criteria"
+      ],
+      "source": "docs/qa/QA_XS_02_restore.md"
+    }
+  ]
+}

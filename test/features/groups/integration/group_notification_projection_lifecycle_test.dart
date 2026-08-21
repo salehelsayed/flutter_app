@@ -1377,12 +1377,19 @@ void main() {
         'await ensureFirebaseReady();',
         start,
       );
+      // Both backfills are still awaited here, in this order, before Firebase.
+      // They are now routed through `runBestEffortStartupBackfill` so a failure
+      // reports and skips instead of aborting the deferred runtime start — an
+      // escaping error used to reach `StartupRouter._doStartP2P`, which meant
+      // `startP2PNode` never ran and the badge stayed "Offline". The ordering
+      // contract is unchanged; only the call shape is, so these anchors track
+      // the future actually being passed through at each point.
       final contextAwait = productionSource.indexOf(
-        'await groupContextBackfill;',
+        '() => groupContextBackfill,',
         start,
       );
       final comparandsAwait = productionSource.indexOf(
-        'await groupReactionComparandBackfill;',
+        '() => groupReactionComparandBackfill,',
         start,
       );
       expect(contextAwait, inInclusiveRange(start, firebase - 1));

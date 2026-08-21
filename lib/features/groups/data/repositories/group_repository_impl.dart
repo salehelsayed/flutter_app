@@ -2216,6 +2216,14 @@ class GroupRepositoryImpl
       }
       authorities[groupId] = await load(groupId);
     }
+    // Nothing to mirror means nothing to replace. Calling through anyway makes
+    // a pure no-op depend on projection OWNERSHIP, which a fresh install does
+    // not have yet: `loadIdentity()` clears the owner when there is no identity
+    // row, so `replaceAllGroupSenderAuthorities` would throw
+    // `group notification projection owner is unavailable` on a device with
+    // zero groups, abort the whole deferred runtime start, and leave the node
+    // unstarted (badge stuck on "Offline" until the next launch).
+    if (authorities.isEmpty) return;
     await projection.replaceAllGroupSenderAuthorities(authorities);
   }
 

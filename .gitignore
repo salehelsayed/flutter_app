@@ -199,5 +199,11 @@ docker-ws/pixel6-state-guard-backup-*/
 # scripts/test/project_memory_recall_contract_test.sh.
 project-memory/graph.db
 project-memory/recall_stats.jsonl
+
+# Codex-owned document-memory graph. The config and implementation are tracked;
+# the database, freshness manifest, anonymous usage ledger, and per-session hook
+# state are derived locally. config.local.json is the developer override layer.
+codex-memory/state/
+codex-memory/config.local.json
 /docker-ws/plan380_emu_logcat_run.txt
 /docker-ws/plan380_e2e_receipts.txt

@@ -1,0 +1,39 @@
+^D17:54:07  Acquired tunnel connection to device.
+17:54:07  Enabling developer disk image services.
+17:54:07  Acquired usage assertion.
+Launched application with com.mknoon.app bundle identifier.
+Waiting for the application to terminate…
+2026-08-21 17:54:08.187 Runner[5133:2101512] [PUSH_DIAG] notification_center_delegate_installed context=before_didFinishLaunching_super previousDelegateClass=nil currentDelegateClass=Optional<UNUserNotificationCenterDelegate>
+2026-08-21 17:54:08.187 Runner[5133:2101512] [PUSH_DIAG] notification_center_delegate_installed context=after_didFinishLaunching_super previousDelegateClass=AppDelegate currentDelegateClass=Optional<UNUserNotificationCenterDelegate>
+2026-08-21 17:54:08.187 Runner[5133:2101512] [PUSH_DIAG] didFinishLaunching super=true
+2026-08-21 17:54:08.195 Runner[5133:2101564] [PUSH_DIAG] native_notification_settings context=didFinishLaunching authorization=UNAuthorizationStatus(rawValue: 2) alert=UNNotificationSetting(rawValue: 2) badge=UNNotificationSetting(rawValue: 2) sound=UNNotificationSetting(rawValue: 2)
+2026-08-21 17:54:08.275 Runner[5133:2101512] [PUSH_DIAG] fcm_plugin_ref found class=FLTFirebaseMessagingPlugin
+2026-08-21 17:54:08.275 Runner[5133:2101512] [PUSH_DIAG] notification_center_delegate_installed context=after_implicit_engine_plugin_registration previousDelegateClass=AppDelegate currentDelegateClass=Optional<UNUserNotificationCenterDelegate>
+2026-08-21 17:54:08.275 Runner[5133:2101512] [PUSH_DIAG] ios_notification_open_bridge_setup
+2026-08-21 17:54:08.275 Runner[5133:2101512] [PUSH_DIAG] ios_notification_recovery_bridge_setup
+2026-08-21 17:54:08.275 Runner[5133:2101512] [GoBridge] Initialized via applicationRegistrar messenger
+2026-08-21 17:54:08.341 Runner[5133:2101512] [PUSH_DIAG] native_registerForRemoteNotifications_begin reason=didFinishLaunching
+2026-08-21 17:54:08.352 Runner[5133:2101512] [PUSH_DIAG] native_registerForRemoteNotifications_requested reason=didFinishLaunching isRegistered=true
+2026-08-21 17:54:08.360 Runner[5133:2101512] [PUSH_DIAG] didBecomeActiveNotification
+2026-08-21 17:54:08.360 Runner[5133:2101512] [PUSH_DIAG] notification_center_delegate_installed context=didBecomeActive previousDelegateClass=AppDelegate currentDelegateClass=Optional<UNUserNotificationCenterDelegate>
+2026-08-21 17:54:08.361 Runner[5133:2101577] [PUSH_DIAG] native_notification_settings context=didBecomeActive authorization=UNAuthorizationStatus(rawValue: 2) alert=UNNotificationSetting(rawValue: 2) badge=UNNotificationSetting(rawValue: 2) sound=UNNotificationSetting(rawValue: 2)
+2026-08-21 17:54:08.365 Runner[5133:2101512] [PUSH_DIAG] native_registerForRemoteNotifications_begin reason=didBecomeActive
+2026-08-21 17:54:08.366 Runner[5133:2101512] [PUSH_DIAG] native_registerForRemoteNotifications_requested reason=didBecomeActive isRegistered=true
+2026-08-21 17:54:08.367 Runner[5133:2101512] [PUSH_DIAG] didRegisterForRemoteNotificationsWithDeviceToken bytes=32
+2026-08-21 17:54:08.370 Runner[5133:2101512] [PUSH_DIAG] didRegisterForRemoteNotificationsWithDeviceToken bytes=32
+2026-08-21 17:54:08.527 Runner[5133:2101512] [GoBridge] onListen: eventSink registered
+2026/08/21 15:54:08 failed to sufficiently increase receive buffer size (was: 768 kiB, wanted: 7168 kiB, got: 6144 kiB). See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.
+2026/08/21 15:54:08 [NODE] Announcing 3 addresses (loopback/link-local filtered out)
+2026/08/21 15:54:08 [NODE]   /ip4/192.168.0.136/tcp/60342/ws
+2026/08/21 15:54:08 [NODE]   /ip4/192.168.0.136/tcp/60343
+2026/08/21 15:54:08 [NODE]   /ip4/192.168.0.136/udp/65079/quic-v1
+2026-08-21 17:54:08.642 Runner[5133:2101512] [PUSH_DIAG] ios_notification_open_bridge_ready
+2026-08-21 17:54:08.642 Runner[5133:2101512] [PUSH_DIAG] ios_notification_open_initial_empty
+2026/08/21 15:54:08 [NODE] Warmed relay connection: 12D3KooWGMYMmN1RGUYj
+2026/08/21 15:54:08 [INBOX] Push token registered on relay 12D3KooWGMYMmN1RGUYj (ios)
+2026/08/21 15:54:08 [INBOX] Stored message for 12D3KooWBHXm4czEvSid
+2026/08/21 15:54:08 [RELAY_SESSION] Reservation opened for 12D3KooWGMYMmN1RGUYj
+2026/08/21 15:54:08 [RENDEZVOUS] Registered ns=mknoon:chat:12D3KooWBHXm4czEvSid5VtFYW41AGF7gBnY6djxvjSpqsdBwUtD
+2026/08/21 15:54:08 [NODE] personal rendezvous refresh started: ns=mknoon:chat:12D3KooWBHXm4czEvSid5VtFYW41AGF7gBnY6djxvjSpqsdBwUtD interval=30m0s
+2026-08-21 17:54:13.122 Runner[5133:2101512] Successfully load keyboard extensions
+App terminated due to signal 9.

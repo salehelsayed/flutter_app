@@ -3527,5 +3527,40 @@ void main() {
         );
       },
     );
+
+    test(
+      'fresh install: a zero-group sender-authority backfill does not require '
+      'projection ownership (regression: bricked node start, "Offline" badge)',
+      () async {
+        // Fresh-install state: the projection has NO owner. `loadIdentity()`
+        // calls clearForLogout() when there is no identity row yet, so
+        // `_ownsContexts` is false for the whole first launch.
+        final store = FakeSecureKeyStore();
+        final projection = GroupReactionNotificationProjection(store: store);
+        final repo = makeRepo(
+          store,
+          projection: projection,
+          loadAllGroupsOverride: () async => const <Map<String, Object?>>[],
+        );
+        repo.setGroupNotificationSenderAuthorityLoader((_) async => null);
+
+        // There are zero groups, so this backfill has nothing to mirror. It
+        // must therefore be a no-op and must NOT reach
+        // `replaceAllGroupSenderAuthorities`, which requires ownership and
+        // throws StateError('group notification projection owner is
+        // unavailable') without it.
+        //
+        // That throw used to escape startLiveServices() ->
+        // RoleAwareDeferredRuntimeStart.start() -> the runtime startup latch ->
+        // StartupRouter._doStartP2P's `await ensureRuntimeServicesReady()`, so
+        // startP2PNode was never called, NodeState.isStarted stayed false, and
+        // the connection badge read "Offline" until the app was relaunched.
+        // Device-reproduced 2026-08-21 on iPhone 11 and iPhone 13.
+        await expectLater(
+          repo.mirrorAllGroupNotificationSenderAuthorities(),
+          completes,
+        );
+      },
+    );
   });
 }
