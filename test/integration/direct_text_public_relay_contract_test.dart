@@ -517,9 +517,9 @@ void main() {
       final bodyCatch = run.indexOf(
         'on _CampaignFailure catch (failure, stackTrace)',
       );
-      final cleanupTry = run.indexOf(
-        'if (directTextOnly && !_exactRestorationComplete)',
-      );
+      // Keep this structural check independent of dartfmt's wrapping of the
+      // restoration predicate. The first try after the body catch owns cleanup.
+      final cleanupTry = run.indexOf('try {', bodyCatch);
       final composite = run.indexOf('cleanupFailure: cleanup');
       final originalStack = run.indexOf('Error.throwWithStackTrace(');
       final cleanupOnly = run.indexOf('if (cleanup != null)');

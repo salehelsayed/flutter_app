@@ -128,6 +128,21 @@ const List<_Scenario> _scenarios = <_Scenario>[
     ],
   ),
   _Scenario(
+    id: 'tc_g24_permission_appop_divergence',
+    testCase: 'TC-392-06',
+    mode: 'android-permission-appop-divergence-device',
+    summary:
+        'runtime POST_NOTIFICATIONS remains granted while the '
+        'POST_NOTIFICATION app-op is ignored; the app emits the exact OS '
+        'override/result, preserves custody, and recovers after restore',
+    requiredChecks: <String>[
+      'g24.permission_appop_divergence',
+      'g24.os_state_override_typed',
+      'g24.no_post_custody_preserved',
+      'g24.appop_restore_recovery',
+    ],
+  ),
+  _Scenario(
     id: 'tc_g7_token_refresh_mid_session',
     testCase: 'TC-380-06',
     mode: 'android-token-refresh-device',
@@ -172,6 +187,7 @@ const _androidPayloadCampaignIds = <String>{
   'payload_fast_path_cold_kill',
   'tc_b13_dual_path_single_alert',
   'tc_g7_permission_denied',
+  'tc_g24_permission_appop_divergence',
   'tc_g7_token_refresh_mid_session',
   'tc_g7_channel_disabled',
   'tc_g7_doze_delivery',

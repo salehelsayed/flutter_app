@@ -431,6 +431,39 @@ void main() {
     });
   });
 
+  test('TC-393-11 fixed wake cohort is additive and exact', () {
+    final base = manifest.buildProfileById('android.production_fcm')!;
+    final fixed = manifest.buildProfileById(
+      'android.production_fcm.fixed_wake',
+    )!;
+    expect(base.compileDefines, <String, String>{
+      'E2E_TEST_MODE': 'true',
+      'PRODUCTION_FCM': 'true',
+      'MKNOON_EMIT_WAKE_TOKEN': 'true',
+    });
+    expect(fixed.artifactKind, 'provider-configured-debug-apk');
+    expect(fixed.compileDefines, <String, String>{
+      ...base.compileDefines,
+      'MKNOON_ENABLE_WAKE_OUTCOME_COORDINATOR': 'true',
+    });
+
+    final build = manifest.capabilityById(
+      'build.android.production_fcm.fixed_wake',
+    )!;
+    expect(build.command, <String>[
+      '@prepare-build',
+      'android.production_fcm.fixed_wake',
+    ]);
+    expect(build.buildProfileId, fixed.id);
+    expect(build.dependencies, isEmpty);
+    expect(
+      build.resources.map(
+        (resource) => '${resource.name}:${resource.access.name}',
+      ),
+      <String>['build:android.production_fcm.fixed_wake:write'],
+    );
+  });
+
   test('physical iOS production profile keeps its APNs-only compile seam', () {
     final profile = manifest.buildProfileById('ios.device.production')!;
     expect(profile.compileDefines, <String, String>{'PRODUCTION_APNS': 'true'});
@@ -602,6 +635,114 @@ void main() {
     expect(capability.automationReady, isTrue);
     expect(capability.buildProfileId, 'android.production_fcm');
     expect(capability.dependencies, <String>['build.android.production_fcm']);
+    expect(capability.declaredBuildException, isFalse);
+  });
+
+  test('typed reaction reuses the central production APK', () {
+    final matches = manifest.capabilities
+        .where(
+          (capability) =>
+              capability.id == 'notifications.android_typed_reaction_smoke',
+        )
+        .toList(growable: false);
+    expect(matches, hasLength(1));
+
+    final capability = matches.single;
+    expect(capability.required, isTrue);
+    expect(capability.active, isTrue);
+    expect(capability.automationReady, isTrue);
+    expect(capability.modes, <SimsMode>{SimsMode.major, SimsMode.full});
+    expect(capability.families, containsAll(<String>['notifications', '1to1']));
+    expect(capability.buildProfileId, 'android.production_fcm');
+    expect(capability.dependencies, <String>['build.android.production_fcm']);
+    expect(capability.command, <String>[
+      'dart',
+      'run',
+      'integration_test/scripts/run_1to1_reaction_notification_sims.dart',
+    ]);
+    expect(capability.declaredBuildException, isFalse);
+  });
+
+  test('TC-393-12 fixed-wake recovery capability is exact and runnable', () {
+    final matches = manifest.capabilities
+        .where(
+          (capability) =>
+              capability.id == 'notifications.android_recovery_completion',
+        )
+        .toList(growable: false);
+    expect(matches, hasLength(1));
+
+    final capability = matches.single;
+    expect(capability.required, isTrue);
+    expect(capability.active, isTrue);
+    expect(capability.automationReady, isTrue);
+    expect(capability.modes, <SimsMode>{SimsMode.major, SimsMode.full});
+    expect(capability.families, containsAll(<String>['notifications', '1to1']));
+    expect(capability.buildProfileId, 'android.production_fcm.fixed_wake');
+    expect(capability.dependencies, <String>[
+      'build.android.production_fcm.fixed_wake',
+    ]);
+    expect(capability.command, <String>[
+      'dart',
+      'run',
+      'integration_test/scripts/run_android_notification_recovery_completion.dart',
+    ]);
+    expect(capability.assertionIds, <String>[
+      'notifications.fixed_wake_live_route_selected',
+      'notifications.direct_reaction_canonical_recovery',
+      'notifications.generic_recovery_card_retired',
+      'notifications.no_duplicate_or_second_tone',
+      'notifications.state_and_route_restored',
+      'notifications.zero_taps_zero_child_builds',
+    ]);
+    expect(
+      capability.resources.map(
+        (resource) => '${resource.name}:${resource.access.name}',
+      ),
+      <String>[
+        'build:android.production_fcm.fixed_wake:read',
+        'device:android-physical:exclusive',
+        'device:android-emulator:exclusive',
+        'relay-mutation:local-plan393-fixture:exclusive',
+        'artifact:android-notification-recovery-completion:write',
+      ],
+    );
+    expect(
+      capability.artifactValidator,
+      'integration_test/android_notification_recovery_completion_proof_test.dart',
+    );
+    expect(capability.declaredBuildException, isFalse);
+  });
+
+  test('TC-393-08 strict notification closure is exact and additive', () {
+    final matches = manifest.capabilities
+        .where(
+          (capability) => capability.id == 'groups.strict_notification_closure',
+        )
+        .toList(growable: false);
+    expect(matches, hasLength(1));
+    final capability = matches.single;
+    expect(capability.required, isTrue);
+    expect(capability.active, isTrue);
+    expect(capability.automationReady, isTrue);
+    expect(capability.buildProfileId, 'android.production_fcm');
+    expect(capability.dependencies, <String>['build.android.production_fcm']);
+    expect(capability.command, <String>[
+      'dart',
+      'run',
+      'integration_test/scripts/run_group_strict_notification_sims.dart',
+    ]);
+    expect(capability.assertionIds, <String>[
+      'groups.strict_exact_chat_suppressed',
+      'groups.strict_message_killed_card',
+      'groups.strict_reaction_author_card',
+      'groups.strict_relay_provenance',
+      'groups.strict_state_restored',
+    ]);
+    expect(
+      capability.artifactValidator,
+      'integration_test/group_strict_notification_proof_test.dart',
+    );
     expect(capability.declaredBuildException, isFalse);
   });
 }

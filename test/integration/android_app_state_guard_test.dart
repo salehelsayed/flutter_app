@@ -803,8 +803,7 @@ Future<void> main(List<String> arguments) async {
         runner: adb,
         privateArchiveCapturer: (_, _, _, destination) async {
           final verifyCall = !destination.path.endsWith('private-data.tar');
-          final drift =
-              verifyCall && adb.privateRestoreMismatchesRemaining > 0;
+          final drift = verifyCall && adb.privateRestoreMismatchesRemaining > 0;
           if (verifyCall) {
             adb.commands.add('VERIFY_STREAM ${destination.path}');
             if (drift) adb.privateRestoreMismatchesRemaining -= 1;
@@ -1558,7 +1557,7 @@ Future<void> main(List<String> arguments) async {
   });
 
   test(
-    'restore failure retains recovery backup and cannot become PASS',
+    'TC-393-15 restore failure retains recovery backup and cannot become PASS',
     () async {
       final root = await Directory.systemTemp.createTemp('state-guard-fail-');
       addTearDown(() async {
@@ -1611,6 +1610,8 @@ Future<void> main(List<String> arguments) async {
       'integration_test/scripts/android_wake_token_directionality_campaign.dart',
       'integration_test/scripts/run_intro_accept_notification_sims.dart',
       'integration_test/scripts/run_group_reaction_notification_sims.dart',
+      'integration_test/scripts/run_group_strict_notification_sims.dart',
+      'integration_test/scripts/run_android_notification_recovery_completion.dart',
     ]) {
       final source = File(path).readAsStringSync();
       expect(source, contains('AndroidAppStateGuard.capture'), reason: path);

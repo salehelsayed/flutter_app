@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // G26 regression suite.
@@ -249,6 +251,199 @@ func TestInboxStore_StrictGroupReactionStaysSilentCustody(t *testing.T) {
 	}
 	requireInboxStoreResult(t, inbox, recipient, entry, InboxStoreResultStored)
 	assertNoAdditionalGroupReactionPush(t, recorder, 0)
+}
+
+func strictGroupReactionEnvelope(
+	t *testing.T,
+	fixture signedGroupReactionFixture,
+	transitionID,
+	action,
+	recipient string,
+	notificationRecipients []string,
+) string {
+	t.Helper()
+	return fixture.envelopeWithCustodyKind(
+		t,
+		transitionID,
+		action,
+		"state-"+transitionID,
+		"target-"+transitionID,
+		[]string{fixture.transportID, recipient},
+		notificationRecipients,
+		ackCustodyGroupContentKind,
+	)
+}
+
+func newStrictGroupReactionInbox(
+	t *testing.T,
+	enabled bool,
+	capable bool,
+) (*InboxStore, *recordingPushSender, string) {
+	t.Helper()
+	const recipient = "strict-author-transport"
+	tokens := newMemoryPushTokenStore()
+	capabilities := []string(nil)
+	if capable {
+		capabilities = []string{groupReactionCapability}
+	}
+	if err := tokens.RegisterToken(
+		recipient,
+		"strict-author-provider-token",
+		"android",
+		capabilities...,
+	); err != nil {
+		t.Fatalf("register strict author route: %v", err)
+	}
+	push := NewPushServiceWithBackend(tokens)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+	inbox.SetGroupReactionPushEnabled(enabled)
+	return inbox, recorder, recipient
+}
+
+// TC-393-07 causal row: strict custody is already recipient-scoped, so the
+// signed author audience is checked against the current custody recipient and
+// the existing typed builder is invoked exactly once (never full fanout).
+func TestInboxStore_StrictGroupReactionWakesSignedAuthorDevice(t *testing.T) {
+	for _, registeredWakeSet := range []bool{true, false} {
+		name := "registered_authorized_set"
+		if !registeredWakeSet {
+			name = "absent_set_fail_open"
+		}
+		t.Run(name, func(t *testing.T) {
+			inbox, recorder, recipient := newStrictGroupReactionInbox(t, true, true)
+			if registeredWakeSet {
+				inbox.RegisterWakeTokens(recipient, []string{"strict-author-wake"})
+			}
+			fixture := newSignedGroupReactionFixture(
+				t,
+				testStrictGroupID,
+				"reactor-account",
+				"reactor-transport",
+			)
+			transitionID := "strict-author-add-" + name
+			entry := inboxMessage{
+				From: fixture.transportID,
+				Message: strictGroupReactionEnvelope(
+					t,
+					fixture,
+					transitionID,
+					"add",
+					recipient,
+					[]string{recipient},
+				),
+				Timestamp: time.Now().UnixMilli(),
+				WakeToken: "strict-author-wake",
+			}
+			attemptedBefore := testutil.ToFloat64(
+				groupReactionWakeCounter.WithLabelValues("attempted"),
+			)
+			requireInboxStoreResult(t, inbox, recipient, entry, InboxStoreResultStored)
+			waitForGroupReactionPushes(t, recorder, 1)
+			message := recorder.LastMessage()
+			if message == nil || message.Data["type"] != "group_reaction" ||
+				message.Data["groupId"] != testStrictGroupID ||
+				message.Data["event_id"] != transitionID {
+				t.Fatalf("strict author push = %#v", message)
+			}
+			if delta := testutil.ToFloat64(
+				groupReactionWakeCounter.WithLabelValues("attempted"),
+			) - attemptedBefore; delta != 1 {
+				t.Fatalf("strict reaction attempted delta = %v, want 1", delta)
+			}
+
+			// Exact retry remains durable/idempotent and cannot refanout.
+			requireInboxStoreResult(t, inbox, recipient, entry, InboxStoreResultDuplicate)
+			assertNoAdditionalGroupReactionPush(t, recorder, 1)
+		})
+	}
+}
+
+// TC-393-07 negative matrix. Every row stores custody, but only a newly stored
+// valid ADD for the signed current author is allowed to wake.
+func TestInboxStore_StrictGroupReactionBystanderStaysSilentCustody(t *testing.T) {
+	tests := []struct {
+		name                  string
+		action                string
+		enabled               bool
+		capable               bool
+		notificationRecipient bool
+		registeredWakeSet     bool
+		wakeToken             string
+		tamperSignature       bool
+	}{
+		{name: "bystander", action: "add", enabled: true, capable: true, registeredWakeSet: true, wakeToken: "strict-author-wake"},
+		{name: "remove", action: "remove", enabled: true, capable: true, notificationRecipient: true, registeredWakeSet: true, wakeToken: "strict-author-wake"},
+		{name: "disabled", action: "add", capable: true, notificationRecipient: true, registeredWakeSet: true, wakeToken: "strict-author-wake"},
+		{name: "registered unauthorized", action: "add", enabled: true, capable: true, notificationRecipient: true, registeredWakeSet: true, wakeToken: "wrong-wake"},
+		{name: "incapable", action: "add", enabled: true, notificationRecipient: true, registeredWakeSet: true, wakeToken: "strict-author-wake"},
+		{name: "tampered signature", action: "add", enabled: true, capable: true, notificationRecipient: true, registeredWakeSet: true, wakeToken: "strict-author-wake", tamperSignature: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			inbox, recorder, recipient := newStrictGroupReactionInbox(t, tc.enabled, tc.capable)
+			if tc.registeredWakeSet {
+				inbox.RegisterWakeTokens(recipient, []string{"strict-author-wake"})
+			}
+			fixture := newSignedGroupReactionFixture(
+				t,
+				testStrictGroupID,
+				"reactor-account",
+				"reactor-transport",
+			)
+			notificationRecipients := []string{"different-author-transport"}
+			if tc.notificationRecipient {
+				notificationRecipients = []string{recipient}
+			}
+			envelope := strictGroupReactionEnvelope(
+				t,
+				fixture,
+				"strict-negative-"+strings.ReplaceAll(tc.name, " ", "-"),
+				tc.action,
+				recipient,
+				notificationRecipients,
+			)
+			if tc.tamperSignature {
+				var decoded map[string]interface{}
+				if err := json.Unmarshal([]byte(envelope), &decoded); err != nil {
+					t.Fatal(err)
+				}
+				extension := decoded["notificationExtension"].(map[string]interface{})
+				extension["signature"] = "tampered"
+				encoded, err := json.Marshal(decoded)
+				if err != nil {
+					t.Fatal(err)
+				}
+				envelope = string(encoded)
+			}
+			requireInboxStoreResult(t, inbox, recipient, inboxMessage{
+				From: fixture.transportID, Message: envelope,
+				Timestamp: time.Now().UnixMilli(), WakeToken: tc.wakeToken,
+			}, InboxStoreResultStored)
+			assertNoAdditionalGroupReactionPush(t, recorder, 0)
+			if inbox.Count(recipient) != 1 {
+				t.Fatalf("strict negative custody count = %d, want 1", inbox.Count(recipient))
+			}
+		})
+	}
+}
+
+func TestInboxStore_StrictGroupReactionProductionFlagWiring(t *testing.T) {
+	t.Setenv(groupReactionPushEnabledEnv, "true")
+	inbox := NewInboxStore(nil)
+	groupInbox := NewGroupInboxStore(10, time.Hour)
+	if enabled := applyGroupReactionPushRollout(inbox, groupInbox); !enabled {
+		t.Fatal("production group reaction rollout returned disabled")
+	}
+	if !inbox.groupReactionPushEnabled || !groupInbox.groupReactionPushEnabled {
+		t.Fatalf(
+			"production rollout strict=%v ordinary=%v, want both true",
+			inbox.groupReactionPushEnabled,
+			groupInbox.groupReactionPushEnabled,
+		)
+	}
 }
 
 // An unusable epoch degrades to the routing-only push the ordinary group lane

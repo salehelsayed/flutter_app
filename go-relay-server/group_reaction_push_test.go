@@ -51,6 +51,28 @@ func (f signedGroupReactionFixture) envelope(
 	replayRecipients,
 	notificationRecipients []string,
 ) string {
+	return f.envelopeWithCustodyKind(
+		t,
+		transitionID,
+		action,
+		baseMessageID,
+		targetMessageID,
+		replayRecipients,
+		notificationRecipients,
+		"",
+	)
+}
+
+func (f signedGroupReactionFixture) envelopeWithCustodyKind(
+	t *testing.T,
+	transitionID,
+	action,
+	baseMessageID,
+	targetMessageID string,
+	replayRecipients,
+	notificationRecipients []string,
+	custodyKind string,
+) string {
 	t.Helper()
 	replayRecipients = append([]string{}, replayRecipients...)
 	sort.Strings(replayRecipients)
@@ -75,6 +97,9 @@ func (f signedGroupReactionFixture) envelope(
 		"signatureAlgorithm":    "ed25519",
 		"signedPayload":         `{"kind":"group_offline_replay"}`,
 		"signature":             "opaque-base-signature-" + transitionID,
+	}
+	if custodyKind != "" {
+		base["custodyKind"] = custodyKind
 	}
 	baseJSON, err := canonicalGroupReactionJSON(base)
 	if err != nil {

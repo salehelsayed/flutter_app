@@ -252,7 +252,9 @@ const _productionBootstrapNormalizedSha256 =
     // Plan 372 composes the shared final-effect ledger, canonical binding,
     // exact SQL handoff/recovery and trigger repair at this same app-owned
     // bootstrap boundary; no repository adapter or core shim moves.
-    '2a0b43440fc95aad4c6ee4cfb3a38d454ef9b10418083fb6d36c37f06f70aa0a';
+    // Plan 393 adds exact-conversation activation cleanup at the existing
+    // app-owned visibility registry; no repository adapter or core shim moves.
+    '7df45086a3874e0ca7afaf89554efda5907a9456edde0f5f7f92d08165aad02a';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

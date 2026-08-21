@@ -722,13 +722,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   bool _currentLifecycleAllowsVisibleRead() {
     final state = WidgetsBinding.instance.lifecycleState;
-    return state == null || state == AppLifecycleState.resumed;
+    return state == AppLifecycleState.resumed;
   }
 
   bool get _canMarkVisibleRead {
     if (!_isLifecycleResumed) return false;
     final tracker = widget.groupConversationTracker;
-    return tracker == null || tracker.isViewing(_activeGroupConversationKey);
+    return tracker != null && tracker.isViewing(_activeGroupConversationKey);
   }
 
   Future<void> _markVisibleReadIfAllowed() async {

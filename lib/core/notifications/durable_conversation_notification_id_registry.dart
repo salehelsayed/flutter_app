@@ -263,7 +263,6 @@ final class DurableConversationNotificationIdRegistry
     required String conversationKey,
     required int notificationId,
     required ConversationNotificationContentMetadata metadata,
-    required Future<void> Function() retireCurrent,
     required Future<void> Function() replace,
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
@@ -273,19 +272,19 @@ final class DurableConversationNotificationIdRegistry
     return _serializeInIsolate(lock.path, () {
       return _withCoordinationLock(lock, () async {
         await _requireExactOwner(id, normalized);
+        final current = await _readContentMetadataFile(id);
+        if (_representsSameContentEvent(current, metadata)) {
+          return ConversationNotificationContentReplacementResult
+              .alreadyCurrent;
+        }
         final prepared = await _prepareContentMetadataFile(id, metadata);
         try {
-          // Retire the old stable-id card before the new marker becomes
-          // active. A kill after this point can leave no card, but can never
-          // leave an old reaction card mislabeled as a new message (or vice
-          // versa). Outbox/headless retry can safely repeat the sequence.
-          await retireCurrent();
-          await _activatePreparedContentMetadataFile(id, prepared);
-          // Keep the new marker even if the plugin call throws: a platform
-          // error is not proof the native side effect did not occur. With the
-          // prior card already retired, the marker describes either the exact
-          // new card or a harmless generation with no card; a retry is safe.
+          // NotificationManager/UNUserNotificationCenter replace the existing
+          // stable id in place. Publish first so a rejected or failed owner
+          // cannot erase the only visible card. The registry lock keeps read,
+          // reaction and tap CAS operations behind this native update.
           await replace();
+          await _activatePreparedContentMetadataFile(id, prepared);
           return ConversationNotificationContentReplacementResult
               .shownAndRecorded;
         } finally {
@@ -305,7 +304,6 @@ final class DurableConversationNotificationIdRegistry
     required int notificationId,
     required String expectedGeneration,
     required ConversationNotificationContentMetadata metadata,
-    required Future<void> Function() retireCurrent,
     required Future<void> Function() replace,
   }) async {
     final normalized = _normalizedConversationKey(conversationKey);
@@ -329,12 +327,8 @@ final class DurableConversationNotificationIdRegistry
         if (await _readContentMetadataFile(id) != snapshot) return false;
         final prepared = await _prepareContentMetadataFile(id, metadata);
         try {
-          await retireCurrent();
-          await _activatePreparedContentMetadataFile(id, prepared);
-          // As with ordinary replacement, retain the new generation if the
-          // plugin throws because the native side effect is ambiguous. The
-          // durable reconciliation job remains available for a later refresh.
           await replace();
+          await _activatePreparedContentMetadataFile(id, prepared);
           return true;
         } finally {
           try {
@@ -527,32 +521,21 @@ final class DurableConversationNotificationIdRegistry
               prepared = await _prepareContentMetadataFile(id, metadata);
             },
             retireCurrent: retireCurrent,
-            retireAndActivateContent: () async {
-              final exactPrepared = prepared;
-              if (exactPrepared == null) {
-                throw StateError('content metadata was not prepared');
-              }
-              if (!await _activateContentFromIntent(
-                id: id,
-                metadata: metadata,
-                currentOpaqueBinding: context.currentOpaqueBinding,
-                retireCurrent: retireCurrent,
-                prepared: exactPrepared,
-              )) {
-                throw StateError('content activation intent mismatch');
-              }
-            },
             ensureContentActivated: () => _activateContentFromIntent(
               id: id,
               metadata: metadata,
               currentOpaqueBinding: context.currentOpaqueBinding,
-              retireCurrent: retireCurrent,
+              prepared: prepared,
             ),
             hasContentActivationIntent: () async {
               final intent = await _readContentActivationIntent(id);
               return intent != null &&
                   intent.opaqueBinding == context.currentOpaqueBinding &&
-                  intent.matchesNext(metadata);
+                  intent.matchesNext(metadata) &&
+                  _contentActivationMetadataDigest(
+                        await _readContentMetadataFile(id),
+                      ) ==
+                      intent.previousDigest;
             },
             completeContentActivation: () => _deleteContentActivationIntent(id),
             exactContentIsCurrent: () async =>
@@ -854,7 +837,6 @@ final class DurableConversationNotificationIdRegistry
     required int id,
     required ConversationNotificationContentMetadata metadata,
     required String currentOpaqueBinding,
-    required Future<void> Function() retireCurrent,
     File? prepared,
   }) async {
     final current = await _readContentMetadataFile(id);
@@ -872,7 +854,6 @@ final class DurableConversationNotificationIdRegistry
     final exactPrepared =
         prepared ?? await _prepareContentMetadataFile(id, metadata);
     try {
-      await retireCurrent();
       await _activatePreparedContentMetadataFile(id, exactPrepared);
       return true;
     } finally {
@@ -884,6 +865,21 @@ final class DurableConversationNotificationIdRegistry
         }
       }
     }
+  }
+
+  bool _representsSameContentEvent(
+    ConversationNotificationContentMetadata? current,
+    ConversationNotificationContentMetadata next,
+  ) {
+    final currentEvent = current?.eventIdentity?.trim();
+    final nextEvent = next.eventIdentity?.trim();
+    return current != null &&
+        current.kind == next.kind &&
+        currentEvent != null &&
+        currentEvent.isNotEmpty &&
+        nextEvent != null &&
+        nextEvent.isNotEmpty &&
+        currentEvent == nextEvent;
   }
 
   Future<void> _deleteContentActivationIntent(int id) async {

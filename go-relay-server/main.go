@@ -130,10 +130,11 @@ func main() {
 	if stores.WakeOutcomeCoordinator != nil {
 		stores.WakeOutcomeCoordinator.Start(ctx)
 	}
-	groupInbox.SetGroupReactionPushEnabled(loadGroupReactionPushEnabledFromEnv())
+	groupReactionPushEnabled := applyGroupReactionPushRollout(inbox, groupInbox)
 	log.Printf(
-		"[GROUP_INBOX] group reaction push enabled=%v (default off; %s)",
-		groupInbox.groupReactionPushEnabled,
+		"[GROUP_INBOX] group reaction push enabled=%v strict_direct_inbox_enabled=%v (default off; %s)",
+		groupReactionPushEnabled,
+		inbox.groupReactionPushEnabled,
 		groupReactionPushEnabledEnv,
 	)
 	media, err := NewMediaStore(storageCfg.MediaDir)

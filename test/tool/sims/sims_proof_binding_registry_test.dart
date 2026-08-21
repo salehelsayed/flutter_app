@@ -11,6 +11,7 @@ const _captureOwnedBindings = <String>{
   'integration_test/notification_tap_message_visible_proof_test.dart',
   'integration_test/intro_accept_notification_android_proof_test.dart',
   'integration_test/group_notification_projection_android_proof_test.dart',
+  'integration_test/group_strict_notification_proof_test.dart',
   'integration_test/group_muted_notification_proof_test.dart',
   'integration_test/android_notification_recovery_completion_proof_test.dart',
   'integration_test/scripts/validate_group_reaction_notification_artifacts.dart',
@@ -37,6 +38,13 @@ const _groupNotificationProjectionSupport = <String, String>{
       '330 strict Android group notification projection raw-evidence criteria',
 };
 
+const _groupStrictNotificationSupport = <String, String>{
+  'integration_test/scripts/run_group_strict_notification_sims.dart':
+      'typed Sims adapter for Android strict group notification closure; manifest owns execution',
+  'integration_test/scripts/group_strict_notification_criteria.dart':
+      '393 strict Android group notification raw-evidence criteria',
+};
+
 const _groupMutedNotificationSupport = <String, String>{
   'integration_test/scripts/run_group_muted_notification_android.dart':
       'typed Sims adapter for Android muted-group notification suppression; manifest owns execution',
@@ -45,10 +53,12 @@ const _groupMutedNotificationSupport = <String, String>{
 };
 
 const _androidRecoveryCompletionSupport = <String, String>{
+  'integration_test/scripts/run_android_notification_recovery_completion_sims.dart':
+      '393 disposable encrypted Redis/FCM relay wrapper prepares the central fixed-wake artifact before manifest execution',
   'integration_test/scripts/run_android_notification_recovery_completion.dart':
-      'manifest-owned paired Android recovery runner; product debug seam remains activation-gated',
+      '393 manifest-owned physical-sender emulator-receiver fixed-wake recovery adapter',
   'integration_test/scripts/android_notification_recovery_completion_criteria.dart':
-      '331 strict content-addressed Android recovery evidence criteria',
+      '393 strict content-addressed fixed-wake recovery evidence criteria',
 };
 
 const _directMediaBlobCustodySupport = <String, String>{
@@ -341,6 +351,7 @@ void main() {
         'proofBoundary': 'android.group-notification-projection-durability',
         'assertions': <String>[
           'groups.two_group_read_zero_exact_cancel',
+          'groups.killed_group_photo_message',
           'groups.group_reaction_photo_semantic_kind',
           'groups.group_reaction_video_semantic_kind',
           'groups.group_reaction_voice_message_semantic_kind',
@@ -410,6 +421,46 @@ void main() {
       expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
     },
   );
+
+  test('TC-393-08 strict group notification closure is manifest-owned', () {
+    const capabilityId = 'groups.strict_notification_closure';
+    const runner =
+        'integration_test/scripts/run_group_strict_notification_sims.dart';
+    final capability = manifest.capabilityById(capabilityId);
+
+    expect(capability, isNotNull);
+    expect(capability!.assertionIds, <String>[
+      'groups.strict_exact_chat_suppressed',
+      'groups.strict_message_killed_card',
+      'groups.strict_reaction_author_card',
+      'groups.strict_relay_provenance',
+      'groups.strict_state_restored',
+    ]);
+    expect(capability.command, <String>['dart', 'run', runner]);
+    expect(capability.buildProfileId, 'android.production_fcm');
+    expect(capability.dependencies, <String>['build.android.production_fcm']);
+    expect(
+      capability.artifactValidator,
+      'integration_test/group_strict_notification_proof_test.dart',
+    );
+    expect(capability.automationReady, isTrue);
+
+    for (final entry in _groupStrictNotificationSupport.entries) {
+      expect(
+        discovery.where(
+          (record) =>
+              record.path == entry.key &&
+              record.category == 'support' &&
+              record.kind == 'support' &&
+              record.note == entry.value,
+        ),
+        hasLength(1),
+      );
+      expect(_executableDiscoveryRecords(discovery, entry.key), isEmpty);
+    }
+    final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
+    expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
+  });
 
   test('muted-group notification campaign is manifest-owned and '
       'discoverable', () {
@@ -495,162 +546,118 @@ void main() {
     expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
   });
 
-  test(
-    'Android notification recovery completion is manifest-owned and fail-closed',
-    () {
-      const capabilityId = 'notifications.android_recovery_completion';
-      const runner =
-          'integration_test/scripts/run_android_notification_recovery_completion.dart';
-      final capability = manifest.capabilityById(capabilityId);
+  test('TC-393-12 Android fixed-wake recovery is manifest-owned and fail-closed', () {
+    const capabilityId = 'notifications.android_recovery_completion';
+    const runner =
+        'integration_test/scripts/run_android_notification_recovery_completion.dart';
+    final capability = manifest.capabilityById(capabilityId);
 
-      expect(capability, isNotNull);
-      expect(capability!.toJson(), <String, Object?>{
-        'id': capabilityId,
-        'owner': 'notifications',
-        'proofBoundary':
-            'android.real-relay.canonical-notification-recovery-completion',
-        'assertions': <String>[
-          'notifications.headless_direct_group_recovery',
-          'notifications.foreground_handoff_new_generation',
-          'notifications.direct_custody_recovery',
-          'notifications.synthetic_outer_id_recovery',
-          'notifications.history_count_projection',
-          'notifications.registration_health_live_recovery',
-          'notifications.recovery_copy_locales',
-          'notifications.zero_taps_zero_child_builds',
-        ],
-        'lane': 'reliability',
-        'modes': <String>['full', 'major'],
-        'families': <String>['1to1', 'group', 'notifications'],
-        'required': true,
-        'command': <String>['dart', 'run', runner],
-        'buildProfile': 'android.production_fcm',
-        'dependencies': <String>['build.android.production_fcm'],
-        'resources': <Map<String, String>>[
-          <String, String>{
-            'name': 'build:android.production_fcm',
-            'access': 'read',
-          },
-          <String, String>{
-            'name': 'device:android-physical',
-            'access': 'exclusive',
-          },
-          <String, String>{
-            'name': 'device:android-emulator',
-            'access': 'exclusive',
-          },
-          <String, String>{
-            'name': 'relay-mutation:staging',
-            'access': 'exclusive',
-          },
-          <String, String>{
-            'name': 'artifact:android-notification-recovery-completion',
-            'access': 'write',
-          },
-        ],
-        'targetCapabilities': <String>[
-          'android.physical',
-          'android.emulator',
-          'credentials.fcm',
-          'relay.staging',
-        ],
-        'allowedNaReason': targetUnavailableNaReason,
-        'artifactRequired': true,
-        'artifactValidator':
-            'integration_test/android_notification_recovery_completion_proof_test.dart',
-        'active': true,
-        'declaredBuildException': false,
-        'automationReady': false,
-      });
+    expect(capability, isNotNull);
+    expect(capability!.toJson(), <String, Object?>{
+      'id': capabilityId,
+      'owner': 'notifications',
+      'proofBoundary':
+          'android.fixed-wake.real-relay.ephemeral-redis-fcm.direct-reaction-recovery',
+      'assertions': <String>[
+        'notifications.fixed_wake_live_route_selected',
+        'notifications.direct_reaction_canonical_recovery',
+        'notifications.generic_recovery_card_retired',
+        'notifications.no_duplicate_or_second_tone',
+        'notifications.state_and_route_restored',
+        'notifications.zero_taps_zero_child_builds',
+      ],
+      'lane': 'reliability',
+      'modes': <String>['full', 'major'],
+      'families': <String>['1to1', 'notifications'],
+      'required': true,
+      'command': <String>['dart', 'run', runner],
+      'buildProfile': 'android.production_fcm.fixed_wake',
+      'dependencies': <String>['build.android.production_fcm.fixed_wake'],
+      'resources': <Map<String, String>>[
+        <String, String>{
+          'name': 'build:android.production_fcm.fixed_wake',
+          'access': 'read',
+        },
+        <String, String>{
+          'name': 'device:android-physical',
+          'access': 'exclusive',
+        },
+        <String, String>{
+          'name': 'device:android-emulator',
+          'access': 'exclusive',
+        },
+        <String, String>{
+          'name': 'relay-mutation:local-plan393-fixture',
+          'access': 'exclusive',
+        },
+        <String, String>{
+          'name': 'artifact:android-notification-recovery-completion',
+          'access': 'write',
+        },
+      ],
+      'targetCapabilities': <String>[
+        'android.physical',
+        'android.emulator',
+        'credentials.fcm',
+        'relay.staging',
+      ],
+      'allowedNaReason': targetUnavailableNaReason,
+      'artifactRequired': true,
+      'artifactValidator':
+          'integration_test/android_notification_recovery_completion_proof_test.dart',
+      'active': true,
+      'declaredBuildException': false,
+      'automationReady': true,
+    });
 
-      for (final entry in _androidRecoveryCompletionSupport.entries) {
-        expect(
-          discovery.where(
-            (record) =>
-                record.path == entry.key &&
-                record.category == 'support' &&
-                record.kind == 'support' &&
-                record.note == entry.value,
-          ),
-          hasLength(1),
-          reason: '${entry.key} must remain one exact support-only record',
-        );
-        expect(_executableDiscoveryRecords(discovery, entry.key), isEmpty);
-      }
-
-      final runnerSource = File(runner).readAsStringSync();
-      expect(runnerSource, contains("'KEYCODE_HOME'"));
-      expect(runnerSource, contains("'kill'"));
-      expect(runnerSource, contains("'pidof'"));
-      expect(runnerSource, contains("'stop-app'"));
-      expect(runnerSource, isNot(contains('force-stop')));
-      expect(runnerSource, isNot(contains("'input', 'tap'")));
-      expect(runnerSource, isNot(contains('flutter build')));
-      expect(runnerSource, isNot(contains('gradlew')));
+    for (final entry in _androidRecoveryCompletionSupport.entries) {
       expect(
-        runnerSource.indexOf('final credentialPath ='),
-        lessThan(runnerSource.indexOf('final artifactPath =')),
-        reason: 'relay/FCM credentials must fail before APK/device mutation',
-      );
-      expect(
-        runnerSource.indexOf(
-          'final driverAudit = _auditRecoveryDriverSource()',
+        discovery.where(
+          (record) =>
+              record.path == entry.key &&
+              record.category == 'support' &&
+              record.kind == 'support' &&
+              record.note == entry.value,
         ),
-        lessThan(runnerSource.indexOf('final artifactPath =')),
-        reason: 'missing product seam must fail before APK/device mutation',
+        hasLength(1),
+        reason: '${entry.key} must remain one exact support-only record',
       );
-      expect(runnerSource, contains('--driver-preflight'));
-      expect(runnerSource, contains('_validateBoundReceipt('));
-      expect(runnerSource, contains('_validateLocaleReadiness('));
+      expect(_executableDiscoveryRecords(discovery, entry.key), isEmpty);
+    }
 
-      for (final requiredSeam in const <String>[
-        'debug_receiver_manifest',
-        'read_only_sqlcipher_observer',
-        'paired_sender_identity_choreography',
-        'sims_automation_enabled',
-      ]) {
-        expect(runnerSource, contains("'$requiredSeam'"));
-      }
+    final runnerSource = File(runner).readAsStringSync();
+    expect(runnerSource, isNot(contains('force-stop')));
+    expect(runnerSource, isNot(contains("'input', 'tap'")));
+    expect(runnerSource, isNot(contains('flutter build')));
+    expect(runnerSource, isNot(contains('gradlew')));
+    expect(
+      runnerSource,
+      contains('androidNotificationRecoveryCompletionArtifactEnvironment'),
+    );
+    expect(runnerSource, contains("'--fixed-wake-recovery'"));
+    expect(runnerSource, contains('AndroidAppStateGuard.capture'));
+    expect(runnerSource, contains('stateGuard.restoreAll'));
+    expect(
+      runnerSource,
+      contains('validateAndroidNotificationRecoveryRawArtifact'),
+    );
+    expect(
+      runnerSource.indexOf('final credentialPath ='),
+      lessThan(runnerSource.indexOf('final artifactPath =')),
+      reason: 'relay/FCM credentials must fail before APK/device mutation',
+    );
+    expect(runnerSource, isNot(contains('21071FDF600CSC')));
+    expect(runnerSource, isNot(contains('emulator-5554')));
+    expect(
+      runnerSource,
+      isNot(contains('NotificationRecoveryCompletionReceiver')),
+    );
+    expect(capability.automationReady, isTrue);
 
-      final runtimeSources = <File>[
-        for (final root in <Directory>[
-          Directory('lib'),
-          Directory('android/app/src/debug'),
-          Directory('android/app/src/main'),
-        ])
-          if (root.existsSync())
-            ...root
-                .listSync(recursive: true, followLinks: false)
-                .whereType<File>()
-                .where(
-                  (file) =>
-                      file.path.endsWith('.dart') ||
-                      file.path.endsWith('.kt') ||
-                      file.path.endsWith('.java'),
-                ),
-      ];
-      final hasDebugAction = runtimeSources.any(
-        (file) => file.readAsStringSync().contains(
-          'com.mknoon.app.debug.NOTIFICATION_RECOVERY_COMPLETION',
-        ),
-      );
-      final hasReceiptProducer = runtimeSources.any(
-        (file) => file.readAsStringSync().contains(
-          'plan331_notification_recovery_receipt.json',
-        ),
-      );
-      expect(hasDebugAction && hasReceiptProducer, isFalse);
-      expect(
-        capability.automationReady,
-        isFalse,
-        reason: 'the manifest cannot advertise an absent product proof seam',
-      );
-
-      final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
-      expect(major.selectedIds, contains(capabilityId));
-      expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
-    },
-  );
+    final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
+    expect(major.selectedIds, contains(capabilityId));
+    expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
+  });
 
   test(
     'TC-347-09 direct-media custody is one manifest-owned Android-pair proof',

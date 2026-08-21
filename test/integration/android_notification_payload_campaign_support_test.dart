@@ -26,15 +26,20 @@ void main() {
     // `mknoon_messages` was IMPORTANCE_NONE. Blocking BOTH channels would make
     // the zero-card census pass without the app changing anything, masking
     // exactly the defect this leg is here to catch.
-    expect(leg, contains('_setChannelEnabled(_audibleNotificationChannelId, false)'));
     expect(
       leg,
-      isNot(contains('_setChannelEnabled(_silentNotificationChannelId, false)')),
+      contains('_setChannelEnabled(_audibleNotificationChannelId, false)'),
+    );
+    expect(
+      leg,
+      isNot(
+        contains('_setChannelEnabled(_silentNotificationChannelId, false)'),
+      ),
     );
     expect(leg, contains('blockedSilentImportance != 2'));
   });
 
-  test('B13 proves its alert from the log, never from a dumpsys channel', () {
+  test('B13 proves the alert from the log and the settled primary card', () {
     final source = File(
       'integration_test/scripts/notification_android_payload_campaign.dart',
     ).readAsStringSync();
@@ -46,18 +51,17 @@ void main() {
     expect(end, greaterThan(start));
     final leg = source.substring(start, end);
 
-    // A later dump reports the losing path's silent same-ID reconcile as a
-    // silent alert, so the audible assertion must consume the first
-    // observation's channels and the surviving record must NOT be re-asserted
-    // as audible.
+    // The log proves that the winning publication alerted. A later dump has a
+    // different job: it proves the losing-path reconcile preserved the active
+    // primary-channel card instead of demoting it.
     expect(
       leg,
-      contains('androidNotificationFirstPostAttemptSilent(\n        await _logcatSince(logcatCursor),\n      )'),
+      contains(
+        'androidNotificationFirstPostAttemptSilent(\n        await _logcatSince(logcatCursor),\n      )',
+      ),
     );
     expect(leg, contains('alertSilent != false'));
-    // Neither the alerting post nor the survivor may be judged by a dumpsys
-    // channel read here.
-    expect(leg, isNot(contains("channels.single != 'mknoon_messages'")));
+    expect(leg, contains('channels.single != _audibleNotificationChannelId'));
     expect(leg, isNot(contains('_requireAudibleChannel(')));
   });
 
@@ -122,11 +126,213 @@ void main() {
     expect(assertedAt, greaterThan(blockedAt));
     // ...and the typed record is awaited right after the relaunch, not after
     // the send/census minutes later.
+    expect(leg.indexOf('_sendSpacedMarker('), greaterThan(assertedAt));
+  });
+
+  test('pm path package census accepts API 37 silent absence', () {
     expect(
-      leg.indexOf('_sendSpacedMarker('),
-      greaterThan(assertedAt),
+      androidPackagePresentFromPmPath(exitCode: 1, stdout: '', stderr: ''),
+      isFalse,
+    );
+    expect(
+      androidPackagePresentFromPmPath(
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Unknown package: com.mknoon.app',
+      ),
+      isFalse,
+    );
+    expect(
+      androidPackagePresentFromPmPath(
+        exitCode: 0,
+        stdout: 'package:/data/app/com.mknoon.app/base.apk\n',
+        stderr: '',
+      ),
+      isTrue,
+    );
+    expect(
+      () => androidPackagePresentFromPmPath(
+        exitCode: 23,
+        stdout: '',
+        stderr: 'error: transport failure',
+      ),
+      throwsFormatException,
     );
   });
+
+  test(
+    'G24 app-op divergence is probe-derived and restores both baselines',
+    () {
+      expect(
+        parseAndroidNotificationAppOpMode(
+          'POST_NOTIFICATION: allow; time=+4m12s ago',
+        ),
+        'allow',
+      );
+      expect(
+        parseAndroidNotificationAppOpMode(
+          'Uid mode: POST_NOTIFICATION: ignore\nPOST_NOTIFICATION: ignore',
+        ),
+        'ignore',
+      );
+      expect(
+        parseAndroidNotificationUidAppOpMode(
+          'Uid mode: POST_NOTIFICATION: ignore\nPOST_NOTIFICATION: allow',
+        ),
+        'ignore',
+      );
+      expect(
+        parseAndroidNotificationUidAppOpMode(
+          'POST_NOTIFICATION: allow; time=+4m12s ago',
+        ),
+        'default',
+      );
+      expect(androidNotificationUidAppOpShellMode('default'), 'allow');
+      expect(androidNotificationUidAppOpShellMode('ignore'), 'ignore');
+      expect(
+        () => androidNotificationUidAppOpShellMode('future-mode'),
+        throwsFormatException,
+      );
+      expect(
+        androidNotificationUidAppOpMutationBlocked(
+          'Blocked setUidMode call for runtime permission app op: '
+          'uid = 10252, code = POST_NOTIFICATION, mode = ignore',
+        ),
+        isTrue,
+      );
+      expect(
+        androidNotificationUidAppOpMutationBlocked(
+          'setUidMode accepted: code = POST_NOTIFICATION, mode = ignore',
+        ),
+        isFalse,
+      );
+      expect(
+        () => parseAndroidNotificationAppOpMode(
+          'POST_NOTIFICATION: mode-from-a-future-android',
+        ),
+        throwsFormatException,
+      );
+
+      final source = File(
+        'integration_test/scripts/notification_android_payload_campaign.dart',
+      ).readAsStringSync();
+      expect(source, contains('androidPackagePresentFromPmPath('));
+      final runStart = source.indexOf(
+        'Future<AndroidNotificationCampaignResult> run() async',
+      );
+      final runEnd = source.indexOf('Future<void> _preflight()', runStart);
+      expect(runStart, greaterThanOrEqualTo(0));
+      expect(runEnd, greaterThan(runStart));
+      final run = source.substring(runStart, runEnd);
+
+      final guardCapture = run.indexOf('AndroidAppStateGuard.capture(');
+      final entryCapture = run.indexOf(
+        '_captureCampaignEntryNotificationAppOp()',
+        guardCapture,
+      );
+      final firstInstall = run.indexOf('prepareFreshInstall(', entryCapture);
+      final outerRestore = run.indexOf(
+        'appStateGuard.restoreAll',
+        firstInstall,
+      );
+      final entryRestore = run.indexOf(
+        '_restoreCampaignEntryNotificationAppOp',
+        outerRestore,
+      );
+      expect(guardCapture, greaterThanOrEqualTo(0));
+      expect(entryCapture, greaterThan(guardCapture));
+      expect(firstInstall, greaterThan(entryCapture));
+      expect(outerRestore, greaterThan(firstInstall));
+      expect(entryRestore, greaterThan(outerRestore));
+
+      final legStart = source.indexOf(
+        'Future<Map<String, Object?>> _runPermissionAppOpDivergenceLeg()',
+      );
+      final legEnd = source.indexOf(
+        'Future<Map<String, Object?>> _runTokenRefreshLeg()',
+        legStart,
+      );
+      expect(legStart, greaterThanOrEqualTo(0));
+      expect(legEnd, greaterThan(legStart));
+      final leg = source.substring(legStart, legEnd);
+      expect(leg, contains('_notificationPermissionGranted()'));
+      expect(leg, contains("_readNotificationAppOpMode()"));
+      expect(leg, contains("_setNotificationAppOpMode('ignore')"));
+      expect(leg, isNot(contains("'pm',\n      'revoke'")));
+
+      final appOpReadStart = source.indexOf(
+        'Future<String> _readNotificationAppOpMode()',
+      );
+      final appOpSetStart = source.indexOf(
+        'Future<void> _setNotificationAppOpMode',
+        appOpReadStart,
+      );
+      final appOpRestoreStart = source.indexOf(
+        'Future<void> _restoreLegLocalNotificationAppOp()',
+        appOpSetStart,
+      );
+      expect(appOpReadStart, greaterThanOrEqualTo(0));
+      expect(appOpSetStart, greaterThan(appOpReadStart));
+      expect(appOpRestoreStart, greaterThan(appOpSetStart));
+      final appOpRead = source.substring(appOpReadStart, appOpSetStart);
+      final appOpSet = source.substring(appOpSetStart, appOpRestoreStart);
+      expect(appOpRead, contains("'get',\n      '--uid',"));
+      expect(appOpRead, contains('parseAndroidNotificationUidAppOpMode'));
+      expect(appOpSet, contains("'set',\n      '--uid',"));
+
+      final mutationFlag = leg.indexOf('_g24AppOpMutated = true;');
+      final mutation = leg.indexOf("_setNotificationAppOpMode('ignore')");
+      final duringRead = leg.indexOf('_readNotificationAppOpMode()', mutation);
+      final cursor = leg.indexOf('_deviceLogcatCursor()', duringRead);
+      final relaunch = leg.indexOf('_launch(emulator)', cursor);
+      final boundedRead = leg.indexOf('_flowRecordsSince(', relaunch);
+      final localRestore = leg.indexOf(
+        '_restoreLegLocalNotificationAppOp()',
+        boundedRead,
+      );
+      final recovery = leg.indexOf(
+        '_sendSpacedMarker(controlMarker',
+        localRestore,
+      );
+      expect(mutationFlag, greaterThanOrEqualTo(0));
+      expect(mutation, greaterThan(mutationFlag));
+      expect(duringRead, greaterThan(mutation));
+      expect(cursor, greaterThan(duringRead));
+      expect(relaunch, greaterThan(cursor));
+      expect(boundedRead, greaterThan(relaunch));
+      expect(localRestore, greaterThan(boundedRead));
+      expect(recovery, greaterThan(localRestore));
+
+      for (final event in <String>[
+        'PUSH_PERMISSION_OS_STATE_OVERRIDE',
+        'PUSH_PERMISSION_REQUEST_RESULT',
+        'PUSH_PERMISSION_OS_CHECK_FAILED',
+        'PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED',
+      ]) {
+        expect(leg, contains(event));
+      }
+      for (final field in <String>[
+        'runtimePermissionGrantedBeforeOverride',
+        'appOpModeAtCampaignEntry',
+        'appOpModeBeforeOverride',
+        'appOpModeDuringOverride',
+        'appOpModeAfterRecovery',
+        'appOpModeAfterCampaignRestore',
+        'permissionOverrideRequestStatus',
+        'permissionOverrideOsEnabled',
+        'permissionResultStatus',
+        'permissionResultGranted',
+        'permissionResultOsEnabled',
+        'permissionOsCheckFailedCount',
+        'permissionDeniedHealthEvent',
+        'disabledCardCount',
+        'disabledMessageCount',
+        'recoveryAlertChannel',
+      ]) {
+        expect(source, contains("'$field'"));
+      }
+    },
+  );
 
   test('cold notification leg explicitly kills the headless FCM process', () {
     final source = File(
@@ -428,13 +634,13 @@ void main() {
     expect(end, greaterThan(start));
     // Recipient binding lives in the journal SCOPE, not in the matched line;
     // dropping the scoping would widen the match to unrelated relay traffic.
-    expect(
-      source.substring(start, end),
-      contains('_relayJournalSince(since)'),
-    );
+    expect(source.substring(start, end), contains('_relayJournalSince(since)'));
     final slice = source.substring(
       end,
-      source.indexOf('Future<ActiveNotificationCard> _waitForNotification', end),
+      source.indexOf(
+        'Future<ActiveNotificationCard> _waitForNotification',
+        end,
+      ),
     );
     expect(slice, contains("'--since'"));
     expect(slice, contains('since.toUtc().millisecondsSinceEpoch'));
@@ -567,7 +773,10 @@ Ranking Config:
         'PUSH_REGISTER_COORDINATOR_SUCCESS',
       ],
     );
-    expect(records.first.hasDetails(<String, Object?>{'trigger': 'startup'}), isTrue);
+    expect(
+      records.first.hasDetails(<String, Object?>{'trigger': 'startup'}),
+      isTrue,
+    );
     expect(records[1].details, isEmpty);
     // Extra proof digests must not defeat a trigger assertion.
     expect(
@@ -590,7 +799,10 @@ Ranking Config:
     // Measured on device: this is what the 1:1 live path actually emits when
     // it loses the race. Excluding it made tc_b13 unsatisfiable.
     expect(
-      sup('NOTIFICATION_LEGACY_CLAIM_RECONCILE', 'message_event_already_claimed'),
+      sup(
+        'NOTIFICATION_LEGACY_CLAIM_RECONCILE',
+        'message_event_already_claimed',
+      ),
       'NOTIFICATION_LEGACY_CLAIM_RECONCILE:message_event_already_claimed',
     );
     expect(
@@ -598,12 +810,25 @@ Ranking Config:
       'NOTIFICATION_SUPPRESSED:recent_remote_push',
     );
     expect(
-      sup('PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED', 'recent_duplicate_background_push'),
+      sup('NOTIFICATION_DEFERRED', 'message_event_claim_pending'),
+      'NOTIFICATION_DEFERRED:message_event_claim_pending',
+      reason:
+          'the background-owner-first ordering retains the live SQL row while '
+          'the background isolate posts',
+    );
+    expect(
+      sup(
+        'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
+        'recent_duplicate_background_push',
+      ),
       'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED:recent_duplicate_background_push',
     );
 
     // The REASON allow-list is unchanged: a novel stand-down still fails.
-    expect(sup('NOTIFICATION_LEGACY_CLAIM_RECONCILE', 'some_new_reason'), isNull);
+    expect(
+      sup('NOTIFICATION_LEGACY_CLAIM_RECONCILE', 'some_new_reason'),
+      isNull,
+    );
     expect(sup('NOTIFICATION_SHOWN', 'message_event_already_claimed'), isNull);
     expect(
       sup('PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED', 'recent_remote_push'),

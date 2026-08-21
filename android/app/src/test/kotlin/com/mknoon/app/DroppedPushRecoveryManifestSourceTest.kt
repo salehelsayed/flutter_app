@@ -15,12 +15,18 @@ class DroppedPushRecoveryManifestSourceTest {
 
         assertTrue(xml.contains("xmlns:tools=\"http://schemas.android.com/tools\""))
         assertTrue(xml.contains("io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService"))
-        assertTrue(xml.contains("tools:node=\"remove\""))
+        assertTrue(xml.contains("io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver"))
+        assertTrue(Regex("tools:node=\\\"remove\\\"").findAll(xml).count() >= 2)
         val customOwner = Regex(
             """<service\s+[^>]*android:name="\.MknoonFirebaseMessagingService"[^>]*>.*?<intent-filter\s+[^>]*android:priority="[1-9][0-9]*"[^>]*>.*?<action\s+android:name="com\.google\.firebase\.MESSAGING_EVENT"\s*/>.*?</intent-filter>.*?</service>""",
             RegexOption.DOT_MATCHES_ALL,
         )
         assertTrue(customOwner.containsMatchIn(xml))
+        val customReceiver = Regex(
+            """<receiver\s+[^>]*android:name="\.MknoonFirebaseMessagingReceiver"[^>]*android:exported="true"[^>]*android:permission="com\.google\.android\.c2dm\.permission\.SEND"[^>]*>.*?<action\s+android:name="com\.google\.android\.c2dm\.intent\.RECEIVE"\s*/>.*?</receiver>""",
+            RegexOption.DOT_MATCHES_ALL,
+        )
+        assertTrue(customReceiver.containsMatchIn(xml))
         assertTrue(xml.contains("androidx.work.impl.foreground.SystemForegroundService"))
         assertTrue(xml.contains("android:foregroundServiceType=\"dataSync\""))
     }

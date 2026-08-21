@@ -116,6 +116,27 @@ void main() {
       reason: 'the typed smoke grades the working tree, not clean HEAD',
     );
     expect(_nonEmpty(app['apkSha256']), isTrue);
+    if (app.containsKey('buildMode')) {
+      final buildMode = app['buildMode'];
+      expect(
+        buildMode,
+        anyOf(
+          'central_prebuilt',
+          'standalone_child_builds',
+          'standalone_cached',
+        ),
+      );
+      expect(_nonEmpty(app['buildProfile']), isTrue);
+      expect(app['childBuildCount'], isA<int>());
+      if (buildMode == 'central_prebuilt') {
+        expect(app['buildProfile'], 'android.production_fcm');
+        expect(app['childBuildCount'], 0);
+        expect(app['reusedPrebuiltCandidate'], isTrue);
+        expect(app['senderHarnessApkSha256'], app['apkSha256']);
+        expect(app['senderApkSha256'], app['apkSha256']);
+        expect(app['recipientApkSha256'], app['apkSha256']);
+      }
+    }
 
     final relay = _object(artifact, 'relay');
     expect(_nonEmpty(relay['revision']), isTrue);
@@ -272,6 +293,116 @@ void main() {
     expect(attribution['recipientBackgroundPushObserved'], isTrue);
     expect(attribution['providerEvidenceSource'], 'recipient_background_push');
     expect(_nonEmpty(attribution['providerEvidencePath']), isTrue);
+  });
+
+  test('android_first_wake_profile_aot', () async {
+    final file = _artifactFile('android_first_wake_profile_aot');
+    if (file == null) {
+      fail('TC-393-06 profile-AOT proof artifact is not configured.');
+    }
+    expect(await file.exists(), isTrue, reason: 'missing ${file.path}');
+    final decoded = jsonDecode(await file.readAsString());
+    expect(decoded, isA<Map<String, dynamic>>());
+    final artifact = decoded as Map<String, dynamic>;
+    expect(
+      artifact['schema'],
+      'mknoon.plan393.android-first-wake-profile-aot.v1',
+    );
+    expect(artifact['testCase'], 'TC-393-06');
+    expect(artifact['scenario'], 'android_first_wake_profile_aot');
+    expect(artifact['status'], 'passed');
+    expect(_nonEmpty(artifact['capturedAt']), isTrue);
+    final mode = artifact['mode'];
+    expect(mode, anyOf('measurement_only', 'require_alert'));
+
+    final app = _object(artifact, 'app');
+    expect(app['workingTreeCandidate'], isTrue);
+    expect(app['buildMode'], 'standalone_child_builds');
+    expect(app['buildProfile'], 'profile-android-arm64-split-plan393-g21-v1');
+    expect(app['childBuildCount'], 2);
+    expect(app['profileAot'], isTrue);
+    expect(
+      app['recipientProfileApkSha256'],
+      matches(RegExp(r'^[0-9a-f]{64}$')),
+    );
+
+    final provider = _object(artifact, 'providerInputs');
+    expect(
+      provider['serviceAccountSha256'],
+      matches(RegExp(r'^[0-9a-f]{64}$')),
+    );
+    expect(
+      provider['stagingManifestSha256'],
+      matches(RegExp(r'^[0-9a-f]{64}$')),
+    );
+    final relay = _object(artifact, 'relay');
+    expect(_nonEmpty(relay['revision']), isTrue);
+    expect(relay['realFcm'], isTrue);
+
+    final observation = _object(artifact, 'observation');
+    expect(observation['mode'], mode);
+    expect(observation['profileReceiverWarmed'], isTrue);
+    expect(observation['recipientProcessAbsentBeforeSend'], isTrue);
+    expect(observation['notificationCount'], 1);
+    expect(observation['cardTitleSha256'], matches(RegExp(r'^[0-9a-f]{64}$')));
+    expect(observation['cardBodySha256'], matches(RegExp(r'^[0-9a-f]{64}$')));
+    expect(observation['cardStateClearedBeforeRestore'], isTrue);
+    expect(observation['selectedProductionReserveMs'], 2000);
+
+    if (mode == 'measurement_only') {
+      expect(observation['measurementFlagEnabled'], isTrue);
+      expect(observation['freshReceiptCount'], 1);
+      final receipt = _object(observation, 'receipt');
+      expect(receipt['schema'], 'mknoon.plan393.g21-measurement.v1');
+      expect(receipt['kind'], 'direct_message');
+      expect(receipt['measurementMode'], 'raw_aggregate_remainder');
+      expect(receipt['terminalOutcome'], 'shown');
+      expect(receipt['buildMode'], 'profile');
+      expect(receipt['engineRole'], 'flutterfire_background');
+      final elapsed = int.parse(
+        receipt['aggregateElapsedAtEligibilityStartMs'] as String,
+      );
+      final remaining = int.parse(
+        receipt['remainingAtEligibilityStartMs'] as String,
+      );
+      final eligibility = int.parse(receipt['eligibilityElapsedMs'] as String);
+      final nativeTail = int.parse(receipt['nativeEntryTailMs'] as String);
+      final reserve = observation['selectedProductionReserveMs'] as int;
+      expect(elapsed, greaterThanOrEqualTo(0));
+      expect(remaining, inInclusiveRange(1, 8000));
+      expect(eligibility, inInclusiveRange(0, 8000));
+      expect(nativeTail, inInclusiveRange(0, 8000));
+      expect(reserve, nativeTail + 500 < 2000 ? 2000 : nativeTail + 500);
+      expect(eligibility, lessThanOrEqualTo(remaining - reserve));
+      final receiptFile = File(observation['receiptPath'] as String);
+      expect(await receiptFile.exists(), isTrue);
+      expect(
+        sha256.convert(await receiptFile.readAsBytes()).toString(),
+        observation['receiptSha256'],
+      );
+    } else {
+      expect(observation['measurementFlagEnabled'], isFalse);
+      expect(observation['measurementFlagAbsentInAcceptance'], isTrue);
+      expect(observation['freshReceiptCount'], 0);
+      expect(observation['receipt'], isNull);
+      expect(observation['receiptPath'], isNull);
+    }
+
+    final restoration = _object(artifact, 'restoration');
+    expect(restoration['hostBackupDeleted'], isTrue);
+    expect(restoration['passWrittenAfterRestoration'], isTrue);
+    for (final entry in restoration.entries.where(
+      (entry) =>
+          entry.key != 'hostBackupDeleted' &&
+          entry.key != 'passWrittenAfterRestoration',
+    )) {
+      final device = Map<String, dynamic>.from(entry.value as Map);
+      expect(device['packageStateRestored'], isTrue);
+      expect(device['privateDataRestored'], isTrue);
+      expect(device['notificationStateRestored'], isTrue);
+      expect(device['appProcessIdle'], isTrue);
+    }
+    expect(artifact['containsSecrets'], isFalse);
   });
 
   test('android_background_crypto_preflight', () async {

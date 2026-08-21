@@ -5793,6 +5793,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     );
     final appVisibilityRouteRegistry = AppVisibilityRouteRegistry(
       authority: appVisibilityAuthority,
+      onExactConversationActivated:
+          buildProductionExactConversationActivationCleanup(
+            notificationService,
+          ),
     );
 
     // FDC-09 §12 / CV-14 recipient leg (217 §A1): once-per-cycle mint+register with

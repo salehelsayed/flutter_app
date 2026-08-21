@@ -123,24 +123,27 @@ void main() {
       expect(coldResult.detail, contains('coldAlertChannel'));
     });
 
-    test('b12 cold artifact without its measured channel evidence is rejected', () {
-      final artifact = _notificationArtifact(
-        scenario: 'payload_fast_path_cold_kill',
-        checks: _coldChecks,
-      );
-      final result = validateNotificationArtifact(artifact);
-      expect(result.ok, isFalse);
-      expect(result.detail, contains('coldAlertChannel'));
+    test(
+      'b12 cold artifact without its measured channel evidence is rejected',
+      () {
+        final artifact = _notificationArtifact(
+          scenario: 'payload_fast_path_cold_kill',
+          checks: _coldChecks,
+        );
+        final result = validateNotificationArtifact(artifact);
+        expect(result.ok, isFalse);
+        expect(result.detail, contains('coldAlertChannel'));
 
-      final missingCheck = _notificationArtifact(
-        scenario: 'payload_fast_path_cold_kill',
-        checks: _coldChecks
-            .where((check) => check != 'b12.cold_audible_channel')
-            .toList(growable: false),
-        evidence: _coldEvidence,
-      );
-      expect(validateNotificationArtifact(missingCheck).ok, isFalse);
-    });
+        final missingCheck = _notificationArtifact(
+          scenario: 'payload_fast_path_cold_kill',
+          checks: _coldChecks
+              .where((check) => check != 'b12.cold_audible_channel')
+              .toList(growable: false),
+          evidence: _coldEvidence,
+        );
+        expect(validateNotificationArtifact(missingCheck).ok, isFalse);
+      },
+    );
 
     // Plan 388 (TC-388-11). The cold leg's graded push is the FIRST wake after
     // an app kill, so it sits in the exact slot where the 2 s
@@ -207,8 +210,9 @@ void main() {
         (artifact) =>
             (artifact['evidence']! as Map)['permissionDeniedPostAttemptEvent'] =
                 'PUSH_BACKGROUND_MESSAGE_RECEIVED',
-        (artifact) =>
-            (artifact['evidence']! as Map).remove('permissionDeniedHealthEvent'),
+        (artifact) => (artifact['evidence']! as Map).remove(
+          'permissionDeniedHealthEvent',
+        ),
         (artifact) =>
             (artifact['evidence']! as Map)['permissionDeniedCardCount'] = 1,
         (artifact) =>
@@ -225,6 +229,81 @@ void main() {
       }
     });
 
+    test('G24 app-op divergence artifact is mandatory and exact', () {
+      expect(validateNotificationArtifact(_g24Artifact()).ok, isTrue);
+
+      const evidenceFields = <String>{
+        'runtimePermissionGrantedBeforeOverride',
+        'appOpModeAtCampaignEntry',
+        'appOpModeBeforeOverride',
+        'appOpModeDuringOverride',
+        'appOpModeAfterRecovery',
+        'appOpModeAfterCampaignRestore',
+        'permissionOverrideRequestStatus',
+        'permissionOverrideOsEnabled',
+        'permissionResultStatus',
+        'permissionResultGranted',
+        'permissionResultOsEnabled',
+        'permissionOsCheckFailedCount',
+        'permissionDeniedHealthEvent',
+        'disabledCardCount',
+        'disabledMessageCount',
+        'recoveryAlertChannel',
+      };
+      for (final field in evidenceFields) {
+        final artifact = _g24Artifact();
+        (artifact['evidence']! as Map).remove(field);
+        expect(
+          validateNotificationArtifact(artifact).ok,
+          isFalse,
+          reason: 'G24 must reject a missing $field probe',
+        );
+      }
+
+      for (final mutation in <void Function(Map<String, Object?>)>[
+        (artifact) =>
+            (artifact['evidence']!
+                    as Map)['runtimePermissionGrantedBeforeOverride'] =
+                false,
+        (artifact) =>
+            (artifact['evidence']! as Map)['appOpModeDuringOverride'] = 'deny',
+        (artifact) =>
+            (artifact['evidence']! as Map)['permissionOverrideRequestStatus'] =
+                'denied',
+        (artifact) =>
+            (artifact['evidence']! as Map)['permissionOverrideOsEnabled'] =
+                true,
+        (artifact) =>
+            (artifact['evidence']! as Map)['permissionResultGranted'] = true,
+        (artifact) =>
+            (artifact['evidence']! as Map)['permissionOsCheckFailedCount'] = 1,
+        (artifact) => (artifact['evidence']! as Map)['disabledCardCount'] = 1,
+        (artifact) =>
+            (artifact['evidence']! as Map)['disabledMessageCount'] = 0,
+        (artifact) => (artifact['evidence']! as Map)['recoveryAlertChannel'] =
+            'mknoon_messages_silent',
+        (artifact) =>
+            (artifact['evidence']! as Map)['appOpModeAfterRecovery'] = 'ignore',
+        (artifact) =>
+            (artifact['evidence']! as Map)['appOpModeAfterCampaignRestore'] =
+                'default',
+        (artifact) =>
+            (artifact['evidence']! as Map)['unmeasuredEscapeHatch'] = true,
+        (artifact) =>
+            (artifact['checks']! as Map).remove('g24.os_state_override_typed'),
+      ]) {
+        final artifact = _g24Artifact();
+        mutation(artifact);
+        expect(validateNotificationArtifact(artifact).ok, isFalse);
+      }
+
+      final absentBaseline = _g24Artifact();
+      final absentEvidence = absentBaseline['evidence']! as Map;
+      absentEvidence['appOpModeAtCampaignEntry'] = 'package_absent';
+      absentEvidence['appOpModeAfterCampaignRestore'] = 'package_absent';
+      expect(validateNotificationArtifact(absentBaseline).ok, isTrue);
+    });
+
     test('G7 token refresh must be same-process and actually rotate', () {
       expect(validateNotificationArtifact(_tokenRefreshArtifact()).ok, isTrue);
 
@@ -234,12 +313,12 @@ void main() {
             (artifact['evidence']! as Map)['tokenRefreshPidAfter'] = '5678',
         // deleteToken can return without the provider ever minting a new
         // token; an unchanged hash is not a rotation.
-        (artifact) =>
-            (artifact['evidence']! as Map)['tokenHashPrefixAfter'] =
-                '0123456789ab',
+        (artifact) => (artifact['evidence']! as Map)['tokenHashPrefixAfter'] =
+            '0123456789ab',
         (artifact) =>
             (artifact['evidence']!
-                as Map)['tokenRefreshStartupAttemptsInWindow'] = 1,
+                    as Map)['tokenRefreshStartupAttemptsInWindow'] =
+                1,
         (artifact) =>
             (artifact['evidence']! as Map)['tokenRefreshSuccessTrigger'] =
                 'startup',
@@ -255,48 +334,53 @@ void main() {
       }
     });
 
-    test('G7 channel-disabled proof requires the measured importance probe', () {
-      expect(
-        validateNotificationArtifact(_channelDisabledArtifact()).ok,
-        isTrue,
-      );
+    test(
+      'G7 channel-disabled proof requires the measured importance probe',
+      () {
+        expect(
+          validateNotificationArtifact(_channelDisabledArtifact()).ok,
+          isTrue,
+        );
 
-      for (final mutation in <void Function(Map<String, Object?>)>[
-        // A skipped Settings toggle leaves importance at 4.
-        (artifact) =>
-            (artifact['evidence']! as Map)['channelDisabledImportance'] = 4,
-        (artifact) =>
-            (artifact['evidence']! as Map)['channelDisabledCardCount'] = 1,
-        (artifact) =>
-            (artifact['evidence']! as Map)['channelReenabledImportance'] = 0,
-        // Blocking the silent channel TOO would make the zero-card census
-        // pass without the app changing anything, masking the very leak this
-        // leg exists to catch — so a blocked silent channel is invalid
-        // evidence, not a stricter run.
-        (artifact) =>
-            (artifact['evidence']! as Map)['channelDisabledSilentImportance'] =
-                0,
-        (artifact) =>
-            (artifact['evidence']! as Map).remove(
-              'channelDisabledSilentImportance',
-            ),
-        (artifact) =>
-            (artifact['evidence']! as Map)['channelReenabledSilentImportance'] =
-                0,
-        (artifact) =>
-            (artifact['evidence']! as Map).remove('channelDisabledImportance'),
-        (artifact) =>
-            (artifact['evidence']! as Map).remove(
-              'channelDisabledPostAttemptEvent',
-            ),
-        (artifact) =>
-            (artifact['checks']! as Map).remove('g7.channel_reenable_recovery'),
-      ]) {
-        final artifact = _channelDisabledArtifact();
-        mutation(artifact);
-        expect(validateNotificationArtifact(artifact).ok, isFalse);
-      }
-    });
+        for (final mutation in <void Function(Map<String, Object?>)>[
+          // A skipped Settings toggle leaves importance at 4.
+          (artifact) =>
+              (artifact['evidence']! as Map)['channelDisabledImportance'] = 4,
+          (artifact) =>
+              (artifact['evidence']! as Map)['channelDisabledCardCount'] = 1,
+          (artifact) =>
+              (artifact['evidence']! as Map)['channelReenabledImportance'] = 0,
+          // Blocking the silent channel TOO would make the zero-card census
+          // pass without the app changing anything, masking the very leak this
+          // leg exists to catch — so a blocked silent channel is invalid
+          // evidence, not a stricter run.
+          (artifact) =>
+              (artifact['evidence']!
+                      as Map)['channelDisabledSilentImportance'] =
+                  0,
+          (artifact) => (artifact['evidence']! as Map).remove(
+            'channelDisabledSilentImportance',
+          ),
+          (artifact) =>
+              (artifact['evidence']!
+                      as Map)['channelReenabledSilentImportance'] =
+                  0,
+          (artifact) => (artifact['evidence']! as Map).remove(
+            'channelDisabledImportance',
+          ),
+          (artifact) => (artifact['evidence']! as Map).remove(
+            'channelDisabledPostAttemptEvent',
+          ),
+          (artifact) => (artifact['checks']! as Map).remove(
+            'g7.channel_reenable_recovery',
+          ),
+        ]) {
+          final artifact = _channelDisabledArtifact();
+          mutation(artifact);
+          expect(validateNotificationArtifact(artifact).ok, isFalse);
+        }
+      },
+    );
 
     test('G7 Doze proof requires both idle boundaries and a typed arm', () {
       expect(validateNotificationArtifact(_dozeArtifact()).ok, isTrue);
@@ -347,9 +431,9 @@ void main() {
       );
       expect(validateNotificationArtifact(artifact).ok, isTrue);
 
-      // A silent SURVIVOR is accepted: the losing path's same-ID reconcile
-      // moves the record after the alert has already been measured. A silent
-      // ALERT is still a failure — that is the mutation below.
+      // A silent survivor is a persistent importance demotion, even when the
+      // winning post briefly alerted. The losing path must update the existing
+      // primary-channel card without moving it.
       final reconciled = _notificationArtifact(
         scenario: 'tc_b13_dual_path_single_alert',
         checks: const <String>[
@@ -364,7 +448,7 @@ void main() {
           'survivingCardChannel': 'mknoon_messages_silent',
         },
       );
-      expect(validateNotificationArtifact(reconciled).ok, isTrue);
+      expect(validateNotificationArtifact(reconciled).ok, isFalse);
 
       for (final mutation in <void Function(Map<String, Object?>)>[
         (item) => (item['evidence']! as Map)['activeCardCount'] = 2,
@@ -563,11 +647,41 @@ Map<String, Object?> _permissionDeniedArtifact() => _notificationArtifact(
   evidence: <String, Object?>{
     'permissionDeniedBackgroundReceiptCount': 1,
     'permissionDeniedPostAttemptEvent': 'PUSH_BACKGROUND_NOTIFICATION_SHOWN',
-    'permissionDeniedHealthEvent': 'PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED',
+    'permissionDeniedHealthEvent':
+        'PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED',
     'permissionDeniedHealthEventCount': 1,
     'permissionDeniedCardCount': 0,
     'permissionDeniedMessageCount': 1,
     'permissionRegrantAlertChannel': 'mknoon_messages',
+  },
+);
+
+Map<String, Object?> _g24Artifact() => _notificationArtifact(
+  scenario: 'tc_g24_permission_appop_divergence',
+  checks: const <String>[
+    'g24.permission_appop_divergence',
+    'g24.os_state_override_typed',
+    'g24.no_post_custody_preserved',
+    'g24.appop_restore_recovery',
+  ],
+  evidence: <String, Object?>{
+    'runtimePermissionGrantedBeforeOverride': true,
+    'appOpModeAtCampaignEntry': 'allow',
+    'appOpModeBeforeOverride': 'allow',
+    'appOpModeDuringOverride': 'ignore',
+    'appOpModeAfterRecovery': 'allow',
+    'appOpModeAfterCampaignRestore': 'allow',
+    'permissionOverrideRequestStatus': 'authorized',
+    'permissionOverrideOsEnabled': false,
+    'permissionResultStatus': 'authorized',
+    'permissionResultGranted': false,
+    'permissionResultOsEnabled': false,
+    'permissionOsCheckFailedCount': 0,
+    'permissionDeniedHealthEvent':
+        'PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED',
+    'disabledCardCount': 0,
+    'disabledMessageCount': 1,
+    'recoveryAlertChannel': 'mknoon_messages',
   },
 );
 

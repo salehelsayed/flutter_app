@@ -321,6 +321,51 @@
       ]
     },
     {
+      "path": "integration_test/scripts/run_1to1_reaction_notification_sims.dart",
+      "owner": "notifications / Sims",
+      "reason": "Plan 392 gives the killed-recipient typed reaction one exact Sims-manifest owner using the central Android production-FCM artifact.",
+      "condition": "Remove only with capability 41 and an equivalent recurring typed-reaction proof adapter.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.42.command.2",
+          "value": "integration_test/scripts/run_1to1_reaction_notification_sims.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_android_notification_recovery_completion.dart",
+      "owner": "notifications / Sims",
+      "reason": "The Plan 393 Sims capability selects this exact executable Android fixed-wake recovery proof tool.",
+      "condition": "Remove only with the owning capability and equivalent real-relay fixed-wake recovery proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.32.command.2",
+          "value": "integration_test/scripts/run_android_notification_recovery_completion.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_android_notification_recovery_completion_sims.dart",
+      "owner": "notifications / Sims manual staging wrapper",
+      "reason": "Plan 393 starts the shared disposable production-code relay in encrypted Redis/real-FCM mode before central fixed-wake build preparation and manifest execution.",
+      "condition": "Remove only with the recovery capability or an equivalent external-state-safe relay setup owner.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "command-argument",
+          "source": "scripts/test/android_notification_recovery_completion_adapter_contract_test.sh",
+          "option": "dart",
+          "target": "integration_test/scripts/run_android_notification_recovery_completion_sims.dart"
+        }
+      ]
+    },
+    {
       "path": "integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart",
       "owner": "QA / release",
       "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
@@ -369,7 +414,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.40.command.2",
+          "keyPath": "capabilities.41.command.2",
           "value": "integration_test/scripts/run_group_muted_notification_android.dart"
         }
       ]
@@ -384,7 +429,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.34.command.2",
+          "keyPath": "capabilities.35.command.2",
           "value": "integration_test/scripts/run_group_notification_projection_android.dart"
         }
       ]
@@ -412,7 +457,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.33.command.2",
+          "keyPath": "capabilities.34.command.2",
           "value": "integration_test/scripts/run_group_reaction_notification_sims.dart"
         }
       ]
@@ -427,7 +472,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.36.command.1",
+          "keyPath": "capabilities.37.command.1",
           "value": "integration_test/scripts/run_group_multi_party_sims.dart"
         }
       ]
@@ -468,7 +513,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.33.artifactValidator",
+          "keyPath": "capabilities.34.artifactValidator",
           "value": "integration_test/scripts/validate_group_reaction_notification_artifacts.dart"
         }
       ]
@@ -550,6 +595,21 @@
           "source": "scripts/run_received_video_picture_in_picture_proof.sh",
           "option": "--driver",
           "target": "test_driver/integration_test.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_group_strict_notification_sims.dart",
+      "owner": "groups / Sims",
+      "reason": "The Plan 393 Sims capability selects this exact executable Android strict-notification proof tool.",
+      "condition": "Remove only with the owning capability and equivalent strict group message/reaction device proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.43.command.2",
+          "value": "integration_test/scripts/run_group_strict_notification_sims.dart"
         }
       ]
     }
@@ -1209,6 +1269,18 @@
       "rootKind": "headless-plugin"
     },
     {
+      "id": "tooling.android-fixed-wake-recovery",
+      "rootKind": "tooling"
+    },
+    {
+      "id": "tooling.android-fixed-wake-recovery-staging-wrapper",
+      "rootKind": "tooling"
+    },
+    {
+      "id": "tooling.group-strict-notification-android",
+      "rootKind": "tooling"
+    },
+    {
       "id": "tooling.group-muted-notification-android",
       "rootKind": "tooling"
     },
@@ -1258,6 +1330,22 @@
           "source": "lib/app/bootstrap/production_application_bootstrap.dart",
           "callee": "FirebaseMessaging.onBackgroundMessage",
           "argument": "firebaseMessagingBackgroundHandler"
+        }
+      ]
+    },
+    {
+      "id": "tooling.android-fixed-wake-recovery-staging-wrapper",
+      "path": "integration_test/scripts/run_android_notification_recovery_completion_sims.dart",
+      "rootKind": "tooling",
+      "owner": "notifications / Sims manual staging wrapper",
+      "reason": "Plan 393 prepares and tears down the encrypted disposable Redis/FCM relay around the centrally built recovery capability.",
+      "condition": "Remove only with the recovery capability or an equivalent external-state-safe relay setup owner.",
+      "evidence": [
+        {
+          "kind": "command-argument",
+          "source": "scripts/test/android_notification_recovery_completion_adapter_contract_test.sh",
+          "option": "dart",
+          "target": "integration_test/scripts/run_android_notification_recovery_completion_sims.dart"
         }
       ]
     },
@@ -1497,6 +1585,38 @@
       ]
     },
     {
+      "id": "tooling.android-fixed-wake-recovery",
+      "path": "integration_test/scripts/run_android_notification_recovery_completion.dart",
+      "rootKind": "tooling",
+      "owner": "notifications / Sims",
+      "reason": "The Plan 393 Sims capability selects this exact executable Android fixed-wake recovery proof tool.",
+      "condition": "Remove only with the capability and equivalent real-relay fixed-wake recovery proof-driver replacement.",
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.32.command.2",
+          "value": "integration_test/scripts/run_android_notification_recovery_completion.dart"
+        }
+      ]
+    },
+    {
+      "id": "tooling.group-strict-notification-android",
+      "path": "integration_test/scripts/run_group_strict_notification_sims.dart",
+      "rootKind": "tooling",
+      "owner": "groups / Sims",
+      "reason": "The Plan 393 Sims capability selects this exact executable Android strict-notification proof tool.",
+      "condition": "Remove only with the capability and equivalent strict group message/reaction proof-driver replacement.",
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.43.command.2",
+          "value": "integration_test/scripts/run_group_strict_notification_sims.dart"
+        }
+      ]
+    },
+    {
       "id": "tooling.group-muted-notification-android",
       "path": "integration_test/scripts/run_group_muted_notification_android.dart",
       "rootKind": "tooling",
@@ -1507,7 +1627,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.40.command.2",
+          "keyPath": "capabilities.41.command.2",
           "value": "integration_test/scripts/run_group_muted_notification_android.dart"
         }
       ]
@@ -1523,7 +1643,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.34.command.2",
+          "keyPath": "capabilities.35.command.2",
           "value": "integration_test/scripts/run_group_notification_projection_android.dart"
         }
       ]
@@ -1539,7 +1659,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.36.command.1",
+          "keyPath": "capabilities.37.command.1",
           "value": "integration_test/scripts/run_group_multi_party_sims.dart"
         }
       ]

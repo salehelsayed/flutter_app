@@ -632,7 +632,8 @@ final class SimsBuildOrchestrator {
       flavor: environment['SIMS_BUILD_FLAVOR'] ?? 'default',
       compileDefines: _effectiveCompileDefines(profile),
       appId: effectiveSimsApplicationId(profile, environment: environment),
-      providerConfigDigests: profile.id == 'android.production_fcm'
+      providerConfigDigests:
+          profile.artifactKind == 'provider-configured-debug-apk'
           ? _digestEnvironmentValues('SIMS_PROVIDER_')
           : const <String, String>{},
       signingDigests: _signingFingerprint(profile, inputFiles),

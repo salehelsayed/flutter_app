@@ -93,6 +93,7 @@ class DroppedPushRecoveryBridgeTest {
             context,
             messenger = null,
             recoverySignal = { generation -> signalled.add(generation) },
+            registerProcessSignals = true,
         )
         val store = DroppedPushRecoveryStore(context)
         assertEquals(1L, store.recordDeletion())
@@ -107,6 +108,17 @@ class DroppedPushRecoveryBridgeTest {
 
         assertEquals(listOf(1L), signalled)
         assertEquals(1L, store.pendingGeneration())
+
+        // A committed service wake accelerates the same warm owner without an
+        // Activity intent or user tap. Delivery is advisory: it must not
+        // consume the durable marker, and disposal must revoke the exact
+        // registration so a detached engine can never receive a later wake.
+        assertTrue(DroppedPushRecoveryProcessSignalRegistry.signal(1L))
+        assertEquals(listOf(1L, 1L), signalled)
+        assertEquals(1L, store.pendingGeneration())
+        bridge.dispose()
+        assertFalse(DroppedPushRecoveryProcessSignalRegistry.signal(1L))
+        assertEquals(listOf(1L, 1L), signalled)
     }
 
     @Test

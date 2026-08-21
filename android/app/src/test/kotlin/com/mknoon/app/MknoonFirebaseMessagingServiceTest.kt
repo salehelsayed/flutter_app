@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Bundle
@@ -67,6 +68,7 @@ class MknoonFirebaseMessagingServiceTest {
             fixedSchedules.toList(),
         )
         assertTrue(deletedSchedules.isEmpty())
+        assertEquals(listOf(1L), service.warmSignals)
         val fixedCard = manager.activeNotifications.single()
         assertEquals(MknoonFirebaseMessagingService.RECOVERY_NOTIFICATION_TAG, fixedCard.tag)
         assertEquals(MknoonFirebaseMessagingService.RECOVERY_NOTIFICATION_ID, fixedCard.id)
@@ -108,6 +110,22 @@ class MknoonFirebaseMessagingServiceTest {
         assertEquals(1L, store.pendingGeneration())
         assertEquals(1, fixedSchedules.size)
         assertTrue(deletedSchedules.isEmpty())
+        assertEquals(listOf(1L), service.warmSignals)
+
+        // Firebase also exposes every incoming message through FlutterFire's
+        // C2DM receiver. The app-owned replacement must suppress the same one
+        // exact fixed shape there, while preserving all incumbent rich shapes.
+        val receiver = RecordingFirebaseMessagingReceiver()
+        receiver.onReceive(
+            context,
+            messageIntent(mapOf("v" to "1", "w" to "1")),
+        )
+        assertTrue(receiver.delegated.isEmpty())
+        for ((index, intent) in nonFixedMessageIntents().withIndex()) {
+            receiver.onReceive(context, intent)
+            assertEquals(index + 1, receiver.delegated.size)
+            assertTrue(intent === receiver.delegated.last())
+        }
 
         // A missing current binding consumes an exact fixed wake fail-closed:
         // zero marker, zero card, zero schedule, and still zero delegation.
@@ -118,6 +136,7 @@ class MknoonFirebaseMessagingServiceTest {
         assertNull(store.pendingGeneration())
         assertEquals(1, fixedSchedules.size)
         assertTrue(deletedSchedules.isEmpty())
+        assertEquals(listOf(1L), service.warmSignals)
         assertTrue(manager.activeNotifications.isEmpty())
     }
 
@@ -285,7 +304,7 @@ class MknoonFirebaseMessagingServiceTest {
         delegated: MutableList<RemoteMessage>,
         fixedSchedules: MutableList<DroppedPushRecoveryStore.PendingRecovery>,
         deletedSchedules: MutableList<DroppedPushRecoveryStore.PendingRecovery>,
-    ): MknoonFirebaseMessagingService =
+    ): RecordingFirebaseMessagingService =
         Robolectric.buildService(RecordingFirebaseMessagingService::class.java)
             .create()
             .get()
@@ -296,9 +315,32 @@ class MknoonFirebaseMessagingServiceTest {
             }
 
     private fun dataMessage(data: Map<String, String>): RemoteMessage {
-        val bundle = Bundle()
-        for ((key, value) in data) bundle.putString(key, value)
-        return remoteMessageFromBundleForTest(bundle)
+        return remoteMessageFromBundleForTest(dataBundle(data))
+    }
+
+    private fun messageIntent(data: Map<String, String>): Intent =
+        Intent("com.google.android.c2dm.intent.RECEIVE").putExtras(dataBundle(data))
+
+    private fun nonFixedMessageIntents(): List<Intent> = listOf(
+        messageIntent(mapOf("v" to "1")),
+        messageIntent(mapOf("w" to "1")),
+        messageIntent(mapOf("v" to "1", "w" to "2")),
+        messageIntent(mapOf("v" to "2", "w" to "1")),
+        messageIntent(mapOf("v" to " 1", "w" to "1")),
+        messageIntent(mapOf("v" to "1", "w" to "1 ")),
+        messageIntent(mapOf("v" to "true", "w" to "1")),
+        messageIntent(mapOf("v" to "1", "w" to "1", "x" to "1")),
+        messageIntent(emptyMap()),
+        Intent("com.google.android.c2dm.intent.RECEIVE").putExtras(
+            dataBundle(mapOf("v" to "1", "w" to "1")).apply {
+                putString("gcm.n.e", "1")
+                putString("gcm.n.title", "rich")
+            },
+        ),
+    )
+
+    private fun dataBundle(data: Map<String, String>): Bundle = Bundle().apply {
+        for ((key, value) in data) putString(key, value)
     }
 
     private fun notificationBearingMessage(data: Map<String, String>): RemoteMessage {
@@ -314,11 +356,20 @@ class MknoonFirebaseMessagingServiceTest {
     }
 }
 
+private class RecordingFirebaseMessagingReceiver : MknoonFirebaseMessagingReceiver() {
+    val delegated = mutableListOf<Intent>()
+
+    override fun delegateRichMessageToFlutterFire(context: Context, intent: Intent) {
+        delegated += intent
+    }
+}
+
 private class RecordingFirebaseMessagingService : MknoonFirebaseMessagingService() {
     lateinit var observed: MutableList<DroppedPushRecoveryStore.PendingRecovery>
     var delegated: MutableList<RemoteMessage> = mutableListOf()
     var observedFixed: MutableList<DroppedPushRecoveryStore.PendingRecovery> =
         mutableListOf()
+    val warmSignals = mutableListOf<Long>()
 
     override fun scheduleRecovery(snapshot: DroppedPushRecoveryStore.PendingRecovery) {
         check(snapshot == DroppedPushRecoveryStore(this).pendingRecovery())
@@ -336,5 +387,10 @@ private class RecordingFirebaseMessagingService : MknoonFirebaseMessagingService
         // Hermetic recorder: production's seam is the only super call site and
         // remains covered by the source contract plus the device rich canary.
         delegated += message
+    }
+
+    override fun signalWarmRuntimeRecovery(generation: Long) {
+        check(generation == DroppedPushRecoveryStore(this).pendingGeneration())
+        warmSignals += generation
     }
 }

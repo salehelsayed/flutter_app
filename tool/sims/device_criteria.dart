@@ -638,19 +638,11 @@ _notificationEvidenceRequirements = <String, Map<String, Set<Object>>>{
   },
   'tc_b13_dual_path_single_alert': <String, Set<Object>>{
     'activeCardCount': <Object>{1},
-    // Read from the cursor-scoped log, not from dumpsys: it answers "did the
-    // winning publication alert?" rather than "which channel does the record
-    // sit on now", which the losing path's silent same-ID reconcile changes
-    // ~2.6 s later.
+    // Read from the cursor-scoped log: it proves that the winning publication
+    // alerted. The settled channel below independently proves the later
+    // reconciliation did not demote or remove that card.
     'alertSilent': <Object>{false},
-    // The surviving record may legitimately have been moved to the silent
-    // channel by the losing path's same-ID reconcile, but it must still be one
-    // of the app's own two message channels — a card on anything else is not
-    // the publication this leg measured.
-    'survivingCardChannel': <Object>{
-      'mknoon_messages',
-      'mknoon_messages_silent',
-    },
+    'survivingCardChannel': <Object>{'mknoon_messages'},
   },
   'tc_g7_permission_denied': <String, Set<Object>>{
     'permissionDeniedBackgroundReceiptCount': <Object>{},
@@ -668,6 +660,26 @@ _notificationEvidenceRequirements = <String, Map<String, Set<Object>>>{
     'permissionDeniedCardCount': <Object>{0},
     'permissionDeniedMessageCount': <Object>{1},
     'permissionRegrantAlertChannel': <Object>{'mknoon_messages'},
+  },
+  'tc_g24_permission_appop_divergence': <String, Set<Object>>{
+    'runtimePermissionGrantedBeforeOverride': <Object>{true},
+    'appOpModeAtCampaignEntry': <Object>{},
+    'appOpModeBeforeOverride': <Object>{},
+    'appOpModeDuringOverride': <Object>{'ignore'},
+    'appOpModeAfterRecovery': <Object>{},
+    'appOpModeAfterCampaignRestore': <Object>{},
+    'permissionOverrideRequestStatus': <Object>{'authorized'},
+    'permissionOverrideOsEnabled': <Object>{false},
+    'permissionResultStatus': <Object>{'authorized'},
+    'permissionResultGranted': <Object>{false},
+    'permissionResultOsEnabled': <Object>{false},
+    'permissionOsCheckFailedCount': <Object>{0},
+    'permissionDeniedHealthEvent': <Object>{
+      'PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED',
+    },
+    'disabledCardCount': <Object>{0},
+    'disabledMessageCount': <Object>{1},
+    'recoveryAlertChannel': <Object>{'mknoon_messages'},
   },
   'tc_g7_token_refresh_mid_session': <String, Set<Object>>{
     'tokenRefreshEvent': <Object>{'PUSH_REGISTER_TOKEN_REFRESH_EVENT'},
@@ -754,17 +766,48 @@ DeviceCriteriaResult _validateNotificationEvidence(
     }
   }
   if (scenario == 'tc_g7_token_refresh_mid_session') {
-    if (evidence['tokenRefreshPidBefore'] !=
-        evidence['tokenRefreshPidAfter']) {
+    if (evidence['tokenRefreshPidBefore'] != evidence['tokenRefreshPidAfter']) {
       return const DeviceCriteriaResult.fail(
         'tc_g7_token_refresh_mid_session re-registered in a different '
         'process, which proves a relaunch rather than a mid-session refresh',
       );
     }
-    if (evidence['tokenHashPrefixBefore'] ==
-        evidence['tokenHashPrefixAfter']) {
+    if (evidence['tokenHashPrefixBefore'] == evidence['tokenHashPrefixAfter']) {
       return const DeviceCriteriaResult.fail(
         'tc_g7_token_refresh_mid_session did not rotate the provider token',
+      );
+    }
+  }
+  if (scenario == 'tc_g24_permission_appop_divergence') {
+    final exactFields = required.keys.toSet();
+    if (evidence.keys.toSet().difference(exactFields).isNotEmpty ||
+        exactFields.difference(evidence.keys.toSet()).isNotEmpty) {
+      return const DeviceCriteriaResult.fail(
+        'tc_g24_permission_appop_divergence evidence fields are not exact',
+      );
+    }
+    const knownModes = <String>{
+      'allow',
+      'ignore',
+      'deny',
+      'default',
+      'foreground',
+      'errored',
+      'ask',
+    };
+    final entryMode = evidence['appOpModeAtCampaignEntry'];
+    final beforeMode = evidence['appOpModeBeforeOverride'];
+    final afterRecovery = evidence['appOpModeAfterRecovery'];
+    final afterCampaign = evidence['appOpModeAfterCampaignRestore'];
+    if (!knownModes.contains(beforeMode) || afterRecovery != beforeMode) {
+      return const DeviceCriteriaResult.fail(
+        'G24 did not restore its leg-local POST_NOTIFICATION app-op baseline',
+      );
+    }
+    if (afterCampaign != entryMode ||
+        (entryMode != 'package_absent' && !knownModes.contains(entryMode))) {
+      return const DeviceCriteriaResult.fail(
+        'G24 did not restore its campaign-entry POST_NOTIFICATION app-op baseline',
       );
     }
   }
@@ -1149,6 +1192,12 @@ const Map<String, Set<String>> _notificationRequirements =
         'g7.permission_denied_typed_health',
         'g7.permission_custody_preserved',
         'g7.permission_regrant_recovery',
+      },
+      'tc_g24_permission_appop_divergence': <String>{
+        'g24.permission_appop_divergence',
+        'g24.os_state_override_typed',
+        'g24.no_post_custody_preserved',
+        'g24.appop_restore_recovery',
       },
       'tc_g7_token_refresh_mid_session': <String>{
         'g7.token_refresh_event_observed',

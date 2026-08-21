@@ -30,7 +30,7 @@ void main() {
     'TC-371-05a production has one suppression owner and no notification tracker lifecycle bypass',
     () {
       final calls = _discoverMaybeShowNotificationCalls();
-      expect(calls, hasLength(14));
+      expect(calls, hasLength(16));
       expect(
         <String, List<String>>{
           for (final path in calls.map((call) => call.path).toSet())
@@ -47,7 +47,12 @@ void main() {
             'dependencies.appVisibility',
             'dependencies.appVisibility',
           ],
-          _foregroundFallbackPath: <String>['visibility', 'visibility'],
+          _foregroundFallbackPath: <String>[
+            'visibility',
+            'visibility',
+            'visibility',
+            'visibility',
+          ],
           _directMessagePath: <String>['appVisibility!'],
           _directReactionPath: <String>['appVisibility'],
           _groupReactionPath: <String>['visibility'],
@@ -89,7 +94,13 @@ void main() {
       );
       expect(showParameters, isNot(contains('ActiveConversationTracker')));
       expect(showParameters, isNot(contains('getAppLifecycleState')));
-      expect(_namedInvocations(showFunction, 'evaluate'), hasLength(1));
+      expect(
+        _namedInvocations(showFunction, 'evaluate'),
+        hasLength(2),
+        reason:
+            'Plan 393 retains the initial suppression decision and adds one '
+            'last native-entry re-evaluation for lifecycle/read races',
+      );
       expect(_namedInvocations(showFunction, 'isViewing'), isEmpty);
 
       final bootstrap = _unit(_bootstrapPath);

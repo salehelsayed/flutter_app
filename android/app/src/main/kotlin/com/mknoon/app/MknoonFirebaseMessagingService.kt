@@ -74,11 +74,42 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
         // calls super. It is only a durable mailbox signal: a missing current
         // binding is consumed fail-closed with zero marker, card or schedule,
         // and the one generic card is always requested explicitly silent.
-        productionRecoverySeam().recordGenericRecoveryTrigger(
+        val committed = productionRecoverySeam().recordGenericRecoveryTrigger(
             DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE,
         ) { generation ->
             postRecoveryNotification(generation, silent = true)
         }
+        emitPlan393FixedWakeIngressDiagnostic(committed)
+        committed?.let { signalWarmRuntimeRecovery(it.generation) }
+    }
+
+    /** Privacy-safe proof emitted only by the real production FCM ingress. */
+    private fun emitPlan393FixedWakeIngressDiagnostic(
+        committed: DroppedPushRecoveryStore.PendingRecovery?,
+    ) {
+        if (
+            (
+                applicationInfo.flags and
+                    android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE
+                ) == 0
+        ) {
+            return
+        }
+        android.util.Log.i(
+            DroppedPushRecoveryBridge.PLAN393_DIAGNOSTIC_TAG,
+            org.json.JSONObject()
+                .put("event", "plan393_fixed_wake_ingress")
+                .put("pid", android.os.Process.myPid())
+                .put("generation", committed?.generation)
+                .put("triggerKind", committed?.triggerKind?.name)
+                .put("genericMayHaveAlerted", committed?.genericMayHaveAlerted)
+                .put("genericCardTag", RECOVERY_NOTIFICATION_TAG)
+                .put("genericCardId", RECOVERY_NOTIFICATION_ID)
+                .put("genericCardRequestedSilent", true)
+                .put("richFlutterFireDelegated", false)
+                .put("productionIngressInvoked", true)
+                .toString(),
+        )
     }
 
     /**
@@ -96,11 +127,12 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
         // the store's serialized afterCommit boundary. The marker is therefore
         // durable before either side effect and cannot race an acknowledgement.
         // The deletion branch retains its incumbent possibly-audible attempt.
-        productionRecoverySeam().recordGenericRecoveryTrigger(
+        val committed = productionRecoverySeam().recordGenericRecoveryTrigger(
             DroppedPushRecoveryStore.TriggerKind.DELETED_BATCH,
         ) { generation ->
             postRecoveryNotification(generation, silent = false)
         }
+        committed?.let { signalWarmRuntimeRecovery(it.generation) }
     }
 
     private fun productionRecoverySeam(): ProductionDeletedBatchRecovery =
@@ -118,6 +150,14 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
         snapshot: DroppedPushRecoveryStore.PendingRecovery,
     ) {
         DroppedPushRecoveryWorkScheduler(this).enqueueFixedWake(snapshot)
+    }
+
+    /**
+     * Best-effort acceleration for a foreground engine in this process. The
+     * marker and scheduled worker stay authoritative when no engine is alive.
+     */
+    internal open fun signalWarmRuntimeRecovery(generation: Long) {
+        DroppedPushRecoveryProcessSignalRegistry.signal(generation)
     }
 
     private fun postRecoveryNotification(generation: Long, silent: Boolean) {

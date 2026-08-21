@@ -569,6 +569,15 @@ sendStrictGroupReactionContent({
           inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
         )
       : List<String>.unmodifiable(frozenRecipientPeerIds);
+  final notificationRecipients = action == GroupReactionPayload.actionAdd
+      ? await loadStrictGroupReactionNotificationRecipientPeerIds(
+          groupRepo: groupRepo,
+          groupId: groupId,
+          reactorPeerId: senderPeerId,
+          targetAuthorPeerId: message.senderPeerId,
+          replayRecipientPeerIds: recipients,
+        )
+      : const <String>[];
   final replayEnvelope = await buildGroupOfflineReplayEnvelope(
     bridge: bridge,
     groupRepo: groupRepo,
@@ -591,7 +600,7 @@ sendStrictGroupReactionContent({
       targetMessageId: message.id,
       reactorPeerId: senderPeerId,
       reactorTransportPeerId: senderDevice.transportPeerId,
-      notificationRecipientTransportPeerIds: const <String>[],
+      notificationRecipientTransportPeerIds: notificationRecipients,
     ),
   );
   final retryPayload = recipients.isEmpty
@@ -644,6 +653,8 @@ sendStrictGroupReactionContent({
         senderAccountPublicKey: senderAccountPublicKey,
         senderDevice: senderDevice,
         expectedRecipients: recipients,
+        expectedNotificationRecipients: notificationRecipients,
+        reactionAction: action,
         expectedContext: context,
         explicitContext: explicitContext,
         inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
@@ -710,6 +721,12 @@ sendStrictGroupReactionContent({
     return (SendGroupReactionResult.unauthorizedSenderKey, null);
   }
   if (recipients.isEmpty) {
+    _emitStrictGroupReactionQueued(
+      reactionId: reactionId,
+      emoji: emoji,
+      replayStatus: GroupReactionReplayOutboxStatus.stored,
+      custodyComplete: true,
+    );
     return (SendGroupReactionResult.success, reaction);
   }
   final completed = await _driveStrictReactionCustody(
@@ -726,17 +743,53 @@ sendStrictGroupReactionContent({
     commitIfAuthorityMatches: commitIfAuthorityMatches,
   );
   if (completed) {
+    _emitStrictGroupReactionQueued(
+      reactionId: reactionId,
+      emoji: emoji,
+      replayStatus: GroupReactionReplayOutboxStatus.stored,
+      custodyComplete: true,
+    );
     return (SendGroupReactionResult.success, reaction);
   }
   final exactPendingOwner = await _hasExactPendingStrictReactionOwner(
     repository: reactionReplayOutboxRepo,
     expected: staged,
   );
+  if (exactPendingOwner) {
+    _emitStrictGroupReactionQueued(
+      reactionId: reactionId,
+      emoji: emoji,
+      replayStatus: GroupReactionReplayOutboxStatus.pending,
+      custodyComplete: false,
+    );
+  }
   return (
     exactPendingOwner
         ? SendGroupReactionResult.queuedForRetry
         : SendGroupReactionResult.unauthorizedSenderKey,
     null,
+  );
+}
+
+void _emitStrictGroupReactionQueued({
+  required String reactionId,
+  required String emoji,
+  required String replayStatus,
+  required bool custodyComplete,
+}) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_REACTION_SEND_QUEUED',
+    details: {
+      'id': reactionId.length > 8 ? reactionId.substring(0, 8) : reactionId,
+      'emoji': emoji,
+      'deliveryMode': 'strict_inbox_custody',
+      'deliveryConfirmed': false,
+      'localState': 'durable',
+      'replayStatus': replayStatus,
+      'publishOk': false,
+      'strictCustodyComplete': custodyComplete,
+    },
   );
 }
 
@@ -783,6 +836,8 @@ Future<bool> _strictReactionAuthorityMatchesAssumingPhase({
   required String senderAccountPublicKey,
   required GroupMemberDeviceIdentity senderDevice,
   required List<String> expectedRecipients,
+  required List<String> expectedNotificationRecipients,
+  required String reactionAction,
   required GroupContentAuthoringContext expectedContext,
   required GroupContentAuthoringContext? explicitContext,
   required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
@@ -799,6 +854,7 @@ Future<bool> _strictReactionAuthorityMatchesAssumingPhase({
       sender == null ||
       target == null ||
       target.groupId != groupId ||
+      target.senderPeerId != message.senderPeerId ||
       target.privateMediaPolicy.isPrivate ||
       target.media.isNotEmpty ||
       target.isForwarded ||
@@ -851,7 +907,20 @@ Future<bool> _strictReactionAuthorityMatchesAssumingPhase({
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     members: currentMembers,
   );
-  return _sameExactStrings(expectedRecipients, currentRecipients);
+  final currentNotificationRecipients =
+      reactionAction == GroupReactionPayload.actionAdd
+      ? loadStrictGroupReactionNotificationRecipientPeerIdsFromMembers(
+          members: currentMembers,
+          reactorPeerId: senderPeerId,
+          targetAuthorPeerId: target.senderPeerId,
+          replayRecipientPeerIds: currentRecipients,
+        )
+      : const <String>[];
+  return _sameExactStrings(expectedRecipients, currentRecipients) &&
+      _sameExactStrings(
+        expectedNotificationRecipients,
+        currentNotificationRecipients,
+      );
 }
 
 /// Revalidates a persisted strict reaction before retrying relay custody.
@@ -867,6 +936,8 @@ Future<bool> strictGroupReactionAuthorityMatchesAssumingPhase({
   required String senderTransportPeerId,
   required String senderDevicePublicKey,
   required List<String> expectedRecipientPeerIds,
+  required List<String> expectedNotificationRecipientPeerIds,
+  required String reactionAction,
   required GroupContentAuthorityVersion expectedAuthority,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
@@ -924,7 +995,20 @@ Future<bool> strictGroupReactionAuthorityMatchesAssumingPhase({
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     members: currentMembers,
   );
-  return _sameExactStrings(expectedRecipientPeerIds, recipients);
+  final notificationRecipients =
+      reactionAction == GroupReactionPayload.actionAdd
+      ? loadStrictGroupReactionNotificationRecipientPeerIdsFromMembers(
+          members: currentMembers,
+          reactorPeerId: logicalSenderPeerId,
+          targetAuthorPeerId: target.senderPeerId,
+          replayRecipientPeerIds: recipients,
+        )
+      : const <String>[];
+  return _sameExactStrings(expectedRecipientPeerIds, recipients) &&
+      _sameExactStrings(
+        expectedNotificationRecipientPeerIds,
+        notificationRecipients,
+      );
 }
 
 bool _sameExactStrings(List<String> left, List<String> right) {
@@ -980,6 +1064,77 @@ Future<List<String>> loadStrictGroupReactionRecipientPeerIds({
         .map((entry) => entry.key),
   );
   return result.toList()..sort();
+}
+
+/// Resolves the signed author-only wake audience for a strict ADD.
+///
+/// Custody remains the full frozen group replay ACL. Notification recipients
+/// are only the target author's active devices that survived that ACL's
+/// ambiguity, invite-state, and self-device filtering. Missing authors and
+/// self-reactions intentionally produce an empty wake set.
+Future<List<String>> loadStrictGroupReactionNotificationRecipientPeerIds({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String reactorPeerId,
+  required String targetAuthorPeerId,
+  required List<String> replayRecipientPeerIds,
+  List<GroupMember>? members,
+}) async => loadStrictGroupReactionNotificationRecipientPeerIdsFromMembers(
+  members: members ?? await groupRepo.getMembers(groupId),
+  reactorPeerId: reactorPeerId,
+  targetAuthorPeerId: targetAuthorPeerId,
+  replayRecipientPeerIds: replayRecipientPeerIds,
+);
+
+List<String> loadStrictGroupReactionNotificationRecipientPeerIdsFromMembers({
+  required List<GroupMember> members,
+  required String reactorPeerId,
+  required String targetAuthorPeerId,
+  required List<String> replayRecipientPeerIds,
+}) {
+  final reactor = reactorPeerId.trim();
+  final author = targetAuthorPeerId.trim();
+  if (reactor.isEmpty || author.isEmpty || reactor == author) {
+    return const <String>[];
+  }
+  final replayRecipients = replayRecipientPeerIds.toSet();
+  final notificationRecipients = <String>{};
+  for (final member in members) {
+    if (member.peerId.trim() != author) continue;
+    for (final device in member.activeDevicesWithLegacyFallback()) {
+      final transportPeerId = device.transportPeerId.trim();
+      if (replayRecipients.contains(transportPeerId)) {
+        notificationRecipients.add(transportPeerId);
+      }
+    }
+  }
+  return notificationRecipients.toList()..sort();
+}
+
+/// Reads the already-canonical extension after [GroupContentRetryPayload]
+/// validated the signed lexical binding. A null result is a malformed retry.
+List<String>? strictGroupReactionNotificationRecipientsFromRetryMessage(
+  String message,
+) {
+  try {
+    final envelope = jsonDecode(message);
+    if (envelope is! Map<String, dynamic>) return null;
+    final extension = envelope['notificationExtension'];
+    if (extension is! Map<String, dynamic>) return null;
+    final raw = extension['notificationRecipientTransportPeerIds'];
+    if (raw is! List) return null;
+    final recipients = <String>[];
+    for (final value in raw) {
+      if (value is! String || value.trim() != value || value.isEmpty) {
+        return null;
+      }
+      recipients.add(value);
+    }
+    final canonical = recipients.toSet().toList()..sort();
+    return _sameExactStrings(recipients, canonical) ? recipients : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 GroupMemberDeviceIdentity? resolveStrictGroupReactionSenderDevice({

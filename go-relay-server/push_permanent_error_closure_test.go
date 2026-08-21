@@ -262,7 +262,8 @@ func plan368OwnedProviderLogFormats(t *testing.T) map[string]int {
 // Plan 368 TC-368-05 replaces the old transition-correlation contract. Owned
 // provider/wake records are a finite coarse vocabulary; runtime canaries prove
 // that peer, route, provider, event, payload, and raw-error values never enter
-// either a structured key or formatted message text.
+// either a structured key or formatted message text. Plan 393 adds the strict
+// group-reaction authorization branch while preserving that coarse vocabulary.
 func TestRelayNotificationClosure_ProviderWakeLogsOmitPrivateValues(t *testing.T) {
 	wantFormats := map[string]int{
 		"[PUSH] outcome=provider_init_failed stage=firebase_app":     1,
@@ -293,11 +294,12 @@ func TestRelayNotificationClosure_ProviderWakeLogsOmitPrivateValues(t *testing.T
 		"[REDIS][PUSH] outcome=platform_count_state_read_failed":     1,
 		"[REDIS][PUSH] outcome=platform_count_scan_failed":           1,
 		"[GROUP_REACTION_WAKE] outcome=duplicate_suppressed":         1,
-		"[GROUP_REACTION_WAKE] outcome=invalid_or_disabled":          1,
-		"[GROUP_REACTION_WAKE] outcome=push_unavailable":             1,
-		"[GROUP_REACTION_WAKE] outcome=no_wake_recipients":           1,
+		"[GROUP_REACTION_WAKE] outcome=invalid_or_disabled":          2,
+		"[GROUP_REACTION_WAKE] outcome=push_unavailable":             2,
+		"[GROUP_REACTION_WAKE] outcome=no_wake_recipients":           2,
 		"[GROUP_REACTION_WAKE] outcome=incapable_skipped":            1,
-		"[GROUP_REACTION_WAKE] outcome=dispatched":                   1,
+		"[GROUP_REACTION_WAKE] outcome=unauthorized_wake":            1,
+		"[GROUP_REACTION_WAKE] outcome=dispatched":                   2,
 	}
 	gotFormats := plan368OwnedProviderLogFormats(t)
 	if !reflect.DeepEqual(gotFormats, wantFormats) {
@@ -307,8 +309,8 @@ func TestRelayNotificationClosure_ProviderWakeLogsOmitPrivateValues(t *testing.T
 	for _, count := range gotFormats {
 		ownedSiteCount += count
 	}
-	if ownedSiteCount != 35 {
-		t.Fatalf("owned provider log sites = %d, want exact 35", ownedSiteCount)
+	if ownedSiteCount != 40 {
+		t.Fatalf("owned provider log sites = %d, want exact 40", ownedSiteCount)
 	}
 
 	const (

@@ -562,7 +562,6 @@ void main() {
         '${directory.path}/$id'
         '${DurableConversationNotificationIdRegistry.contentKindFileSuffix}',
       ).createSync();
-      var retireCalls = 0;
       var showCalls = 0;
 
       await expectLater(
@@ -574,65 +573,62 @@ void main() {
             eventIdentity: 'message-preflight',
             generation: 'generation-preflight',
           ),
-          retireCurrent: () async => retireCalls += 1,
           replace: () async => showCalls += 1,
         ),
         throwsA(isA<FileSystemException>()),
       );
 
-      expect(retireCalls, 0);
       expect(showCalls, 0);
     },
   );
 
-  test('uncertain native replacement retains the exact new metadata', () async {
-    const key = 'group:failed-native-replacement';
-    final registry = DurableConversationNotificationIdRegistry(
-      directory: directory,
-    );
-    final id = await registry.resolve(
-      key,
-      activeNotificationIds: () async => const <Object?>[],
-    );
-    await registry.recordContentMetadata(
-      conversationKey: key,
-      notificationId: id,
-      metadata: const ConversationNotificationContentMetadata(
-        kind: ConversationNotificationContentKind.reaction,
-        eventIdentity: 'reaction-before',
-        generation: 'generation-before',
-      ),
-    );
-    var retired = false;
-
-    await expectLater(
-      registry.replaceContent(
+  test(
+    'failed native replacement preserves the visible card metadata',
+    () async {
+      const key = 'group:failed-native-replacement';
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: directory,
+      );
+      final id = await registry.resolve(
+        key,
+        activeNotificationIds: () async => const <Object?>[],
+      );
+      await registry.recordContentMetadata(
         conversationKey: key,
         notificationId: id,
         metadata: const ConversationNotificationContentMetadata(
-          kind: ConversationNotificationContentKind.message,
-          eventIdentity: 'message-after',
-          generation: 'generation-after',
+          kind: ConversationNotificationContentKind.reaction,
+          eventIdentity: 'reaction-before',
+          generation: 'generation-before',
         ),
-        retireCurrent: () async => retired = true,
-        replace: () async => throw StateError('native show failed'),
-      ),
-      throwsStateError,
-    );
+      );
+      await expectLater(
+        registry.replaceContent(
+          conversationKey: key,
+          notificationId: id,
+          metadata: const ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity: 'message-after',
+            generation: 'generation-after',
+          ),
+          replace: () async => throw StateError('native show failed'),
+        ),
+        throwsStateError,
+      );
 
-    expect(retired, isTrue);
-    expect(
-      await registry.lookupContentMetadata(
-        conversationKey: key,
-        notificationId: id,
-      ),
-      const ConversationNotificationContentMetadata(
-        kind: ConversationNotificationContentKind.message,
-        eventIdentity: 'message-after',
-        generation: 'generation-after',
-      ),
-    );
-  });
+      expect(
+        await registry.lookupContentMetadata(
+          conversationKey: key,
+          notificationId: id,
+        ),
+        const ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.reaction,
+          eventIdentity: 'reaction-before',
+          generation: 'generation-before',
+        ),
+      );
+    },
+  );
 
   test(
     'generation replacement is atomic and a stale generation cannot overwrite it',
@@ -666,12 +662,11 @@ void main() {
             eventIdentity: 'older-unread-message',
             generation: 'generation-after',
           ),
-          retireCurrent: () async => operations.add('retire'),
           replace: () async => operations.add('replace'),
         ),
         isTrue,
       );
-      expect(operations, <String>['retire', 'replace']);
+      expect(operations, <String>['replace']);
       expect(
         await registry.lookupContentMetadata(
           conversationKey: key,
@@ -694,12 +689,11 @@ void main() {
             eventIdentity: 'stale-message',
             generation: 'stale-generation',
           ),
-          retireCurrent: () async => operations.add('stale-retire'),
           replace: () async => operations.add('stale-replace'),
         ),
         isFalse,
       );
-      expect(operations, <String>['retire', 'replace']);
+      expect(operations, <String>['replace']);
     },
   );
 
@@ -856,7 +850,6 @@ void main() {
           eventIdentity: 'message-g2',
           generation: 'generation-g2',
         ),
-        retireCurrent: () async {},
         replace: () async {},
       );
       releaseEligibility.complete();
@@ -878,7 +871,7 @@ void main() {
   );
 
   test(
-    'fresh isolates serialize native cancel before reaction replacement',
+    'fresh isolates serialize native cancel before reaction replacement show',
     () async {
       const key = 'group:isolate-cancel-first';
       final registry = DurableConversationNotificationIdRegistry(
@@ -900,10 +893,10 @@ void main() {
       final rootPath = directory.path;
       final cancelEnteredPath = '$rootPath/cancel-entered';
       final releaseCancelPath = '$rootPath/release-cancel';
-      final replacementRetiredPath = '$rootPath/replacement-retired';
+      final replacementShownPath = '$rootPath/replacement-shown';
       final cancelEntered = File(cancelEnteredPath);
       final releaseCancel = File(releaseCancelPath);
-      final replacementRetired = File(replacementRetiredPath);
+      final replacementShown = File(replacementShownPath);
 
       final cancel = Isolate.run(() async {
         final isolated = DurableConversationNotificationIdRegistry(
@@ -934,17 +927,16 @@ void main() {
             eventIdentity: 'reaction-isolate',
             generation: 'generation-reaction-isolate',
           ),
-          retireCurrent: () async => File(replacementRetiredPath).create(),
-          replace: () async {},
+          replace: () async => File(replacementShownPath).create(),
         );
       });
       await Future<void>.delayed(const Duration(milliseconds: 75));
-      expect(replacementRetired.existsSync(), isFalse);
+      expect(replacementShown.existsSync(), isFalse);
 
       await releaseCancel.create();
       expect(await cancel, isTrue);
       await replacement;
-      expect(replacementRetired.existsSync(), isTrue);
+      expect(replacementShown.existsSync(), isTrue);
       expect(
         await registry.lookupContentKind(
           conversationKey: key,
@@ -995,7 +987,6 @@ void main() {
             eventIdentity: 'reaction-current',
             generation: 'generation-reaction-current',
           ),
-          retireCurrent: () async {},
           replace: () async {
             await File(showEnteredPath).create();
             await _waitForFile(File(releaseShowPath));
@@ -1016,10 +1007,14 @@ void main() {
         );
       });
 
-      expect(await cancellation, isFalse);
+      var cancellationCompleted = false;
+      unawaited(cancellation.whenComplete(() => cancellationCompleted = true));
+      await Future<void>.delayed(const Duration(milliseconds: 75));
+      expect(cancellationCompleted, isFalse);
       expect(nativeCancel.existsSync(), isFalse);
       await releaseShow.create();
       await replacement;
+      expect(await cancellation, isFalse);
       expect(
         await registry.lookupContentKind(
           conversationKey: key,

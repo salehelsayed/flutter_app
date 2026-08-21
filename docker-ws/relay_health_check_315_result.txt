@@ -1,84 +1,84 @@
-=== 2026-07-31T22:23:42Z ===
+=== 2026-08-21T13:25:28Z ===
 active
 --- systemctl status ---
 ● relay-server.service - mknoon relay server
      Loaded: loaded (/etc/systemd/system/relay-server.service; enabled; preset: enabled)
-     Active: active (running) since Fri 2026-07-31 22:23:28 UTC; 13s ago
-   Main PID: 644991 (relay-server)
-      Tasks: 8 (limit: 1071)
-     Memory: 8.2M (peak: 8.7M)
-        CPU: 74ms
+     Active: active (running) since Fri 2026-08-21 03:56:29 UTC; 9h ago
+   Main PID: 813240 (relay-server)
+      Tasks: 9 (limit: 1071)
+     Memory: 25.5M (peak: 29.1M)
+        CPU: 7min 8.370s
      CGroup: /system.slice/relay-server.service
-             └─644991 /usr/local/bin/relay-server
+             └─813240 /usr/local/bin/relay-server
 
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [GROUP_INBOX] Retrieved 1 authorized message(s) for group 9bc055cc-9a2a-4801-9 peer 12D3KooWRofUkyAuKdsp (since=1785526788097)
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [INBOX] stream handled in 440.98µs
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] stream handled in 503.481µs
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Acked 2 message(s) for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] stream handled in 4.415518ms
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] Incoming stream from 12D3KooWMBjtcM1hXGNs
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] Stream closed for 12D3KooWMBjtcM1hXGNs
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] stream handled in 576.13µs
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] Incoming stream from 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] Stream closed for 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] stream handled in 1.714068ms
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] Incoming stream from 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [GROUP_INBOX] Retrieved 1 authorized message(s) for group bde4d943-f473-4476-9 peer 12D3KooWLMSaWq4ezZxr (since=1787315018815)
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] Stream closed for 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] stream handled in 1.258209ms
 --- raw journal tail 60 ---
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 Relay limits: reservations=512 connectionsPerPeer=8 inboxPerPeer=100 groupInboxPerGroup=500
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 Storage config: root=/data media=/data/media profiles=/data/profiles
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 Peer ID: 12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 Listening addresses:
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   - /ip4/13.60.15.36/tcp/4005
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   - /dns4/mknoun.xyz/tcp/4001/wss
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   - /dns4/mknoun.xyz/udp/4002/quic-v1
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 Announced addresses:
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   - /dns4/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   - /ip4/13.60.15.36/tcp/4005/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   - /dns4/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 Relay circuit: /p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g/p2p-circuit
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 Protocols:
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   Rendezvous: /canvas/rendezvous/1.0.0
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   Inbox:      /mknoon/inbox/1.0.0
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   Media:      /mknoon/media/1.0.0
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28   Push:       enabled
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28
-Jul 31 22:23:28 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:28 [METRICS] Serving Prometheus metrics on :2112/metrics
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [NODE] Peer connected: 12D3KooWRofUkyAuKdsp... (total=1)
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] Peer 12D3KooWRofUkyAuKdsp... has 2 pending messages
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [RENDEZVOUS] Incoming stream from 12D3KooWRofUkyAuKdsp...
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [RENDEZVOUS] Request type=0 from 12D3KooWRofUkyAuKdsp...
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [RENDEZVOUS] REGISTER ns=mknoon:chat:12D3KooWRofUkyAuKdspz9o4rfnDDki4UqE9W6iCbACvhWrwEHmY ttl=7200 from 12D3KooWRofUkyAuKdsp...
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [RENDEZVOUS] Sent response type=1
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [RENDEZVOUS] stream handled in 398.866µs
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] stream handled in 827.068µs
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [PUSH] Token registered for 12D3KooWRofUkyAuKdsp (android)
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] stream handled in 388.257µs
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] Acked 2 message(s) for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:30 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:30 [INBOX] stream handled in 2.745047ms
-Jul 31 22:23:31 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:31 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:31 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:31 [INBOX] Stored message for 12D3KooWRofUkyAuKdsp from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:31 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:31 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:31 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:31 [INBOX] stream handled in 780.445µs
-Jul 31 22:23:31 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:31 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:31 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:31 [INBOX] Stored message for 12D3KooWRofUkyAuKdsp from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:31 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:31 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:31 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:31 [INBOX] stream handled in 2.135146ms
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [INBOX] stream handled in 607.245µs
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [GROUP_INBOX] Retrieved 1 authorized message(s) for group 9bc055cc-9a2a-4801-9 peer 12D3KooWRofUkyAuKdsp (since=1785526788097)
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:36 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:36 [INBOX] stream handled in 440.98µs
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] stream handled in 503.481µs
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Incoming stream from 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Acked 2 message(s) for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] Stream closed for 12D3KooWRofUkyAuKdsp
-Jul 31 22:23:41 ip-172-31-34-24 relay-server[644991]: 2026/07/31 22:23:41 [INBOX] stream handled in 4.415518ms
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] stream handled in 65.022µs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] Incoming stream from 12D3KooWMBjtcM1hXGNs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] Incoming stream from 12D3KooWMBjtcM1hXGNs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] Stream closed for 12D3KooWMBjtcM1hXGNs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] stream handled in 413.667µs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] Stored message for 12D3KooWMBjtcM1hXGNs from 12D3KooWMBjtcM1hXGNs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] Stream closed for 12D3KooWMBjtcM1hXGNs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] stream handled in 737.632µs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] Incoming stream from 12D3KooWMBjtcM1hXGNs...
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] Request type=0 from 12D3KooWMBjtcM1hXGNs...
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] REGISTER ns=mknoon:chat:12D3KooWMBjtcM1hXGNsssBnTp7p5AVZp2MBKc4FGLmhDMS4RhQt ttl=7200 from 12D3KooWMBjtcM1hXGNs...
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] Sent response type=1
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] Incoming stream from 12D3KooWMBjtcM1hXGNs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] stream handled in 529.131µs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [PUSH] outcome=registered
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] Stream closed for 12D3KooWMBjtcM1hXGNs
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [INBOX] stream handled in 2.666654ms
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] Incoming stream from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] Request type=0 from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] REGISTER ns=mknoon:chat:12D3KooWLMSaWq4ezZxr2XH79diDEz6wKRrFUJqDCs4nSNgTCDHS ttl=7200 from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] Sent response type=1
+Aug 21 13:24:56 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:24:56 [RENDEZVOUS] stream handled in 352.944µs
+Aug 21 13:25:01 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:01 [INBOX] Incoming stream from 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:01 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:01 [INBOX] Stream closed for 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:01 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:01 [INBOX] stream handled in 728.185µs
+Aug 21 13:25:01 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:01 [INBOX] Incoming stream from 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:01 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:01 [GROUP_INBOX] Retrieved 1 authorized message(s) for group bde4d943-f473-4476-9 peer 12D3KooWLMSaWq4ezZxr (since=1787315018815)
+Aug 21 13:25:01 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:01 [INBOX] Stream closed for 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:01 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:01 [INBOX] stream handled in 608.09µs
+Aug 21 13:25:15 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:15 [RENDEZVOUS] Incoming stream from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:25:15 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:15 [RENDEZVOUS] Request type=3 from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:25:15 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:15 [RENDEZVOUS] DISCOVER ns=/mknoon/group/bde4d943-f473-4476-94ac-66915566c7f2 limit=64 from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:25:15 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:15 [RENDEZVOUS] Sent response type=4
+Aug 21 13:25:15 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:15 [RENDEZVOUS] stream handled in 5.908554ms
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] Incoming stream from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] Request type=0 from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] REGISTER ns=/mknoon/group/bde4d943-f473-4476-94ac-66915566c7f2 ttl=7200 from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] Sent response type=1
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] stream handled in 354.417µs
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] Incoming stream from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] Request type=3 from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] DISCOVER ns=/mknoon/group/bde4d943-f473-4476-94ac-66915566c7f2 limit=64 from 12D3KooWLMSaWq4ezZxr...
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] Sent response type=4
+Aug 21 13:25:16 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:16 [RENDEZVOUS] stream handled in 6.082395ms
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] Incoming stream from 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] Stream closed for 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] stream handled in 401.865µs
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] Incoming stream from 12D3KooWMBjtcM1hXGNs
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] Stream closed for 12D3KooWMBjtcM1hXGNs
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] stream handled in 598.963µs
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] Incoming stream from 12D3KooWMBjtcM1hXGNs
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] Stream closed for 12D3KooWMBjtcM1hXGNs
+Aug 21 13:25:26 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:26 [INBOX] stream handled in 576.13µs
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] Incoming stream from 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] Stream closed for 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] stream handled in 1.714068ms
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] Incoming stream from 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [GROUP_INBOX] Retrieved 1 authorized message(s) for group bde4d943-f473-4476-9 peer 12D3KooWLMSaWq4ezZxr (since=1787315018815)
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] Stream closed for 12D3KooWLMSaWq4ezZxr
+Aug 21 13:25:28 ip-172-31-34-24 relay-server[813240]: 2026/08/21 13:25:28 [INBOX] stream handled in 1.258209ms

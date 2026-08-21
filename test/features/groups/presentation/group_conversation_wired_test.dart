@@ -6416,7 +6416,10 @@ void main() {
           find.text("Couldn't send — you're no longer in this group"),
           findsNothing,
         );
-        expect(find.byKey(const ValueKey('group-read-only-banner')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsNothing,
+        );
         expect(bridge.commandLog, isNot(contains('group:publish')));
       },
     );
@@ -11722,7 +11725,10 @@ void main() {
         );
         // Reaction state restored, composer writable, no latch, no banner.
         expect((after.reactions['msg-1'] ?? const []), hasLength(1));
-        expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+        expect(
+          await reactionRepo.getReactionsForMessage('msg-1'),
+          hasLength(1),
+        );
         expect(after.canWrite, isTrue);
         expect(after.failedTerminalReasonText, isNull);
         expect(
@@ -12470,7 +12476,7 @@ void main() {
     );
 
     testWidgets(
-      'read marking requires foreground lifecycle and matching active group key',
+      'TC-393-01 group read fails closed on unknown lifecycle or tracker',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -12512,6 +12518,27 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         expect(msgRepo.markAsReadCalls, callsAfterResume);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpFrames(tester, count: 2);
+        final untrackedRepo = CountingGroupMessageRepository();
+        await untrackedRepo.saveMessage(
+          makeMessage(
+            id: 'msg-untracked-authority',
+            text: 'Unread without tracker authority',
+            groupId: group.id,
+          ),
+        );
+        await tester.pumpWidget(
+          buildWidget(group: group, messageRepo: untrackedRepo),
+        );
+        await pumpFrames(tester, count: 20);
+        expect(
+          untrackedRepo.markAsReadCalls,
+          0,
+          reason: 'an absent tracker is unknown authority and fails closed',
+        );
+        expect(await untrackedRepo.getUnreadCount(group.id), 1);
       },
     );
 
@@ -19129,6 +19156,9 @@ void main() {
       testWidgets(
         'TC-159-08b coalesced group burst restores scroll offset once + marks read',
         (tester) async {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
           final group = makeChatGroup();
           await groupRepo.saveGroup(group);
           for (var i = 0; i < 30; i++) {
@@ -19141,7 +19171,10 @@ void main() {
             );
           }
 
-          await tester.pumpWidget(buildWidget(group: group));
+          final tracker = ActiveConversationTracker();
+          await tester.pumpWidget(
+            buildWidget(group: group, groupConversationTracker: tracker),
+          );
           await pumpFrames(tester);
 
           final controller = tester

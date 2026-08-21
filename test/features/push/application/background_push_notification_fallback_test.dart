@@ -1101,6 +1101,74 @@ void main() {
     );
 
     test(
+      'TC-393-03 all conversation fallbacks use the final visibility barrier',
+      () async {
+        final cases = <({String label, RemoteMessage message, String key})>[
+          (
+            label: 'unanchored group',
+            message: const RemoteMessage(
+              data: <String, dynamic>{
+                'type': 'group_message',
+                'groupId': 'group-final-unanchored',
+              },
+            ),
+            key: 'group:group-final-unanchored',
+          ),
+          (
+            label: 'raw direct message',
+            message: const RemoteMessage(
+              data: <String, dynamic>{
+                'type': 'new_message',
+                'sender_id': 'peer-final-direct-message',
+                'message_id': 'message-final-direct',
+              },
+            ),
+            key: 'peer-final-direct-message',
+          ),
+          (
+            label: 'raw direct reaction',
+            message: const RemoteMessage(
+              data: <String, dynamic>{
+                'type': 'message_reaction',
+                'sender_id': 'peer-final-direct-reaction',
+                'event_id': 'reaction-final-direct',
+                'target_message_id': 'target-final-direct',
+                'action': 'add',
+              },
+            ),
+            key: 'peer-final-direct-reaction',
+          ),
+        ];
+
+        for (final testCase in cases) {
+          final tracker = ActiveConversationTracker();
+          final service = _RaceFlippingNotificationService(
+            beforeNative: () => tracker.setActive(testCase.key),
+          );
+          final visibility = TrackerBackedAppVisibility(
+            tracker: tracker,
+            lifecycle: () => AppLifecycleState.resumed,
+          );
+
+          await subject.showForegroundPushFallbackNotificationIfNeeded(
+            result: ForegroundRemoteMessageResult.notificationNeeded,
+            notificationService: service,
+            message: testCase.message,
+            groupMessageDisplayEligibilityResolver: (_) async =>
+                const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+            appVisibility: visibility,
+            durableGroupMessageNotificationCoordinatorResolver: () async =>
+                groupMessageCoordinator,
+          );
+
+          expect(service.nativeCalls, 0, reason: testCase.label);
+          expect(service.shown, isEmpty, reason: testCase.label);
+          expect(service.shownGeneric, isEmpty, reason: testCase.label);
+        }
+      },
+    );
+
+    test(
       'group drain native-attempt error retains exact claim fail-closed',
       () async {
         var now = DateTime.utc(2026, 8, 4);
@@ -2151,5 +2219,68 @@ class _BlockingNotificationService extends FakeNotificationService {
       contentEventIdentity: contentEventIdentity,
       snapshot: snapshot,
     );
+  }
+}
+
+class _RaceFlippingNotificationService extends FakeNotificationService
+    implements MessageNotificationNativePublicationBoundary {
+  _RaceFlippingNotificationService({required this.beforeNative});
+
+  final void Function() beforeNative;
+  var nativeCalls = 0;
+
+  @override
+  Future<void> showMessageNotificationAtNativeBoundary({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+    required Future<void> Function(NativeMessageNotificationShow showNative)
+    publishNative,
+  }) async {
+    beforeNative();
+    await publishNative(({required bool silent}) async {
+      nativeCalls += 1;
+    });
+  }
+
+  @override
+  Future<void> showMessageNotification({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+  }) async {
+    beforeNative();
+    nativeCalls += 1;
+    await super.showMessageNotification(
+      contactPeerId: contactPeerId,
+      senderUsername: senderUsername,
+      messageText: messageText,
+      payload: payload,
+      silent: silent,
+      contentKind: contentKind,
+      contentEventIdentity: contentEventIdentity,
+      snapshot: snapshot,
+    );
+  }
+
+  @override
+  Future<void> showNotification({
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    beforeNative();
+    nativeCalls += 1;
+    await super.showNotification(title: title, body: body, payload: payload);
   }
 }

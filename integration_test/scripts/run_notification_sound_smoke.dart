@@ -14,10 +14,11 @@
 //
 // Every scenario carries a machine-readable SOUND DISPOSITION (see
 // [_dispositionContract]). The disposition — not an either-channel guess — is
-// what the OS-capture verdict enforces: an audible scenario whose card lands on
-// the silent channel is a failure, and vice versa. `--print-disposition-contract`
-// emits that table for the process contract; `--verify-os-capture` runs the same
-// pure decision function offline against a canned dumpsys record.
+// what the OS-capture verdict enforces: a card may start on the silent channel
+// only when there is no active primary card to update; a settled primary card
+// may never be demoted by reconciliation. `--print-disposition-contract` emits
+// that table for the process contract; `--verify-os-capture` runs the same pure
+// decision function offline against a canned dumpsys record.
 //
 // For each scenario the orchestrator asks the operator "did you hear sound?"
 // so the final report combines programmatic FLOW-event verdicts with audible
@@ -32,7 +33,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+
 import '../_support/signal_files.dart';
+import '../support/android_app_state_guard.dart';
 import '_android_app_package.dart';
 
 // Single role-dispatched harness; the SMOKE_ROLE dart-define selects the
@@ -81,16 +85,14 @@ late String _remoteSharedDirRelative;
 bool _stopSignalSync = false;
 Set<String>? _selectedRows;
 
-/// Documented S14 fallback: if the same-id in-place update's dumpsys record
-/// does not surface the SILENT channel on a given API level, the conclusive
-/// assertion set degrades to flags `[false, true]` + one record + same id. The
-/// flags assertion stays mandatory in this mode.
+/// Backward-compatible CLI switch retained for old runners. It no longer
+/// relaxes S14's settled-channel assertion: a silent same-ID update must keep
+/// the already-active primary-channel card.
 bool _toneDebounceChannelFallback = false;
 
 /// Android notification channel ids produced by the production channel mapping
 /// (`lib/core/notifications/local_notification_support.dart`).
 const _audibleChannel = 'mknoon_messages';
-const _silentChannel = 'mknoon_messages_silent';
 
 /// How a scenario's posted notification must SOUND.
 ///
@@ -98,11 +100,10 @@ const _silentChannel = 'mknoon_messages_silent';
 ///   production `silent` flag recorded as `false`.
 /// * [suppressed]     — zero `showMessageNotification` calls AND zero OS
 ///   records.
-/// * [consistency]    — one record whose channel agrees with the recorded
-///   `silent` flag. Used where the tone window legitimately makes the
-///   disposition timing-dependent (consecutive same-lane scenarios).
+/// * [consistency]    — one primary-channel record; the recorded `silent` flag
+///   may vary with the tone window, but may not demote the already-active card.
 /// * [toneDebounce]   — an audible first message followed by a SILENT in-place
-///   update of the same notification id inside the tone window.
+///   update of the same primary-channel notification id inside the tone window.
 enum _SoundDisposition { audibleStrict, suppressed, consistency, toneDebounce }
 
 class _ScenarioDisposition {
@@ -119,9 +120,7 @@ class _ScenarioDisposition {
   final String lane;
 
   /// Printed contract token. A real channel id for the deterministic
-  /// dispositions; `none` for [_SoundDisposition.suppressed] and `silentFlag`
-  /// for [_SoundDisposition.consistency], where the expected channel is a
-  /// function of the recorded `silent` flag rather than a constant.
+  /// dispositions and `none` for [_SoundDisposition.suppressed].
   final String expectedChannel;
 }
 
@@ -154,52 +153,52 @@ const _dispositionContract = <String, _ScenarioDisposition>{
   'S5': _ScenarioDisposition(
     disposition: _SoundDisposition.consistency,
     lane: 'direct',
-    expectedChannel: 'silentFlag',
+    expectedChannel: _audibleChannel,
   ),
   'S6': _ScenarioDisposition(
     disposition: _SoundDisposition.consistency,
     lane: 'direct',
-    expectedChannel: 'silentFlag',
+    expectedChannel: _audibleChannel,
   ),
   'S7': _ScenarioDisposition(
     disposition: _SoundDisposition.consistency,
     lane: 'direct',
-    expectedChannel: 'silentFlag',
+    expectedChannel: _audibleChannel,
   ),
   'S8': _ScenarioDisposition(
     disposition: _SoundDisposition.consistency,
     lane: 'group',
-    expectedChannel: 'silentFlag',
+    expectedChannel: _audibleChannel,
   ),
   'S9': _ScenarioDisposition(
     disposition: _SoundDisposition.consistency,
     lane: 'group',
-    expectedChannel: 'silentFlag',
+    expectedChannel: _audibleChannel,
   ),
   'S10': _ScenarioDisposition(
     disposition: _SoundDisposition.consistency,
     lane: 'group',
-    expectedChannel: 'silentFlag',
+    expectedChannel: _audibleChannel,
   ),
   'S11': _ScenarioDisposition(
     disposition: _SoundDisposition.consistency,
     lane: 'announcement',
-    expectedChannel: 'silentFlag',
+    expectedChannel: _audibleChannel,
   ),
   'S12': _ScenarioDisposition(
     disposition: _SoundDisposition.consistency,
     lane: 'announcement',
-    expectedChannel: 'silentFlag',
+    expectedChannel: _audibleChannel,
   ),
   'S13': _ScenarioDisposition(
     disposition: _SoundDisposition.consistency,
     lane: 'announcement',
-    expectedChannel: 'silentFlag',
+    expectedChannel: _audibleChannel,
   ),
   'S14': _ScenarioDisposition(
     disposition: _SoundDisposition.toneDebounce,
     lane: 'direct',
-    expectedChannel: _silentChannel,
+    expectedChannel: _audibleChannel,
   ),
   'S15': _ScenarioDisposition(
     disposition: _SoundDisposition.suppressed,
@@ -285,14 +284,12 @@ _DispositionEvaluation _evaluateDisposition({
       cardCountMatches = records.length == 1;
       silentFlagsMatch = silentFlags.length == 1;
       channelMatches =
-          cardCountMatches &&
-          silentFlagsMatch &&
-          channelOf(records.single) ==
-              (silentFlags.single ? _silentChannel : _audibleChannel);
+          cardCountMatches && channelOf(records.single) == _audibleChannel;
     case _SoundDisposition.toneDebounce:
-      // The flags assertion is the load-bearing exclusion of the
-      // "second message was simply suppressed" degenerate pass; it is
-      // mandatory in BOTH the primary and the channel-fallback mode.
+      // The flags assertion is the load-bearing exclusion of the "second
+      // message was simply suppressed" degenerate pass. The surviving record
+      // must stay on the primary channel; moving it to the silent channel is a
+      // persistent importance demotion, not a harmless sound decision.
       silentFlagsMatch =
           silentFlags.length == 2 && !silentFlags[0] && silentFlags[1];
       cardCountMatches = records.length == 1;
@@ -301,8 +298,7 @@ _DispositionEvaluation _evaluateDisposition({
           priorRecordIds.isEmpty ||
           priorRecordIds.contains(records.single['id']);
       channelMatches =
-          toneDebounceChannelFallback ||
-          (cardCountMatches && channelOf(records.single) == _silentChannel);
+          cardCountMatches && channelOf(records.single) == _audibleChannel;
   }
 
   final String reason;
@@ -375,9 +371,9 @@ int _verifyOsCaptureOffline(
   }
 
   _appPackage = resolveAndroidAppPackage();
-  final records = _activeAppNotificationRecords(dumpFile.readAsStringSync())
-      .map(_sanitizeNotificationRecord)
-      .toList(growable: false);
+  final records = _activeAppNotificationRecords(
+    dumpFile.readAsStringSync(),
+  ).map(_sanitizeNotificationRecord).toList(growable: false);
   final Map<String, dynamic> verdict;
   try {
     verdict =
@@ -421,6 +417,246 @@ void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
   });
 }
 
+final class _AndroidSoundNotificationSnapshot {
+  const _AndroidSoundNotificationSnapshot({
+    required this.packagePresent,
+    required this.notificationCardsSha256,
+    required this.notificationChannelsSha256,
+  });
+
+  final bool packagePresent;
+  final String notificationCardsSha256;
+  final String notificationChannelsSha256;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'packagePresent': packagePresent,
+    'notificationCardsSha256': notificationCardsSha256,
+    'notificationChannelsSha256': notificationChannelsSha256,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is _AndroidSoundNotificationSnapshot &&
+      other.packagePresent == packagePresent &&
+      other.notificationCardsSha256 == notificationCardsSha256 &&
+      other.notificationChannelsSha256 == notificationChannelsSha256;
+
+  @override
+  int get hashCode => Object.hash(
+    packagePresent,
+    notificationCardsSha256,
+    notificationChannelsSha256,
+  );
+}
+
+final class _AndroidSoundStateBoundary {
+  _AndroidSoundStateBoundary({
+    required this.guard,
+    required this.devices,
+    required this.baseline,
+  });
+
+  final AndroidAppStateGuard guard;
+  final List<String> devices;
+  final Map<String, _AndroidSoundNotificationSnapshot> baseline;
+  Map<String, _AndroidSoundNotificationSnapshot> restored =
+      <String, _AndroidSoundNotificationSnapshot>{};
+  bool restorationVerified = false;
+
+  Future<void> restoreAndVerify() async {
+    await guard.restoreAll();
+    final after = <String, _AndroidSoundNotificationSnapshot>{};
+    for (final device in devices) {
+      after[device] = await _readAndroidSoundNotificationSnapshot(device);
+    }
+    restored = Map<String, _AndroidSoundNotificationSnapshot>.unmodifiable(
+      after,
+    );
+    for (final device in devices) {
+      final expected = baseline[device];
+      final actual = restored[device];
+      if (expected == null || actual != expected || actual!.packagePresent) {
+        throw StateError(
+          'Android sound state did not restore exactly on $device.',
+        );
+      }
+    }
+    restorationVerified = true;
+  }
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'requiredAbsentBaseline': true,
+    'restorationVerified': restorationVerified,
+    'before': <String, Object?>{
+      for (final entry in baseline.entries) entry.key: entry.value.toJson(),
+    },
+    'after': <String, Object?>{
+      for (final entry in restored.entries) entry.key: entry.value.toJson(),
+    },
+  };
+}
+
+Future<bool> _androidSoundPackagePresent(String deviceId) async {
+  final result = await _adbOn(deviceId, <String>[
+    'shell',
+    'pm',
+    'path',
+    _appPackage,
+  ]);
+  if (result.exitCode != 0) {
+    final rawOutput = '${result.stdout}\n${result.stderr}'.trim();
+    final output = rawOutput.toLowerCase();
+    // `pm path <package>` uses exit 1 with no output for an absent package on
+    // current Android releases. That is a readable negative result, not an
+    // ADB failure. Non-empty failures remain fail-closed below.
+    if (result.exitCode == 1 && rawOutput.isEmpty) return false;
+    if (output.contains('unknown package') ||
+        output.contains('not found') ||
+        output.contains('unable to find package')) {
+      return false;
+    }
+    throw StateError('Package presence is not readable on $deviceId.');
+  }
+  return '${result.stdout}'
+      .split('\n')
+      .map((line) => line.trim())
+      .any((line) => line.startsWith('package:'));
+}
+
+List<String> _activePackageNotificationRecords(
+  String dump, {
+  required String packageName,
+}) {
+  final activeSection = dump.split(RegExp(r'\nRanking Config:')).first;
+  final packagePattern = RegExp(r'\bpkg=' + RegExp.escape(packageName) + r'\b');
+  return RegExp(r'NotificationRecord\([\s\S]*?(?=\n\s*NotificationRecord\(|$)')
+      .allMatches(activeSection)
+      .map((match) => match.group(0)!)
+      .where(packagePattern.hasMatch)
+      .toList(growable: false);
+}
+
+String _androidSoundNotificationChannelStateSha256(
+  String dump, {
+  required String packageName,
+}) {
+  final packageHeader = RegExp(
+    r'^\s+AppSettings:\s+' + RegExp.escape(packageName) + r'\s+\(',
+  );
+  final nextPackageHeader = RegExp(r'^\s+AppSettings:\s+');
+  String? header;
+  final stableChildren = <String>[];
+  var inPackage = false;
+  for (final raw in dump.split('\n')) {
+    if (!inPackage) {
+      if (!packageHeader.hasMatch(raw)) continue;
+      inPackage = true;
+      header = raw.trim().replaceFirst(RegExp(r'\s+\(\d+\)'), ' (<uid>)');
+      continue;
+    }
+    if (nextPackageHeader.hasMatch(raw)) break;
+    final line = raw.trim();
+    if (line.startsWith('Delegate:') ||
+        line.startsWith('NotificationChannel{') ||
+        line.startsWith('NotificationChannelGroup{')) {
+      stableChildren.add(
+        line
+            .replaceAll(
+              RegExp(r'mLastNotificationUpdateTimeMs=-?\d+'),
+              'mLastNotificationUpdateTimeMs=<volatile>',
+            )
+            .replaceAll(
+              RegExp(r'mUserLockedFields=-?\d+'),
+              'mUserLockedFields=<user-provenance>',
+            ),
+      );
+    }
+  }
+  stableChildren.sort();
+  return sha256
+      .convert(utf8.encode(jsonEncode(<String>[?header, ...stableChildren])))
+      .toString();
+}
+
+Future<_AndroidSoundNotificationSnapshot> _readAndroidSoundNotificationSnapshot(
+  String deviceId,
+) async {
+  final packagePresent = await _androidSoundPackagePresent(deviceId);
+  final dump = await _adbOn(deviceId, const <String>[
+    'shell',
+    'dumpsys',
+    'notification',
+    '--noredact',
+  ]);
+  if (dump.exitCode != 0) {
+    throw StateError('Notification state is not readable on $deviceId.');
+  }
+  final raw = '${dump.stdout}';
+  final records = _activePackageNotificationRecords(
+    raw,
+    packageName: _appPackage,
+  )..sort();
+  return _AndroidSoundNotificationSnapshot(
+    packagePresent: packagePresent,
+    notificationCardsSha256: sha256
+        .convert(utf8.encode(jsonEncode(records)))
+        .toString(),
+    notificationChannelsSha256: _androidSoundNotificationChannelStateSha256(
+      raw,
+      packageName: _appPackage,
+    ),
+  );
+}
+
+Future<_AndroidSoundStateBoundary?> _captureAndroidSoundStateBoundary(
+  List<String> deviceIds,
+) async {
+  if (deviceIds.isEmpty) return null;
+  try {
+    final packagePresence = await Future.wait<bool>(
+      deviceIds.map(_androidSoundPackagePresent),
+    );
+    if (packagePresence.any((present) => present)) {
+      final installed = <String>[
+        for (var index = 0; index < deviceIds.length; index++)
+          if (packagePresence[index]) deviceIds[index],
+      ];
+      stderr.writeln(
+        'ENVIRONMENT BLOCKED [package_installed_before_sound_smoke]: '
+        '$_appPackage must be absent on both Android targets before any '
+        'child or mutation; installed=${installed.join(',')}.',
+      );
+      return null;
+    }
+    final snapshots = await Future.wait<_AndroidSoundNotificationSnapshot>(
+      deviceIds.map(_readAndroidSoundNotificationSnapshot),
+    );
+    final baseline = <String, _AndroidSoundNotificationSnapshot>{
+      for (var index = 0; index < deviceIds.length; index++)
+        deviceIds[index]: snapshots[index],
+    };
+    final guard = await AndroidAppStateGuard.capture(
+      devices: deviceIds,
+      packageName: _appPackage,
+      backupLabel: 'notification-sound-smoke',
+    );
+    return _AndroidSoundStateBoundary(
+      guard: guard,
+      devices: List<String>.unmodifiable(deviceIds),
+      baseline: Map<String, _AndroidSoundNotificationSnapshot>.unmodifiable(
+        baseline,
+      ),
+    );
+  } on AndroidAppStateBlocked catch (error) {
+    stderr.writeln(
+      'ENVIRONMENT BLOCKED [sound_state_capture]: ${error.detail}',
+    );
+  } on Object catch (error) {
+    stderr.writeln('ENVIRONMENT BLOCKED [sound_state_capture]: $error');
+  }
+  return null;
+}
+
 Future<Process> _launchHarness({
   required String harness,
   required String role,
@@ -451,6 +687,24 @@ Future<Process> _launchHarness({
   ];
   _log('ORCH', 'Launching $role: flutter ${args.join(' ')}');
   return Process.start('flutter', args);
+}
+
+Future<void> _stopHarness(Process? process) async {
+  if (process == null) return;
+  process.kill(ProcessSignal.sigterm);
+  try {
+    await process.exitCode.timeout(const Duration(seconds: 10));
+  } on TimeoutException {
+    process.kill(ProcessSignal.sigkill);
+    await process.exitCode.timeout(const Duration(seconds: 5));
+  }
+}
+
+Future<void> _awaitHarnessSuccess(Process process, String role) async {
+  final exitCode = await process.exitCode.timeout(const Duration(seconds: 60));
+  if (exitCode != 0) {
+    throw StateError('$role Flutter harness exited $exitCode');
+  }
 }
 
 bool _nonInteractive = false;
@@ -717,6 +971,24 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
     await Future<void>.delayed(const Duration(milliseconds: 250));
   }
 
+  // Do not grade the first matching snapshot. A competing delivery path may
+  // reconcile the same card a few seconds later; the old oracle returned
+  // before that update and accepted cards that were subsequently cancelled or
+  // moved to the low-importance channel.
+  if (!expectSuppressed && records.length == 1) {
+    await Future<void>.delayed(const Duration(seconds: 4));
+    final settledDump = await _adb(const <String>[
+      'shell',
+      'dumpsys',
+      'notification',
+      '--noredact',
+    ]);
+    if (settledDump.exitCode != 0) {
+      throw StateError('settled dumpsys notification failed on $_bobDevice.');
+    }
+    records = _activeAppNotificationRecords(settledDump.stdout.toString());
+  }
+
   final sanitized = records
       .map(_sanitizeNotificationRecord)
       .toList(growable: false);
@@ -766,42 +1038,77 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
       ]);
       await Future<void>.delayed(Duration(milliseconds: 650 + (attempt * 250)));
 
-      // A silent MKnoon card can be below a full page of unrelated alerting
-      // notifications on a physical test phone. Reopening the shade without
-      // scrolling merely captures the same first page on every retry. Scroll
-      // progressively instead of clearing unrelated user notifications.
-      final scrollCount = attempt - 1;
-      for (var scroll = 0; scroll < scrollCount; scroll++) {
-        await _adb(const <String>[
-          'shell',
-          'input',
-          'swipe',
-          '540',
-          '1800',
-          '540',
-          '650',
-          '300',
-        ]);
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-      }
-
       final remoteDump =
           '/data/local/tmp/nsmoke_notification_${scenarioId.toLowerCase()}_'
           '$attempt.xml';
-      final dumpResult = await _adb(<String>[
+      var dumpResult = await _adb(<String>[
         'shell',
         'uiautomator',
         'dump',
         remoteDump,
       ]);
-      final ui = dumpResult.exitCode == 0
+      final initialDumpExitCode = dumpResult.exitCode;
+      var ui = dumpResult.exitCode == 0
           ? await _adb(<String>['shell', 'cat', remoteDump])
           : null;
-      final xml = ui?.stdout.toString() ?? '';
-      final attemptTitleVisible =
+      var xml = ui?.stdout.toString() ?? '';
+      var shadeHierarchyVisible = xml.contains(
+        'package="com.android.systemui"',
+      );
+      var attemptTitleVisible =
           expectedTitle.isNotEmpty && xml.contains(expectedTitle);
-      final attemptBodyVisible =
+      var attemptBodyVisible =
           expectedBody.isNotEmpty && xml.contains(expectedBody);
+
+      // A silent MKnoon card can be below a full page of unrelated alerting
+      // notifications on a physical test phone. Reopening the shade without
+      // scrolling merely captures the same first page on every retry. First
+      // prove that the hierarchy belongs to SystemUI, though: if an earlier
+      // uiautomator process was killed, swiping against a short shade can close
+      // it and leave every subsequent capture on the foreground app.
+      final requestedScrollCount = attempt - 1;
+      var scrollCount = 0;
+      int? postScrollDumpExitCode;
+      if (shadeHierarchyVisible &&
+          !(attemptTitleVisible && attemptBodyVisible)) {
+        for (var scroll = 0; scroll < requestedScrollCount; scroll++) {
+          await _adb(const <String>[
+            'shell',
+            'input',
+            'swipe',
+            '540',
+            '1800',
+            '540',
+            '650',
+            '300',
+          ]);
+          scrollCount++;
+          await Future<void>.delayed(const Duration(milliseconds: 400));
+        }
+        if (scrollCount > 0) {
+          await _adb(<String>['shell', 'rm', '-f', remoteDump]);
+          dumpResult = await _adb(<String>[
+            'shell',
+            'uiautomator',
+            'dump',
+            remoteDump,
+          ]);
+          postScrollDumpExitCode = dumpResult.exitCode;
+          ui = dumpResult.exitCode == 0
+              ? await _adb(<String>['shell', 'cat', remoteDump])
+              : null;
+          xml = ui?.stdout.toString() ?? '';
+          shadeHierarchyVisible =
+              shadeHierarchyVisible ||
+              xml.contains('package="com.android.systemui"');
+          attemptTitleVisible =
+              attemptTitleVisible ||
+              (expectedTitle.isNotEmpty && xml.contains(expectedTitle));
+          attemptBodyVisible =
+              attemptBodyVisible ||
+              (expectedBody.isNotEmpty && xml.contains(expectedBody));
+        }
+      }
       shadeTitleVisible = shadeTitleVisible || attemptTitleVisible;
       shadeBodyVisible = shadeBodyVisible || attemptBodyVisible;
 
@@ -816,7 +1123,11 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
           const JsonEncoder.withIndent('  ').convert(<String, dynamic>{
             'scenarioId': scenarioId,
             'attempt': attempt,
+            'requestedScrollCount': requestedScrollCount,
             'scrollCount': scrollCount,
+            'shadeHierarchyVisible': shadeHierarchyVisible,
+            'initialDumpExitCode': initialDumpExitCode,
+            'postScrollDumpExitCode': postScrollDumpExitCode,
             'dumpExitCode': dumpResult.exitCode,
             'readExitCode': ui?.exitCode,
             'titleVisible': attemptTitleVisible,
@@ -828,7 +1139,11 @@ Future<Map<String, dynamic>> _captureAndroidNotificationState({
       }
       uiHierarchyAttempts.add(<String, dynamic>{
         'attempt': attempt,
+        'requestedScrollCount': requestedScrollCount,
         'scrollCount': scrollCount,
+        'shadeHierarchyVisible': shadeHierarchyVisible,
+        'initialDumpExitCode': initialDumpExitCode,
+        'postScrollDumpExitCode': postScrollDumpExitCode,
         'dumpExitCode': dumpResult.exitCode,
         'readExitCode': ui?.exitCode,
         'titleVisible': attemptTitleVisible,
@@ -1276,6 +1591,13 @@ Future<void> main(List<String> args) async {
   }
   _androidPair = aliceIsAndroid && _bobIsAndroid;
   _appPackage = resolveAndroidAppPackage();
+  final androidStateBoundary = await _captureAndroidSoundStateBoundary(
+    _androidPair ? <String>[aliceDevice, bobDevice] : const <String>[],
+  );
+  if (_androidPair && androidStateBoundary == null) {
+    exitCode = 78;
+    return;
+  }
   if (artifactPath != null && artifactPath.isNotEmpty) {
     _artifactDirectory = Directory(artifactPath).absolute
       ..createSync(recursive: true);
@@ -1570,7 +1892,9 @@ Future<void> main(List<String> args) async {
             .toList(growable: false);
         _log('ORCH', 'S14 phase-1 audible record ids: $s14PriorRecordIds');
       } else {
-        throw StateError('S14 phase-1 audible message failed its harness predicate');
+        throw StateError(
+          'S14 phase-1 audible message failed its harness predicate',
+        );
       }
     }
     _recordScenarioOutcome(
@@ -1580,7 +1904,7 @@ Future<void> main(List<String> args) async {
         goSignal: 's14_second_go',
         bobVerdictSignal: 's14_bob_verdict',
         verdictAckSignal: 's14_verdict_ack',
-        description: '1:1 tone-window debounce (second message updates silently)',
+        description: '1:1 tone-window debounce',
         expectAudible: false,
         expectSuppressed: false,
         priorRecordIds: s14PriorRecordIds,
@@ -1631,7 +1955,7 @@ Future<void> main(List<String> args) async {
         goSignal: 's16_go',
         bobVerdictSignal: 's16_bob_verdict',
         verdictAckSignal: 's16_verdict_ack',
-        description: '1:1 backgrounded-but-connected delivery (expect notification + sound)',
+        description: '1:1 backgrounded-but-connected notification',
         expectAudible: true,
         expectSuppressed: false,
       ),
@@ -1642,10 +1966,16 @@ Future<void> main(List<String> args) async {
       'alice_done',
       timeout: const Duration(seconds: 60),
     );
+    _signals.writeSignal('alice_done_ack');
     await _signals.waitForSignal(
       'bob_done',
       timeout: const Duration(seconds: 60),
     );
+    _signals.writeSignal('bob_done_ack');
+    await Future.wait<void>(<Future<void>>[
+      _awaitHarnessSuccess(alice, 'alice'),
+      _awaitHarnessSuccess(bob, 'bob'),
+    ]);
     runCompleted = true;
   } on _FocusedRowsComplete {
     runCompleted = true;
@@ -1659,16 +1989,48 @@ Future<void> main(List<String> args) async {
     stderr.writeln(stackTrace);
   } finally {
     _log('ORCH', 'Cleaning up...');
-    alice?.kill();
-    bob?.kill();
+    void recordCleanupError(String phase, Object error) {
+      runError ??= StateError('$phase failed: $error');
+      _log('ORCH', '$phase failed: $error');
+    }
+
+    try {
+      await _stopHarness(alice);
+    } on Object catch (error) {
+      recordCleanupError('alice child cleanup', error);
+    }
+    try {
+      await _stopHarness(bob);
+    } on Object catch (error) {
+      recordCleanupError('bob child cleanup', error);
+    }
     _stopSignalSync = true;
     if (signalSync != null) {
-      await signalSync.timeout(const Duration(seconds: 5));
+      try {
+        await signalSync.timeout(const Duration(seconds: 5));
+      } on Object catch (error) {
+        recordCleanupError('signal sync cleanup', error);
+      }
     }
-    await aliceLog.flush();
-    await aliceLog.close();
-    await bobLog.flush();
-    await bobLog.close();
+    try {
+      await aliceLog.flush();
+      await aliceLog.close();
+    } on Object catch (error) {
+      recordCleanupError('alice log cleanup', error);
+    }
+    try {
+      await bobLog.flush();
+      await bobLog.close();
+    } on Object catch (error) {
+      recordCleanupError('bob log cleanup', error);
+    }
+    if (androidStateBoundary != null) {
+      try {
+        await androidStateBoundary.restoreAndVerify();
+      } on Object catch (error) {
+        recordCleanupError('android exact-state restoration', error);
+      }
+    }
 
     final selectedOutcomes = outcomes
         .where((outcome) => outcome.selected)
@@ -1692,6 +2054,7 @@ Future<void> main(List<String> args) async {
       if (entry.disposition == _SoundDisposition.suppressed) return null;
       return entry.lane;
     }
+
     final expectedLaneObservationCounts = <String, int>{
       'direct': 0,
       'group': 0,
@@ -1741,6 +2104,7 @@ Future<void> main(List<String> args) async {
       'sharedDir': _sharedDir.path,
       'rowFilter': rowFilterSummary,
       'androidRecipient': _bobIsAndroid,
+      'androidStateBoundary': androidStateBoundary?.toJson(),
       'stableConversationCards': stableConversationCards,
       'conversationCardIdentity': conversationCardIdentity,
       'prerequisiteRows': outcomes

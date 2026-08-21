@@ -63,16 +63,16 @@ case1_print_disposition_contract() {
     'S2|audibleStrict|group|mknoon_messages' \
     'S3|audibleStrict|announcement|mknoon_messages' \
     'S4|suppressed|direct|none' \
-    'S5|consistency|direct|silentFlag' \
-    'S6|consistency|direct|silentFlag' \
-    'S7|consistency|direct|silentFlag' \
-    'S8|consistency|group|silentFlag' \
-    'S9|consistency|group|silentFlag' \
-    'S10|consistency|group|silentFlag' \
-    'S11|consistency|announcement|silentFlag' \
-    'S12|consistency|announcement|silentFlag' \
-    'S13|consistency|announcement|silentFlag' \
-    'S14|toneDebounce|direct|mknoon_messages_silent' \
+    'S5|consistency|direct|mknoon_messages' \
+    'S6|consistency|direct|mknoon_messages' \
+    'S7|consistency|direct|mknoon_messages' \
+    'S8|consistency|group|mknoon_messages' \
+    'S9|consistency|group|mknoon_messages' \
+    'S10|consistency|group|mknoon_messages' \
+    'S11|consistency|announcement|mknoon_messages' \
+    'S12|consistency|announcement|mknoon_messages' \
+    'S13|consistency|announcement|mknoon_messages' \
+    'S14|toneDebounce|direct|mknoon_messages' \
     'S15|suppressed|group|none' \
     'S16|audibleStrict|direct|mknoon_messages' >"$expected"
 
@@ -138,6 +138,10 @@ case2_verify_os_capture_fixtures() {
   printf '%s\n' '{"shownCalls":[{"silent":false}]}' >"$shown_false"
   local shown_none="$tmp_dir/verdict.shown_none.json"
   printf '%s\n' '{"shownCalls":[]}' >"$shown_none"
+  local shown_debounce="$tmp_dir/verdict.shown_debounce.json"
+  printf '%s\n' \
+    '{"shownCalls":[{"silent":false},{"silent":true}],"priorRecordIds":[1701]}' \
+    >"$shown_debounce"
 
   # 2a: audible-expected scenario + audible record -> pass.
   local result
@@ -173,6 +177,21 @@ case2_verify_os_capture_fixtures() {
   result="$(run_verify S4 "$empty_dump" "$shown_none")"
   [ "${result%%|*}" = 0 ] ||
     fail "suppressed scenario failed on an empty shade (got: $result)"
+
+  # 2d: tone debounce keeps the original primary-channel card while the
+  # second same-ID update is explicitly silent.
+  result="$(run_verify S14 "$audible_dump" "$shown_debounce")"
+  [ "${result%%|*}" = 0 ] ||
+    fail "tone-debounce primary-card fixture did not pass (got: $result)"
+
+  # 2e: the same two call flags cannot excuse a settled channel demotion.
+  result="$(run_verify S14 "$silent_dump" "$shown_debounce")"
+  [ "${result%%|*}" != 0 ] ||
+    fail 'tone-debounce scenario accepted a demoted silent-channel survivor'
+  case "$result" in
+    *"result=fail"*"reason=channel_contradiction"*) ;;
+    *) fail "tone-debounce channel demotion was not typed (got: $result)" ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -220,8 +239,226 @@ case3_discovery_rows() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# case4_absent_package_state_boundary
+#
+# Flutter integration-test cleanup can uninstall its package. The guarded
+# Android pair is therefore accepted only when BOTH packages are absent before
+# any child or mutating adb command. That read-only refusal path is executable
+# here with fake adb; source ordering pins the accepted absent-baseline path.
+# ---------------------------------------------------------------------------
+case4_absent_package_state_boundary() {
+  grep -Fq 'final androidStateBoundary = await _captureAndroidSoundStateBoundary(' \
+    "$orchestrator" ||
+    fail 'sound runner lacks its read-only Android package/state preflight'
+  grep -Fq 'AndroidAppStateGuard.capture(' "$orchestrator" ||
+    fail 'sound runner does not own the absent Android pair with one state guard'
+  grep -Fq 'await androidStateBoundary.restoreAndVerify()' "$orchestrator" ||
+    fail 'sound runner does not restore and re-read the exact baseline'
+
+  python3 - "$orchestrator" <<'PY'
+import sys
+
+source = open(sys.argv[1], encoding="utf-8").read()
+main = source[source.index("Future<void> main(List<String> args) async {"):]
+capture = main.index("_captureAndroidSoundStateBoundary(")
+launch = main.index("_launchHarness(", capture)
+restore = main.index("androidStateBoundary.restoreAndVerify()", launch)
+summary = main.index("final summary = <String, dynamic>{", restore)
+exit_call = main.index("exit(failed ? 1 : 0)", summary)
+assert capture < launch < restore < summary < exit_call
+
+method_start = source.index("Future<_AndroidSoundStateBoundary?> _captureAndroidSoundStateBoundary(")
+method_end = source.index("Future<Process> _launchHarness", method_start)
+method = source[method_start:method_end]
+both_checks = method.index("Future.wait")
+installed_block = method.index("package_installed_before_sound_smoke", both_checks)
+snapshot = method.index("_readAndroidSoundNotificationSnapshot", installed_block)
+guard = method.index("AndroidAppStateGuard.capture", snapshot)
+assert both_checks < installed_block < snapshot < guard
+
+boundary_start = source.index("final class _AndroidSoundStateBoundary")
+boundary_end = source.index("Future<_AndroidSoundStateBoundary?>", boundary_start)
+boundary = source[boundary_start:boundary_end]
+assert "restoreAll()" in boundary
+assert "_readAndroidSoundNotificationSnapshot" in boundary
+assert "packagePresent" in boundary
+assert "notificationCardsSha256" in boundary
+assert "notificationChannelsSha256" in boundary
+assert "restorationVerified" in boundary
+PY
+
+  local fake_bin="$tmp_dir/state-boundary-bin"
+  local command_log="$tmp_dir/state-boundary.commands"
+  mkdir -p "$fake_bin"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf "adb %s\\n" "$*" >>"${SOUND_STATE_COMMAND_LOG:?}"' \
+    'case "$*" in' \
+    '  "-s physical-1 get-state"|"-s emulator-5554 get-state") printf "device\\n" ;;' \
+    '  "-s physical-1 shell pm path com.mknoon.app") printf "package:/data/app/com.mknoon.app/base.apk\\n" ;;' \
+    '  "-s emulator-5554 shell pm path com.mknoon.app") exit 1 ;;' \
+    '  *) exit 23 ;;' \
+    'esac' >"$fake_bin/adb"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf "flutter %s\\n" "$*" >>"${SOUND_STATE_COMMAND_LOG:?}"' \
+    'exit 99' >"$fake_bin/flutter"
+  chmod +x "$fake_bin/adb" "$fake_bin/flutter"
+
+  local blocked_out="$tmp_dir/state-boundary.out"
+  local blocked_err="$tmp_dir/state-boundary.err"
+  local blocked_status=0
+  set +e
+  PATH="$fake_bin:$PATH" SOUND_STATE_COMMAND_LOG="$command_log" \
+    dart "$orchestrator" -d physical-1,emulator-5554 --non-interactive \
+      >"$blocked_out" 2>"$blocked_err"
+  blocked_status=$?
+  set -e
+  [ "$blocked_status" -eq 78 ] ||
+    fail "installed-package preflight exited $blocked_status instead of 78"
+  grep -Fq 'package_installed_before_sound_smoke' "$blocked_err" ||
+    fail 'installed-package preflight omitted its typed blocker'
+  grep -Fq 'adb -s physical-1 shell pm path com.mknoon.app' "$command_log" ||
+    fail 'physical package presence was not checked read-only'
+  grep -Fq 'adb -s emulator-5554 shell pm path com.mknoon.app' "$command_log" ||
+    fail 'emulator package presence was not checked read-only'
+  if grep -Eq 'flutter | install| uninstall| pm grant| pm revoke| am | cmd ' \
+      "$command_log"; then
+    fail 'installed-package blocker launched a child or mutated a target'
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# case5_direct_send_custody_capability
+#
+# S1/S4/S5-S7/S14/S16 use the production direct-text sender. Its repository
+# must expose the complete custody capability, including the unique owner
+# lookup added to the production contract. Omitting that one callback compiles
+# but makes every direct row fail before transport.
+# ---------------------------------------------------------------------------
+case5_direct_send_custody_capability() {
+  python3 - \
+    integration_test/notification_sound_smoke_harness.dart \
+    integration_test/_support/direct_inbox_custody_db_bindings.dart <<'PY'
+import re
+import sys
+
+harness = re.sub(r"\s+", " ", open(sys.argv[1], encoding="utf-8").read())
+bindings = re.sub(r"\s+", " ", open(sys.argv[2], encoding="utf-8").read())
+
+assert (
+    "dbLoadDirectInboxCustodyOutboxOwnerForMessageId: "
+    "custodyDb.loadOwnerForMessageId" in harness
+), "sound sender omits the direct custody owner lookup"
+assert "loadOwnerForMessageId({ required String messageId" in bindings, (
+    "shared direct custody bindings omit the owner lookup"
+)
+assert re.search(
+    r"dbLoadDirectInboxCustodyOutboxOwnerForMessageId\(\s*db,",
+    bindings,
+), (
+    "owner lookup is not bound to the production DB helper"
+)
+assert harness.count("dbApplyIncomingOrdinaryTextMutation:") == 2, (
+    "both sound peers must wire the atomic incoming ordinary-text apply"
+)
+assert "dbApplyIncomingOrdinaryTextMutation( stack.db," in harness, (
+    "sound peers do not bind the production incoming ordinary-text apply"
+)
+factory = re.search(
+    r"MediaAttachment _mediaAttachmentForScenario\(.*?return MediaAttachment\((.*?)\n  \);",
+    open(sys.argv[1], encoding="utf-8").read(),
+    re.S,
+)
+assert factory is not None, "sound media descriptor factory is missing"
+assert re.search(r"\blocalPath\s*:\s*[^,]+,", factory.group(1)), (
+    "sound media descriptor omits the local path required by direct custody preflight"
+)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# case6_android_completion_signal_handshake
+#
+# Android signal files live in app-private storage and are mirrored to the
+# host. A role must remain alive until the host acknowledges its final signal;
+# otherwise `flutter test` can tear the package down before the 500ms mirror
+# loop observes the file, producing a false timeout after all rows pass.
+# ---------------------------------------------------------------------------
+case6_android_completion_signal_handshake() {
+  python3 - \
+    integration_test/notification_sound_smoke_harness.dart \
+    integration_test/scripts/run_notification_sound_smoke.dart <<'PY'
+import re
+import sys
+
+harness = re.sub(r"\s+", " ", open(sys.argv[1], encoding="utf-8").read())
+runner = re.sub(r"\s+", " ", open(sys.argv[2], encoding="utf-8").read())
+
+for role in ("alice", "bob"):
+    assert f"writeSignal('{role}_done', content: 'ok')" in harness, (
+        f"{role} completion signal is missing"
+    )
+    assert f"waitForSignal( '{role}_done_ack'" in harness, (
+        f"{role} can exit before its final Android signal is mirrored"
+    )
+    assert f"waitForSignal( '{role}_done'" in runner, (
+        f"orchestrator does not await {role} completion"
+    )
+    assert f"writeSignal('{role}_done_ack')" in runner, (
+        f"orchestrator does not acknowledge {role} completion"
+    )
+    assert f"_awaitHarnessSuccess({role}, '{role}')" in runner, (
+        f"orchestrator can kill {role} before the completion ack is consumed"
+    )
+assert "Future<void> _awaitHarnessSuccess(" in runner, (
+    "sound runner does not require a clean Flutter child exit"
+)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# case7_notification_shade_retry_order
+#
+# A killed first uiautomator dump must not turn the progressive-scroll retries
+# into upward swipes against the app. On a short one-card shade that gesture can
+# collapse SystemUI, so every retry must capture and identify the shade before
+# it is allowed to scroll.
+# ---------------------------------------------------------------------------
+case7_notification_shade_retry_order() {
+  python3 - integration_test/scripts/run_notification_sound_smoke.dart <<'PY'
+import sys
+
+source = open(sys.argv[1], encoding="utf-8").read()
+method_start = source.index("Future<Map<String, dynamic>> _captureAndroidNotificationState({")
+method_end = source.index("Map<String, dynamic> _redactedVerdict(", method_start)
+method = source[method_start:method_end]
+
+loop = method[method.index("for (var attempt = 1; attempt <= 3; attempt++)"):]
+first_dump = loop.index("'uiautomator',")
+first_swipe = loop.index("'swipe',")
+assert first_dump < first_swipe, (
+    "notification retry scrolls before proving the shade is open"
+)
+assert "package=\"com.android.systemui\"" in loop, (
+    "notification retry does not distinguish SystemUI from the foreground app"
+)
+shade_guard = loop.index("shadeHierarchyVisible")
+assert first_dump < shade_guard < first_swipe, (
+    "notification retry does not gate scrolling on a captured SystemUI hierarchy"
+)
+PY
+}
+
 case1_print_disposition_contract
 case2_verify_os_capture_fixtures
 case3_discovery_rows
+case4_absent_package_state_boundary
+case5_direct_send_custody_capability
+case6_android_completion_signal_handshake
+case7_notification_shade_retry_order
 
 printf 'PASS: notification sound disposition contract\n'

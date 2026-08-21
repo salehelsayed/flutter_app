@@ -15,13 +15,7 @@ void main() {
   group('android relay push registration acceptance', () {
     String flow(String event, Map<String, Object?> details) =>
         'I/flutter: [FLOW] '
-        '${jsonEncode(<String, Object?>{
-          'ts': '2026-08-17T20:00:00.000Z',
-          'milestone': 'M1_IDENTITY_INIT',
-          'layer': 'FL',
-          'event': event,
-          'details': details,
-        })}';
+        '${jsonEncode(<String, Object?>{'ts': '2026-08-17T20:00:00.000Z', 'milestone': 'M1_IDENTITY_INIT', 'layer': 'FL', 'event': event, 'details': details})}';
 
     test('accepts the unconditional PUSH_DIAG success line', () {
       expect(
@@ -125,17 +119,19 @@ void main() {
   group('flow event occurrence counting', () {
     String flow(String event, Map<String, Object?> details) =>
         'I/flutter: [FLOW] '
-        '${jsonEncode(<String, Object?>{
-          'layer': 'DB',
-          'event': event,
-          'details': details,
-        })}';
+        '${jsonEncode(<String, Object?>{'layer': 'DB', 'event': event, 'details': details})}';
 
     test('counts only exact event matches', () {
       final log = <String>[
-        flow('GROUP_MESSAGES_DB_INSERT_SUCCESS', <String, Object?>{'id': 'aaaa1111'}),
-        flow('GROUP_MESSAGES_DB_INSERT_START', <String, Object?>{'id': 'bbbb2222'}),
-        flow('GROUP_MESSAGES_DB_INSERT_SUCCESS', <String, Object?>{'id': 'cccc3333'}),
+        flow('GROUP_MESSAGES_DB_INSERT_SUCCESS', <String, Object?>{
+          'id': 'aaaa1111',
+        }),
+        flow('GROUP_MESSAGES_DB_INSERT_START', <String, Object?>{
+          'id': 'bbbb2222',
+        }),
+        flow('GROUP_MESSAGES_DB_INSERT_SUCCESS', <String, Object?>{
+          'id': 'cccc3333',
+        }),
         'D/unrelated: GROUP_MESSAGES_DB_INSERT_SUCCESS in prose',
       ].join('\n');
 
@@ -162,14 +158,13 @@ void main() {
         }),
       ].join('\n');
       // The ring rotated both baseline lines away and kept only the new row.
-      final rotated = flow('GROUP_MESSAGES_DB_INSERT_SUCCESS',
-          <String, Object?>{'id': 'dddd4444'});
+      final rotated = flow(
+        'GROUP_MESSAGES_DB_INSERT_SUCCESS',
+        <String, Object?>{'id': 'dddd4444'},
+      );
 
       expect(
-        countFlowEventOccurrences(
-              rotated,
-              'GROUP_MESSAGES_DB_INSERT_SUCCESS',
-            ) >
+        countFlowEventOccurrences(rotated, 'GROUP_MESSAGES_DB_INSERT_SUCCESS') >
             countFlowEventOccurrences(
               baseline,
               'GROUP_MESSAGES_DB_INSERT_SUCCESS',
@@ -202,15 +197,12 @@ void main() {
       // Device evidence, run 11: the live-fanout insert happened at 11:10:52Z
       // and had rotated out of the ring by the time the dump was pulled, but
       // every later inbox replay still reported the row as already stored.
-      final duplicate = 'I/flutter: [FLOW] '
+      final duplicate =
+          'I/flutter: [FLOW] '
           '${jsonEncode(<String, Object?>{
             'layer': 'FL',
             'event': 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
-            'details': <String, Object?>{
-              'incoming': true,
-              'messageId': '6e4e1d63-bb8f-43fd-90a8-116ea10f34a9',
-              'existingLocalRowId': '6e4e1d63-bb8f-43fd-90a8-116ea10f34a9',
-            },
+            'details': <String, Object?>{'incoming': true, 'messageId': '6e4e1d63-bb8f-43fd-90a8-116ea10f34a9', 'existingLocalRowId': '6e4e1d63-bb8f-43fd-90a8-116ea10f34a9'},
           })}';
 
       expect(groupMessageStoredWithId(duplicate, '6e4e1d63'), isTrue);
@@ -925,8 +917,10 @@ void main() {
 
     final stems = literals(source.substring(stemStart, scenarioStart));
     final scenarios = literals(source.substring(scenarioStart, testCaseStart));
-    expect(stems, hasLength(4));
-    expect(scenarios, hasLength(4));
+    // Plan 393 adds the fixed-wake branch through the shared constant, so the
+    // five literal legacy branches must still match exactly on both getters.
+    expect(stems, hasLength(5));
+    expect(scenarios, hasLength(5));
     expect(
       stems,
       scenarios,
@@ -984,55 +978,50 @@ void main() {
     );
   });
 
-  test(
-    'the 1to1 android capture attributes push registration to the recipient '
-    'device',
-    () {
-      // Plan 391 TC-391-11, found by executing the lane. The android arm
-      // waited on the relay-journal line `[PUSH] Token registered for
-      // <peerPrefix> (android)`, which relay v1.8.0 (8d86501e4) deleted with
-      // the rest of the identifying [PUSH] vocabulary — a removal Plan 368
-      // pins. Measured 2026-08-20: the recipient logged
-      // relay_push_registration_success at 07:49:06Z and the capture still
-      // failed at 07:51:12Z with "Timed out waiting for recipient FCM token
-      // registration". capture_group_reaction_notification_device.dart already
-      // moved this wait to the device boundary; this pins the same move here.
-      final source = _collapsedSource(
-        'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
-      );
-      final stageStart = source.indexOf(
-        "_stage = 'recipient_push_registration'",
-      );
-      final stageEnd = source.indexOf(
-        'await _requireCleanNotificationSlate();',
-        stageStart,
-      );
-      expect(stageStart, greaterThan(0));
-      expect(stageEnd, greaterThan(stageStart));
-      expect(
-        source.substring(stageStart, stageEnd),
-        contains('await _waitForRecipientPushRegistrationAccepted();'),
-        reason:
-            'the android capture must attribute registration to the '
-            'recipient device, not to a relay line the relay no longer emits',
-      );
+  test('the 1to1 android capture attributes push registration to the recipient '
+      'device', () {
+    // Plan 391 TC-391-11, found by executing the lane. The android arm
+    // waited on the relay-journal line `[PUSH] Token registered for
+    // <peerPrefix> (android)`, which relay v1.8.0 (8d86501e4) deleted with
+    // the rest of the identifying [PUSH] vocabulary — a removal Plan 368
+    // pins. Measured 2026-08-20: the recipient logged
+    // relay_push_registration_success at 07:49:06Z and the capture still
+    // failed at 07:51:12Z with "Timed out waiting for recipient FCM token
+    // registration". capture_group_reaction_notification_device.dart already
+    // moved this wait to the device boundary; this pins the same move here.
+    final source = _collapsedSource(
+      'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+    );
+    final stageStart = source.indexOf("_stage = 'recipient_push_registration'");
+    final stageEnd = source.indexOf(
+      'await _requireCleanNotificationSlate();',
+      stageStart,
+    );
+    expect(stageStart, greaterThan(0));
+    expect(stageEnd, greaterThan(stageStart));
+    expect(
+      source.substring(stageStart, stageEnd),
+      contains('await _waitForRecipientPushRegistrationAccepted();'),
+      reason:
+          'the android capture must attribute registration to the '
+          'recipient device, not to a relay line the relay no longer emits',
+    );
 
-      final methodStart = source.indexOf(
-        'Future<void> _waitForRecipientPushRegistrationAccepted()',
-      );
-      expect(methodStart, greaterThan(0));
-      final method = source.substring(
-        methodStart,
-        source.indexOf('Future<', methodStart + 1),
-      );
-      expect(method, contains('androidRelayPushRegistrationAccepted('));
-      expect(
-        method,
-        contains("_adb(recipientId, ['logcat'"),
-        reason: 'the evidence must come from the recipient device own log',
-      );
-    },
-  );
+    final methodStart = source.indexOf(
+      'Future<void> _waitForRecipientPushRegistrationAccepted()',
+    );
+    expect(methodStart, greaterThan(0));
+    final method = source.substring(
+      methodStart,
+      source.indexOf('Future<', methodStart + 1),
+    );
+    expect(method, contains('androidRelayPushRegistrationAccepted('));
+    expect(
+      method,
+      contains("_adb(recipientId, ['logcat'"),
+      reason: 'the evidence must come from the recipient device own log',
+    );
+  });
 
   group('android direct-reaction background push observation', () {
     // Plan 391 TC-391-12. The relay's peer-attributed push line is gone
@@ -1209,12 +1198,7 @@ void main() {
         '08-19 10:00:01.000  2000  2000 I flutter : [FLOW] '
         '${jsonEncode(<String, Object?>{
           'event': 'GROUP_SEND_MSG_TIMING',
-          'details': <String, Object?>{
-            'outcome': outcome,
-            'expectedRecipientCount': recipients,
-            'inboxStored': stored,
-            'inboxPending': false,
-          },
+          'details': <String, Object?>{'outcome': outcome, 'expectedRecipientCount': recipients, 'inboxStored': stored, 'inboxPending': false},
         })}';
 
     test(
@@ -1240,10 +1224,7 @@ void main() {
         expect(selected, isNotNull);
         expect(selected!.outcome, 'success');
         expect(selected.isCommitted, isTrue);
-        expect(
-          selected.hasRequiredInboxCustody(recipientCount: 1),
-          isTrue,
-        );
+        expect(selected.hasRequiredInboxCustody(recipientCount: 1), isTrue);
 
         // The positional rule on the same window: two observations exist and
         // the pre-tap baseline was 2, so `observations[2]` is out of range and
@@ -1254,24 +1235,30 @@ void main() {
       },
     );
 
-    test('the marker selector fails closed on a foreign or absent breadcrumb', () {
-      final window = <String>[
-        breadcrumb('plan386-other'),
-        timing('success'),
-      ].join('\n');
+    test(
+      'the marker selector fails closed on a foreign or absent breadcrumb',
+      () {
+        final window = <String>[
+          breadcrumb('plan386-other'),
+          timing('success'),
+        ].join('\n');
 
-      expect(
-        selectGroupSendObservationForMarker(window, 'plan386-graded'),
-        isNull,
-        reason: 'a different send must never grade this one',
-      );
-      expect(selectGroupSendObservationForMarker(window, ''), isNull);
-      expect(
-        selectGroupSendObservationForMarker(breadcrumb('plan386-graded'), 'plan386-graded'),
-        isNull,
-        reason: 'a breadcrumb with no outcome after it is not a result',
-      );
-    });
+        expect(
+          selectGroupSendObservationForMarker(window, 'plan386-graded'),
+          isNull,
+          reason: 'a different send must never grade this one',
+        );
+        expect(selectGroupSendObservationForMarker(window, ''), isNull);
+        expect(
+          selectGroupSendObservationForMarker(
+            breadcrumb('plan386-graded'),
+            'plan386-graded',
+          ),
+          isNull,
+          reason: 'a breadcrumb with no outcome after it is not a result',
+        );
+      },
+    );
 
     test('the last breadcrumb for a marker wins', () {
       // `_sendGroupText` re-taps after a group-recovery-pending outcome and
@@ -1308,7 +1295,8 @@ void main() {
   group('Plan 386 device flow accumulator', () {
     test('the accumulator keeps id-distinct events that render identically', () {
       final accumulator = DeviceFlowAccumulator();
-      const line = '08-19 10:00:00.000 I flutter : [FLOW] '
+      const line =
+          '08-19 10:00:00.000 I flutter : [FLOW] '
           '{"event":"GROUP_REACTION_SEND_QUEUED"}';
 
       // Two genuinely distinct sends whose raw lines render identically. The
@@ -1359,7 +1347,9 @@ void main() {
       expect(wait, contains('_accumulatedSenderFlowLines()'));
       expect(wait, isNot(contains("'logcat'")));
 
-      final collectStart = capture.indexOf('Future<void> _collectBoundedLogs()');
+      final collectStart = capture.indexOf(
+        'Future<void> _collectBoundedLogs()',
+      );
       final collectEnd = capture.indexOf(
         'Future<void> _tapOrbitCreateFab(',
         collectStart,
@@ -2027,16 +2017,22 @@ I/flutter: [FLOW] not-json
 I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_USE_CASE_RECOVERY_PENDING","details":{}}
 I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"group_recovery_pending"}}
 I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"success_no_peers","expectedRecipientCount":1,"inboxStored":true,"inboxPending":false}}
+I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"strict_custody_complete","expectedRecipientCount":1,"inboxStored":true,"inboxPending":false}}
 ''';
 
       final observations = extractGroupSendTimingObservations(log);
 
-      expect(observations, hasLength(3));
+      expect(observations, hasLength(4));
       expect(observations[0].isCommitted, isTrue);
       expect(observations[1].isRecoveryPending, isTrue);
       expect(observations[2].outcome, 'success_no_peers');
       expect(
         observations[2].hasRequiredInboxCustody(recipientCount: 1),
+        isTrue,
+      );
+      expect(observations[3].outcome, 'strict_custody_complete');
+      expect(
+        observations[3].hasRequiredInboxCustody(recipientCount: 1),
         isTrue,
       );
     });
@@ -2123,13 +2119,11 @@ Ranking Config:
       );
     });
 
-    test(
-      'marks Android auto-group summaries separately from content cards',
-      () {
-        const dump = '''
+    test('marks Android auto-group summaries independently of system id', () {
+      const dump = '''
 Active Notifications:
-  NotificationRecord(0x1: pkg=com.mknoon.app user=UserHandle{0} id=0 tag=0|com.mknoon.app|g:Aggregate_AlertingSection importance=4)
-    flags=AUTO_CANCEL|LOCAL_ONLY|GROUP_SUMMARY|AUTOGROUP_SUMMARY
+  NotificationRecord(0x1: pkg=com.mknoon.app user=UserHandle{0} id=1 tag=0|com.mknoon.app|g:Aggregate_SilentSection importance=2)
+    flags=LOCAL_ONLY|GROUP_SUMMARY|AUTOGROUP_SUMMARY
     android.title=null
     android.text=null
   NotificationRecord(0x2: pkg=com.mknoon.app user=UserHandle{0} id=11 tag=null importance=4)
@@ -2143,29 +2137,28 @@ Active Notifications:
 Ranking Config:
 ''';
 
-        final cards = extractActiveNotificationCards(
-          dump,
-          packageName: 'com.mknoon.app',
-        );
+      final cards = extractActiveNotificationCards(
+        dump,
+        packageName: 'com.mknoon.app',
+      );
 
-        expect(cards, hasLength(3));
-        expect(cards.where((card) => card.isGroupSummary), hasLength(1));
-        expect(
-          cards.where((card) => !card.isGroupSummary).map((card) => card.title),
-          orderedEquals(const <String>['Plan330A', 'Plan330B']),
-        );
+      expect(cards, hasLength(3));
+      expect(cards.where((card) => card.isGroupSummary), hasLength(1));
+      expect(
+        cards.where((card) => !card.isGroupSummary).map((card) => card.title),
+        orderedEquals(const <String>['Plan330A', 'Plan330B']),
+      );
 
-        final contentCards = extractActiveContentNotificationCards(
-          dump,
-          packageName: 'com.mknoon.app',
-        );
-        expect(contentCards, hasLength(2));
-        expect(
-          contentCards.map((card) => card.title),
-          orderedEquals(const <String>['Plan330A', 'Plan330B']),
-        );
-      },
-    );
+      final contentCards = extractActiveContentNotificationCards(
+        dump,
+        packageName: 'com.mknoon.app',
+      );
+      expect(contentCards, hasLength(2));
+      expect(
+        contentCards.map((card) => card.title),
+        orderedEquals(const <String>['Plan330A', 'Plan330B']),
+      );
+    });
 
     test('keeps an app-owned group summary in fail-closed content', () {
       const dump = '''
@@ -2698,35 +2691,32 @@ Ranking Config:
   group('durable direct-reaction arm', () {
     String flow(String event, Map<String, Object?> details) =>
         'I/flutter: [FLOW] '
-        '${jsonEncode(<String, Object?>{
-          'ts': '2026-08-20T09:00:00.000Z',
-          'milestone': 'M1_IDENTITY_INIT',
-          'layer': 'FL',
-          'event': event,
-          'details': details,
-        })}';
+        '${jsonEncode(<String, Object?>{'ts': '2026-08-20T09:00:00.000Z', 'milestone': 'M1_IDENTITY_INIT', 'layer': 'FL', 'event': event, 'details': details})}';
 
-    test('reports the durable arm executed for an osPosted direct reaction', () {
-      final observed = androidDurableDirectReactionShow(
-        [
-          flow('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK', <String, Object?>{
-            'kind': 'reaction',
-          }),
-          flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
-            'durable': true,
-            'producer': 'direct_reaction',
-            'disposition': 'osPosted',
-            'silent': false,
-          }),
-        ].join('\n'),
-      );
+    test(
+      'reports the durable arm executed for an osPosted direct reaction',
+      () {
+        final observed = androidDurableDirectReactionShow(
+          [
+            flow('PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK', <String, Object?>{
+              'kind': 'reaction',
+            }),
+            flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
+              'durable': true,
+              'producer': 'direct_reaction',
+              'disposition': 'osPosted',
+              'silent': false,
+            }),
+          ].join('\n'),
+        );
 
-      expect(observed.durableArmExecuted, isTrue);
-      expect(observed.durableShown, isTrue);
-      expect(observed.disposition, 'osPosted');
-      expect(observed.silent, isFalse);
-      expect(observed.deferralReasons, isEmpty);
-    });
+        expect(observed.durableArmExecuted, isTrue);
+        expect(observed.durableShown, isTrue);
+        expect(observed.disposition, 'osPosted');
+        expect(observed.silent, isFalse);
+        expect(observed.deferralReasons, isEmpty);
+      },
+    );
 
     test('rejects the non-durable fallback and names the deferral reason', () {
       // This is exactly what Plan 391's killed-path leg observed, twice. The
@@ -2769,55 +2759,58 @@ Ranking Config:
       }
     });
 
-    test('accumulates across polls so a rotated ring cannot erase evidence', () {
-      // The alive recipient's log rotates fast. Each poll re-reads the whole
-      // remaining buffer, and rotation only drops from the FRONT, so the fold
-      // must keep the per-reason maximum rather than the last snapshot.
-      final early = androidDurableDirectReactionShow(
-        [
-          flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
-            'reason': 'exact_sql_authority_unavailable',
-          }),
-          flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
-            'reason': 'exact_sql_authority_unavailable',
-          }),
-        ].join('\n'),
-      );
-      // A later read whose front has rotated away: one deferral is gone, and
-      // the durable show has since landed.
-      final late = androidDurableDirectReactionShow(
-        [
-          flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
-            'reason': 'exact_sql_authority_unavailable',
-          }),
-          flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
-            'durable': true,
-            'producer': 'direct_reaction',
-            'disposition': 'osPosted',
-            'silent': false,
-          }),
-        ].join('\n'),
-      );
+    test(
+      'accumulates across polls so a rotated ring cannot erase evidence',
+      () {
+        // The alive recipient's log rotates fast. Each poll re-reads the whole
+        // remaining buffer, and rotation only drops from the FRONT, so the fold
+        // must keep the per-reason maximum rather than the last snapshot.
+        final early = androidDurableDirectReactionShow(
+          [
+            flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
+              'reason': 'exact_sql_authority_unavailable',
+            }),
+            flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
+              'reason': 'exact_sql_authority_unavailable',
+            }),
+          ].join('\n'),
+        );
+        // A later read whose front has rotated away: one deferral is gone, and
+        // the durable show has since landed.
+        final late = androidDurableDirectReactionShow(
+          [
+            flow('PUSH_BACKGROUND_DURABLE_EFFECT_DEFERRED', <String, Object?>{
+              'reason': 'exact_sql_authority_unavailable',
+            }),
+            flow('PUSH_BACKGROUND_NOTIFICATION_SHOWN', <String, Object?>{
+              'durable': true,
+              'producer': 'direct_reaction',
+              'disposition': 'osPosted',
+              'silent': false,
+            }),
+          ].join('\n'),
+        );
 
-      expect(early.durableArmExecuted, isFalse);
-      expect(late.deferralReasons, hasLength(1));
+        expect(early.durableArmExecuted, isFalse);
+        expect(late.deferralReasons, hasLength(1));
 
-      final folded = early.mergedWith(late);
-      expect(folded.durableArmExecuted, isTrue);
-      expect(
-        folded.deferralReasons,
-        hasLength(2),
-        reason: 'the deferral the ring dropped must survive the fold',
-      );
-      expect(
-        AndroidDurableDirectReactionShow.nothingObserved
-            .mergedWith(early)
-            .mergedWith(late)
-            .deferralReasons,
-        hasLength(2),
-        reason: 'folding from the empty seed is the capture loop\'s own path',
-      );
-    });
+        final folded = early.mergedWith(late);
+        expect(folded.durableArmExecuted, isTrue);
+        expect(
+          folded.deferralReasons,
+          hasLength(2),
+          reason: 'the deferral the ring dropped must survive the fold',
+        );
+        expect(
+          AndroidDurableDirectReactionShow.nothingObserved
+              .mergedWith(early)
+              .mergedWith(late)
+              .deferralReasons,
+          hasLength(2),
+          reason: 'folding from the empty seed is the capture loop\'s own path',
+        );
+      },
+    );
 
     test('does not accept a durable show the OS did not post', () {
       final observed = androidDurableDirectReactionShow(
@@ -2836,13 +2829,15 @@ Ranking Config:
 
   group('alive-but-backgrounded recipient', () {
     const package = 'com.mknoon.app';
-    const backgrounded = '''
+    const backgrounded =
+        '''
   Task{111 #42 type=standard A=$package U=0 visible=false}
     ActivityRecord{aaa u0 $package/.MainActivity t42}
   mResumedActivity: ActivityRecord{bbb u0 com.android.launcher/.Launcher t1}
   mFocusedApp=ActivityRecord{bbb u0 com.android.launcher/.Launcher t1}
 ''';
-    const foreground = '''
+    const foreground =
+        '''
   Task{111 #42 type=standard A=$package U=0 visible=true}
     ActivityRecord{aaa u0 $package/.MainActivity t42}
   mResumedActivity: ActivityRecord{aaa u0 $package/.MainActivity t42}
@@ -2858,36 +2853,39 @@ Ranking Config:
       expect(hasResumedAndroidActivity(foreground, package), isTrue);
     });
 
-    test('alive-and-backgrounded requires a live pid and no resumed activity', () {
-      expect(
-        isAndroidAppProcessAliveAndBackgrounded(
-          pidOutput: '6130',
-          dumpsysActivities: backgrounded,
-          packageName: package,
-        ),
-        isTrue,
-      );
-      expect(
-        isAndroidAppProcessAliveAndBackgrounded(
-          pidOutput: '',
-          dumpsysActivities: backgrounded,
-          packageName: package,
-        ),
-        isFalse,
-        reason: 'a killed recipient is the other leg, and cannot go durable',
-      );
-      expect(
-        isAndroidAppProcessAliveAndBackgrounded(
-          pidOutput: '6130',
-          dumpsysActivities: foreground,
-          packageName: package,
-        ),
-        isFalse,
-        reason:
-            'a foreground app takes the in-app lane, not the background '
-            'isolate the durable arm runs in',
-      );
-    });
+    test(
+      'alive-and-backgrounded requires a live pid and no resumed activity',
+      () {
+        expect(
+          isAndroidAppProcessAliveAndBackgrounded(
+            pidOutput: '6130',
+            dumpsysActivities: backgrounded,
+            packageName: package,
+          ),
+          isTrue,
+        );
+        expect(
+          isAndroidAppProcessAliveAndBackgrounded(
+            pidOutput: '',
+            dumpsysActivities: backgrounded,
+            packageName: package,
+          ),
+          isFalse,
+          reason: 'a killed recipient is the other leg, and cannot go durable',
+        );
+        expect(
+          isAndroidAppProcessAliveAndBackgrounded(
+            pidOutput: '6130',
+            dumpsysActivities: foreground,
+            packageName: package,
+          ),
+          isFalse,
+          reason:
+              'a foreground app takes the in-app lane, not the background '
+              'isolate the durable arm runs in',
+        );
+      },
+    );
   });
 
   group('the alive-connected durable leg is reachable and honest', () {
@@ -2954,41 +2952,46 @@ Ranking Config:
       );
     });
 
-    test('the durable variant backgrounds the recipient instead of killing it', () {
-      // The load-bearing difference between this leg and the killed-path leg.
-      // _terminateRecipient sat on the COMMON path; if the durable variant
-      // still took it, the app would be dead, no display-outbox row would
-      // exist, and the arm under test could not run at all.
-      final source = _collapsedSource(
-        'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
-      );
+    test(
+      'the durable variant backgrounds the recipient instead of killing it',
+      () {
+        // The load-bearing difference between this leg and the killed-path leg.
+        // _terminateRecipient sat on the COMMON path; if the durable variant
+        // still took it, the app would be dead, no display-outbox row would
+        // exist, and the arm under test could not run at all.
+        final source = _collapsedSource(
+          'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+        );
 
-      expect(
-        source,
-        contains(
-          'if (durableBackgroundConnected) { await _backgroundRecipient(); } '
-          'else { await _terminateRecipient(); }',
-        ),
-        reason:
-            'the durable variant must background the recipient, and every '
-            'other variant must still kill it',
-      );
-      expect(
-        source,
-        contains(
-          'Future<void> _backgroundRecipient() async { await '
-          "_adbShell(recipientId, ['input', 'keyevent', 'KEYCODE_HOME']);",
-        ),
-        reason: 'HOME backgrounds; am kill would not',
-      );
-      expect(
-        source.substring(source.indexOf('Future<void> _backgroundRecipient()')),
-        contains('_recipientProcessAliveAndBackgroundedWithin('),
-        reason:
-            'a recipient that died during HOME must fail the leg, not be '
-            'graded as if it were alive',
-      );
-    });
+        expect(
+          source,
+          contains(
+            'if (durableBackgroundConnected || fixedWakeRecovery) { await _backgroundRecipient(); } '
+            'else { await _terminateRecipient(); }',
+          ),
+          reason:
+              'the two durable/fixed-wake variants must first background the '
+              'recipient, and every other variant must still kill it',
+        );
+        expect(
+          source,
+          contains(
+            'Future<void> _backgroundRecipient() async { await '
+            "_adbShell(recipientId, ['input', 'keyevent', 'KEYCODE_HOME']);",
+          ),
+          reason: 'HOME backgrounds; am kill would not',
+        );
+        expect(
+          source.substring(
+            source.indexOf('Future<void> _backgroundRecipient()'),
+          ),
+          contains('_recipientProcessAliveAndBackgroundedWithin('),
+          reason:
+              'a recipient that died during HOME must fail the leg, not be '
+              'graded as if it were alive',
+        );
+      },
+    );
 
     test('the durable verdict is measured, never assumed', () {
       // The artifact must carry what the recipient device actually logged. A
@@ -3021,7 +3024,8 @@ Ranking Config:
       expect(
         window,
         contains('!$identifier.durableArmExecuted'),
-        reason: 'a deferred run must fail the capture, not write a passed '
+        reason:
+            'a deferred run must fail the capture, not write a passed '
             'artifact',
       );
 

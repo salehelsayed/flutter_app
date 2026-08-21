@@ -254,6 +254,10 @@ MediaAttachment _mediaAttachmentForScenario(
     durationMs: scenario.mediaType == 'video' || scenario.mediaType == 'audio'
         ? 3200
         : null,
+    // Direct-media custody now rejects descriptor-only rows without a stable
+    // local source identity. The smoke never reads this synthetic path: the
+    // campaign exercises encrypted message projection, not blob transfer.
+    localPath: 'media/notification_sound/${scenario.signal}',
     downloadStatus: 'done',
     createdAt: DateTime.now().toUtc().toIso8601String(),
     waveform: scenario.mediaType == 'audio'
@@ -427,15 +431,12 @@ void _runAlice() {
         username: 'AliceNotif',
         cliPeerFixture: null,
         publishOutgoingOrdinaryMutation:
-            ({
-              required messageId,
-              required outcome,
-              required committedMedia,
-            }) => messageRepo.publishOutgoingOrdinaryMutation(
-              messageId: messageId,
-              outcome: outcome,
-              committedMedia: committedMedia,
-            ),
+            ({required messageId, required outcome, required committedMedia}) =>
+                messageRepo.publishOutgoingOrdinaryMutation(
+                  messageId: messageId,
+                  outcome: outcome,
+                  committedMedia: committedMedia,
+                ),
       );
     } catch (e, s) {
       print('[ALICE-DIAG] setupGroupMultiDeviceStack THREW: $e');
@@ -496,6 +497,13 @@ void _runAlice() {
                 limit: limit,
               ),
       dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(stack.db, id, we),
+      dbApplyIncomingOrdinaryTextMutation:
+          ({required incomingRow, required kind}) =>
+              dbApplyIncomingOrdinaryTextMutation(
+                stack.db,
+                incomingRow: incomingRow,
+                kind: kind,
+              ),
       dbStageOutgoingOrdinaryAttempt:
           ({required expectedRow, required stagedRow, required kind}) =>
               dbStageOutgoingOrdinaryAttempt(
@@ -507,6 +515,8 @@ void _runAlice() {
       dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
       dbLoadDirectInboxCustodyOutbox: custodyDb.load,
       dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+      dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+          custodyDb.loadOwnerForMessageId,
       dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
       dbCompleteAcceptedDirectInboxCustodyIfExact:
           custodyDb.completeAcceptedIfExact,
@@ -1024,6 +1034,13 @@ void _runAlice() {
     print('\n[ALICE-N] Complete');
     await stack.teardown();
     _signals.writeSignal('alice_done', content: 'ok');
+    // Android signals are mirrored from app-private storage on a polling
+    // loop. Keep the test process/package alive until the host confirms it
+    // captured this final file, or a fully green run can false-timeout.
+    await _signals.waitForSignal(
+      'alice_done_ack',
+      timeout: const Duration(seconds: 60),
+    );
   }, timeout: const Timeout(Duration(minutes: 60)));
 }
 
@@ -1168,6 +1185,13 @@ void _runBob() {
                 limit: limit,
               ),
       dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(stack.db, id, we),
+      dbApplyIncomingOrdinaryTextMutation:
+          ({required incomingRow, required kind}) =>
+              dbApplyIncomingOrdinaryTextMutation(
+                stack.db,
+                incomingRow: incomingRow,
+                kind: kind,
+              ),
       dbLoadStuckSendingOutgoingMessages:
           ({required DateTime olderThan, int limit = 50}) =>
               dbLoadStuckSendingOutgoingMessages(
@@ -1758,5 +1782,9 @@ void _runBob() {
     notificationService.dispose();
     await stack.teardown();
     _signals.writeSignal('bob_done', content: 'ok');
+    await _signals.waitForSignal(
+      'bob_done_ack',
+      timeout: const Duration(seconds: 60),
+    );
   }, timeout: const Timeout(Duration(minutes: 60)));
 }

@@ -251,6 +251,7 @@ void main() {
   testWidgets('notification-routed read clears chat and announcement nodes', (
     tester,
   ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     final semantics = tester.ensureSemantics();
     final navigatorKey = GlobalKey<NavigatorState>();
     setLargeTestSurface(tester);

@@ -14,6 +14,8 @@ const String groupNotificationProjectionArtifactSchema =
     'mknoon.plan330.android-group-notification-projection.v1';
 const String groupNotificationProjectionTargetReceiptSchema =
     'mknoon.plan330.group-media-reaction-target.v1';
+const String groupNotificationProjectionKilledPhotoReceiptSchema =
+    'mknoon.plan393.group-killed-photo-author.v1';
 const String groupNotificationProjectionCommandJournalSchema =
     'mknoon.plan330.android-command-journal.v1';
 const String plan330PhysicalAndroidDeviceId = '21071FDF600CSC';
@@ -21,6 +23,7 @@ const String plan330AndroidEmulatorDeviceId = 'emulator-5554';
 
 const List<String> groupNotificationProjectionCriteria = <String>[
   'groups.two_group_read_zero_exact_cancel',
+  'groups.killed_group_photo_message',
   'groups.group_reaction_photo_semantic_kind',
   'groups.group_reaction_video_semantic_kind',
   'groups.group_reaction_voice_message_semantic_kind',
@@ -79,6 +82,7 @@ validateGroupNotificationProjectionAndroidArtifact({
       'topology',
       'fixture',
       'readProjection',
+      'killedPhoto',
       'reactionProjection',
       'automation',
     },
@@ -378,20 +382,222 @@ validateGroupNotificationProjectionAndroidArtifact({
             RegExp(
               '"id"\\s*:\\s*${RegExp.escape('$groupANotificationId')}',
             ).hasMatch(line),
-        unreadZeroIndex < 0 ? 0 : unreadZeroIndex + 1,
       );
       if (markReadIndex < 0 ||
           unreadZeroIndex <= markReadIndex ||
-          exactCancelIndex <= unreadZeroIndex) {
+          exactCancelIndex < 0) {
         failures.add(
-          r'$.readProjection.readFlowLog lacks ordered committed read, '
-          'in-coordinator unread-zero recheck, and exact '
-          'acknowledged-generation cancellation',
+          r'$.readProjection.readFlowLog lacks committed read, '
+          'in-coordinator unread-zero recheck, and exact activation/read '
+          'generation cancellation',
         );
       }
       if (readFlow.contains('NOTIFICATION_TAPPED')) {
         failures.add(
           r'$.readProjection.readFlowLog contains a forbidden notification tap',
+        );
+      }
+    }
+  }
+
+  final killedPhoto = _object(
+    artifact['killedPhoto'],
+    r'$.killedPhoto',
+    failures,
+  );
+  if (killedPhoto != null) {
+    _expectExactKeys(
+      killedPhoto,
+      const <String>{
+        'kind',
+        'mediaType',
+        'senderRole',
+        'recipientRole',
+        'recipientProcessAbsentBeforeSend',
+        'targetMessageIdSha256',
+        'relayBranch',
+        'stableGroupANotificationId',
+        'notificationDump',
+        'flowLog',
+        'authorReceipt',
+      },
+      r'$.killedPhoto',
+      failures,
+    );
+    _expectValue(killedPhoto, 'kind', 'photo', r'$.killedPhoto', failures);
+    _expectValue(killedPhoto, 'mediaType', 'image', r'$.killedPhoto', failures);
+    _expectValue(
+      killedPhoto,
+      'senderRole',
+      'emulator_author',
+      r'$.killedPhoto',
+      failures,
+    );
+    _expectValue(
+      killedPhoto,
+      'recipientRole',
+      'killed_physical',
+      r'$.killedPhoto',
+      failures,
+    );
+    _expectValue(
+      killedPhoto,
+      'recipientProcessAbsentBeforeSend',
+      true,
+      r'$.killedPhoto',
+      failures,
+    );
+    _expectValue(
+      killedPhoto,
+      'stableGroupANotificationId',
+      groupANotificationId,
+      r'$.killedPhoto',
+      failures,
+    );
+    final targetDigest = _requiredString(
+      killedPhoto,
+      'targetMessageIdSha256',
+      r'$.killedPhoto',
+      failures,
+    );
+    if (!_isSha256(targetDigest)) {
+      failures.add(
+        r'$.killedPhoto.targetMessageIdSha256 must be a SHA-256 digest',
+      );
+    }
+    final relayBranch = _requiredString(
+      killedPhoto,
+      'relayBranch',
+      r'$.killedPhoto',
+      failures,
+    );
+    if (!const <String>{
+      'full_ciphertext',
+      'preview_unavailable',
+    }.contains(relayBranch)) {
+      failures.add(
+        r'$.killedPhoto.relayBranch must be full_ciphertext or '
+        'preview_unavailable',
+      );
+    }
+
+    final notificationDump = await _readEvidence(
+      killedPhoto['notificationDump'],
+      artifactFile: artifactFile,
+      path: r'$.killedPhoto.notificationDump',
+      failures: failures,
+    );
+    if (notificationDump != null &&
+        groupANotificationId != null &&
+        groupBNotificationId != null) {
+      _expectExactTwoGroupCards(
+        _activeAppCards(
+          notificationDump,
+          packageName,
+          r'$.killedPhoto.notificationDump',
+          failures,
+        ),
+        groupAName: groupAName,
+        groupBName: groupBName,
+        groupANotificationId: groupANotificationId,
+        groupBNotificationId: groupBNotificationId,
+        path: r'$.killedPhoto.notificationDump',
+        failures: failures,
+      );
+    }
+
+    final flowLog = await _readEvidence(
+      killedPhoto['flowLog'],
+      artifactFile: artifactFile,
+      path: r'$.killedPhoto.flowLog',
+      failures: failures,
+    );
+    if (flowLog != null) {
+      final lines = flowLog.split('\n');
+      final received = lines
+          .asMap()
+          .entries
+          .where(
+            (entry) => entry.value.contains('PUSH_BACKGROUND_MESSAGE_RECEIVED'),
+          )
+          .toList(growable: false);
+      final shownIndex = lines.indexWhere(
+        (line) => line.contains('PUSH_BACKGROUND_NOTIFICATION_SHOWN'),
+      );
+      final receivedIndex = received.length == 1 ? received.single.key : -1;
+      final receivedLine = received.length == 1 ? received.single.value : '';
+      final branchMatches = switch (relayBranch) {
+        'full_ciphertext' =>
+          receivedLine.contains('ciphertext') &&
+              !receivedLine.contains('preview_unavailable'),
+        'preview_unavailable' =>
+          receivedLine.contains('preview_unavailable') &&
+              !receivedLine.contains('ciphertext'),
+        _ => false,
+      };
+      final decryptIndex = lines.indexWhere(
+        (line) => line.contains('PUSH_ANDROID_DATA_DECRYPT_OK'),
+        receivedIndex < 0 ? 0 : receivedIndex + 1,
+      );
+      if (receivedIndex < 0 ||
+          shownIndex <= receivedIndex ||
+          !branchMatches ||
+          (relayBranch == 'full_ciphertext' &&
+              (decryptIndex <= receivedIndex || decryptIndex >= shownIndex))) {
+        failures.add(
+          r'$.killedPhoto.flowLog lacks one killed-photo received-to-shown '
+          'flow bound to its exact relay branch',
+        );
+      }
+    }
+
+    final authorReceipt = await _readEvidence(
+      killedPhoto['authorReceipt'],
+      artifactFile: artifactFile,
+      path: r'$.killedPhoto.authorReceipt',
+      failures: failures,
+    );
+    if (authorReceipt != null) {
+      final receipt = _decodeObject(
+        authorReceipt,
+        r'$.killedPhoto.authorReceipt',
+        failures,
+      );
+      if (receipt != null) {
+        _expectExactKeys(
+          receipt,
+          const <String>{
+            'schema',
+            'kind',
+            'mediaType',
+            'ownerLane',
+            'attachmentCount',
+            'targetMessageIdSha256',
+            'publicationCommitted',
+          },
+          r'$.killedPhoto.authorReceipt',
+          failures,
+        );
+        _expectValue(
+          receipt,
+          'schema',
+          groupNotificationProjectionKilledPhotoReceiptSchema,
+          r'$.killedPhoto.authorReceipt',
+          failures,
+        );
+        _expectValue(
+          receipt,
+          'targetMessageIdSha256',
+          targetDigest,
+          r'$.killedPhoto.authorReceipt',
+          failures,
+        );
+        _expectValue(
+          receipt,
+          'publicationCommitted',
+          true,
+          r'$.killedPhoto.authorReceipt',
+          failures,
         );
       }
     }
@@ -634,6 +840,9 @@ Future<void> _validateAutomation(
   var openedGroupAInAppAt = -1;
   var unreadZeroObservedAt = -1;
   var postReadNotificationDumpAt = -1;
+  var killedRecipientAbsentAt = -1;
+  var killedPhotoSentAt = -1;
+  var killedPhotoCardAt = -1;
   final reactedKinds = <String>{};
   for (var index = 0; index < commands.length; index += 1) {
     final path = '\$.automation.commandJournal.commands[$index]';
@@ -684,6 +893,24 @@ Future<void> _validateAutomation(
         }.contains(semanticTarget)) {
       reactedKinds.add(semanticTarget);
     }
+    if (stage == 'killed_photo_projection' &&
+        target == physicalDeviceId &&
+        action == 'verify_process_absent' &&
+        semanticTarget == 'physical_recipient_before_killed_jpeg') {
+      killedRecipientAbsentAt = index;
+    }
+    if (stage == 'killed_photo_projection' &&
+        target == emulatorDeviceId &&
+        action == 'send_fixed_group_jpeg' &&
+        semanticTarget == 'emulator_author_to_killed_physical_recipient') {
+      killedPhotoSentAt = index;
+    }
+    if (stage == 'killed_photo_projection' &&
+        target == physicalDeviceId &&
+        action == 'dumpsys_notification' &&
+        semanticTarget == 'killed_group_photo_card') {
+      killedPhotoCardAt = index;
+    }
     if (action == 'tap_notification' ||
         stage.contains('notification_shade') ||
         semanticTarget.contains('notification card')) {
@@ -702,6 +929,14 @@ Future<void> _validateAutomation(
     failures.add(
       r'$.automation.commandJournal lacks automated photo/video/voice '
       'reaction actions',
+    );
+  }
+  if (killedRecipientAbsentAt < 0 ||
+      killedPhotoSentAt <= killedRecipientAbsentAt ||
+      killedPhotoCardAt <= killedPhotoSentAt) {
+    failures.add(
+      r'$.automation.commandJournal lacks ordered killed-recipient, fixed '
+      'JPEG send, and group-photo card evidence',
     );
   }
 }

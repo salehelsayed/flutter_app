@@ -344,6 +344,14 @@ var pushFallbackCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Push routing fallbacks constructed by reason.",
 }, []string{"reason"})
 
+// Identifier-free selection evidence for controlled fixed-wake cohorts. The
+// counter records only the route class chosen at the provider boundary; it
+// never labels a peer, token, lease, capability, or provider target.
+var selectedPushRouteCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_push_route_selected_total",
+	Help: "Push route selections by opaque or rich route class.",
+}, []string{"route"})
+
 var groupReactionWakeCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "relay_group_reaction_wake_total",
 	Help: "Group reaction wake decisions by outcome.",

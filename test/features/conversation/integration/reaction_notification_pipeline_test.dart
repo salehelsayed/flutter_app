@@ -75,12 +75,10 @@ final class _InMemoryConversationNotificationContentRegistry
     required String conversationKey,
     required int notificationId,
     required ConversationNotificationContentMetadata metadata,
-    required Future<void> Function() retireCurrent,
     required Future<void> Function() replace,
   }) async {
-    await retireCurrent();
-    _content[_key(conversationKey, notificationId)] = metadata;
     await replace();
+    _content[_key(conversationKey, notificationId)] = metadata;
     return ConversationNotificationContentReplacementResult.shownAndRecorded;
   }
 
@@ -90,14 +88,12 @@ final class _InMemoryConversationNotificationContentRegistry
     required int notificationId,
     required String expectedGeneration,
     required ConversationNotificationContentMetadata metadata,
-    required Future<void> Function() retireCurrent,
     required Future<void> Function() replace,
   }) async {
     final key = _key(conversationKey, notificationId);
     if (_content[key]?.generation != expectedGeneration) return false;
-    await retireCurrent();
-    _content[key] = metadata;
     await replace();
+    _content[key] = metadata;
     return true;
   }
 

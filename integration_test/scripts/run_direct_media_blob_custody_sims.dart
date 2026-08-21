@@ -16,6 +16,7 @@ const String _fixtureProbeEnvironment =
     'MKNOON_DIRECT_MEDIA_CUSTODY_FIXTURE_PROBE_URL';
 const String _fixtureStopExecutableEnvironment =
     'PLAN347_FIXTURE_STOP_EXECUTABLE';
+const String _plan393FixedWakeFixtureMode = 'MKNOON_PLAN393_FIXED_WAKE_FIXTURE';
 
 Future<void> main(List<String> arguments) async {
   try {
@@ -288,6 +289,9 @@ final class _FixtureSession {
     required this.port,
     required this.fixtureIdentitySha256,
     required this.probeUrl,
+    required this.fixedWakeRecovery,
+    required this.relayVersion,
+    required this.relayBinarySha256,
     required this.stopExecutable,
     required StreamSubscription<String> stdoutSubscription,
     required StreamSubscription<String> stderrSubscription,
@@ -298,6 +302,7 @@ final class _FixtureSession {
     required String goExecutable,
     required String hostIp,
     required Map<String, String> environment,
+    bool fixedWakeRecovery = false,
   }) async {
     final process = await Process.start(
       goExecutable,
@@ -319,6 +324,7 @@ final class _FixtureSession {
         _fixtureHostIpEnvironment: hostIp,
         'DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED': 'true',
         'DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED': 'true',
+        if (fixedWakeRecovery) _plan393FixedWakeFixtureMode: '1',
       },
     );
     final ready = Completer<Map<String, Object?>>();
@@ -370,11 +376,18 @@ final class _FixtureSession {
       int port,
       String fixtureIdentitySha256,
       String probeUrl,
+      bool fixedWakeRecovery,
+      String relayVersion,
+      String relayBinarySha256,
     })
     parsed;
     try {
       payload = await ready.future.timeout(const Duration(minutes: 5));
-      parsed = _validateFixtureReadiness(payload, expectedHost: hostIp);
+      parsed = _validateFixtureReadiness(
+        payload,
+        expectedHost: hostIp,
+        requireFixedWakeRecovery: fixedWakeRecovery,
+      );
     } on Object {
       process.kill(ProcessSignal.sigterm);
       try {
@@ -393,6 +406,9 @@ final class _FixtureSession {
       port: parsed.port,
       fixtureIdentitySha256: parsed.fixtureIdentitySha256,
       probeUrl: parsed.probeUrl,
+      fixedWakeRecovery: parsed.fixedWakeRecovery,
+      relayVersion: parsed.relayVersion,
+      relayBinarySha256: parsed.relayBinarySha256,
       stopExecutable:
           environment[_fixtureStopExecutableEnvironment]?.trim().isNotEmpty ==
               true
@@ -409,6 +425,9 @@ final class _FixtureSession {
   final int port;
   final String fixtureIdentitySha256;
   final String probeUrl;
+  final bool fixedWakeRecovery;
+  final String relayVersion;
+  final String relayBinarySha256;
   final String? stopExecutable;
   final StreamSubscription<String> _stdoutSubscription;
   final StreamSubscription<String> _stderrSubscription;
@@ -494,11 +513,13 @@ final class DirectMediaBlobCustodyFixtureLease {
     required String goExecutable,
     required String hostIp,
     required Map<String, String> environment,
+    bool fixedWakeRecovery = false,
   }) async => DirectMediaBlobCustodyFixtureLease._(
     await _FixtureSession.start(
       goExecutable: goExecutable,
       hostIp: hostIp,
       environment: environment,
+      fixedWakeRecovery: fixedWakeRecovery,
     ),
   );
 
@@ -509,6 +530,9 @@ final class DirectMediaBlobCustodyFixtureLease {
   int get port => _session.port;
   String get fixtureIdentitySha256 => _session.fixtureIdentitySha256;
   String get probeUrl => _session.probeUrl;
+  bool get fixedWakeRecovery => _session.fixedWakeRecovery;
+  String get relayVersion => _session.relayVersion;
+  String get relayBinarySha256 => _session.relayBinarySha256;
 
   Future<void> stop() => _session.stop();
 }
@@ -519,14 +543,21 @@ final class DirectMediaBlobCustodyFixtureLease {
   int port,
   String fixtureIdentitySha256,
   String probeUrl,
+  bool fixedWakeRecovery,
+  String relayVersion,
+  String relayBinarySha256,
 })
 _validateFixtureReadiness(
   Map<String, Object?> payload, {
   required String expectedHost,
+  bool requireFixedWakeRecovery = false,
 }) {
   final multiaddr = payload['multiaddr'];
   final fixtureIdentitySha256 = payload['fixtureIdentitySha256'];
   final probeUrl = payload['probeUrl'];
+  final fixedWakeRecovery = payload['fixedWakeRecovery'];
+  final relayVersion = payload['relayVersion'];
+  final relayBinarySha256 = payload['relayBinarySha256'];
   if (payload['schema'] != 'mknoon.plan347.direct-media-fixture.v1' ||
       payload['backend'] != 'redis' ||
       payload['ephemeral'] != true ||
@@ -535,9 +566,24 @@ _validateFixtureReadiness(
       multiaddr is! String ||
       probeUrl is! String ||
       fixtureIdentitySha256 is! String ||
+      fixedWakeRecovery is! bool ||
+      relayVersion is! String ||
+      relayBinarySha256 is! String ||
+      !RegExp(r'^[0-9a-f]{64}$').hasMatch(relayBinarySha256) ||
       !RegExp(r'^[0-9a-f]{64}$').hasMatch(fixtureIdentitySha256)) {
     throw const FormatException(
       'Disposable relay readiness omitted its backend/admission attestation',
+    );
+  }
+  if (requireFixedWakeRecovery &&
+      (fixedWakeRecovery != true ||
+          payload['pushTokenState'] != 'encrypted' ||
+          payload['wakeOutcomeAdmissionEnabled'] != true ||
+          payload['wakeOutcomeCoordinatorStarted'] != true ||
+          payload['directReactionPushEnabled'] != true ||
+          payload['realFcmConfigured'] != true)) {
+    throw const FormatException(
+      'Disposable relay omitted the Plan 393 encrypted fixed-wake attestation',
     );
   }
   final match = RegExp(
@@ -567,5 +613,8 @@ _validateFixtureReadiness(
     port: port,
     fixtureIdentitySha256: fixtureIdentitySha256,
     probeUrl: probeUrl,
+    fixedWakeRecovery: fixedWakeRecovery,
+    relayVersion: relayVersion,
+    relayBinarySha256: relayBinarySha256,
   );
 }

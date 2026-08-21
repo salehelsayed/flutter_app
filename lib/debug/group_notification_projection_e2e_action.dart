@@ -13,6 +13,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -101,8 +102,12 @@ Future<Map<String, Object?>> runGroupNotificationProjectionE2EAction({
       await sendGroupMediaReliabilityFixtures(
         runId: request.runId,
         groupId: group.id,
-        messageIds: request.messageIds,
-        attachmentIds: request.attachmentIds,
+        messageIds: groupNotificationProjectionMediaFixtureSubset(
+          request.messageIds,
+        ),
+        attachmentIds: groupNotificationProjectionMediaFixtureSubset(
+          request.attachmentIds,
+        ),
         receiverAccountPeerId: otherMembers.single.peerId,
         receiverTransportPeerId: remoteTransportPeerId,
         fixtureDirectory: fixtureDirectory,
@@ -110,6 +115,7 @@ Future<Map<String, Object?>> runGroupNotificationProjectionE2EAction({
         p2pService: p2pService,
         identityRepository: identityRepository,
         groupRepository: groupRepository,
+        groupConfigBuilder: buildGroupConfigPayload,
         groupMessageRepository: groupMessageRepository,
         mediaAttachmentRepository: mediaAttachmentRepository,
         mediaFileManager: mediaFileManager,
@@ -118,7 +124,7 @@ Future<Map<String, Object?>> runGroupNotificationProjectionE2EAction({
         inviteDeliveryAttemptRepository: inviteDeliveryAttemptRepository,
       );
       final media = <Map<String, Object?>>[];
-      for (final fixtureKind in const <String>['jpeg', 'mp4', 'voice']) {
+      for (final fixtureKind in groupNotificationProjectionMediaFixtureKeys) {
         final messageId = request.messageIds[fixtureKind]!;
         final attachments = await mediaAttachmentRepository
             .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
@@ -146,6 +152,75 @@ Future<Map<String, Object?>> runGroupNotificationProjectionE2EAction({
         'observation': <String, Object?>{
           'groupIdSha256': _sha256Text(group.id),
           'media': media,
+        },
+      };
+    case groupNotificationProjectionSendKilledJpegPhase:
+      if (request.role != 'emulator_author') {
+        throw const FormatException(
+          'Plan 393 killed JPEG author role rejected',
+        );
+      }
+      final otherMembers = (await groupRepository.getMembers(group.id))
+          .where((member) => member.peerId != identity.peerId)
+          .toList(growable: false);
+      if (otherMembers.length != 1) {
+        throw StateError('Plan 330 group must contain one remote member');
+      }
+      final remoteDevices = otherMembers.single
+          .activeDevicesWithLegacyFallback();
+      final remoteTransportPeerId = resolvePlan330AccountBoundRemoteTransport(
+        remoteAccountPeerId: otherMembers.single.peerId,
+        activeTransportPeerIds: remoteDevices.map(
+          (device) => device.transportPeerId,
+        ),
+      );
+      if (remoteTransportPeerId == null) {
+        throw StateError('Plan 330 remote transport authority is ambiguous');
+      }
+      final messageId =
+          request.messageIds[groupNotificationProjectionKilledJpegFixtureKey]!;
+      final attachmentId = request
+          .attachmentIds[groupNotificationProjectionKilledJpegFixtureKey]!;
+      await sendGroupKilledIncomingJpegReliabilityFixture(
+        runId: request.runId,
+        groupId: group.id,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        receiverAccountPeerId: otherMembers.single.peerId,
+        receiverTransportPeerId: remoteTransportPeerId,
+        fixtureDirectory: fixtureDirectory,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepository: identityRepository,
+        groupRepository: groupRepository,
+        groupConfigBuilder: buildGroupConfigPayload,
+        groupMessageRepository: groupMessageRepository,
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        mediaFileManager: mediaFileManager,
+        audioRecorderService: audioRecorderService,
+        authorityMode: GroupMediaReliabilityAuthorityMode.accountBoundLegacy,
+        inviteDeliveryAttemptRepository: inviteDeliveryAttemptRepository,
+      );
+      final attachments = await mediaAttachmentRepository
+          .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
+      if (attachments.length != 1 ||
+          attachments.single.id != attachmentId ||
+          attachments.single.mediaType != 'image' ||
+          attachments.single.ownerLane != MediaOwnerLane.group) {
+        throw StateError(
+          'Plan 393 killed JPEG author attachment did not settle',
+        );
+      }
+      return <String, Object?>{
+        ...base,
+        'observation': <String, Object?>{
+          'schema': groupNotificationProjectionKilledPhotoReceiptSchema,
+          'kind': 'photo',
+          'mediaType': 'image',
+          'ownerLane': 'group',
+          'attachmentCount': 1,
+          'targetMessageIdSha256': _sha256Text(messageId),
+          'publicationCommitted': true,
         },
       };
     case groupNotificationProjectionReactMediaPhase:

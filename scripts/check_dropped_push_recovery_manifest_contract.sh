@@ -33,6 +33,12 @@ FLUTTERFIRE_OWNER = (
     "io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService"
 )
 FIREBASE_FALLBACK = "com.google.firebase.messaging.FirebaseMessagingService"
+CUSTOM_RECEIVER = "com.mknoon.app.MknoonFirebaseMessagingReceiver"
+FLUTTERFIRE_RECEIVER = (
+    "io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver"
+)
+C2DM_ACTION = "com.google.android.c2dm.intent.RECEIVE"
+C2DM_PERMISSION = "com.google.android.c2dm.permission.SEND"
 
 
 def android_attr(element: ET.Element, name: str) -> str | None:
@@ -52,6 +58,7 @@ if application is None:
     raise AssertionError(f"{path}: missing application")
 
 services = list(application.findall("service"))
+receivers = list(application.findall("receiver"))
 
 
 def named(name: str) -> list[ET.Element]:
@@ -60,6 +67,9 @@ def named(name: str) -> list[ET.Element]:
 
 if named(FLUTTERFIRE_OWNER):
     raise AssertionError(f"{path}: FlutterFire messaging owner was reintroduced")
+
+if any(android_attr(receiver, "name") == FLUTTERFIRE_RECEIVER for receiver in receivers):
+    raise AssertionError(f"{path}: FlutterFire C2DM receiver was reintroduced")
 
 custom = exactly_one(named(CUSTOM_OWNER), "MKnoon messaging owner")
 fallback = exactly_one(named(FIREBASE_FALLBACK), "Firebase SDK fallback")
@@ -97,8 +107,24 @@ if len(all_messaging_filters) != 2:
         f"{path}: expected two messaging filters, found {len(all_messaging_filters)}"
     )
 
+custom_receiver = exactly_one(
+    [receiver for receiver in receivers if android_attr(receiver, "name") == CUSTOM_RECEIVER],
+    "MKnoon C2DM receiver",
+)
+if android_attr(custom_receiver, "exported") != "true":
+    raise AssertionError(f"{path}: MKnoon C2DM receiver must remain exported")
+if android_attr(custom_receiver, "permission") != C2DM_PERMISSION:
+    raise AssertionError(f"{path}: MKnoon C2DM receiver lost its sender permission")
+receiver_actions = {
+    android_attr(action, "name")
+    for action in custom_receiver.findall("./intent-filter/action")
+}
+if receiver_actions != {C2DM_ACTION}:
+    raise AssertionError(f"{path}: MKnoon C2DM receiver action drifted")
+
 print(
     "PASS flutterfireOwner=0 mknoonOwner=1 mknoonPriority=500 "
-    "firebaseFallback=1 firebasePriority=-500 messagingFilters=2"
+    "firebaseFallback=1 firebasePriority=-500 messagingFilters=2 "
+    "flutterfireReceiver=0 mknoonReceiver=1"
 )
 PY

@@ -77,6 +77,25 @@ class CanonicalRuntimeH0ProbeSourceTest {
     }
 
     @Test
+    fun `TC-393 arm-only fixed wake phase cannot inject production ingress`() {
+        val receiver = repoFile(
+            "android/app/src/debug/kotlin/com/mknoon/app/CanonicalRuntimeH0ProbeReceiver.kt",
+        ).readText()
+        val arm = receiver.substring(
+            receiver.indexOf("plan374Phase == \"arm-fixed-wake\""),
+            receiver.indexOf("plan374Phase == \"fixed-wake\""),
+        )
+
+        assertTrue(arm.contains("Plan374ProcessDeathBarrier.arm("))
+        assertTrue(arm.contains("productionIngressInvoked\", false"))
+        assertTrue(arm.contains("pendingRecovery == null"))
+        assertFalse(arm.contains("DebugFixedWakeIngressService"))
+        assertFalse(arm.contains("onMessageReceived"))
+        assertFalse(arm.contains("recordFixedWake"))
+        assertFalse(arm.contains("WorkManager.getInstance"))
+    }
+
+    @Test
     fun `Dart entrypoint opens only through lease and cannot drain or acknowledge recovery`() {
         val main = repoFile("lib/main.dart").readText()
         val probe = repoFile(

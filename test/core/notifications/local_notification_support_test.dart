@@ -68,7 +68,10 @@ void main() {
 
     // 118 Phase 3: BOTH the high channel and the silent channel are created.
     expect(log, hasLength(2));
-    expect(log.every((call) => call.method == 'createNotificationChannel'), isTrue);
+    expect(
+      log.every((call) => call.method == 'createNotificationChannel'),
+      isTrue,
+    );
 
     final args = log.first.arguments as Map;
     expect(args['id'], mknoonMessagesChannelId);
@@ -122,7 +125,8 @@ void main() {
         mknoonMessagesSilentNotificationDetails.android
             as AndroidNotificationDetails;
     final iosDetails =
-        mknoonMessagesSilentNotificationDetails.iOS as DarwinNotificationDetails;
+        mknoonMessagesSilentNotificationDetails.iOS
+            as DarwinNotificationDetails;
 
     expect(androidDetails.channelId, mknoonMessagesSilentChannelId);
     expect(androidDetails.importance, Importance.low);
@@ -134,6 +138,72 @@ void main() {
     expect(iosDetails.presentSound, isFalse);
     expect(iosDetails.presentAlert, isTrue);
     expect(iosDetails.presentBadge, isTrue);
+  });
+
+  test(
+    'silent update can retain an active primary-channel card without alerting',
+    () {
+      final details = mknoonConversationNotificationDetails(
+        conversationKey: 'peer-primary-update',
+        silent: true,
+        preservePrimaryAndroidChannel: true,
+      );
+      final android = details.android as AndroidNotificationDetails;
+
+      expect(android.channelId, mknoonMessagesChannelId);
+      expect(android.importance, Importance.high);
+      expect(android.priority, Priority.high);
+      expect(android.playSound, isFalse);
+      expect(android.enableVibration, isFalse);
+      expect(android.onlyAlertOnce, isTrue);
+      expect(android.silent, isTrue);
+    },
+  );
+
+  group('shouldPreserveMknoonPrimaryChannelForSilentUpdate', () {
+    test('matches the exact active id on the primary channel', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+
+      expect(
+        await shouldPreserveMknoonPrimaryChannelForSilentUpdate(
+          silent: true,
+          notificationId: 42,
+          plugin: FlutterLocalNotificationsPlugin(),
+          activeNotificationsFn: () async => const <ActiveNotification>[
+            ActiveNotification(id: 42, channelId: mknoonMessagesChannelId),
+          ],
+        ),
+        isTrue,
+      );
+    });
+
+    test('does not promote a first or already-silent card', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+
+      expect(
+        await shouldPreserveMknoonPrimaryChannelForSilentUpdate(
+          silent: true,
+          notificationId: 42,
+          plugin: FlutterLocalNotificationsPlugin(),
+          activeNotificationsFn: () async => const <ActiveNotification>[
+            ActiveNotification(
+              id: 42,
+              channelId: mknoonMessagesSilentChannelId,
+            ),
+          ],
+        ),
+        isFalse,
+      );
+      expect(
+        await shouldPreserveMknoonPrimaryChannelForSilentUpdate(
+          silent: true,
+          notificationId: 42,
+          plugin: FlutterLocalNotificationsPlugin(),
+          activeNotificationsFn: () async => const <ActiveNotification>[],
+        ),
+        isFalse,
+      );
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -162,53 +232,62 @@ void main() {
       expect(eventsNamed('NOTIFICATION_SILENT_CHANNEL_WITHHELD'), isEmpty);
     });
 
-    test('keeps the silent channel while the primary channel is open', () async {
-      final silent = await resolveMknoonMessagePublicationSilence(
-        silent: true,
-        plugin: FlutterLocalNotificationsPlugin(),
-        primaryChannelEnabledFn: () async => true,
-      );
+    test(
+      'keeps the silent channel while the primary channel is open',
+      () async {
+        final silent = await resolveMknoonMessagePublicationSilence(
+          silent: true,
+          plugin: FlutterLocalNotificationsPlugin(),
+          primaryChannelEnabledFn: () async => true,
+        );
 
-      expect(silent, isTrue);
-      expect(eventsNamed('NOTIFICATION_SILENT_CHANNEL_WITHHELD'), isEmpty);
-    });
+        expect(silent, isTrue);
+        expect(eventsNamed('NOTIFICATION_SILENT_CHANNEL_WITHHELD'), isEmpty);
+      },
+    );
 
-    test('withdraws the silent channel when the primary channel is blocked',
-        () async {
-      final silent = await resolveMknoonMessagePublicationSilence(
-        silent: true,
-        plugin: FlutterLocalNotificationsPlugin(),
-        primaryChannelEnabledFn: () async => false,
-      );
+    test(
+      'withdraws the silent channel when the primary channel is blocked',
+      () async {
+        final silent = await resolveMknoonMessagePublicationSilence(
+          silent: true,
+          plugin: FlutterLocalNotificationsPlugin(),
+          primaryChannelEnabledFn: () async => false,
+        );
 
-      // False routes the publication back onto the blocked primary channel,
-      // where the OS refuses it — the post attempt stays real and no card
-      // reaches the user on either channel.
-      expect(silent, isFalse);
+        // False routes the publication back onto the blocked primary channel,
+        // where the OS refuses it — the post attempt stays real and no card
+        // reaches the user on either channel.
+        expect(silent, isFalse);
 
-      final withheld = eventsNamed('NOTIFICATION_SILENT_CHANNEL_WITHHELD');
-      expect(withheld, hasLength(1));
-      final details = (withheld.single['details'] as Map)
-          .cast<String, dynamic>();
-      expect(details['primaryChannelId'], mknoonMessagesChannelId);
-      expect(details['withheldChannelId'], mknoonMessagesSilentChannelId);
-    });
+        final withheld = eventsNamed('NOTIFICATION_SILENT_CHANNEL_WITHHELD');
+        expect(withheld, hasLength(1));
+        final details = (withheld.single['details'] as Map)
+            .cast<String, dynamic>();
+        expect(details['primaryChannelId'], mknoonMessagesChannelId);
+        expect(details['withheldChannelId'], mknoonMessagesSilentChannelId);
+      },
+    );
 
-    test('fails OPEN and reports the failure when the channel read throws',
-        () async {
-      final silent = await resolveMknoonMessagePublicationSilence(
-        silent: true,
-        plugin: FlutterLocalNotificationsPlugin(),
-        // StateError is an Error, not an Exception: an `on Exception` catch
-        // would let it escape and abort an otherwise healthy publication.
-        primaryChannelEnabledFn: () async => throw StateError('channel read'),
-      );
+    test(
+      'fails OPEN and reports the failure when the channel read throws',
+      () async {
+        final silent = await resolveMknoonMessagePublicationSilence(
+          silent: true,
+          plugin: FlutterLocalNotificationsPlugin(),
+          // StateError is an Error, not an Exception: an `on Exception` catch
+          // would let it escape and abort an otherwise healthy publication.
+          primaryChannelEnabledFn: () async => throw StateError('channel read'),
+        );
 
-      expect(silent, isTrue);
-      expect(eventsNamed('NOTIFICATION_CHANNEL_STATE_READ_FAILED'),
-          hasLength(1));
-      expect(eventsNamed('NOTIFICATION_SILENT_CHANNEL_WITHHELD'), isEmpty);
-    });
+        expect(silent, isTrue);
+        expect(
+          eventsNamed('NOTIFICATION_CHANNEL_STATE_READ_FAILED'),
+          hasLength(1),
+        );
+        expect(eventsNamed('NOTIFICATION_SILENT_CHANNEL_WITHHELD'), isEmpty);
+      },
+    );
   });
 
   group('mknoonPrimaryMessageChannelEnabled', () {
@@ -223,28 +302,30 @@ void main() {
           });
     }
 
-    test('reports the live user-blocked importance of the primary channel',
-        () async {
-      mockChannels(<Map<String, Object?>>[
-        // 0 = IMPORTANCE_NONE, what the OS reports once the user switches the
-        // channel off in Settings. Nothing else in the stack moves: the app
-        // still holds POST_NOTIFICATIONS and areNotificationsEnabled() stays
-        // true, which is why this read is the only way to see the state.
-        _channelReply(mknoonMessagesChannelId, 0),
-        _channelReply(mknoonMessagesSilentChannelId, 2),
-      ]);
+    test(
+      'reports the live user-blocked importance of the primary channel',
+      () async {
+        mockChannels(<Map<String, Object?>>[
+          // 0 = IMPORTANCE_NONE, what the OS reports once the user switches the
+          // channel off in Settings. Nothing else in the stack moves: the app
+          // still holds POST_NOTIFICATIONS and areNotificationsEnabled() stays
+          // true, which is why this read is the only way to see the state.
+          _channelReply(mknoonMessagesChannelId, 0),
+          _channelReply(mknoonMessagesSilentChannelId, 2),
+        ]);
 
-      expect(
-        await mknoonPrimaryMessageChannelEnabled(
-          FlutterLocalNotificationsPlugin(),
-        ),
-        isFalse,
-      );
-      expect(
-        log.map((call) => call.method),
-        contains('getNotificationChannels'),
-      );
-    });
+        expect(
+          await mknoonPrimaryMessageChannelEnabled(
+            FlutterLocalNotificationsPlugin(),
+          ),
+          isFalse,
+        );
+        expect(
+          log.map((call) => call.method),
+          contains('getNotificationChannels'),
+        );
+      },
+    );
 
     test('reports enabled for the channel the app actually declares', () async {
       mockChannels(<Map<String, Object?>>[
@@ -260,28 +341,30 @@ void main() {
       );
     });
 
-    test('fails OPEN when the primary channel is absent or unreadable',
-        () async {
-      // A blocked SILENT channel must not be mistaken for a blocked primary:
-      // reading the wrong entry here would suppress every audible card.
-      mockChannels(<Map<String, Object?>>[
-        _channelReply(mknoonMessagesSilentChannelId, 0),
-      ]);
-      expect(
-        await mknoonPrimaryMessageChannelEnabled(
-          FlutterLocalNotificationsPlugin(),
-        ),
-        isTrue,
-      );
+    test(
+      'fails OPEN when the primary channel is absent or unreadable',
+      () async {
+        // A blocked SILENT channel must not be mistaken for a blocked primary:
+        // reading the wrong entry here would suppress every audible card.
+        mockChannels(<Map<String, Object?>>[
+          _channelReply(mknoonMessagesSilentChannelId, 0),
+        ]);
+        expect(
+          await mknoonPrimaryMessageChannelEnabled(
+            FlutterLocalNotificationsPlugin(),
+          ),
+          isTrue,
+        );
 
-      mockChannels(null);
-      expect(
-        await mknoonPrimaryMessageChannelEnabled(
-          FlutterLocalNotificationsPlugin(),
-        ),
-        isTrue,
-      );
-    });
+        mockChannels(null);
+        expect(
+          await mknoonPrimaryMessageChannelEnabled(
+            FlutterLocalNotificationsPlugin(),
+          ),
+          isTrue,
+        );
+      },
+    );
 
     test('is a no-op off Android', () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;

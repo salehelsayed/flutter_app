@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "description": "Deterministic navigation cases for compact Graphify precision and output size.",
+  "cases": [
+    {
+      "name": "delete-message-symbol-and-proof",
+      "question": "deleteMessageForMe cleanup attachments",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/conversation/application/delete_message_use_case.dart"],
+        "proof_any": ["test/features/conversation/application/delete_message_use_case_test.dart"],
+        "contains": ["ONE_TO_ONE_TESTS"]
+      }
+    },
+    {
+      "name": "full-repository-path-anchor",
+      "question": "lib/features/conversation/application/delete_message_use_case.dart",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/conversation/application/delete_message_use_case.dart"]
+      }
+    },
+    {
+      "name": "group-media-review-proof",
+      "question": "GroupMediaIntegrityPolicy group media delete",
+      "profile": "review",
+      "budget": 800,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/core/media/group_media_integrity_policy.dart"],
+        "proof_any": ["test/core/media/group_media_integrity_policy_test.dart"],
+        "contains": ["Caller/bypass candidates:"]
+      }
+    },
+    {
+      "name": "private-viewer-controller",
+      "question": "DirectPrivateMediaViewerController displayed",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/conversation/application/direct_private_media_viewer_controller.dart"]
+      }
+    },
+    {
+      "name": "share-batch-coordinator",
+      "question": "ShareBatchDeliveryCoordinator hooks",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/share/application/share_batch_delivery_coordinator.dart"]
+      }
+    },
+    {
+      "name": "background-message-handler-proof",
+      "question": "background_message_handler.dart push decrypt",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/push/application/background_message_handler.dart"],
+        "proof_any": ["test/features/push/application/background_message_handler_test.dart"]
+      }
+    },
+    {
+      "name": "membership-watermark-proof",
+      "question": "group_membership_event_watermark.dart membership",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/groups/application/group_membership_event_watermark.dart"],
+        "proof_any": ["test/features/groups/application/group_membership_event_watermark_test.dart"]
+      }
+    },
+    {
+      "name": "group-exit-intent-review",
+      "question": "GroupExitIntentCoordinator",
+      "profile": "review",
+      "budget": 800,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/groups/application/group_exit_intent_coordinator.dart"],
+        "proof_any": ["test/features/groups/application/group_exit_intent_coordinator_test.dart"]
+      }
+    },
+    {
+      "name": "send-group-message-proof",
+      "question": "lib/features/groups/application/send_group_message_use_case.dart proof",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/groups/application/send_group_message_use_case.dart"],
+        "proof_any": ["test/features/groups/application/send_group_message_use_case_test.dart"]
+      }
+    },
+    {
+      "name": "create-group-members-proof",
+      "question": "lib/features/groups/application/create_group_with_members_use_case.dart proof",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/groups/application/create_group_with_members_use_case.dart"],
+        "proof_any": ["test/features/groups/application/create_group_with_members_use_case_test.dart"]
+      }
+    },
+    {
+      "name": "push-permission-proof",
+      "question": "lib/features/push/application/request_push_permission_use_case.dart proof",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/push/application/request_push_permission_use_case.dart"],
+        "proof_any": ["test/features/push/application/request_push_permission_use_case_test.dart"]
+      }
+    },
+    {
+      "name": "direct-media-custody-flag",
+      "question": "lib/core/config/direct_media_blob_custody_client_flag.dart proof",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/core/config/direct_media_blob_custody_client_flag.dart"],
+        "proof_any": ["test/features/conversation/presentation/screens/conversation_wired_test.dart"]
+      }
+    },
+    {
+      "name": "local-notification-support-proof",
+      "question": "lib/core/notifications/local_notification_support.dart proof",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/core/notifications/local_notification_support.dart"],
+        "proof_any": ["test/core/notifications/local_notification_support_test.dart"]
+      }
+    },
+    {
+      "name": "history-gap-repository-proof",
+      "question": "lib/features/groups/data/repositories/group_history_gap_repair_repository_impl.dart proof",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/groups/data/repositories/group_history_gap_repair_repository_impl.dart"],
+        "proof_any": ["test/core/database/helpers/group_history_gap_repairs_db_helpers_test.dart"]
+      }
+    },
+    {
+      "name": "retry-group-download-proof",
+      "question": "lib/features/groups/application/retry_incomplete_group_downloads_use_case.dart proof",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/groups/application/retry_incomplete_group_downloads_use_case.dart"],
+        "proof_any": ["test/features/groups/application/retry_incomplete_group_downloads_use_case_test.dart"]
+      }
+    },
+    {
+      "name": "image-quality-preference",
+      "question": "ImageQualityPreference",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/settings/domain/models/image_quality_preference.dart"]
+      }
+    },
+    {
+      "name": "conversation-message-model",
+      "question": "ConversationMessage",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/conversation/domain/models/conversation_message.dart"]
+      }
+    },
+    {
+      "name": "media-attachment-model",
+      "question": "MediaAttachment",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/conversation/domain/models/media_attachment.dart"]
+      }
+    },
+    {
+      "name": "retention-notice-widget",
+      "question": "GroupBacklogRetentionNotice",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": ["lib/features/groups/presentation/group_backlog_retention_notice.dart"]
+      }
+    },
+    {
+      "name": "typo-suggests-symbol",
+      "question": "GroupConversatoinWired construction",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "broad",
+        "route": "architecture",
+        "contains": ["Did you mean:", "GroupConversationWired"]
+      }
+    },
+    {
+      "name": "total-miss-suggests-symbol",
+      "question": "deleteMesageForMe",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "none",
+        "route": "architecture",
+        "contains": ["Did you mean:", "deleteMessageForMe"]
+      }
+    },
+    {
+      "name": "component-map",
+      "question": "group media download pipeline",
+      "profile": "general",
+      "level": "component",
+      "budget": 500,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "contains": ["Component relationships:", "Drill down:"]
+      }
+    },
+    {
+      "name": "conceptual-background-storage",
+      "question": "notification background storage liveness",
+      "profile": "general",
+      "budget": 600,
+      "expected": {
+        "confidence": "broad",
+        "route": "architecture",
+        "source_any": ["lib/features/push/application/background_storage_liveness_journal.dart"]
+      }
+    },
+    {
+      "name": "plan-document-handoff",
+      "question": "implement Test-Flight-Improv/392-android-notification-e2e-recurrence-and-permission-divergence-tdd-plan.md",
+      "profile": "tdd",
+      "budget": 300,
+      "expected": {
+        "route": "document_handoff",
+        "contains": [
+          "plans/specifications are intentionally outside code graphs",
+          "run a new code-only Graphify query"
+        ],
+        "max_estimated_tokens": 300
+      }
+    },
+    {
+      "name": "plan-handoff-code-only-navigation",
+      "question": "requestPushPermission AndroidAppStateGuard run_notification_sound_smoke.dart",
+      "profile": "tdd",
+      "budget": 700,
+      "expected": {
+        "confidence": "anchored",
+        "route": "architecture",
+        "source_any": [
+          "lib/features/push/application/request_push_permission_use_case.dart",
+          "integration_test/scripts/run_notification_sound_smoke.dart"
+        ],
+        "proof_any": [
+          "test/features/push/application/request_push_permission_use_case_test.dart"
+        ]
+      }
+    }
+  ]
+}

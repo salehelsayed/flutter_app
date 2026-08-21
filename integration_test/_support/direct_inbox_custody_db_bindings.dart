@@ -43,6 +43,11 @@ final class DirectInboxCustodyDbBindings {
     messageId: messageId,
   );
 
+  Future<Map<String, Object?>?> loadOwnerForMessageId({
+    required String messageId,
+  }) =>
+      dbLoadDirectInboxCustodyOutboxOwnerForMessageId(db, messageId: messageId);
+
   Future<bool> recordFailureIfExact({
     required String recipientPeerId,
     required String messageId,

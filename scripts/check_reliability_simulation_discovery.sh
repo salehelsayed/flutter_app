@@ -149,7 +149,9 @@ classify_path() {
     lib/core/debug/keepalive_drop_e2e_contract.dart|\
     lib/core/debug/group_reaction_e2e_probe.dart|\
     lib/core/debug/group_notification_projection_e2e.dart|\
+    lib/core/debug/group_strict_notification_e2e.dart|\
     lib/debug/group_notification_projection_e2e_action.dart|\
+    lib/debug/group_strict_notification_e2e_action.dart|\
     lib/core/debug/android_notification_payload_e2e.dart|\
     lib/core/debug/android_notification_payload_e2e_protocol.dart|\
     lib/core/debug/private_media_outbox_e2e.dart|\
@@ -241,6 +243,10 @@ classify_path() {
       ;;
     integration_test/scripts/group_notification_projection_android_criteria.dart)
       record "support" "$path" "support" "330 strict Android group notification projection raw-evidence criteria"
+      return
+      ;;
+    integration_test/scripts/group_strict_notification_criteria.dart)
+      record "support" "$path" "support" "393 strict Android group notification raw-evidence criteria"
       return
       ;;
     integration_test/scripts/group_muted_notification_android_criteria.dart)
@@ -415,6 +421,10 @@ classify_path() {
       record "1to1" "$path" "runner" "256 reaction-notification device/relay proof campaign orchestrator (--list-scenarios)"
       return
       ;;
+    integration_test/scripts/run_1to1_reaction_notification_sims.dart)
+      record "support" "$path" "support" "392 exact-selector Sims adapter for killed-recipient typed 1:1 reaction proof; shared runner remains legacy-visible"
+      return
+      ;;
     integration_test/scripts/run_direct_private_media_device_local_journey.dart)
       record "1to1" "$path" "runner" "234 fully automated physical-Android plus emulator device-local private-media proof"
       return
@@ -449,6 +459,10 @@ classify_path() {
       ;;
     integration_test/group_notification_projection_android_proof_test.dart)
       record "support" "$path" "support" "330 capture-owned Android projection artifact binding; manifest owns execution"
+      return
+      ;;
+    integration_test/group_strict_notification_proof_test.dart)
+      record "support" "$path" "support" "393 capture-owned Android strict-group artifact binding; manifest owns execution"
       return
       ;;
     integration_test/group_muted_notification_proof_test.dart)
@@ -537,16 +551,24 @@ classify_path() {
       record "support" "$path" "support" "typed Sims adapter for Android group notification projection durability; manifest owns execution"
       return
       ;;
+    integration_test/scripts/run_group_strict_notification_sims.dart)
+      record "support" "$path" "support" "typed Sims adapter for Android strict group notification closure; manifest owns execution"
+      return
+      ;;
     integration_test/scripts/run_group_muted_notification_android.dart)
       record "support" "$path" "support" "typed Sims adapter for Android muted-group notification suppression; manifest owns execution"
       return
       ;;
     integration_test/scripts/run_android_notification_recovery_completion.dart)
-      record "support" "$path" "support" "manifest-owned paired Android recovery runner; product debug seam remains activation-gated"
+      record "support" "$path" "support" "393 manifest-owned physical-sender emulator-receiver fixed-wake recovery adapter"
+      return
+      ;;
+    integration_test/scripts/run_android_notification_recovery_completion_sims.dart)
+      record "support" "$path" "support" "393 disposable encrypted Redis/FCM relay wrapper prepares the central fixed-wake artifact before manifest execution"
       return
       ;;
     integration_test/scripts/android_notification_recovery_completion_criteria.dart)
-      record "support" "$path" "support" "331 strict content-addressed Android recovery evidence criteria"
+      record "support" "$path" "support" "393 strict content-addressed fixed-wake recovery evidence criteria"
       return
       ;;
     integration_test/scripts/run_group_media_send_reliability.dart)
@@ -734,7 +756,8 @@ discover_candidates() {
       lib/core/debug/group_media_ios_disposable_profile.dart \
       lib/core/debug/group_media_ios_disposable_reset.dart \
       lib/debug/android_direct_media_blob_custody_e2e.dart \
-      lib/debug/group_notification_projection_e2e_action.dart; do
+      lib/debug/group_notification_projection_e2e_action.dart \
+      lib/debug/group_strict_notification_e2e_action.dart; do
       [ ! -f "$path" ] || printf '%s\n' "$path"
     done
     [ -f smoke_test_friends.sh ] && printf '%s\n' smoke_test_friends.sh

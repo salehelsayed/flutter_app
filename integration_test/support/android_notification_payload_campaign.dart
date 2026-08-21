@@ -7,6 +7,117 @@ const String androidNotificationCapabilityId =
     'notifications.android_payload_campaign';
 const String androidNotificationBuildProfileId = 'android.production_fcm';
 
+const Set<String> androidNotificationKnownAppOpModes = <String>{
+  'allow',
+  'ignore',
+  'deny',
+  'default',
+  'foreground',
+  'errored',
+  'ask',
+};
+
+/// Interprets `adb shell pm path <package>` without guessing through an adb
+/// failure. Android 17 reports an absent package as exit 1 with no output;
+/// older images commonly spell the absence as `unknown package`/`not found`.
+/// Any other non-zero response remains an unobservable census and fails shut.
+bool androidPackagePresentFromPmPath({
+  required int exitCode,
+  required String stdout,
+  required String stderr,
+}) {
+  final hasPackagePath = stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .any((line) => line.startsWith('package:'));
+  if (hasPackagePath) return true;
+  if (exitCode == 0) return false;
+
+  final output = '$stdout\n$stderr';
+  final normalized = output.toLowerCase();
+  if ((exitCode == 1 && output.trim().isEmpty) ||
+      normalized.contains('unknown package') ||
+      normalized.contains('not found')) {
+    return false;
+  }
+  throw const FormatException('pm path package presence is not observable');
+}
+
+/// Parses the receiver's real `cmd appops get <package> POST_NOTIFICATION`
+/// response into a closed Android mode. Unknown or contradictory output is a
+/// probe failure, never a guessed `allow`/`default` premise.
+String parseAndroidNotificationAppOpMode(String output) {
+  final modes = RegExp(
+    r'\bPOST_NOTIFICATION\s*:\s*([A-Za-z_]+)',
+    caseSensitive: false,
+  ).allMatches(output).map((match) => match.group(1)!.toLowerCase()).toSet();
+  if (modes.isEmpty &&
+      RegExp(r'\bno operations\b', caseSensitive: false).hasMatch(output)) {
+    return 'default';
+  }
+  if (modes.length != 1 ||
+      !androidNotificationKnownAppOpModes.contains(modes.single)) {
+    throw const FormatException(
+      'POST_NOTIFICATION app-op mode is absent, unknown, or contradictory',
+    );
+  }
+  return modes.single;
+}
+
+/// Parses the explicit UID override emitted by
+/// `cmd appops get --uid <package> POST_NOTIFICATION`.
+///
+/// Android 17 keeps the runtime-permission-backed package row at `allow` even
+/// while a UID override is `ignore`. The authoritative line is therefore the
+/// optional `Uid mode:` prefix. Its absence means that no UID override exists
+/// (`default`); the package row is still required to be syntactically valid so
+/// an unsupported/changed shell response cannot be mistaken for a baseline.
+String parseAndroidNotificationUidAppOpMode(String output) {
+  final uidModes = RegExp(
+    r'\bUid mode\s*:\s*POST_NOTIFICATION\s*:\s*([A-Za-z_]+)',
+    caseSensitive: false,
+  ).allMatches(output).map((match) => match.group(1)!.toLowerCase()).toSet();
+  if (uidModes.length > 1 ||
+      (uidModes.isNotEmpty &&
+          !androidNotificationKnownAppOpModes.contains(uidModes.single))) {
+    throw const FormatException(
+      'POST_NOTIFICATION UID app-op mode is unknown or contradictory',
+    );
+  }
+  if (uidModes.isNotEmpty) return uidModes.single;
+
+  // Validate that this was still a recognizable app-ops response. Package
+  // history/effective rows are deliberately ignored when no UID override is
+  // present because they do not describe the state that this harness mutates.
+  parseAndroidNotificationAppOpMode(output);
+  return 'default';
+}
+
+/// Maps a captured UID override state to the shell mode that reproduces it.
+///
+/// For the runtime-permission-backed notification op on Android 17, writing
+/// UID `default` is a no-op when an `ignore` override exists. Writing UID
+/// `allow` clears that override; the next UID probe has no `Uid mode:` line and
+/// therefore reads back as the captured `default` state. Other closed modes
+/// are written literally and still have to read back exactly.
+String androidNotificationUidAppOpShellMode(String capturedMode) {
+  if (!androidNotificationKnownAppOpModes.contains(capturedMode)) {
+    throw const FormatException('Unknown POST_NOTIFICATION UID app-op mode');
+  }
+  return capturedMode == 'default' ? 'allow' : capturedMode;
+}
+
+/// Whether Android explicitly rejected the UID override needed by G24.
+///
+/// Some API 33+ images return exit zero and briefly expose a UID-mode row even
+/// though AppOps refuses to apply that mode to the runtime-backed notification
+/// permission. That receiver is not a behavior failure: it lacks the settable
+/// OS boundary required by the availability-bounded G24 row.
+bool androidNotificationUidAppOpMutationBlocked(String logcat) => RegExp(
+  r'Blocked setUidMode call for runtime permission app op:[^\r\n]*\bPOST_NOTIFICATION\b',
+  caseSensitive: false,
+).hasMatch(logcat);
+
 /// Content-safe fingerprint of the package's durable notification-channel
 /// configuration. Two fields are intentionally removed:
 ///
@@ -194,14 +305,21 @@ const String androidNotificationFcmPathAttemptEvent =
 /// novel stand-down still fails the leg.
 const Set<String> androidNotificationLivePathSuppressionEvents = <String>{
   'NOTIFICATION_SUPPRESSED',
+  'NOTIFICATION_DEFERRED',
   'NOTIFICATION_LEGACY_CLAIM_RECONCILE',
   'NOTIFICATION_LEGACY_DEDUPE_RECONCILE',
 };
 
 /// Reasons the LIVE path emits when it loses the race.
+///
+/// `message_event_claim_pending` is the background-owner-first overlap: the
+/// live projection retains SQL custody while the background isolate completes
+/// the exact native post. The B13 card assertion still requires that post, so a
+/// stranded pending claim cannot pass as a successful dedupe.
 const Set<String> androidNotificationLivePathLosingReasons = <String>{
   'recent_remote_push',
   'message_event_already_claimed',
+  'message_event_claim_pending',
 };
 
 /// Reasons the FCM background isolate emits when it loses the race for a
@@ -289,11 +407,9 @@ String? androidNotificationPostAttemptEvent(String logcat) {
 /// The `silent` flag reported by the FIRST post attempt in [logcat].
 ///
 /// Returns null when the window records no post attempt, or when the attempt
-/// reported no native show at all (the key is absent in that case). A dumpsys
-/// channel read cannot answer this question: when both delivery paths reach
-/// one message the loser reconciles and publishes a silent SAME-ID update,
-/// which moves the record to `mknoon_messages_silent` about 2.6 s after the
-/// winning post — faster than a dumpsys poll can sample.
+/// reported no native show at all (the key is absent in that case). The log
+/// answers whether the winning post alerted; a settled dumpsys read separately
+/// verifies that a later silent same-ID reconcile preserved the primary card.
 bool? androidNotificationFirstPostAttemptSilent(String logcat) {
   for (final record in androidNotificationFlowRecords(logcat)) {
     if (!androidNotificationPostAttemptEvents.contains(record.event)) continue;
@@ -447,9 +563,7 @@ int? androidNotificationChannelImportance(
     if (nextPackageHeader.hasMatch(raw)) break;
     final line = raw.trim();
     if (!line.startsWith('NotificationChannel{')) continue;
-    if (!RegExp(
-      r"mId='" + RegExp.escape(channelId) + r"'",
-    ).hasMatch(line)) {
+    if (!RegExp(r"mId='" + RegExp.escape(channelId) + r"'").hasMatch(line)) {
       continue;
     }
     final importance = RegExp(r'mImportance=(-?\d+)').firstMatch(line);

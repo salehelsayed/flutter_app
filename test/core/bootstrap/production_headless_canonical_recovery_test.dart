@@ -865,6 +865,241 @@ void main() {
   );
 
   test(
+    'TC-393-13 authenticated direct reaction settles through inbox reconciler',
+    () async {
+      sqfliteFfiInit();
+      final database = await databaseFactoryFfi.openDatabase(
+        inMemoryDatabasePath,
+      );
+      addTearDown(database.close);
+      for (final table in const <String>[
+        'direct_notification_display_outbox',
+        'direct_notification_reconciliation_outbox',
+        'group_notification_display_outbox',
+        'group_notification_reconciliation_outbox',
+      ]) {
+        await database.execute(
+          'CREATE TABLE $table (id INTEGER PRIMARY KEY, status TEXT NOT NULL)',
+        );
+      }
+      await database.insert(
+        'direct_notification_display_outbox',
+        <String, Object?>{'status': 'DEFERRED_NOT_READY'},
+      );
+
+      final ledgerDirectory = await Directory.systemTemp.createTemp(
+        'plan393-fixed-wake-direct-reaction-ledger-',
+      );
+      addTearDown(() => ledgerDirectory.delete(recursive: true));
+      final ledgerStore = LocalNotificationLedgerStore(
+        directory: ledgerDirectory,
+      );
+      expect(
+        await ledgerStore.initializeOrRebind(currentOpaqueBinding: _binding),
+        isNotNull,
+      );
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: ledgerDirectory,
+        localNotificationEffectCoordinator:
+            DurableLocalNotificationEffectCoordinator(
+              ledgerStore: ledgerStore,
+              nowUtc: () => DateTime.parse('2026-08-21T12:00:01.000Z').toUtc(),
+              effectTokenFactory: () => '3' * 64,
+            ),
+      );
+
+      final invocation = HeadlessCanonicalRecoveryInvocation.parse(
+        const <String>['fixed_wake', 'nonce-tc-393-13', _binding, '7'],
+      );
+      expect(invocation.reason, CanonicalRecoveryReason.fixedWake);
+      expect(invocation.identityPayload().keys.toSet(), <String>{
+        'reason',
+        'nonce',
+        'binding',
+        'generation',
+      });
+
+      const reactionId = 'direct-reaction-tc-393-13';
+      const physicalPeerId = 'physical-peer-tc-393-13';
+      final selectedEventKey = trySelectNotificationCompletedOutcomeEventKey(
+        producerKind: NotificationCompletedOutcomeProducerKind.directReaction,
+        authenticatedEnvelope: const <String, Object?>{
+          'reactionId': reactionId,
+          'messageId': 'non-authoritative-message-id',
+        },
+      );
+      expect(selectedEventKey, reactionId);
+      final eventCorrelation =
+          tryComputeNotificationCompletedOutcomeCorrelation(
+            physicalPeerId: physicalPeerId,
+            producerKind:
+                NotificationCompletedOutcomeProducerKind.directReaction,
+            eventKey: selectedEventKey!,
+          )!;
+      final conversationIdentity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.direct,
+        value: 'direct-peer-tc-393-13',
+      )!;
+
+      Future<ProductionHeadlessCustodyTotals> readTotals() async {
+        final envelope = await ledgerStore.read(currentOpaqueBinding: _binding);
+        final unresolvedLedgerRecords = envelope == null
+            ? 1
+            : (envelope.claimsSuspended ? 1 : 0) +
+                  envelope.records.values
+                      .where(
+                        (record) =>
+                            record.effectPhase !=
+                            LocalNotificationEffectPhase.settled,
+                      )
+                      .length;
+        return ProductionHeadlessCustodyTotals(
+          directDisplay: await dbCountAllDirectNotificationDisplayOutboxEntries(
+            database,
+          ),
+          directReconciliation:
+              await dbCountAllDirectNotificationReconciliationOutboxEntries(
+                database,
+              ),
+          groupDisplay: await dbCountAllGroupNotificationDisplayOutboxEntries(
+            database,
+          ),
+          groupReconciliation:
+              await dbCountAllGroupNotificationReconciliationOutboxEntries(
+                database,
+              ),
+          unresolvedLedgerRecords: unresolvedLedgerRecords,
+        );
+      }
+
+      var nativePosts = 0;
+      Future<void> materializeAuthenticatedReaction() async {
+        final notificationId = await registry.resolve(
+          'direct-peer-tc-393-13',
+          activeNotificationIds: () async => const <Object?>[],
+        );
+        final effect = await registry.runFinalEffect(
+          context: DurableLocalNotificationEffectContext(
+            currentOpaqueBinding: _binding,
+            eventCorrelation: eventCorrelation,
+            conversationDigest: conversationIdentity.digest,
+            producerKind: LocalNotificationProducerKind.directReaction,
+            sourceCustody: LocalNotificationSourceCustody.sqlReady,
+            presentationOwner:
+                LocalNotificationPresentationOwner.inboxReconciler,
+            readFinalCanonicalDisposition: () async =>
+                DurableLocalNotificationCanonicalDisposition.eligible,
+          ),
+          appVisibility: _HeadlessBackgroundVisibility(),
+          conversationIdentity: conversationIdentity,
+          conversationKey: 'direct-peer-tc-393-13',
+          notificationId: notificationId,
+          metadata: ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.reaction,
+            eventIdentity: eventCorrelation,
+            generation: 'ledger:$eventCorrelation',
+          ),
+          retireCurrent: () async {},
+          publishNative: () async {
+            nativePosts += 1;
+          },
+        );
+        expect(
+          effect.disposition,
+          DurableLocalNotificationEffectDisposition.osPosted,
+        );
+        final settled = await registry.settleSqlReadyEffect(
+          currentOpaqueBinding: _binding,
+          eventCorrelation: eventCorrelation,
+          expectedRevision: effect.receipt!.recordRevision,
+        );
+        expect(settled, isNotNull);
+        await database.delete('direct_notification_display_outbox');
+      }
+
+      final acknowledged = <CanonicalRecoveryMarker>[];
+      var markerPresent = true;
+      final runtime = CanonicalRecoveryRuntime(
+        loadCurrentBinding: () async => _binding,
+        loadPendingMarker: () async => markerPresent ? _marker : null,
+        acquireSession: ({required binding, required reason}) async {
+          expect(binding, _binding);
+          expect(reason, CanonicalRecoveryReason.fixedWake);
+          return _Tc37504Session(
+            drainDirect: () async {
+              await materializeAuthenticatedReaction();
+              return const CanonicalRecoveryDrainOutcome(
+                isSuccessful: true,
+                hasMore: false,
+              );
+            },
+            settle: () async {
+              final totals = await readTotals();
+              return CanonicalRecoveryProjectionOutcome(
+                isSuccessful: true,
+                hasPendingWork: !totals.isConverged,
+              );
+            },
+          );
+        },
+        acknowledgeMarker: (marker, {authorityRevision}) async {
+          if (marker != _marker || !markerPresent) return false;
+          markerPresent = false;
+          acknowledged.add(marker);
+          return true;
+        },
+      );
+
+      final result = await runtime.run(
+        CanonicalRecoveryReason.fixedWake,
+        expectedBinding: _binding,
+        expectedMarker: _marker,
+      );
+      expect(result.disposition, CanonicalRecoveryDisposition.succeeded);
+      expect(nativePosts, 1);
+      expect(acknowledged, <CanonicalRecoveryMarker>[_marker]);
+      expect(markerPresent, isFalse);
+      expect((await readTotals()).isConverged, isTrue);
+
+      final envelope = (await ledgerStore.read(
+        currentOpaqueBinding: _binding,
+      ))!;
+      expect(envelope.records, hasLength(1));
+      final record = envelope.records.values.single;
+      expect(envelope.records.keys.single, eventCorrelation);
+      expect(record.producerKind, LocalNotificationProducerKind.directReaction);
+      expect(record.sourceCustody, LocalNotificationSourceCustody.sqlReady);
+      expect(
+        record.presentationOwner,
+        LocalNotificationPresentationOwner.inboxReconciler,
+      );
+      expect(
+        record.presentationState,
+        LocalNotificationPresentationState.osPosted,
+      );
+      expect(record.effectPhase, LocalNotificationEffectPhase.settled);
+
+      final persisted = StringBuffer();
+      await for (final entity in ledgerDirectory.list(recursive: true)) {
+        if (entity is File) {
+          persisted.write(
+            utf8.decode(await entity.readAsBytes(), allowMalformed: true),
+          );
+        }
+      }
+      final persistedLedger = persisted.toString();
+      expect(persistedLedger, contains('direct_reaction'));
+      expect(persistedLedger, contains('SQL_READY'));
+      expect(persistedLedger, contains('INBOX_RECONCILER'));
+      expect(persistedLedger, contains('SETTLED'));
+      expect(persistedLedger, isNot(contains('nonce-tc-393-13')));
+      expect(persistedLedger, isNot(contains('fixed_wake')));
+      expect(persistedLedger, isNot(contains('ANDROID_PUSH_SERVICE')));
+      expect(persistedLedger, isNot(contains('RELAY_VERIFIED_UNACKED')));
+    },
+  );
+
+  test(
     'TC-374-04 admission seals awaits re-settles and same-owner emergency cleanup preserves ordered facts',
     () async {
       final trace = <String>[];

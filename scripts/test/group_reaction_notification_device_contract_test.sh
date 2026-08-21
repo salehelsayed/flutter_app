@@ -127,7 +127,7 @@ done
 # (`notification_tap_campaign_adapter_contract_test.sh:239-252`). Ported
 # verbatim that seam is UNSATISFIABLE here: it bans `['logcat', '-c']` outright
 # and tests `'logcat',` x `'-d',` co-occurrence across the whole file, while
-# this capture legitimately keeps eight `logcat -c` clears and two
+# this capture legitimately keeps ten `logcat -c` clears and two
 # process-scoped `logcat -d --pid=<pid>` readiness polls. A permanent red is
 # not a causal red, so the assertions below name the exact graded shapes.
 python3 - "$capture_driver" <<'STREAM_SEAM'
@@ -167,11 +167,24 @@ for read in re.findall(r"'logcat',\s*'-d',(.*?)\]", source, re.S):
 # The clears stay. The stream turns each one into a floor instead of destroying
 # evidence, so the destructive-action ban stays green.
 #
-# Repinned 8 -> 9 by Plan 389: the reaction lane now clears at the kill, exactly
-# as the muted and killed-text lanes already do, so its post-kill wake COUNT is
-# readable from `recipient_app` without a cursor. Repinned, never weakened.
-if source.count("const <String>['logcat', '-c']") != 9:
-    fail('the nine non-destructive log clear sites changed without repinning')
+# Repinned 8 -> 9 by Plan 389 for the reaction kill, then 9 -> 10 by Plan 393
+# for the distinct killed-photo message window. Each clear is intercepted by
+# the live-stream floor and cannot destroy captured evidence.
+if source.count("const <String>['logcat', '-c']") != 10:
+    fail('the ten non-destructive log clear sites changed without repinning')
+
+killed_cursor = source.find(
+    'final killedPhotoCursor = await _deviceLogcatCursor(recipientId);'
+)
+killed_send = source.find("phase: 'send_killed_jpeg'", killed_cursor)
+killed_flow = source.find(
+    'await _deviceLogSince(recipientId, killedPhotoCursor)', killed_send
+)
+killed_terminal = source.find(
+    "flow.contains('PUSH_BACKGROUND_NOTIFICATION_SHOWN')", killed_flow
+)
+if not (0 <= killed_cursor < killed_send < killed_flow < killed_terminal):
+    fail('the killed-photo proof no longer waits on its exact live-stream window')
 STREAM_SEAM
 
 set +e

@@ -1,6 +1,7 @@
 import 'package:flutter_app/app/bootstrap/production_canonical_direct_projection_composition.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome_correlation.dart';
@@ -32,6 +33,26 @@ const _physicalPeerId = 'physical-direct-correlation';
 
 void main() {
   sqfliteFfiInit();
+
+  test('TC-393-02 production wires exact generation cancellation', () async {
+    final service = _GenerationNotificationService(
+      const ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: 'event-active-generation',
+        generation: 'active-generation',
+      ),
+    );
+    final cleanup = buildProductionExactConversationActivationCleanup(service);
+    final identity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.direct,
+      value: _peerId,
+    )!;
+
+    await cleanup(identity);
+
+    expect(service.cancelledGenerations, <String>['active-generation']);
+    expect(service.metadata, isNull);
+  });
 
   test(
     'durable direct message correlation materializes and rewrites raw identity',

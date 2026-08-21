@@ -3064,6 +3064,11 @@ _sendGroupMessageWithAuthorityRecheck({
     final current = await msgRepo.getMessage(resolvedMessageId);
     emitGroupSendTiming(
       outcome: completed ? 'strict_custody_complete' : 'strict_custody_pending',
+      details: {
+        'expectedRecipientCount': recipientPeerIds.length,
+        'inboxStored': current?.inboxStored == true,
+        'inboxPending': current?.inboxRetryPayload != null,
+      },
     );
     return (
       completed

@@ -30,6 +30,7 @@ void main() {
   // plugin's "no channel information" answer, which the publication path
   // treats as fail-open — so every pre-existing test keeps its behaviour.
   late List<Map<String, Object?>>? notificationChannelsReply;
+  late List<Map<String, Object?>>? activeNotificationsReply;
 
   /// One entry of a `getNotificationChannels` reply. Every key the plugin's
   /// mapper dereferences is supplied; it calls `Color(a['ledColor'])` and
@@ -79,6 +80,7 @@ void main() {
     launchPayload = 'peer-123';
     launchNotificationId = 7;
     notificationChannelsReply = null;
+    activeNotificationsReply = null;
     notificationIdDirectory = Directory.systemTemp.createTempSync(
       'flutter-notification-service-id-registry-',
     );
@@ -91,6 +93,8 @@ void main() {
               return true;
             case 'getNotificationChannels':
               return notificationChannelsReply;
+            case 'getActiveNotifications':
+              return activeNotificationsReply;
             case 'getNotificationAppLaunchDetails':
               return <String, Object?>{
                 'notificationLaunchedApp': true,
@@ -310,7 +314,7 @@ void main() {
   });
 
   test(
-    'Android native boundary runs after registry retirement and directly wraps show',
+    'Android native boundary updates the stable card without cancelling it',
     () async {
       final service = buildService();
       await service.initialize();
@@ -324,7 +328,7 @@ void main() {
         contentEventIdentity: 'message-native-boundary',
         publishNative: (showNative) async {
           effects.add('boundary_entered');
-          expect(log.where((call) => call.method == 'cancel'), hasLength(1));
+          expect(log.where((call) => call.method == 'cancel'), isEmpty);
           expect(log.where((call) => call.method == 'show'), isEmpty);
           await showNative(silent: true);
           effects.add('boundary_returned');
@@ -336,10 +340,168 @@ void main() {
           .where((call) => call.method == 'cancel' || call.method == 'show')
           .map((call) => call.method)
           .toList(growable: false);
-      expect(notificationEffects, <String>['cancel', 'show']);
+      expect(notificationEffects, <String>['show']);
       final show = log.singleWhere((call) => call.method == 'show');
       final specifics = (show.arguments as Map)['platformSpecifics'] as Map;
       expect(specifics['playSound'], isFalse);
+    },
+  );
+
+  test(
+    'rejected Android replacement preserves the current card and generation',
+    () async {
+      final generations = <String>[
+        'generation-existing',
+        'generation-rejected',
+      ];
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: notificationIdDirectory,
+      );
+      final service = buildService(
+        registry: registry,
+        generationFactory: () => generations.removeAt(0),
+      );
+      await service.initialize();
+      const key = 'peer-rejected-replacement';
+
+      await service.showMessageNotification(
+        contactPeerId: key,
+        senderUsername: 'Alice',
+        messageText: 'Visible card',
+        contentKind: ConversationNotificationContentKind.message,
+        contentEventIdentity: 'message-existing',
+      );
+      final notificationId = (log.last.arguments as Map)['id'] as int;
+      final cancelCount = log.where((call) => call.method == 'cancel').length;
+      final showCount = log.where((call) => call.method == 'show').length;
+
+      await expectLater(
+        service.showMessageNotificationAtNativeBoundary(
+          contactPeerId: key,
+          senderUsername: 'Alice',
+          messageText: 'Contended replacement',
+          contentKind: ConversationNotificationContentKind.message,
+          contentEventIdentity: 'message-contended',
+          publishNative: (_) async => throw StateError('claim pending'),
+        ),
+        throwsStateError,
+      );
+
+      expect(
+        log.where((call) => call.method == 'cancel'),
+        hasLength(cancelCount),
+      );
+      expect(log.where((call) => call.method == 'show'), hasLength(showCount));
+      expect(
+        (await registry.lookupContentMetadata(
+          conversationKey: key,
+          notificationId: notificationId,
+        ))?.generation,
+        'generation-existing',
+      );
+    },
+  );
+
+  test(
+    'duplicate event cannot demote its audible card to the silent channel',
+    () async {
+      final generations = <String>[
+        'generation-first-delivery',
+        'generation-duplicate-delivery',
+      ];
+      final service = buildService(
+        generationFactory: () => generations.removeAt(0),
+      );
+      await service.initialize();
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+
+      await service.showMessageNotification(
+        contactPeerId: 'peer-double-delivery',
+        senderUsername: 'Alice',
+        messageText: 'One logical message',
+        contentKind: ConversationNotificationContentKind.message,
+        contentEventIdentity: 'message-double-delivery',
+      );
+      await service.showMessageNotification(
+        contactPeerId: 'peer-double-delivery',
+        senderUsername: 'Alice',
+        messageText: 'One logical message',
+        silent: true,
+        contentKind: ConversationNotificationContentKind.message,
+        contentEventIdentity: 'message-double-delivery',
+      );
+
+      final shows = log.where((call) => call.method == 'show').toList();
+      expect(shows, hasLength(1));
+      expect(log.where((call) => call.method == 'cancel'), isEmpty);
+      expect(
+        ((shows.single.arguments as Map)['platformSpecifics']
+            as Map)['channelId'],
+        mknoonMessagesChannelId,
+      );
+      expect(
+        events.where((event) => event['event'] == 'NOTIFICATION_SHOWN'),
+        hasLength(1),
+      );
+      expect(
+        events.where(
+          (event) => event['event'] == 'NOTIFICATION_DUPLICATE_CARD_PRESERVED',
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'cross-path silent reconcile retains an active primary-channel card',
+    () async {
+      final service = buildService(
+        generationFactory: () => createConversationNotificationGeneration(),
+      );
+      await service.initialize();
+      const conversationKey = 'peer-cross-path-reconcile';
+      final notificationId = deterministicConversationNotificationId(
+        conversationKey,
+      );
+
+      await service.showMessageNotification(
+        contactPeerId: conversationKey,
+        senderUsername: 'Alice',
+        messageText: 'One logical message',
+        contentKind: ConversationNotificationContentKind.message,
+        contentEventIdentity: 'message-id-from-transport',
+      );
+      activeNotificationsReply = <Map<String, Object?>>[
+        <String, Object?>{
+          'id': notificationId,
+          'channelId': mknoonMessagesChannelId,
+        },
+      ];
+
+      // The durable lane can identify the same event by its opaque correlation
+      // rather than the transport message id. Even when that makes the content
+      // registry perform an update, the active alerting card must not move to
+      // the low-importance channel.
+      await service.showMessageNotification(
+        contactPeerId: conversationKey,
+        senderUsername: 'Alice',
+        messageText: 'One logical message',
+        silent: true,
+        contentKind: ConversationNotificationContentKind.message,
+        contentEventIdentity: 'opaque-durable-correlation',
+      );
+
+      final shows = log.where((call) => call.method == 'show').toList();
+      expect(shows, hasLength(2));
+      expect(log.where((call) => call.method == 'cancel'), isEmpty);
+      final updateSpecifics =
+          (shows.last.arguments as Map)['platformSpecifics'] as Map;
+      expect(updateSpecifics['channelId'], mknoonMessagesChannelId);
+      expect(updateSpecifics['playSound'], isFalse);
+      expect(updateSpecifics['enableVibration'], isFalse);
+      expect(updateSpecifics['onlyAlertOnce'], isTrue);
+      expect(updateSpecifics['silent'], isTrue);
     },
   );
 
@@ -793,8 +955,8 @@ void main() {
 
       expect(
         log.where((call) => call.method == 'cancel'),
-        hasLength(cancelCountBefore + 2),
-        reason: 'one retire-before-replace plus the exact read cancellation',
+        hasLength(cancelCountBefore + 1),
+        reason: 'only the exact read cancellation retires the card',
       );
     },
   );
@@ -1360,5 +1522,4 @@ Future<void> _waitForAsyncNotificationWork({
     if (until == null || await until()) return;
   } while (DateTime.now().isBefore(deadline));
   throw StateError('timed out waiting for notification callback work');
-
 }

@@ -20,7 +20,57 @@ import (
 	"time"
 
 	"firebase.google.com/go/v4/messaging"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+func TestSelectedPushRouteCounterDistinguishesOpaqueFromRich(t *testing.T) {
+	const (
+		peerID        = "plan393-route-counter-peer-private"
+		providerToken = "plan393-route-counter-provider-token-private"
+	)
+	rich := selectedPushRouteCounter.WithLabelValues("rich")
+	opaque := selectedPushRouteCounter.WithLabelValues("opaque")
+	richBefore := testutil.ToFloat64(rich)
+	opaqueBefore := testutil.ToFloat64(opaque)
+
+	for _, row := range []struct {
+		name         string
+		capabilities []string
+	}{
+		{name: "rich", capabilities: nil},
+		{name: "opaque", capabilities: []string{opaqueWakeCapability}},
+	} {
+		store := newMemoryPushTokenStore()
+		if err := store.RegisterToken(
+			peerID,
+			providerToken,
+			"android",
+			row.capabilities...,
+		); err != nil {
+			t.Fatalf("%s RegisterToken(): %v", row.name, err)
+		}
+		push := NewPushServiceWithBackend(store)
+		push.retryDelays = nil
+		recorder := newRecordingPushSender()
+		push.sender = recorder.Send
+		push.SendNotification(
+			context.Background(),
+			peerID,
+			"plan393-route-counter-sender-private",
+			ordinaryChatCiphertextEnvelope(8, 16),
+		)
+		if recorder.SendCallCount() != 1 {
+			t.Fatalf("%s provider sends = %d, want one", row.name, recorder.SendCallCount())
+		}
+	}
+
+	if delta := testutil.ToFloat64(rich) - richBefore; delta != 1 {
+		t.Fatalf("rich selected-route delta = %v, want 1", delta)
+	}
+	if delta := testutil.ToFloat64(opaque) - opaqueBefore; delta != 1 {
+		t.Fatalf("opaque selected-route delta = %v, want 1", delta)
+	}
+}
 
 type plan368BackendProbe struct {
 	delegate PushTokenBackend

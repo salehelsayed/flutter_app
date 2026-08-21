@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -29,6 +31,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+typedef GroupMediaReliabilityConfigBuilder =
+    Map<String, dynamic> Function(GroupModel group, List<GroupMember> members);
+
 Future<Map<String, Object?>> setupGroupMediaReliabilitySender({
   required String receiverAccountPeerId,
   required String receiverTransportPeerId,
@@ -41,7 +46,7 @@ Future<Map<String, Object?>> setupGroupMediaReliabilitySender({
 }) async {
   final identity = await identityRepository.loadIdentity();
   final receiver = await contactRepository.getContact(receiverAccountPeerId);
-  final transport = p2pService.currentState.peerId?.trim();
+  final transport = await _waitForLocalTransportPeerId(p2pService);
   if (identity == null ||
       receiver == null ||
       receiver.mlKemPublicKey == null ||
@@ -100,6 +105,7 @@ Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
   required P2PService p2pService,
   required IdentityRepository identityRepository,
   required GroupRepository groupRepository,
+  required GroupMediaReliabilityConfigBuilder groupConfigBuilder,
   required GroupMessageRepository groupMessageRepository,
   required MediaAttachmentRepository mediaAttachmentRepository,
   required MediaFileManager mediaFileManager,
@@ -107,9 +113,96 @@ Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
   GroupMediaReliabilityAuthorityMode authorityMode =
       GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
+}) => _sendGroupMediaReliabilityFixturesForKinds(
+  runId: runId,
+  groupId: groupId,
+  messageIds: messageIds,
+  attachmentIds: attachmentIds,
+  fixtureKinds: const <String>{'jpeg', 'mp4', 'voice'},
+  receiverAccountPeerId: receiverAccountPeerId,
+  receiverTransportPeerId: receiverTransportPeerId,
+  fixtureDirectory: fixtureDirectory,
+  bridge: bridge,
+  p2pService: p2pService,
+  identityRepository: identityRepository,
+  groupRepository: groupRepository,
+  groupConfigBuilder: groupConfigBuilder,
+  groupMessageRepository: groupMessageRepository,
+  mediaAttachmentRepository: mediaAttachmentRepository,
+  mediaFileManager: mediaFileManager,
+  audioRecorderService: audioRecorderService,
+  authorityMode: authorityMode,
+  inviteDeliveryAttemptRepository: inviteDeliveryAttemptRepository,
+);
+
+/// Publishes the one fixed JPEG fixture used by Plan 393's killed-recipient
+/// group-message proof. This deliberately exposes no caller-selected media
+/// kind; the established three-kind reliability fixture remains unchanged.
+Future<Map<String, Object?>> sendGroupKilledIncomingJpegReliabilityFixture({
+  required String runId,
+  required String groupId,
+  required String messageId,
+  required String attachmentId,
+  required String receiverAccountPeerId,
+  required String receiverTransportPeerId,
+  required Directory fixtureDirectory,
+  required Bridge bridge,
+  required P2PService p2pService,
+  required IdentityRepository identityRepository,
+  required GroupRepository groupRepository,
+  required GroupMediaReliabilityConfigBuilder groupConfigBuilder,
+  required GroupMessageRepository groupMessageRepository,
+  required MediaAttachmentRepository mediaAttachmentRepository,
+  required MediaFileManager mediaFileManager,
+  required AudioRecorderService audioRecorderService,
+  GroupMediaReliabilityAuthorityMode authorityMode =
+      GroupMediaReliabilityAuthorityMode.distinctAccountAndTransport,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
+}) => _sendGroupMediaReliabilityFixturesForKinds(
+  runId: runId,
+  groupId: groupId,
+  messageIds: <String, String>{'jpeg': messageId},
+  attachmentIds: <String, String>{'jpeg': attachmentId},
+  fixtureKinds: const <String>{'jpeg'},
+  receiverAccountPeerId: receiverAccountPeerId,
+  receiverTransportPeerId: receiverTransportPeerId,
+  fixtureDirectory: fixtureDirectory,
+  bridge: bridge,
+  p2pService: p2pService,
+  identityRepository: identityRepository,
+  groupRepository: groupRepository,
+  groupConfigBuilder: groupConfigBuilder,
+  groupMessageRepository: groupMessageRepository,
+  mediaAttachmentRepository: mediaAttachmentRepository,
+  mediaFileManager: mediaFileManager,
+  audioRecorderService: audioRecorderService,
+  authorityMode: authorityMode,
+  inviteDeliveryAttemptRepository: inviteDeliveryAttemptRepository,
+);
+
+Future<Map<String, Object?>> _sendGroupMediaReliabilityFixturesForKinds({
+  required String runId,
+  required String groupId,
+  required Map<String, String> messageIds,
+  required Map<String, String> attachmentIds,
+  required Set<String> fixtureKinds,
+  required String receiverAccountPeerId,
+  required String receiverTransportPeerId,
+  required Directory fixtureDirectory,
+  required Bridge bridge,
+  required P2PService p2pService,
+  required IdentityRepository identityRepository,
+  required GroupRepository groupRepository,
+  required GroupMediaReliabilityConfigBuilder groupConfigBuilder,
+  required GroupMessageRepository groupMessageRepository,
+  required MediaAttachmentRepository mediaAttachmentRepository,
+  required MediaFileManager mediaFileManager,
+  required AudioRecorderService audioRecorderService,
+  required GroupMediaReliabilityAuthorityMode authorityMode,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepository,
 }) async {
   final identity = await identityRepository.loadIdentity();
-  final senderTransport = p2pService.currentState.peerId?.trim();
+  final senderTransport = await _waitForLocalTransportPeerId(p2pService);
   if (identity == null || senderTransport == null || senderTransport.isEmpty) {
     throw StateError('group-media send identity discriminator failed');
   }
@@ -133,8 +226,20 @@ Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
     throw StateError('group-media authority policy rejected');
   }
 
+  // App startup can still be rejoining older groups after SQL and transport
+  // identity have converged. The native reliable-send path requires this
+  // exact target to be present in its in-memory topic/config/key maps, so make
+  // the established production join call an explicit fixture precondition.
+  await _ensureExactGroupTopicJoined(
+    bridge: bridge,
+    groupRepository: groupRepository,
+    groupId: groupId,
+    members: members,
+    groupConfigBuilder: groupConfigBuilder,
+  );
+
   await fixtureDirectory.create(recursive: true);
-  final specs = <({String kind, String mime, String? asset})>[
+  final allSpecs = <({String kind, String mime, String? asset})>[
     (
       kind: 'mp4',
       mime: 'video/mp4',
@@ -150,20 +255,17 @@ Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
       asset: 'integration_test/fixtures/received_media_egress_fixture.jpg',
     ),
   ];
-  if (messageIds.keys.toSet().length != 3 ||
-      attachmentIds.keys.toSet().length != 3 ||
-      !messageIds.keys.toSet().containsAll(const <String>{
-        'jpeg',
-        'mp4',
-        'voice',
-      }) ||
-      !attachmentIds.keys.toSet().containsAll(const <String>{
-        'jpeg',
-        'mp4',
-        'voice',
-      }) ||
-      messageIds.values.toSet().length != 3 ||
-      attachmentIds.values.toSet().length != 3) {
+  final specs = allSpecs
+      .where((spec) => fixtureKinds.contains(spec.kind))
+      .toList(growable: false);
+  if (fixtureKinds.isEmpty ||
+      specs.length != fixtureKinds.length ||
+      messageIds.keys.toSet().length != fixtureKinds.length ||
+      attachmentIds.keys.toSet().length != fixtureKinds.length ||
+      !messageIds.keys.toSet().containsAll(fixtureKinds) ||
+      !attachmentIds.keys.toSet().containsAll(fixtureKinds) ||
+      messageIds.values.toSet().length != fixtureKinds.length ||
+      attachmentIds.values.toSet().length != fixtureKinds.length) {
     throw StateError('group-media fixture IDs are incomplete or reused');
   }
 
@@ -372,7 +474,24 @@ Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
             SendGroupMessageResult.success,
             SendGroupMessageResult.successNoPeers,
           }.contains(result.$1)) {
-        throw StateError('group-media ${spec.kind} publication failed');
+        final disposition = groupMediaReliabilityPublicationDisposition(
+          result: result.$1,
+          message: result.$2,
+          expectedMessageId: messageId,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MEDIA_RELIABILITY_PUBLICATION_REJECTED',
+          details: {'disposition': disposition},
+        );
+        // The endpoint host polls its result file and immediately begins
+        // cleanup. Keep this debug-only failure path alive for one logcat
+        // collection interval so the causal GROUP_SEND_MSG_TIMING event and
+        // this closed-domain disposition are retained before process stop.
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        throw StateError(
+          'group-media ${spec.kind} $disposition publication failed',
+        );
       }
       publications[spec.kind] = (publications[spec.kind] ?? 0) + 1;
       try {
@@ -402,6 +521,64 @@ Future<Map<String, Object?>> sendGroupMediaReliabilityFixtures({
     'uploadsPerBlob': uploads,
     'publicationsPerMessage': publications,
   };
+}
+
+String groupMediaReliabilityPublicationDisposition({
+  required SendGroupMessageResult result,
+  required GroupMessage? message,
+  required String expectedMessageId,
+}) {
+  if (result != SendGroupMessageResult.error) return result.name;
+  if (message == null) return 'error_no_message';
+  if (message.id != expectedMessageId) return 'error_wrong_message';
+  return switch (message.status) {
+    'sending' => 'error_sending',
+    'failed' => 'error_failed',
+    'pending' => 'error_pending',
+    GroupMessage.statusQueuedOffline => 'error_queued_offline',
+    'sent' => 'error_sent',
+    _ => 'error_other',
+  };
+}
+
+Future<String?> _waitForLocalTransportPeerId(P2PService p2pService) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 20));
+  while (DateTime.now().isBefore(deadline)) {
+    final peerId = p2pService.currentState.peerId?.trim();
+    if (peerId != null && peerId.isNotEmpty) return peerId;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+  final peerId = p2pService.currentState.peerId?.trim();
+  return peerId == null || peerId.isEmpty ? null : peerId;
+}
+
+Future<void> _ensureExactGroupTopicJoined({
+  required Bridge bridge,
+  required GroupRepository groupRepository,
+  required String groupId,
+  required List<GroupMember> members,
+  required GroupMediaReliabilityConfigBuilder groupConfigBuilder,
+}) async {
+  final group = await groupRepository.getGroup(groupId);
+  final key = await groupRepository.getLatestKey(groupId);
+  if (group == null || key == null) {
+    throw StateError('group-media exact topic lacks persisted authority');
+  }
+  await callGroupJoinWithConfig(
+    bridge,
+    groupId: groupId,
+    groupConfig: groupConfigBuilder(group, members),
+    groupKey: key.encryptedKey,
+    keyEpoch: key.keyGeneration,
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_MEDIA_RELIABILITY_EXACT_TOPIC_READY',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'keyEpoch': key.keyGeneration,
+    },
+  );
 }
 
 Future<Map<String, Object?>> probeGroupMediaReliabilityRoleDatabase({

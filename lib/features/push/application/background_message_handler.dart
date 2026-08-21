@@ -79,10 +79,26 @@ const Duration _productionBackgroundStorageAggregateDeadline = Duration(
   seconds: 8,
 );
 const Duration _productionBackgroundStoragePhaseDeadline = Duration(seconds: 2);
+// Plan 393 TC-393-06 measured a 175 ms profile-AOT downstream native-entry
+// tail. `max(existing 2 s phase, measured tail + 500 ms)` therefore freezes at
+// 2 s. The retained, APK-bound receipt lives under
+// build/plan393/g21-profile-aot-measurement.
+const Duration _productionBackgroundStorageDisplayEligibilityReserve = Duration(
+  seconds: 2,
+);
+const bool _backgroundStorageG21MeasurementBuild = bool.fromEnvironment(
+  'MKNOON_NOTIFICATION_G21_MEASUREMENT',
+);
+const bool _compiledPlan393G30Diagnostics = bool.fromEnvironment(
+  'E2E_TEST_MODE',
+);
+bool _plan393G30DiagnosticsEnabled = _compiledPlan393G30Diagnostics;
 Duration _backgroundStorageAggregateDeadline =
     _productionBackgroundStorageAggregateDeadline;
 Duration _backgroundStoragePhaseDeadline =
     _productionBackgroundStoragePhaseDeadline;
+Duration _backgroundStorageDisplayEligibilityReserve =
+    _productionBackgroundStorageDisplayEligibilityReserve;
 BackgroundStorageLivenessJournal _backgroundStorageLivenessJournal =
     BackgroundStorageLivenessJournal.mobileDefault();
 typedef BackgroundStorageMonotonicClock = Duration Function();
@@ -150,6 +166,11 @@ final class _BackgroundStorageDeadline {
     return value.isNegative ? Duration.zero : value;
   }
 
+  Duration get remaining {
+    final value = aggregate - elapsed;
+    return value.isNegative ? Duration.zero : value;
+  }
+
   Duration get _phaseElapsed {
     final startedAt = _phaseStartedAt;
     if (startedAt == null) return Duration.zero;
@@ -184,18 +205,84 @@ final class _BackgroundStorageDeadline {
       ),
     );
   }
+
+  /// Measurement-only escape hatch for G21. The aggregate remains the hard
+  /// stop; only the ordinary per-phase ceiling is omitted so a successful
+  /// eligibility read and its downstream native-entry tail can be observed.
+  Future<T> runWithRawAggregateRemainder<T>(
+    String phaseName,
+    Future<T> Function() action,
+  ) {
+    if (!enabled) return action();
+    _phaseStartedAt = _elapsed();
+    final bound = remaining;
+    if (bound <= Duration.zero) {
+      throw BackgroundStorageDeadlineExceeded(
+        phase: phaseName,
+        elapsed: elapsed,
+        phaseElapsed: _phaseElapsed,
+        budget: Duration.zero,
+      );
+    }
+    return action().timeout(
+      bound,
+      onTimeout: () => throw BackgroundStorageDeadlineExceeded(
+        phase: phaseName,
+        elapsed: elapsed,
+        phaseElapsed: _phaseElapsed,
+        budget: bound,
+      ),
+    );
+  }
+
+  /// Gives the policy-complete eligibility read the aggregate remainder after
+  /// preserving a fixed, evidence-backed tail for native entry. No sibling
+  /// phase calls this method, and [aggregate] remains the hard stop.
+  Future<T> runWithAggregateReserve<T>(
+    String phaseName, {
+    required Duration reserve,
+    required Future<T> Function() action,
+  }) {
+    if (!enabled) return action();
+    _phaseStartedAt = _elapsed();
+    final aggregateRemaining = remaining;
+    final bound = aggregateRemaining - reserve;
+    if (bound <= Duration.zero) {
+      throw BackgroundStorageDeadlineExceeded(
+        phase: phaseName,
+        elapsed: elapsed,
+        phaseElapsed: _phaseElapsed,
+        budget: Duration.zero,
+      );
+    }
+    return action().timeout(
+      bound,
+      onTimeout: () => throw BackgroundStorageDeadlineExceeded(
+        phase: phaseName,
+        elapsed: elapsed,
+        phaseElapsed: _phaseElapsed,
+        budget: bound,
+      ),
+    );
+  }
 }
 
 @visibleForTesting
 void debugSetBackgroundStorageDeadlineDurations({
   required Duration aggregate,
   required Duration phase,
+  Duration? displayEligibilityReserve,
 }) {
-  if (aggregate <= Duration.zero || phase <= Duration.zero) {
+  if (aggregate <= Duration.zero ||
+      phase <= Duration.zero ||
+      (displayEligibilityReserve != null &&
+          displayEligibilityReserve <= Duration.zero)) {
     throw ArgumentError('background storage deadlines must be positive');
   }
   _backgroundStorageAggregateDeadline = aggregate;
   _backgroundStoragePhaseDeadline = phase;
+  _backgroundStorageDisplayEligibilityReserve =
+      displayEligibilityReserve ?? phase;
 }
 
 @visibleForTesting
@@ -203,6 +290,8 @@ void debugResetBackgroundStorageDeadlineDurations() {
   _backgroundStorageAggregateDeadline =
       _productionBackgroundStorageAggregateDeadline;
   _backgroundStoragePhaseDeadline = _productionBackgroundStoragePhaseDeadline;
+  _backgroundStorageDisplayEligibilityReserve =
+      _productionBackgroundStorageDisplayEligibilityReserve;
 }
 
 @visibleForTesting
@@ -228,6 +317,16 @@ void debugSetBackgroundStorageMonotonicClockFactory(
 @visibleForTesting
 void debugResetBackgroundStorageMonotonicClockFactory() {
   _backgroundStorageMonotonicClockFactory = _newBackgroundStorageStopwatchClock;
+}
+
+@visibleForTesting
+void debugSetPlan393G30DiagnosticsEnabled(bool enabled) {
+  _plan393G30DiagnosticsEnabled = enabled;
+}
+
+@visibleForTesting
+void debugResetPlan393G30DiagnosticsEnabled() {
+  _plan393G30DiagnosticsEnabled = _compiledPlan393G30Diagnostics;
 }
 
 @visibleForTesting
@@ -666,6 +765,39 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     enabled: defaultTargetPlatform == TargetPlatform.android,
     elapsed: _backgroundStorageMonotonicClockFactory(),
   );
+  Duration? g21EligibilityStartElapsed;
+  Duration? g21RemainingAtEligibilityStart;
+  Duration? g21EligibilityCompletedElapsed;
+  Duration? g21NativeEntryCompletedElapsed;
+  final g21MeasurementApplies =
+      _backgroundStorageG21MeasurementBuild &&
+      _trimToNull(message.data['type']) == 'new_message';
+
+  Future<void> recordG21Measurement(
+    BackgroundStorageG21TerminalOutcome outcome,
+  ) async {
+    if (!g21MeasurementApplies) return;
+    final start = g21EligibilityStartElapsed;
+    final remaining = g21RemainingAtEligibilityStart;
+    final completed = g21EligibilityCompletedElapsed;
+    if (start == null || remaining == null || completed == null) return;
+    final nativeCompleted = g21NativeEntryCompletedElapsed;
+    if (outcome == BackgroundStorageG21TerminalOutcome.shown &&
+        nativeCompleted == null) {
+      return;
+    }
+    await _backgroundStorageLivenessJournal.recordG21Measurement(
+      kind: BackgroundStorageMessageKind.directMessage,
+      aggregateElapsedAtEligibilityStart: start,
+      remainingAtEligibilityStart: remaining,
+      eligibilityElapsed: completed - start,
+      nativeEntryTail: nativeCompleted == null
+          ? Duration.zero
+          : nativeCompleted - completed,
+      terminalOutcome: outcome,
+    );
+  }
+
   Future<void> markVisibleRemoteAnnouncement() async {
     final target = routeTarget;
     if (target == null) {
@@ -717,10 +849,22 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   late final PushFallbackNotificationDisplayEligibility displayEligibility;
   try {
-    displayEligibility = await storageDeadline.run(
-      'display_eligibility',
-      () => _backgroundPushNotificationDisplayEligibilityResolver(message),
-    );
+    if (g21MeasurementApplies) {
+      g21EligibilityStartElapsed = storageDeadline.elapsed;
+      g21RemainingAtEligibilityStart = storageDeadline.remaining;
+      displayEligibility = await storageDeadline.runWithRawAggregateRemainder(
+        'display_eligibility',
+        () => _backgroundPushNotificationDisplayEligibilityResolver(message),
+      );
+      g21EligibilityCompletedElapsed = storageDeadline.elapsed;
+    } else {
+      displayEligibility = await storageDeadline.runWithAggregateReserve(
+        'display_eligibility',
+        reserve: _backgroundStorageDisplayEligibilityReserve,
+        action: () =>
+            _backgroundPushNotificationDisplayEligibilityResolver(message),
+      );
+    }
   } on BackgroundStorageDeadlineExceeded catch (error) {
     await _recordBackgroundStorageDeferred(
       message,
@@ -730,6 +874,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     return;
   }
   if (!displayEligibility.shouldDisplay) {
+    await recordG21Measurement(
+      BackgroundStorageG21TerminalOutcome.policySuppressed,
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
@@ -1070,6 +1217,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           );
     DurableLocalNotificationEffectContext? durableEffectContext;
     AppVisibilitySuppressionReader? durableFinalVisibility;
+    final groupComparand = fallback.groupComparand;
     final requiresDurableEffect =
         defaultTargetPlatform == TargetPlatform.android &&
         resolvedEventIdentity != null &&
@@ -1173,19 +1321,27 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         silent: publicationSilent,
         plugin: _backgroundNotificationsPlugin,
       );
-      publishedSilently = effectiveSilent;
-      return _backgroundNotificationsPlugin.show(
-          notificationId,
-          fallback.title,
-          fallback.body,
-          mknoonConversationNotificationDetails(
-            conversationKey: conversationKey,
+      final preservePrimaryAndroidChannel =
+          await shouldPreserveMknoonPrimaryChannelForSilentUpdate(
             silent: effectiveSilent,
-            autoCancel: contentMetadata == null,
-            snapshot: fallback.snapshot,
-          ),
-          payload: nativePayload,
-        );
+            notificationId: notificationId,
+            plugin: _backgroundNotificationsPlugin,
+          );
+      publishedSilently = effectiveSilent;
+      await _backgroundNotificationsPlugin.show(
+        notificationId,
+        fallback.title,
+        fallback.body,
+        mknoonConversationNotificationDetails(
+          conversationKey: conversationKey,
+          silent: effectiveSilent,
+          preservePrimaryAndroidChannel: preservePrimaryAndroidChannel,
+          autoCancel: contentMetadata == null,
+          snapshot: fallback.snapshot,
+        ),
+        payload: nativePayload,
+      );
+      g21NativeEntryCompletedElapsed ??= storageDeadline.elapsed;
     }
 
     Future<void> publishPrepared({required bool publicationSilent}) async {
@@ -1197,13 +1353,106 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         conversationKey: conversationKey,
         notificationId: notificationId,
         metadata: contentMetadata,
-        retireCurrent: () =>
-            _backgroundNotificationsPlugin.cancel(notificationId),
         replace: () => show(publicationSilent: publicationSilent),
       );
     }
 
     DurableNotificationClaimedPublicationResult? claimedPublication;
+    Future<bool> authorizeNondurableNativeEntry() async {
+      final metadata = contentMetadata;
+      final target = routeTarget;
+      if (metadata == null || target == null) return true;
+
+      if (target.kind == NotificationRouteTargetKind.group) {
+        final comparand = groupComparand;
+        if (comparand != null) {
+          final metadataMatches = switch (comparand) {
+            BackgroundGroupMessageNotificationComparand messageComparand =>
+              metadata.kind == ConversationNotificationContentKind.message &&
+                  metadata.eventIdentity == messageComparand.messageId,
+            BackgroundGroupReactionNotificationComparand reactionComparand =>
+              metadata.kind == ConversationNotificationContentKind.reaction &&
+                  metadata.eventIdentity ==
+                      reactionComparand.notificationEventIdentity,
+            BackgroundProvisionalGroupReactionNotificationComparand
+            reactionComparand =>
+              metadata.kind == ConversationNotificationContentKind.reaction &&
+                  metadata.eventIdentity ==
+                      reactionComparand.notificationEventIdentity,
+          };
+          if (!metadataMatches) return false;
+          final remainingBeforeValidation = storageDeadline.remaining;
+          try {
+            final decision = await storageDeadline.run(
+              'group_post_show_validation',
+              () => _backgroundGroupNotificationPostShowValidator(comparand),
+            );
+            if (decision == BackgroundGroupNotificationPostShowDecision.read ||
+                decision ==
+                    BackgroundGroupNotificationPostShowDecision.retire) {
+              return false;
+            }
+          } on BackgroundStorageDeadlineExceeded catch (error) {
+            await _recordBackgroundStorageDeferred(
+              message,
+              error,
+              outcome: 'storage_deferred',
+            );
+            // An ordinary sibling-phase timeout leaves canonical state
+            // unknown, which must fail toward notification. Only a phase
+            // bounded by the aggregate remainder may enforce the hard stop.
+            if (remainingBeforeValidation <= storageDeadline.phase) rethrow;
+          } catch (_) {
+            // Unknown canonical facts fail toward notification.
+          }
+        }
+      } else if (target.kind == NotificationRouteTargetKind.conversation) {
+        final peerId = _trimToNull(target.peerId);
+        if (peerId != null) {
+          final remainingBeforeValidation = storageDeadline.remaining;
+          try {
+            final decision = await storageDeadline.run(
+              'direct_post_show_validation',
+              () => _validateBackgroundDirectNotificationAfterShow(
+                peerId: peerId,
+                metadata: metadata,
+              ),
+            );
+            if (decision == BackgroundDirectNotificationPostShowDecision.read ||
+                decision ==
+                    BackgroundDirectNotificationPostShowDecision.retire) {
+              return false;
+            }
+          } on BackgroundStorageDeadlineExceeded catch (error) {
+            await _recordBackgroundStorageDeferred(
+              message,
+              error,
+              outcome: 'storage_deferred',
+            );
+            // Preserve the aggregate hard stop without converting an
+            // ordinary canonical-read timeout into false suppression.
+            if (remainingBeforeValidation <= storageDeadline.phase) rethrow;
+          } catch (_) {
+            // Unknown canonical facts fail toward notification.
+          }
+        }
+      }
+
+      try {
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: target.kind == NotificationRouteTargetKind.group
+              ? AppVisibilityConversationLane.group
+              : AppVisibilityConversationLane.direct,
+          value: conversationKey,
+        );
+        final visibility = await _backgroundAppVisibilityResolver();
+        return !(await visibility.evaluate(identity)).maySuppress;
+      } catch (_) {
+        // A stale/missing native visibility snapshot cannot erase an alert.
+        return true;
+      }
+    }
+
     Future<bool> publishAtDurableFinalBarrier(
       AuthorizeDurableLocalNotificationNativeEntry authorize,
     ) async {
@@ -1249,7 +1498,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     }
 
     Future<void> publishAtNativeBoundary() async {
-      final entered = await publishAtDurableFinalBarrier(() async => true);
+      final entered = await publishAtDurableFinalBarrier(
+        durableEffectContext == null
+            ? authorizeNondurableNativeEntry
+            : () async => true,
+      );
       if (!entered) throw const _BackgroundNotificationClaimOwnershipLost();
     }
 
@@ -1296,14 +1549,24 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       } else if (contentMetadata == null) {
         await publishAtNativeBoundary();
       } else {
-        await notificationIdRegistry.replaceContent(
+        final replacement = await notificationIdRegistry.replaceContent(
           conversationKey: conversationKey,
           notificationId: notificationId,
           metadata: contentMetadata,
-          retireCurrent: () =>
-              _backgroundNotificationsPlugin.cancel(notificationId),
           replace: publishAtNativeBoundary,
         );
+        if (replacement ==
+            ConversationNotificationContentReplacementResult.alreadyCurrent) {
+          await releaseProvisionalNotificationOwners(
+            reason: 'content_event_already_current',
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'NOTIFICATION_DUPLICATE_CARD_PRESERVED',
+            details: const {'reason': 'same_content_event'},
+          );
+          return;
+        }
       }
     } else {
       // Preserve the existing Apple/desktop ordering. Their coordination
@@ -1414,7 +1677,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       }
     }
     var postShowStorageExpired = false;
-    final groupComparand = fallback.groupComparand;
     if (durableEffectContext == null &&
         contentMetadata != null &&
         groupComparand != null) {
@@ -1575,6 +1837,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             !notificationClaimCommitted)) {
       await markVisibleRemoteAnnouncement();
     }
+
+    await recordG21Measurement(BackgroundStorageG21TerminalOutcome.shown);
 
     emitFlowEvent(
       layer: 'FL',
@@ -1801,24 +2065,123 @@ _validateBackgroundDirectNotificationAfterShow({
     return BackgroundDirectNotificationPostShowDecision.unknown;
   }
   Database? db;
+  var phase = 'secure_key';
+  var handleState = 'not_requested';
+  BackgroundDirectNotificationPostShowDecision? decision;
+  Object? failure;
+  StackTrace? failureStack;
+  String? failurePhase;
+  String? failureHandleState;
   try {
     final key = await FlutterSecureKeyStore().read(_backgroundDbEncryptionKey);
     if (_trimToNull(key) == null) {
-      return BackgroundDirectNotificationPostShowDecision.unknown;
+      decision = BackgroundDirectNotificationPostShowDecision.unknown;
+    } else {
+      phase = 'open';
+      handleState = 'requested_read_only_non_singleton';
+      final dbPath = await getDatabasesPath();
+      db = await openBackgroundIdentityDbReadTolerant(
+        path: '$dbPath/identity.db',
+        key: key!,
+      );
+      handleState = 'acquired_read_only_non_singleton';
+      phase = 'query';
+      // TC-393-14 / G30: this await is the ownership boundary. Returning the
+      // Future from inside a try/finally runs the close before the validator's
+      // later SQL reads complete, which produced the observed database_closed
+      // between contact lookup and read-ack lookup on Android.
+      decision = await validateBackgroundDirectNotificationAfterShowInDatabase(
+        db,
+        peerId: peerId,
+        metadata: metadata,
+      );
     }
-    final dbPath = await getDatabasesPath();
-    db = await openBackgroundIdentityDbReadTolerant(
-      path: '$dbPath/identity.db',
-      key: key!,
-    );
-    return validateBackgroundDirectNotificationAfterShowInDatabase(
-      db,
-      peerId: peerId,
-      metadata: metadata,
-    );
+  } catch (error, stackTrace) {
+    failure = error;
+    failureStack = stackTrace;
+    failurePhase = phase;
+    failureHandleState = handleState;
   } finally {
-    await db?.close();
+    if (db != null) {
+      phase = 'close';
+      handleState = 'close_attempted';
+      try {
+        await db.close();
+        handleState = 'close_completed';
+      } catch (error, stackTrace) {
+        if (failure == null) {
+          failure = error;
+          failureStack = stackTrace;
+          failurePhase = phase;
+          failureHandleState = handleState;
+        }
+      }
+    }
   }
+  final capturedFailure = failure;
+  if (capturedFailure != null) {
+    _emitPlan393G30Diagnostic(
+      phase: failurePhase ?? phase,
+      sqfliteCode: _sanitizedPlan393SqfliteCode(capturedFailure),
+      independentHandleState: failureHandleState ?? handleState,
+      validatorDisposition: 'not_completed',
+      outcome: 'failure',
+    );
+    Error.throwWithStackTrace(
+      capturedFailure,
+      failureStack ?? StackTrace.current,
+    );
+  }
+  final capturedDecision =
+      decision ?? BackgroundDirectNotificationPostShowDecision.unknown;
+  final effectiveDisposition =
+      capturedDecision == BackgroundDirectNotificationPostShowDecision.unknown
+      ? BackgroundDirectNotificationPostShowDecision.keep
+      : capturedDecision;
+  _emitPlan393G30Diagnostic(
+    phase: 'complete',
+    sqfliteCode: 'none',
+    independentHandleState: handleState,
+    validatorDisposition: effectiveDisposition.name,
+    outcome: 'completed',
+  );
+  return effectiveDisposition;
+}
+
+void _emitPlan393G30Diagnostic({
+  required String phase,
+  required String sqfliteCode,
+  required String independentHandleState,
+  required String validatorDisposition,
+  required String outcome,
+}) {
+  if (!_plan393G30DiagnosticsEnabled) return;
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'PUSH_BACKGROUND_DIRECT_VALIDATOR_DIAGNOSTIC',
+    details: <String, Object?>{
+      'phase': phase,
+      'sqfliteCode': sqfliteCode,
+      'independentHandleState': independentHandleState,
+      'validatorDisposition': validatorDisposition,
+      'outcome': outcome,
+    },
+  );
+}
+
+String _sanitizedPlan393SqfliteCode(Object error) {
+  final normalized = error.toString().toLowerCase();
+  if (normalized.contains('database_closed') ||
+      normalized.contains('database closed')) {
+    return 'database_closed';
+  }
+  if (normalized.contains('database_locked') ||
+      normalized.contains('database locked')) {
+    return 'database_locked';
+  }
+  if (normalized.contains('timeout')) return 'timeout';
+  if (error is DatabaseException) return 'sqflite_other';
+  return 'non_sqflite';
 }
 
 /// Read-only FlutterFire H0 seam. Unknown canonical materialization remains
@@ -2299,7 +2662,11 @@ _readFinalBackgroundCanonicalDisposition(
       if (sameIdentity && current.hasCanonicalRetirementProof) {
         return DurableLocalNotificationCanonicalDisposition.cancelled;
       }
-      if (!sameIdentity || !_sameDirectDisplayAuthority(direct, current)) {
+      if (!sameIdentity ||
+          !backgroundDirectDisplayAuthorityRemainsCurrentForFinalRead(
+            expected: direct,
+            current: current,
+          )) {
         return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
       }
       return switch (decision) {
@@ -2338,7 +2705,11 @@ _readFinalBackgroundCanonicalDisposition(
         retirementCorrelation == authority.eventCorrelation) {
       return DurableLocalNotificationCanonicalDisposition.cancelled;
     }
-    if (!sameIdentity || !_sameGroupDisplayAuthority(group, current)) {
+    if (!sameIdentity ||
+        !backgroundGroupDisplayAuthorityRemainsCurrentForFinalRead(
+          expected: group,
+          current: current,
+        )) {
       return DurableLocalNotificationCanonicalDisposition.retryableUnknown;
     }
     return switch (groupDecision) {
@@ -2358,12 +2729,25 @@ _readFinalBackgroundCanonicalDisposition(
   }
 }
 
-bool _sameDirectDisplayAuthority(
-  DirectNotificationDisplayOutboxEntry expected,
-  DirectNotificationDisplayOutboxEntry current,
-) =>
+/// The final SQL authority remains exact when the only concurrent writer was
+/// the losing live projection recording a retry. Revision and retry-count
+/// deltas must match, so canonical retirement or identity mutation cannot be
+/// mistaken for harmless retry bookkeeping.
+@visibleForTesting
+bool backgroundDirectDisplayAuthorityRemainsCurrentForFinalRead({
+  required DirectNotificationDisplayOutboxEntry expected,
+  required DirectNotificationDisplayOutboxEntry current,
+}) =>
     _sameDirectDisplayAuthorityIdentity(expected, current) &&
-    expected.revision == current.revision;
+    (expected.revision == current.revision ||
+        _isNotificationDisplayRetryOnlyRevisionAdvance(
+          expectedRevision: expected.revision,
+          currentRevision: current.revision,
+          expectedRetryCount: expected.retryCount,
+          currentRetryCount: current.retryCount,
+          currentLastErrorCode: current.lastErrorCode,
+          currentNextAttemptAt: current.nextAttemptAt,
+        ));
 
 bool _sameDirectDisplayAuthorityIdentity(
   DirectNotificationDisplayOutboxEntry expected,
@@ -2380,12 +2764,23 @@ bool _sameDirectDisplayAuthorityIdentity(
     expected.reactionTombstone == current.reactionTombstone &&
     expected.readiness == current.readiness;
 
-bool _sameGroupDisplayAuthority(
-  GroupNotificationDisplayOutboxEntry expected,
-  GroupNotificationDisplayOutboxEntry current,
-) =>
+/// Group counterpart of
+/// [backgroundDirectDisplayAuthorityRemainsCurrentForFinalRead].
+@visibleForTesting
+bool backgroundGroupDisplayAuthorityRemainsCurrentForFinalRead({
+  required GroupNotificationDisplayOutboxEntry expected,
+  required GroupNotificationDisplayOutboxEntry current,
+}) =>
     _sameGroupDisplayAuthorityIdentity(expected, current) &&
-    expected.revision == current.revision;
+    (expected.revision == current.revision ||
+        _isNotificationDisplayRetryOnlyRevisionAdvance(
+          expectedRevision: expected.revision,
+          currentRevision: current.revision,
+          expectedRetryCount: expected.retryCount,
+          currentRetryCount: current.retryCount,
+          currentLastErrorCode: current.lastErrorCode,
+          currentNextAttemptAt: current.nextAttemptAt,
+        ));
 
 bool _sameGroupDisplayAuthorityIdentity(
   GroupNotificationDisplayOutboxEntry expected,
@@ -2401,6 +2796,24 @@ bool _sameGroupDisplayAuthorityIdentity(
     expected.reactionAction == current.reactionAction &&
     expected.reactionTombstone == current.reactionTombstone &&
     expected.readiness == current.readiness;
+
+bool _isNotificationDisplayRetryOnlyRevisionAdvance({
+  required int expectedRevision,
+  required int currentRevision,
+  required int expectedRetryCount,
+  required int currentRetryCount,
+  required String? currentLastErrorCode,
+  required String? currentNextAttemptAt,
+}) {
+  final revisionAdvance = currentRevision - expectedRevision;
+  final retryAdvance = currentRetryCount - expectedRetryCount;
+  if (revisionAdvance <= 0 || revisionAdvance != retryAdvance) return false;
+  if (_trimToNull(currentNextAttemptAt) == null) return false;
+  return switch (currentLastErrorCode) {
+    'display_failed' || 'claim_pending' || 'state_unavailable' => true,
+    _ => false,
+  };
+}
 
 Future<void> _stageResolvedPushEnvelopeIfNeeded(
   RemoteMessage message,

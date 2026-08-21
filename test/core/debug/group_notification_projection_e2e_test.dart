@@ -1,4 +1,7 @@
 import 'package:flutter_app/core/debug/group_notification_projection_e2e.dart';
+import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -12,8 +15,13 @@ void main() {
       expect(request.role, 'physical_author');
       expect(request.groupName, 'Plan330A-Abc123');
       expect(request.kind, 'group');
-      expect(request.messageIds.keys, <String>['jpeg', 'mp4', 'voice']);
-      expect(request.attachmentIds.values.toSet(), hasLength(3));
+      expect(request.messageIds.keys, <String>[
+        'jpeg',
+        'mp4',
+        'voice',
+        'killed_jpeg',
+      ]);
+      expect(request.attachmentIds.values.toSet(), hasLength(4));
       expect(request.stepId, config['stepId']);
     });
 
@@ -97,6 +105,111 @@ void main() {
         );
       }
     });
+
+    test('TC-393-09 accepts only the fixed killed JPEG phase and role', () {
+      final config = _command();
+      config['phase'] = groupNotificationProjectionSendKilledJpegPhase;
+      config['role'] = 'emulator_author';
+      config['stepId'] =
+          'plan330-$groupNotificationProjectionSendKilledJpegPhase-group-'
+          'run-0123456789abcdef';
+
+      final request = GroupNotificationProjectionE2ERequest.fromConfig(config);
+
+      expect(request.phase, groupNotificationProjectionSendKilledJpegPhase);
+      expect(
+        request.messageIds[groupNotificationProjectionKilledJpegFixtureKey],
+        isNotEmpty,
+      );
+      final genericMutation = Map<String, dynamic>.from(config)
+        ..['kind'] = 'jpeg'
+        ..['stepId'] =
+            'plan330-$groupNotificationProjectionSendKilledJpegPhase-jpeg-'
+            'run-0123456789abcdef';
+      expect(
+        () => GroupNotificationProjectionE2ERequest.fromConfig(genericMutation),
+        throwsFormatException,
+      );
+    });
+
+    test('legacy media sender excludes the distinct killed JPEG fixture', () {
+      final request = GroupNotificationProjectionE2ERequest.fromConfig(
+        _command(),
+      );
+
+      final messageIds = groupNotificationProjectionMediaFixtureSubset(
+        request.messageIds,
+      );
+      final attachmentIds = groupNotificationProjectionMediaFixtureSubset(
+        request.attachmentIds,
+      );
+
+      expect(messageIds.keys, groupNotificationProjectionMediaFixtureKeys);
+      expect(attachmentIds.keys, groupNotificationProjectionMediaFixtureKeys);
+      expect(
+        messageIds,
+        isNot(contains(groupNotificationProjectionKilledJpegFixtureKey)),
+      );
+      expect(
+        attachmentIds,
+        isNot(contains(groupNotificationProjectionKilledJpegFixtureKey)),
+      );
+    });
+
+    test('publication diagnostics disclose only a fixed result vocabulary', () {
+      final receipt = groupNotificationProjectionE2EFailureReceipt(
+        config: _command(),
+        error: StateError(
+          'group-media mp4 authorityUnavailable publication failed',
+        ),
+      );
+
+      expect(receipt['errorCode'], 'media_publication_authorityUnavailable');
+      expect(receipt.toString(), isNot(contains('group-media')));
+    });
+
+    test(
+      'publication disposition separates persistence from delivery errors',
+      () {
+        final now = DateTime.utc(2026, 8, 21);
+        final optimistic = GroupMessage(
+          id: 'message-id',
+          groupId: 'group-id',
+          senderPeerId: 'sender-id',
+          senderUsername: 'Sender',
+          text: '',
+          timestamp: now,
+          status: 'sending',
+          isIncoming: false,
+          createdAt: now,
+        );
+
+        expect(
+          groupMediaReliabilityPublicationDisposition(
+            result: SendGroupMessageResult.error,
+            message: null,
+            expectedMessageId: optimistic.id,
+          ),
+          'error_no_message',
+        );
+        expect(
+          groupMediaReliabilityPublicationDisposition(
+            result: SendGroupMessageResult.error,
+            message: optimistic,
+            expectedMessageId: optimistic.id,
+          ),
+          'error_sending',
+        );
+        expect(
+          groupMediaReliabilityPublicationDisposition(
+            result: SendGroupMessageResult.error,
+            message: optimistic.copyWith(status: 'failed'),
+            expectedMessageId: optimistic.id,
+          ),
+          'error_failed',
+        );
+      },
+    );
   });
 }
 
@@ -117,11 +230,13 @@ Map<String, dynamic> _command({String groupName = 'Plan330A-Abc123'}) {
       'jpeg': '11111111-1111-4111-8111-111111111111',
       'mp4': '22222222-2222-4222-8222-222222222222',
       'voice': '33333333-3333-4333-8333-333333333333',
+      'killed_jpeg': '77777777-7777-4777-8777-777777777777',
     },
     'attachmentIds': const <String, String>{
       'jpeg': '44444444-4444-4444-8444-444444444444',
       'mp4': '55555555-5555-4555-8555-555555555555',
       'voice': '66666666-6666-4666-8666-666666666666',
+      'killed_jpeg': '88888888-8888-4888-8888-888888888888',
     },
   };
 }

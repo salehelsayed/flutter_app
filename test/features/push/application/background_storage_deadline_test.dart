@@ -74,6 +74,11 @@ void main() {
     debugSetBackgroundStorageLivenessJournal(
       BackgroundStorageLivenessJournal(
         directoryResolver: () async => livenessJournalDirectory,
+        // This suite reads the breadcrumb as its assertion substrate. Keep the
+        // production 200 ms bound covered by the journal's own unit tests, but
+        // do not let a saturated multi-file groups run detach a still-writing
+        // test artifact just before the next case clears the directory.
+        maxCallerImpact: const Duration(seconds: 2),
       ),
     );
     ownerDirectory = Directory('${root.path}/owners')..createSync();
@@ -182,6 +187,169 @@ void main() {
     await remoteGate.clear();
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
+
+  test(
+    'TC-393-05 display eligibility reserves measured native-entry tail without policy bypass',
+    () async {
+      const aggregate = Duration(milliseconds: 1000);
+      const siblingPhase = Duration(milliseconds: 100);
+      const downstreamReserve = Duration(milliseconds: 250);
+
+      Future<void> runDelayedEligibility({
+        required String suffix,
+        required bool eligible,
+      }) async {
+        final clock = _FakeMonotonicClock();
+        debugSetBackgroundStorageMonotonicClockFactory(
+          () =>
+              () => clock.elapsed,
+        );
+        debugSetBackgroundStorageDeadlineDurations(
+          aggregate: aggregate,
+          phase: siblingPhase,
+          displayEligibilityReserve: downstreamReserve,
+        );
+        notificationCalls.clear();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver((_) async {
+          // Deliberately crosses the old 100 ms sibling ceiling. The fake
+          // monotonic jump represents an eligibility read close to its new
+          // upper bound while the real delay makes the old implementation
+          // causally RED rather than merely changing reported timestamps.
+          await Future<void>.delayed(const Duration(milliseconds: 140));
+          clock.advance(const Duration(milliseconds: 700));
+          return eligible
+              ? const PushFallbackNotificationDisplayEligibility.allow()
+              : const PushFallbackNotificationDisplayEligibility.suppressed(
+                  'policy_fixture',
+                );
+        });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(notificationsChannel, (call) async {
+              notificationCalls.add(call);
+              if (call.method == 'initialize') return true;
+              if (call.method == 'show') {
+                // This is the measured downstream tail the eligibility phase
+                // must leave available instead of consuming the aggregate.
+                clock.advance(const Duration(milliseconds: 200));
+              }
+              return null;
+            });
+        final message = RemoteMessage(
+          messageId: 'transport-g21-$suffix',
+          data: <String, dynamic>{
+            'type': 'group_message',
+            'groupId': 'group-g21-$suffix',
+            'message_id': 'event-g21-$suffix',
+            'preview_unavailable': '1',
+          },
+        );
+        await firebaseMessagingBackgroundHandler(
+          message,
+        ).timeout(observationBudget);
+        expect(
+          _notificationEffects(
+            notificationCalls,
+          ).where((call) => call.method == 'show'),
+          eligible ? hasLength(1) : isEmpty,
+        );
+        expect(
+          clock.elapsed,
+          eligible
+              ? const Duration(milliseconds: 900)
+              : const Duration(milliseconds: 700),
+          reason:
+              'eligible and policy-suppressed outcomes must both finish '
+              'inside the aggregate with the fixed tail preserved',
+        );
+      }
+
+      await runDelayedEligibility(suffix: 'eligible', eligible: true);
+      await runDelayedEligibility(suffix: 'ineligible', eligible: false);
+
+      final exhaustedClock = _FakeMonotonicClock();
+      debugSetBackgroundStorageMonotonicClockFactory(
+        () =>
+            () => exhaustedClock.elapsed,
+      );
+      debugSetBackgroundStorageDeadlineDurations(
+        aggregate: aggregate,
+        phase: siblingPhase,
+        displayEligibilityReserve: downstreamReserve,
+      );
+      notificationCalls.clear();
+      var exhaustedEligibilityCalls = 0;
+      debugSetBackgroundPushEnvelopeStager((entry) async {
+        staged.add(entry);
+        exhaustedClock.advance(const Duration(milliseconds: 800));
+      });
+      debugSetBackgroundPushNotificationDisplayEligibilityResolver((_) async {
+        exhaustedEligibilityCalls += 1;
+        return const PushFallbackNotificationDisplayEligibility.allow();
+      });
+      const exhausted = RemoteMessage(
+        messageId: 'transport-g21-exhausted',
+        data: <String, dynamic>{
+          'type': 'new_message',
+          'sender_id': 'peer-g21-exhausted',
+          'message_id': 'event-g21-exhausted',
+          'kem': 'kem-g21-exhausted',
+          'ciphertext': 'ciphertext-g21-exhausted',
+          'nonce': 'nonce-g21-exhausted',
+        },
+      );
+      await firebaseMessagingBackgroundHandler(
+        exhausted,
+      ).timeout(observationBudget);
+      expect(exhaustedEligibilityCalls, 0);
+      expect(_notificationEffects(notificationCalls), isEmpty);
+
+      // The widened eligibility method is narrow: preview resolution remains
+      // on the ordinary sibling phase ceiling.
+      final siblingClock = _FakeMonotonicClock();
+      debugSetBackgroundStorageMonotonicClockFactory(
+        () =>
+            () => siblingClock.elapsed,
+      );
+      debugSetBackgroundStorageDeadlineDurations(
+        aggregate: aggregate,
+        phase: siblingPhase,
+        displayEligibilityReserve: downstreamReserve,
+      );
+      debugSetBackgroundPushEnvelopeStager((entry) async => staged.add(entry));
+      debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+        (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+      );
+      notificationCalls.clear();
+      final heldPreview = Completer<BackgroundPushNotificationFallback>();
+      debugSetBackgroundPushNotificationResolver((_) => heldPreview.future);
+      const sibling = RemoteMessage(
+        messageId: 'transport-g21-sibling',
+        data: <String, dynamic>{
+          'type': 'group_message',
+          'groupId': 'group-g21-sibling',
+          'message_id': 'event-g21-sibling',
+          'preview_unavailable': '1',
+        },
+      );
+      final siblingHandler = firebaseMessagingBackgroundHandler(sibling);
+      try {
+        expect(
+          await _completesWithin(
+            siblingHandler,
+            const Duration(milliseconds: 400),
+          ),
+          isTrue,
+          reason: 'preview_resolution must retain the 100 ms sibling bound',
+        );
+        expect(_notificationEffects(notificationCalls), isEmpty);
+      } finally {
+        if (!heldPreview.isCompleted) {
+          heldPreview.complete(_groupFallback(sibling));
+        }
+        await siblingHandler.timeout(cleanupBudget);
+      }
+    },
+  );
 
   test('held initial direct staging fails closed before eligibility', () async {
     const message = RemoteMessage(
@@ -878,11 +1046,18 @@ void main() {
     final validatorEntered = Completer<void>();
     final releaseValidator =
         Completer<BackgroundGroupNotificationPostShowDecision>();
+    var validationCalls = 0;
     debugSetBackgroundGroupNotificationPostShowValidator((comparand) {
       expect(comparand, isA<BackgroundGroupMessageNotificationComparand>());
       final exact = comparand as BackgroundGroupMessageNotificationComparand;
       expect(exact.groupId, groupId);
       expect(exact.messageId, eventId);
+      validationCalls += 1;
+      if (validationCalls == 1) {
+        return Future<BackgroundGroupNotificationPostShowDecision>.value(
+          BackgroundGroupNotificationPostShowDecision.keep,
+        );
+      }
       if (!validatorEntered.isCompleted) validatorEntered.complete();
       return releaseValidator.future;
     });
@@ -890,9 +1065,15 @@ void main() {
     final handler = firebaseMessagingBackgroundHandler(message);
     try {
       await _awaitSignal(validatorEntered.future, 'group post-show validator');
+      expect(validationCalls, 2);
       final shown = _singleShownEnvelope(notificationCalls);
       expect(shown.conversationKey, 'group:$groupId');
       expect(shown.metadata.eventIdentity, eventId);
+      expect(
+        await _completesWithin(handler, observationBudget),
+        isTrue,
+        reason: 'post-show validation must return unknown at its phase bound',
+      );
       expect(
         await _storedMetadata(notificationIdRegistry, shown.conversationKey),
         shown.metadata,
@@ -905,11 +1086,6 @@ void main() {
         conversationKey: shown.conversationKey,
       );
 
-      expect(
-        await _completesWithin(handler, observationBudget),
-        isTrue,
-        reason: 'post-show validation must return unknown at its phase bound',
-      );
       expect(_cancelCount(notificationCalls), 1);
 
       releaseValidator.complete(
@@ -947,6 +1123,7 @@ void main() {
     );
     final secureReadEntered = Completer<void>();
     final releaseSecureRead = Completer<String?>();
+    var secureReadCalls = 0;
     final monotonicClock = _FakeMonotonicClock();
     debugSetBackgroundStorageMonotonicClockFactory(
       () =>
@@ -957,18 +1134,32 @@ void main() {
           final arguments = call.arguments as Map<Object?, Object?>?;
           if (call.method == 'read' &&
               arguments?['key'] == 'db_encryption_key') {
+            secureReadCalls += 1;
+            if (secureReadCalls == 1) return null;
             if (!secureReadEntered.isCompleted) secureReadEntered.complete();
             return releaseSecureRead.future;
           }
           return null;
         });
+    debugSetBackgroundDurableLocalNotificationEffectResolver(
+      ({required routeTarget, required fallback, required metadata}) async =>
+          null,
+    );
+    addTearDown(debugResetBackgroundDurableLocalNotificationEffectResolver);
 
     final handler = firebaseMessagingBackgroundHandler(message);
     try {
       await _awaitSignal(secureReadEntered.future, 'direct post-show read');
+      expect(secureReadCalls, 2);
       final shown = _singleShownEnvelope(notificationCalls);
       expect(shown.conversationKey, peerId);
       expect(shown.metadata.eventIdentity, eventId);
+      expect(
+        await _completesWithin(handler, observationBudget),
+        isTrue,
+        reason:
+            'direct post-show storage must return unknown at its phase bound',
+      );
       expect(
         await _storedMetadata(notificationIdRegistry, shown.conversationKey),
         shown.metadata,
@@ -981,11 +1172,6 @@ void main() {
         conversationKey: shown.conversationKey,
       );
 
-      expect(
-        await _completesWithin(handler, observationBudget),
-        isTrue,
-        reason: 'direct post-show storage must return unknown at its bound',
-      );
       expect(_cancelCount(notificationCalls), 1);
 
       releaseSecureRead.complete(null);
@@ -1233,79 +1419,211 @@ void main() {
   // three times cannot pass.
   // -------------------------------------------------------------------------
 
-  test('phase-local elapsed and the applied budget are exact on both throw branches', () async {
-    // The field contract itself. At HEAD `BackgroundStorageDeadlineExceeded`
-    // carries neither member, so this file does not compile — the missing
-    // field IS the contract.
-    const probe = BackgroundStorageDeadlineExceeded(
-      phase: 'preview_resolution',
-      elapsed: Duration(milliseconds: 637),
-      phaseElapsed: Duration(milliseconds: 137),
-      budget: Duration(milliseconds: 300),
-    );
-    expect(probe.elapsed, const Duration(milliseconds: 637));
-    expect(probe.phaseElapsed, const Duration(milliseconds: 137));
-    expect(probe.budget, const Duration(milliseconds: 300));
+  test(
+    'phase-local elapsed and the applied budget are exact on both throw branches',
+    () async {
+      // The field contract itself. At HEAD `BackgroundStorageDeadlineExceeded`
+      // carries neither member, so this file does not compile — the missing
+      // field IS the contract.
+      const probe = BackgroundStorageDeadlineExceeded(
+        phase: 'preview_resolution',
+        elapsed: Duration(milliseconds: 637),
+        phaseElapsed: Duration(milliseconds: 137),
+        budget: Duration(milliseconds: 300),
+      );
+      expect(probe.elapsed, const Duration(milliseconds: 637));
+      expect(probe.phaseElapsed, const Duration(milliseconds: 137));
+      expect(probe.budget, const Duration(milliseconds: 300));
 
-    // Every case below trips `preview_resolution`. The display-eligibility
-    // resolver spends the lead-in, so the tripping phase starts at a non-zero
-    // aggregate offset and phase-local elapsed cannot be confused with total
-    // elapsed. The fake clock drives the REPORTED numbers; the real timer still
-    // decides when the phase trips, which is why an eligibility resolver that
-    // jumps the fake clock and returns immediately never times out itself.
-    // Time spent BETWEEN two phases, in `_initializeBackgroundNotifications()`
-    // — which sits outside every `.run`, after the eligibility phase and
-    // before the preview phase. Without a non-zero gap here, stamping the
-    // phase start on ENTRY and stamping it on the PREVIOUS phase's EXIT give
-    // identical numbers, and an exit-stamping implementation (which bills the
-    // inter-phase gap to the next phase) would pass every assertion below.
-    const betweenPhases = Duration(milliseconds: 90);
+      // Every case below trips `preview_resolution`. The display-eligibility
+      // resolver spends the lead-in, so the tripping phase starts at a non-zero
+      // aggregate offset and phase-local elapsed cannot be confused with total
+      // elapsed. The fake clock drives the REPORTED numbers; the real timer still
+      // decides when the phase trips, which is why an eligibility resolver that
+      // jumps the fake clock and returns immediately never times out itself.
+      // Time spent BETWEEN two phases, in `_initializeBackgroundNotifications()`
+      // — which sits outside every `.run`, after the eligibility phase and
+      // before the preview phase. Without a non-zero gap here, stamping the
+      // phase start on ENTRY and stamping it on the PREVIOUS phase's EXIT give
+      // identical numbers, and an exit-stamping implementation (which bills the
+      // inter-phase gap to the next phase) would pass every assertion below.
+      const betweenPhases = Duration(milliseconds: 90);
 
-    Future<Map<String, dynamic>> deferralRecord({
-      required Duration aggregate,
-      required Duration phase,
-      required Duration leadIn,
-      required Duration insidePhase,
-      required String suffix,
-    }) async {
-      _clearLivenessJournal(livenessJournalDirectory);
+      Future<Map<String, dynamic>> deferralRecord({
+        required Duration aggregate,
+        required Duration phase,
+        required Duration leadIn,
+        required Duration insidePhase,
+        required String suffix,
+      }) async {
+        _clearLivenessJournal(livenessJournalDirectory);
+        debugSetBackgroundStorageDeadlineDurations(
+          aggregate: aggregate,
+          phase: phase,
+        );
+        final clock = _FakeMonotonicClock();
+        debugSetBackgroundStorageMonotonicClockFactory(
+          () =>
+              () => clock.elapsed,
+        );
+        var initializeCalls = 0;
+        debugResetBackgroundNotificationsInitialization();
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(notificationsChannel, (call) async {
+              notificationCalls.add(call);
+              if (call.method == 'initialize') {
+                initializeCalls += 1;
+                clock.advance(betweenPhases);
+                return true;
+              }
+              return null;
+            });
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver((_) async {
+          clock.advance(leadIn);
+          return const PushFallbackNotificationDisplayEligibility.allow();
+        });
+        final heldPreview = Completer<BackgroundPushNotificationFallback>();
+        debugSetBackgroundPushNotificationResolver((_) {
+          clock.advance(insidePhase);
+          return heldPreview.future;
+        });
+
+        final message = RemoteMessage(
+          messageId: 'transport-deadline-fields-$suffix',
+          data: <String, dynamic>{
+            'type': 'new_message',
+            'sender_id': 'peer-deadline-fields-$suffix',
+            'message_id': 'event-deadline-fields-$suffix',
+          },
+        );
+        final handler = firebaseMessagingBackgroundHandler(message);
+        try {
+          expect(
+            await _completesWithin(handler, observationBudget),
+            isTrue,
+            reason: 'a held preview resolution must consume a bounded phase',
+          );
+        } finally {
+          if (!heldPreview.isCompleted) {
+            heldPreview.complete(_directFallback(message));
+          }
+          await handler.timeout(cleanupBudget);
+        }
+        expect(_notificationEffects(notificationCalls), isEmpty);
+        expect(
+          initializeCalls,
+          1,
+          reason: 'the inter-phase gap must actually have been spent',
+        );
+        return _singleLivenessRecord(livenessJournalDirectory);
+      }
+
+      // Case 1 — the ordinary phase timeout: the configured phase is smaller
+      // than what is left of the aggregate, so `budget` is the phase.
+      final ordinary = await deferralRecord(
+        aggregate: const Duration(milliseconds: 4000),
+        phase: const Duration(milliseconds: 300),
+        leadIn: const Duration(milliseconds: 500),
+        insidePhase: const Duration(milliseconds: 137),
+        suffix: 'ordinary',
+      );
+      expect(ordinary['outcome'], 'storage_deferred');
+      expect(ordinary['phase'], 'local_state');
+      expect(ordinary['phaseName'], 'preview_resolution');
+      expect(
+        ordinary['phaseElapsedMs'],
+        '137',
+        reason:
+            'an exit-stamped implementation would bill the 90 ms inter-phase '
+            'gap to this phase and report 227',
+      );
+      expect(ordinary['budgetMs'], '300');
+      expect(ordinary['elapsedMs'], '727');
+
+      // Case 2 — the aggregate remainder is SMALLER than the configured phase,
+      // so the bound actually applied is the remainder. This is the only case
+      // that discriminates `budgetMs`: an implementation emitting the configured
+      // constant would report 400 here.
+      final remainder = await deferralRecord(
+        aggregate: const Duration(milliseconds: 900),
+        phase: const Duration(milliseconds: 400),
+        leadIn: const Duration(milliseconds: 700),
+        insidePhase: const Duration(milliseconds: 53),
+        suffix: 'remainder',
+      );
+      expect(remainder['outcome'], 'storage_deferred');
+      expect(remainder['phaseName'], 'preview_resolution');
+      expect(remainder['phaseElapsedMs'], '53');
+      expect(remainder['budgetMs'], '110');
+      expect(remainder['elapsedMs'], '843');
+
+      // Case 3 — the aggregate was already exhausted, so `run` throws before the
+      // phase begins: no bound was ever installed and no phase-local time was
+      // spent. Stamping the phase start AFTER the remaining check would report
+      // the PREVIOUS phase's stale offset here instead of zero.
+      final exhausted = await deferralRecord(
+        aggregate: const Duration(milliseconds: 400),
+        phase: const Duration(milliseconds: 300),
+        leadIn: const Duration(milliseconds: 600),
+        insidePhase: const Duration(milliseconds: 41),
+        suffix: 'exhausted',
+      );
+      expect(exhausted['outcome'], 'storage_deferred');
+      expect(exhausted['phaseName'], 'preview_resolution');
+      expect(
+        exhausted['phaseElapsedMs'],
+        '0',
+        reason:
+            'stamping after the remaining check reports the PREVIOUS phase '
+            'offset; stamping on exit reports the inter-phase gap',
+      );
+      expect(exhausted['budgetMs'], '0');
+      expect(exhausted['elapsedMs'], '690');
+    },
+  );
+
+  test(
+    'the deferral flow event carries exact timings and the closed phase identifier',
+    () async {
+      const leadIn = Duration(milliseconds: 410);
+      const insidePhase = Duration(milliseconds: 173);
+      const phaseBudget = Duration(milliseconds: 320);
       debugSetBackgroundStorageDeadlineDurations(
-        aggregate: aggregate,
-        phase: phase,
+        aggregate: const Duration(milliseconds: 4000),
+        phase: phaseBudget,
       );
       final clock = _FakeMonotonicClock();
       debugSetBackgroundStorageMonotonicClockFactory(
         () =>
             () => clock.elapsed,
       );
-      var initializeCalls = 0;
-      debugResetBackgroundNotificationsInitialization();
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(notificationsChannel, (call) async {
-            notificationCalls.add(call);
-            if (call.method == 'initialize') {
-              initializeCalls += 1;
-              clock.advance(betweenPhases);
-              return true;
-            }
-            return null;
-          });
-      debugSetBackgroundPushNotificationDisplayEligibilityResolver((_) async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      // `direct_stage` spends the lead-in and COMPLETES, so the tripping phase
+      // is `display_eligibility` itself — the exit measured on device by plan
+      // 383 — and its phase-local clock starts after a finished sibling phase.
+      debugSetBackgroundPushEnvelopeStager((entry) async {
         clock.advance(leadIn);
-        return const PushFallbackNotificationDisplayEligibility.allow();
+        staged.add(entry);
       });
-      final heldPreview = Completer<BackgroundPushNotificationFallback>();
-      debugSetBackgroundPushNotificationResolver((_) {
+      final heldEligibility =
+          Completer<PushFallbackNotificationDisplayEligibility>();
+      debugSetBackgroundPushNotificationDisplayEligibilityResolver((_) {
         clock.advance(insidePhase);
-        return heldPreview.future;
+        return heldEligibility.future;
       });
 
-      final message = RemoteMessage(
-        messageId: 'transport-deadline-fields-$suffix',
+      const message = RemoteMessage(
+        messageId: 'transport-deferral-flow-event',
         data: <String, dynamic>{
           'type': 'new_message',
-          'sender_id': 'peer-deadline-fields-$suffix',
-          'message_id': 'event-deadline-fields-$suffix',
+          'sender_id': 'peer-deferral-flow-event',
+          'message_id': 'event-deferral-flow-event',
+          'kem': 'kem-deferral-flow-event',
+          'ciphertext': 'ciphertext-deferral-flow-event',
+          'nonce': 'nonce-deferral-flow-event',
         },
       );
       final handler = firebaseMessagingBackgroundHandler(message);
@@ -1313,258 +1631,141 @@ void main() {
         expect(
           await _completesWithin(handler, observationBudget),
           isTrue,
-          reason: 'a held preview resolution must consume a bounded phase',
+          reason: 'a held eligibility read must consume a bounded phase',
         );
       } finally {
-        if (!heldPreview.isCompleted) {
-          heldPreview.complete(_directFallback(message));
+        if (!heldEligibility.isCompleted) {
+          heldEligibility.complete(
+            const PushFallbackNotificationDisplayEligibility.allow(),
+          );
         }
         await handler.timeout(cleanupBudget);
       }
-      expect(_notificationEffects(notificationCalls), isEmpty);
-      expect(
-        initializeCalls,
-        1,
-        reason: 'the inter-phase gap must actually have been spent',
+
+      expect(staged, hasLength(1), reason: 'the lead-in phase must have run');
+      final deferral = flowEvents.singleWhere(
+        (event) => event['event'] == 'PUSH_BACKGROUND_STORAGE_DEFERRED',
       );
-      return _singleLivenessRecord(livenessJournalDirectory);
-    }
-
-    // Case 1 — the ordinary phase timeout: the configured phase is smaller
-    // than what is left of the aggregate, so `budget` is the phase.
-    final ordinary = await deferralRecord(
-      aggregate: const Duration(milliseconds: 4000),
-      phase: const Duration(milliseconds: 300),
-      leadIn: const Duration(milliseconds: 500),
-      insidePhase: const Duration(milliseconds: 137),
-      suffix: 'ordinary',
-    );
-    expect(ordinary['outcome'], 'storage_deferred');
-    expect(ordinary['phase'], 'local_state');
-    expect(ordinary['phaseName'], 'preview_resolution');
-    expect(
-      ordinary['phaseElapsedMs'],
-      '137',
-      reason:
-          'an exit-stamped implementation would bill the 90 ms inter-phase '
-          'gap to this phase and report 227',
-    );
-    expect(ordinary['budgetMs'], '300');
-    expect(ordinary['elapsedMs'], '727');
-
-    // Case 2 — the aggregate remainder is SMALLER than the configured phase,
-    // so the bound actually applied is the remainder. This is the only case
-    // that discriminates `budgetMs`: an implementation emitting the configured
-    // constant would report 400 here.
-    final remainder = await deferralRecord(
-      aggregate: const Duration(milliseconds: 900),
-      phase: const Duration(milliseconds: 400),
-      leadIn: const Duration(milliseconds: 700),
-      insidePhase: const Duration(milliseconds: 53),
-      suffix: 'remainder',
-    );
-    expect(remainder['outcome'], 'storage_deferred');
-    expect(remainder['phaseName'], 'preview_resolution');
-    expect(remainder['phaseElapsedMs'], '53');
-    expect(remainder['budgetMs'], '110');
-    expect(remainder['elapsedMs'], '843');
-
-    // Case 3 — the aggregate was already exhausted, so `run` throws before the
-    // phase begins: no bound was ever installed and no phase-local time was
-    // spent. Stamping the phase start AFTER the remaining check would report
-    // the PREVIOUS phase's stale offset here instead of zero.
-    final exhausted = await deferralRecord(
-      aggregate: const Duration(milliseconds: 400),
-      phase: const Duration(milliseconds: 300),
-      leadIn: const Duration(milliseconds: 600),
-      insidePhase: const Duration(milliseconds: 41),
-      suffix: 'exhausted',
-    );
-    expect(exhausted['outcome'], 'storage_deferred');
-    expect(exhausted['phaseName'], 'preview_resolution');
-    expect(
-      exhausted['phaseElapsedMs'],
-      '0',
-      reason:
-          'stamping after the remaining check reports the PREVIOUS phase '
-          'offset; stamping on exit reports the inter-phase gap',
-    );
-    expect(exhausted['budgetMs'], '0');
-    expect(exhausted['elapsedMs'], '690');
-  });
-
-  test('the deferral flow event carries exact timings and the closed phase identifier', () async {
-    const leadIn = Duration(milliseconds: 410);
-    const insidePhase = Duration(milliseconds: 173);
-    const phaseBudget = Duration(milliseconds: 320);
-    debugSetBackgroundStorageDeadlineDurations(
-      aggregate: const Duration(milliseconds: 4000),
-      phase: phaseBudget,
-    );
-    final clock = _FakeMonotonicClock();
-    debugSetBackgroundStorageMonotonicClockFactory(
-      () =>
-          () => clock.elapsed,
-    );
-    final flowEvents = <Map<String, dynamic>>[];
-    debugSetFlowEventSink(flowEvents.add);
-    addTearDown(() => debugSetFlowEventSink(null));
-
-    // `direct_stage` spends the lead-in and COMPLETES, so the tripping phase
-    // is `display_eligibility` itself — the exit measured on device by plan
-    // 383 — and its phase-local clock starts after a finished sibling phase.
-    debugSetBackgroundPushEnvelopeStager((entry) async {
-      clock.advance(leadIn);
-      staged.add(entry);
-    });
-    final heldEligibility =
-        Completer<PushFallbackNotificationDisplayEligibility>();
-    debugSetBackgroundPushNotificationDisplayEligibilityResolver((_) {
-      clock.advance(insidePhase);
-      return heldEligibility.future;
-    });
-
-    const message = RemoteMessage(
-      messageId: 'transport-deferral-flow-event',
-      data: <String, dynamic>{
-        'type': 'new_message',
-        'sender_id': 'peer-deferral-flow-event',
-        'message_id': 'event-deferral-flow-event',
-        'kem': 'kem-deferral-flow-event',
-        'ciphertext': 'ciphertext-deferral-flow-event',
-        'nonce': 'nonce-deferral-flow-event',
-      },
-    );
-    final handler = firebaseMessagingBackgroundHandler(message);
-    try {
+      final details = deferral['details'] as Map<String, dynamic>;
+      expect(details['kind'], 'direct_message');
+      expect(details['phase'], 'display_eligibility');
+      expect(details['phaseName'], 'display_eligibility');
+      expect(details['outcome'], 'storage_deferred');
+      expect(details['engineRole'], 'flutterfire_background');
+      expect(details['buildMode'], 'debug');
+      // The bucket is unchanged by this wave and stays coarse on purpose.
+      expect(details['elapsedBucket'], 'under_2s');
       expect(
-        await _completesWithin(handler, observationBudget),
-        isTrue,
-        reason: 'a held eligibility read must consume a bounded phase',
+        int.parse(details['phaseElapsedMs'] as String),
+        insidePhase.inMilliseconds,
       );
-    } finally {
-      if (!heldEligibility.isCompleted) {
-        heldEligibility.complete(
-          const PushFallbackNotificationDisplayEligibility.allow(),
+      expect(
+        int.parse(details['budgetMs'] as String),
+        (const Duration(milliseconds: 4000) - leadIn - phaseBudget)
+            .inMilliseconds,
+        reason:
+            'display eligibility owns the aggregate remainder after its '
+            'reserved native-entry tail, not the sibling phase ceiling',
+      );
+      expect(
+        int.parse(details['elapsedMs'] as String),
+        (leadIn + insidePhase).inMilliseconds,
+      );
+      // Exact, not a relation: `onTimeout` fires exactly `bound` after the phase
+      // is attached, so `phaseElapsed < elapsed` alone would also be satisfied by
+      // an implementation that never stamps a phase start at all.
+      expect(
+        int.parse(details['phaseElapsedMs'] as String),
+        isNot(int.parse(details['elapsedMs'] as String)),
+      );
+    },
+  );
+
+  test(
+    'collapsed local_state phases carry distinct raw phase identifiers',
+    () async {
+      // `preview_resolution` and `durable_effect_authority` are the only two
+      // phases the liveness enum does not name, so both map to `local_state`.
+      // Before this wave their records were indistinguishable apart from timings.
+      debugSetBackgroundStorageDeadlineDurations(
+        aggregate: const Duration(milliseconds: 4000),
+        phase: const Duration(milliseconds: 220),
+      );
+
+      _clearLivenessJournal(livenessJournalDirectory);
+      final heldPreview = Completer<BackgroundPushNotificationFallback>();
+      debugSetBackgroundPushNotificationResolver((_) => heldPreview.future);
+      const previewMessage = RemoteMessage(
+        messageId: 'transport-collapsed-preview',
+        data: <String, dynamic>{
+          'type': 'new_message',
+          'sender_id': 'peer-collapsed-preview',
+          'message_id': 'event-collapsed-preview',
+        },
+      );
+      final previewHandler = firebaseMessagingBackgroundHandler(previewMessage);
+      try {
+        expect(
+          await _completesWithin(previewHandler, observationBudget),
+          isTrue,
         );
+      } finally {
+        if (!heldPreview.isCompleted) {
+          heldPreview.complete(_directFallback(previewMessage));
+        }
+        await previewHandler.timeout(cleanupBudget);
       }
-      await handler.timeout(cleanupBudget);
-    }
+      final previewRecord = _singleLivenessRecord(livenessJournalDirectory);
 
-    expect(staged, hasLength(1), reason: 'the lead-in phase must have run');
-    final deferral = flowEvents.singleWhere(
-      (event) => event['event'] == 'PUSH_BACKGROUND_STORAGE_DEFERRED',
-    );
-    final details = deferral['details'] as Map<String, dynamic>;
-    expect(details['kind'], 'direct_message');
-    expect(details['phase'], 'display_eligibility');
-    expect(details['phaseName'], 'display_eligibility');
-    expect(details['outcome'], 'storage_deferred');
-    expect(details['engineRole'], 'flutterfire_background');
-    expect(details['buildMode'], 'debug');
-    // The bucket is unchanged by this wave and stays coarse on purpose.
-    expect(details['elapsedBucket'], 'under_2s');
-    expect(
-      int.parse(details['phaseElapsedMs'] as String),
-      insidePhase.inMilliseconds,
-    );
-    expect(int.parse(details['budgetMs'] as String), phaseBudget.inMilliseconds);
-    expect(
-      int.parse(details['elapsedMs'] as String),
-      (leadIn + insidePhase).inMilliseconds,
-    );
-    // Exact, not a relation: `onTimeout` fires exactly `bound` after the phase
-    // is attached, so `phaseElapsed < elapsed` alone would also be satisfied by
-    // an implementation that never stamps a phase start at all.
-    expect(
-      int.parse(details['phaseElapsedMs'] as String),
-      isNot(int.parse(details['elapsedMs'] as String)),
-    );
-  });
-
-  test('collapsed local_state phases carry distinct raw phase identifiers', () async {
-    // `preview_resolution` and `durable_effect_authority` are the only two
-    // phases the liveness enum does not name, so both map to `local_state`.
-    // Before this wave their records were indistinguishable apart from timings.
-    debugSetBackgroundStorageDeadlineDurations(
-      aggregate: const Duration(milliseconds: 4000),
-      phase: const Duration(milliseconds: 220),
-    );
-
-    _clearLivenessJournal(livenessJournalDirectory);
-    final heldPreview = Completer<BackgroundPushNotificationFallback>();
-    debugSetBackgroundPushNotificationResolver((_) => heldPreview.future);
-    const previewMessage = RemoteMessage(
-      messageId: 'transport-collapsed-preview',
-      data: <String, dynamic>{
-        'type': 'new_message',
-        'sender_id': 'peer-collapsed-preview',
-        'message_id': 'event-collapsed-preview',
-      },
-    );
-    final previewHandler = firebaseMessagingBackgroundHandler(previewMessage);
-    try {
-      expect(
-        await _completesWithin(previewHandler, observationBudget),
-        isTrue,
-      );
-    } finally {
-      if (!heldPreview.isCompleted) {
-        heldPreview.complete(_directFallback(previewMessage));
-      }
-      await previewHandler.timeout(cleanupBudget);
-    }
-    final previewRecord = _singleLivenessRecord(livenessJournalDirectory);
-
-    _clearLivenessJournal(livenessJournalDirectory);
-    debugSetBackgroundPushNotificationResolver(
-      (_) async => const BackgroundPushNotificationFallback(
-        title: 'Alice',
-        body: 'Alice: hello',
-        payload: 'peer-collapsed-authority',
-        resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
-          kind: ConversationNotificationContentKind.message,
-          canonicalEventId: 'event-collapsed-authority',
+      _clearLivenessJournal(livenessJournalDirectory);
+      debugSetBackgroundPushNotificationResolver(
+        (_) async => const BackgroundPushNotificationFallback(
+          title: 'Alice',
+          body: 'Alice: hello',
+          payload: 'peer-collapsed-authority',
+          resolvedEventIdentity: ResolvedPushEventIdentity.authenticatedInner(
+            kind: ConversationNotificationContentKind.message,
+            canonicalEventId: 'event-collapsed-authority',
+          ),
         ),
-      ),
-    );
-    final heldAuthority = Completer<DurableLocalNotificationEffectContext?>();
-    debugSetBackgroundDurableLocalNotificationEffectResolver(({
-      required routeTarget,
-      required fallback,
-      required metadata,
-    }) => heldAuthority.future);
-    addTearDown(debugResetBackgroundDurableLocalNotificationEffectResolver);
-    const authorityMessage = RemoteMessage(
-      messageId: 'transport-collapsed-authority',
-      data: <String, dynamic>{
-        'type': 'new_message',
-        'sender_id': 'peer-collapsed-authority',
-        'message_id': 'event-collapsed-authority',
-      },
-    );
-    final authorityHandler = firebaseMessagingBackgroundHandler(
-      authorityMessage,
-    );
-    try {
-      expect(
-        await _completesWithin(authorityHandler, observationBudget),
-        isTrue,
       );
-    } finally {
-      if (!heldAuthority.isCompleted) heldAuthority.complete(null);
-      await authorityHandler.timeout(cleanupBudget);
-    }
-    final authorityRecord = _singleLivenessRecord(livenessJournalDirectory);
+      final heldAuthority = Completer<DurableLocalNotificationEffectContext?>();
+      debugSetBackgroundDurableLocalNotificationEffectResolver(
+        ({required routeTarget, required fallback, required metadata}) =>
+            heldAuthority.future,
+      );
+      addTearDown(debugResetBackgroundDurableLocalNotificationEffectResolver);
+      const authorityMessage = RemoteMessage(
+        messageId: 'transport-collapsed-authority',
+        data: <String, dynamic>{
+          'type': 'new_message',
+          'sender_id': 'peer-collapsed-authority',
+          'message_id': 'event-collapsed-authority',
+        },
+      );
+      final authorityHandler = firebaseMessagingBackgroundHandler(
+        authorityMessage,
+      );
+      try {
+        expect(
+          await _completesWithin(authorityHandler, observationBudget),
+          isTrue,
+        );
+      } finally {
+        if (!heldAuthority.isCompleted) heldAuthority.complete(null);
+        await authorityHandler.timeout(cleanupBudget);
+      }
+      final authorityRecord = _singleLivenessRecord(livenessJournalDirectory);
 
-    // Both assertions bind to ONE decoded record each: the mapped enum must
-    // still collapse, and the raw identifier must still discriminate.
-    expect(previewRecord['phase'], 'local_state');
-    expect(previewRecord['phaseName'], 'preview_resolution');
-    expect(authorityRecord['phase'], 'local_state');
-    expect(authorityRecord['phaseName'], 'durable_effect_authority');
-    expect(previewRecord['phaseName'], isNot(authorityRecord['phaseName']));
-  });
+      // Both assertions bind to ONE decoded record each: the mapped enum must
+      // still collapse, and the raw identifier must still discriminate.
+      expect(previewRecord['phase'], 'local_state');
+      expect(previewRecord['phaseName'], 'preview_resolution');
+      expect(authorityRecord['phase'], 'local_state');
+      expect(authorityRecord['phaseName'], 'durable_effect_authority');
+      expect(previewRecord['phaseName'], isNot(authorityRecord['phaseName']));
+    },
+  );
 }
 
 BackgroundPushNotificationFallback _directFallback(RemoteMessage message) {
@@ -1632,10 +1833,7 @@ void _clearLivenessJournal(Directory directory) {
 }
 
 Map<String, dynamic> _singleLivenessRecord(Directory directory) {
-  final files = directory
-      .listSync()
-      .whereType<File>()
-      .toList(growable: false);
+  final files = directory.listSync().whereType<File>().toList(growable: false);
   expect(files, hasLength(1), reason: 'one deferral must write one record');
   final decoded = jsonDecode(files.single.readAsStringSync());
   expect(decoded, isA<Map<String, dynamic>>());

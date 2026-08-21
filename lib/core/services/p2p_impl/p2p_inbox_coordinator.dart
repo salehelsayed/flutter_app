@@ -1085,6 +1085,30 @@ class _P2PInboxCoordinator {
           );
           continue;
         }
+        final ownerPeerId = entry.ownerPeerId.trim();
+        if (_recoveryOnly &&
+            entry.messageType == 'readiness_proof' &&
+            ownerPeerId.isNotEmpty &&
+            entry.senderPeerId.trim() == ownerPeerId) {
+          // Foreground readiness windows store a non-content control envelope
+          // in the account's own relay inbox. A killed-path recovery may pick
+          // it up after the foreground runtime exits. It has no projection to
+          // replay, and retaining it would keep the recovery seal retrying
+          // forever. Only the identity-qualified self-envelope is consumable;
+          // foreign or unknown controls remain fail-closed below.
+          await repo.deleteEntry(entry.entryId);
+          replayed++;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_SERVICE_RECOVERY_READINESS_CONTROL_CONSUMED',
+            details: {
+              'entryId': entry.entryId.length > 8
+                  ? entry.entryId.substring(0, 8)
+                  : entry.entryId,
+            },
+          );
+          continue;
+        }
         final ReplayRecoveredInboxChatMessage? chatReplay;
         if (entry.entryId.startsWith('direct:')) {
           chatReplay =

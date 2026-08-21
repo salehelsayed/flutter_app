@@ -506,20 +506,23 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
           event: 'PUSH_FOREGROUND_GROUP_FALLBACK_UNANCHORED',
           details: {'reason': 'missing_canonical_message_id'},
         );
-        await notificationService.showMessageNotification(
+        final presentation = await maybeShowNotification(
+          notificationService: notificationService,
+          appVisibility: visibility,
           contactPeerId: conversationKey,
+          routePayload: barePayload,
           senderUsername: 'Mknoon',
           messageText: genericBody,
-          payload: barePayload,
-          silent: true,
-          contentKind: ConversationNotificationContentKind.message,
-          snapshot:
-              await _loadForegroundGroupConversationNotificationProjection(
+          forceSilent: true,
+          loadConversationNotificationSnapshot: () =>
+              _loadForegroundGroupConversationNotificationProjection(
                 resolver: groupConversationNotificationProjectionResolver,
                 groupId: groupId,
               ),
+          notificationEventType: 'group_message',
+          backgroundDuplicateGuardDelay: Duration.zero,
         );
-        return true;
+        return presentation == NotificationPresentationResult.osPosted;
       }
 
       final canonicalPayload = NotificationRouteTarget.group(
@@ -593,6 +596,38 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
   final fallback = buildBackgroundPushFallbackNotification(message);
   if (fallback.payload == null) {
     return false;
+  }
+
+  final directPeerId =
+      routeTarget?.kind == NotificationRouteTargetKind.conversation
+      ? _trimToNull(routeTarget?.peerId)
+      : null;
+  final visibility = appVisibility;
+  if (directPeerId != null && visibility != null) {
+    final rawType = _trimToNull(message.data['type']);
+    final rawEventId = rawType == 'message_reaction'
+        ? _trimToNull(message.data['event_id']) ??
+              _trimToNull(message.data['reaction_id'])
+        : remoteNotificationMessageIdFromData(message.data) ??
+              _trimToNull(message.messageId);
+    final presentation = await maybeShowNotification(
+      notificationService: notificationService,
+      appVisibility: visibility,
+      contactPeerId: directPeerId,
+      routePayload: fallback.payload,
+      senderUsername: fallback.title,
+      messageText: fallback.body,
+      messageId: rawEventId,
+      notificationEventIdentity:
+          rawType == 'message_reaction' && rawEventId != null
+          ? boundedReactionEventIdentity(rawEventId)
+          : rawEventId,
+      notificationEventType: rawType == 'message_reaction'
+          ? 'message_reaction'
+          : 'new_message',
+      backgroundDuplicateGuardDelay: Duration.zero,
+    );
+    return presentation == NotificationPresentationResult.osPosted;
   }
 
   await notificationService.showNotification(

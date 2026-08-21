@@ -105,14 +105,22 @@ abstract interface class AppVisibilityTopRouteReader {
   });
 }
 
+typedef ExactConversationActivationCleanup =
+    Future<void> Function(AppVisibilityConversationIdentity identity);
+
 final class AppVisibilityRouteRegistry implements AppVisibilityTopRouteReader {
-  AppVisibilityRouteRegistry({required AppVisibilityAuthority authority})
-    : _authority = authority;
+  AppVisibilityRouteRegistry({
+    required AppVisibilityAuthority authority,
+    ExactConversationActivationCleanup? onExactConversationActivated,
+  }) : _authority = authority,
+       _onExactConversationActivated = onExactConversationActivated;
 
   final AppVisibilityAuthority _authority;
+  final ExactConversationActivationCleanup? _onExactConversationActivated;
   Object? _topOwner;
   AppVisibilityConversationIdentity? _topConversation;
   Future<void> _lastProjection = Future<void>.value();
+  Future<void> _lastActivationCleanup = Future<void>.value();
   bool _disposed = false;
 
   @override
@@ -137,19 +145,26 @@ final class AppVisibilityRouteRegistry implements AppVisibilityTopRouteReader {
 
   /// Republishes the process-local top route after native resume establishes a
   /// fresh lifecycle generation. A non-chat top route publishes a null key.
-  Future<bool> republishCurrentTopConversation() {
-    if (_disposed) return Future<bool>.value(false);
+  Future<bool> republishCurrentTopConversation() async {
+    if (_disposed) return false;
     final top = _topConversation;
     final projection = top == null
         ? _authority.clearVisibleConversation()
         : _authority.publishVisibleConversation(top);
     _track(projection);
-    return projection;
+    final committed = await projection;
+    if (committed && top != null && _topConversation == top && !_disposed) {
+      _scheduleActivationCleanup(top);
+    }
+    return committed;
   }
 
   /// Waits only for projections already issued by this registry. Intended for
   /// deterministic teardown/tests, not for lifecycle correctness.
-  Future<void> settle() => _lastProjection;
+  Future<void> settle() => Future.wait<void>(<Future<void>>[
+    _lastProjection,
+    _lastActivationCleanup,
+  ]);
 
   void _becameTop(Object owner, AppVisibilityConversationIdentity identity) {
     if (_disposed) return;
@@ -157,6 +172,7 @@ final class AppVisibilityRouteRegistry implements AppVisibilityTopRouteReader {
     _topOwner = owner;
     _topConversation = identity;
     _track(_authority.publishVisibleConversation(identity));
+    _scheduleActivationCleanup(identity);
   }
 
   void _leftTop(Object owner) {
@@ -171,6 +187,19 @@ final class AppVisibilityRouteRegistry implements AppVisibilityTopRouteReader {
       (_) {},
       onError: (Object _, StackTrace _) {},
     );
+  }
+
+  void _scheduleActivationCleanup(AppVisibilityConversationIdentity identity) {
+    final cleanup = _onExactConversationActivated;
+    if (cleanup == null) return;
+    final previous = _lastActivationCleanup;
+    final current = Future<void>.sync(
+      () => cleanup(identity),
+    ).then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    _lastActivationCleanup = Future.wait<void>(<Future<void>>[
+      previous,
+      current,
+    ]);
   }
 
   void dispose() {

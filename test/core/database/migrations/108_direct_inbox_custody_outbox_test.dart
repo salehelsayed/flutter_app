@@ -189,6 +189,10 @@ void main() {
           'await runProductionOnCreate(db, $historicalVersion);',
         ): 1,
         classified(
+          'test/core/debug/group_reaction_e2e_probe_badge_observation_test.dart',
+          'await runProductionOnCreate(database, $historicalVersion);',
+        ): 1,
+        classified(
           'test/features/account_migration/application/migration_database_active_importer_test.dart',
           'manifest: manifest.copyWith(databaseVersion: $historicalVersion),',
         ): 1,

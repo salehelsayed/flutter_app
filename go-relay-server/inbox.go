@@ -310,6 +310,11 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 			pushSentCounter.WithLabelValues("route_refresh_ineligible").Inc()
 			return pushDeliveryRetryable
 		}
+		if selectedOpaque {
+			selectedPushRouteCounter.WithLabelValues("opaque").Inc()
+		} else {
+			selectedPushRouteCounter.WithLabelValues("rich").Inc()
+		}
 
 		var err error
 		if selectedOpaque {
@@ -1760,6 +1765,9 @@ type InboxStore struct {
 	// push flag. Custody admission and delivery are unchanged by this flag —
 	// only whether a stored group message also wakes the recipient.
 	groupContentPushEnabled bool
+	// G27: strict-authority group reactions share direct-inbox custody but keep
+	// the signed author-only audience and typed group_reaction capability.
+	groupReactionPushEnabled bool
 }
 
 func (is *InboxStore) SetDirectReactionPushEnabled(enabled bool) {
@@ -1769,6 +1777,12 @@ func (is *InboxStore) SetDirectReactionPushEnabled(enabled bool) {
 func (is *InboxStore) SetGroupContentPushEnabled(enabled bool) {
 	if is != nil {
 		is.groupContentPushEnabled = enabled
+	}
+}
+
+func (is *InboxStore) SetGroupReactionPushEnabled(enabled bool) {
+	if is != nil {
+		is.groupReactionPushEnabled = enabled
 	}
 }
 
@@ -2140,6 +2154,59 @@ func (is *InboxStore) launchStoredDirectPush(toPeerId string, entry inboxMessage
 	// ineligible shapes return here rather than falling through, so a reaction
 	// can never be routed onto the group-message audience.
 	if metadata, recognizedContent, eligibleContent := extractGroupContentPushMetadata(entry.Message); recognizedContent {
+		if metadata.PayloadType == groupContentPayloadTypeReaction {
+			reaction, recognizedReaction, validReaction := extractGroupReactionPushMetadata(
+				entry.Message,
+				metadata.GroupID,
+				entry.From,
+				nil,
+			)
+			if !recognizedReaction || !validReaction || reaction.Action != "add" ||
+				!is.groupReactionPushEnabled {
+				groupReactionWakeCounter.WithLabelValues("invalid_or_disabled").Inc()
+				log.Printf("[GROUP_REACTION_WAKE] outcome=invalid_or_disabled")
+				return
+			}
+			if !containsExactString(reaction.NotificationRecipientTransportPeerIDs, toPeerId) {
+				groupReactionWakeCounter.WithLabelValues("no_wake_recipients").Inc()
+				log.Printf("[GROUP_REACTION_WAKE] outcome=no_wake_recipients")
+				return
+			}
+			// Strict custody is already per recipient. The absent-set behavior stays
+			// rollout-safe/fail-open, while an explicitly registered set is
+			// authoritative regardless of the legacy global enforcement switch.
+			if is.wakeTokens != nil && is.wakeTokens.HasRegisteredSet(toPeerId) &&
+				!is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken) {
+				groupReactionWakeCounter.WithLabelValues("unauthorized_wake").Inc()
+				log.Printf("[GROUP_REACTION_WAKE] outcome=unauthorized_wake")
+				return
+			}
+			if is.push == nil {
+				groupReactionWakeCounter.WithLabelValues("push_unavailable").Inc()
+				log.Printf("[GROUP_REACTION_WAKE] outcome=push_unavailable")
+				return
+			}
+			route, err := is.push.selectPushRoute(toPeerId, groupReactionCapability)
+			if err != nil {
+				groupReactionWakeCounter.WithLabelValues("route_error").Inc()
+				return
+			}
+			if route == nil {
+				recordGroupReactionIncapableSkipped()
+				return
+			}
+			groupReactionWakeCounter.WithLabelValues("attempted").Inc()
+			log.Printf("[GROUP_REACTION_WAKE] outcome=dispatched")
+			go is.push.sendGroupReactionNotificationForRoute(
+				context.Background(),
+				toPeerId,
+				*route,
+				metadata.GroupID,
+				entry.Message,
+				reaction,
+			)
+			return
+		}
 		if !eligibleContent || !is.groupContentPushEnabled {
 			groupContentWakeCounter.WithLabelValues("invalid_or_disabled").Inc()
 			return

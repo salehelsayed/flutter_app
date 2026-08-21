@@ -1543,7 +1543,6 @@ void main() {
                 eventIdentity: 'reaction-must-not-prepare',
                 generation: 'generation-must-not-show',
               ),
-              retireCurrent: () async => effects.add('cancel'),
               replace: () async => effects.add('show'),
             )
             .timeout(_outerWatchdog);
@@ -1587,7 +1586,7 @@ void main() {
   );
 
   test(
-    'acquired notification-id owner is not timeout-released and newer generation survives',
+    'in-flight notification update leaves its unpublished generation uncancellable',
     () async {
       const conversationKey = 'group:acquired-id-owner';
       final registry = DurableConversationNotificationIdRegistry(
@@ -1625,7 +1624,6 @@ void main() {
               eventIdentity: 'reaction-new-owner',
               generation: 'generation-new-owner',
             ),
-            retireCurrent: () async {},
             replace: () async {
               await File(ownerEntered.path).create();
               await Future<void>.delayed(_ownerHold);
@@ -1663,10 +1661,14 @@ void main() {
         notificationId: id,
       );
 
-      expect(contenderError, isA<NotificationIdAllocationException>());
-      expect(contenderResult, isNull);
+      expect(contenderError, isNull);
+      expect(contenderResult, isFalse);
       expect(stopwatch.elapsed, lessThan(_boundedCompletionCeiling));
-      expect(ownerWasStillRunning, isTrue);
+      expect(
+        ownerWasStillRunning,
+        isTrue,
+        reason: 'the generation is checked before waiting on the owner lock',
+      );
       expect(unexpectedCancel.existsSync(), isFalse);
       expect(
         ownerResult,

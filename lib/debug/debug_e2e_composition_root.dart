@@ -33,6 +33,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/debug/group_notification_projection_e2e_action.dart';
+import 'package:flutter_app/debug/group_strict_notification_e2e_action.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
@@ -49,6 +50,7 @@ import 'package:flutter_app/features/conversation/presentation/navigation/conver
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
@@ -681,6 +683,16 @@ final class DebugE2ECompositionRoot {
       detailedInboxStore: dependencies.p2pService,
       wakeTokenAttachmentObserver: wakeTokenAttachmentObserver,
       privateMediaOutboxE2EController: privateMediaOutboxE2EController,
+      runGroupStrictNotificationE2E: (config) =>
+          runGroupStrictNotificationE2EAction(
+            config: config,
+            database: dependencies.database,
+            bridge: dependencies.bridge,
+            p2pService: dependencies.p2pService,
+            inboxStore: dependencies.p2pService,
+            identityRepository: dependencies.identityRepository,
+            groupRepository: dependencies.groupRepository,
+          ),
       runGroupNotificationProjectionE2E: (config) =>
           runGroupNotificationProjectionE2EAction(
             config: config,
@@ -766,6 +778,7 @@ final class DebugE2ECompositionRoot {
                 p2pService: dependencies.p2pService,
                 identityRepository: dependencies.identityRepository,
                 groupRepository: dependencies.groupRepository,
+                groupConfigBuilder: buildGroupConfigPayload,
                 groupMessageRepository: dependencies.groupMessageRepository,
                 mediaAttachmentRepository:
                     dependencies.mediaAttachmentRepository,

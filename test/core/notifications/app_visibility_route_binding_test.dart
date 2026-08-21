@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -158,6 +159,86 @@ void main() {
       authority.dispose();
     },
   );
+
+  testWidgets(
+    'TC-393-02 exact activation cleanup is generation safe and read independent',
+    (tester) async {
+      final bridge = _RoutePlatformBridge();
+      final authority = AppVisibilityAuthority(platformBridge: bridge);
+      final generations = _HeldGenerationCancellation()
+        ..put('peer-A', 'generation-a-1')
+        ..put('peer-B', 'generation-b-1')
+        ..holdNextLookup();
+      final registry = AppVisibilityRouteRegistry(
+        authority: authority,
+        onExactConversationActivated: (identity) async {
+          final metadata = await generations
+              .lookupConversationNotificationContentMetadata(
+                identity.normalizedValue,
+              );
+          final generation = metadata?.generation?.trim();
+          if (generation == null || generation.isEmpty) return;
+          await generations.cancelConversationNotificationGeneration(
+            identity.normalizedValue,
+            generation,
+          );
+        },
+      );
+      final observer = AppVisibilityRouteObserver();
+      final navigatorKey = GlobalKey<NavigatorState>();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigatorKey,
+          navigatorObservers: <NavigatorObserver>[observer],
+          builder: (context, child) => DirectPrivateMediaRouteObserverScope(
+            observer: observer,
+            appVisibilityRouteRegistry: registry,
+            child: child!,
+          ),
+          home: const Scaffold(body: Text('settings')),
+        ),
+      );
+      final route = MaterialPageRoute<void>(
+        builder: (_) => const _BoundConversation(
+          lane: AppVisibilityConversationLane.direct,
+          value: 'peer-A',
+          label: 'direct-a',
+        ),
+      );
+      unawaited(navigatorKey.currentState!.push<void>(route));
+      await tester.pumpAndSettle();
+      await generations.lookupCaptured.future;
+
+      expect(
+        registry.currentTopConversation,
+        _directA,
+        reason: 'top identity must be synchronous before cleanup awaits',
+      );
+      generations.put('peer-A', 'generation-a-2');
+      generations.releaseLookup();
+      await registry.settle();
+
+      expect(generations.generationFor('peer-A'), 'generation-a-2');
+      expect(generations.generationFor('peer-B'), 'generation-b-1');
+      expect(generations.cancelledGenerations, isEmpty);
+
+      bridge.transition(AppVisibilityLifecycle.background);
+      authority.invalidateSynchronously();
+      bridge.transition(AppVisibilityLifecycle.foregroundActive);
+      expect(await authority.synchronize(), isTrue);
+      generations.put('peer-A', 'generation-a-3');
+      expect(await registry.republishCurrentTopConversation(), isTrue);
+      await registry.settle();
+
+      expect(generations.generationFor('peer-A'), isNull);
+      expect(generations.cancelledGenerations, <String>['generation-a-3']);
+      expect(bridge.readSideEffects, 0);
+
+      registry.dispose();
+      authority.dispose();
+    },
+  );
 }
 
 final AppVisibilityConversationIdentity _directA =
@@ -265,5 +346,56 @@ final class _RoutePlatformBridge implements AppVisibilityPlatformBridge {
       currentMonotonicMs: nowMs,
       currentBootSession: 'test:route-boot',
     );
+  }
+}
+
+final class _HeldGenerationCancellation
+    implements ConversationNotificationGenerationCancellation {
+  final Map<String, ConversationNotificationContentMetadata> _metadata =
+      <String, ConversationNotificationContentMetadata>{};
+  final List<String> cancelledGenerations = <String>[];
+  Completer<void> lookupCaptured = Completer<void>();
+  Completer<void>? _lookupRelease;
+
+  void put(String conversationKey, String generation) {
+    _metadata[conversationKey] = ConversationNotificationContentMetadata(
+      kind: ConversationNotificationContentKind.message,
+      eventIdentity: 'event-$generation',
+      generation: generation,
+    );
+  }
+
+  String? generationFor(String conversationKey) =>
+      _metadata[conversationKey]?.generation;
+
+  void holdNextLookup() {
+    lookupCaptured = Completer<void>();
+    _lookupRelease = Completer<void>();
+  }
+
+  void releaseLookup() => _lookupRelease?.complete();
+
+  @override
+  Future<ConversationNotificationContentMetadata?>
+  lookupConversationNotificationContentMetadata(String conversationKey) async {
+    final captured = _metadata[conversationKey];
+    final release = _lookupRelease;
+    if (release != null) {
+      if (!lookupCaptured.isCompleted) lookupCaptured.complete();
+      await release.future;
+      if (identical(_lookupRelease, release)) _lookupRelease = null;
+    }
+    return captured;
+  }
+
+  @override
+  Future<bool> cancelConversationNotificationGeneration(
+    String conversationKey,
+    String generation,
+  ) async {
+    if (_metadata[conversationKey]?.generation != generation) return false;
+    _metadata.remove(conversationKey);
+    cancelledGenerations.add(generation);
+    return true;
   }
 }

@@ -104,6 +104,7 @@ class MainActivity : FlutterActivity() {
         droppedPushRecoveryBridge = DroppedPushRecoveryBridge(
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
+            registerProcessSignals = true,
         )
         canonicalRuntimeShutdownChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,

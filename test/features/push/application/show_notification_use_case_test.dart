@@ -255,7 +255,13 @@ void main() {
             backgroundDuplicateGuardDelay: Duration.zero,
           );
 
-          expect(testCase.visibility.evaluations, 1, reason: testCase.label);
+          expect(
+            testCase.visibility.evaluations,
+            testCase.suppressed ? 1 : 2,
+            reason:
+                '${testCase.label}: eligible presentation must re-evaluate '
+                'once at the Plan 393 native-entry boundary',
+          );
           if (testCase.suppressed) {
             expect(
               result,
@@ -385,6 +391,36 @@ void main() {
         }
       },
     );
+
+    test('TC-393-03 compatibility final visibility barrier', () async {
+      final visibility = _SequencedVisibility(<AppVisibilityEvaluation>[
+        _exactBackgroundEvaluation(revision: 1),
+        _exactForegroundEvaluation(maySuppress: true, revision: 2),
+      ]);
+      final service = _NativeBoundaryNotificationService();
+
+      final resultFuture = subject.maybeShowNotification(
+        notificationService: service,
+        appVisibility: visibility,
+        contactPeerId: 'peer-final-compatibility',
+        senderUsername: 'Alice',
+        messageText: 'Racing visibility',
+        messageId: 'message-final-compatibility',
+        backgroundDuplicateGuardDelay: Duration.zero,
+      );
+      await service.nativeBoundaryEntered.future;
+      service.releaseNativeBoundary.complete();
+      final result = await resultFuture;
+
+      expect(visibility.evaluations, 2);
+      expect(service.nativeCalls, 0);
+      expect(service.shown, isEmpty);
+      expect(
+        result,
+        NotificationPresentationResult.contendedRetryable,
+        reason: 'a pre-native visibility denial releases compatibility owners',
+      );
+    });
 
     test(
       'terminal OS replay after tone horizon releases provisional owners without native bookkeeping',
@@ -2184,6 +2220,33 @@ final class _DurableBoundaryNotificationService extends FakeNotificationService
         presentationState: presentation,
       ),
     );
+  }
+}
+
+final class _NativeBoundaryNotificationService extends FakeNotificationService
+    implements MessageNotificationNativePublicationBoundary {
+  final Completer<void> nativeBoundaryEntered = Completer<void>();
+  final Completer<void> releaseNativeBoundary = Completer<void>();
+  int nativeCalls = 0;
+
+  @override
+  Future<void> showMessageNotificationAtNativeBoundary({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+    ConversationNotificationContentKind? contentKind,
+    String? contentEventIdentity,
+    ConversationNotificationSnapshot? snapshot,
+    required Future<void> Function(NativeMessageNotificationShow showNative)
+    publishNative,
+  }) async {
+    if (!nativeBoundaryEntered.isCompleted) nativeBoundaryEntered.complete();
+    await releaseNativeBoundary.future;
+    await publishNative(({required bool silent}) async {
+      nativeCalls += 1;
+    });
   }
 }
 

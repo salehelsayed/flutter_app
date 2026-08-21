@@ -29,6 +29,14 @@ case "$profile" in
     artifact="${SIMS_ARTIFACT_ROOT:?}/standard.apk"
     printf 'android fixture\n' >"$artifact"
     ;;
+  android.production_fcm)
+    artifact="${SIMS_ARTIFACT_ROOT:?}/provider-base.apk"
+    printf 'provider base fixture\n' >"$artifact"
+    ;;
+  android.production_fcm.fixed_wake)
+    artifact="${SIMS_ARTIFACT_ROOT:?}/provider-fixed-wake.apk"
+    printf 'provider fixed-wake fixture\n' >"$artifact"
+    ;;
   ios.simulator.e2e)
     artifact="${SIMS_ARTIFACT_ROOT:?}/Runner.app"
     rm -rf "$artifact"
@@ -94,6 +102,22 @@ cat >"$manifest" <<'JSON'
       "buildRequired": true,
       "compileDefines": {},
       "declaredException": false
+    },
+    {
+      "id": "android.production_fcm",
+      "platform": "android",
+      "artifactKind": "provider-configured-debug-apk",
+      "buildRequired": true,
+      "compileDefines": {"E2E_TEST_MODE": "true", "PRODUCTION_FCM": "true", "MKNOON_EMIT_WAKE_TOKEN": "true"},
+      "declaredException": false
+    },
+    {
+      "id": "android.production_fcm.fixed_wake",
+      "platform": "android",
+      "artifactKind": "provider-configured-debug-apk",
+      "buildRequired": true,
+      "compileDefines": {"E2E_TEST_MODE": "true", "PRODUCTION_FCM": "true", "MKNOON_EMIT_WAKE_TOKEN": "true", "MKNOON_ENABLE_WAKE_OUTCOME_COORDINATOR": "true"},
+      "declaredException": false
     }
   ],
   "capabilities": [
@@ -134,6 +158,44 @@ cat >"$manifest" <<'JSON'
       "artifactValidator": "build.attestation",
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "build.android.provider-base.fixture",
+      "owner": "fixture-build",
+      "proofBoundary": "fixture.android.provider-base-fingerprint",
+      "assertions": ["android.provider.inputs.attested"],
+      "lane": "build",
+      "modes": ["major"],
+      "families": ["fixture"],
+      "required": true,
+      "command": ["@prepare-build", "android.production_fcm"],
+      "buildProfile": "android.production_fcm",
+      "dependencies": [],
+      "resources": [{"name": "build:android.production_fcm", "access": "write"}],
+      "targetCapabilities": [],
+      "artifactRequired": true,
+      "artifactValidator": "build.attestation",
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "build.android.provider-fixed.fixture",
+      "owner": "fixture-build",
+      "proofBoundary": "fixture.android.provider-fixed-fingerprint",
+      "assertions": ["android.provider.fixed.inputs.attested"],
+      "lane": "build",
+      "modes": ["major"],
+      "families": ["fixture"],
+      "required": true,
+      "command": ["@prepare-build", "android.production_fcm.fixed_wake"],
+      "buildProfile": "android.production_fcm.fixed_wake",
+      "dependencies": [],
+      "resources": [{"name": "build:android.production_fcm.fixed_wake", "access": "write"}],
+      "targetCapabilities": [],
+      "artifactRequired": true,
+      "artifactValidator": "build.attestation",
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": []
@@ -144,6 +206,7 @@ source_digest="$(printf 'e%.0s' {1..64})"
 xcode_version='xcode-a'
 go_version='go-a'
 gomobile_version='gomobile-a'
+provider_version='provider-a'
 
 run_prepare() {
   local report="$1"
@@ -156,6 +219,7 @@ run_prepare() {
     SIMS_FAKE_XCODE_VERSION="$xcode_version" \
     SIMS_FAKE_GO_VERSION="$go_version" \
     SIMS_FAKE_GOMOBILE_VERSION="$gomobile_version" \
+    SIMS_PROVIDER_FCM_CREDENTIAL_DIGEST="$provider_version" \
     SIMS_FAKE_GOPATH="$tmp_dir/gopath" \
     SIMS_SOURCE_DIGEST="$source_digest" \
     SIMS_TEST_ALLOW_SOURCE_DIGEST_OVERRIDE=1 \
@@ -184,26 +248,33 @@ PY
 }
 
 run_prepare "$tmp_dir/first.json"
-assert_report "$tmp_dir/first.json" 2 0
-[ "$(wc -l <"$tmp_dir/build.log" | tr -d ' ')" -eq 2 ] ||
-  fail 'first preparation did not build both profiles once'
+assert_report "$tmp_dir/first.json" 4 0
+[ "$(wc -l <"$tmp_dir/build.log" | tr -d ' ')" -eq 4 ] ||
+  fail 'first preparation did not build all profiles once'
 
 run_prepare "$tmp_dir/second.json"
-assert_report "$tmp_dir/second.json" 0 2
-[ "$(wc -l <"$tmp_dir/build.log" | tr -d ' ')" -eq 2 ] ||
-  fail 'identical profile inputs did not hit both cache entries'
+assert_report "$tmp_dir/second.json" 0 4
+[ "$(wc -l <"$tmp_dir/build.log" | tr -d ' ')" -eq 4 ] ||
+  fail 'identical profile inputs did not hit all cache entries'
 
 gomobile_version='gomobile-b'
 run_prepare "$tmp_dir/gomobile-change.json"
-assert_report "$tmp_dir/gomobile-change.json" 2 0
-[ "$(wc -l <"$tmp_dir/build.log" | tr -d ' ')" -eq 4 ] ||
-  fail 'gomobile identity change did not rebuild both mobile profiles once'
+assert_report "$tmp_dir/gomobile-change.json" 4 0
+[ "$(wc -l <"$tmp_dir/build.log" | tr -d ' ')" -eq 8 ] ||
+  fail 'gomobile identity change did not rebuild all mobile profiles once'
 
 gomobile_version='gomobile-a'
 xcode_version='xcode-b'
 run_prepare "$tmp_dir/xcode-change.json"
-assert_report "$tmp_dir/xcode-change.json" 1 1
+assert_report "$tmp_dir/xcode-change.json" 1 3
 [ "$(tail -n 1 "$tmp_dir/build.log")" = 'ios.simulator.e2e' ] ||
   fail 'an iOS-only toolchain change rebuilt the Android profile'
 
-printf 'PASS: sims build fingerprints isolate platform toolchains by profile\n'
+provider_version='provider-b'
+run_prepare "$tmp_dir/provider-change.json"
+assert_report "$tmp_dir/provider-change.json" 2 2
+provider_rebuilds="$(tail -n 2 "$tmp_dir/build.log" | sort)"
+[ "$provider_rebuilds" = $'android.production_fcm\nandroid.production_fcm.fixed_wake' ] ||
+  fail 'provider credential change did not rebuild both isolated provider cohorts'
+
+printf 'PASS: sims build fingerprints isolate platform toolchains and provider cohorts by profile\n'

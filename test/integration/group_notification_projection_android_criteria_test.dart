@@ -46,6 +46,26 @@ void main() {
     },
   );
 
+  test(
+    'accepts Plan 393 exact-route activation cancellation before read',
+    () async {
+      final artifact = await _writeValidArtifact(
+        temporaryDirectory,
+        activationCancelFirst: true,
+      );
+
+      final validation =
+          await validateGroupNotificationProjectionAndroidArtifact(
+            artifactFile: artifact,
+            expectedPhysicalDeviceId: _physicalDeviceId,
+            expectedEmulatorDeviceId: _emulatorDeviceId,
+          );
+
+      expect(validation.failures, isEmpty, reason: validation.detail);
+      expect(validation.ok, isTrue);
+    },
+  );
+
   test('rejects a third non-summary content card', () async {
     final artifact = await _writeValidArtifact(
       temporaryDirectory,
@@ -79,9 +99,9 @@ void main() {
 
     expect(validation.ok, isFalse);
     expect(validation.failures, const <String>[
-      r'$.readProjection.readFlowLog lacks ordered committed read, '
-          'in-coordinator unread-zero recheck, and exact '
-          'acknowledged-generation cancellation',
+      r'$.readProjection.readFlowLog lacks committed read, '
+          'in-coordinator unread-zero recheck, and exact activation/read '
+          'generation cancellation',
     ]);
   });
 }
@@ -90,6 +110,7 @@ Future<File> _writeValidArtifact(
   Directory directory, {
   bool includeThirdContentCard = false,
   String cancelReason = 'conversation_acknowledged',
+  bool activationCancelFirst = false,
 }) async {
   final beforeNotifications = await _writeEvidence(
     directory,
@@ -123,10 +144,37 @@ Future<File> _writeValidArtifact(
   final readFlow = await _writeEvidence(
     directory,
     'read_flow.log',
-    'GROUP_MESSAGES_DB_MARK_READ_SUCCESS {"count":1}\n'
+    '${activationCancelFirst ? 'NOTIFICATION_DISMISSED {"reason":"$cancelReason","id":$_groupANotificationId}\n' : ''}'
+        'GROUP_MESSAGES_DB_MARK_READ_SUCCESS {"count":1}\n'
         'GROUP_MESSAGES_DB_COUNT_UNREAD_SUCCESS {"count":0}\n'
-        'NOTIFICATION_DISMISSED '
-        '{"reason":"$cancelReason","id":$_groupANotificationId}\n',
+        '${activationCancelFirst ? '' : 'NOTIFICATION_DISMISSED {"reason":"$cancelReason","id":$_groupANotificationId}\n'}',
+  );
+  final killedPhotoTargetDigest = _digest('d');
+  final killedPhotoNotifications = await _writeEvidence(
+    directory,
+    'killed_photo_notifications.txt',
+    _notificationDump(groupABody: 'Alice: Photo'),
+  );
+  final killedPhotoFlow = await _writeEvidence(
+    directory,
+    'killed_photo_flow.log',
+    'PUSH_BACKGROUND_MESSAGE_RECEIVED '
+        '{"dataKeys":["type","groupId","ciphertext"]}\n'
+        'PUSH_ANDROID_DATA_DECRYPT_OK {"kind":"group_message"}\n'
+        'PUSH_BACKGROUND_NOTIFICATION_SHOWN {"silent":false}\n',
+  );
+  final killedPhotoReceipt = await _writeJsonEvidence(
+    directory,
+    'killed_photo_author_receipt.json',
+    <String, Object?>{
+      'schema': groupNotificationProjectionKilledPhotoReceiptSchema,
+      'kind': 'photo',
+      'mediaType': 'image',
+      'ownerLane': 'group',
+      'attachmentCount': 1,
+      'targetMessageIdSha256': killedPhotoTargetDigest,
+      'publicationCommitted': true,
+    },
   );
 
   const kinds = <(String, String, String)>[
@@ -191,6 +239,24 @@ Future<File> _writeValidArtifact(
           action: 'dumpsys_notification',
           semanticTarget: 'after_read_zero',
         ),
+        _command(
+          stage: 'killed_photo_projection',
+          target: _physicalDeviceId,
+          action: 'verify_process_absent',
+          semanticTarget: 'physical_recipient_before_killed_jpeg',
+        ),
+        _command(
+          stage: 'killed_photo_projection',
+          target: _emulatorDeviceId,
+          action: 'send_fixed_group_jpeg',
+          semanticTarget: 'emulator_author_to_killed_physical_recipient',
+        ),
+        _command(
+          stage: 'killed_photo_projection',
+          target: _physicalDeviceId,
+          action: 'dumpsys_notification',
+          semanticTarget: 'killed_group_photo_card',
+        ),
         for (final kind in kinds)
           _command(
             stage: 'reaction_projection',
@@ -248,6 +314,19 @@ Future<File> _writeValidArtifact(
       'beforeUiDump': beforeUi,
       'afterUiDump': afterUi,
       'readFlowLog': readFlow,
+    },
+    'killedPhoto': <String, Object?>{
+      'kind': 'photo',
+      'mediaType': 'image',
+      'senderRole': 'emulator_author',
+      'recipientRole': 'killed_physical',
+      'recipientProcessAbsentBeforeSend': true,
+      'targetMessageIdSha256': killedPhotoTargetDigest,
+      'relayBranch': 'full_ciphertext',
+      'stableGroupANotificationId': _groupANotificationId,
+      'notificationDump': killedPhotoNotifications,
+      'flowLog': killedPhotoFlow,
+      'authorReceipt': killedPhotoReceipt,
     },
     'reactionProjection': <String, Object?>{
       'stableGroupANotificationId': _groupANotificationId,

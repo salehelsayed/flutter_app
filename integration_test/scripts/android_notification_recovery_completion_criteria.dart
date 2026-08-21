@@ -7,951 +7,1148 @@ const String androidNotificationRecoveryCompletionCapabilityId =
     'notifications.android_recovery_completion';
 const String androidNotificationRecoveryCompletionValidator =
     'integration_test/android_notification_recovery_completion_proof_test.dart';
+const String androidNotificationRecoveryCompletionScenarioId =
+    'android_fixed_wake_direct_reaction_recovery';
+const String androidNotificationRecoveryCompletionRawSchema =
+    'mknoon.plan393.android-fixed-wake-recovery-raw.v1';
 const String androidNotificationRecoveryCompletionCampaignSchema =
-    'mknoon.plan331.android-notification-recovery-completion.v1';
-const String androidNotificationRecoveryCompletionReceiptSchema =
-    'mknoon.plan331.android-notification-recovery-receipt.v1';
-const String androidNotificationRecoveryCompletionCommandSchema =
-    'mknoon.plan331.android-notification-command-journal.v1';
-const String plan331PhysicalAndroidDeviceId = '21071FDF600CSC';
-const String plan331AndroidEmulatorDeviceId = 'emulator-5554';
+    'mknoon.plan393.android-fixed-wake-recovery-final.v1';
+const String androidNotificationRecoveryCompletionBuildProfile =
+    'android.production_fcm.fixed_wake';
+const String androidNotificationRecoveryCompletionBuildCapability =
+    'build.android.production_fcm.fixed_wake';
+const String androidNotificationRecoveryCompletionArtifactEnvironment =
+    'SIMS_ARTIFACT_ANDROID_PRODUCTION_FCM_FIXED_WAKE';
 
 const List<String> androidNotificationRecoveryCompletionAssertions = <String>[
-  'notifications.headless_direct_group_recovery',
-  'notifications.foreground_handoff_new_generation',
-  'notifications.direct_custody_recovery',
-  'notifications.synthetic_outer_id_recovery',
-  'notifications.history_count_projection',
-  'notifications.registration_health_live_recovery',
-  'notifications.recovery_copy_locales',
+  'notifications.fixed_wake_live_route_selected',
+  'notifications.direct_reaction_canonical_recovery',
+  'notifications.generic_recovery_card_retired',
+  'notifications.no_duplicate_or_second_tone',
+  'notifications.state_and_route_restored',
   'notifications.zero_taps_zero_child_builds',
 ];
 
-const List<String> androidNotificationRecoveryCompletionScenarioIds = <String>[
-  'headless_direct_group_recovery',
-  'foreground_handoff_new_generation',
-  'direct_custody_recovery',
-  'synthetic_outer_id_removal',
-  'history_registration_health',
-  'localized_recovery_copy',
-];
+const List<Map<String, String>> androidNotificationRecoveryDisposition =
+    <Map<String, String>>[
+      <String, String>{
+        'assertion': 'notifications.headless_direct_group_recovery',
+        'disposition': 'retained_host_native',
+        'owner': 'plan374_tc374_02_tc374_08',
+      },
+      <String, String>{
+        'assertion': 'notifications.foreground_handoff_new_generation',
+        'disposition': 'retained_host_concurrency',
+        'owner': 'plan374_tc374_06_and_plan393_distinct_generations',
+      },
+      <String, String>{
+        'assertion': 'notifications.direct_custody_recovery',
+        'disposition': 'specialized',
+        'owner': 'plan393_authenticated_direct_reaction',
+      },
+      <String, String>{
+        'assertion': 'notifications.synthetic_outer_id_recovery',
+        'disposition': 'retired_obsolete_unsafe',
+        'owner': 'plan375_tc375_04_identity_free_wake',
+      },
+      <String, String>{
+        'assertion': 'notifications.history_count_projection',
+        'disposition': 'retained_outside_recovery_matrix',
+        'owner': 'conversation_snapshot_and_projection_tests',
+      },
+      <String, String>{
+        'assertion': 'notifications.registration_health_live_recovery',
+        'disposition': 'split_existing_owners',
+        'owner': 'plan375_tc375_07_and_registration_health_tests',
+      },
+      <String, String>{
+        'assertion': 'notifications.recovery_copy_locales',
+        'disposition': 'retained_native_host',
+        'owner': 'android_recovery_string_resources_tests',
+      },
+      <String, String>{
+        'assertion': 'notifications.zero_taps_zero_child_builds',
+        'disposition': 'retained_narrowed_capability',
+        'owner': 'plan393_tc393_12_tc393_13',
+      },
+    ];
+
+Set<int> parseAndroidCanonicalRecoveryJobIds({
+  required String dump,
+  required String appPackage,
+}) {
+  final normalized = dump.replaceAll('\r', '');
+  final start = RegExp(
+    r'^Registered(?:\s+\d+)?\s+jobs:',
+    multiLine: true,
+  ).firstMatch(normalized);
+  if (start == null) {
+    throw const FormatException('JobScheduler has no registered-jobs section.');
+  }
+
+  var section = normalized.substring(start.end);
+  final endOffsets = <String>[
+    '\nPending queue:',
+    '\nActive jobs:',
+    '\nRecently completed jobs:',
+    '\nConcurrency:',
+  ].map(section.indexOf).where((index) => index >= 0).toList()..sort();
+  if (endOffsets.isNotEmpty) section = section.substring(0, endOffsets.first);
+
+  final headers = RegExp(
+    r'^\s*JOB\s+#?[^\s/]+/(?<job>\d+)(?::|\s+from\s+namespace\b[^\n]*:)',
+    multiLine: true,
+  ).allMatches(section).toList();
+  final result = <int>{};
+  final service =
+      '$appPackage/androidx.work.impl.background.systemjob.SystemJobService';
+  for (var index = 0; index < headers.length; index += 1) {
+    final block = section.substring(
+      headers[index].start,
+      index + 1 < headers.length ? headers[index + 1].start : section.length,
+    );
+    if (block.contains(service) &&
+        block.contains('androidx.work.systemjobscheduler') &&
+        block.contains('#HeadlessCanonicalRecoveryWorker#')) {
+      final id = int.tryParse(headers[index].namedGroup('job') ?? '');
+      if (id != null) result.add(id);
+    }
+  }
+  return Set<int>.unmodifiable(result);
+}
 
 final class AndroidNotificationRecoveryCompletionValidation {
   AndroidNotificationRecoveryCompletionValidation(List<String> failures)
     : failures = List<String>.unmodifiable(failures);
 
   final List<String> failures;
-
   bool get ok => failures.isEmpty;
-
   String get detail => ok ? 'accepted' : failures.join('; ');
 }
 
-/// Validates the final Sims proof and every content-addressed raw attachment.
-///
-/// Normalized `passed` booleans are never sufficient. The validator replays
-/// command ordering, app receipt binding, relay provenance, process absence,
-/// OS-card evidence, and scenario-specific invariants from files adjacent to
-/// the aggregate proof.
 AndroidNotificationRecoveryCompletionValidation
 validateAndroidNotificationRecoveryCompletionArtifact({
   required File artifactFile,
-  String expectedPhysicalDeviceId = plan331PhysicalAndroidDeviceId,
-  String expectedEmulatorDeviceId = plan331AndroidEmulatorDeviceId,
+  String? expectedPhysicalDeviceId,
+  String? expectedEmulatorDeviceId,
   String? expectedApkSha256,
   String? expectedPackageName,
 }) {
   final failures = <String>[];
-  if (!_isRegularFile(artifactFile, followLinks: false)) {
-    return AndroidNotificationRecoveryCompletionValidation(<String>[
-      'proof artifact is not a regular file: ${artifactFile.path}',
-    ]);
-  }
-
-  final artifact = _decodeObject(
-    artifactFile.readAsStringSync(),
-    r'$',
-    failures,
-  );
-  if (artifact == null) {
+  final root = _readObject(artifactFile, r'$', failures);
+  if (root == null) {
     return AndroidNotificationRecoveryCompletionValidation(failures);
   }
-  _expectExactKeys(
-    artifact,
+  _exactKeys(
+    root,
     const <String>{
-      'schema',
-      'campaignSchema',
-      'capabilityId',
-      'validatorIds',
       'status',
       'recordedAt',
+      'campaignSchema',
+      'scenarioIds',
+      'criteria',
+      'targetIds',
+      'targetKinds',
       'buildProfile',
+      'buildCapability',
+      'preparedArtifactEnvironment',
       'preparedArtifactSha256',
-      'packageName',
+      'captureRoot',
+      'captureArtifactPath',
+      'captureArtifactSha256',
       'childBuildCount',
       'manualTaps',
       'notificationCardTaps',
-      'headlessActivityLaunchCount',
-      'forbiddenProcessStopCount',
-      'platforms',
-      'physicalDeviceId',
-      'emulatorDeviceId',
-      'scenarios',
+      'mainActivityLaunchesDuringKilledRecovery',
+      'authenticatedRouteUnregister',
+      'routeAbsentReadback',
+      'stateRestored',
+      'postRestoreAppCardCount',
+      'schema',
+      'capabilityId',
+      'validatorIds',
     },
     r'$',
     failures,
   );
-  _expectValue(artifact, 'schema', 'mknoon.sims.proof.v1', r'$', failures);
-  _expectValue(
-    artifact,
+  _expect(root, 'schema', 'mknoon.sims.proof.v1', r'$', failures);
+  _expect(
+    root,
     'campaignSchema',
     androidNotificationRecoveryCompletionCampaignSchema,
     r'$',
     failures,
   );
-  _expectValue(
-    artifact,
+  _expect(
+    root,
     'capabilityId',
     androidNotificationRecoveryCompletionCapabilityId,
     r'$',
     failures,
   );
-  _expectValue(artifact, 'status', 'passed', r'$', failures);
-  _expectValue(
-    artifact,
+  _expect(
+    root,
     'validatorIds',
     const <String>[androidNotificationRecoveryCompletionValidator],
     r'$',
     failures,
   );
-  _expectUtcTimestamp(artifact['recordedAt'], r'$.recordedAt', failures);
-  _expectValue(
-    artifact,
-    'buildProfile',
-    'android.production_fcm',
+  _expect(root, 'status', 'passed', r'$', failures);
+  _expect(
+    root,
+    'scenarioIds',
+    const <String>[androidNotificationRecoveryCompletionScenarioId],
     r'$',
     failures,
   );
+  _expect(
+    root,
+    'criteria',
+    androidNotificationRecoveryCompletionAssertions,
+    r'$',
+    failures,
+  );
+  _expect(
+    root,
+    'buildProfile',
+    androidNotificationRecoveryCompletionBuildProfile,
+    r'$',
+    failures,
+  );
+  _expect(
+    root,
+    'buildCapability',
+    androidNotificationRecoveryCompletionBuildCapability,
+    r'$',
+    failures,
+  );
+  _expect(
+    root,
+    'preparedArtifactEnvironment',
+    androidNotificationRecoveryCompletionArtifactEnvironment,
+    r'$',
+    failures,
+  );
+  _utc(root['recordedAt'], r'$.recordedAt', failures);
   for (final key in const <String>[
     'childBuildCount',
     'manualTaps',
     'notificationCardTaps',
-    'headlessActivityLaunchCount',
-    'forbiddenProcessStopCount',
+    'mainActivityLaunchesDuringKilledRecovery',
+    'postRestoreAppCardCount',
   ]) {
-    _expectValue(artifact, key, 0, r'$', failures);
+    _expect(root, key, 0, r'$', failures);
   }
-  _expectValue(
-    artifact,
-    'platforms',
-    const <String>['android'],
-    r'$',
-    failures,
-  );
-  _expectValue(
-    artifact,
-    'physicalDeviceId',
-    expectedPhysicalDeviceId,
-    r'$',
-    failures,
-  );
-  _expectValue(
-    artifact,
-    'emulatorDeviceId',
-    expectedEmulatorDeviceId,
-    r'$',
-    failures,
-  );
-  final apkSha = artifact['preparedArtifactSha256'];
-  if (!_isSha256(apkSha)) {
-    failures.add(r'$.preparedArtifactSha256 must be a lowercase SHA-256');
-  } else if (expectedApkSha256 != null && apkSha != expectedApkSha256) {
+  for (final key in const <String>[
+    'authenticatedRouteUnregister',
+    'routeAbsentReadback',
+    'stateRestored',
+  ]) {
+    _expect(root, key, true, r'$', failures);
+  }
+  if (!_digest(root['preparedArtifactSha256'])) {
+    failures.add(r'$.preparedArtifactSha256 invalid');
+  } else if (expectedApkSha256 != null &&
+      root['preparedArtifactSha256'] != expectedApkSha256) {
     failures.add(r'$.preparedArtifactSha256 does not bind the prepared APK');
   }
-  final packageName = artifact['packageName'];
-  if (packageName is! String ||
-      !RegExp(r'^[A-Za-z][A-Za-z0-9_.]{2,199}$').hasMatch(packageName)) {
-    failures.add(r'$.packageName is not a safe Android package');
-  } else if (expectedPackageName != null &&
-      packageName != expectedPackageName) {
-    failures.add(r'$.packageName does not match the prepared app');
-  }
-
-  final scenarios = artifact['scenarios'];
-  final expectedPairs = <String>{
-    for (final scenarioId in androidNotificationRecoveryCompletionScenarioIds)
-      '$scenarioId@$expectedPhysicalDeviceId',
-    for (final scenarioId in androidNotificationRecoveryCompletionScenarioIds)
-      '$scenarioId@$expectedEmulatorDeviceId',
-  };
-  if (scenarios is! List || scenarios.length != expectedPairs.length) {
+  final targets = root['targetIds'];
+  if (targets is! List || targets.length != 2) {
     failures.add(
-      r'$.scenarios must contain every scenario in both Android receiver roles',
+      r'$.targetIds must contain physical sender and emulator receiver',
     );
+  } else {
+    if (expectedPhysicalDeviceId != null &&
+        targets[0] != expectedPhysicalDeviceId) {
+      failures.add(r'$.targetIds[0] is not the assigned physical sender');
+    }
+    if (expectedEmulatorDeviceId != null &&
+        targets[1] != expectedEmulatorDeviceId) {
+      failures.add(r'$.targetIds[1] is not the assigned emulator receiver');
+    }
+  }
+  _expect(
+    root,
+    'targetKinds',
+    const <String>['physical', 'emulator'],
+    r'$',
+    failures,
+  );
+
+  final capturePath = root['captureArtifactPath'];
+  if (capturePath is! String || capturePath.trim().isEmpty) {
+    failures.add(r'$.captureArtifactPath missing');
     return AndroidNotificationRecoveryCompletionValidation(failures);
   }
+  final rawArtifact = File(capturePath);
+  if (!_regular(rawArtifact, followLinks: false)) {
+    failures.add(r'$.captureArtifactPath is not a regular file');
+    return AndroidNotificationRecoveryCompletionValidation(failures);
+  }
+  final actualRawDigest = sha256
+      .convert(rawArtifact.readAsBytesSync())
+      .toString();
+  if (root['captureArtifactSha256'] != actualRawDigest) {
+    failures.add(r'$.captureArtifactSha256 mismatch');
+  }
+  final rawValidation = validateAndroidNotificationRecoveryRawArtifact(
+    artifactFile: rawArtifact,
+    expectedPhysicalDeviceId: expectedPhysicalDeviceId,
+    expectedEmulatorDeviceId: expectedEmulatorDeviceId,
+    expectedApkSha256: expectedApkSha256,
+    expectedPackageName: expectedPackageName,
+  );
+  failures.addAll(rawValidation.failures.map((value) => 'raw: $value'));
+  return AndroidNotificationRecoveryCompletionValidation(failures);
+}
 
-  final observedPairs = <String>{};
-  for (var index = 0; index < scenarios.length; index += 1) {
-    final path = '\$.scenarios[$index]';
-    final scenario = _object(scenarios[index], path, failures);
-    if (scenario == null) continue;
-    _expectExactKeys(
-      scenario,
-      const <String>{
-        'id',
-        'mode',
-        'receiverDeviceId',
-        'senderDeviceId',
-        'evidence',
-      },
-      path,
+AndroidNotificationRecoveryCompletionValidation
+validateAndroidNotificationRecoveryRawArtifact({
+  required File artifactFile,
+  String? expectedPhysicalDeviceId,
+  String? expectedEmulatorDeviceId,
+  String? expectedApkSha256,
+  String? expectedPackageName,
+}) {
+  final failures = <String>[];
+  final root = _readObject(artifactFile, r'$', failures);
+  if (root == null) {
+    return AndroidNotificationRecoveryCompletionValidation(failures);
+  }
+  final raw = artifactFile.readAsStringSync();
+  for (final forbidden in const <String>[
+    'BEGIN PRIVATE KEY',
+    '"fcmToken":',
+    '"pushToken":',
+    '"privateKey":',
+    'NotificationRecoveryCompletionReceiver',
+    'android_notification_recovery_completion_campaign_driver',
+  ]) {
+    if (raw.contains(forbidden)) failures.add('artifact contains $forbidden');
+  }
+  _exactKeys(
+    root,
+    const <String>{
+      'schema',
+      'version',
+      'scenario',
+      'status',
+      'recordedAt',
+      'buildProfile',
+      'buildCapability',
+      'preparedArtifactSha256',
+      'appPackage',
+      'topology',
+      'relay',
+      'transitionA',
+      'transitionB',
+      'cleanup',
+      'automation',
+      'assertions',
+      'oldAssertionDisposition',
+      'redaction',
+    },
+    r'$',
+    failures,
+  );
+  _expect(
+    root,
+    'schema',
+    androidNotificationRecoveryCompletionRawSchema,
+    r'$',
+    failures,
+  );
+  _expect(root, 'version', 1, r'$', failures);
+  _expect(
+    root,
+    'scenario',
+    androidNotificationRecoveryCompletionScenarioId,
+    r'$',
+    failures,
+  );
+  _expect(root, 'status', 'passed', r'$', failures);
+  _expect(
+    root,
+    'buildProfile',
+    androidNotificationRecoveryCompletionBuildProfile,
+    r'$',
+    failures,
+  );
+  _expect(
+    root,
+    'buildCapability',
+    androidNotificationRecoveryCompletionBuildCapability,
+    r'$',
+    failures,
+  );
+  _expect(
+    root,
+    'assertions',
+    androidNotificationRecoveryCompletionAssertions,
+    r'$',
+    failures,
+  );
+  _expect(
+    root,
+    'oldAssertionDisposition',
+    androidNotificationRecoveryDisposition,
+    r'$',
+    failures,
+  );
+  _utc(root['recordedAt'], r'$.recordedAt', failures);
+  if (!_digest(root['preparedArtifactSha256'])) {
+    failures.add(r'$.preparedArtifactSha256 invalid');
+  } else if (expectedApkSha256 != null &&
+      root['preparedArtifactSha256'] != expectedApkSha256) {
+    failures.add(r'$.preparedArtifactSha256 mismatch');
+  }
+  if (expectedPackageName != null &&
+      root['appPackage'] != expectedPackageName) {
+    failures.add(r'$.appPackage mismatch');
+  }
+
+  final topology = _object(root['topology'], r'$.topology', failures);
+  if (topology != null) {
+    _exactKeys(
+      topology,
+      const <String>{'sender', 'receiver'},
+      r'$.topology',
       failures,
     );
-    final id = scenario['id'];
-    final receiver = scenario['receiverDeviceId'];
-    final sender = scenario['senderDeviceId'];
-    if (id is! String ||
-        !androidNotificationRecoveryCompletionScenarioIds.contains(id)) {
-      failures.add('$path.id is not a registered Plan-331 scenario');
-      continue;
-    }
-    if (receiver is! String ||
-        !<String>{
-          expectedPhysicalDeviceId,
-          expectedEmulatorDeviceId,
-        }.contains(receiver)) {
-      failures.add('$path.receiverDeviceId is not an assigned Android target');
-      continue;
-    }
-    final expectedSender = receiver == expectedPhysicalDeviceId
-        ? expectedEmulatorDeviceId
-        : expectedPhysicalDeviceId;
-    if (sender != expectedSender) {
-      failures.add('$path.senderDeviceId must be the other assigned target');
-    }
-    final pair = '$id@$receiver';
-    if (!observedPairs.add(pair)) {
-      failures.add('$path duplicates $pair');
-    }
-    _expectValue(
-      scenario,
-      'mode',
-      id == 'synthetic_outer_id_removal'
-          ? 'test_only_transport_mutation'
-          : 'real_relay',
-      path,
+    _device(
+      topology['sender'],
+      r'$.topology.sender',
+      'physical',
+      'sender',
+      expectedPhysicalDeviceId,
       failures,
     );
-    _validateScenarioEvidence(
-      artifactFile: artifactFile,
-      scenario: scenario,
-      path: path,
-      scenarioId: id,
-      receiverDeviceId: receiver,
-      senderDeviceId: expectedSender,
-      packageName: packageName is String ? packageName : '',
-      failures: failures,
+    _device(
+      topology['receiver'],
+      r'$.topology.receiver',
+      'emulator',
+      'receiver',
+      expectedEmulatorDeviceId,
+      failures,
     );
   }
-  if (!_sameStringSet(observedPairs, expectedPairs)) {
-    failures.add(r'$.scenarios receiver-role matrix is incomplete');
+  final relay = _object(root['relay'], r'$.relay', failures);
+  if (relay != null) {
+    _exactKeys(
+      relay,
+      const <String>{
+        'revision',
+        'sha256',
+        'selectedRouteCounter',
+        'executionBoundary',
+        'backend',
+        'pushTokenState',
+        'wakeOutcomeLedger',
+        'provider',
+      },
+      r'$.relay',
+      failures,
+    );
+    if (relay['revision'] is! String || '${relay['revision']}'.trim().isEmpty) {
+      failures.add(r'$.relay.revision missing');
+    }
+    if (!_digest(relay['sha256'])) failures.add(r'$.relay.sha256 invalid');
+    _expect(
+      relay,
+      'selectedRouteCounter',
+      'relay_push_route_selected_total',
+      r'$.relay',
+      failures,
+    );
+    _expect(
+      relay,
+      'executionBoundary',
+      'ephemeral_production_redis_fixture',
+      r'$.relay',
+      failures,
+    );
+    _expect(relay, 'backend', 'redis', r'$.relay', failures);
+    _expect(relay, 'pushTokenState', 'encrypted', r'$.relay', failures);
+    _expect(relay, 'wakeOutcomeLedger', 'redis', r'$.relay', failures);
+    _expect(relay, 'provider', 'fcm', r'$.relay', failures);
+  }
+
+  final transitionA = _transition(
+    root['transitionA'],
+    r'$.transitionA',
+    lifecycle: 'alive_backgrounded',
+    requireKilledWorker: false,
+    artifactDirectory: artifactFile.parent,
+    failures: failures,
+  );
+  final transitionB = _transition(
+    root['transitionB'],
+    r'$.transitionB',
+    lifecycle: 'killed',
+    requireKilledWorker: true,
+    artifactDirectory: artifactFile.parent,
+    failures: failures,
+  );
+  if (transitionA != null && transitionB != null) {
+    for (final key in const <String>[
+      'targetMarkerSha256',
+      'targetMessageIdSha256',
+      'reactionIdSha256',
+      'recoveryGeneration',
+    ]) {
+      if (transitionA[key] == transitionB[key]) {
+        failures.add(r'$.transitionB reuses transition A ' + key);
+      }
+    }
+  }
+
+  final cleanup = _object(root['cleanup'], r'$.cleanup', failures);
+  if (cleanup != null) {
+    _exactKeys(
+      cleanup,
+      const <String>{
+        'authenticatedRouteUnregister',
+        'unregisterReceipt',
+        'routeAbsentReadback',
+        'absenceProbeReactionIdSha256',
+        'absenceProbeRouteBefore',
+        'absenceProbeRouteAfter',
+        'absenceProbeRelayJournal',
+        'postCampaignAppCardCount',
+        'localStateRestorationOwnedByParent',
+      },
+      r'$.cleanup',
+      failures,
+    );
+    for (final key in const <String>[
+      'authenticatedRouteUnregister',
+      'routeAbsentReadback',
+      'localStateRestorationOwnedByParent',
+    ]) {
+      _expect(cleanup, key, true, r'$.cleanup', failures);
+    }
+    _expect(cleanup, 'postCampaignAppCardCount', 0, r'$.cleanup', failures);
+    if (!_digest(cleanup['absenceProbeReactionIdSha256'])) {
+      failures.add(r'$.cleanup absence reaction digest invalid');
+    }
+    final before = _route(
+      cleanup['absenceProbeRouteBefore'],
+      r'$.cleanup.absenceProbeRouteBefore',
+      artifactFile.parent,
+      failures,
+    );
+    final after = _route(
+      cleanup['absenceProbeRouteAfter'],
+      r'$.cleanup.absenceProbeRouteAfter',
+      artifactFile.parent,
+      failures,
+    );
+    if (before != null &&
+        after != null &&
+        (before.$1 != after.$1 || before.$2 != after.$2)) {
+      failures.add(r'$.cleanup route remained selectable after unregister');
+    }
+    _reference(
+      cleanup['unregisterReceipt'],
+      artifactFile.parent,
+      r'$.cleanup.unregisterReceipt',
+      failures,
+    );
+    _reference(
+      cleanup['absenceProbeRelayJournal'],
+      artifactFile.parent,
+      r'$.cleanup.absenceProbeRelayJournal',
+      failures,
+    );
+  }
+
+  final automation = _object(root['automation'], r'$.automation', failures);
+  if (automation != null) {
+    _exactKeys(
+      automation,
+      const <String>{
+        'manualUserTaps',
+        'notificationCardTaps',
+        'childBuildCount',
+        'mainActivityLaunchesDuringKilledRecovery',
+        'productionIngressInjectionCount',
+        'statePreparedByParent',
+      },
+      r'$.automation',
+      failures,
+    );
+    for (final key in const <String>[
+      'manualUserTaps',
+      'notificationCardTaps',
+      'childBuildCount',
+      'mainActivityLaunchesDuringKilledRecovery',
+      'productionIngressInjectionCount',
+    ]) {
+      _expect(automation, key, 0, r'$.automation', failures);
+    }
+    _expect(
+      automation,
+      'statePreparedByParent',
+      true,
+      r'$.automation',
+      failures,
+    );
+  }
+  final redaction = _object(root['redaction'], r'$.redaction', failures);
+  if (redaction != null) {
+    for (final key in const <String>[
+      'providerTokensPersisted',
+      'privateKeysPersisted',
+      'rawPeerIdsPersisted',
+      'messagePlaintextPersisted',
+    ]) {
+      _expect(redaction, key, false, r'$.redaction', failures);
+    }
   }
   return AndroidNotificationRecoveryCompletionValidation(failures);
 }
 
-void _validateScenarioEvidence({
-  required File artifactFile,
-  required Map<String, Object?> scenario,
-  required String path,
-  required String scenarioId,
-  required String receiverDeviceId,
-  required String senderDeviceId,
-  required String packageName,
+Map<String, Object?>? _transition(
+  Object? value,
+  String path, {
+  required String lifecycle,
+  required bool requireKilledWorker,
+  required Directory artifactDirectory,
   required List<String> failures,
 }) {
-  final evidence = _object(scenario['evidence'], '$path.evidence', failures);
-  if (evidence == null) return;
-  final expectedKeys = <String>{
-    'receipt',
-    'flowLog',
-    'notificationDump',
-    'activityDump',
+  final transition = _object(value, path, failures);
+  if (transition == null) return null;
+  final commonKeys = <String>{
+    'lifecycle',
+    'targetMarkerSha256',
+    'targetMessageIdSha256',
+    'reactionIdSha256',
+    'recoveryGeneration',
+    'routeBefore',
+    'routeAfter',
+    'opaqueRouteDelta',
+    'richRouteDelta',
+    'productionFixedWakeIngress',
+    'genericCard',
+    'canonicalCard',
+    'genericCardRetiredAfterCanonical',
+    'exactMarkerAcknowledgement',
+    'duplicateCanonicalShowCount',
+    'requestedToneCount',
+    'richFlutterFireCallbackCount',
+    'notificationSnapshots',
+    'runtimeEvidence',
     'relayJournal',
-    'commandJournal',
-    if (scenarioId == 'localized_recovery_copy') ...<String>{
-      'localeEnDump',
-      'localeDeDump',
-      'localeArDump',
-      'localeFallbackDump',
-    },
   };
-  _expectExactKeys(evidence, expectedKeys, '$path.evidence', failures);
-  final raw = <String, String>{};
-  for (final key in expectedKeys) {
-    final value = _readEvidence(
-      evidence[key],
-      artifactFile: artifactFile,
-      path: '$path.evidence.$key',
-      failures: failures,
-    );
-    if (value != null) raw[key] = value;
+  if (lifecycle == 'alive_backgrounded') {
+    commonKeys.add('exactChatActivation');
   }
-  final receipt = _decodeObject(
-    raw['receipt'] ?? '',
-    '$path.evidence.receipt',
-    failures,
-  );
-  if (receipt == null) return;
-  _expectExactKeys(
-    receipt,
-    const <String>{
-      'schema',
-      'scenarioId',
-      'runId',
-      'nonce',
-      'status',
-      'receiverDeviceId',
-      'senderDeviceId',
-      'facts',
-    },
-    '$path.evidence.receipt',
-    failures,
-  );
-  _expectValue(
-    receipt,
-    'schema',
-    androidNotificationRecoveryCompletionReceiptSchema,
-    '$path.evidence.receipt',
-    failures,
-  );
-  _expectValue(
-    receipt,
-    'scenarioId',
-    scenarioId,
-    '$path.evidence.receipt',
-    failures,
-  );
-  _expectValue(
-    receipt,
-    'receiverDeviceId',
-    receiverDeviceId,
-    '$path.evidence.receipt',
-    failures,
-  );
-  _expectValue(
-    receipt,
-    'senderDeviceId',
-    senderDeviceId,
-    '$path.evidence.receipt',
-    failures,
-  );
-  _expectValue(receipt, 'status', 'passed', '$path.evidence.receipt', failures);
-  final runId = _safeToken(
-    receipt['runId'],
-    '$path.evidence.receipt.runId',
-    failures,
-  );
-  final nonce = _safeToken(
-    receipt['nonce'],
-    '$path.evidence.receipt.nonce',
-    failures,
-  );
-  final flow = raw['flowLog'] ?? '';
-  final relay = raw['relayJournal'] ?? '';
-  final notifications = raw['notificationDump'] ?? '';
-  final activity = raw['activityDump'] ?? '';
-  if (runId != null && !flow.contains(runId)) {
-    failures.add('$path.evidence.flowLog is not bound to the receipt runId');
+  if (requireKilledWorker) {
+    commonKeys.addAll(const <String>{
+      'processAbsentBeforeSend',
+      'barrierArmReceipt',
+      'firstWorkerPid',
+      'resumedWorkerPid',
+      'runAttemptCount',
+      'terminalOutcome',
+      'jobSchedulerBaseline',
+      'jobSchedulerAudit',
+    });
   }
-  if (scenarioId != 'synthetic_outer_id_removal' &&
-      runId != null &&
-      (!relay.contains(runId) ||
-          !RegExp(
-            r'(relay|inbox|push|fcm)',
-            caseSensitive: false,
-          ).hasMatch(relay))) {
-    failures.add('$path.evidence.relayJournal lacks real-relay run binding');
-  }
-  if (!notifications.contains(packageName)) {
-    failures.add('$path.evidence.notificationDump lacks the package boundary');
-  }
-  for (final secretMarker in const <String>[
-    '-----BEGIN PRIVATE KEY-----',
-    '"private_key"',
-    '"client_email"',
+  _exactKeys(transition, commonKeys, path, failures);
+  _expect(transition, 'lifecycle', lifecycle, path, failures);
+  for (final key in const <String>[
+    'targetMarkerSha256',
+    'targetMessageIdSha256',
+    'reactionIdSha256',
   ]) {
-    if (raw.values.any((value) => value.contains(secretMarker))) {
-      failures.add('$path evidence contains forbidden credential material');
+    if (!_digest(transition[key])) failures.add('$path.$key invalid');
+  }
+  final generation = transition['recoveryGeneration'];
+  if (generation is! int || generation <= 0) {
+    failures.add('$path.recoveryGeneration invalid');
+  }
+  final before = _route(
+    transition['routeBefore'],
+    '$path.routeBefore',
+    artifactDirectory,
+    failures,
+  );
+  final after = _route(
+    transition['routeAfter'],
+    '$path.routeAfter',
+    artifactDirectory,
+    failures,
+  );
+  if (before != null && after != null) {
+    if (after.$1 - before.$1 != 1 || after.$2 - before.$2 != 0) {
+      failures.add('$path selected route is not opaque +1/rich +0');
+    }
+    _expect(transition, 'opaqueRouteDelta', 1, path, failures);
+    _expect(transition, 'richRouteDelta', 0, path, failures);
+  }
+  final ingress = _object(
+    transition['productionFixedWakeIngress'],
+    '$path.productionFixedWakeIngress',
+    failures,
+  );
+  if (ingress != null) {
+    _expect(
+      ingress,
+      'event',
+      'plan393_fixed_wake_ingress',
+      '$path.productionFixedWakeIngress',
+      failures,
+    );
+    _expect(
+      ingress,
+      'generation',
+      generation,
+      '$path.productionFixedWakeIngress',
+      failures,
+    );
+    _expect(
+      ingress,
+      'triggerKind',
+      'FIXED_WAKE',
+      '$path.productionFixedWakeIngress',
+      failures,
+    );
+    _expect(
+      ingress,
+      'genericMayHaveAlerted',
+      false,
+      '$path.productionFixedWakeIngress',
+      failures,
+    );
+    _expect(
+      ingress,
+      'genericCardTag',
+      'mknoon_dropped_push_recovery',
+      '$path.productionFixedWakeIngress',
+      failures,
+    );
+    _expect(
+      ingress,
+      'genericCardId',
+      329,
+      '$path.productionFixedWakeIngress',
+      failures,
+    );
+    _expect(
+      ingress,
+      'genericCardRequestedSilent',
+      true,
+      '$path.productionFixedWakeIngress',
+      failures,
+    );
+    _expect(
+      ingress,
+      'richFlutterFireDelegated',
+      false,
+      '$path.productionFixedWakeIngress',
+      failures,
+    );
+    _expect(
+      ingress,
+      'productionIngressInvoked',
+      true,
+      '$path.productionFixedWakeIngress',
+      failures,
+    );
+  }
+  final generic = _object(
+    transition['genericCard'],
+    '$path.genericCard',
+    failures,
+  );
+  if (generic != null) {
+    _expect(
+      generic,
+      'tag',
+      'mknoon_dropped_push_recovery',
+      '$path.genericCard',
+      failures,
+    );
+    _expect(generic, 'id', 329, '$path.genericCard', failures);
+    _expect(generic, 'observed', true, '$path.genericCard', failures);
+    _expect(generic, 'requestedSilent', true, '$path.genericCard', failures);
+  }
+  final canonical = _object(
+    transition['canonicalCard'],
+    '$path.canonicalCard',
+    failures,
+  );
+  if (canonical != null) {
+    if (canonical['id'] is! int ||
+        canonical['id'] == 329 ||
+        canonical['id'] == 330) {
+      failures.add('$path canonical card id invalid');
+    }
+    _expect(
+      canonical,
+      'producer',
+      'direct_reaction',
+      '$path.canonicalCard',
+      failures,
+    );
+    _expect(
+      canonical,
+      'sourceCustody',
+      'SQL_READY',
+      '$path.canonicalCard',
+      failures,
+    );
+    _expect(
+      canonical,
+      'presentationOwner',
+      'INBOX_RECONCILER',
+      '$path.canonicalCard',
+      failures,
+    );
+    _expect(
+      canonical,
+      'effectPhase',
+      'SETTLED',
+      '$path.canonicalCard',
+      failures,
+    );
+    _expect(
+      canonical,
+      'requestedSilent',
+      false,
+      '$path.canonicalCard',
+      failures,
+    );
+    if (!_digest(canonical['titleSha256']) ||
+        !_digest(canonical['bodySha256'])) {
+      failures.add('$path canonical copy digests invalid');
+    }
+    final settlement = _object(
+      canonical['settlement'],
+      '$path.canonicalCard.settlement',
+      failures,
+    );
+    if (settlement != null) {
+      _expect(
+        settlement,
+        'sourceCustody',
+        'SQL_READY',
+        '$path.canonicalCard.settlement',
+        failures,
+      );
+      _expect(
+        settlement,
+        'presentationOwner',
+        'INBOX_RECONCILER',
+        '$path.canonicalCard.settlement',
+        failures,
+      );
+      _expect(
+        settlement,
+        'effectPhase',
+        'SETTLED',
+        '$path.canonicalCard.settlement',
+        failures,
+      );
+      _expect(
+        settlement,
+        'presentationState',
+        'OS_POSTED',
+        '$path.canonicalCard.settlement',
+        failures,
+      );
     }
   }
-  _validateCommandJournal(
-    raw['commandJournal'] ?? '',
-    scenarioId: scenarioId,
-    runId: runId,
-    nonce: nonce,
-    receiverDeviceId: receiverDeviceId,
-    allowedDevices: <String>{receiverDeviceId, senderDeviceId},
-    path: '$path.evidence.commandJournal',
-    failures: failures,
-  );
-  final facts = _object(
-    receipt['facts'],
-    '$path.evidence.receipt.facts',
+  _expect(transition, 'genericCardRetiredAfterCanonical', true, path, failures);
+  _expect(transition, 'duplicateCanonicalShowCount', 0, path, failures);
+  _expect(transition, 'requestedToneCount', 1, path, failures);
+  _expect(transition, 'richFlutterFireCallbackCount', 0, path, failures);
+  final acknowledgement = _object(
+    transition['exactMarkerAcknowledgement'],
+    '$path.exactMarkerAcknowledgement',
     failures,
   );
-  if (facts == null) return;
-  switch (scenarioId) {
-    case 'headless_direct_group_recovery':
-      _expectExactKeys(
-        facts,
-        const <String>{
-          'generation',
-          'directRowsRecovered',
-          'groupRowsRecovered',
-          'directCards',
-          'groupCards',
-          'generationAcknowledged',
-          'duplicateCount',
-          'activityLaunchesBeforeAck',
-        },
-        '$path.evidence.receipt.facts',
+  if (acknowledgement != null) {
+    _expect(
+      acknowledgement,
+      'event',
+      'plan393_recovery_generation_acknowledged',
+      '$path.exactMarkerAcknowledgement',
+      failures,
+    );
+    _expect(
+      acknowledgement,
+      'generation',
+      generation,
+      '$path.exactMarkerAcknowledgement',
+      failures,
+    );
+    _expect(
+      acknowledgement,
+      'genericCardId',
+      329,
+      '$path.exactMarkerAcknowledgement',
+      failures,
+    );
+    _expect(
+      acknowledgement,
+      'genericCardRetired',
+      true,
+      '$path.exactMarkerAcknowledgement',
+      failures,
+    );
+    if (requireKilledWorker) {
+      _expect(
+        acknowledgement,
+        'owner',
+        'headless',
+        '$path.exactMarkerAcknowledgement',
         failures,
       );
-      _expectPositive(facts['generation'], '$path.facts.generation', failures);
-      _expectPositive(
-        facts['directRowsRecovered'],
-        '$path.facts.directRowsRecovered',
+    }
+  }
+  _references(
+    transition['notificationSnapshots'],
+    artifactDirectory,
+    '$path.notificationSnapshots',
+    failures,
+    exactLength: 2,
+  );
+  _references(
+    transition['runtimeEvidence'],
+    artifactDirectory,
+    '$path.runtimeEvidence',
+    failures,
+    exactLength: 2,
+  );
+  _reference(
+    transition['relayJournal'],
+    artifactDirectory,
+    '$path.relayJournal',
+    failures,
+  );
+  if (lifecycle == 'alive_backgrounded') {
+    _reference(
+      transition['exactChatActivation'],
+      artifactDirectory,
+      '$path.exactChatActivation',
+      failures,
+    );
+  }
+  if (requireKilledWorker) {
+    _expect(transition, 'processAbsentBeforeSend', true, path, failures);
+    final arm = _object(
+      transition['barrierArmReceipt'],
+      '$path.barrierArmReceipt',
+      failures,
+    );
+    if (arm != null) {
+      _expect(arm, 'status', 'PASS', '$path.barrierArmReceipt', failures);
+      _expect(
+        arm,
+        'phase',
+        'arm-fixed-wake',
+        '$path.barrierArmReceipt',
         failures,
       );
-      _expectPositive(
-        facts['groupRowsRecovered'],
-        '$path.facts.groupRowsRecovered',
-        failures,
-      );
-      for (final key in const <String>['directCards', 'groupCards']) {
-        _expectValue(facts, key, 1, '$path.facts', failures);
-      }
-      _expectValue(
-        facts,
-        'generationAcknowledged',
+      _expect(
+        arm,
+        'processDeathBarrierArmed',
         true,
-        '$path.facts',
+        '$path.barrierArmReceipt',
         failures,
       );
-      _expectValue(facts, 'duplicateCount', 0, '$path.facts', failures);
-      _expectValue(
-        facts,
-        'activityLaunchesBeforeAck',
+      _expect(
+        arm,
+        'productionIngressInvoked',
+        false,
+        '$path.barrierArmReceipt',
+        failures,
+      );
+      _expect(
+        arm,
+        'pendingGenerationBefore',
+        null,
+        '$path.barrierArmReceipt',
+        failures,
+      );
+      _expect(
+        arm,
+        'pendingGenerationAfter',
+        null,
+        '$path.barrierArmReceipt',
+        failures,
+      );
+      _expect(
+        arm,
+        'mainActivityLaunchCount',
         0,
-        '$path.facts',
+        '$path.barrierArmReceipt',
         failures,
       );
-      _expectOrdered(
-        flow,
-        const <String>[
-          'RECOVERY_GENERATION_COMMITTED',
-          'CANONICAL_RECOVERY_HEADLESS_STARTED',
-          'DIRECT_INBOX_DRAIN_EXHAUSTED',
-          'GROUP_INBOX_DRAIN_EXHAUSTED',
-          'NOTIFICATION_SETTLEMENT_COMPLETE',
-          'RECOVERY_GENERATION_ACKNOWLEDGED',
-        ],
-        '$path.evidence.flowLog',
-        failures,
-      );
-      if (RegExp(
-        '${RegExp.escape(packageName)}/\\.MainActivity',
-        caseSensitive: false,
-      ).hasMatch(activity)) {
-        failures.add('$path headless activity dump shows MainActivity');
+      if (!_digest(arm['receiptSha256'])) {
+        failures.add('$path barrier receipt digest invalid');
       }
-    case 'foreground_handoff_new_generation':
-      _expectExactKeys(
-        facts,
-        const <String>{
-          'firstGeneration',
-          'newerGeneration',
-          'soleOwner',
-          'staleCompletionRejected',
-          'newerGenerationAcknowledged',
-          'duplicateCount',
-        },
-        '$path.evidence.receipt.facts',
-        failures,
-      );
-      final first = _positiveInt(facts['firstGeneration']);
-      final newer = _positiveInt(facts['newerGeneration']);
-      if (first == null || newer == null || newer <= first) {
-        failures.add('$path handoff generations are not monotonic');
-      }
-      for (final key in const <String>[
-        'soleOwner',
-        'staleCompletionRejected',
-        'newerGenerationAcknowledged',
-      ]) {
-        _expectValue(facts, key, true, '$path.facts', failures);
-      }
-      _expectValue(facts, 'duplicateCount', 0, '$path.facts', failures);
-      _expectOrdered(
-        flow,
-        const <String>[
-          'RECOVERY_OWNER_DRAINING',
-          'FOREGROUND_HANDOFF_ACQUIRED',
-          'STALE_RECOVERY_COMPLETION_REJECTED',
-          'NEWER_RECOVERY_GENERATION_ACKNOWLEDGED',
-        ],
-        '$path.evidence.flowLog',
-        failures,
-      );
-    case 'direct_custody_recovery':
-      _expectExactKeys(
-        facts,
-        const <String>{
-          'eventKinds',
-          'firstShowFailureInjected',
-          'readyCustodyRetained',
-          'restartRetryCount',
-          'duplicateCount',
-        },
-        '$path.evidence.receipt.facts',
-        failures,
-      );
-      _expectValue(
-        facts,
-        'eventKinds',
-        const <String>['text', 'photo', 'video', 'voiceMessage', 'reactionAdd'],
-        '$path.facts',
-        failures,
-      );
-      _expectValue(
-        facts,
-        'firstShowFailureInjected',
-        true,
-        '$path.facts',
-        failures,
-      );
-      _expectValue(
-        facts,
-        'readyCustodyRetained',
-        true,
-        '$path.facts',
-        failures,
-      );
-      _expectValue(facts, 'restartRetryCount', 1, '$path.facts', failures);
-      _expectValue(facts, 'duplicateCount', 0, '$path.facts', failures);
-    case 'synthetic_outer_id_removal':
-      _expectExactKeys(
-        facts,
-        const <String>{
-          'label',
-          'ordinaryRelayClaim',
-          'authenticCiphertextRetained',
-          'authenticatedInnerIdentityPromoted',
-          'exactClaimAndReadFence',
-          'identityFreeFallbackSilent',
-        },
-        '$path.evidence.receipt.facts',
-        failures,
-      );
-      _expectValue(
-        facts,
-        'label',
-        'test_only_outer_id_removal',
-        '$path.facts',
-        failures,
-      );
-      _expectValue(facts, 'ordinaryRelayClaim', false, '$path.facts', failures);
-      for (final key in const <String>[
-        'authenticCiphertextRetained',
-        'authenticatedInnerIdentityPromoted',
-        'exactClaimAndReadFence',
-        'identityFreeFallbackSilent',
-      ]) {
-        _expectValue(facts, key, true, '$path.facts', failures);
-      }
-      if (!flow.contains('TEST_ONLY_OUTER_ID_REMOVAL') ||
-          flow.contains('ORDINARY_RELAY_MISSING_OUTER_ID')) {
-        failures.add(
-          '$path synthetic mutation is mislabeled as ordinary relay',
-        );
-      }
-    case 'history_registration_health':
-      _expectExactKeys(
-        facts,
-        const <String>{
-          'historyLineCount',
-          'totalUnreadCount',
-          'androidNumber',
-          'stableConversationCardCount',
-          'healthPhases',
-          'warningActionAutomated',
-          'warningClearedLive',
-        },
-        '$path.evidence.receipt.facts',
-        failures,
-      );
-      _expectValue(facts, 'historyLineCount', 5, '$path.facts', failures);
-      final total = _positiveInt(facts['totalUnreadCount']);
-      if (total == null || total <= 5 || facts['androidNumber'] != total) {
-        failures.add(
-          '$path history count is capped or not bound to Android number',
-        );
-      }
-      _expectValue(
-        facts,
-        'stableConversationCardCount',
-        2,
-        '$path.facts',
-        failures,
-      );
-      _expectValue(
-        facts,
-        'healthPhases',
-        const <String>[
-          'healthy',
-          'transient',
-          'thresholdWarning',
-          'permissionDenied',
-          'retrying',
-          'healthy',
-        ],
-        '$path.facts',
-        failures,
-      );
-      _expectValue(
-        facts,
-        'warningActionAutomated',
-        true,
-        '$path.facts',
-        failures,
-      );
-      _expectValue(facts, 'warningClearedLive', true, '$path.facts', failures);
-      if (!notifications.contains('android.messages') ||
-          !RegExp(
-            r'(number|mNumber)\s*[=:]\s*[6-9][0-9]*',
-            caseSensitive: false,
-          ).hasMatch(notifications)) {
-        failures.add(
-          '$path notification dump lacks InboxStyle history/full number',
-        );
-      }
-    case 'localized_recovery_copy':
-      _expectExactKeys(
-        facts,
-        const <String>{
-          'locales',
-          'stableChannelId',
-          'importancePreserved',
-          'unsupportedLocaleUsedDefault',
-        },
-        '$path.evidence.receipt.facts',
-        failures,
-      );
-      _expectValue(
-        facts,
-        'locales',
-        const <String>['en', 'de', 'ar', 'unsupported-default'],
-        '$path.facts',
-        failures,
-      );
-      for (final key in const <String>[
-        'stableChannelId',
-        'importancePreserved',
-        'unsupportedLocaleUsedDefault',
-      ]) {
-        _expectValue(facts, key, true, '$path.facts', failures);
-      }
-      _expectLocalizedDump(
-        raw['localeEnDump'],
-        const <String>[
-          'mknoon_dropped_push_recovery',
-          'Message recovery',
-          'Messages may be waiting',
-        ],
-        '$path.evidence.localeEnDump',
-        failures,
-      );
-      _expectLocalizedDump(
-        raw['localeDeDump'],
-        const <String>[
-          'mknoon_dropped_push_recovery',
-          'Nachrichtenwiederherstellung',
-          'Möglicherweise warten Nachrichten',
-        ],
-        '$path.evidence.localeDeDump',
-        failures,
-      );
-      _expectLocalizedDump(
-        raw['localeArDump'],
-        const <String>[
-          'mknoon_dropped_push_recovery',
-          'استرداد الرسائل',
-          'قد تكون هناك رسائل بانتظار الاسترداد',
-        ],
-        '$path.evidence.localeArDump',
-        failures,
-      );
-      _expectLocalizedDump(
-        raw['localeFallbackDump'],
-        const <String>[
-          'mknoon_dropped_push_recovery',
-          'Message recovery',
-          'Messages may be waiting',
-        ],
-        '$path.evidence.localeFallbackDump',
-        failures,
-      );
+    }
+    final firstPid = transition['firstWorkerPid'];
+    final resumedPid = transition['resumedWorkerPid'];
+    if (firstPid is! int ||
+        firstPid <= 0 ||
+        resumedPid is! int ||
+        resumedPid <= 0 ||
+        firstPid == resumedPid) {
+      failures.add('$path worker PID provenance invalid');
+    }
+    final attempt = transition['runAttemptCount'];
+    if (attempt is! int || attempt < 1) {
+      failures.add('$path runAttemptCount must prove retry');
+    }
+    _expect(transition, 'terminalOutcome', 'SUCCESS', path, failures);
+    if (acknowledgement != null && acknowledgement['pid'] != resumedPid) {
+      failures.add('$path ACK PID does not match resumed worker');
+    }
+    _reference(
+      transition['jobSchedulerBaseline'],
+      artifactDirectory,
+      '$path.jobSchedulerBaseline',
+      failures,
+    );
+    _reference(
+      transition['jobSchedulerAudit'],
+      artifactDirectory,
+      '$path.jobSchedulerAudit',
+      failures,
+    );
+  }
+  return transition;
+}
+
+(int, int)? _route(
+  Object? value,
+  String path,
+  Directory directory,
+  List<String> failures,
+) {
+  final route = _object(value, path, failures);
+  if (route == null) return null;
+  _exactKeys(
+    route,
+    const <String>{'opaque', 'rich', 'evidence'},
+    path,
+    failures,
+  );
+  final opaque = route['opaque'];
+  final rich = route['rich'];
+  if (opaque is! int || opaque < 0 || rich is! int || rich < 0) {
+    failures.add('$path counters invalid');
+    return null;
+  }
+  _reference(route['evidence'], directory, '$path.evidence', failures);
+  return (opaque, rich);
+}
+
+void _device(
+  Object? value,
+  String path,
+  String kind,
+  String role,
+  String? expectedId,
+  List<String> failures,
+) {
+  final device = _object(value, path, failures);
+  if (device == null) return;
+  _exactKeys(
+    device,
+    const <String>{'deviceId', 'kind', 'role'},
+    path,
+    failures,
+  );
+  _expect(device, 'kind', kind, path, failures);
+  _expect(device, 'role', role, path, failures);
+  final id = device['deviceId'];
+  if (id is! String || !RegExp(r'^[A-Za-z0-9._:-]{1,160}$').hasMatch(id)) {
+    failures.add('$path.deviceId invalid');
+  }
+  if (expectedId != null && id != expectedId) {
+    failures.add('$path.deviceId mismatch');
+  }
+  if (kind == 'physical' && id is String && id.startsWith('emulator-')) {
+    failures.add('$path physical device is emulator-shaped');
+  }
+  if (kind == 'emulator' &&
+      id is String &&
+      !RegExp(r'^emulator-[0-9]+$').hasMatch(id)) {
+    failures.add('$path emulator device is not live-ID shaped');
   }
 }
 
-void _validateCommandJournal(
-  String encoded, {
-  required String scenarioId,
-  required String? runId,
-  required String? nonce,
-  required String receiverDeviceId,
-  required Set<String> allowedDevices,
-  required String path,
-  required List<String> failures,
+void _references(
+  Object? value,
+  Directory directory,
+  String path,
+  List<String> failures, {
+  required int exactLength,
 }) {
-  final journal = _decodeObject(encoded, path, failures);
-  if (journal == null) return;
-  _expectExactKeys(
-    journal,
-    const <String>{'schema', 'scenarioId', 'runId', 'nonce', 'commands'},
-    path,
-    failures,
-  );
-  _expectValue(
-    journal,
-    'schema',
-    androidNotificationRecoveryCompletionCommandSchema,
-    path,
-    failures,
-  );
-  _expectValue(journal, 'scenarioId', scenarioId, path, failures);
-  _expectValue(journal, 'runId', runId, path, failures);
-  _expectValue(journal, 'nonce', nonce, path, failures);
-  final commands = journal['commands'];
-  if (commands is! List || commands.isEmpty) {
-    failures.add('$path.commands must contain actual host-driven commands');
+  if (value is! List || value.length != exactLength) {
+    failures.add('$path must contain $exactLength references');
     return;
   }
-  final joined = <String>[];
-  final stdoutEmpty = <bool?>[];
-  final phases = <String>[];
-  var boundRecoveryBroadcastObserved = false;
-  for (var index = 0; index < commands.length; index += 1) {
-    final itemPath = '$path.commands[$index]';
-    final command = _object(commands[index], itemPath, failures);
-    if (command == null) continue;
-    _expectExactKeys(
-      command,
-      const <String>{
-        'phase',
-        'device',
-        'args',
-        'exitCode',
-        'stdoutEmpty',
-        'capturedAt',
-      },
-      itemPath,
-      failures,
-    );
-    final phase = command['phase'];
-    final device = command['device'];
-    final args = command['args'];
-    if (phase is! String ||
-        !const <String>{
-          'setup',
-          'termination',
-          'headless',
-          'capture',
-          'teardown',
-        }.contains(phase)) {
-      failures.add('$itemPath.phase is invalid');
-    } else {
-      phases.add(phase);
-    }
-    if (device is! String || !allowedDevices.contains(device)) {
-      failures.add('$itemPath.device is outside the assigned pair');
-    }
-    if (args is! List ||
-        args.isEmpty ||
-        args.any((value) => value is! String)) {
-      failures.add('$itemPath.args must be a nonempty string array');
-      continue;
-    }
-    final tokens = args.cast<String>();
-    final line = tokens.join(' ');
-    joined.add(line);
-    if (device == receiverDeviceId &&
-        runId != null &&
-        nonce != null &&
-        _containsSubsequence(tokens, <String>[
-          'am',
-          'broadcast',
-          '-a',
-          'com.mknoon.app.debug.NOTIFICATION_RECOVERY_COMPLETION',
-          '--es',
-          'scenarioId',
-          scenarioId,
-          '--es',
-          'runId',
-          runId,
-          '--es',
-          'nonce',
-          nonce,
-        ])) {
-      boundRecoveryBroadcastObserved = true;
-    }
-    stdoutEmpty.add(
-      command['stdoutEmpty'] is bool ? command['stdoutEmpty']! as bool : null,
-    );
-    if (line.contains('force-stop') ||
-        RegExp(r'(^| )input tap( |$)').hasMatch(line) ||
-        line.contains('click-notification')) {
-      failures.add('$itemPath contains a forbidden process stop/card tap');
-    }
-    if ((phase == 'termination' || phase == 'headless') &&
-        line.contains('am start')) {
-      failures.add('$itemPath launches an Activity during the headless window');
-    }
-    if (command['exitCode'] is! int) {
-      failures.add('$itemPath.exitCode must be an integer');
-    }
-    if (command['stdoutEmpty'] is! bool) {
-      failures.add('$itemPath.stdoutEmpty must be boolean');
-    }
-    _expectUtcTimestamp(
-      command['capturedAt'],
-      '$itemPath.capturedAt',
-      failures,
-    );
-  }
-  if (!boundRecoveryBroadcastObserved) {
-    failures.add(
-      '$path lacks the exact receiver scenario/run/nonce recovery broadcast',
-    );
-  }
-  if (scenarioId == 'headless_direct_group_recovery') {
-    final home = joined.indexWhere((line) => line.contains('KEYCODE_HOME'));
-    final kill = joined.indexWhere(
-      (line) =>
-          line.contains('am kill') && line.contains(receiverDeviceId) == false,
-      home < 0 ? 0 : home + 1,
-    );
-    final firstPid = joined.indexWhere(
-      (line) => line.contains('pidof'),
-      kill < 0 ? 0 : kill + 1,
-    );
-    final lastPid = joined.lastIndexWhere((line) => line.contains('pidof'));
-    final boundedStop = joined.indexWhere(
-      (line) => line.contains('cmd activity stop-app'),
-      firstPid < 0 ? 0 : firstPid + 1,
-    );
-    if (home < 0 || kill <= home || firstPid <= kill || lastPid < firstPid) {
-      failures.add(
-        '$path lacks ordered HOME, am kill, and bounded pidof proof',
-      );
-    }
-    if (boundedStop >= 0 && lastPid <= boundedStop) {
-      failures.add('$path stop-app fallback lacks a final empty-pid proof');
-    }
-    if (!phases.contains('headless')) {
-      failures.add('$path lacks a headless command phase');
-    }
-    if (lastPid < 0 || stdoutEmpty[lastPid] != true) {
-      failures.add('$path final pidof observation is not empty');
-    }
+  for (var index = 0; index < value.length; index += 1) {
+    _reference(value[index], directory, '$path[$index]', failures);
   }
 }
 
-String? _readEvidence(
-  Object? value, {
-  required File artifactFile,
-  required String path,
-  required List<String> failures,
-}) {
-  final ref = _object(value, path, failures);
-  if (ref == null) return null;
-  _expectExactKeys(
-    ref,
+void _reference(
+  Object? value,
+  Directory directory,
+  String path,
+  List<String> failures,
+) {
+  final reference = _object(value, path, failures);
+  if (reference == null) return;
+  _exactKeys(
+    reference,
     const <String>{'path', 'sha256', 'bytes'},
     path,
     failures,
   );
-  final relative = ref['path'];
-  final digest = ref['sha256'];
-  final byteCount = ref['bytes'];
+  final relative = reference['path'];
   if (relative is! String ||
       relative.isEmpty ||
-      relative.startsWith('/') ||
-      relative.contains('..') ||
-      relative.contains('\\')) {
-    failures.add('$path.path must be a safe relative sibling path');
-    return null;
+      relative.contains('/') ||
+      relative.contains(r'\') ||
+      relative == '.' ||
+      relative == '..') {
+    failures.add('$path.path is not one adjacent filename');
+    return;
   }
-  if (!_isSha256(digest) ||
-      byteCount is! int ||
-      byteCount <= 0 ||
-      byteCount > 10000000) {
-    failures.add('$path has invalid digest/byte metadata');
-    return null;
-  }
-  final file = File(
-    '${artifactFile.parent.path}${Platform.pathSeparator}$relative',
-  );
-  if (!_isRegularFile(file, followLinks: false)) {
-    failures.add('$path does not resolve to a regular evidence file');
-    return null;
+  final file = File('${directory.path}${Platform.pathSeparator}$relative');
+  if (!_regular(file, followLinks: false)) {
+    failures.add('$path attachment missing');
+    return;
   }
   final bytes = file.readAsBytesSync();
-  if (bytes.length != byteCount || sha256.convert(bytes).toString() != digest) {
-    failures.add('$path content address does not match the evidence file');
+  if (reference['bytes'] != bytes.length ||
+      reference['sha256'] != sha256.convert(bytes).toString()) {
+    failures.add('$path content address mismatch');
+  }
+}
+
+Map<String, Object?>? _readObject(
+  File file,
+  String path,
+  List<String> failures,
+) {
+  if (!_regular(file, followLinks: false)) {
+    failures.add('$path is not a regular file');
     return null;
   }
-  return utf8.decode(bytes, allowMalformed: false);
-}
-
-void _expectLocalizedDump(
-  String? value,
-  List<String> needles,
-  String path,
-  List<String> failures,
-) {
-  if (value == null || needles.any((needle) => !value.contains(needle))) {
-    failures.add('$path lacks stable channel and localized recovery copy');
-  }
-}
-
-void _expectOrdered(
-  String value,
-  List<String> markers,
-  String path,
-  List<String> failures,
-) {
-  var cursor = -1;
-  for (final marker in markers) {
-    final next = value.indexOf(marker, cursor + 1);
-    if (next <= cursor) {
-      failures.add('$path lacks ordered marker $marker');
-      return;
-    }
-    cursor = next;
-  }
-}
-
-Map<String, Object?>? _decodeObject(
-  String encoded,
-  String path,
-  List<String> failures,
-) {
   try {
-    return _object(jsonDecode(encoded), path, failures);
+    final value = jsonDecode(file.readAsStringSync());
+    return _object(value, path, failures);
   } on Object {
-    failures.add('$path is not valid JSON');
+    failures.add('$path is not JSON');
     return null;
   }
 }
@@ -968,82 +1165,58 @@ Map<String, Object?>? _object(
   return value.map<String, Object?>((key, item) => MapEntry('$key', item));
 }
 
-void _expectExactKeys(
+void _exactKeys(
   Map<String, Object?> value,
   Set<String> expected,
   String path,
   List<String> failures,
 ) {
-  if (!_sameStringSet(value.keys.toSet(), expected)) {
-    failures.add('$path keys must be exactly ${expected.toList()..sort()}');
+  final actual = value.keys.toSet();
+  if (actual.length != expected.length || !actual.containsAll(expected)) {
+    failures.add('$path keys mismatch');
   }
 }
 
-void _expectValue(
+void _expect(
   Map<String, Object?> value,
   String key,
   Object? expected,
   String path,
   List<String> failures,
 ) {
-  if (jsonEncode(value[key]) != jsonEncode(expected)) {
-    failures.add('$path.$key must equal ${jsonEncode(expected)}');
-  }
+  if (!_deepEqual(value[key], expected)) failures.add('$path.$key mismatch');
 }
 
-String? _safeToken(Object? value, String path, List<String> failures) {
-  if (value is! String ||
-      value.isEmpty ||
-      value.length > 160 ||
-      !RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(value)) {
-    failures.add('$path must be a safe bound token');
-    return null;
+bool _deepEqual(Object? left, Object? right) {
+  if (left is List && right is List) {
+    return left.length == right.length &&
+        List<int>.generate(
+          left.length,
+          (index) => index,
+        ).every((index) => _deepEqual(left[index], right[index]));
   }
-  return value;
+  if (left is Map && right is Map) {
+    final l = left.map<String, Object?>(
+      (key, value) => MapEntry('$key', value),
+    );
+    final r = right.map<String, Object?>(
+      (key, value) => MapEntry('$key', value),
+    );
+    return l.length == r.length &&
+        l.keys.every((key) => r.containsKey(key) && _deepEqual(l[key], r[key]));
+  }
+  return left == right;
 }
 
-void _expectPositive(Object? value, String path, List<String> failures) {
-  if (_positiveInt(value) == null) {
-    failures.add('$path must be a positive integer');
-  }
-}
-
-int? _positiveInt(Object? value) {
-  if (value is int && value > 0) return value;
-  if (value is num && value.toInt() == value && value > 0) {
-    return value.toInt();
-  }
-  return null;
-}
-
-void _expectUtcTimestamp(Object? value, String path, List<String> failures) {
-  if (value is! String) {
-    failures.add('$path must be a UTC timestamp');
-    return;
-  }
-  final parsed = DateTime.tryParse(value);
-  if (parsed == null || !parsed.isUtc || parsed.toIso8601String() != value) {
-    failures.add('$path must be a canonical UTC timestamp');
-  }
-}
-
-bool _isSha256(Object? value) =>
+bool _digest(Object? value) =>
     value is String && RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
 
-bool _isRegularFile(File file, {required bool followLinks}) =>
-    FileSystemEntity.typeSync(file.path, followLinks: followLinks) ==
-    FileSystemEntityType.file;
-
-bool _sameStringSet(Set<String> left, Set<String> right) =>
-    left.length == right.length && left.containsAll(right);
-
-bool _containsSubsequence(List<String> values, List<String> expected) {
-  if (expected.isEmpty) return true;
-  var expectedIndex = 0;
-  for (final value in values) {
-    if (value != expected[expectedIndex]) continue;
-    expectedIndex += 1;
-    if (expectedIndex == expected.length) return true;
+void _utc(Object? value, String path, List<String> failures) {
+  if (value is! String || DateTime.tryParse(value)?.isUtc != true) {
+    failures.add('$path must be UTC');
   }
-  return false;
 }
+
+bool _regular(File file, {required bool followLinks}) =>
+    FileSystemEntity.typeSync(file.absolute.path, followLinks: followLinks) ==
+    FileSystemEntityType.file;

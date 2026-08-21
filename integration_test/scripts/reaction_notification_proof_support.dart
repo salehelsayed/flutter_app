@@ -5169,7 +5169,10 @@ class GroupSendTimingObservation {
   final bool? inboxStored;
   final bool? inboxPending;
 
-  bool get isCommitted => outcome == 'success' || outcome == 'success_no_peers';
+  bool get isCommitted =>
+      outcome == 'success' ||
+      outcome == 'success_no_peers' ||
+      outcome == 'strict_custody_complete';
 
   bool get isRecoveryPending => outcome == 'group_recovery_pending';
 
@@ -6592,7 +6595,10 @@ class AndroidDurableDirectReactionShow {
     fallbackShown: fallbackShown || other.fallbackShown,
     disposition: disposition ?? other.disposition,
     silent: silent ?? other.silent,
-    deferralReasons: _mergeDeferralReasons(deferralReasons, other.deferralReasons),
+    deferralReasons: _mergeDeferralReasons(
+      deferralReasons,
+      other.deferralReasons,
+    ),
   );
 
   static List<String> _mergeDeferralReasons(
@@ -6702,9 +6708,11 @@ List<ActiveNotificationCard> extractActiveNotificationCards(
 
 /// Returns only content-bearing app notification records.
 ///
-/// Android may synthesize an id=0 aggregate summary when multiple app
-/// notifications are active. That OS-owned record is useful diagnostic data,
-/// but it is not a conversation card and must not affect exact card counts.
+/// Android may synthesize an aggregate summary when multiple app notifications
+/// are active. Its numeric id varies across Android implementations, so the
+/// system tag/flags/empty-copy contract identifies it. That OS-owned record is
+/// useful diagnostic data, but it is not a conversation card and must not
+/// affect exact card counts.
 List<ActiveNotificationCard> extractActiveContentNotificationCards(
   String dump, {
   required String packageName,
@@ -6730,9 +6738,6 @@ bool isAndroidGroupSummaryNotificationRecord(String record) {
   final hasAutoGroupSummary = RegExp(
     r'(?:^|\|)AUTOGROUP_SUMMARY(?:\||$)',
   ).hasMatch(normalizedFlags);
-  final id = int.tryParse(
-    RegExp(r'\bid=(-?\d+)\b').firstMatch(record)?.group(1) ?? '',
-  );
   final packageName = RegExp(r'\bpkg=([^\s,)]+)').firstMatch(record)?.group(1);
   final tag = RegExp(r'\btag=([^\s,)]+)').firstMatch(record)?.group(1);
   final aggregateTag = packageName != null
@@ -6740,8 +6745,7 @@ bool isAndroidGroupSummaryNotificationRecord(String record) {
           '^0\\|${RegExp.escape(packageName)}\\|g:Aggregate_[A-Za-z0-9_]+\$',
         ).hasMatch(tag ?? '')
       : false;
-  return id == 0 &&
-      hasGroupSummary &&
+  return hasGroupSummary &&
       hasAutoGroupSummary &&
       aggregateTag &&
       _notificationValue(record, 'android.title').isEmpty &&

@@ -26,7 +26,7 @@ void main() {
     'TC-372-07a adopted direct group main background and reconciler effects have one gateway owner and correlation',
     () {
       final calls = _discoverProductionInvocations('maybeShowNotification');
-      expect(calls, hasLength(14));
+      expect(calls, hasLength(16));
 
       final adopted = calls
           .where((call) => call.arguments.containsKey('durableEffectContext'))
@@ -55,7 +55,7 @@ void main() {
       final classifiedLegacy = calls
           .where((call) => !call.arguments.containsKey('durableEffectContext'))
           .toList(growable: false);
-      expect(classifiedLegacy, hasLength(8));
+      expect(classifiedLegacy, hasLength(10));
       expect(
         <String, int>{
           for (final path in classifiedLegacy.map((call) => call.path).toSet())
@@ -69,7 +69,7 @@ void main() {
               1,
           _groupOwner: 3,
           'lib/features/push/application/background_push_notification_fallback.dart':
-              2,
+              4,
         },
         reason:
             'compatibility, unanchored and foreground-push fallbacks cannot synthesize ledger identity',

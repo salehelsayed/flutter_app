@@ -145,6 +145,7 @@ assert_not_executable "$registry"
 support_paths=(
   integration_test/scripts/run_1to1_device_real.dart
   integration_test/scripts/run_direct_media_blob_custody_sims.dart
+  integration_test/scripts/run_android_notification_recovery_completion_sims.dart
   integration_test/scripts/android_direct_media_blob_custody_campaign.dart
   integration_test/scripts/android_direct_media_blob_custody_device_action.dart
   integration_test/support/android_direct_media_blob_custody_campaign_contract.dart
@@ -196,6 +197,7 @@ jq -e '
     "proofBoundary": "android.group-notification-projection-durability",
     "assertions": [
       "groups.two_group_read_zero_exact_cancel",
+      "groups.killed_group_photo_message",
       "groups.group_reaction_photo_semantic_kind",
       "groups.group_reaction_video_semantic_kind",
       "groups.group_reaction_voice_message_semantic_kind",
@@ -264,12 +266,17 @@ jq -e '
 ' tool/sims/critical_features.json >/dev/null ||
   fail 'Plan 379 muted-group capability is incomplete or duplicated'
 
-# The muted capability must stay LAST: six runtime-roots keyPaths select
-# capabilities by ARRAY INDEX (capabilities.33/34/36/40), and a mid-array
-# insert silently repoints them at the wrong row.
-jq -e '.capabilities[-1].id == "groups.muted_notification_campaign"' \
+# The Plan 379 row stays at its ratcheted index because runtime-roots keyPaths
+# select capabilities by ARRAY INDEX. Plan 393 rows are append-only after it.
+jq -e '
+  .capabilities[41].id == "groups.muted_notification_campaign" and
+  [.capabilities[-2].id, .capabilities[-1].id] == [
+    "notifications.android_typed_reaction_smoke",
+    "groups.strict_notification_closure"
+  ]
+' \
   tool/sims/critical_features.json >/dev/null ||
-  fail 'the muted capability must remain the last capabilities entry'
+  fail 'the ratcheted Plan 379/393 capability suffix drifted'
 
 # Plan 269 keeps one discoverable prepared-artifact runner with exactly two
 # independently listable target-bounded scenarios. The manifest owns only the

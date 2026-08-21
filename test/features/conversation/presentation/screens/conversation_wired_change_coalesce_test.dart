@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/utils/message_window_cap.dart';
@@ -126,6 +127,7 @@ void main() {
       chatMessageListener: chatListener,
       p2pService: p2pService,
       micPermissionGateway: FakeMicPermissionGateway(),
+      conversationTracker: ActiveConversationTracker(),
     ),
   );
 
@@ -269,9 +271,11 @@ void main() {
           _incomingMsg(
             id: 'm-${i.toString().padLeft(4, '0')}',
             text: 'm-$i',
-            ts: DateTime.utc(2026, 1, 1)
-                .add(Duration(minutes: i))
-                .toIso8601String(),
+            ts: DateTime.utc(
+              2026,
+              1,
+              1,
+            ).add(Duration(minutes: i)).toIso8601String(),
           ),
         );
       }
@@ -287,7 +291,10 @@ void main() {
       );
       final ids = screen.messages.map((m) => m.id).toSet();
       // Newest (live edge) retained, oldest evicted.
-      expect(ids.contains('m-${(over - 1).toString().padLeft(4, '0')}'), isTrue);
+      expect(
+        ids.contains('m-${(over - 1).toString().padLeft(4, '0')}'),
+        isTrue,
+      );
       expect(ids.contains('m-0000'), isFalse);
       // An eviction flags more older history as re-fetchable (1:1 self-heal).
       expect(screen.hasMoreOlderMessages, isTrue);

@@ -8,19 +8,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'scripts/android_notification_recovery_completion_criteria.dart';
 
 const String _proofArtifact = String.fromEnvironment(
-  'MKNOON_331_ANDROID_NOTIFICATION_RECOVERY_ARTIFACT',
+  'MKNOON_393_ANDROID_FIXED_WAKE_RECOVERY_ARTIFACT',
 );
 
-/// Capture-owned binding for the paired Android/real-relay Plan-331 campaign.
+/// Capture-owned binding for the Plan-393 Android fixed-wake campaign.
 /// Device control belongs exclusively to the registered Sims runner.
 void main() {
   test(androidNotificationRecoveryCompletionCapabilityId, () {
     if (_proofArtifact.trim().isEmpty) {
       fail(
-        'The Plan-331 proof artifact is not configured. Run the registered '
+        'The Plan-393 proof artifact is not configured. Run the registered '
         '$androidNotificationRecoveryCompletionCapabilityId capability and '
         'bind its artifact with '
-        '--dart-define=MKNOON_331_ANDROID_NOTIFICATION_RECOVERY_ARTIFACT='
+        '--dart-define=MKNOON_393_ANDROID_FIXED_WAKE_RECOVERY_ARTIFACT='
         '<json>.',
       );
     }
@@ -31,7 +31,7 @@ void main() {
     expect(
       validation.ok,
       isTrue,
-      reason: 'invalid Plan-331 Android proof: ${validation.detail}',
+      reason: 'invalid Plan-393 Android proof: ${validation.detail}',
     );
   });
 }

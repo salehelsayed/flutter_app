@@ -6,6 +6,8 @@ const String groupNotificationProjectionE2EResultSchema =
     'mknoon.plan330.android-endpoint-result.v1';
 const String groupNotificationProjectionTargetReceiptSchema =
     'mknoon.plan330.group-media-reaction-target.v1';
+const String groupNotificationProjectionKilledPhotoReceiptSchema =
+    'mknoon.plan393.group-killed-photo-author.v1';
 const String groupNotificationProjectionScenario =
     'android_group_notification_projection_durability';
 const String groupNotificationProjectionBuildProfile = 'android.production_fcm';
@@ -13,11 +15,26 @@ const String groupNotificationProjectionBuildProfile = 'android.production_fcm';
 const String groupNotificationProjectionObserveGroupPhase = 'observe_group';
 const String groupNotificationProjectionSendMediaPhase = 'send_media';
 const String groupNotificationProjectionReactMediaPhase = 'react_media';
+const String groupNotificationProjectionSendKilledJpegPhase =
+    'send_killed_jpeg';
+const String groupNotificationProjectionKilledJpegFixtureKey = 'killed_jpeg';
+const List<String> groupNotificationProjectionMediaFixtureKeys = <String>[
+  'jpeg',
+  'mp4',
+  'voice',
+];
 
 const Map<String, String> groupNotificationProjectionExternalKindByFixtureKind =
     <String, String>{'jpeg': 'photo', 'mp4': 'video', 'voice': 'voiceMessage'};
 const Map<String, String> groupNotificationProjectionMediaTypeByFixtureKind =
     <String, String>{'jpeg': 'image', 'mp4': 'video', 'voice': 'audio'};
+
+Map<String, String> groupNotificationProjectionMediaFixtureSubset(
+  Map<String, String> fixtureIds,
+) => Map<String, String>.unmodifiable(<String, String>{
+  for (final key in groupNotificationProjectionMediaFixtureKeys)
+    key: fixtureIds[key]!,
+});
 
 final class GroupNotificationProjectionE2ERequest {
   const GroupNotificationProjectionE2ERequest({
@@ -68,13 +85,19 @@ final class GroupNotificationProjectionE2ERequest {
     ).hasMatch(groupName);
     final groupAOnlyPhase =
         phase == groupNotificationProjectionSendMediaPhase ||
-        phase == groupNotificationProjectionReactMediaPhase;
+        phase == groupNotificationProjectionReactMediaPhase ||
+        phase == groupNotificationProjectionSendKilledJpegPhase;
     if (!const <String>{
           groupNotificationProjectionObserveGroupPhase,
           groupNotificationProjectionSendMediaPhase,
           groupNotificationProjectionReactMediaPhase,
+          groupNotificationProjectionSendKilledJpegPhase,
         }.contains(phase) ||
-        !const <String>{'physical_author', 'emulator_reactor'}.contains(role) ||
+        !const <String>{
+          'physical_author',
+          'emulator_reactor',
+          'emulator_author',
+        }.contains(role) ||
         !const <String>{'group', 'jpeg', 'mp4', 'voice'}.contains(kind) ||
         (phase == groupNotificationProjectionReactMediaPhase &&
             !groupNotificationProjectionExternalKindByFixtureKind.containsKey(
@@ -187,6 +210,28 @@ String groupNotificationProjectionFailureCode(Object error) {
   }
   if (message.startsWith('group-media ') &&
       message.endsWith(' publication failed')) {
+    for (final outcome in const <String>{
+      'success',
+      'successNoPeers',
+      'queuedOffline',
+      'groupNotFound',
+      'groupDissolved',
+      'unauthorized',
+      'authorityUnavailable',
+      'error',
+      'error_no_message',
+      'error_wrong_message',
+      'error_sending',
+      'error_failed',
+      'error_pending',
+      'error_queued_offline',
+      'error_sent',
+      'error_other',
+    }) {
+      if (message.contains(' $outcome publication failed')) {
+        return 'media_publication_$outcome';
+      }
+    }
     return 'media_publication_failed';
   }
   if (message.startsWith('Plan 330 ') &&
@@ -215,16 +260,17 @@ String? resolvePlan330AccountBoundRemoteTransport({
 }
 
 Map<String, String> _fixtureIdMap(Object? value) {
+  final requiredKinds = <String>{
+    ...groupNotificationProjectionExternalKindByFixtureKind.keys,
+    groupNotificationProjectionKilledJpegFixtureKey,
+  };
   if (value is! Map ||
-      value.keys.toSet().length != 3 ||
-      !value.keys.toSet().containsAll(
-        groupNotificationProjectionExternalKindByFixtureKind.keys,
-      )) {
+      value.keys.toSet().length != requiredKinds.length ||
+      !value.keys.toSet().containsAll(requiredKinds)) {
     throw const FormatException('Plan 330 fixture ID map rejected');
   }
   final result = <String, String>{};
-  for (final kind
-      in groupNotificationProjectionExternalKindByFixtureKind.keys) {
+  for (final kind in requiredKinds) {
     result[kind] = _safeToken(value[kind], maxLength: 160);
     if (!RegExp(
       r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',

@@ -11,6 +11,9 @@ const String backgroundStorageLivenessJournalDirectoryName =
 const String _backgroundStorageLivenessFilePrefix = 'terminal-v1-';
 const String _backgroundStorageLivenessFileExtension = '.json';
 const String _backgroundStorageLivenessTemporaryPrefix = '.terminal-v1-tmp-';
+const String backgroundStorageG21MeasurementFilePrefix = 'g21-measurement-v1-';
+const String _backgroundStorageG21MeasurementTemporaryPrefix =
+    '.g21-measurement-v1-tmp-';
 const Duration _backgroundStorageLivenessTemporaryRetention = Duration(
   hours: 1,
 );
@@ -135,6 +138,19 @@ enum BackgroundStorageEngineRole {
   final String wireName;
 }
 
+/// The only terminal outcomes emitted by the Plan-393 first-wake timing probe.
+///
+/// This remains a closed domain because the receipt is copied directly from
+/// app-private storage by the device harness. No caller text or notification
+/// identifier is allowed to enter that artifact.
+enum BackgroundStorageG21TerminalOutcome {
+  shown('shown'),
+  policySuppressed('policy_suppressed');
+
+  const BackgroundStorageG21TerminalOutcome(this.wireName);
+  final String wireName;
+}
+
 BackgroundStorageElapsedBucket bucketBackgroundStorageElapsed(
   Duration elapsed,
 ) {
@@ -205,6 +221,89 @@ class BackgroundStorageLivenessJournal {
   final int maxEntries;
   final Duration maxCallerImpact;
   int _sequence = 0;
+
+  /// Writes the successful, identifier-free Plan-393 first-wake measurement.
+  ///
+  /// Production never calls this method: its sole caller is guarded by the
+  /// compile-time `MKNOON_NOTIFICATION_G21_MEASUREMENT` flag. The unique file
+  /// name gives the capture harness an inventory cursor without introducing a
+  /// shared lock or letting a stale receipt satisfy a later run.
+  Future<void> recordG21Measurement({
+    required BackgroundStorageMessageKind kind,
+    required Duration aggregateElapsedAtEligibilityStart,
+    required Duration remainingAtEligibilityStart,
+    required Duration eligibilityElapsed,
+    required Duration nativeEntryTail,
+    required BackgroundStorageG21TerminalOutcome terminalOutcome,
+  }) async {
+    final operation = Future<void>.sync(
+      () => _persistG21Measurement(
+        kind: kind,
+        aggregateElapsedAtEligibilityStart: aggregateElapsedAtEligibilityStart,
+        remainingAtEligibilityStart: remainingAtEligibilityStart,
+        eligibilityElapsed: eligibilityElapsed,
+        nativeEntryTail: nativeEntryTail,
+        terminalOutcome: terminalOutcome,
+      ),
+    );
+    try {
+      await operation.timeout(maxCallerImpact);
+    } on Object {
+      // The measurement is observability only and cannot retain the FCM
+      // callback or alter its presentation outcome.
+    }
+  }
+
+  Future<void> _persistG21Measurement({
+    required BackgroundStorageMessageKind kind,
+    required Duration aggregateElapsedAtEligibilityStart,
+    required Duration remainingAtEligibilityStart,
+    required Duration eligibilityElapsed,
+    required Duration nativeEntryTail,
+    required BackgroundStorageG21TerminalOutcome terminalOutcome,
+  }) async {
+    final directory = await _directoryResolver();
+    await directory.create(recursive: true);
+    final sequence = _sequence++;
+    final nonce = _randomNonce() & 0x7fffffff;
+    final now = _now();
+    final stem =
+        '$backgroundStorageG21MeasurementFilePrefix'
+        '${now.microsecondsSinceEpoch}-'
+        '${nonce.toRadixString(16).padLeft(8, '0')}-'
+        '${_instanceNonce.toRadixString(16).padLeft(8, '0')}-'
+        '$sequence';
+    final target = File(
+      '${directory.path}${Platform.pathSeparator}'
+      '$stem$_backgroundStorageLivenessFileExtension',
+    );
+    final temporary = File(
+      '${directory.path}${Platform.pathSeparator}'
+      '$_backgroundStorageG21MeasurementTemporaryPrefix$stem.tmp',
+    );
+    final record = <String, String>{
+      'schema': 'mknoon.plan393.g21-measurement.v1',
+      'kind': kind.wireName,
+      'measurementMode': 'raw_aggregate_remainder',
+      'aggregateElapsedAtEligibilityStartMs': aggregateElapsedAtEligibilityStart
+          .inMilliseconds
+          .toString(),
+      'remainingAtEligibilityStartMs': remainingAtEligibilityStart
+          .inMilliseconds
+          .toString(),
+      'eligibilityElapsedMs': eligibilityElapsed.inMilliseconds.toString(),
+      'nativeEntryTailMs': nativeEntryTail.inMilliseconds.toString(),
+      'terminalOutcome': terminalOutcome.wireName,
+      'buildMode': _buildMode.wireName,
+      'engineRole': BackgroundStorageEngineRole.flutterfireBackground.wireName,
+    };
+    await _atomicWriter(
+      temporary: temporary,
+      target: target,
+      contents: jsonEncode(record),
+    );
+    await _pruneG21Measurements(directory, maxEntries);
+  }
 
   /// Records only a terminal, redacted outcome. Failures and the 200 ms bound
   /// are swallowed by design; callers must continue releasing their queue.
@@ -431,6 +530,31 @@ class BackgroundStorageLivenessJournal {
         await dated[index].file.delete();
       } on FileSystemException {
         // Lock-free concurrent pruning can legitimately win this delete.
+      }
+    }
+  }
+
+  static Future<void> _pruneG21Measurements(
+    Directory directory,
+    int maxEntries,
+  ) async {
+    final files = await directory
+        .list(followLinks: false)
+        .where((entity) {
+          if (entity is! File) return false;
+          final name = entity.path.split(Platform.pathSeparator).last;
+          return name.startsWith(backgroundStorageG21MeasurementFilePrefix) &&
+              name.endsWith(_backgroundStorageLivenessFileExtension);
+        })
+        .cast<File>()
+        .toList();
+    if (files.length <= maxEntries) return;
+    files.sort((left, right) => left.path.compareTo(right.path));
+    for (final file in files.take(files.length - maxEntries)) {
+      try {
+        await file.delete();
+      } on FileSystemException {
+        // Another lock-free measurement writer may already have pruned it.
       }
     }
   }

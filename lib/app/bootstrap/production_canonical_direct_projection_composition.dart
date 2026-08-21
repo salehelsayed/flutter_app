@@ -3,6 +3,7 @@ import 'package:flutter_app/core/database/helpers/direct_notification_reconcilia
 import 'package:flutter_app/core/database/helpers/direct_notification_read_projection_db_helpers.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/direct_notification_canonical_reconciler.dart';
 import 'package:flutter_app/core/notifications/direct_notification_presentation_coordinator.dart';
@@ -44,6 +45,36 @@ final class ProductionCanonicalDirectProjectionComposition {
 
   final DirectNotificationProjectionOwner owner;
   final DirectNotificationReadProjector readProjector;
+}
+
+ExactConversationActivationCleanup
+buildProductionExactConversationActivationCleanup(
+  ConversationNotificationGenerationCancellation cancellation,
+) {
+  return (identity) async {
+    try {
+      final conversationKey = identity.normalizedValue;
+      final metadata = await cancellation
+          .lookupConversationNotificationContentMetadata(conversationKey);
+      final generation = metadata?.generation?.trim();
+      if (generation == null || generation.isEmpty) return;
+      await cancellation.cancelConversationNotificationGeneration(
+        conversationKey,
+        generation,
+      );
+    } catch (error) {
+      // Activation cleanup is deliberately independent of SQL read and route
+      // publication. Unknown metadata keeps the card for later reconciliation.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACTIVE_CONVERSATION_NOTIFICATION_RETIRE_DEFERRED',
+        details: <String, Object?>{
+          'lane': identity.lane.wireValue,
+          'errorType': error.runtimeType.toString(),
+        },
+      );
+    }
+  };
 }
 
 typedef _DirectCanonicalMetadataKey = ({
@@ -338,6 +369,17 @@ buildProductionCanonicalDirectProjectionComposition(
         );
       }
     }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'DIRECT_NOTIFICATION_DURABLE_SETTLED',
+      details: <String, Object?>{
+        'sourceCustody': LocalNotificationSourceCustody.sqlReady.wireName,
+        'presentationOwner':
+            LocalNotificationPresentationOwner.inboxReconciler.wireName,
+        'effectPhase': LocalNotificationEffectPhase.settled.wireName,
+        'presentationState': receipt.presentationState.wireName,
+      },
+    );
   }
 
   Future<void> recoverCommittedDirectNotificationDurableEffects(

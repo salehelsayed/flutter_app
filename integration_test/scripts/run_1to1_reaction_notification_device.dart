@@ -57,6 +57,14 @@ const List<_Scenario> _scenarios = <_Scenario>[
         'real FCM headless-engine crypto-plugin registration and main-callback preservation',
   ),
   _Scenario(
+    id: 'android_first_wake_profile_aot',
+    testCase: 'TC-393-06',
+    requiresSender: true,
+    summary:
+        'warmed killed profile-AOT receiver, successful policy eligibility, '
+        'measured native-entry tail, and one real FCM direct-text alert',
+  ),
+  _Scenario(
     id: 'android_message_unread_lifecycle',
     testCase: 'TC-16',
     requiresSender: true,
@@ -101,6 +109,21 @@ Future<void> main(List<String> args) async {
   }
 
   final scenario = selected.single;
+  final measurementOnly = args.contains('--measurement-only');
+  final requireAlert = args.contains('--require-alert');
+  if (scenario.id == 'android_first_wake_profile_aot') {
+    if (measurementOnly == requireAlert) {
+      _usageError(
+        'android_first_wake_profile_aot requires exactly one of '
+        '--measurement-only or --require-alert.',
+      );
+    }
+  } else if (measurementOnly || requireAlert) {
+    _usageError(
+      '--measurement-only/--require-alert are owned by '
+      'android_first_wake_profile_aot.',
+    );
+  }
   final sender = _valueFor(args, '--sender');
   final recipient = _valueFor(args, '--recipient');
   final artifactDir = _valueFor(args, '--artifact-dir');
@@ -123,6 +146,7 @@ Future<void> main(List<String> args) async {
       'android_typed_reaction_smoke' => _headProvenanceCaptureDriver,
       'android_durable_reaction_background_connected' =>
         _headProvenanceCaptureDriver,
+      'android_first_wake_profile_aot' => _headProvenanceCaptureDriver,
       'android_background_crypto_preflight' =>
         _androidBackgroundCryptoPreflightDriver,
       'android_message_unread_lifecycle' ||
@@ -168,12 +192,19 @@ Future<void> main(List<String> args) async {
         '--service-account',
         '--staging-manifest',
         '--capture-manifest',
+        '--prebuilt-android-apk',
       ]) ...[
         if (_valueFor(args, option) case final value?) ...[option, value],
       ],
+      if (args.contains('--no-child-builds')) '--no-child-builds',
+      if (args.contains('--android-state-prepared')) '--android-state-prepared',
       if (scenario.id == 'android_typed_reaction_smoke') '--live-typed-smoke',
       if (scenario.id == 'android_durable_reaction_background_connected')
         '--durable-background-connected',
+      if (scenario.id == 'android_first_wake_profile_aot')
+        '--first-wake-profile-aot',
+      if (args.contains('--measurement-only')) '--measurement-only',
+      if (args.contains('--require-alert')) '--require-alert',
       if (args.contains('--verbose')) '--verbose',
       if (args.contains('--keep-build-artifacts')) '--keep-build-artifacts',
     ];
@@ -270,6 +301,7 @@ Never _usageError(String message) {
     'run_1to1_reaction_notification_device.dart '
     '--scenario <id> [--sender <device-id>] --recipient <device-id> '
     '--artifact-dir <dir> [--staging-manifest <json>] '
+    '[--measurement-only | --require-alert] '
     '[--capture-manifest <json>] | --list-scenarios | '
     '--validate-artifacts <dir>',
   );

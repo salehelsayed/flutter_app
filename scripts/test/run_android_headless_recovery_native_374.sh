@@ -100,6 +100,7 @@ com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest|testTC37503WorkerAdoptsCurren
 com.mknoon.app.MknoonFirebaseMessagingServiceTest|testTC37501ExactFixedWakeInterceptsAndAllOtherShapesDelegateOnce
 com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-375-06 native read back advertises exact fixed consumer version kind and disposition
 com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|ADB script pins a device and supports handoff and process death
+com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|TC-393 arm-only fixed wake phase cannot inject production ingress
 com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|Dart entrypoint opens only through lease and cannot drain or acknowledge recovery
 com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|debug receiver is no Activity and uses an explicit minimal plugin allowlist
 com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|queue artifact timeout literals stay bound to Dart production constants
@@ -163,9 +164,9 @@ com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 default off 
 com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 shared deleted batch seam commits resnapshots and schedules before caller work
 """
 expected = [line for line in expected_text.strip().splitlines() if line]
-if len(expected) != 67 or len(set(expected)) != 67:
+if len(expected) != 68 or len(set(expected)) != 68:
     raise SystemExit(
-        "the frozen Plan 374/375 JUnit manifest must contain 67 unique methods"
+        "the frozen Plan 374/375/393 JUnit manifest must contain 68 unique methods"
     )
 
 xml_files = [result_dir / f"TEST-{name}.xml" for name in selected_classes]
@@ -212,12 +213,14 @@ for row in sorted(observed):
     print(row)
 PY
 
-[[ "$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')" -eq 67 ]] ||
-  fail "the parsed JUnit method manifest did not contain exactly 67 methods"
+[[ "$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')" -eq 68 ]] ||
+  fail "the parsed JUnit method manifest did not contain exactly 68 methods"
 [[ "$(rg -c '\|TC-374-(05|08) ' "$OBSERVED_MANIFEST")" -eq 7 ]] ||
   fail "the seven planned native TC-374 methods were not observed exactly once"
 [[ "$(rg -c '\|(testTC375|TC-375-)' "$OBSERVED_MANIFEST")" -eq 5 ]] ||
   fail "the five planned native TC-375 methods were not observed exactly once"
+[[ "$(rg -F -c '|TC-393 arm-only fixed wake phase cannot inject production ingress' "$OBSERVED_MANIFEST")" -eq 1 ]] ||
+  fail "the Plan 393 arm-only native source sentinel was not observed exactly once"
 mkdir -p "$RESULT_DIR/android-junit-results"
 for class_name in "${SELECTED_CLASSES[@]}"; do
   cp "$JVM_RESULTS/TEST-$class_name.xml" "$RESULT_DIR/android-junit-results/"
@@ -263,6 +266,30 @@ actions = {
 if actions != {"com.google.firebase.MESSAGING_EVENT"}:
     raise SystemExit(f"Firebase service action drifted: {sorted(actions)!r}")
 
+c2dm_receivers = [
+    node for node in application.findall("receiver")
+    if node.attrib.get(android + "name") == "com.mknoon.app.MknoonFirebaseMessagingReceiver"
+]
+if len(c2dm_receivers) != 1:
+    raise SystemExit(f"expected one Mknoon C2DM receiver, found {len(c2dm_receivers)}")
+c2dm_receiver = c2dm_receivers[0]
+if c2dm_receiver.attrib.get(android + "exported") != "true":
+    raise SystemExit("Mknoon C2DM receiver must remain exported")
+if c2dm_receiver.attrib.get(android + "permission") != "com.google.android.c2dm.permission.SEND":
+    raise SystemExit("Mknoon C2DM receiver lost its sender permission fence")
+c2dm_actions = {
+    action.attrib.get(android + "name")
+    for action in c2dm_receiver.findall("./intent-filter/action")
+}
+if c2dm_actions != {"com.google.android.c2dm.intent.RECEIVE"}:
+    raise SystemExit(f"Mknoon C2DM receiver action drifted: {sorted(c2dm_actions)!r}")
+if any(
+    node.attrib.get(android + "name") ==
+    "io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver"
+    for node in application.findall("receiver")
+):
+    raise SystemExit("FlutterFire C2DM receiver bypass was reintroduced")
+
 receivers = [
     node for node in application.findall("receiver")
     if node.attrib.get(android + "name") == "com.mknoon.app.CanonicalRuntimeH0ProbeReceiver"
@@ -277,6 +304,7 @@ if receiver.attrib.get(android + "exported") != "true":
 PY
 
 readonly SERVICE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessagingService.kt"
+readonly RECEIVER_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessagingReceiver.kt"
 readonly SEAM_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/ProductionDeletedBatchRecovery.kt"
 readonly STORE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/DroppedPushRecoveryStore.kt"
 readonly BRIDGE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/DroppedPushRecoveryBridge.kt"
@@ -295,6 +323,10 @@ readonly BRIDGE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/Dr
   fail "exactly one FlutterFire delegation seam may call super"
 [[ "$(rg -F -c 'fun isExactFixedOpaqueWake(' "$SERVICE_SOURCE")" -eq 1 ]] ||
   fail "the exact fixed classifier must exist exactly once"
+[[ "$(rg -F -c 'MknoonFirebaseMessagingService.isExactFixedOpaqueWake(' "$RECEIVER_SOURCE")" -eq 1 ]] ||
+  fail "the C2DM receiver must share the exact fixed classifier"
+[[ "$(rg -F -c 'super.onReceive(context, intent)' "$RECEIVER_SOURCE")" -eq 1 ]] ||
+  fail "the C2DM receiver must retain exactly one FlutterFire rich delegation seam"
 [[ "$(rg -F -c 'store.recordDeletion { generation ->' "$SEAM_SOURCE")" -eq 1 ]] ||
   fail "production seam must own one deleted-batch store transaction"
 [[ "$(rg -F -c 'store.recordFixedWake { generation ->' "$SEAM_SOURCE")" -eq 1 ]] ||
@@ -314,5 +346,5 @@ readonly BRIDGE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/Dr
 [[ "$(rg -F -c '"headlessAcknowledgeRecovery" ->' "$BRIDGE_SOURCE")" -eq 1 ]] ||
   fail "native bridge must expose one headless acknowledgement method"
 
-printf 'PASS: Plan 374/375 Android native suite selected 9 classes / 67 methods; artifacts: %s\n' \
+printf 'PASS: Plan 374/375/393 Android native suite selected 9 classes / 68 methods; artifacts: %s\n' \
   "$RESULT_DIR"

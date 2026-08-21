@@ -15,9 +15,9 @@ void main() {
               candidate['id'] == 'notifications.android_recovery_completion',
         );
 
-    expect(capability['buildProfile'], 'android.production_fcm');
+    expect(capability['buildProfile'], 'android.production_fcm.fixed_wake');
     expect(capability['dependencies'], <String>[
-      'build.android.production_fcm',
+      'build.android.production_fcm.fixed_wake',
     ]);
     expect(capability['targetCapabilities'], <String>[
       'android.physical',
@@ -49,6 +49,9 @@ void main() {
     final proofBinding = File(
       'integration_test/android_notification_recovery_completion_proof_test.dart',
     ).readAsStringSync();
+    final sharedCapture = File(
+      'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+    ).readAsStringSync();
     final executableBoundary = '$runner\n$criteria\n$proofBinding';
 
     expect(
@@ -63,8 +66,23 @@ void main() {
     expect(runner, isNot(contains("'input', 'tap'")));
     expect(runner, isNot(contains('flutter build')));
     expect(runner, isNot(contains('gradlew')));
-    expect(runner, contains("'stop-app'"));
-    expect(criteria, contains("line.contains('force-stop')"));
+    final terminationStart = sharedCapture.indexOf(
+      'Future<void> _terminateRecipient()',
+    );
+    final terminationEnd = sharedCapture.indexOf(
+      'Future<void> _backgroundRecipient()',
+      terminationStart,
+    );
+    expect(terminationStart, greaterThanOrEqualTo(0));
+    expect(terminationEnd, greaterThan(terminationStart));
+    final recoveryTermination = sharedCapture.substring(
+      terminationStart,
+      terminationEnd,
+    );
+    expect(recoveryTermination, contains("'stop-app'"));
+    expect(recoveryTermination, isNot(contains('force-stop')));
+    expect(criteria, contains("'notificationCardTaps'"));
+    expect(criteria, contains("'mainActivityLaunchesDuringKilledRecovery'"));
 
     final dependencyAndNativeSources = <File>[
       File('pubspec.yaml'),

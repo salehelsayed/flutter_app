@@ -378,10 +378,12 @@ Future<NotificationPresentationResult> maybeShowNotification({
     Future<void> publishLegacyAtNativeBoundary(
       NativeMessageNotificationShow showNative,
     ) async {
-      final entered = await publishAtNativeBoundary(
-        showNative,
-        () async => true,
-      );
+      final entered = await publishAtNativeBoundary(showNative, () async {
+        final finalVisibility = await appVisibility.evaluate(
+          visibilityIdentity,
+        );
+        return !finalVisibility.maySuppress;
+      });
       if (!entered) {
         throw const _NotificationClaimOwnershipLostBeforeShow();
       }

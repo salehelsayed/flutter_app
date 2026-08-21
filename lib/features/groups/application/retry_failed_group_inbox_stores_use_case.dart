@@ -1059,6 +1059,10 @@ Future<_StrictRetryDisposition> _preflightStrictReactionRetry({
   );
   final senderDevice = sender?.findDeviceById(initial.senderDeviceId);
   final target = await messageRepository.getMessage(expected.messageId);
+  final expectedNotificationRecipients =
+      strictGroupReactionNotificationRecipientsFromRetryMessage(
+        initial.message,
+      );
   if (group == null ||
       group.selfRemovedAt != null ||
       group.isDissolved ||
@@ -1068,7 +1072,8 @@ Future<_StrictRetryDisposition> _preflightStrictReactionRetry({
       senderDevice.transportPeerId != initial.senderTransportPeerId ||
       senderDevice.deviceSigningPublicKey != initial.senderPublicKey ||
       target == null ||
-      target.groupId != initial.groupId) {
+      target.groupId != initial.groupId ||
+      expectedNotificationRecipients == null) {
     return _StrictRetryDisposition.stale;
   }
   final matches = await strictGroupReactionAuthorityMatchesAssumingPhase(
@@ -1082,6 +1087,8 @@ Future<_StrictRetryDisposition> _preflightStrictReactionRetry({
     senderTransportPeerId: initial.senderTransportPeerId,
     senderDevicePublicKey: initial.senderPublicKey,
     expectedRecipientPeerIds: initial.fullRecipientPeerIds,
+    expectedNotificationRecipientPeerIds: expectedNotificationRecipients,
+    reactionAction: expected.action,
     expectedAuthority: initial.authorityVersion,
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
   );

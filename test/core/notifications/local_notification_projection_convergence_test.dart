@@ -822,8 +822,8 @@ Future<void> _verifyDirectGenerationSiblingFence(Directory root) async {
   expect(nativeEffects, 0);
   expect(
     retiredPriorGeneration,
-    1,
-    reason: 'only the pre-barrier prior generation is retired',
+    0,
+    reason: 'a rejected generation must leave the prior card untouched',
   );
   expect(
     await fixture.registry.lookupContentMetadata(
@@ -957,7 +957,7 @@ Future<void> _verifyDirectPublishingActiveProofRecovery(Directory root) async {
     DurableLocalNotificationEffectDisposition.ambiguous,
   );
 
-  var recoveryNativeCalls = 0;
+  var silentRepairs = 0;
   final recovered = await fixture.registry.runFinalEffect(
     context: context,
     appVisibility: _BackgroundVisibility(),
@@ -965,16 +965,22 @@ Future<void> _verifyDirectPublishingActiveProofRecovery(Directory root) async {
     conversationKey: _directPeerId,
     notificationId: fixture.notificationId,
     metadata: fixture.metadata,
-    retireCurrent: () async => fail('active proof must not retire'),
-    publishNative: () async => recoveryNativeCalls += 1,
+    retireCurrent: () async => fail('recovery must not retire'),
+    publishNative: () async => fail('recovery must not alert again'),
+    publishNativeSilently: () async => silentRepairs += 1,
     activeNotificationIds: () async => <Object?>[fixture.notificationId],
   );
   expect(
     recovered.disposition,
     DurableLocalNotificationEffectDisposition.osPosted,
   );
-  expect(recovered.currentNativeEntryAttempted, isFalse);
-  expect(recoveryNativeCalls, 0, reason: 'exact active proof avoids republish');
+  expect(recovered.currentNativeEntryAttempted, isTrue);
+  expect(recovered.currentNativeEntryWasSilentRepair, isTrue);
+  expect(
+    silentRepairs,
+    1,
+    reason: 'active id alone cannot prove the unactivated content generation',
+  );
 }
 
 Future<void> _verifySpawnedIsolateOneOwner(Directory root) async {
@@ -1064,8 +1070,8 @@ Future<Map<String, Object?>> _runDirectFinalEffectInSpawnedIsolate(
 
 Future<void> _verifyPublishingCrashCutMatrix(Directory root) async {
   await _verifyClaimedCrashCut(root);
-  await _verifyOldCardRetirementCrashCut(root);
-  await _verifyMarkerActivationCrashCut(root);
+  await _verifyNativeReplacementCrashCut(root);
+  await _verifyPreNativeBarrierCrashCut(root);
   await _verifyNativeEntryCrashCut(root);
   await _verifyNativeReturnCrashCut(root);
   await _verifyEffectTerminalCrashCut(root);
@@ -1144,7 +1150,7 @@ Future<void> _verifyClaimedCrashCut(Directory root) async {
   expect(nativeEffects, 1);
 }
 
-Future<void> _verifyOldCardRetirementCrashCut(Directory root) async {
+Future<void> _verifyNativeReplacementCrashCut(Directory root) async {
   const messageId = 'direct-crash-cut-old-card';
   final directory = Directory('${root.path}/direct-crash-cut-old-card-ledger');
   final fixture = await _DirectEffectFixture.open(
@@ -1168,6 +1174,7 @@ Future<void> _verifyOldCardRetirementCrashCut(Directory root) async {
   );
 
   var retirementEntries = 0;
+  var nativeEntries = 0;
   final interrupted = await fixture.registry.runFinalEffect(
     context: context,
     appVisibility: _BackgroundVisibility(),
@@ -1175,17 +1182,18 @@ Future<void> _verifyOldCardRetirementCrashCut(Directory root) async {
     conversationKey: _directPeerId,
     notificationId: fixture.notificationId,
     metadata: fixture.metadata,
-    retireCurrent: () async {
-      retirementEntries += 1;
-      throw StateError('crash after old-card retirement entry');
+    retireCurrent: () async => retirementEntries += 1,
+    publishNative: () async {
+      nativeEntries += 1;
+      throw StateError('ambiguous native replacement');
     },
-    publishNative: () async => fail('marker was not activated yet'),
   );
   expect(
     interrupted.disposition,
     DurableLocalNotificationEffectDisposition.ambiguous,
   );
-  expect(retirementEntries, 1);
+  expect(retirementEntries, 0);
+  expect(nativeEntries, 1);
   final interruptedRecord = await fixture.registry.lookupExactEffect(
     currentOpaqueBinding: fixture.binding,
     eventCorrelation: fixture.eventCorrelation,
@@ -1197,7 +1205,22 @@ Future<void> _verifyOldCardRetirementCrashCut(Directory root) async {
     interruptedRecord?.effectPhase,
     LocalNotificationEffectPhase.publishing,
   );
-  expect(interruptedRecord?.attemptKind, LocalNotificationAttemptKind.cancel);
+  expect(
+    interruptedRecord?.attemptKind,
+    LocalNotificationAttemptKind.postOrUpdate,
+  );
+  expect(
+    await fixture.registry.lookupContentMetadata(
+      conversationKey: _directPeerId,
+      notificationId: fixture.notificationId,
+    ),
+    const ConversationNotificationContentMetadata(
+      kind: ConversationNotificationContentKind.message,
+      eventIdentity: legacyIdentity,
+      generation: 'legacy-generation-before-plan-372',
+    ),
+    reason: 'native ambiguity must preserve the prior visible generation',
+  );
 
   final reopened = await _DirectEffectFixture.reopen(
     directory,
@@ -1222,7 +1245,7 @@ Future<void> _verifyOldCardRetirementCrashCut(Directory root) async {
     recovered.disposition,
     DurableLocalNotificationEffectDisposition.osPosted,
   );
-  expect(retirementEntries, 2);
+  expect(retirementEntries, 0);
   expect(ordinaryEffects, 0);
   expect(silentRepairs, 1);
   expect(
@@ -1239,7 +1262,7 @@ Future<void> _verifyOldCardRetirementCrashCut(Directory root) async {
   expect(await intentFile.exists(), isFalse);
 }
 
-Future<void> _verifyMarkerActivationCrashCut(Directory root) async {
+Future<void> _verifyPreNativeBarrierCrashCut(Directory root) async {
   const messageId = 'direct-crash-cut-marker';
   final directory = Directory('${root.path}/direct-crash-cut-marker-ledger');
   final fixture = await _DirectEffectFixture.open(
@@ -1266,9 +1289,10 @@ Future<void> _verifyMarkerActivationCrashCut(Directory root) async {
           conversationKey: _directPeerId,
           notificationId: fixture.notificationId,
         ),
-        fixture.metadata,
+        isNull,
+        reason: 'metadata activates only after native publication succeeds',
       );
-      throw StateError('crash after marker activation before native entry');
+      throw StateError('crash before native entry');
     },
   );
   expect(
@@ -1375,9 +1399,9 @@ Future<void> _verifyNativeEntryCrashCut(Directory root) async {
       conversationKey: _directPeerId,
       notificationId: fixture.notificationId,
     ),
-    fixture.metadata,
+    isNull,
     reason:
-        'a later READY event cannot overwrite an unresolved PUBLISHING card',
+        'a later READY event cannot activate over an unresolved PUBLISHING card',
   );
 
   final reopened = await _DirectEffectFixture.reopen(
@@ -1385,6 +1409,7 @@ Future<void> _verifyNativeEntryCrashCut(Directory root) async {
     messageId: messageId,
     notificationId: fixture.notificationId,
   );
+  var silentRepairs = 0;
   final recovered = await reopened.registry.runFinalEffect(
     context: context,
     appVisibility: _BackgroundVisibility(),
@@ -1392,15 +1417,18 @@ Future<void> _verifyNativeEntryCrashCut(Directory root) async {
     conversationKey: _directPeerId,
     notificationId: reopened.notificationId,
     metadata: reopened.metadata,
-    retireCurrent: () async => fail('active proof must not retire'),
-    publishNative: () async => fail('active proof must not republish'),
+    retireCurrent: () async => fail('recovery must not retire'),
+    publishNative: () async => fail('recovery must not alert again'),
+    publishNativeSilently: () async => silentRepairs += 1,
     activeNotificationIds: () async => <Object?>[fixture.notificationId],
   );
   expect(
     recovered.disposition,
     DurableLocalNotificationEffectDisposition.osPosted,
   );
-  expect(recovered.currentNativeEntryAttempted, isFalse);
+  expect(recovered.currentNativeEntryAttempted, isTrue);
+  expect(recovered.currentNativeEntryWasSilentRepair, isTrue);
+  expect(silentRepairs, 1);
   expect(nativeEntries, 1);
 }
 

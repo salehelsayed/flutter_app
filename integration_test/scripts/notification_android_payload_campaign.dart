@@ -100,6 +100,12 @@ const List<String> _permissionDeniedChecks = <String>[
   'g7.permission_custody_preserved',
   'g7.permission_regrant_recovery',
 ];
+const List<String> _permissionAppOpDivergenceChecks = <String>[
+  'g24.permission_appop_divergence',
+  'g24.os_state_override_typed',
+  'g24.no_post_custody_preserved',
+  'g24.appop_restore_recovery',
+];
 const List<String> _tokenRefreshChecks = <String>[
   'g7.token_refresh_event_observed',
   'g7.token_refresh_reregistered_same_process',
@@ -123,6 +129,7 @@ const List<String> _androidPayloadCampaignScenarios = <String>[
   'payload_fast_path_cold_kill',
   'tc_b13_dual_path_single_alert',
   'tc_g7_permission_denied',
+  'tc_g24_permission_appop_divergence',
   'tc_g7_token_refresh_mid_session',
   'tc_g7_channel_disabled',
   'tc_g7_doze_delivery',
@@ -200,6 +207,7 @@ final class _AndroidNotificationCampaign {
   bool _networkMutated = false;
   bool _pushTokenUnregistered = false;
   bool _permissionRevoked = false;
+  bool _g24AppOpMutated = false;
   bool _channelToggledOff = false;
   bool _dozeForced = false;
   bool _tokenRotationInFlight = false;
@@ -213,6 +221,11 @@ final class _AndroidNotificationCampaign {
   // wake window. The leg dies 48 lines before it reads that window itself.
   String? _coldWakeLogcatCursor;
   bool _coldWakeWindowScannedClean = false;
+  bool? _campaignEntryPackagePresent;
+  String? _campaignEntryAppOpMode;
+  String? _g24LegLocalAppOpMode;
+  String? _g24AppOpModeAfterRecovery;
+  String? _g24AppOpModeAfterCampaignRestore;
 
   Future<AndroidNotificationCampaignResult> run() async {
     await _preflight();
@@ -221,6 +234,7 @@ final class _AndroidNotificationCampaign {
     await _startDeviceLogStream();
 
     final captured = <Map<String, Object?>>[];
+    Map<String, Object?>? permissionAppOpDivergence;
     AndroidAppStateGuard? appStateGuard;
     var proofCompleted = false;
     // A throw from the finally REPLACES an in-flight exception, so a leg
@@ -234,6 +248,7 @@ final class _AndroidNotificationCampaign {
         packageName: packageName,
         backupLabel: 'notification',
       );
+      await _captureCampaignEntryNotificationAppOp();
       await appStateGuard.prepareFreshInstall(device: physical, artifact: apk);
       await _configureFreshInstall(physical, 'sims-notification-sender');
       await appStateGuard.prepareFreshInstall(device: emulator, artifact: apk);
@@ -266,6 +281,8 @@ final class _AndroidNotificationCampaign {
 
       final permissionDenied = await _runPermissionDeniedLeg();
       captured.add(await _writeScenarioArtifact(permissionDenied));
+
+      permissionAppOpDivergence = await _runPermissionAppOpDivergenceLeg();
 
       final tokenRefresh = await _runTokenRefreshLeg();
       captured.add(await _writeScenarioArtifact(tokenRefresh));
@@ -312,7 +329,16 @@ final class _AndroidNotificationCampaign {
           });
         }
         if (_permissionRevoked) {
-          await attempt('post-notifications-permission', _restorePostNotifications);
+          await attempt(
+            'post-notifications-permission',
+            _restorePostNotifications,
+          );
+        }
+        if (_g24AppOpMutated) {
+          await attempt(
+            'g24-leg-local-app-op',
+            _restoreLegLocalNotificationAppOp,
+          );
         }
         await attempt('receiver-config', () async {
           await _removeAppFile(emulator, 'intro_e2e_config.json');
@@ -324,6 +350,10 @@ final class _AndroidNotificationCampaign {
         });
         await attempt('campaign-notifications', _cleanupCampaignNotifications);
         await attempt('app-state', appStateGuard.restoreAll);
+        await attempt(
+          'g24-campaign-entry-app-op',
+          _restoreCampaignEntryNotificationAppOp,
+        );
         await attempt('notification-state', _verifyExactNotificationOsState);
       }
       // Outside the appStateGuard branch on purpose: the log stream is started
@@ -338,12 +368,43 @@ final class _AndroidNotificationCampaign {
           'Exact Android campaign restoration failed at '
           '${restorationFailures.join(', ')}'
           '${legFailure == null ? '' : '; the leg had ALREADY failed: '
-                '${_describeFailure(legFailure)}'}'
+                    '${_describeFailure(legFailure)}'}'
           '; no passing evidence was retained.',
           assertionsAttempted: _assertionsAttempted,
         );
       }
     }
+
+    final g24 = permissionAppOpDivergence;
+    if (_g24AppOpModeAfterCampaignRestore == null) {
+      await _removeScenarioArtifacts();
+      throw _Failure(
+        'G24 did not reach its post-restoration artifact boundary.',
+        assertionsAttempted: 10,
+      );
+    }
+    final g24Evidence = _object(g24['evidence']);
+    g24Evidence['appOpModeAfterCampaignRestore'] =
+        _g24AppOpModeAfterCampaignRestore;
+    g24['evidence'] = g24Evidence;
+    try {
+      captured.insert(6, await _writeScenarioArtifact(g24));
+    } on Object {
+      await _removeScenarioArtifacts();
+      rethrow;
+    }
+
+    if (!_isRegularFile(apk) ||
+        sha256.convert(apk.readAsBytesSync()).toString() != apkSha256) {
+      await _removeScenarioArtifacts();
+      throw _Failure(
+        'The central prepared APK changed or disappeared during the campaign.',
+        assertionsAttempted: 10,
+      );
+    }
+    final preparedArtifactSha256After = sha256
+        .convert(apk.readAsBytesSync())
+        .toString();
 
     final evidence = writeSimsArtifactEvidenceSync(
       directory: proofDirectory,
@@ -358,6 +419,7 @@ final class _AndroidNotificationCampaign {
         'targetKinds': const <String>['physical', 'emulator'],
         'preparedArtifactPath': apk.resolveSymbolicLinksSync(),
         'preparedArtifactSha256': apkSha256,
+        'preparedArtifactSha256After': preparedArtifactSha256After,
         'buildProfile': androidNotificationBuildProfileId,
         'captureArtifacts': captured,
         'childBuildCount': 0,
@@ -365,6 +427,8 @@ final class _AndroidNotificationCampaign {
         'pushRegistrationRestored': !_pushTokenUnregistered,
         'appStateRestored': appStateGuard.restored,
         'notificationStateRestored': true,
+        'notificationAppOpStateRestored':
+            _g24AppOpModeAfterCampaignRestore == _campaignEntryAppOpMode,
       },
     );
     final audit = auditSimsArtifactEvidence(
@@ -377,20 +441,20 @@ final class _AndroidNotificationCampaign {
       await _removeScenarioArtifacts();
       throw _Failure(
         'Aggregate notification evidence failed: ${audit.detail}',
-        assertionsAttempted: 9,
+        assertionsAttempted: 10,
       );
     }
     return AndroidNotificationCampaignResult(0, <String, Object?>{
       'status': 'PASS',
-      'assertionsAttempted': 9,
+      'assertionsAttempted': 10,
       'artifactPresent': true,
       'printOnly': false,
       'exitCode': 0,
       'detail':
           'A6, B11, Android B12 warm/cold with measured audible-channel '
           'evidence, B13 dual-path single alert, and the PRD 13 Android '
-          'matrix legs (permission denied, mid-session token refresh, '
-          'channel disabled, Doze) passed with one centrally '
+          'matrix legs (permission denied, permission/app-op divergence, '
+          'mid-session token refresh, channel disabled, Doze) passed with one centrally '
           'prepared production-FCM APK, zero child builds, and exact target '
           'state restoration.',
       'artifactEvidence': evidence.toJson(),
@@ -999,16 +1063,11 @@ final class _AndroidNotificationCampaign {
     await _waitForProviderSend(sentAt);
     await _waitForNotification(marker);
 
-    // The ALERT is read from the cursor-scoped LOG, never from dumpsys.
-    //
-    // The winning path here is the FCM background isolate, and the loser
-    // reconciles the claim and publishes a silent SAME-ID update ~2.6 s later,
-    // which moves the record onto `mknoon_messages_silent`. Device-measured
-    // twice, 2026-08-19: `PUSH_BACKGROUND_NOTIFICATION_SHOWN` -> 2.5 s ->
-    // `NOTIFICATION_LEGACY_CLAIM_RECONCILE` -> 140 ms ->
-    // `NOTIFICATION_SHOWN {"silent":true}`. That is B13 PASSING — one alert,
-    // one card — but no dumpsys poll is fast enough to see the audible window,
-    // so a channel read reports the correct behaviour as a silent alert.
+    // The winning ALERT is read from the cursor-scoped log. The settled
+    // dumpsys record is asserted separately below: a losing path may reconcile
+    // silently, but it must update the same primary-channel card in place. A
+    // later move to `mknoon_messages_silent` is a persistent importance demotion
+    // and therefore a product failure, even if the first post briefly alerted.
     bool? alertSilent;
     final alertDeadline = DateTime.now().add(const Duration(minutes: 1));
     while (DateTime.now().isBefore(alertDeadline)) {
@@ -1051,21 +1110,11 @@ final class _AndroidNotificationCampaign {
       );
     }
 
-    // Exactly ONE card survives the race. The alert itself was already
-    // asserted audible above, from the log.
-    //
-    // The surviving record's channel is recorded but NOT required to be the
-    // audible one: when the losing path reconciles it publishes a silent
-    // same-ID in-place update, which moves the record to
-    // `mknoon_messages_silent` (device-measured 2026-08-19). Requiring the
-    // audible channel here made B13 fail on runs where the product did
-    // exactly what B13 exists to prove — one alert, one card — and pass only
-    // when the losing path happened to stand down without reconciling.
-    // `survivingCardChannel` is value-bounded by the criteria instead, and the
-    // typed losing-path stand-down asserted below is what attributes the
-    // single card to the dedupe seam.
+    // Exactly one card must already exist once both paths have attempted. Its
+    // settled channel is re-read after the typed losing-path reconciliation
+    // below, which closes the old transient-snapshot loophole.
     final dump = await _notificationDump();
-    final channels = androidNotificationChannelsForBody(
+    var channels = androidNotificationChannelsForBody(
       dump,
       packageName: packageName,
       body: marker,
@@ -1077,7 +1126,6 @@ final class _AndroidNotificationCampaign {
         assertionsAttempted: _assertionsAttempted,
       );
     }
-
     // The losing path must say WHY it stood down. Either path may win, so the
     // discriminator is a union over both events' reason sets.
     //
@@ -1101,6 +1149,21 @@ final class _AndroidNotificationCampaign {
       throw _Failure(
         'B13 recorded no typed suppression from the losing delivery path; the '
         'single card cannot be attributed to the dedupe seam.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+
+    channels = androidNotificationChannelsForBody(
+      await _notificationDump(),
+      packageName: packageName,
+      body: marker,
+    );
+    if (channels.length != 1 ||
+        channels.single != _audibleNotificationChannelId) {
+      throw _Failure(
+        'B13 settled card channels were $channels; the silent losing-path '
+        'reconcile must preserve exactly one '
+        '$_audibleNotificationChannelId card.',
         assertionsAttempted: _assertionsAttempted,
       );
     }
@@ -1245,17 +1308,25 @@ final class _AndroidNotificationCampaign {
       RegExp.escape(androidNotificationFcmPathAttemptEvent),
     );
     var receipts = 0;
-    await _waitFor('$leg background FCM receipt', const Duration(minutes: 2), () async {
-      receipts = pattern.allMatches(await _logcatSince(cursor)).length;
-      return receipts > 0;
-    });
+    await _waitFor(
+      '$leg background FCM receipt',
+      const Duration(minutes: 2),
+      () async {
+        receipts = pattern.allMatches(await _logcatSince(cursor)).length;
+        return receipts > 0;
+      },
+    );
     String? attempt;
-    await _waitFor('$leg native post attempt', const Duration(minutes: 2), () async {
-      attempt = androidNotificationPostAttemptEvent(
-        await _logcatSince(cursor),
-      );
-      return attempt != null;
-    });
+    await _waitFor(
+      '$leg native post attempt',
+      const Duration(minutes: 2),
+      () async {
+        attempt = androidNotificationPostAttemptEvent(
+          await _logcatSince(cursor),
+        );
+        return attempt != null;
+      },
+    );
     return (receipts: receipts, postAttemptEvent: attempt!);
   }
 
@@ -1348,9 +1419,8 @@ final class _AndroidNotificationCampaign {
     return records
         .where((record) => record.event == 'PUSH_BACKGROUND_STORAGE_DEFERRED')
         .where(
-          (record) => _alertLosingDeferralOutcomes.contains(
-            record.details['outcome'],
-          ),
+          (record) =>
+              _alertLosingDeferralOutcomes.contains(record.details['outcome']),
         )
         // `pending_overlay` is the ONE `storage_deferred` site that records and
         // then FALLS THROUGH instead of returning: the encrypted overlay is
@@ -1549,9 +1619,9 @@ final class _AndroidNotificationCampaign {
     await _waitFor(
       'push registration success after re-grant',
       const Duration(minutes: 3),
-      () async => (await _flowRecordsSince(recoveryCursor)).any(
-        (record) => record.event == 'PUSH_REGISTER_COORDINATOR_SUCCESS',
-      ),
+      () async => (await _flowRecordsSince(
+        recoveryCursor,
+      )).any((record) => record.event == 'PUSH_REGISTER_COORDINATOR_SUCCESS'),
     );
     await _backgroundReceiver();
     final control = await _sendSpacedMarker(controlMarker, runId: '$runId-ctl');
@@ -1633,10 +1703,340 @@ final class _AndroidNotificationCampaign {
   }
 
   // ---------------------------------------------------------------------
+  // TC-392-06 / G24 — runtime permission granted while the posting app-op is
+  // ignored. This is deliberately distinct from the ordinary pm-revoke row.
+  // ---------------------------------------------------------------------
+  Future<Map<String, Object?>> _runPermissionAppOpDivergenceLeg() async {
+    _assertionsAttempted = 7;
+    final sdk = int.tryParse(
+      (await _shellText(emulator, const <String>[
+        'getprop',
+        'ro.build.version.sdk',
+      ])).trim(),
+    );
+    if (sdk == null || sdk < 33) {
+      throw const _Blocked(
+        'targetUnavailable',
+        'G24 requires an API 33+ Android emulator receiver; this row is N/A '
+            'under the availability-bounded device policy and no aggregate '
+            'G24 PASS is claimed.',
+      );
+    }
+
+    _campaignEntryAppOpMode ??= 'package_absent';
+    final runId = _token('g24appop');
+    final marker = 'Sims G24 permission app-op $runId';
+    final controlMarker = 'Sims G24 permission app-op recovery $runId';
+    await _cleanupCampaignNotifications();
+    _campaignNotificationBodies
+      ..add(marker)
+      ..add(controlMarker);
+
+    final runtimePermissionGrantedBeforeOverride =
+        await _notificationPermissionGranted();
+    if (!runtimePermissionGrantedBeforeOverride) {
+      throw _Failure(
+        'G24 requires POST_NOTIFICATIONS to remain runtime-granted before '
+        'the app-op override.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    _g24LegLocalAppOpMode = await _readNotificationAppOpMode();
+    final appOpMutationCursor = await _deviceLogcatCursor();
+
+    // Set custody BEFORE mutation so any throw inside adb still reaches the
+    // leg-local restore in the outer finally.
+    _g24AppOpMutated = true;
+    await _setNotificationAppOpMode('ignore');
+    final appOpModeDuringOverride = await _readNotificationAppOpMode();
+    if (appOpModeDuringOverride != 'ignore' ||
+        !await _notificationPermissionGranted()) {
+      throw _Failure(
+        'G24 could not establish runtime-granted plus app-op-ignore.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    final appOpProbeDeadline = DateTime.now().add(const Duration(seconds: 3));
+    while (DateTime.now().isBefore(appOpProbeDeadline)) {
+      if (androidNotificationUidAppOpMutationBlocked(
+        await _logcatSince(appOpMutationCursor),
+      )) {
+        throw const _Blocked(
+          'targetUnavailable',
+          'G24 is N/A (target unavailable by project policy): the configured '
+              'emulator blocks a UID POST_NOTIFICATION override for its '
+              'runtime-backed notification permission.',
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+
+    await _terminateReceiver();
+    final coordinatorCursor = await _deviceLogcatCursor();
+    await _launch(emulator);
+    await _identity(emulator);
+
+    List<AndroidFlowRecord> boundedRecords = const <AndroidFlowRecord>[];
+    await _waitFor(
+      'G24 typed permission override/result window',
+      const Duration(minutes: 2),
+      () async {
+        boundedRecords = await _flowRecordsSince(coordinatorCursor);
+        final events = boundedRecords.map((record) => record.event).toSet();
+        return events.contains('PUSH_PERMISSION_OS_STATE_OVERRIDE') &&
+            events.contains('PUSH_PERMISSION_REQUEST_RESULT') &&
+            events.contains('PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED');
+      },
+    );
+    await Future<void>.delayed(const Duration(seconds: 1));
+    boundedRecords = await _flowRecordsSince(coordinatorCursor);
+    final overrides = boundedRecords
+        .where((record) => record.event == 'PUSH_PERMISSION_OS_STATE_OVERRIDE')
+        .toList(growable: false);
+    final results = boundedRecords
+        .where((record) => record.event == 'PUSH_PERMISSION_REQUEST_RESULT')
+        .toList(growable: false);
+    final osCheckFailures = boundedRecords
+        .where((record) => record.event == 'PUSH_PERMISSION_OS_CHECK_FAILED')
+        .toList(growable: false);
+    final deniedHealth = boundedRecords
+        .where(
+          (record) =>
+              record.event == 'PUSH_REGISTER_COORDINATOR_PERMISSION_DENIED',
+        )
+        .toList(growable: false);
+    if (overrides.length != 1 ||
+        !overrides.single.hasDetails(<String, Object?>{
+          'requestStatus': 'authorized',
+          'osEnabled': false,
+        }) ||
+        results.length != 1 ||
+        !results.single.hasDetails(<String, Object?>{
+          'status': 'authorized',
+          'granted': false,
+          'osEnabled': false,
+        }) ||
+        osCheckFailures.isNotEmpty ||
+        deniedHealth.length != 1) {
+      throw _Failure(
+        'G24 did not emit exactly one authorized/OS-disabled override, '
+        'honest result, and coordinator denial in its bounded window.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+
+    await _backgroundReceiver();
+    final send = await _sendSpacedMarker(marker, runId: runId);
+    await _requirePostAttempt(send.cursor, 'G24 app-op disabled');
+    await _waitForStagedEnvelope(sent: send.sent, notBefore: send.sentAt);
+    final disabledCardCount = await _requireNoCardForMarker(
+      marker,
+      'G24 app-op disabled',
+    );
+    await _requireReceiverAlive('G24 app-op disabled');
+    final drain = await _restartAndDrain(
+      runId: runId,
+      nonce: _token('nonce'),
+      marker: marker,
+      messageId: send.sent.messageId,
+    );
+    if (drain['messageCount'] != 1 || drain['pendingRelayEntries'] != 0) {
+      throw _Failure(
+        'G24 app-op-disabled delivery lost or duplicated message custody.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+
+    await _restoreLegLocalNotificationAppOp();
+    final recoveryCursor = await _deviceLogcatCursor();
+    await _terminateReceiver();
+    await _launch(emulator);
+    await _identity(emulator);
+    await _waitFor(
+      'G24 push registration after app-op restore',
+      const Duration(minutes: 3),
+      () async => (await _flowRecordsSince(
+        recoveryCursor,
+      )).any((record) => record.event == 'PUSH_REGISTER_COORDINATOR_SUCCESS'),
+    );
+    await _backgroundReceiver();
+    await _sendSpacedMarker(controlMarker, runId: '$runId-ctl');
+    final controlObservation = await _waitForNotificationObservation(
+      controlMarker,
+    );
+    final recoveryAlertChannel = _requireAudibleChannel(
+      controlObservation.channels,
+      'G24 app-op restore control',
+    );
+
+    return androidNotificationScenarioArtifact(
+      testCase: 'TC-392-06',
+      scenario: 'tc_g24_permission_appop_divergence',
+      devices: <String>[physical, emulator],
+      passedChecks: _permissionAppOpDivergenceChecks,
+      capturedAt: DateTime.now(),
+      evidence: <String, Object?>{
+        'runtimePermissionGrantedBeforeOverride':
+            runtimePermissionGrantedBeforeOverride,
+        'appOpModeAtCampaignEntry': _campaignEntryAppOpMode,
+        'appOpModeBeforeOverride': _g24LegLocalAppOpMode,
+        'appOpModeDuringOverride': appOpModeDuringOverride,
+        'appOpModeAfterRecovery': _g24AppOpModeAfterRecovery,
+        'appOpModeAfterCampaignRestore': null,
+        'permissionOverrideRequestStatus':
+            overrides.single.details['requestStatus'],
+        'permissionOverrideOsEnabled': overrides.single.details['osEnabled'],
+        'permissionResultStatus': results.single.details['status'],
+        'permissionResultGranted': results.single.details['granted'],
+        'permissionResultOsEnabled': results.single.details['osEnabled'],
+        'permissionOsCheckFailedCount': osCheckFailures.length,
+        'permissionDeniedHealthEvent': deniedHealth.single.event,
+        'disabledCardCount': disabledCardCount,
+        'disabledMessageCount': drain['messageCount'],
+        'recoveryAlertChannel': recoveryAlertChannel,
+      },
+    );
+  }
+
+  Future<void> _captureCampaignEntryNotificationAppOp() async {
+    final present = await _packagePresent(emulator);
+    _campaignEntryPackagePresent = present;
+    _campaignEntryAppOpMode = present
+        ? await _readNotificationAppOpMode()
+        : 'package_absent';
+  }
+
+  Future<bool> _packagePresent(String device) async {
+    final result = await _adb(device, <String>[
+      'shell',
+      'pm',
+      'path',
+      packageName,
+    ], allowFailure: true);
+    try {
+      return androidPackagePresentFromPmPath(
+        exitCode: result.exitCode,
+        stdout: '${result.stdout}',
+        stderr: '${result.stderr}',
+      );
+    } on FormatException {
+      throw _Failure(
+        'Package presence is not observable for the G24 app-op baseline.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+  }
+
+  Future<String> _readNotificationAppOpMode() async {
+    final result = await _adb(emulator, <String>[
+      'shell',
+      'cmd',
+      'appops',
+      'get',
+      '--uid',
+      packageName,
+      'POST_NOTIFICATION',
+    ], allowFailure: true);
+    if (result.exitCode != 0) {
+      throw const _Blocked(
+        'deviceOsState',
+        'The emulator does not expose a readable POST_NOTIFICATION app-op.',
+      );
+    }
+    try {
+      return parseAndroidNotificationUidAppOpMode(
+        '${result.stdout}\n${result.stderr}',
+      );
+    } on FormatException {
+      throw const _Blocked(
+        'deviceOsState',
+        'The emulator returned an unknown POST_NOTIFICATION app-op mode.',
+      );
+    }
+  }
+
+  Future<void> _setNotificationAppOpMode(String mode) async {
+    if (!androidNotificationKnownAppOpModes.contains(mode)) {
+      throw _Failure(
+        'Refusing to set unknown POST_NOTIFICATION app-op mode $mode.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    final shellMode = androidNotificationUidAppOpShellMode(mode);
+    await _adb(emulator, <String>[
+      'shell',
+      'cmd',
+      'appops',
+      'set',
+      '--uid',
+      packageName,
+      'POST_NOTIFICATION',
+      shellMode,
+    ]);
+    final observed = await _readNotificationAppOpMode();
+    if (observed != mode) {
+      throw _Failure(
+        'POST_NOTIFICATION app-op read back $observed after setting $mode.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+  }
+
+  Future<void> _restoreLegLocalNotificationAppOp() async {
+    final baseline = _g24LegLocalAppOpMode;
+    if (baseline == null) {
+      throw _Failure(
+        'G24 leg-local app-op baseline is unavailable.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    await _setNotificationAppOpMode(baseline);
+    _g24AppOpModeAfterRecovery = await _readNotificationAppOpMode();
+    _g24AppOpMutated = false;
+  }
+
+  Future<void> _restoreCampaignEntryNotificationAppOp() async {
+    final initiallyPresent = _campaignEntryPackagePresent;
+    final baseline = _campaignEntryAppOpMode;
+    if (initiallyPresent == null || baseline == null) {
+      throw _Failure(
+        'Campaign-entry app-op baseline is unavailable.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    final presentAfterGuard = await _packagePresent(emulator);
+    if (!initiallyPresent) {
+      if (presentAfterGuard) {
+        throw _Failure(
+          'Initially absent package survived the outer state restoration.',
+          assertionsAttempted: _assertionsAttempted,
+        );
+      }
+      _g24AppOpModeAfterCampaignRestore = 'package_absent';
+      return;
+    }
+    if (!presentAfterGuard ||
+        !androidNotificationKnownAppOpModes.contains(baseline)) {
+      throw _Failure(
+        'Installed campaign-entry package/app-op baseline cannot be restored.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    await _setNotificationAppOpMode(baseline);
+    _g24AppOpModeAfterCampaignRestore = await _readNotificationAppOpMode();
+    if (_g24AppOpModeAfterCampaignRestore != baseline) {
+      throw _Failure(
+        'Campaign-entry POST_NOTIFICATION app-op did not restore exactly.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // TC-380-06 — PRD 13 mid-session token refresh.
   // ---------------------------------------------------------------------
   Future<Map<String, Object?>> _runTokenRefreshLeg() async {
-    _assertionsAttempted = 7;
+    _assertionsAttempted = 8;
     final runId = _token('tokenrefresh');
     final marker = 'Sims G7 token refresh $runId';
     await _cleanupCampaignNotifications();
@@ -1707,9 +2107,7 @@ final class _AndroidNotificationCampaign {
         )
         .length;
     final refreshRecord = rotationWindow
-        .where(
-          (record) => record.event == 'PUSH_REGISTER_TOKEN_REFRESH_EVENT',
-        )
+        .where((record) => record.event == 'PUSH_REGISTER_TOKEN_REFRESH_EVENT')
         .toList(growable: false);
     final successRecord = rotationWindow
         .where(
@@ -1756,8 +2154,7 @@ final class _AndroidNotificationCampaign {
         'messageIdPrefix': safeNotificationIdPrefix(send.sent.messageId),
         'senderTransport': send.sent.transport,
         'tokenRefreshEvent': refreshRecord.first.event,
-        'tokenRefreshSuccessTrigger':
-            successRecord.first.details['trigger'],
+        'tokenRefreshSuccessTrigger': successRecord.first.details['trigger'],
         'tokenRefreshPidBefore': pidBeforeRotation,
         'tokenRefreshPidAfter': pidAfterRotation,
         'tokenRefreshStartupAttemptsInWindow': extraStartupAttempts,
@@ -1774,7 +2171,7 @@ final class _AndroidNotificationCampaign {
   // TC-380-08 — PRD 13 channel disabled.
   // ---------------------------------------------------------------------
   Future<Map<String, Object?>> _runChannelDisabledLeg() async {
-    _assertionsAttempted = 8;
+    _assertionsAttempted = 9;
     final runId = _token('channeloff');
     final marker = 'Sims G7 channel disabled $runId';
     final controlMarker = 'Sims G7 channel reenabled $runId';
@@ -1973,14 +2370,19 @@ final class _AndroidNotificationCampaign {
   // the fixed-wake recovery card, which is silent by design.
   // ---------------------------------------------------------------------
   Future<Map<String, Object?>> _runDozeDeliveryLeg() async {
-    _assertionsAttempted = 9;
+    _assertionsAttempted = 10;
     final runId = _token('doze');
     final marker = 'Sims G7 doze delivery $runId';
     await _cleanupCampaignNotifications();
     _campaignNotificationBodies.add(marker);
 
     await _terminateReceiver();
-    await _adb(emulator, const <String>['shell', 'dumpsys', 'battery', 'unplug']);
+    await _adb(emulator, const <String>[
+      'shell',
+      'dumpsys',
+      'battery',
+      'unplug',
+    ]);
     _dozeForced = true;
     await _adb(emulator, const <String>[
       'shell',
@@ -2113,7 +2515,12 @@ final class _AndroidNotificationCampaign {
       'deviceidle',
       'unforce',
     ]);
-    await _adb(emulator, const <String>['shell', 'dumpsys', 'battery', 'reset']);
+    await _adb(emulator, const <String>[
+      'shell',
+      'dumpsys',
+      'battery',
+      'reset',
+    ]);
     await _waitFor(
       'deep idle release',
       const Duration(seconds: 60),
@@ -2406,24 +2813,19 @@ final class _AndroidNotificationCampaign {
   Future<ActiveNotificationCard> _waitForNotification(String marker) async =>
       (await _waitForNotificationObservation(marker)).card;
 
-  /// Waits for the run-bound card and returns the channel(s) it occupied in
-  /// the SAME dumpsys read that first saw it.
+  /// Waits for the run-bound card, then proves that the same card and channel
+  /// survive a bounded reconciliation window.
   ///
-  /// Reading the alert channel from a LATER dump is unsound. When both
-  /// delivery paths reach the same message, the losing path reconciles the
-  /// claim and then performs a silent same-ID in-place update
-  /// (`local_notification_support.dart:47-49`,
-  /// `flutter_notification_service.dart:406-415`), which moves the record onto
-  /// `mknoon_messages_silent`. That is the designed single-alert behaviour —
-  /// the alert already happened — but a later dump reports it as a silent
-  /// alert. Device-measured 2026-08-19: `PUSH_BACKGROUND_NOTIFICATION_SHOWN`
-  /// at T, `NOTIFICATION_LEGACY_CLAIM_RECONCILE` at T+2.5s, then
-  /// `NOTIFICATION_SHOWN {"silent":true}` 140 ms after that — which failed B13
-  /// as a product defect on a correct delivery.
+  /// A first-hit snapshot is insufficient: the live and FCM paths can resolve
+  /// their claim race a few seconds after the initial post. The old oracle
+  /// returned immediately and therefore accepted a card that was subsequently
+  /// cancelled or moved to the low-importance channel.
   Future<({ActiveNotificationCard card, List<String> channels})>
   _waitForNotificationObservation(String marker) async {
-    final observation =
-        await _waitForValue<({ActiveNotificationCard card, List<String> channels})>(
+    final firstObservation =
+        await _waitForValue<
+          ({ActiveNotificationCard card, List<String> channels})
+        >(
           'run-bound Android FCM notification card',
           const Duration(minutes: 2),
           () async {
@@ -2443,10 +2845,37 @@ final class _AndroidNotificationCampaign {
             );
           },
         );
+    var settledObservation = firstObservation;
+    final stabilityDeadline = DateTime.now().add(const Duration(seconds: 4));
+    while (DateTime.now().isBefore(stabilityDeadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final dump = await _notificationDump();
+      final matching = extractActiveNotificationCards(
+        dump,
+        packageName: packageName,
+      ).where((card) => card.body == marker).toList(growable: false);
+      final channels = androidNotificationChannelsForBody(
+        dump,
+        packageName: packageName,
+        body: marker,
+      );
+      if (matching.length != 1 ||
+          matching.single.id != firstObservation.card.id ||
+          channels.length != 1 ||
+          firstObservation.channels.length != 1 ||
+          channels.single != firstObservation.channels.single) {
+        throw _Failure(
+          'Run-bound notification did not preserve one stable card/channel '
+          'through the reconciliation window.',
+          assertionsAttempted: _assertionsAttempted,
+        );
+      }
+      settledObservation = (card: matching.single, channels: channels);
+    }
     // Every publication consumes the conversation's tone reservation, so the
     // spacing owed to the NEXT audible-asserting send is keyed here.
     _lastCardObservedAt = DateTime.now();
-    return observation;
+    return settledObservation;
   }
 
   Future<void> _requireNoAppNotification() async {
@@ -2631,7 +3060,10 @@ final class _AndroidNotificationCampaign {
     final handle = await file.open();
     try {
       await handle.setPosition(start);
-      return utf8.decode(await handle.read(length - start), allowMalformed: true);
+      return utf8.decode(
+        await handle.read(length - start),
+        allowMalformed: true,
+      );
     } finally {
       await handle.close();
     }

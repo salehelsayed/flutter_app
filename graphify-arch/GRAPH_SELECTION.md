@@ -7,6 +7,29 @@
 ## Selection Rule
 - Use the architecture graph for app architecture, feature flows, repository/service/UI relationships, and day-to-day code navigation.
 - Use the full graph when you need exhaustive symbol lookup across generated/native/vendor/platform code.
+- `tdd_context.py query` checks exact filename/path targets against both manifests. A compact-graph miss reports `full_graph_fallback` when the full graph owns the target, or `raw_search_fallback` when neither graph can answer it.
+
+## Compact Query Measurement
+
+Each compact query prints a `query_id`. Link the one allowed broad-result refinement with:
+
+```bash
+python3 graphify-arch/tdd_context.py query "<exact refinement>" \
+  --profile general --budget 600 \
+  --stage refinement --refines <query_id>
+```
+
+Usage telemetry stores hashed Codex session/thread identifiers, output size,
+truncation, route, stage, and confidence without storing question text.
+
+```bash
+python3 graphify-arch/tdd_context.py stats --last 100
+python3 graphify-arch/tdd_context.py benchmark
+```
+
+The repository benchmark verifies delivered source/proof paths and required
+output markers under the configured budgets. It complements Graphify's corpus
+compression benchmark below; the two measure different boundaries.
 
 ## Metrics
 | Metric | Full | Architecture | Delta |

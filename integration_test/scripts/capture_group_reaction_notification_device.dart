@@ -13,6 +13,8 @@ import '_android_app_package.dart';
 import 'group_muted_notification_android_criteria.dart';
 import 'group_notification_projection_android_criteria.dart';
 import 'group_reaction_notification_device_criteria.dart';
+import 'group_strict_notification_criteria.dart'
+    hide groupStrictNotificationScenarioId;
 import 'reaction_notification_proof_support.dart';
 
 const _defaultRelayTarget = 'ubuntu@mknoun.xyz';
@@ -32,6 +34,12 @@ const _plan330EndpointCommandSchema =
     'mknoon.plan330.android-endpoint-command.v1';
 const _plan330EndpointResultSchema =
     'mknoon.plan330.android-endpoint-result.v1';
+const _plan393StrictEndpointAction = 'group_strict_notification_authority';
+const _plan393StrictEndpointCommandSchema =
+    'mknoon.plan393.strict-authority-command.v1';
+const _plan393StrictEndpointResultSchema =
+    'mknoon.plan393.strict-authority-result.v1';
+const _relayGroupContentWakeCounter = 'relay_group_content_wake_total';
 const _iosTapTest = 'ios/RunnerUITests/NotificationTapUITests.swift';
 const _iosTapSelector = 'testAnnouncementReactionNotificationTap';
 const _iosFixtureCreateSelector = 'testCreateAnnouncementReactionFixture';
@@ -548,14 +556,17 @@ class _Plan257Capture {
   File? _plan330BeforeUiDump;
   File? _plan330AfterUiDump;
   File? _plan330ReadFlowLog;
+  Map<String, Object?>? _plan393KilledPhotoObservation;
   final List<Map<String, Object?>> _plan330ReactionObservations =
       <Map<String, Object?>>[];
   final List<Map<String, Object?>> _plan330Commands = <Map<String, Object?>>[];
   late final Map<String, String> _plan330MessageIds = <String, String>{
-    for (final kind in const <String>['jpeg', 'mp4', 'voice']) kind: _uuidV4(),
+    for (final kind in const <String>['jpeg', 'mp4', 'voice', 'killed_jpeg'])
+      kind: _uuidV4(),
   };
   late final Map<String, String> _plan330AttachmentIds = <String, String>{
-    for (final kind in const <String>['jpeg', 'mp4', 'voice']) kind: _uuidV4(),
+    for (final kind in const <String>['jpeg', 'mp4', 'voice', 'killed_jpeg'])
+      kind: _uuidV4(),
   };
   String _firstMarker = '';
   String _secondMarker = '';
@@ -611,6 +622,20 @@ class _Plan257Capture {
   String _killedPreKillNotificationDump = '';
   String _killedGradedNotificationDump = '';
   GroupKilledTextCardDeliveryInput? _killedDelivery;
+  final List<Map<String, Object?>> _strictAuthoritySteps =
+      <Map<String, Object?>>[];
+  Map<String, dynamic>? _strictFinalAuthorityTransfer;
+  String? _strictFinalAuthorityDigest;
+  String _strictExactMarker = '';
+  String _strictKilledMarker = '';
+  String _strictTargetMarker = '';
+  Map<String, Object?>? _strictExactObservation;
+  Map<String, Object?>? _strictKilledObservation;
+  Map<String, Object?>? _strictReactionObservation;
+  String _strictMetricsBaseline = '';
+  String _strictMetricsBeforeKilled = '';
+  String _strictMetricsBeforeReaction = '';
+  String _strictMetricsFinal = '';
   String _iosE2eAppSha256 = '';
   String _iosNormalAppSha256 = '';
   final Map<String, File> _iosInstallReceipts = <String, File>{};
@@ -748,6 +773,10 @@ class _Plan257Capture {
     await _collectAndroidIdentity(sender);
     await _collectAndroidIdentity(recipient);
     await _prepopulateAndroidContacts();
+    if (_dispatch.lifecycleStage ==
+        GroupReactionCaptureLifecycleStage.strictNotificationClosure) {
+      await _exchangeStrictReactionWakeAuthorization();
+    }
 
     stage = 'group_fixture_setup';
     if (_isPlan330) {
@@ -757,6 +786,11 @@ class _Plan257Capture {
       await _createAndAcceptGroup(name: _plan330GroupAName);
       await _createAndAcceptGroup(name: _plan330GroupBName);
       _groupName = _plan330GroupAName;
+    } else if (_dispatch.lifecycleStage ==
+        GroupReactionCaptureLifecycleStage.strictNotificationClosure) {
+      final suffix = _runtimeToken('fixture').replaceAll('-', '');
+      await _createAndAcceptGroup(name: 'Plan393S-${suffix.substring(0, 16)}');
+      await _establishStrictGroupAuthority();
     } else if (_isMutedLane) {
       // Two groups: the one under test, which is muted mid-capture, and an
       // always-unmuted control. Without the control, a dead notification lane
@@ -804,6 +838,10 @@ class _Plan257Capture {
     await _adb(recipientId, const <String>['logcat', '-c']);
     await _launchAndroid(recipientId);
     await _waitForRecipientPushRegistrationAccepted();
+    if (_dispatch.lifecycleStage ==
+        GroupReactionCaptureLifecycleStage.strictNotificationClosure) {
+      await _reactivateStrictRecipientAfterProviderLaunch();
+    }
     await _requireCleanNotificationSlate();
 
     _captureWindowStart = DateTime.now().toUtc();
@@ -831,6 +869,9 @@ class _Plan257Capture {
       case GroupReactionCaptureLifecycleStage.groupTextKilledAppCard:
         stage = 'android_group_text_killed_app_card';
         await _runAndroidGroupTextKilledAppCardLifecycle();
+      case GroupReactionCaptureLifecycleStage.strictNotificationClosure:
+        stage = 'android_strict_group_notification_closure';
+        await _runAndroidStrictNotificationClosure();
       case GroupReactionCaptureLifecycleStage.reactionRecipient:
         stage = 'android_reaction_lifecycle';
         await _runAndroidReactionLifecycle();
@@ -857,6 +898,8 @@ class _Plan257Capture {
         await _writeMutedAndroidArtifact();
       case GroupReactionCaptureValidatorKind.killedTextCard:
         await _writeKilledTextCardAndroidArtifact();
+      case GroupReactionCaptureValidatorKind.strictNotification:
+        await _writeStrictNotificationArtifact();
       case GroupReactionCaptureValidatorKind.reaction:
         await _writeAndroidArtifact(sqlCipherEvidence!);
     }
@@ -891,6 +934,16 @@ class _Plan257Capture {
         artifactValidationDetail = result.detail;
       case GroupReactionCaptureValidatorKind.killedTextCard:
         final result = await validateGroupKilledTextCardAndroidArtifact(
+          artifactFile: artifact,
+          expectedPhysicalDeviceId: recipientId,
+          expectedEmulatorDeviceId: senderId,
+          expectedApkSha256: _androidBuilds!.e2eSha256,
+          expectedPackageName: appPackage,
+        );
+        artifactAccepted = result.ok;
+        artifactValidationDetail = result.detail;
+      case GroupReactionCaptureValidatorKind.strictNotification:
+        final result = await validateGroupStrictNotificationArtifact(
           artifactFile: artifact,
           expectedPhysicalDeviceId: recipientId,
           expectedEmulatorDeviceId: senderId,
@@ -2166,6 +2219,77 @@ class _Plan257Capture {
     await _launchAndroid(owner.deviceId);
   }
 
+  /// Distributes the physical author's current recipient-issued wake token to
+  /// the emulator reactor through the production signed contact-request path.
+  ///
+  /// The generic contact prepopulation above is intentionally local-only. The
+  /// exchange therefore runs before group-authority setup through the same
+  /// production signed contact-request path used by the 1:1 campaign. The
+  /// received authorization is durable across the later provider APK swap, and
+  /// keeping this step here prevents a setup relaunch from discarding the
+  /// strict recipient resolver. No opaque token crosses the host process.
+  Future<void> _exchangeStrictReactionWakeAuthorization() async {
+    final stepId =
+        'plan393-strict-wake-${DateTime.now().microsecondsSinceEpoch}';
+    final senderCursor = await _deviceLogcatCursor(senderId);
+    await _deleteAppFile(recipientId, 'intro_e2e_result.json');
+    await _deleteAppFile(recipientId, 'intro_e2e_config.json');
+    await _writeAppFile(
+      recipientId,
+      'intro_e2e_config.json',
+      jsonEncode(<String, Object?>{
+        'stepId': stepId,
+        'add_contacts': <Object?>[
+          <String, Object?>{
+            'qrPayload': sender.qrPayload,
+            'mlKemPublicKey': sender.mlKemPublicKey,
+          },
+        ],
+        'send_contact_requests_for_added_contacts': true,
+        'contact_settle_delay_ms': 1000,
+      }),
+    );
+    await _launchAndroid(recipientId);
+    await _waitForValue<Map<String, dynamic>>(
+      'strict reaction wake authorization distribution',
+      const Duration(minutes: 3),
+      () async {
+        final raw = await _readAppFile(recipientId, 'intro_e2e_result.json');
+        if (raw == null) return null;
+        try {
+          final result = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          if (result['stepId'] != stepId) return null;
+          if (result['status'] == 'failed') {
+            throw _CaptureFailure.capture(
+              stage,
+              'strict reaction wake authorization distribution failed',
+            );
+          }
+          if (result['status'] != 'complete') return null;
+          if (result['success'] != true) {
+            throw _CaptureFailure.capture(
+              stage,
+              'strict reaction wake authorization distribution was not successful',
+            );
+          }
+          return result;
+        } on FormatException {
+          return null;
+        }
+      },
+    );
+    await _waitFor(
+      'strict reaction wake authorization persistence',
+      const Duration(seconds: 60),
+      () async => (await _deviceLogSince(
+        senderId,
+        senderCursor,
+      )).contains('WAKE_TOKEN_RECEIVED_STORED'),
+    );
+    await _deleteAppFile(recipientId, 'intro_e2e_config.json');
+    await _deleteAppFile(recipientId, 'intro_e2e_result.json');
+  }
+
   /// Creates one group and has the invitee accept it.
   ///
   /// [groupType] defaults to the scenario's own type. It is a parameter because
@@ -2180,8 +2304,7 @@ class _Plan257Capture {
     final type = groupType ?? scenario.groupType;
     final now = DateTime.now().toUtc().microsecondsSinceEpoch;
     _groupName =
-        name ??
-        (type == 'announcement' ? 'TC257Ann$now' : 'TC257Group$now');
+        name ?? (type == 'announcement' ? 'TC257Ann$now' : 'TC257Group$now');
     final creator = scenario.id.endsWith('_message_unread_lifecycle')
         ? sender
         : recipient;
@@ -2546,6 +2669,131 @@ class _Plan257Capture {
       '$readLog\n',
     );
 
+    // Plan 393 TC-393-09: one fixed-direction killed group-photo delivery.
+    // The emulator authors and the physical Android recipient is process
+    // absent. This uses its own IDs, so the preserved Plan-330 reaction trio
+    // below cannot accidentally satisfy the new message proof.
+    await _adb(recipientId, const <String>['logcat', '-c']);
+    final killedPhotoCursor = await _deviceLogcatCursor(recipientId);
+    await _terminateAndroidRecipient();
+    _recordPlan330Command(
+      commandStage: 'killed_photo_projection',
+      target: recipientId,
+      action: 'verify_process_absent',
+      semanticTarget: 'physical_recipient_before_killed_jpeg',
+    );
+    final killedPhotoReceipt = await _runPlan330Endpoint(
+      deviceId: senderId,
+      phase: 'send_killed_jpeg',
+      role: 'emulator_author',
+      groupName: _plan330GroupAName,
+      kind: 'group',
+      timeout: const Duration(minutes: 4),
+    );
+    if (killedPhotoReceipt['schema'] !=
+            groupNotificationProjectionKilledPhotoReceiptSchema ||
+        killedPhotoReceipt['kind'] != 'photo' ||
+        killedPhotoReceipt['mediaType'] != 'image' ||
+        killedPhotoReceipt['ownerLane'] != 'group' ||
+        killedPhotoReceipt['attachmentCount'] != 1 ||
+        killedPhotoReceipt['publicationCommitted'] != true ||
+        !RegExp(
+          r'^[0-9a-f]{64}$',
+        ).hasMatch('${killedPhotoReceipt['targetMessageIdSha256'] ?? ''}')) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 killed JPEG author receipt is invalid',
+      );
+    }
+    _recordPlan330Command(
+      commandStage: 'killed_photo_projection',
+      target: senderId,
+      action: 'send_fixed_group_jpeg',
+      semanticTarget: 'emulator_author_to_killed_physical_recipient',
+    );
+    final killedPhotoCards = await _waitForPlan330TwoCards();
+    final killedGroupACard = killedPhotoCards.$2.singleWhere(
+      (record) => record.$2.title == _plan330GroupAName,
+    );
+    if (killedGroupACard.$1 != _plan330GroupANotificationId) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 killed JPEG changed the stable group notification identity',
+      );
+    }
+    final killedPhotoFlow = await _waitForValue<String>(
+      'Plan 393 killed JPEG received and shown flow',
+      const Duration(seconds: 60),
+      () async {
+        final flow = await _deviceLogSince(recipientId, killedPhotoCursor);
+        final received = flow
+            .split('\n')
+            .where((line) => line.contains('PUSH_BACKGROUND_MESSAGE_RECEIVED'))
+            .toList(growable: false);
+        final exactRelayBranch =
+            received.length == 1 &&
+            (received.single.contains('preview_unavailable') ||
+                received.single.contains('ciphertext'));
+        return exactRelayBranch &&
+                flow.contains('PUSH_BACKGROUND_NOTIFICATION_SHOWN')
+            ? flow
+            : null;
+      },
+    );
+    final receivedLines = killedPhotoFlow
+        .split('\n')
+        .where((line) => line.contains('PUSH_BACKGROUND_MESSAGE_RECEIVED'))
+        .toList(growable: false);
+    final previewUnavailable =
+        receivedLines.length == 1 &&
+        receivedLines.single.contains('preview_unavailable');
+    final fullCiphertext =
+        receivedLines.length == 1 &&
+        receivedLines.single.contains('ciphertext') &&
+        !previewUnavailable;
+    if ((!previewUnavailable && !fullCiphertext) ||
+        !killedPhotoFlow.contains('PUSH_BACKGROUND_NOTIFICATION_SHOWN')) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 killed JPEG lacks an exact relay branch or shown flow',
+      );
+    }
+    final killedPhotoNotificationFile = await _writePlan330RawFile(
+      'plan393_killed_photo_notifications.log',
+      '${_appNotificationRecords(killedPhotoCards.$1)}\n',
+    );
+    final killedPhotoFlowFile = await _writePlan330RawFile(
+      'plan393_killed_photo_flow.log',
+      '$killedPhotoFlow\n',
+    );
+    final killedPhotoReceiptFile = await _writePlan330RawFile(
+      'plan393_killed_photo_author_receipt.json',
+      '${const JsonEncoder.withIndent(' ').convert(killedPhotoReceipt)}\n',
+    );
+    _recordPlan330Command(
+      commandStage: 'killed_photo_projection',
+      target: recipientId,
+      action: 'dumpsys_notification',
+      semanticTarget: 'killed_group_photo_card',
+    );
+    _plan393KilledPhotoObservation = <String, Object?>{
+      'kind': 'photo',
+      'mediaType': 'image',
+      'senderRole': 'emulator_author',
+      'recipientRole': 'killed_physical',
+      'recipientProcessAbsentBeforeSend': true,
+      'targetMessageIdSha256': killedPhotoReceipt['targetMessageIdSha256'],
+      'relayBranch': previewUnavailable
+          ? 'preview_unavailable'
+          : 'full_ciphertext',
+      'stableGroupANotificationId': killedGroupACard.$1,
+      'notificationDump': await _plan330EvidenceReference(
+        killedPhotoNotificationFile,
+      ),
+      'flowLog': await _plan330EvidenceReference(killedPhotoFlowFile),
+      'authorReceipt': await _plan330EvidenceReference(killedPhotoReceiptFile),
+    };
+
     await _grantRecordAudioPermission(recipientId);
     final mediaSend = await _runPlan330Endpoint(
       deviceId: recipientId,
@@ -2794,7 +3042,8 @@ class _Plan257Capture {
   /// Puts [deviceId] on an Orbit surface that actually projects group rows.
   ///
   /// Accepting a group invite lands Orbit on the all-chats `Intros` filter, and
-  /// ACTIVE GROUP NODES ARE EXCLUDED FROM THAT FILTER (`:100-107`). With one
+  /// ACTIVE GROUP NODES ARE EXCLUDED FROM THAT FILTER (see the cited helper
+  /// range). With one
   /// group this lane never noticed. With two, the second accept leaves the
   /// device on that filter and `_ensureOrbit`'s `Open group <name>` probe finds
   /// nothing at all — measured 2026-08-19, the first device run of this plan
@@ -3552,9 +3801,7 @@ class _Plan257Capture {
   /// Folds this device's current window into its monotonic flow log.
   Future<String> _accumulatedFlowLines(String deviceId) async {
     final accumulator = _flowAccumulatorFor(deviceId);
-    accumulator.absorb(
-      _flowLines((await _readAndroidLogcat(deviceId)).stdout),
-    );
+    accumulator.absorb(_flowLines((await _readAndroidLogcat(deviceId)).stdout));
     return accumulator.text;
   }
 
@@ -3956,6 +4203,269 @@ class _Plan257Capture {
 
   GroupMutedSelfReactionAudienceInput? _mutedSelfReactionAudience;
 
+  double? _strictAttemptedDelta(
+    String family,
+    String baseline,
+    String finalScrape,
+  ) {
+    final window = parseRelayMetricsWindow(
+      '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n$baseline'
+      '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n$finalScrape',
+    );
+    return window?.delta(
+      relayCounterSeries(family, const <String, String>{
+        'outcome': 'attempted',
+      }),
+    );
+  }
+
+  Future<String> _waitForStrictAttemptedDelta({
+    required String family,
+    required String baseline,
+  }) async {
+    return _waitForValue<String>(
+      'one strict $family attempted transition',
+      const Duration(minutes: 2),
+      () async {
+        final current = await _scrapeRelayMetrics();
+        return _strictAttemptedDelta(family, baseline, current) == 1
+            ? current
+            : null;
+      },
+    );
+  }
+
+  Future<String> _waitForStrictFlow({
+    required String cursor,
+    required bool shown,
+  }) async {
+    return _waitForValue<String>(
+      shown ? 'strict received/decrypt/shown flow' : 'strict suppressed flow',
+      const Duration(minutes: 2),
+      () async {
+        final flow = await _deviceLogSince(recipientId, cursor);
+        if (!shown) {
+          // Android routes an FCM data message through `onMessage` while the
+          // app is resumed. Exact-chat suppression is therefore evidenced by
+          // foreground receipt + typed group routing + completed canonical
+          // drain, followed by the explicit zero-card check below. Requiring
+          // a background-isolate suppression event here is impossible for the
+          // lifecycle state this row deliberately establishes.
+          final foregroundReceived = flow.contains(
+            'PUSH_FOREGROUND_MESSAGE_RECEIVED',
+          );
+          final foregroundRouted = flow.contains(
+            'PUSH_FOREGROUND_MESSAGE_ROUTED',
+          );
+          final canonicalDrain = flow.contains(
+            'GROUP_DRAIN_OFFLINE_INBOX_SINGLE_DONE',
+          );
+          return foregroundReceived && foregroundRouted && canonicalDrain
+              ? flow
+              : null;
+        }
+        final received = flow.contains('PUSH_BACKGROUND_MESSAGE_RECEIVED');
+        final decrypted = flow.contains('PUSH_ANDROID_DATA_DECRYPT_OK');
+        final terminal = flow.contains('PUSH_BACKGROUND_NOTIFICATION_SHOWN');
+        return received && decrypted && terminal ? flow : null;
+      },
+    );
+  }
+
+  Future<void> _runAndroidStrictNotificationClosure() async {
+    final token = _runtimeToken('strict').replaceAll('-', '');
+    _strictExactMarker = 'Plan393Exact${token.substring(0, 10)}';
+    _strictKilledMarker = 'Plan393Killed${token.substring(10, 20)}';
+    _strictTargetMarker = 'Plan393Target${token.substring(20, 30)}';
+
+    // 1. Strict authority must not weaken the ordinary exact-chat barrier.
+    await _openGradedGroup(recipientId);
+    await _openGradedGroup(senderId);
+    final exactCursor = await _deviceLogcatCursor(recipientId);
+    _strictMetricsBaseline = await _scrapeRelayMetrics();
+    await _sendGroupText(senderId, _strictExactMarker);
+    await _waitForUiText(
+      recipientId,
+      _strictExactMarker,
+      const Duration(minutes: 2),
+    );
+    final exactMetrics = await _waitForStrictAttemptedDelta(
+      family: _relayGroupContentWakeCounter,
+      baseline: _strictMetricsBaseline,
+    );
+    final exactFlow = await _waitForStrictFlow(
+      cursor: exactCursor,
+      shown: false,
+    );
+    await Future<void>.delayed(const Duration(seconds: 5));
+    final exactNotificationDump = await _notificationDump(recipientId);
+    final exactCards = _activeContentNotificationRecords(
+      exactNotificationDump,
+    ).where((row) => row.$2.title == _groupName).toList(growable: false);
+    if (exactCards.isNotEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'strict exact-chat transition posted ${exactCards.length} card(s)',
+      );
+    }
+    _strictExactObservation = <String, Object?>{
+      'markerSha256': sha256
+          .convert(utf8.encode(_strictExactMarker))
+          .toString(),
+      'processAbsentBeforeSend': false,
+      'attemptedDelta': _strictAttemptedDelta(
+        _relayGroupContentWakeCounter,
+        _strictMetricsBaseline,
+        exactMetrics,
+      )?.toInt(),
+      'cardCount': 0,
+      'notificationId': null,
+      'flow': 'suppressed',
+      '_flowRaw': exactFlow,
+      '_notificationRaw': exactNotificationDump,
+    };
+
+    // 2. The physical recipient authors the exact target before it is killed.
+    await _openGradedGroup(recipientId);
+    await _sendGroupText(recipientId, _strictTargetMarker);
+    await _openGradedGroup(senderId);
+    await _waitForUiText(
+      senderId,
+      _strictTargetMarker,
+      const Duration(minutes: 2),
+    );
+    await Future<void>.delayed(const Duration(seconds: 5));
+
+    // 3. A distinct strict text must wake and card the killed recipient.
+    _strictMetricsBeforeKilled = await _scrapeRelayMetrics();
+    await _terminateAndroidRecipient();
+    final killedCursor = await _deviceLogcatCursor(recipientId);
+    await _openGradedGroup(senderId);
+    await _sendGroupText(senderId, _strictKilledMarker);
+    final killedMetrics = await _waitForStrictAttemptedDelta(
+      family: _relayGroupContentWakeCounter,
+      baseline: _strictMetricsBeforeKilled,
+    );
+    final killedNotificationDump =
+        await _waitForGroupNotificationBodyContaining(
+          _groupName,
+          _strictKilledMarker,
+        );
+    final killedFlow = await _waitForStrictFlow(
+      cursor: killedCursor,
+      shown: true,
+    );
+    final killedCards = _activeContentNotificationRecords(
+      killedNotificationDump,
+    ).where((row) => row.$2.title == _groupName).toList(growable: false);
+    if (killedCards.length != 1) {
+      throw _CaptureFailure.capture(
+        stage,
+        'strict killed-message transition did not produce one group card',
+      );
+    }
+    final killedCard = killedCards.single;
+    _strictKilledObservation = <String, Object?>{
+      'markerSha256': sha256
+          .convert(utf8.encode(_strictKilledMarker))
+          .toString(),
+      'processAbsentBeforeSend': true,
+      'attemptedDelta': _strictAttemptedDelta(
+        _relayGroupContentWakeCounter,
+        _strictMetricsBeforeKilled,
+        killedMetrics,
+      )?.toInt(),
+      'cardCount': 1,
+      'notificationId': killedCard.$1,
+      'flow': 'received_decrypt_shown',
+      '_flowRaw': killedFlow,
+      '_notificationRaw': killedNotificationDump,
+    };
+
+    // 4. Kill again, then ADD to the physical-authored target. The signed
+    // author-device set must wake this recipient and replace the same card.
+    _strictMetricsBeforeReaction = await _scrapeRelayMetrics();
+    await _terminateAndroidRecipient();
+    final reactionCursor = await _deviceLogcatCursor(recipientId);
+    await _openGradedGroup(senderId);
+    await _longPressText(senderId, _strictTargetMarker);
+    await _tapText(senderId, _reactionEmoji);
+    await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 1);
+    final reactionMetrics = await _waitForStrictAttemptedDelta(
+      family: relayGroupReactionWakeCounter,
+      baseline: _strictMetricsBeforeReaction,
+    );
+    final expectedBody = groupReactionNotificationExpectedAndroidReactionBody(
+      sender.username,
+    );
+    final reactionCard = await _waitForStrictReactionReplacement(
+      expectedNotificationId: killedCard.$1,
+      expectedBody: expectedBody,
+    );
+    final reactionFlow = await _waitForStrictFlow(
+      cursor: reactionCursor,
+      shown: true,
+    );
+    if (reactionCard.$1 != killedCard.$1 ||
+        reactionCard.$2.title != _groupName ||
+        reactionCard.$2.body != expectedBody) {
+      throw _CaptureFailure.capture(
+        stage,
+        'strict author reaction did not replace the typed group card',
+      );
+    }
+    final reactionDump = await _notificationDump(recipientId);
+    _strictReactionObservation = <String, Object?>{
+      'markerSha256': sha256
+          .convert(utf8.encode(_strictTargetMarker))
+          .toString(),
+      'processAbsentBeforeSend': true,
+      'attemptedDelta': _strictAttemptedDelta(
+        relayGroupReactionWakeCounter,
+        _strictMetricsBeforeReaction,
+        reactionMetrics,
+      )?.toInt(),
+      'cardCount': 1,
+      'notificationId': reactionCard.$1,
+      'flow': 'received_decrypt_shown',
+      'typedReactionCopy': true,
+      '_flowRaw': reactionFlow,
+      '_notificationRaw': reactionDump,
+    };
+
+    await Future<void>.delayed(const Duration(seconds: 10));
+    _strictMetricsFinal = await _scrapeRelayMetrics();
+    _relayJournal = await _relayJournalSince(
+      _captureWindowStart ?? DateTime.now().toUtc(),
+    );
+  }
+
+  Future<(int, ActiveNotificationCard)> _waitForStrictReactionReplacement({
+    required int expectedNotificationId,
+    required String expectedBody,
+  }) {
+    final gradedGroupName = _groupName;
+    return _waitForValue<(int, ActiveNotificationCard)>(
+      'strict typed reaction replacement for $gradedGroupName',
+      const Duration(minutes: 2),
+      () async {
+        final cards = _mutedAttributableCards(
+          await _notificationDump(recipientId),
+          groupName: gradedGroupName,
+        );
+        if (cards.length != 1) return null;
+        final card = cards.single;
+        final id = card.id;
+        if (id != expectedNotificationId ||
+            card.title != gradedGroupName ||
+            card.body != expectedBody) {
+          return null;
+        }
+        return (id!, card);
+      },
+    );
+  }
+
   void _recordKilledCommand({
     required String commandStage,
     required String target,
@@ -4069,6 +4579,142 @@ class _Plan257Capture {
       gradedFcmMessageId: binding.gradedFcmMessageId,
       backgroundFlowLog: flowLog,
     );
+  }
+
+  Future<void> _writeStrictNotificationArtifact() async {
+    final exact = _strictExactObservation;
+    final killed = _strictKilledObservation;
+    final reaction = _strictReactionObservation;
+    if (_strictAuthoritySteps.length != 4 ||
+        exact == null ||
+        killed == null ||
+        reaction == null ||
+        _strictMetricsBaseline.isEmpty ||
+        _strictMetricsBeforeKilled.isEmpty ||
+        _strictMetricsBeforeReaction.isEmpty ||
+        _strictMetricsFinal.isEmpty ||
+        _relayJournal.trim().isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 strict capture inventory is incomplete',
+      );
+    }
+    await _flushCommandJournal();
+
+    Future<Map<String, Object?>> transition(
+      String prefix,
+      Map<String, Object?> source,
+    ) async {
+      final flow = await _writePlan330RawFile(
+        'plan393_${prefix}_flow.log',
+        '${_redact(source['_flowRaw'].toString())}\n',
+      );
+      final notifications = await _writePlan330RawFile(
+        'plan393_${prefix}_notifications.log',
+        '${_redact(source['_notificationRaw'].toString())}\n',
+      );
+      return <String, Object?>{
+        for (final entry in source.entries)
+          if (!entry.key.startsWith('_')) entry.key: entry.value,
+        'flowEvidence': await _artifactFileReference(flow),
+        'notificationEvidence': await _artifactFileReference(notifications),
+      };
+    }
+
+    final journal = await _writePlan330RawFile(
+      'plan393_strict_relay.log',
+      '${_redact(_relayJournal)}\n',
+    );
+    final metricsBaseline = await _writePlan330RawFile(
+      'plan393_strict_metrics_baseline.log',
+      _strictMetricsBaseline,
+    );
+    final metricsBeforeKilled = await _writePlan330RawFile(
+      'plan393_strict_metrics_before_killed.log',
+      _strictMetricsBeforeKilled,
+    );
+    final metricsBeforeReaction = await _writePlan330RawFile(
+      'plan393_strict_metrics_before_reaction.log',
+      _strictMetricsBeforeReaction,
+    );
+    final metricsFinal = await _writePlan330RawFile(
+      'plan393_strict_metrics_final.log',
+      _strictMetricsFinal,
+    );
+    final firstDigest = _strictAuthoritySteps.first['authorityDigest'];
+    final finalDigest = _strictAuthoritySteps[2]['authorityDigest'];
+    if (_strictAuthoritySteps[1]['authorityDigest'] != firstDigest ||
+        _strictAuthoritySteps[3]['authorityDigest'] != finalDigest) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 strict authority install digests diverged',
+      );
+    }
+    final artifact = <String, Object?>{
+      'schema': groupStrictNotificationArtifactSchema,
+      'version': groupStrictNotificationArtifactVersion,
+      'scenario': groupStrictNotificationScenarioId,
+      'status': 'passed',
+      'appPackage': appPackage,
+      'preparedArtifactSha256': _androidBuilds!.e2eSha256,
+      'topology': <String, Object?>{
+        'physical': <String, Object?>{
+          'deviceId': recipientId,
+          'kind': 'physical',
+          'platform': 'android',
+        },
+        'emulator': <String, Object?>{
+          'deviceId': senderId,
+          'kind': 'emulator',
+          'platform': 'android',
+        },
+      },
+      'authority': <String, Object?>{
+        'groupName': _groupName,
+        'steps': _strictAuthoritySteps,
+        'firstAuthorityDigest': firstDigest,
+        'finalAuthorityDigest': finalDigest,
+        'bothDevicesInstalledFinalAuthority': true,
+        'revokedHistoricalDevices': 2,
+      },
+      'exactChat': await transition('exact_chat', exact),
+      'killedMessage': await transition('killed_message', killed),
+      'reaction': await transition('reaction', reaction),
+      'relay': <String, Object?>{
+        'revision': _relay.revision,
+        'sha256': _relay.sha256,
+        'journal': await _artifactFileReference(journal),
+        'metricsBaseline': await _artifactFileReference(metricsBaseline),
+        'metricsBeforeKilled': await _artifactFileReference(
+          metricsBeforeKilled,
+        ),
+        'metricsBeforeReaction': await _artifactFileReference(
+          metricsBeforeReaction,
+        ),
+        'metricsFinal': await _artifactFileReference(metricsFinal),
+      },
+      'automation': <String, Object?>{
+        'manualTaps': 0,
+        'notificationCardTaps': 0,
+        'childBuildCount': 0,
+        'statePreparedByParent': statePreparedByParent,
+        'commandJournal': await _artifactFileReference(_commandJournalFile),
+      },
+      'redaction': const <String, Object?>{
+        'tokensPersisted': false,
+        'privateKeysPersisted': false,
+        'authorityTransferPersisted': false,
+        'rawPeerIdsPersisted': false,
+      },
+    };
+    final encoded = const JsonEncoder.withIndent(' ').convert(artifact);
+    _rejectSensitivePersistence(encoded, 'Plan 393 strict artifact');
+    final output = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    final pending = File('${output.path}.pending');
+    await pending.writeAsString(encoded, flush: true);
+    await pending.rename(output.path);
   }
 
   Future<void> _writeKilledTextCardAndroidArtifact() async {
@@ -4872,7 +5518,10 @@ class _Plan257Capture {
       '$count sender $event event(s)',
       const Duration(seconds: 60),
       () async =>
-          countFlowEventOccurrences(await _accumulatedSenderFlowLines(), event) >=
+          countFlowEventOccurrences(
+            await _accumulatedSenderFlowLines(),
+            event,
+          ) >=
           count,
     );
   }
@@ -4936,6 +5585,7 @@ class _Plan257Capture {
         .where(
           (line) =>
               line.startsWith(relayGroupReactionWakeCounter) ||
+              line.startsWith(_relayGroupContentWakeCounter) ||
               line.startsWith(relayPushSentCounter) ||
               line.startsWith(relayMetricsLivenessSentinel),
         )
@@ -4981,6 +5631,221 @@ class _Plan257Capture {
       const Duration(minutes: 2),
       () async => (await _relayWakeAttemptsSince(baseline) ?? -1) >= count,
     );
+  }
+
+  Future<Map<String, dynamic>> _runStrictAuthorityEndpoint({
+    required String deviceId,
+    required String phase,
+    Map<String, dynamic>? authorityTransfer,
+  }) async {
+    final stepId = 'plan393-strict-$phase-$_runtimeRunId';
+    final request = <String, Object?>{
+      'schema': _plan393StrictEndpointCommandSchema,
+      'transport_action': _plan393StrictEndpointAction,
+      'scenario': groupStrictNotificationScenarioId,
+      'stepId': stepId,
+      'phase': phase,
+      'runId': _runtimeRunId,
+      'nonce': _runtimeNonce,
+      'groupName': _groupName,
+      'authorityTransfer': authorityTransfer,
+    };
+    await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+    await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+    await _writeAppFile(deviceId, 'intro_e2e_config.json', jsonEncode(request));
+    await _startAndroid(deviceId);
+    try {
+      return await _waitForValue<Map<String, dynamic>>(
+        'Plan 393 strict authority $phase endpoint result',
+        const Duration(seconds: 90),
+        () async {
+          final raw = await _readAppFile(deviceId, 'intro_e2e_result.json');
+          if (raw == null) return null;
+          late final Map<String, dynamic> result;
+          try {
+            result = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          } on Object {
+            throw _CaptureFailure.capture(
+              stage,
+              'Plan 393 strict authority result is invalid JSON',
+            );
+          }
+          if (result['stepId'] != stepId) return null;
+          if (result['schema'] != _plan393StrictEndpointResultSchema ||
+              result['transport_action'] != _plan393StrictEndpointAction ||
+              result['scenario'] != groupStrictNotificationScenarioId ||
+              result['phase'] != phase ||
+              result['runId'] != _runtimeRunId ||
+              result['nonce'] != _runtimeNonce ||
+              result['status'] != 'complete' ||
+              result['success'] != true ||
+              result['observation'] is! Map) {
+            throw _CaptureFailure.capture(
+              stage,
+              'Plan 393 strict authority endpoint contract mismatch',
+            );
+          }
+          return Map<String, dynamic>.from(result['observation'] as Map);
+        },
+      );
+    } finally {
+      await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+      await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+    }
+  }
+
+  Map<String, Object?> _strictAuthorityStep({
+    required String role,
+    required String phase,
+    required Map<String, dynamic> observation,
+  }) {
+    final digest = observation['authorityDigest'];
+    final eventAt = observation['authorityEventAt'];
+    final eventIdDigest = observation['authorityEventIdSha256'];
+    final keyEpoch = observation['keyEpoch'];
+    if (digest is! String ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(digest) ||
+        eventIdDigest is! String ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(eventIdDigest) ||
+        eventAt is! String ||
+        DateTime.tryParse(eventAt)?.isUtc != true ||
+        keyEpoch is! int ||
+        keyEpoch <= 0 ||
+        observation['strictAuthoringActivated'] != true) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 strict authority observation is incomplete',
+      );
+    }
+    return <String, Object?>{
+      'role': role,
+      'phase': phase,
+      'authorityDigest': digest,
+      'authorityEventAt': eventAt,
+      'authorityEventIdSha256': eventIdDigest,
+      'keyEpoch': keyEpoch,
+    };
+  }
+
+  Future<void> _establishStrictGroupAuthority() async {
+    const author = 'author_authority';
+    const install = 'install_authority';
+    final physicalAuthor = await _runStrictAuthorityEndpoint(
+      deviceId: recipientId,
+      phase: author,
+    );
+    final firstTransfer = physicalAuthor['authorityTransfer'];
+    if (firstTransfer is! Map ||
+        physicalAuthor['revokedHistoricalDevice'] != true) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 physical authority transfer is incomplete',
+      );
+    }
+    final emulatorInstall = await _runStrictAuthorityEndpoint(
+      deviceId: senderId,
+      phase: install,
+      authorityTransfer: Map<String, dynamic>.from(firstTransfer),
+    );
+    if (emulatorInstall['installed'] != true ||
+        emulatorInstall['authorityDigest'] !=
+            physicalAuthor['authorityDigest']) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 emulator did not install physical authority',
+      );
+    }
+
+    final emulatorAuthor = await _runStrictAuthorityEndpoint(
+      deviceId: senderId,
+      phase: author,
+    );
+    final finalTransfer = emulatorAuthor['authorityTransfer'];
+    if (finalTransfer is! Map ||
+        emulatorAuthor['revokedHistoricalDevice'] != true ||
+        emulatorAuthor['authorityDigest'] ==
+            physicalAuthor['authorityDigest']) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 emulator authority did not advance the snapshot',
+      );
+    }
+    final physicalInstall = await _runStrictAuthorityEndpoint(
+      deviceId: recipientId,
+      phase: install,
+      authorityTransfer: Map<String, dynamic>.from(finalTransfer),
+    );
+    if (physicalInstall['installed'] != true ||
+        physicalInstall['authorityDigest'] !=
+            emulatorAuthor['authorityDigest']) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 physical did not install final authority',
+      );
+    }
+    _strictFinalAuthorityTransfer = Map<String, dynamic>.from(finalTransfer);
+    _strictFinalAuthorityDigest = emulatorAuthor['authorityDigest'] as String;
+
+    _strictAuthoritySteps
+      ..add(
+        _strictAuthorityStep(
+          role: 'physical',
+          phase: author,
+          observation: physicalAuthor,
+        ),
+      )
+      ..add(
+        _strictAuthorityStep(
+          role: 'emulator',
+          phase: install,
+          observation: emulatorInstall,
+        ),
+      )
+      ..add(
+        _strictAuthorityStep(
+          role: 'emulator',
+          phase: author,
+          observation: emulatorAuthor,
+        ),
+      )
+      ..add(
+        _strictAuthorityStep(
+          role: 'physical',
+          phase: install,
+          observation: physicalInstall,
+        ),
+      );
+  }
+
+  Future<void> _reactivateStrictRecipientAfterProviderLaunch() async {
+    final transfer = _strictFinalAuthorityTransfer;
+    final expectedDigest = _strictFinalAuthorityDigest;
+    if (transfer == null || expectedDigest == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'Plan 393 final authority unavailable after provider launch',
+      );
+    }
+    try {
+      final observation = await _runStrictAuthorityEndpoint(
+        deviceId: recipientId,
+        phase: 'install_authority',
+        authorityTransfer: transfer,
+      );
+      if (observation['installed'] != true ||
+          observation['strictAuthoringActivated'] != true ||
+          observation['authorityDigest'] != expectedDigest) {
+        throw _CaptureFailure.capture(
+          stage,
+          'Plan 393 recipient authority was not reactivated after provider '
+          'launch',
+        );
+      }
+    } finally {
+      // The signed transfer is setup-only and never belongs in retained proof
+      // output. Drop the in-memory copy before the graded capture window.
+      _strictFinalAuthorityTransfer = null;
+    }
   }
 
   Future<Map<String, dynamic>> _runPlan330Endpoint({
@@ -5045,7 +5910,8 @@ class _Plan257Capture {
             throw _CaptureFailure.capture(
               stage,
               'Plan 330 endpoint failed with '
-              '${result['errorType'] ?? 'unknown error'}',
+              '${result['errorType'] ?? 'unknown error'} '
+              '(${result['errorCode'] ?? 'unknown_code'})',
             );
           }
           return Map<String, dynamic>.from(result['observation'] as Map);
@@ -5369,6 +6235,7 @@ class _Plan257Capture {
     final readFlow = _plan330ReadFlowLog;
     final groupANotificationId = _plan330GroupANotificationId;
     final groupBNotificationId = _plan330GroupBNotificationId;
+    final killedPhoto = _plan393KilledPhotoObservation;
     if (beforeNotifications == null ||
         afterNotifications == null ||
         beforeUi == null ||
@@ -5379,6 +6246,7 @@ class _Plan257Capture {
         _plan330GroupAIdSha256.isEmpty ||
         _plan330GroupBIdSha256.isEmpty ||
         _plan330Locale.isEmpty ||
+        killedPhoto == null ||
         _plan330ReactionObservations.length != 3) {
       throw _CaptureFailure.capture(
         stage,
@@ -5441,6 +6309,7 @@ class _Plan257Capture {
         'afterUiDump': await _plan330EvidenceReference(afterUi),
         'readFlowLog': await _plan330EvidenceReference(readFlow),
       },
+      'killedPhoto': killedPhoto,
       'reactionProjection': <String, Object?>{
         'stableGroupANotificationId': groupANotificationId,
         'duplicateCount': 0,
@@ -6279,7 +7148,7 @@ class _Plan257Capture {
   // `-T 1` starts at the newest line, so no historical backlog is dumped into
   // the file where an early cursor could see stale text.
   //
-  // The eight `['logcat', '-c']` clears stay exactly where they are. They clear
+  // The ten `['logcat', '-c']` clears stay exactly where they are. They clear
   // the DEVICE ring, which the stream has already consumed; `_adb` turns each
   // one into a FLOOR on the stream instead, which reproduces the old "forget
   // everything before this point" semantics without destroying evidence.

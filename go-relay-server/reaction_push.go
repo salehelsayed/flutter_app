@@ -639,3 +639,20 @@ func loadGroupReactionPushEnabledFromEnv() bool {
 		return false
 	}
 }
+
+// applyGroupReactionPushRollout keeps the ordinary group inbox and the strict
+// per-recipient direct-inbox custody seam on the same production kill switch.
+// The latter is where strict-authority replay envelopes are stored.
+func applyGroupReactionPushRollout(
+	inbox *InboxStore,
+	groupInbox *GroupInboxStore,
+) bool {
+	enabled := loadGroupReactionPushEnabledFromEnv()
+	if inbox != nil {
+		inbox.SetGroupReactionPushEnabled(enabled)
+	}
+	if groupInbox != nil {
+		groupInbox.SetGroupReactionPushEnabled(enabled)
+	}
+	return enabled
+}

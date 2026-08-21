@@ -391,10 +391,7 @@ void main() {
       );
       expect(add.$1, SendGroupReactionResult.success);
       expect(add.$2, isNotNull);
-      expect(
-        await reactionRepo.getReactionsForMessage('msg-1'),
-        hasLength(1),
-      );
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
 
       final remove = await removeGroupReaction(
         bridge: bridge,
@@ -512,23 +509,37 @@ void main() {
       );
       final authoredAt = DateTime.utc(2026, 8, 13, 12, 0, 0, 0, 1);
 
-      final add = await sendGroupReaction(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        reactionRepo: reactionRepo,
-        reactionReplayOutboxRepo: strictOutbox,
-        groupId: 'group-1',
-        messageId: 'msg-1',
-        emoji: '👍',
-        senderPeerId: 'peer-1',
-        senderPublicKey: 'account-pk',
-        senderPrivateKey: 'account-sk',
-        groupContentAuthoring: context,
-        authoredAt: authoredAt,
+      final strictEvents = <Map<String, dynamic>>[];
+      final add = await _captureFlowEvents(
+        strictEvents,
+        () => sendGroupReaction(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          reactionRepo: reactionRepo,
+          reactionReplayOutboxRepo: strictOutbox,
+          groupId: 'group-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'account-pk',
+          senderPrivateKey: 'account-sk',
+          groupContentAuthoring: context,
+          authoredAt: authoredAt,
+        ),
       );
       expect(add.$1, SendGroupReactionResult.success);
       expect(add.$2, isNotNull);
+      final queued = strictEvents.singleWhere(
+        (event) => event['event'] == 'GROUP_REACTION_SEND_QUEUED',
+      );
+      expect(
+        queued['details'],
+        containsPair('deliveryMode', 'strict_inbox_custody'),
+      );
+      expect(queued['details'], containsPair('deliveryConfirmed', false));
+      expect(queued['details'], containsPair('replayStatus', 'stored'));
+      expect(queued['details'], containsPair('strictCustodyComplete', true));
       final addEntry = strictOutbox.entries.single;
       final addOrder = GroupReactionTransitionOrder.tryParse(
         addEntry.reactionId,
@@ -1020,6 +1031,113 @@ void main() {
       expect((await autoResolved).$1, SendGroupReactionResult.success);
       await competingAuthority;
       expect(competingAuthorityEntered, isTrue);
+    },
+  );
+
+  test(
+    'TC-393-07 strict ADD signs only the target author device wake subset',
+    () async {
+      await groupRepo.saveMember(
+        testMember.copyWith(
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'reactor-device',
+              transportPeerId: 'transport-reactor',
+              deviceSigningPublicKey: 'pk-1',
+            ),
+          ],
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'author-device',
+              transportPeerId: 'transport-author',
+              deviceSigningPublicKey: 'pk-2',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'revoked-author-device',
+              transportPeerId: 'transport-author-revoked',
+              deviceSigningPublicKey: 'pk-2-revoked',
+              status: GroupMemberDeviceStatus.revoked,
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-3',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-3',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'bystander-device',
+              transportPeerId: 'transport-bystander',
+              deviceSigningPublicKey: 'pk-3',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      final strictOutbox = _StrictReactionOutbox();
+      final strictStore = _PersistAwareStrictReactionStore(strictOutbox);
+
+      final result = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: strictOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 20, 10),
+            eventId: 'authority.tc393.07',
+            keyEpoch: 0,
+          ),
+          inboxStore: strictStore,
+        ),
+        authoredAt: DateTime.utc(2026, 8, 20, 11),
+      );
+
+      expect(result.$1, SendGroupReactionResult.success);
+      final envelope = _replayEnvelopeFromRetryPayload(
+        strictOutbox.entries.single.inboxRetryPayload,
+      );
+      expect(envelope['recipientPeerIds'], <String>[
+        'transport-author',
+        'transport-bystander',
+      ]);
+      final extension =
+          envelope['notificationExtension'] as Map<String, dynamic>;
+      expect(extension['notificationRecipientTransportPeerIds'], <String>[
+        'transport-author',
+      ]);
+      expect(
+        extension['notificationRecipientTransportPeerIds'],
+        isNot(contains('transport-bystander')),
+      );
+      expect(
+        jsonEncode(extension),
+        isNot(contains('transport-author-revoked')),
+      );
     },
   );
 

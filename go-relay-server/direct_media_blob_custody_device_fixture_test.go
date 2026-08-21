@@ -6,9 +6,12 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -29,39 +32,93 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const (
 	directMediaDeviceFixtureProcessMode = "MKNOON_DIRECT_MEDIA_DEVICE_FIXTURE_PROCESS"
 	directMediaDeviceFixtureHostIP      = "MKNOON_DIRECT_MEDIA_DEVICE_FIXTURE_HOST_IP"
 	directMediaDeviceFixtureReadyPrefix = "MKNOON_DIRECT_MEDIA_FIXTURE_READY="
+	plan393FixedWakeFixtureMode         = "MKNOON_PLAN393_FIXED_WAKE_FIXTURE"
+	plan393FixtureSnapshotKind          = "plan393_relay_snapshot"
 )
 
 type directMediaDeviceFixtureReady struct {
-	Schema                       string `json:"schema"`
-	Multiaddr                    string `json:"multiaddr"`
-	ProbeURL                     string `json:"probeUrl"`
-	FixtureIdentitySHA256        string `json:"fixtureIdentitySha256"`
-	Backend                      string `json:"backend"`
-	Ephemeral                    bool   `json:"ephemeral"`
-	AckCustodyAdmissionEnabled   bool   `json:"ackCustodyAdmissionEnabled"`
-	MediaCustodyAdmissionEnabled bool   `json:"mediaCustodyAdmissionEnabled"`
+	Schema                        string `json:"schema"`
+	Multiaddr                     string `json:"multiaddr"`
+	ProbeURL                      string `json:"probeUrl"`
+	FixtureIdentitySHA256         string `json:"fixtureIdentitySha256"`
+	Backend                       string `json:"backend"`
+	Ephemeral                     bool   `json:"ephemeral"`
+	AckCustodyAdmissionEnabled    bool   `json:"ackCustodyAdmissionEnabled"`
+	MediaCustodyAdmissionEnabled  bool   `json:"mediaCustodyAdmissionEnabled"`
+	FixedWakeRecovery             bool   `json:"fixedWakeRecovery"`
+	PushTokenState                string `json:"pushTokenState"`
+	WakeOutcomeAdmissionEnabled   bool   `json:"wakeOutcomeAdmissionEnabled"`
+	WakeOutcomeCoordinatorStarted bool   `json:"wakeOutcomeCoordinatorStarted"`
+	DirectReactionPushEnabled     bool   `json:"directReactionPushEnabled"`
+	RealFCMConfigured             bool   `json:"realFcmConfigured"`
+	RelayVersion                  string `json:"relayVersion"`
+	RelayBinarySHA256             string `json:"relayBinarySha256"`
+}
+
+type directMediaDeviceFixtureOptions struct {
+	fixedWakeRecovery  bool
+	serviceAccountPath string
+}
+
+type directMediaFixtureLogEntry struct {
+	at   time.Time
+	line string
+}
+
+type directMediaFixtureLogBuffer struct {
+	mu      sync.Mutex
+	entries []directMediaFixtureLogEntry
+}
+
+func (buffer *directMediaFixtureLogBuffer) Write(payload []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	now := time.Now().UTC()
+	for _, line := range strings.Split(strings.TrimRight(string(payload), "\n"), "\n") {
+		if line != "" {
+			buffer.entries = append(buffer.entries, directMediaFixtureLogEntry{at: now, line: line})
+		}
+	}
+	return len(payload), nil
+}
+
+func (buffer *directMediaFixtureLogBuffer) Since(since time.Time) string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	lines := make([]string, 0, len(buffer.entries))
+	for _, entry := range buffer.entries {
+		if !entry.at.Before(since) {
+			lines = append(lines, entry.line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 type directMediaDeviceFixture struct {
-	root      string
-	host      host.Host
-	stores    *controlPlaneStores
-	media     *MediaStore
-	redis     *miniredis.Miniredis
-	probe     *http.Server
-	probeLn   net.Listener
-	cancel    context.CancelFunc
-	ready     directMediaDeviceFixtureReady
-	stop      chan struct{}
-	stopOnce  sync.Once
-	closeOnce sync.Once
-	closeErr  error
+	root                string
+	host                host.Host
+	stores              *controlPlaneStores
+	media               *MediaStore
+	redis               *miniredis.Miniredis
+	probe               *http.Server
+	probeLn             net.Listener
+	cancel              context.CancelFunc
+	ready               directMediaDeviceFixtureReady
+	stop                chan struct{}
+	stopOnce            sync.Once
+	closeOnce           sync.Once
+	closeErr            error
+	startedAt           time.Time
+	logs                *directMediaFixtureLogBuffer
+	priorLogWriter      io.Writer
+	environmentRestores []func()
 }
 
 // TestDirectMediaBlobCustodyDeviceFixtureContract owns two modes. A normal
@@ -82,7 +139,11 @@ func TestDirectMediaBlobCustodyDeviceFixtureContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create fixture root: %v", err)
 	}
-	fixture, err := startDirectMediaDeviceFixture(root, "127.0.0.1")
+	fixture, err := startDirectMediaDeviceFixture(
+		root,
+		"127.0.0.1",
+		directMediaDeviceFixtureOptions{},
+	)
 	if err != nil {
 		_ = os.RemoveAll(root)
 		t.Fatalf("start fixture: %v", err)
@@ -114,6 +175,44 @@ func TestDirectMediaBlobCustodyDeviceFixtureContract(t *testing.T) {
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("disposable fixture root survived teardown: %v", err)
 	}
+
+	plan393Root, err := os.MkdirTemp("", "mknoon-plan393-fixture-contract-")
+	if err != nil {
+		t.Fatalf("create Plan 393 fixture root: %v", err)
+	}
+	serviceAccountPath := filepath.Join(plan393Root, "fixture-service-account.json")
+	if err := os.WriteFile(serviceAccountPath, []byte(`{"type":"service_account"}`), 0o600); err != nil {
+		_ = os.RemoveAll(plan393Root)
+		t.Fatalf("write Plan 393 fixture credential: %v", err)
+	}
+	plan393Fixture, err := startDirectMediaDeviceFixture(
+		plan393Root,
+		"127.0.0.1",
+		directMediaDeviceFixtureOptions{
+			fixedWakeRecovery:  true,
+			serviceAccountPath: serviceAccountPath,
+		},
+	)
+	if err != nil {
+		_ = os.RemoveAll(plan393Root)
+		t.Fatalf("start Plan 393 fixture: %v", err)
+	}
+	if !plan393Fixture.ready.FixedWakeRecovery ||
+		plan393Fixture.ready.PushTokenState != string(pushTokenStateEncrypted) ||
+		!plan393Fixture.ready.WakeOutcomeAdmissionEnabled ||
+		!plan393Fixture.ready.WakeOutcomeCoordinatorStarted ||
+		!plan393Fixture.ready.DirectReactionPushEnabled ||
+		!plan393Fixture.ready.RealFCMConfigured ||
+		len(plan393Fixture.ready.RelayBinarySHA256) != sha256.Size*2 {
+		t.Fatalf("Plan 393 fixture attestation = %#v", plan393Fixture.ready)
+	}
+	assertPlan393RelayFixtureSnapshot(t, plan393Fixture)
+	if err := plan393Fixture.Close(); err != nil {
+		t.Fatalf("Plan 393 fixture teardown: %v", err)
+	}
+	if _, err := os.Stat(plan393Root); !os.IsNotExist(err) {
+		t.Fatalf("Plan 393 fixture root survived teardown: %v", err)
+	}
 }
 
 func runDirectMediaDeviceFixtureProcess(t *testing.T) {
@@ -126,11 +225,26 @@ func runDirectMediaDeviceFixtureProcess(t *testing.T) {
 		!loadDirectMediaBlobCustodyAdmissionEnabledFromEnv() {
 		t.Fatal("fixture process requires both custody admission flags")
 	}
+	fixedWakeRecovery := os.Getenv(plan393FixedWakeFixtureMode) == "1"
+	serviceAccountPath := ""
+	if fixedWakeRecovery {
+		serviceAccountPath = os.Getenv("SIMS_PROVIDER_FCM_CREDENTIAL_PATH")
+		if info, err := os.Stat(serviceAccountPath); err != nil || !info.Mode().IsRegular() || info.Size() <= 0 {
+			t.Fatal("Plan 393 fixture process requires a regular FCM service-account file")
+		}
+	}
 	root, err := os.MkdirTemp("", "mknoon-plan347-device-fixture-")
 	if err != nil {
 		t.Fatalf("create fixture root: %v", err)
 	}
-	fixture, err := startDirectMediaDeviceFixture(root, hostIP)
+	fixture, err := startDirectMediaDeviceFixture(
+		root,
+		hostIP,
+		directMediaDeviceFixtureOptions{
+			fixedWakeRecovery:  fixedWakeRecovery,
+			serviceAccountPath: serviceAccountPath,
+		},
+	)
 	if err != nil {
 		_ = os.RemoveAll(root)
 		t.Fatalf("start fixture: %v", err)
@@ -156,13 +270,21 @@ func runDirectMediaDeviceFixtureProcess(t *testing.T) {
 	}
 }
 
-func startDirectMediaDeviceFixture(root, advertisedHost string) (*directMediaDeviceFixture, error) {
+func startDirectMediaDeviceFixture(
+	root string,
+	advertisedHost string,
+	options directMediaDeviceFixtureOptions,
+) (*directMediaDeviceFixture, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	fixture := &directMediaDeviceFixture{
-		root:   root,
-		cancel: cancel,
-		stop:   make(chan struct{}),
+		root:      root,
+		cancel:    cancel,
+		stop:      make(chan struct{}),
+		startedAt: time.Now().UTC(),
+		logs:      &directMediaFixtureLogBuffer{},
 	}
+	fixture.priorLogWriter = log.Writer()
+	log.SetOutput(io.MultiWriter(fixture.priorLogWriter, fixture.logs))
 	fail := func(err error) (*directMediaDeviceFixture, error) {
 		_ = fixture.Close()
 		return nil, err
@@ -176,17 +298,49 @@ func startDirectMediaDeviceFixture(root, advertisedHost string) (*directMediaDev
 		return fail(fmt.Errorf("start Redis-compatible state: %w", err))
 	}
 	fixture.redis = redisServer
+	if options.fixedWakeRecovery {
+		if err := fixture.configurePlan393PushTokenVault(); err != nil {
+			return fail(fmt.Errorf("configure Plan 393 push token vault: %w", err))
+		}
+	}
 	limits := DefaultServerLimits()
+	serviceAccountPath := filepath.Join(root, "missing-fcm-service-account.json")
+	if options.fixedWakeRecovery {
+		serviceAccountPath = options.serviceAccountPath
+	}
 	stores, err := newControlPlaneStores(ctx, backendConfig{
 		Kind:                       backendKindRedis,
 		RedisURL:                   "redis://" + redisServer.Addr(),
 		RedisPrefix:                "plan347:",
 		AckCustodyAdmissionEnabled: true,
-	}, limits, filepath.Join(root, "missing-fcm-service-account.json"))
+	}, limits, serviceAccountPath)
 	if err != nil {
 		return fail(fmt.Errorf("start production Redis stores: %w", err))
 	}
 	fixture.stores = stores
+	pushTokenState := string(pushTokenStateAbsent)
+	wakeCoordinatorStarted := false
+	if options.fixedWakeRecovery {
+		pushBackend, ok := stores.PushTokenBackend.(*redisPushTokenBackend)
+		if !ok {
+			return fail(fmt.Errorf("Plan 393 fixture push backend is %T", stores.PushTokenBackend))
+		}
+		receipt := sha256.Sum256([]byte("mknoon-plan393-ephemeral-token-vault"))
+		if err := pushBackend.Migrate(hex.EncodeToString(receipt[:])); err != nil {
+			return fail(fmt.Errorf("initialize encrypted push token state: %w", err))
+		}
+		marker, err := pushBackend.readState(pushBackend.client)
+		if err != nil || marker.State != pushTokenStateEncrypted {
+			return fail(fmt.Errorf("encrypted push token state is unavailable: state=%q err=%v", marker.State, err))
+		}
+		pushTokenState = string(marker.State)
+		stores.Inbox.SetDirectReactionPushEnabled(true)
+		if stores.WakeOutcomeCoordinator == nil {
+			return fail(fmt.Errorf("Plan 393 fixture has no durable wake coordinator"))
+		}
+		stores.WakeOutcomeCoordinator.Start(ctx)
+		wakeCoordinatorStarted = true
+	}
 	stores.Rendezvous.StartCleanup(ctx)
 
 	media, err := NewMediaStore(filepath.Join(root, "media"))
@@ -229,21 +383,88 @@ func startDirectMediaDeviceFixture(root, advertisedHost string) (*directMediaDev
 		return fail(err)
 	}
 	identityHash := sha256.Sum256([]byte(h.ID().String()))
+	relayBinarySHA256, err := currentExecutableSHA256()
+	if err != nil {
+		return fail(fmt.Errorf("hash fixture executable: %w", err))
+	}
 	fixture.ready = directMediaDeviceFixtureReady{
-		Schema:                       "mknoon.plan347.direct-media-fixture.v1",
-		Multiaddr:                    fmt.Sprintf("/ip4/%s/tcp/%d/p2p/%s", advertisedHost, port, h.ID()),
-		ProbeURL:                     probeURL,
-		FixtureIdentitySHA256:        hex.EncodeToString(identityHash[:]),
-		Backend:                      backendKindRedis,
-		Ephemeral:                    true,
-		AckCustodyAdmissionEnabled:   stores.Inbox.AckCustodyAdmissionEnabled(),
-		MediaCustodyAdmissionEnabled: media.DirectMediaBlobCustodyAdmissionEnabled(),
+		Schema:                        "mknoon.plan347.direct-media-fixture.v1",
+		Multiaddr:                     fmt.Sprintf("/ip4/%s/tcp/%d/p2p/%s", advertisedHost, port, h.ID()),
+		ProbeURL:                      probeURL,
+		FixtureIdentitySHA256:         hex.EncodeToString(identityHash[:]),
+		Backend:                       backendKindRedis,
+		Ephemeral:                     true,
+		AckCustodyAdmissionEnabled:    stores.Inbox.AckCustodyAdmissionEnabled(),
+		MediaCustodyAdmissionEnabled:  media.DirectMediaBlobCustodyAdmissionEnabled(),
+		FixedWakeRecovery:             options.fixedWakeRecovery,
+		PushTokenState:                pushTokenState,
+		WakeOutcomeAdmissionEnabled:   stores.Inbox.WakeOutcomeAdmissionEnabled(),
+		WakeOutcomeCoordinatorStarted: wakeCoordinatorStarted,
+		DirectReactionPushEnabled:     stores.Inbox.directReactionPushEnabled,
+		RealFCMConfigured:             options.fixedWakeRecovery && serviceAccountPath != "",
+		RelayVersion:                  "relay-server v" + version + "+plan393-fixture",
+		RelayBinarySHA256:             relayBinarySHA256,
 	}
 	if !fixture.ready.AckCustodyAdmissionEnabled ||
 		!fixture.ready.MediaCustodyAdmissionEnabled {
 		return fail(fmt.Errorf("both custody admissions must be enabled"))
 	}
 	return fixture, nil
+}
+
+func (fixture *directMediaDeviceFixture) configurePlan393PushTokenVault() error {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	keyringPath := filepath.Join(fixture.root, "plan393-push-token-keyring.json")
+	payload, err := json.Marshal(map[string]any{
+		"version": 1,
+		"keys": map[string]string{
+			"plan393-ephemeral": base64.StdEncoding.EncodeToString(key),
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(keyringPath, payload, 0o600); err != nil {
+		return err
+	}
+	for name, value := range map[string]string{
+		pushTokenKeyringFileEnv:         keyringPath,
+		pushTokenActiveKeyIDEnv:         "plan393-ephemeral",
+		pushTokenProviderEnvironmentEnv: "plan393-fixture",
+	} {
+		previous, present := os.LookupEnv(name)
+		if err := os.Setenv(name, value); err != nil {
+			return err
+		}
+		fixture.environmentRestores = append(fixture.environmentRestores, func() {
+			if present {
+				_ = os.Setenv(name, previous)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		})
+	}
+	return nil
+}
+
+func currentExecutableSHA256() (string, error) {
+	path, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func (fixture *directMediaDeviceFixture) startProbe(advertisedHost string) (string, error) {
@@ -272,12 +493,33 @@ func (fixture *directMediaDeviceFixture) startProbe(advertisedHost string) (stri
 			http.Error(writer, "method rejected", http.StatusMethodNotAllowed)
 			return
 		}
-		attachmentID := request.URL.Query().Get("attachmentId")
+		query := request.URL.Query()
+		if query.Get("kind") == plan393FixtureSnapshotKind {
+			if len(query) != 2 || !fixture.ready.FixedWakeRecovery {
+				http.Error(writer, "snapshot rejected", http.StatusBadRequest)
+				return
+			}
+			sinceUnixMs, err := strconv.ParseInt(query.Get("sinceUnixMs"), 10, 64)
+			if err != nil || sinceUnixMs < 0 {
+				http.Error(writer, "snapshot time rejected", http.StatusBadRequest)
+				return
+			}
+			fixture.writePlan393RelaySnapshot(
+				writer,
+				time.UnixMilli(sinceUnixMs).UTC(),
+			)
+			return
+		}
+		if query.Has("kind") {
+			http.Error(writer, "snapshot kind rejected", http.StatusBadRequest)
+			return
+		}
+		attachmentID := query.Get("attachmentId")
 		// 362: an optional recipientPeerId selects one exact composite
 		// (recipient, id) record; an absent recipient keeps the legacy
 		// aggregate-by-ID probe, which now counts every sibling target row.
-		recipientPeerID := request.URL.Query().Get("recipientPeerId")
-		inboxMessageID := request.URL.Query().Get("inboxMessageId")
+		recipientPeerID := query.Get("recipientPeerId")
+		inboxMessageID := query.Get("inboxMessageId")
 		if (attachmentID == "" && inboxMessageID == "") ||
 			(attachmentID != "" && !validDirectMediaFixtureProbeID(attachmentID)) ||
 			(recipientPeerID != "" && !validDirectMediaFixtureProbeID(recipientPeerID)) {
@@ -336,6 +578,33 @@ func (fixture *directMediaDeviceFixture) startProbe(advertisedHost string) (stri
 	}()
 	port := listener.Addr().(*net.TCPAddr).Port
 	return fmt.Sprintf("http://%s:%d%s", advertisedHost, port, path), nil
+}
+
+func (fixture *directMediaDeviceFixture) writePlan393RelaySnapshot(
+	writer http.ResponseWriter,
+	since time.Time,
+) {
+	opaque := testutil.ToFloat64(selectedPushRouteCounter.WithLabelValues("opaque"))
+	rich := testutil.ToFloat64(selectedPushRouteCounter.WithLabelValues("rich"))
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(map[string]any{
+		"schema":                        "mknoon.plan393.relay-fixture-snapshot.v1",
+		"relayVersion":                  fixture.ready.RelayVersion,
+		"relayBinarySha256":             fixture.ready.RelayBinarySHA256,
+		"backend":                       fixture.ready.Backend,
+		"ephemeral":                     fixture.ready.Ephemeral,
+		"pushTokenState":                fixture.ready.PushTokenState,
+		"wakeOutcomeAdmissionEnabled":   fixture.ready.WakeOutcomeAdmissionEnabled,
+		"wakeOutcomeCoordinatorStarted": fixture.ready.WakeOutcomeCoordinatorStarted,
+		"directReactionPushEnabled":     fixture.ready.DirectReactionPushEnabled,
+		"realFcmConfigured":             fixture.ready.RealFCMConfigured,
+		"processStartTimeSeconds":       float64(fixture.startedAt.UnixMilli()) / 1000,
+		"selectedRoutes": map[string]int{
+			"opaque": int(opaque),
+			"rich":   int(rich),
+		},
+		"journal": fixture.logs.Since(since),
+	})
 }
 
 func directMediaFixturePendingProtectedCount(
@@ -415,6 +684,50 @@ func assertDirectMediaFixtureProbe(t *testing.T, rawURL, attachmentID string, wa
 	if response.StatusCode != http.StatusOK ||
 		payload.Schema != "mknoon.plan347.direct-media-probe.v1" || payload.Count != want {
 		t.Fatalf("fixture probe = status %d payload %#v, want count %d", response.StatusCode, payload, want)
+	}
+}
+
+func assertPlan393RelayFixtureSnapshot(t *testing.T, fixture *directMediaDeviceFixture) {
+	t.Helper()
+	client := &http.Client{Timeout: 5 * time.Second}
+	request, err := http.NewRequest(
+		http.MethodGet,
+		fixture.ready.ProbeURL+"?kind="+plan393FixtureSnapshotKind+"&sinceUnixMs=0",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create Plan 393 snapshot request: %v", err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("query Plan 393 relay snapshot: %v", err)
+	}
+	defer response.Body.Close()
+	var payload struct {
+		Schema                        string         `json:"schema"`
+		RelayBinarySHA256             string         `json:"relayBinarySha256"`
+		Backend                       string         `json:"backend"`
+		Ephemeral                     bool           `json:"ephemeral"`
+		PushTokenState                string         `json:"pushTokenState"`
+		WakeOutcomeAdmissionEnabled   bool           `json:"wakeOutcomeAdmissionEnabled"`
+		WakeOutcomeCoordinatorStarted bool           `json:"wakeOutcomeCoordinatorStarted"`
+		DirectReactionPushEnabled     bool           `json:"directReactionPushEnabled"`
+		RealFCMConfigured             bool           `json:"realFcmConfigured"`
+		SelectedRoutes                map[string]int `json:"selectedRoutes"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode Plan 393 relay snapshot: %v", err)
+	}
+	if response.StatusCode != http.StatusOK ||
+		payload.Schema != "mknoon.plan393.relay-fixture-snapshot.v1" ||
+		payload.RelayBinarySHA256 != fixture.ready.RelayBinarySHA256 ||
+		payload.Backend != backendKindRedis || !payload.Ephemeral ||
+		payload.PushTokenState != string(pushTokenStateEncrypted) ||
+		!payload.WakeOutcomeAdmissionEnabled ||
+		!payload.WakeOutcomeCoordinatorStarted ||
+		!payload.DirectReactionPushEnabled || !payload.RealFCMConfigured ||
+		payload.SelectedRoutes["opaque"] != 0 || payload.SelectedRoutes["rich"] != 0 {
+		t.Fatalf("Plan 393 relay snapshot = status %d payload %#v", response.StatusCode, payload)
 	}
 }
 
@@ -521,6 +834,12 @@ func (fixture *directMediaDeviceFixture) Close() error {
 			if err := os.RemoveAll(fixture.root); err != nil && fixture.closeErr == nil {
 				fixture.closeErr = err
 			}
+		}
+		for index := len(fixture.environmentRestores) - 1; index >= 0; index-- {
+			fixture.environmentRestores[index]()
+		}
+		if fixture.priorLogWriter != nil {
+			log.SetOutput(fixture.priorLogWriter)
 		}
 	})
 	return fixture.closeErr

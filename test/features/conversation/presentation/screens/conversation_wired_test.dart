@@ -39,6 +39,7 @@ import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -1848,6 +1849,7 @@ void main() {
     DirectLinkedMediaFanoutSelector? directLinkedMediaFanoutSelector,
     bool? directMediaBlobCustodyClientEnabled,
     bool? directLinkedEventFanoutEnabled,
+    ActiveConversationTracker? conversationTracker,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -1907,6 +1909,7 @@ void main() {
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
+          conversationTracker: conversationTracker,
           autoDownloadDecider: autoDownloadDecider,
           receivedMediaActionController: receivedMediaActionController,
           preparedDirectMediaBlobCustodyCoordinator:
@@ -1917,6 +1920,79 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  testWidgets('TC-393-01 direct read requires resumed exact tracking', (
+    tester,
+  ) async {
+    ConversationMessage unread(String id) {
+      const timestamp = '2026-08-21T08:00:00.000Z';
+      return ConversationMessage(
+        id: id,
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeContact().peerId,
+        text: 'Unread notification lifecycle row',
+        timestamp: timestamp,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: timestamp,
+      );
+    }
+
+    Future<void> mount({
+      required InMemoryMessageRepository repository,
+      ActiveConversationTracker? tracker,
+    }) => pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      messageRepo: repository,
+      chatListener: ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: repository,
+        contactRepo: FakeContactRepository(),
+      ),
+      sendFn: _instantSuccessSendFn,
+      bridge: FakeBridge(),
+      conversationTracker: tracker,
+    );
+
+    final trackedRepository = InMemoryMessageRepository();
+    await trackedRepository.saveMessage(unread('tc-393-paused'));
+    final tracker = ActiveConversationTracker();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    addTearDown(() {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    });
+
+    await mount(repository: trackedRepository, tracker: tracker);
+    expect(
+      await trackedRepository.getUnreadCountForContact(makeContact().peerId),
+      1,
+      reason: 'a mounted but paused conversation cannot consume unread state',
+    );
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(tracker.isViewing(makeContact().peerId), isTrue);
+    expect(
+      await trackedRepository.getUnreadCountForContact(makeContact().peerId),
+      0,
+      reason: 'resume plus the exact tracked peer marks once',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    final untrackedRepository = InMemoryMessageRepository();
+    await untrackedRepository.saveMessage(unread('tc-393-untracked'));
+    await mount(repository: untrackedRepository);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(
+      await untrackedRepository.getUnreadCountForContact(makeContact().peerId),
+      1,
+      reason: 'an absent tracker is unknown authority and must fail closed',
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
 
   group('Plan 343 wired reaction attempt authority', () {
     ConversationMessage reactionMessage() => ConversationMessage(

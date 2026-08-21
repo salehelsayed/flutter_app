@@ -1408,6 +1408,13 @@ class _ConversationWiredState extends State<ConversationWired>
     _draftText = widget.initialText ?? '';
     widget.appShellController?.addListener(_onAppShellChanged);
     widget.conversationTracker?.setActive(widget.contact.peerId);
+    // A cold notification launch can construct this route while Flutter still
+    // reports `inactive`, then publish `resumed` before this State registers as
+    // an observer. Re-check after the first rendered frame; the shared strict
+    // predicate below still requires resumed + the exact tracked peer.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_markAsRead());
+    });
     _updateComposerState(
       pendingAttachments: _composerController.pendingAttachments,
     );
@@ -2435,6 +2442,12 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   Future<void> _markAsRead() async {
+    final tracker = widget.conversationTracker;
+    if (_appLifecycleState != AppLifecycleState.resumed ||
+        tracker == null ||
+        !tracker.isViewing(_contact.peerId)) {
+      return;
+    }
     try {
       await markConversationRead(
         messageRepo: widget.messageRepo,
@@ -7724,7 +7737,18 @@ class _ConversationWiredState extends State<ConversationWired>
     // async app-resume drain AFTER this screen's one-shot DB read and may miss
     // the no-replay live stream. Re-fetch (without yanking the scroll position).
     if (state == AppLifecycleState.resumed) {
-      unawaited(_drainAndReloadOnce('resume', scrollToLiveEdge: false));
+      unawaited(_recoverAndMarkReadAfterResume());
+    }
+  }
+
+  Future<void> _recoverAndMarkReadAfterResume() async {
+    try {
+      await _drainAndReloadOnce('resume', scrollToLiveEdge: false);
+    } finally {
+      // Even when the row was already present in the initial page (so recovery
+      // reports no newly-added message), resumed exact visibility is sufficient
+      // read authority. The strict predicate is re-evaluated at this final seam.
+      await _markAsRead();
     }
   }
 

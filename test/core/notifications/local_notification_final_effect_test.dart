@@ -214,6 +214,73 @@ void main() {
   );
 
   test(
+    'claim contention before native entry preserves the current conversation card',
+    () async {
+      final directory = Directory('${root.path}/claim-contention');
+      const conversationKey = 'peer-claim-contention';
+      final fixture = await _Fixture.open(directory, conversationKey);
+      final identity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.direct,
+        value: conversationKey,
+      )!;
+      final context = _context(
+        label: 'claim-contention',
+        identity: identity,
+        producer: LocalNotificationProducerKind.directMessage,
+        readFinal: () async =>
+            DurableLocalNotificationCanonicalDisposition.eligible,
+      );
+      await fixture.initialize(context.currentOpaqueBinding);
+      const previous = ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: 'previous-message',
+        generation: 'previous-generation',
+      );
+      await fixture.registry.recordContentMetadata(
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: previous,
+      );
+      final next = ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: context.eventCorrelation,
+        generation: 'next-generation',
+      );
+      var cancelCalls = 0;
+      var nativeCalls = 0;
+
+      final result = await fixture.registry.runFinalEffect(
+        context: context,
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: <String>[],
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: next,
+        retireCurrent: () async => cancelCalls += 1,
+        publishNative: () async => nativeCalls += 1,
+        publishNativeAtFinalBarrier: (_) async => false,
+      );
+
+      expect(
+        result.disposition,
+        DurableLocalNotificationEffectDisposition.retryable,
+      );
+      expect(cancelCalls, 0);
+      expect(nativeCalls, 0);
+      expect(
+        await fixture.registry.lookupContentMetadata(
+          conversationKey: conversationKey,
+          notificationId: fixture.notificationId,
+        ),
+        previous,
+      );
+    },
+  );
+
+  test(
     'final-effect supporting canonical CAS prevents stale generation mutation',
     () async {
       final cancelledDirectory = Directory('${root.path}/cancelled');
@@ -727,7 +794,7 @@ void main() {
   );
 
   test(
-    'materialized native PUBLISHING uses exact active proof without changing owner or republishing',
+    'materialized native PUBLISHING repairs an unactivated card without changing owner',
     () async {
       final directory = Directory('${root.path}/relay-publishing-recovery');
       final fixture = await _Fixture.open(
@@ -782,6 +849,7 @@ void main() {
         readFinalCanonicalDisposition: () async =>
             DurableLocalNotificationCanonicalDisposition.eligible,
       );
+      var silentRepairs = 0;
       final recovered = await fixture.registry.runFinalEffect(
         context: sqlContext,
         appVisibility: _MutableVisibility(
@@ -794,13 +862,16 @@ void main() {
         metadata: metadata,
         retireCurrent: () async => fail('active proof must not retire'),
         publishNative: () async => fail('active proof must not republish'),
+        publishNativeSilently: () async => silentRepairs += 1,
         activeNotificationIds: () async => <Object?>[fixture.notificationId],
       );
       expect(
         recovered.disposition,
         DurableLocalNotificationEffectDisposition.osPosted,
       );
-      expect(recovered.currentNativeEntryAttempted, isFalse);
+      expect(recovered.currentNativeEntryAttempted, isTrue);
+      expect(recovered.currentNativeEntryWasSilentRepair, isTrue);
+      expect(silentRepairs, 1);
       final record = await fixture.record(
         binding: relayContext.currentOpaqueBinding,
         correlation: relayContext.eventCorrelation,
@@ -815,7 +886,7 @@ void main() {
   );
 
   test(
-    'content activation crash intent is opaque and resumes exact old-card retirement',
+    'native ambiguity intent is opaque and resumes an in-place silent repair',
     () async {
       var now = DateTime.utc(2026, 8, 16, 12);
       final directory = Directory('${root.path}/activation-intent-recovery');
@@ -863,24 +934,21 @@ void main() {
         conversationKey: 'peer-activation-intent-recovery',
         notificationId: fixture.notificationId,
         metadata: metadata,
-        retireCurrent: () async {
-          retireCalls += 1;
-          throw StateError('cut after old-card cancellation entry');
-        },
-        publishNative: () async => fail('new card must not publish before cut'),
+        retireCurrent: () async => retireCalls += 1,
+        publishNative: () async => throw StateError('native outcome unknown'),
       );
       expect(
         interrupted.disposition,
         DurableLocalNotificationEffectDisposition.ambiguous,
       );
-      expect(retireCalls, 1);
+      expect(retireCalls, 0);
       final interruptedRecord = await fixture.record(
         binding: context.currentOpaqueBinding,
         correlation: context.eventCorrelation,
       );
       expect(
         interruptedRecord.attemptKind,
-        LocalNotificationAttemptKind.cancel,
+        LocalNotificationAttemptKind.postOrUpdate,
       );
       final intent = File(
         '${directory.path}/${fixture.notificationId}'
@@ -925,7 +993,7 @@ void main() {
         DurableLocalNotificationEffectDisposition.osPosted,
       );
       expect(recovered.currentNativeEntryWasSilentRepair, isTrue);
-      expect(retireCalls, 2);
+      expect(retireCalls, 0);
       expect(silentRepairs, 1);
       expect(await intent.exists(), isFalse);
       expect(
@@ -1249,7 +1317,7 @@ void main() {
           conversationKey: 'peer-native-ambiguity',
           notificationId: fixture.notificationId,
         ),
-        metadata,
+        isNull,
       );
 
       var replayNativeCalls = 0;
@@ -1273,6 +1341,7 @@ void main() {
       expect(replay.currentNativeEntryAttempted, isFalse);
       expect(replayNativeCalls, 0);
 
+      var activeRepairCalls = 0;
       final provenActive = await fixture.registry.runFinalEffect(
         context: context,
         appVisibility: _MutableVisibility(
@@ -1285,13 +1354,16 @@ void main() {
         metadata: metadata,
         retireCurrent: () async => fail('active proof must not retire'),
         publishNative: () async => fail('active proof must not republish'),
+        publishNativeSilently: () async => activeRepairCalls += 1,
         activeNotificationIds: () async => <Object?>[fixture.notificationId],
       );
       expect(
         provenActive.disposition,
         DurableLocalNotificationEffectDisposition.osPosted,
       );
-      expect(provenActive.currentNativeEntryAttempted, isFalse);
+      expect(provenActive.currentNativeEntryAttempted, isTrue);
+      expect(provenActive.currentNativeEntryWasSilentRepair, isTrue);
+      expect(activeRepairCalls, 1);
     },
   );
 

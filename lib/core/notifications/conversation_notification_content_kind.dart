@@ -196,31 +196,33 @@ ConversationNotificationPayloadEnvelope? decodeConversationNotificationPayload(
 
 /// Result of replacing the shared OS card while holding its durable ownership
 /// lock.
-enum ConversationNotificationContentReplacementResult { shownAndRecorded }
+enum ConversationNotificationContentReplacementResult {
+  shownAndRecorded,
+  alreadyCurrent,
+}
 
 /// Durable, identifier-only ownership metadata for a delivered conversation
 /// card. Implementations must fail closed on missing or malformed state.
 abstract interface class ConversationNotificationContentRegistry {
-  /// Serializes retiring the prior stable-id card, publishing exact ownership,
-  /// and showing the replacement across Flutter isolates and app processes.
+  /// Serializes a same-id native update and its exact ownership publication
+  /// across Flutter isolates and app processes. A repeated semantic event is
+  /// idempotent and must not demote an already-alerting card.
   Future<ConversationNotificationContentReplacementResult> replaceContent({
     required String conversationKey,
     required int notificationId,
     required ConversationNotificationContentMetadata metadata,
-    required Future<void> Function() retireCurrent,
     required Future<void> Function() replace,
   });
 
   /// Replaces only when [expectedGeneration] still owns the stable card.
-  /// The comparison, retirement, metadata publication, and native show share
-  /// the registry lock so another isolate's newer generation cannot be
-  /// overwritten by a stale canonical rebuild.
+  /// The comparison, same-id native update, and metadata publication share the
+  /// registry lock so another isolate's newer generation cannot be overwritten
+  /// by a stale canonical rebuild.
   Future<bool> replaceContentIfGeneration({
     required String conversationKey,
     required int notificationId,
     required String expectedGeneration,
     required ConversationNotificationContentMetadata metadata,
-    required Future<void> Function() retireCurrent,
     required Future<void> Function() replace,
   });
 

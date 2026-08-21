@@ -302,10 +302,10 @@ void main() {
         'lib/core/debug/group_media_reliability_e2e_main_actions.dart',
       ).readAsStringSync();
       final specsStart = fixtureSource.indexOf(
-        'final specs = <({String kind, String mime, String? asset})>[',
+        'final allSpecs = <({String kind, String mime, String? asset})>[',
       );
       final specsEnd = fixtureSource.indexOf(
-        'final uploads = <String, int>{};',
+        'final specs = allSpecs',
         specsStart,
       );
       final specs = fixtureSource.substring(specsStart, specsEnd);
@@ -331,6 +331,22 @@ void main() {
         reason:
             'P269 must validate authority before and inside the upload leaf',
       );
+      expect(
+        RegExp(
+          r'await _waitForLocalTransportPeerId\(p2pService\)',
+        ).allMatches(fixtureSource),
+        hasLength(2),
+        reason:
+            'sender setup and publication must both wait for bounded local '
+            'transport readiness',
+      );
+      final rosterReady = fixtureSource.indexOf(
+        'final members = await _waitForReceiverTransportRoster(',
+      );
+      final exactTopicReady = fixtureSource.indexOf(
+        'await _ensureExactGroupTopicJoined(',
+        rosterReady,
+      );
       final lease = fixtureSource.indexOf(
         'mediaUploadInFlightTracker.tryClaimAll(',
       );
@@ -345,6 +361,16 @@ void main() {
         productionLeaf,
       );
       expect(lease, greaterThan(specsEnd));
+      expect(rosterReady, greaterThanOrEqualTo(0));
+      expect(exactTopicReady, greaterThan(rosterReady));
+      expect(lease, greaterThan(exactTopicReady));
+      expect(
+        fixtureSource,
+        contains('await callGroupJoinWithConfig('),
+        reason:
+            'the exact target group must enter native topic/config/key state '
+            'before any fixture upload or reliable publication',
+      );
       expect(parentSave, greaterThan(lease));
       expect(productionLeaf, greaterThan(parentSave));
       expect(publication, greaterThan(productionLeaf));
@@ -361,10 +387,13 @@ void main() {
             'one timestamp so message-id reuse is authorized',
       );
       expect(fixtureSource, contains("downloadStatus: 'upload_pending'"));
-      expect(fixtureSource, contains('messageIds.values.toSet().length != 3'));
       expect(
         fixtureSource,
-        contains('attachmentIds.values.toSet().length != 3'),
+        contains('messageIds.values.toSet().length != fixtureKinds.length'),
+      );
+      expect(
+        fixtureSource,
+        contains('attachmentIds.values.toSet().length != fixtureKinds.length'),
       );
       expect(fixtureSource, contains('required String transportPeerId'));
       expect(

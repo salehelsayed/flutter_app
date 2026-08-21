@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -74,9 +75,11 @@ const mknoonMessagesSilentNotificationDetails = NotificationDetails(
 NotificationDetails mknoonConversationNotificationDetails({
   required String conversationKey,
   bool silent = false,
+  bool preservePrimaryAndroidChannel = false,
   bool autoCancel = true,
   ConversationNotificationSnapshot? snapshot,
 }) {
+  final useSilentAndroidChannel = silent && !preservePrimaryAndroidChannel;
   final historyLines = snapshot?.historyLines
       .where((line) => line.trim().isNotEmpty)
       .take(5)
@@ -84,16 +87,25 @@ NotificationDetails mknoonConversationNotificationDetails({
   final unreadMessageCount = snapshot?.totalUnreadMessageCount;
   return NotificationDetails(
     android: AndroidNotificationDetails(
-      silent ? mknoonMessagesSilentChannelId : mknoonMessagesChannelId,
-      silent ? mknoonMessagesSilentChannelName : mknoonMessagesChannelName,
-      channelDescription: silent
+      useSilentAndroidChannel
+          ? mknoonMessagesSilentChannelId
+          : mknoonMessagesChannelId,
+      useSilentAndroidChannel
+          ? mknoonMessagesSilentChannelName
+          : mknoonMessagesChannelName,
+      channelDescription: useSilentAndroidChannel
           ? mknoonMessagesSilentChannelDescription
           : mknoonMessagesChannelDescription,
-      importance: silent ? Importance.low : Importance.high,
-      priority: silent ? Priority.low : Priority.high,
+      importance: useSilentAndroidChannel ? Importance.low : Importance.high,
+      priority: useSilentAndroidChannel ? Priority.low : Priority.high,
       playSound: !silent,
       enableVibration: !silent,
       onlyAlertOnce: silent,
+      // A same-ID update on the primary channel must retain that channel so
+      // Android does not tear down the visible high-importance card. `silent`
+      // and `onlyAlertOnce` suppress a second alert without moving the card to
+      // the low-importance continuation channel.
+      silent: silent,
       category: AndroidNotificationCategory.message,
       autoCancel: autoCancel,
       number: unreadMessageCount != null && unreadMessageCount > 0
@@ -110,6 +122,50 @@ NotificationDetails mknoonConversationNotificationDetails({
       threadIdentifier: conversationKey,
     ),
   );
+}
+
+typedef MknoonActiveNotificationReader =
+    Future<List<ActiveNotification>> Function();
+
+/// Whether a silent same-ID update should remain on the primary Android
+/// channel.
+///
+/// Android treats changing the channel of an existing notification as a card
+/// replacement. If an audible `mknoon_messages` card is already active, moving
+/// its reconciliation update to `mknoon_messages_silent` can collapse the
+/// heads-up card and permanently demote it. Keep that exact active card on its
+/// current primary channel and use the per-notification silent flags instead.
+/// A first silent publication, or an existing low-importance card, continues
+/// to use the silent channel.
+Future<bool> shouldPreserveMknoonPrimaryChannelForSilentUpdate({
+  required bool silent,
+  required int notificationId,
+  required FlutterLocalNotificationsPlugin plugin,
+  MknoonActiveNotificationReader? activeNotificationsFn,
+}) async {
+  if (!silent || kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    return false;
+  }
+
+  try {
+    final activeNotifications =
+        await (activeNotificationsFn ?? plugin.getActiveNotifications)();
+    return activeNotifications.any(
+      (notification) =>
+          notification.id == notificationId &&
+          notification.channelId == mknoonMessagesChannelId,
+    );
+  } on Object catch (error) {
+    // Inventory is an optimization, not publication authority. Falling back
+    // to the low-importance channel remains silent and cannot create a second
+    // audible alert.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NOTIFICATION_ACTIVE_CHANNEL_READ_FAILED',
+      details: <String, Object?>{'errorType': error.runtimeType.toString()},
+    );
+    return false;
+  }
 }
 
 /// Reads whether the user-facing `mknoon_messages` channel may still post.
@@ -178,7 +234,8 @@ Future<bool> resolveMknoonMessagePublicationSilence({
   if (!silent) return false;
 
   final readPrimaryEnabled =
-      primaryChannelEnabledFn ?? () => mknoonPrimaryMessageChannelEnabled(plugin);
+      primaryChannelEnabledFn ??
+      () => mknoonPrimaryMessageChannelEnabled(plugin);
 
   bool primaryEnabled;
   try {

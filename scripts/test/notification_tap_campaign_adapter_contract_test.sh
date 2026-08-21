@@ -26,13 +26,30 @@ printf '%s\n' \
   payload_fast_path_cold_kill \
   tc_b13_dual_path_single_alert \
   tc_g7_permission_denied \
+  tc_g24_permission_appop_divergence \
   tc_g7_token_refresh_mid_session \
   tc_g7_channel_disabled \
   tc_g7_doze_delivery >"$expected"
 cmp -s "$expected" "$list_output" ||
-  fail 'android payload campaign does not expand to the nine exact Android phases'
+  fail 'android payload campaign does not expand to the ten exact Android phases'
 grep -Fq payload_fast_path_ios_receiver "$list_output" &&
   fail 'Android payload campaign incorrectly included the iOS APNs/NSE phase'
+
+python3 - <<'PY'
+import json
+
+manifest = json.load(open("tool/sims/critical_features.json", encoding="utf-8"))
+rows = [row for row in manifest["capabilities"] if row["id"] == "notifications.android_payload_campaign"]
+assert len(rows) == 1
+required = {
+    "g24.permission_appop_divergence",
+    "g24.os_state_override_typed",
+    "g24.no_post_custody_preserved",
+    "g24.appop_restore_recovery",
+}
+assert required <= set(rows[0]["assertions"])
+assert len(rows[0]["assertions"]) == 31
+PY
 
 blocked_output="$tmp_dir/blocked.out"
 printf 'inherited-prebuilt-apk\n' >"$tmp_dir/inherited-app.apk"
@@ -76,6 +93,8 @@ printf '%s\n' \
   '  printf "1\\n"' \
   'elif [ "$*" = "-s emulator-5554 shell settings get global mobile_data" ]; then' \
   '  printf "1\\n"' \
+  'elif [[ "$*" == *"shell pm path com.mknoon.app" ]]; then' \
+  '  exit 0' \
   'elif [[ "$*" == *"shell pm list packages -3" ]]; then' \
   '  exit 0' \
   'elif [ "$*" = "-s emulator-5554 shell dumpsys notification --noredact" ]; then' \
@@ -216,6 +235,12 @@ for required in \
   'force-idle' \
   'deviceidle' \
   'set-permission-flags' \
+  'POST_NOTIFICATION' \
+  'cmd' \
+  'appops' \
+  'PUSH_PERMISSION_OS_STATE_OVERRIDE' \
+  'PUSH_PERMISSION_REQUEST_RESULT' \
+  'PUSH_PERMISSION_OS_CHECK_FAILED' \
   'CHANNEL_NOTIFICATION_SETTINGS' \
   'airplane-mode' \
   'am' \

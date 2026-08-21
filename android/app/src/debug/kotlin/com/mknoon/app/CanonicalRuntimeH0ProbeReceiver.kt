@@ -124,6 +124,39 @@ class CanonicalRuntimeH0ProbeReceiver : BroadcastReceiver() {
                 )
                 return
             }
+            if (plan374Phase == "arm-fixed-wake") {
+                val store = DroppedPushRecoveryStore(applicationContext)
+                val before = store.recoveryAuthority()
+                val armed = before.currentBinding != null &&
+                    before.recoveryWorkEnabled &&
+                    before.pendingRecovery == null &&
+                    Plan374ProcessDeathBarrier.arm(
+                        applicationContext,
+                        runNonce,
+                    )
+                val after = store.recoveryAuthority()
+                val passed = armed &&
+                    after.currentBinding == before.currentBinding &&
+                    after.recoveryWorkEnabled &&
+                    after.pendingRecovery == null
+                finishPlan374(
+                    JSONObject()
+                        .put("status", if (passed) "PASS" else "FAIL")
+                        .put("phase", plan374Phase)
+                        .put("runNonce", runNonce)
+                        .put("processDeathBarrierArmed", armed)
+                        .put("productionIngressInvoked", false)
+                        .put("bindingBefore", before.currentBinding)
+                        .put("bindingAfter", after.currentBinding)
+                        .put("recoveryWorkEnabled", after.recoveryWorkEnabled)
+                        .put("pendingGenerationBefore", before.pendingRecovery?.generation)
+                        .put("pendingGenerationAfter", after.pendingRecovery?.generation)
+                        .put("mainActivityLaunchCount", 0)
+                        .put("pid", Process.myPid()),
+                    passed,
+                )
+                return
+            }
             if (plan374Phase == "fixed-wake") {
                 val store = DroppedPushRecoveryStore(applicationContext)
                 val before = store.recoveryAuthority()

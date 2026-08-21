@@ -8,19 +8,79 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 import '_android_app_package.dart';
+import 'android_notification_recovery_completion_criteria.dart'
+    show parseAndroidCanonicalRecoveryJobIds;
 import 'reaction_notification_proof_support.dart';
 
 const _defaultRelayTarget = 'ubuntu@mknoun.xyz';
 const _defaultRelayKey = 'se.pem';
 const _reactionEmoji = '👍';
 const _androidBuildProfile = 'debug-android-arm64-split-v1';
+const _firstWakeProfileAotBuildProfile =
+    'profile-android-arm64-split-plan393-g21-v1';
+const _fixedWakeRecoveryBuildProfile = 'android.production_fcm.fixed_wake';
+const _fixedWakeRecoveryScenario =
+    'android_fixed_wake_direct_reaction_recovery';
+const _relaySelectedRouteCounter = 'relay_push_route_selected_total';
+const _g21FrozenProductionReserveMs = 2000;
 const _providerObservationDelay = Duration(seconds: 10);
+
+const List<Map<String, String>> _plan393RecoveryAssertionDisposition =
+    <Map<String, String>>[
+      <String, String>{
+        'assertion': 'notifications.headless_direct_group_recovery',
+        'disposition': 'retained_host_native',
+        'owner': 'plan374_tc374_02_tc374_08',
+      },
+      <String, String>{
+        'assertion': 'notifications.foreground_handoff_new_generation',
+        'disposition': 'retained_host_concurrency',
+        'owner': 'plan374_tc374_06_and_plan393_distinct_generations',
+      },
+      <String, String>{
+        'assertion': 'notifications.direct_custody_recovery',
+        'disposition': 'specialized',
+        'owner': 'plan393_authenticated_direct_reaction',
+      },
+      <String, String>{
+        'assertion': 'notifications.synthetic_outer_id_recovery',
+        'disposition': 'retired_obsolete_unsafe',
+        'owner': 'plan375_tc375_04_identity_free_wake',
+      },
+      <String, String>{
+        'assertion': 'notifications.history_count_projection',
+        'disposition': 'retained_outside_recovery_matrix',
+        'owner': 'conversation_snapshot_and_projection_tests',
+      },
+      <String, String>{
+        'assertion': 'notifications.registration_health_live_recovery',
+        'disposition': 'split_existing_owners',
+        'owner': 'plan375_tc375_07_and_registration_health_tests',
+      },
+      <String, String>{
+        'assertion': 'notifications.recovery_copy_locales',
+        'disposition': 'retained_native_host',
+        'owner': 'android_recovery_string_resources_tests',
+      },
+      <String, String>{
+        'assertion': 'notifications.zero_taps_zero_child_builds',
+        'disposition': 'retained_narrowed_capability',
+        'owner': 'plan393_tc393_12_tc393_13',
+      },
+    ];
 
 Future<void> main(List<String> args) async {
   final sender = _valueFor(args, '--sender');
   final recipient = _valueFor(args, '--recipient');
   final artifactPath = _valueFor(args, '--artifact-dir');
   final directTextOnly = args.contains('--direct-text-only');
+  final firstWakeProfileAot = args.contains('--first-wake-profile-aot');
+  final fixedWakeRecovery = args.contains('--fixed-wake-recovery');
+  final measurementOnly = args.contains('--measurement-only');
+  final requireAlert = args.contains('--require-alert');
+  final prebuiltAndroidApkPath = _valueFor(args, '--prebuilt-android-apk');
+  final noChildBuilds = args.contains('--no-child-builds');
+  final statePreparedByParent = args.contains('--android-state-prepared');
   final gateAArtifactPath = _valueFor(args, '--gate-a-artifact');
   final gateAArtifactSha256 = _valueFor(args, '--gate-a-artifact-sha256');
   if (sender == null || recipient == null || artifactPath == null) {
@@ -31,10 +91,68 @@ Future<void> main(List<String> args) async {
       '--artifact-dir <dir> [--relay-target <ssh-target>] '
       '[--relay-key <key>] [--head-source-root <path>] '
       '[--live-typed-smoke] [--durable-background-connected] '
+      '[--prebuilt-android-apk <central-apk> --no-child-builds '
+      '--android-state-prepared] '
       '[--direct-text-only '
       '--gate-a-artifact <gate-a-pass.json> '
       '--gate-a-artifact-sha256 <sha256>] '
+      '[--first-wake-profile-aot '
+      '(--measurement-only | --require-alert) '
+      '--service-account <fcm-service-account.json> '
+      '--staging-manifest <staging-manifest.json>] '
+      '[--fixed-wake-recovery --service-account <json> '
+      '--staging-manifest <json> --prebuilt-android-apk <central-apk> '
+      '--no-child-builds --android-state-prepared] '
       '[--reuse-working-tree-apks] [--verbose]',
+    );
+    exit(64);
+  }
+  if (<bool>[
+        firstWakeProfileAot,
+        directTextOnly,
+        fixedWakeRecovery,
+      ].where((value) => value).length >
+      1) {
+    stderr.writeln(
+      '--first-wake-profile-aot, --direct-text-only, and '
+      '--fixed-wake-recovery are mutually exclusive.',
+    );
+    exit(64);
+  }
+  if (firstWakeProfileAot && measurementOnly == requireAlert) {
+    stderr.writeln(
+      '--first-wake-profile-aot requires exactly one of --measurement-only '
+      'or --require-alert.',
+    );
+    exit(64);
+  }
+  if (!firstWakeProfileAot && (measurementOnly || requireAlert)) {
+    stderr.writeln(
+      '--measurement-only/--require-alert require --first-wake-profile-aot.',
+    );
+    exit(64);
+  }
+  final serviceAccountPath = _valueFor(args, '--service-account');
+  final stagingManifestPath = _valueFor(args, '--staging-manifest');
+  final relayFixtureProbeRaw = _valueFor(args, '--relay-fixture-probe');
+  final relayFixtureProbe = _parseRelayFixtureProbe(relayFixtureProbeRaw);
+  if (relayFixtureProbeRaw != null && relayFixtureProbe == null) {
+    stderr.writeln(
+      '--relay-fixture-probe is not an exact local capability URL.',
+    );
+    exit(64);
+  }
+  if (relayFixtureProbe != null && !fixedWakeRecovery) {
+    stderr.writeln(
+      '--relay-fixture-probe is reserved for fixed-wake recovery.',
+    );
+    exit(64);
+  }
+  if ((firstWakeProfileAot || fixedWakeRecovery) &&
+      (serviceAccountPath == null || stagingManifestPath == null)) {
+    stderr.writeln(
+      'The profile-AOT/fixed-wake mode requires --service-account and '
+      '--staging-manifest.',
     );
     exit(64);
   }
@@ -45,6 +163,26 @@ Future<void> main(List<String> args) async {
     stderr.writeln(
       '--direct-text-only requires --gate-a-artifact <json> and its exact '
       '--gate-a-artifact-sha256 <sha256>.',
+    );
+    exit(64);
+  }
+  final preparedFlags = <bool>[
+    prebuiltAndroidApkPath != null,
+    noChildBuilds,
+    statePreparedByParent,
+  ];
+  if (preparedFlags.any((value) => value) &&
+      (!preparedFlags.every((value) => value) ||
+          (!args.contains('--live-typed-smoke') && !fixedWakeRecovery))) {
+    stderr.writeln(
+      '--prebuilt-android-apk, --no-child-builds, and '
+      '--android-state-prepared are an atomic central-capture contract.',
+    );
+    exit(64);
+  }
+  if (fixedWakeRecovery && !preparedFlags.every((value) => value)) {
+    stderr.writeln(
+      '--fixed-wake-recovery requires the atomic central prepared-APK flags.',
     );
     exit(64);
   }
@@ -91,15 +229,30 @@ Future<void> main(List<String> args) async {
     ).absolute,
     relayTarget: _valueFor(args, '--relay-target') ?? _defaultRelayTarget,
     relayKey: File(_valueFor(args, '--relay-key') ?? _defaultRelayKey).absolute,
+    relayFixtureProbe: relayFixtureProbe,
     verbose: args.contains('--verbose'),
     keepBuildArtifacts: args.contains('--keep-build-artifacts'),
     liveTypedSmoke: args.contains('--live-typed-smoke'),
     durableBackgroundConnected: args.contains('--durable-background-connected'),
     reuseWorkingTreeApks: args.contains('--reuse-working-tree-apks'),
     directTextOnly: directTextOnly,
+    firstWakeProfileAot: firstWakeProfileAot,
+    fixedWakeRecovery: fixedWakeRecovery,
+    measurementOnly: measurementOnly,
+    serviceAccount: serviceAccountPath == null
+        ? null
+        : File(serviceAccountPath).absolute,
+    stagingManifest: stagingManifestPath == null
+        ? null
+        : File(stagingManifestPath).absolute,
     gateAArtifact: gateAArtifact,
     gateAArtifactBytes: gateAArtifactBytes,
     gateAAuthorization: gateAAuthorization,
+    prebuiltAndroidApk: prebuiltAndroidApkPath == null
+        ? null
+        : File(prebuiltAndroidApkPath).absolute,
+    noChildBuilds: noChildBuilds,
+    statePreparedByParent: statePreparedByParent,
   );
 
   try {
@@ -148,6 +301,9 @@ class _BuildArtifacts {
     required this.normalApk,
     required this.e2eApkSha256,
     required this.normalApkSha256,
+    required this.buildMode,
+    required this.buildProfile,
+    required this.childBuildCount,
   });
 
   final String revision;
@@ -155,13 +311,29 @@ class _BuildArtifacts {
   final File normalApk;
   final String e2eApkSha256;
   final String normalApkSha256;
+  final String buildMode;
+  final String buildProfile;
+  final int childBuildCount;
 }
 
 class _RelayInfo {
-  const _RelayInfo({required this.version, required this.sha256});
+  const _RelayInfo({
+    required this.version,
+    required this.sha256,
+    this.executionBoundary = 'external_staging',
+    this.backend = 'redis',
+    this.pushTokenState = 'unspecified',
+    this.wakeOutcomeLedger = 'redis',
+    this.provider = 'fcm',
+  });
 
   final String version;
   final String sha256;
+  final String executionBoundary;
+  final String backend;
+  final String pushTokenState;
+  final String wakeOutcomeLedger;
+  final String provider;
 }
 
 class _InitialAndroidPackageState {
@@ -221,6 +393,64 @@ class _DirectTextRelaySendEvidence {
   };
 }
 
+class _RelayRouteSnapshot {
+  const _RelayRouteSnapshot({
+    required this.opaque,
+    required this.rich,
+    required this.evidence,
+  });
+
+  final int opaque;
+  final int rich;
+  final File evidence;
+}
+
+class _FixedWakeWindow {
+  const _FixedWakeWindow({
+    required this.reactionId,
+    required this.generation,
+    required this.firstWorkerPid,
+    required this.routeAfter,
+    required this.ingress,
+    required this.notificationSnapshots,
+    required this.runtimeLog,
+    required this.relayJournal,
+  });
+
+  final String reactionId;
+  final int generation;
+  final int? firstWorkerPid;
+  final _RelayRouteSnapshot routeAfter;
+  final Map<String, Object?> ingress;
+  final File notificationSnapshots;
+  final File runtimeLog;
+  final File relayJournal;
+}
+
+class _FixedWakeCompletion {
+  const _FixedWakeCompletion({
+    required this.canonicalCard,
+    required this.acknowledgement,
+    required this.directShow,
+    required this.settlement,
+    required this.workerCompletion,
+    required this.workerEngineCompletion,
+    required this.runtimeLog,
+    required this.notificationSnapshots,
+    required this.jobSchedulerAudit,
+  });
+
+  final ActiveNotificationCard canonicalCard;
+  final Map<String, Object?> acknowledgement;
+  final Map<String, Object?> directShow;
+  final Map<String, Object?> settlement;
+  final Map<String, Object?>? workerCompletion;
+  final Map<String, Object?>? workerEngineCompletion;
+  final File runtimeLog;
+  final File notificationSnapshots;
+  final File? jobSchedulerAudit;
+}
+
 class _HeadProvenanceCampaign {
   _HeadProvenanceCampaign({
     required this.senderId,
@@ -229,15 +459,24 @@ class _HeadProvenanceCampaign {
     required this.sourceRoot,
     required this.relayTarget,
     required this.relayKey,
+    required this.relayFixtureProbe,
     required this.verbose,
     required this.keepBuildArtifacts,
     required this.liveTypedSmoke,
     required this.durableBackgroundConnected,
     required this.reuseWorkingTreeApks,
     required this.directTextOnly,
+    required this.firstWakeProfileAot,
+    required this.fixedWakeRecovery,
+    required this.measurementOnly,
+    required this.serviceAccount,
+    required this.stagingManifest,
     required this.gateAArtifact,
     required this.gateAArtifactBytes,
     required this.gateAAuthorization,
+    required this.prebuiltAndroidApk,
+    required this.noChildBuilds,
+    required this.statePreparedByParent,
   }) : sender = _Party(role: 'A', deviceId: senderId),
        recipient = _Party(role: 'B', deviceId: recipientId),
        appPackage = resolveAndroidAppPackage();
@@ -248,15 +487,24 @@ class _HeadProvenanceCampaign {
   final Directory sourceRoot;
   final String relayTarget;
   final File relayKey;
+  final Uri? relayFixtureProbe;
   final bool verbose;
   final bool keepBuildArtifacts;
   final bool liveTypedSmoke;
   final bool durableBackgroundConnected;
   final bool reuseWorkingTreeApks;
   final bool directTextOnly;
+  final bool firstWakeProfileAot;
+  final bool fixedWakeRecovery;
+  final bool measurementOnly;
+  final File? serviceAccount;
+  final File? stagingManifest;
   final File? gateAArtifact;
   final List<int>? gateAArtifactBytes;
   Map<String, Object?>? gateAAuthorization;
+  final File? prebuiltAndroidApk;
+  final bool noChildBuilds;
+  final bool statePreparedByParent;
   final _Party sender;
   final _Party recipient;
   final String appPackage;
@@ -281,6 +529,10 @@ class _HeadProvenanceCampaign {
 
   String get _artifactStem => directTextOnly
       ? 'android_direct_text_public_relay'
+      : firstWakeProfileAot
+      ? 'android_first_wake_profile_aot'
+      : fixedWakeRecovery
+      ? _fixedWakeRecoveryScenario
       : liveTypedSmoke
       ? 'android_typed_reaction_smoke'
       : durableBackgroundConnected
@@ -289,6 +541,10 @@ class _HeadProvenanceCampaign {
 
   String get _scenario => directTextOnly
       ? 'android_direct_text_public_relay'
+      : firstWakeProfileAot
+      ? 'android_first_wake_profile_aot'
+      : fixedWakeRecovery
+      ? _fixedWakeRecoveryScenario
       : liveTypedSmoke
       ? 'android_typed_reaction_smoke'
       : durableBackgroundConnected
@@ -297,6 +553,10 @@ class _HeadProvenanceCampaign {
 
   String get _testCase => directTextOnly
       ? 'TC-DIRECT-TEXT-PUBLIC-RELAY'
+      : firstWakeProfileAot
+      ? 'TC-393-06'
+      : fixedWakeRecovery
+      ? 'TC-393-13'
       : liveTypedSmoke
       ? 'TC-13-core-smoke'
       : durableBackgroundConnected
@@ -306,11 +566,16 @@ class _HeadProvenanceCampaign {
   /// Every variant except TC-00 grades the WORKING TREE. TC-00 alone builds
   /// clean HEAD, which is what its `cleanCurrentBuild` claim means.
   bool get _workingTreeBuild =>
-      liveTypedSmoke || directTextOnly || durableBackgroundConnected;
+      liveTypedSmoke ||
+      directTextOnly ||
+      durableBackgroundConnected ||
+      firstWakeProfileAot ||
+      fixedWakeRecovery;
 
   /// The variants whose card must carry the typed reaction copy rather than the
   /// generic "New Message" fallback.
-  bool get _typedCopyRequired => liveTypedSmoke || durableBackgroundConnected;
+  bool get _typedCopyRequired =>
+      liveTypedSmoke || durableBackgroundConnected || fixedWakeRecovery;
 
   Future<void> run() async {
     _CampaignFailure? primaryFailure;
@@ -320,19 +585,23 @@ class _HeadProvenanceCampaign {
       _stage = 'preflight';
       await _verifyEnvironment();
       final relayInfo = await _readRelayInfo();
-      if (directTextOnly) {
+      if (directTextOnly || firstWakeProfileAot) {
         await _captureInitialDeviceState();
       }
 
       _stage = _workingTreeBuild ? 'working_tree_build' : 'clean_head_build';
-      _build = _workingTreeBuild
-          ? reuseWorkingTreeApks
-                ? await _reuseWorkingTreeApks()
-                : await _buildWorkingTreeApks()
-          : await _buildCleanHeadApks();
+      if (noChildBuilds) {
+        _build = await _useCentralPrebuiltAndroidApk();
+      } else {
+        _build = _workingTreeBuild
+            ? reuseWorkingTreeApks
+                  ? await _reuseWorkingTreeApks()
+                  : await _buildWorkingTreeApks()
+            : await _buildCleanHeadApks();
+      }
 
       _stage = 'e2e_setup';
-      if (directTextOnly) {
+      if (directTextOnly || firstWakeProfileAot) {
         if (!_initialStateCaptureComplete) {
           throw _CampaignFailure(
             _stage,
@@ -343,6 +612,12 @@ class _HeadProvenanceCampaign {
       }
       await _installApk(senderId, _build!.e2eApk);
       await _installApk(recipientId, _build!.e2eApk);
+      // Fresh Android 13+ installs can surface the runtime notification prompt
+      // over Orbit as soon as the debug harness requests notifications. Grant
+      // both fixture apps before their first launch; the enclosing state guard
+      // still restores the exact package/permission baseline.
+      await _grantNotificationPermission(senderId);
+      await _grantNotificationPermission(recipientId);
       await _prepareE2EParty(sender, 'TC256-A');
       await _prepareE2EParty(recipient, 'TC256-B');
       await _launch(senderId);
@@ -352,10 +627,25 @@ class _HeadProvenanceCampaign {
       await _prepopulateContacts();
       String? messageMarker;
       String? messageId;
-      if (!directTextOnly) {
+      String? secondMessageMarker;
+      String? secondMessageId;
+      if (!directTextOnly && !firstWakeProfileAot) {
         messageMarker =
-            'TC256-${DateTime.now().toUtc().microsecondsSinceEpoch}';
+            '${fixedWakeRecovery ? 'TC393RA' : 'TC256'}-'
+            '${DateTime.now().toUtc().microsecondsSinceEpoch}';
         messageId = await _seedIncomingMessage(messageMarker);
+        if (fixedWakeRecovery) {
+          secondMessageMarker =
+              'TC393RB-${DateTime.now().toUtc().microsecondsSinceEpoch}';
+          secondMessageId = await _seedIncomingMessage(secondMessageMarker);
+          if (messageId == secondMessageId ||
+              messageMarker == secondMessageMarker) {
+            throw _CampaignFailure(
+              _stage,
+              'The fixed-wake transitions did not receive distinct targets.',
+            );
+          }
+        }
       }
 
       _stage = 'recipient_push_registration';
@@ -380,10 +670,26 @@ class _HeadProvenanceCampaign {
       // row, and only the live runtime writes those, so this variant
       // BACKGROUNDS the recipient instead of killing it. Every other variant
       // kills it: the killed path is the premise they grade.
-      if (durableBackgroundConnected) {
+      if (durableBackgroundConnected || fixedWakeRecovery) {
         await _backgroundRecipient();
       } else {
         await _terminateRecipient();
+      }
+
+      if (firstWakeProfileAot) {
+        _stage = 'first_wake_profile_aot';
+        final evidence = await _captureFirstWakeProfileAot();
+        _stage = 'restoration';
+        await _restoreExactInitialDeviceState();
+        _stage = 'artifact';
+        _writeFirstWakeProfileAotArtifact(
+          relayInfo: relayInfo,
+          evidence: evidence,
+        );
+        stdout.writeln(
+          'PASS: $_testCase $_scenario captured at '
+          '${artifactDir.path}/$_artifactStem.json',
+        );
       }
 
       if (directTextOnly) {
@@ -405,7 +711,22 @@ class _HeadProvenanceCampaign {
         );
       }
 
-      if (!directTextOnly) {
+      if (fixedWakeRecovery) {
+        _stage = 'fixed_wake_recovery';
+        await _captureFixedWakeRecovery(
+          relayInfo: relayInfo,
+          firstMarker: messageMarker!,
+          firstMessageId: messageId!,
+          secondMarker: secondMessageMarker!,
+          secondMessageId: secondMessageId!,
+        );
+        stdout.writeln(
+          'PASS: $_testCase $_scenario captured at '
+          '${artifactDir.path}/$_artifactStem.json',
+        );
+      }
+
+      if (!directTextOnly && !firstWakeProfileAot && !fixedWakeRecovery) {
         _stage = 'reaction_capture';
         await _adb(senderId, ['logcat', '-c']);
         // Bound the RECIPIENT's window too. The provider send is attributed on
@@ -568,15 +889,16 @@ class _HeadProvenanceCampaign {
         final providerEvidence = File(
           '${artifactDir.path}/recipient_background_push.log',
         )..writeAsStringSync(_backgroundPushFlowLines(recipientPushLog ?? ''));
-        final durableEvidence = File(
-          '${artifactDir.path}/recipient_durable_effect.log',
-        )..writeAsStringSync(
-          'durableShown=${durableShow?.durableShown ?? false}\n'
-          'disposition=${durableShow?.disposition ?? 'not_observed'}\n'
-          'silent=${durableShow?.silent}\n'
-          'fallbackShown=${durableShow?.fallbackShown ?? false}\n'
-          'deferralReasons=${durableShow?.deferralReasons.join(',') ?? ''}\n',
-        );
+        final durableEvidence =
+            File(
+              '${artifactDir.path}/recipient_durable_effect.log',
+            )..writeAsStringSync(
+              'durableShown=${durableShow?.durableShown ?? false}\n'
+              'disposition=${durableShow?.disposition ?? 'not_observed'}\n'
+              'silent=${durableShow?.silent}\n'
+              'fallbackShown=${durableShow?.fallbackShown ?? false}\n'
+              'deferralReasons=${durableShow?.deferralReasons.join(',') ?? ''}\n',
+            );
         _writePassedArtifact(
           relayInfo: relayInfo,
           reactionId: reactionId,
@@ -610,10 +932,13 @@ class _HeadProvenanceCampaign {
       primaryStackTrace = stackTrace;
     }
     try {
-      if (directTextOnly && !_exactRestorationComplete) {
+      if ((directTextOnly || firstWakeProfileAot) &&
+          !_exactRestorationComplete) {
         await _restoreExactInitialDeviceState();
       } else {
-        if (!directTextOnly) await _restoreNormalBuilds();
+        if (!directTextOnly && !firstWakeProfileAot && !statePreparedByParent) {
+          await _restoreNormalBuilds();
+        }
       }
       await _removeCleanWorktree();
     } on _CampaignFailure catch (failure) {
@@ -678,24 +1003,72 @@ class _HeadProvenanceCampaign {
         );
       }
     }
-    if (!relayKey.existsSync()) {
+    if (relayFixtureProbe == null && !relayKey.existsSync()) {
       throw _CampaignFailure(
         _stage,
         'Relay SSH key is unavailable at ${relayKey.path}.',
         environmentBlocked: true,
       );
     }
-    final ssh = await _ssh(['systemctl', 'is-active', 'relay-server']);
-    if (ssh.stdout.trim() != 'active') {
-      throw _CampaignFailure(
-        _stage,
-        'Relay service is not active on the configured capture target.',
-        environmentBlocked: true,
-      );
+    if (firstWakeProfileAot || fixedWakeRecovery) {
+      for (final requiredFile in <File?>[serviceAccount, stagingManifest]) {
+        if (requiredFile == null ||
+            !requiredFile.existsSync() ||
+            requiredFile.lengthSync() <= 0) {
+          throw _CampaignFailure(
+            _stage,
+            'The profile-AOT/fixed-wake credential or manifest is missing.',
+            environmentBlocked: true,
+          );
+        }
+      }
+      try {
+        final manifest = jsonDecode(stagingManifest!.readAsStringSync());
+        if (manifest is! Map<String, dynamic> || manifest.isEmpty) {
+          throw const FormatException('empty staging manifest');
+        }
+        final credential = jsonDecode(serviceAccount!.readAsStringSync());
+        if (credential is! Map<String, dynamic> ||
+            credential['type'] != 'service_account') {
+          throw const FormatException('not a service account');
+        }
+      } on Object {
+        throw _CampaignFailure(
+          _stage,
+          'The profile-AOT/fixed-wake manifest or FCM account is invalid.',
+          environmentBlocked: true,
+        );
+      }
+    }
+    if (relayFixtureProbe == null) {
+      final ssh = await _ssh(['systemctl', 'is-active', 'relay-server']);
+      if (ssh.stdout.trim() != 'active') {
+        throw _CampaignFailure(
+          _stage,
+          'Relay service is not active on the configured capture target.',
+          environmentBlocked: true,
+        );
+      }
+    } else {
+      await _relayFixtureSnapshot(DateTime.fromMillisecondsSinceEpoch(0));
     }
   }
 
   Future<_RelayInfo> _readRelayInfo() async {
+    if (relayFixtureProbe != null) {
+      final snapshot = await _relayFixtureSnapshot(
+        DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      return _RelayInfo(
+        version: snapshot['relayVersion']! as String,
+        sha256: snapshot['relayBinarySha256']! as String,
+        executionBoundary: 'ephemeral_production_redis_fixture',
+        backend: snapshot['backend']! as String,
+        pushTokenState: snapshot['pushTokenState']! as String,
+        wakeOutcomeLedger: 'redis',
+        provider: 'fcm',
+      );
+    }
     final version = await _ssh(['/usr/local/bin/relay-server', 'version']);
     final sha = await _ssh(['sha256sum', '/usr/local/bin/relay-server']);
     return _RelayInfo(
@@ -734,6 +1107,9 @@ class _HeadProvenanceCampaign {
               normalApk: cachedNormal,
               e2eApkSha256: e2eSha,
               normalApkSha256: normalSha,
+              buildMode: 'standalone_cached',
+              buildProfile: _androidBuildProfile,
+              childBuildCount: 0,
             );
           }
         }
@@ -820,6 +1196,9 @@ class _HeadProvenanceCampaign {
       normalApk: normalApk,
       e2eApkSha256: await _sha256(e2eApk),
       normalApkSha256: await _sha256(normalApk),
+      buildMode: 'standalone_child_builds',
+      buildProfile: _androidBuildProfile,
+      childBuildCount: 2,
     );
     cacheMetadata.writeAsStringSync(
       const JsonEncoder.withIndent('  ').convert({
@@ -827,6 +1206,72 @@ class _HeadProvenanceCampaign {
         'buildProfile': _androidBuildProfile,
         'e2eApkSha256': result.e2eApkSha256,
         'normalApkSha256': result.normalApkSha256,
+      }),
+    );
+    return result;
+  }
+
+  Future<_BuildArtifacts> _useCentralPrebuiltAndroidApk() async {
+    final prepared = prebuiltAndroidApk;
+    if (!noChildBuilds ||
+        !statePreparedByParent ||
+        prepared == null ||
+        FileSystemEntity.typeSync(prepared.path, followLinks: true) !=
+            FileSystemEntityType.file ||
+        prepared.lengthSync() <= 0) {
+      throw _CampaignFailure(
+        _stage,
+        'The central-prebuilt contract is incomplete; child builds remain '
+        'forbidden.',
+        environmentBlocked: true,
+      );
+    }
+    final profile = Platform.environment['SIMS_ARTIFACT_PROFILE_ID']?.trim();
+    final expectedProfile = fixedWakeRecovery
+        ? _fixedWakeRecoveryBuildProfile
+        : 'android.production_fcm';
+    if (profile != null && profile.isNotEmpty && profile != expectedProfile) {
+      throw _CampaignFailure(
+        _stage,
+        'Prepared build profile $profile is not $expectedProfile.',
+        environmentBlocked: true,
+      );
+    }
+    final head = (await _run('git', [
+      'rev-parse',
+      'HEAD',
+    ], workingDirectory: sourceRoot.path)).stdout.trim();
+    final status = await _run('git', [
+      'status',
+      '--porcelain',
+    ], workingDirectory: sourceRoot.path);
+    final revision = status.stdout.trim().isEmpty ? head : '$head+working-tree';
+    final preparedSha = await _sha256(prepared);
+    final result = _BuildArtifacts(
+      revision: revision,
+      e2eApk: prepared,
+      normalApk: prepared,
+      e2eApkSha256: preparedSha,
+      normalApkSha256: preparedSha,
+      buildMode: 'central_prebuilt',
+      buildProfile: expectedProfile,
+      childBuildCount: 0,
+    );
+    File(
+      '${artifactDir.path}/candidate_build_provenance.json',
+    ).writeAsStringSync(
+      const JsonEncoder.withIndent('  ').convert(<String, Object?>{
+        'schema': 'mknoon.plan257.candidate-build.v1',
+        'revision': revision,
+        'buildMode': result.buildMode,
+        'buildProfile': result.buildProfile,
+        'childBuildCount': result.childBuildCount,
+        'preparedArtifactPath': prepared.resolveSymbolicLinksSync(),
+        'preparedArtifactSha256': preparedSha,
+        'e2eApkSha256': preparedSha,
+        'normalApkSha256': preparedSha,
+        'senderApkSha256': preparedSha,
+        'recipientApkSha256': preparedSha,
       }),
     );
     return result;
@@ -864,6 +1309,7 @@ class _HeadProvenanceCampaign {
       '--split-per-abi',
       '--dart-define=E2E_TEST_MODE=true',
       '--dart-define=MKNOON_EMIT_WAKE_TOKEN=true',
+      if (firstWakeProfileAot) '--dart-define=PRODUCTION_FCM=true',
     ], workingDirectory: sourceRoot.path);
     final builtApk = File(
       '${sourceRoot.path}/build/app/outputs/flutter-apk/'
@@ -877,37 +1323,65 @@ class _HeadProvenanceCampaign {
     }
     final e2eApk = await builtApk.copy(e2eTarget.path);
 
-    await _runStreaming('flutter', [
-      'build',
-      'apk',
-      '--debug',
-      '--target-platform=android-arm64',
-      '--split-per-abi',
-      '--dart-define=E2E_TEST_MODE=false',
-      '--dart-define=MKNOON_EMIT_WAKE_TOKEN=true',
-      if (directTextOnly)
-        '--dart-define=MKNOON_DIRECT_TEXT_RELAY_TOKEN_PROOF=true',
-    ], workingDirectory: sourceRoot.path);
-    if (!builtApk.existsSync()) {
+    if (firstWakeProfileAot) {
+      await _runStreaming('flutter', [
+        'build',
+        'apk',
+        '--profile',
+        '--target-platform=android-arm64',
+        '--split-per-abi',
+        '--dart-define=E2E_TEST_MODE=true',
+        '--dart-define=PRODUCTION_FCM=true',
+        '--dart-define=MKNOON_EMIT_WAKE_TOKEN=true',
+        if (measurementOnly)
+          '--dart-define=MKNOON_NOTIFICATION_G21_MEASUREMENT=true',
+      ], workingDirectory: sourceRoot.path);
+    } else {
+      await _runStreaming('flutter', [
+        'build',
+        'apk',
+        '--debug',
+        '--target-platform=android-arm64',
+        '--split-per-abi',
+        '--dart-define=E2E_TEST_MODE=false',
+        '--dart-define=MKNOON_EMIT_WAKE_TOKEN=true',
+        if (directTextOnly)
+          '--dart-define=MKNOON_DIRECT_TEXT_RELAY_TOKEN_PROOF=true',
+      ], workingDirectory: sourceRoot.path);
+    }
+    final recipientBuiltApk = firstWakeProfileAot
+        ? File(
+            '${sourceRoot.path}/build/app/outputs/flutter-apk/'
+            'app-arm64-v8a-profile.apk',
+          )
+        : builtApk;
+    if (!recipientBuiltApk.existsSync()) {
       throw _CampaignFailure(
         _stage,
-        'Working-tree normal APK did not materialize.',
+        'Working-tree recipient APK did not materialize.',
       );
     }
-    final normalApk = await builtApk.copy(normalTarget.path);
+    final normalApk = await recipientBuiltApk.copy(normalTarget.path);
     final result = _BuildArtifacts(
       revision: revision,
       e2eApk: e2eApk,
       normalApk: normalApk,
       e2eApkSha256: await _sha256(e2eApk),
       normalApkSha256: await _sha256(normalApk),
+      buildMode: 'standalone_child_builds',
+      buildProfile: firstWakeProfileAot
+          ? _firstWakeProfileAotBuildProfile
+          : _androidBuildProfile,
+      childBuildCount: 2,
     );
     File('${artifactDir.path}/working_tree_build.json').writeAsStringSync(
       const JsonEncoder.withIndent('  ').convert({
         'revision': revision,
-        'buildProfile': _androidBuildProfile,
+        'buildProfile': result.buildProfile,
         'dirtyAtBuild': status.stdout.trim().isNotEmpty,
         'directTextRelayTokenProof': directTextOnly,
+        'firstWakeProfileAot': firstWakeProfileAot,
+        'measurementOnly': firstWakeProfileAot ? measurementOnly : null,
         'e2eApkSha256': result.e2eApkSha256,
         'normalApkSha256': result.normalApkSha256,
       }),
@@ -975,6 +1449,9 @@ class _HeadProvenanceCampaign {
       normalApk: normalApk,
       e2eApkSha256: actualE2E,
       normalApkSha256: actualNormal,
+      buildMode: 'standalone_cached',
+      buildProfile: _androidBuildProfile,
+      childBuildCount: 0,
     );
   }
 
@@ -1088,24 +1565,75 @@ class _HeadProvenanceCampaign {
     _Party owner,
     _Party contact,
   ) async {
+    final stepId =
+        '256-head-${owner.role.toLowerCase()}-fixture-'
+        '${DateTime.now().microsecondsSinceEpoch}';
+    await _deleteAppFile(owner.deviceId, 'intro_e2e_result.json');
     await _writeAppFile(
       owner.deviceId,
       'intro_e2e_config.json',
       jsonEncode({
-        'stepId':
-            '256-head-${owner.role.toLowerCase()}-fixture-'
-            '${DateTime.now().microsecondsSinceEpoch}',
+        'stepId': stepId,
         'add_contacts': [_contactEntry(contact)],
       }),
     );
-    // The clean app's startup fixture inserts contacts before runApp. Relaunch
-    // once with the fixture, remove it before the delayed action poller can own
-    // it, then relaunch without a pending diagnostic action.
+    // Android's activity-level wait does not prove that Flutter consumed this
+    // startup file. Keep it in place until the app publishes the matching
+    // completed receipt and its snapshot contains the expected contact.
     await _launch(owner.deviceId);
+    await _waitForIntroE2EStepCompletion(
+      owner: owner,
+      stepId: stepId,
+      expectedContactPeerId: contact.peerId,
+    );
     await _deleteAppFile(owner.deviceId, 'intro_e2e_config.json');
     await _deleteAppFile(owner.deviceId, 'intro_e2e_result.json');
     await _launch(owner.deviceId);
   }
+
+  Future<Map<String, dynamic>> _waitForIntroE2EStepCompletion({
+    required _Party owner,
+    required String stepId,
+    required String expectedContactPeerId,
+  }) => _waitForValue<Map<String, dynamic>>(
+    'completed contact bootstrap on ${owner.role}',
+    const Duration(minutes: 3),
+    () async {
+      final raw = await _readAppFile(owner.deviceId, 'intro_e2e_result.json');
+      if (raw == null) return null;
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map) return null;
+        final result = Map<String, dynamic>.from(decoded);
+        if (result['stepId'] != stepId) return null;
+        if (result['status'] == 'failed' || result['success'] == false) {
+          throw _CampaignFailure(
+            _stage,
+            'Contact bootstrap failed on ${owner.role}.',
+          );
+        }
+        if (result['status'] != 'complete' || result['success'] != true) {
+          return null;
+        }
+        final snapshot = result['snapshot'];
+        final contacts = snapshot is Map ? snapshot['contacts'] : null;
+        final expectedContactPresent =
+            contacts is List &&
+            contacts.whereType<Map>().any(
+              (contact) => contact['peerId'] == expectedContactPeerId,
+            );
+        if (!expectedContactPresent) {
+          throw _CampaignFailure(
+            _stage,
+            'Contact bootstrap receipt on ${owner.role} omitted the expected contact.',
+          );
+        }
+        return result;
+      } on FormatException {
+        return null;
+      }
+    },
+  );
 
   Future<void> _exchangeWakeToken(_Party owner, _Party contact) async {
     final stepId =
@@ -1181,6 +1709,51 @@ class _HeadProvenanceCampaign {
       dump = await _uiDump(owner.deviceId);
     }
 
+    // `am start -W` proves only that Android resumed MainActivity; the first
+    // Flutter frame can still be pending. Sampling once here made clean,
+    // prebuilt runs fail before the campaign whenever Orbit rendered a moment
+    // after the activity-level wait completed.
+    var lastDump = dump;
+    try {
+      dump = await _waitForValue<String>(
+        'direct chat or chat-list entry point on ${owner.role}',
+        const Duration(seconds: 20),
+        () async {
+          final candidate = await _uiDump(owner.deviceId);
+          lastDump = candidate;
+          final directReady = findSemanticNodeCenter(
+            candidate,
+            'Open chat with $contactUsername',
+          );
+          final chatListReady = findSemanticNodeCenter(
+            candidate,
+            'Show all chats',
+          );
+          final alreadyInChatList = findSemanticNodeCenter(
+            candidate,
+            'Show inner circle',
+          );
+          final listContactReady = findSemanticNodeCenter(
+            candidate,
+            contactUsername,
+          );
+          return directReady != null ||
+                  chatListReady != null ||
+                  alreadyInChatList != null ||
+                  listContactReady != null
+              ? candidate
+              : null;
+        },
+      );
+    } on _CampaignFailure {
+      await _captureConversationEntryDiagnostic(
+        owner: owner,
+        contactUsername: contactUsername,
+        uiDump: lastDump,
+      );
+      rethrow;
+    }
+
     final direct = findSemanticNodeCenter(
       dump,
       'Open chat with $contactUsername',
@@ -1193,20 +1766,27 @@ class _HeadProvenanceCampaign {
         '${direct.$2}',
       ]);
     } else {
+      var contact = findSemanticNodeCenter(dump, contactUsername);
       final allChats = findSemanticNodeCenter(dump, 'Show all chats');
-      if (allChats == null) {
+      final alreadyInChatList = findSemanticNodeCenter(
+        dump,
+        'Show inner circle',
+      );
+      if (contact == null && allChats == null && alreadyInChatList == null) {
         throw _CampaignFailure(
           _stage,
           'Could not find the direct chat or chat-list entry point on ${owner.role}.',
         );
       }
-      await _adbShell(owner.deviceId, [
-        'input',
-        'tap',
-        '${allChats.$1}',
-        '${allChats.$2}',
-      ]);
-      final contact = await _waitForBounds(
+      if (contact == null && allChats != null) {
+        await _adbShell(owner.deviceId, [
+          'input',
+          'tap',
+          '${allChats.$1}',
+          '${allChats.$2}',
+        ]);
+      }
+      contact ??= await _waitForBounds(
         owner.deviceId,
         contactUsername,
         const Duration(seconds: 20),
@@ -1227,6 +1807,67 @@ class _HeadProvenanceCampaign {
         'android.widget.EditText',
       ),
     );
+  }
+
+  Future<void> _captureConversationEntryDiagnostic({
+    required _Party owner,
+    required String contactUsername,
+    required String uiDump,
+  }) async {
+    try {
+      artifactDir.createSync(recursive: true);
+      final stem = '${_artifactStem}_${owner.role.toLowerCase()}_conversation';
+      final packages =
+          RegExp(r'package="([^"]+)"')
+              .allMatches(uiDump)
+              .map((match) => match.group(1)!)
+              .toSet()
+              .toList(growable: false)
+            ..sort();
+      final screenshot = File('${artifactDir.path}/${stem}_failure.png');
+      final capture = await Process.run('adb', <String>[
+        '-s',
+        owner.deviceId,
+        'exec-out',
+        'screencap',
+        '-p',
+      ], stdoutEncoding: null);
+      final screenshotCaptured =
+          capture.exitCode == 0 && capture.stdout is List<int>;
+      if (screenshotCaptured) {
+        await screenshot.writeAsBytes(capture.stdout as List<int>, flush: true);
+      }
+      await File('${artifactDir.path}/${stem}_failure.json').writeAsString(
+        const JsonEncoder.withIndent('  ').convert(<String, Object?>{
+          'role': owner.role,
+          'uiSha256': sha256.convert(utf8.encode(uiDump)).toString(),
+          'nodeCount': RegExp(r'<node\b').allMatches(uiDump).length,
+          'packages': packages,
+          'appPackageVisible': packages.contains(appPackage),
+          'systemUiVisible': packages.contains('com.android.systemui'),
+          'composeEditorVisible':
+              findNodeBoundsByClass(uiDump, 'android.widget.EditText') != null,
+          'directContactVisible':
+              findSemanticNodeCenter(
+                uiDump,
+                'Open chat with $contactUsername',
+              ) !=
+              null,
+          'listContactVisible':
+              findSemanticNodeCenter(uiDump, contactUsername) != null,
+          'showAllChatsVisible':
+              findSemanticNodeCenter(uiDump, 'Show all chats') != null,
+          'showInnerCircleVisible':
+              findSemanticNodeCenter(uiDump, 'Show inner circle') != null,
+          'screenshotCaptured': screenshotCaptured,
+          'screenshot': screenshotCaptured ? screenshot.path : null,
+          'containsSecrets': false,
+        }),
+        flush: true,
+      );
+    } on Object {
+      // Diagnostics must never replace the original causal failure.
+    }
   }
 
   Map<String, dynamic> _contactEntry(_Party party) => {
@@ -1651,6 +2292,1361 @@ class _HeadProvenanceCampaign {
         return capture.relayMatchedEvent ? log : null;
       },
     );
+  }
+
+  Future<void> _captureFixedWakeRecovery({
+    required _RelayInfo relayInfo,
+    required String firstMarker,
+    required String firstMessageId,
+    required String secondMarker,
+    required String secondMessageId,
+  }) async {
+    final build = _build;
+    if (!fixedWakeRecovery ||
+        build == null ||
+        build.buildProfile != _fixedWakeRecoveryBuildProfile ||
+        build.childBuildCount != 0 ||
+        !statePreparedByParent) {
+      throw _CampaignFailure(
+        _stage,
+        'Fixed-wake recovery requires the central fixed cohort and zero child builds.',
+      );
+    }
+    if (!await _recipientProcessAliveAndBackgroundedWithin(
+      const Duration(seconds: 5),
+    )) {
+      throw _CampaignFailure(
+        _stage,
+        'Transition A did not start with an alive/backgrounded receiver.',
+      );
+    }
+
+    final routeBeforeA = await _fixedRouteSnapshot('route-before-a');
+    final windowA = await _captureFixedWakeWindow(
+      stem: 'transition-a',
+      marker: firstMarker,
+      routeBefore: routeBeforeA,
+      requireBarrier: false,
+    );
+    final completionA = await _waitForFixedWakeCompletion(
+      stem: 'transition-a',
+      generation: windowA.generation,
+      requireHeadlessWorker: false,
+    );
+    await _launch(recipientId);
+    await _openConversation(recipient, sender.username);
+    await _waitForZeroAppCards('transition A exact-chat retirement');
+    final transitionAActivation =
+        File(
+          '${artifactDir.path}/transition-a-exact-chat-retirement.json',
+        )..writeAsStringSync(
+          '${jsonEncode(<String, Object?>{'programmaticExactChatActivation': true, 'notificationCardTapCount': 0, 'canonicalNotificationId': completionA.canonicalCard.id, 'genericCardId': 329, 'postActivationAppCardCount': 0, 'generation': windowA.generation})}\n',
+          flush: true,
+        );
+
+    // Transition B must start only after A has fully converged and cleared.
+    await _backgroundRecipient();
+    await _waitForZeroAppCards('transition A convergence before B');
+    final baselineRecoveryJobs = await _registeredRecoveryJobIds();
+    final jobBaselineEvidence = File(
+      '${artifactDir.path}/transition-b-jobscheduler-baseline.txt',
+    )..writeAsStringSync('${await _jobschedulerDump()}\n', flush: true);
+    final barrierReceipt = await _armFixedWakeBarrier();
+    await _terminateRecipient();
+    final processAbsentBeforeB = await _recipientProcessAndActivityAbsentWithin(
+      const Duration(seconds: 5),
+    );
+    if (!processAbsentBeforeB) {
+      throw _CampaignFailure(
+        _stage,
+        'Transition B receiver was not process/activity absent before send.',
+      );
+    }
+
+    final routeBeforeB = await _fixedRouteSnapshot('route-before-b');
+    final windowB = await _captureFixedWakeWindow(
+      stem: 'transition-b',
+      marker: secondMarker,
+      routeBefore: routeBeforeB,
+      requireBarrier: true,
+    );
+    final firstWorkerPid = windowB.firstWorkerPid;
+    if (firstWorkerPid == null) {
+      throw _CampaignFailure(
+        _stage,
+        'Transition B did not bind the first barrier-held worker PID.',
+      );
+    }
+    await _killBarrierHeldWorker(firstWorkerPid);
+    final completionB = await _waitForFixedWakeCompletion(
+      stem: 'transition-b',
+      generation: windowB.generation,
+      requireHeadlessWorker: true,
+      firstWorkerPid: firstWorkerPid,
+      baselineRecoveryJobs: baselineRecoveryJobs,
+    );
+
+    if (windowA.reactionId == windowB.reactionId ||
+        windowA.generation == windowB.generation ||
+        firstMessageId == secondMessageId) {
+      throw _CampaignFailure(
+        _stage,
+        'Transition B reused transition A reaction, generation, or target.',
+      );
+    }
+
+    // Clear the final exact card without tapping it, then authenticate removal
+    // of the fresh recipient route while that identity is still active.
+    await _launch(recipientId);
+    await _openConversation(recipient, sender.username);
+    await _waitForZeroAppCards('transition B exact-chat retirement');
+    final unregisterReceipt = await _runNotificationPayloadAction(
+      'notification_unregister_push',
+    );
+    if (unregisterReceipt['unregistered'] != true ||
+        unregisterReceipt['success'] != true) {
+      throw _CampaignFailure(
+        _stage,
+        'Authenticated ephemeral push-route unregister was not acknowledged.',
+      );
+    }
+    final unregisterEvidence =
+        File(
+          '${artifactDir.path}/recipient-route-unregister.json',
+        )..writeAsStringSync(
+          '${jsonEncode(<String, Object?>{'schema': unregisterReceipt['schema'], 'transport_action': unregisterReceipt['transport_action'], 'scenario': unregisterReceipt['scenario'], 'status': unregisterReceipt['status'], 'success': unregisterReceipt['success'], 'unregistered': unregisterReceipt['unregistered'], 'authenticatedMainAppAction': true})}\n',
+          flush: true,
+        );
+    await _terminateRecipient();
+    // Both transition targets already carry the same reaction used by this
+    // campaign. Reusing either one would toggle that reaction off and emit
+    // REACTION_REMOVE_SUCCESS, which cannot prove a fresh post-unregister
+    // relay store. Seed a third, unreacted target while the recipient and its
+    // authenticated push route are absent, then react to that exact target.
+    final routeAbsenceMarker =
+        'TC393RX-${DateTime.now().toUtc().microsecondsSinceEpoch}';
+    await _sendUiMessageFromSender(routeAbsenceMarker);
+    final routeAbsence = await _captureRouteAbsenceProbe(routeAbsenceMarker);
+    await _waitForZeroAppCards('post-unregister campaign baseline');
+
+    final artifact = <String, Object?>{
+      'schema': 'mknoon.plan393.android-fixed-wake-recovery-raw.v1',
+      'version': 1,
+      'scenario': _fixedWakeRecoveryScenario,
+      'status': 'passed',
+      'recordedAt': DateTime.now().toUtc().toIso8601String(),
+      'buildProfile': _fixedWakeRecoveryBuildProfile,
+      'buildCapability': 'build.android.production_fcm.fixed_wake',
+      'preparedArtifactSha256': build.normalApkSha256,
+      'appPackage': appPackage,
+      'topology': <String, Object?>{
+        'sender': <String, Object?>{
+          'deviceId': senderId,
+          'kind': 'physical',
+          'role': 'sender',
+        },
+        'receiver': <String, Object?>{
+          'deviceId': recipientId,
+          'kind': 'emulator',
+          'role': 'receiver',
+        },
+      },
+      'relay': <String, Object?>{
+        'revision': relayInfo.version,
+        'sha256': relayInfo.sha256,
+        'selectedRouteCounter': _relaySelectedRouteCounter,
+        'executionBoundary': relayInfo.executionBoundary,
+        'backend': relayInfo.backend,
+        'pushTokenState': relayInfo.pushTokenState,
+        'wakeOutcomeLedger': relayInfo.wakeOutcomeLedger,
+        'provider': relayInfo.provider,
+      },
+      'transitionA': _fixedTransitionJson(
+        lifecycle: 'alive_backgrounded',
+        marker: firstMarker,
+        messageId: firstMessageId,
+        window: windowA,
+        completion: completionA,
+        routeBefore: routeBeforeA,
+        exactChatActivation: _evidenceReference(transitionAActivation),
+      ),
+      'transitionB': <String, Object?>{
+        ..._fixedTransitionJson(
+          lifecycle: 'killed',
+          marker: secondMarker,
+          messageId: secondMessageId,
+          window: windowB,
+          completion: completionB,
+          routeBefore: routeBeforeB,
+        ),
+        'processAbsentBeforeSend': processAbsentBeforeB,
+        'barrierArmReceipt': barrierReceipt,
+        'firstWorkerPid': firstWorkerPid,
+        'resumedWorkerPid': completionB.workerCompletion!['pid'],
+        'runAttemptCount': completionB.workerCompletion!['runAttemptCount'],
+        'terminalOutcome': completionB.workerCompletion!['outcome'],
+        'jobSchedulerBaseline': _evidenceReference(jobBaselineEvidence),
+        'jobSchedulerAudit': _evidenceReference(completionB.jobSchedulerAudit!),
+      },
+      'cleanup': <String, Object?>{
+        'authenticatedRouteUnregister': true,
+        'unregisterReceipt': _evidenceReference(unregisterEvidence),
+        'routeAbsentReadback': true,
+        'absenceProbeReactionIdSha256': routeAbsence['reactionIdSha256'],
+        'absenceProbeRouteBefore': routeAbsence['routeBefore'],
+        'absenceProbeRouteAfter': routeAbsence['routeAfter'],
+        'absenceProbeRelayJournal': routeAbsence['relayJournal'],
+        'postCampaignAppCardCount': 0,
+        'localStateRestorationOwnedByParent': true,
+      },
+      'automation': <String, Object?>{
+        'manualUserTaps': 0,
+        'notificationCardTaps': 0,
+        'childBuildCount': 0,
+        'mainActivityLaunchesDuringKilledRecovery': 0,
+        'productionIngressInjectionCount': 0,
+        'statePreparedByParent': true,
+      },
+      'assertions': const <String>[
+        'notifications.fixed_wake_live_route_selected',
+        'notifications.direct_reaction_canonical_recovery',
+        'notifications.generic_recovery_card_retired',
+        'notifications.no_duplicate_or_second_tone',
+        'notifications.state_and_route_restored',
+        'notifications.zero_taps_zero_child_builds',
+      ],
+      'oldAssertionDisposition': _plan393RecoveryAssertionDisposition,
+      'redaction': const <String, Object?>{
+        'providerTokensPersisted': false,
+        'privateKeysPersisted': false,
+        'rawPeerIdsPersisted': false,
+        'messagePlaintextPersisted': false,
+      },
+    };
+    File('${artifactDir.path}/$_artifactStem.json').writeAsStringSync(
+      '${const JsonEncoder.withIndent('  ').convert(artifact)}\n',
+      flush: true,
+    );
+  }
+
+  Map<String, Object?> _fixedTransitionJson({
+    required String lifecycle,
+    required String marker,
+    required String messageId,
+    required _FixedWakeWindow window,
+    required _FixedWakeCompletion completion,
+    required _RelayRouteSnapshot routeBefore,
+    Map<String, Object?>? exactChatActivation,
+  }) => <String, Object?>{
+    'lifecycle': lifecycle,
+    'targetMarkerSha256': sha256.convert(utf8.encode(marker)).toString(),
+    'targetMessageIdSha256': sha256.convert(utf8.encode(messageId)).toString(),
+    'reactionIdSha256': sha256
+        .convert(utf8.encode(window.reactionId))
+        .toString(),
+    'recoveryGeneration': window.generation,
+    'routeBefore': _routeJson(routeBefore),
+    'routeAfter': _routeJson(window.routeAfter),
+    'opaqueRouteDelta': window.routeAfter.opaque - routeBefore.opaque,
+    'richRouteDelta': window.routeAfter.rich - routeBefore.rich,
+    'productionFixedWakeIngress': window.ingress,
+    'genericCard': const <String, Object?>{
+      'tag': 'mknoon_dropped_push_recovery',
+      'id': 329,
+      'observed': true,
+      'requestedSilent': true,
+    },
+    'canonicalCard': <String, Object?>{
+      'id': completion.canonicalCard.id,
+      'titleSha256': sha256
+          .convert(utf8.encode(completion.canonicalCard.title))
+          .toString(),
+      'bodySha256': sha256
+          .convert(utf8.encode(completion.canonicalCard.body))
+          .toString(),
+      'producer': 'direct_reaction',
+      'sourceCustody': 'SQL_READY',
+      'presentationOwner': 'INBOX_RECONCILER',
+      'effectPhase': 'SETTLED',
+      'settlement': completion.settlement,
+      'requestedSilent': completion.directShow['silent'],
+    },
+    'genericCardRetiredAfterCanonical': true,
+    'exactMarkerAcknowledgement': completion.acknowledgement,
+    'duplicateCanonicalShowCount': 0,
+    'requestedToneCount': 1,
+    'richFlutterFireCallbackCount': 0,
+    'notificationSnapshots': <Map<String, Object?>>[
+      _evidenceReference(window.notificationSnapshots),
+      _evidenceReference(completion.notificationSnapshots),
+    ],
+    'runtimeEvidence': <Map<String, Object?>>[
+      _evidenceReference(window.runtimeLog),
+      _evidenceReference(completion.runtimeLog),
+    ],
+    'relayJournal': _evidenceReference(window.relayJournal),
+    'exactChatActivation': ?exactChatActivation,
+  };
+
+  Future<_FixedWakeWindow> _captureFixedWakeWindow({
+    required String stem,
+    required String marker,
+    required _RelayRouteSnapshot routeBefore,
+    required bool requireBarrier,
+  }) async {
+    await _adb(senderId, const <String>['logcat', '-c']);
+    await _adb(recipientId, const <String>['logcat', '-c']);
+    await _longPressText(senderId, marker);
+    final windowStart = DateTime.now().toUtc();
+    await _tapText(senderId, _reactionEmoji);
+
+    String? reactionId;
+    String relayJournal = '';
+    var relayMatched = false;
+    var genericObserved = false;
+    int? generation;
+    int? firstWorkerPid;
+    Map<String, Object?>? ingress;
+    var routeAfter = routeBefore;
+    var iteration = 0;
+    final snapshots = <Map<String, Object?>>[];
+    String runtimeLog = '';
+    final deadline = DateTime.now().add(const Duration(minutes: 2));
+    while (DateTime.now().isBefore(deadline)) {
+      final senderLog = await _adb(senderId, const <String>[
+        'logcat',
+        '-d',
+        '-v',
+        'brief',
+      ]);
+      reactionId ??= extractReactionSuccessId(senderLog.stdout);
+      final recipientLog = await _adb(recipientId, const <String>[
+        'logcat',
+        '-d',
+        '-v',
+        'brief',
+      ]);
+      runtimeLog = recipientLog.stdout;
+      final dump = await _notificationDump(recipientId);
+      final summary = _notificationSnapshot(dump);
+      snapshots.add(<String, Object?>{
+        'capturedAt': DateTime.now().toUtc().toIso8601String(),
+        ...summary,
+      });
+      genericObserved =
+          genericObserved || summary['genericCardPresent'] == true;
+
+      final ingressEvents = _runtimeEvents(runtimeLog)
+          .where((event) => event['event'] == 'plan393_fixed_wake_ingress')
+          .toList(growable: false);
+      if (ingressEvents.length > 1) {
+        throw _CampaignFailure(
+          _stage,
+          '$stem observed more than one production fixed-wake ingress.',
+        );
+      }
+      if (ingressEvents.length == 1) {
+        final candidate = ingressEvents.single;
+        final candidateGeneration = candidate['generation'];
+        if (candidateGeneration is int && candidateGeneration > 0) {
+          generation = candidateGeneration;
+          ingress = candidate;
+        }
+      }
+      if (requireBarrier && generation != null) {
+        final held = _runtimeEvents(runtimeLog).where(
+          (event) =>
+              event['event'] == 'plan374_headless_worker' &&
+              event['phase'] == 'process_death_barrier_consumed' &&
+              event['generation'] == generation,
+        );
+        if (held.isNotEmpty && held.first['pid'] is int) {
+          firstWorkerPid = held.first['pid']! as int;
+        }
+      }
+
+      if (iteration % 4 == 0) {
+        relayJournal = await _relayJournalSince(windowStart);
+        relayMatched = classifyRelayCapture(
+          log: relayJournal,
+          senderPrefix: sender.peerPrefix,
+          recipientPrefix: recipient.peerPrefix,
+        ).relayMatchedEvent;
+        routeAfter = await _fixedRouteSnapshot('$stem-route-after');
+        final opaqueDelta = routeAfter.opaque - routeBefore.opaque;
+        final richDelta = routeAfter.rich - routeBefore.rich;
+        if (opaqueDelta > 1 || richDelta != 0) {
+          throw _CampaignFailure(
+            _stage,
+            '$stem selected-route counter escaped the exact opaque +1/rich +0 window.',
+          );
+        }
+      }
+
+      final ingressExact =
+          ingress != null &&
+          ingress['triggerKind'] == 'FIXED_WAKE' &&
+          ingress['genericMayHaveAlerted'] == false &&
+          ingress['genericCardTag'] == 'mknoon_dropped_push_recovery' &&
+          ingress['genericCardId'] == 329 &&
+          ingress['genericCardRequestedSilent'] == true &&
+          ingress['richFlutterFireDelegated'] == false &&
+          ingress['productionIngressInvoked'] == true;
+      final routeExact =
+          routeAfter.opaque - routeBefore.opaque == 1 &&
+          routeAfter.rich == routeBefore.rich;
+      final barrierExact = !requireBarrier || firstWorkerPid != null;
+      if (reactionId != null &&
+          relayMatched &&
+          routeExact &&
+          genericObserved &&
+          ingressExact &&
+          barrierExact) {
+        if (_containsRichFlutterFireCallback(runtimeLog)) {
+          throw _CampaignFailure(
+            _stage,
+            '$stem substituted a rich FlutterFire callback for fixed ingress.',
+          );
+        }
+        final runtimeEvidence = _writeRuntimeEvidence(
+          '$stem-runtime-ingress.jsonl',
+          runtimeLog,
+        );
+        final snapshotEvidence = _writeJsonEvidence(
+          '$stem-notification-snapshots.json',
+          <String, Object?>{'snapshots': snapshots},
+        );
+        final relayEvidence = _writeRelayEvidence(
+          relayJournal,
+          windowStart,
+          filename: '$stem-relay-window.log',
+        );
+        return _FixedWakeWindow(
+          reactionId: reactionId,
+          generation: generation!,
+          firstWorkerPid: firstWorkerPid,
+          routeAfter: routeAfter,
+          ingress: Map<String, Object?>.unmodifiable(ingress),
+          notificationSnapshots: snapshotEvidence,
+          runtimeLog: runtimeEvidence,
+          relayJournal: relayEvidence,
+        );
+      }
+      iteration += 1;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    final timeoutIngressExact =
+        ingress != null &&
+        ingress['triggerKind'] == 'FIXED_WAKE' &&
+        ingress['genericMayHaveAlerted'] == false &&
+        ingress['genericCardTag'] == 'mknoon_dropped_push_recovery' &&
+        ingress['genericCardId'] == 329 &&
+        ingress['genericCardRequestedSilent'] == true &&
+        ingress['richFlutterFireDelegated'] == false &&
+        ingress['productionIngressInvoked'] == true;
+    _writeRuntimeEvidence('$stem-timeout-runtime.jsonl', runtimeLog);
+    _writeJsonEvidence('$stem-timeout-notification-snapshots.json', {
+      'snapshots': snapshots,
+    });
+    _writeJsonEvidence('$stem-timeout-diagnostics.json', {
+      'schema': 'mknoon.plan393.fixed-wake-timeout.v1',
+      'reactionSuccessObserved': reactionId != null,
+      'relayStoreObserved': relayMatched,
+      'opaqueRouteDelta': routeAfter.opaque - routeBefore.opaque,
+      'richRouteDelta': routeAfter.rich - routeBefore.rich,
+      'genericCardObserved': genericObserved,
+      'fixedIngressObserved': ingress != null,
+      'fixedIngressExact': timeoutIngressExact,
+      'barrierSatisfied': !requireBarrier || firstWorkerPid != null,
+      'richFlutterFireObserved': _containsRichFlutterFireCallback(runtimeLog),
+      'notificationSnapshotCount': snapshots.length,
+    });
+    throw _CampaignFailure(
+      _stage,
+      '$stem did not converge through reaction/store/opaque ingress/generic card.',
+    );
+  }
+
+  Future<_FixedWakeCompletion> _waitForFixedWakeCompletion({
+    required String stem,
+    required int generation,
+    required bool requireHeadlessWorker,
+    int? firstWorkerPid,
+    Set<int> baselineRecoveryJobs = const <int>{},
+  }) async {
+    final snapshots = <Map<String, Object?>>[];
+    String runtimeLog = '';
+    final forcedKeys = <String>{};
+    final deferredForceKeys = <String>{};
+    final retryObservedAt = <int, DateTime>{};
+    final forceAudit = StringBuffer();
+    var latestRetryAttempt = -1;
+    final deadline = DateTime.now().add(
+      requireHeadlessWorker
+          ? const Duration(minutes: 5)
+          : const Duration(minutes: 2),
+    );
+    while (DateTime.now().isBefore(deadline)) {
+      runtimeLog = (await _adb(recipientId, const <String>[
+        'logcat',
+        '-d',
+        '-v',
+        'brief',
+      ])).stdout;
+      if (_containsRichFlutterFireCallback(runtimeLog)) {
+        throw _CampaignFailure(
+          _stage,
+          '$stem entered the forbidden rich FlutterFire callback.',
+        );
+      }
+      final events = _runtimeEvents(runtimeLog);
+      final acknowledgements = events
+          .where(
+            (event) =>
+                event['event'] == 'plan393_recovery_generation_acknowledged' &&
+                event['generation'] == generation &&
+                event['genericCardId'] == 329 &&
+                event['genericCardRetired'] == true,
+          )
+          .toList(growable: false);
+      final directShows = events
+          .where((event) {
+            if (event['event'] != 'NOTIFICATION_SHOWN') return false;
+            final details = event['details'];
+            return details is Map &&
+                details['durable'] == true &&
+                details['producer'] == 'direct_reaction' &&
+                details['disposition'] == 'osPosted';
+          })
+          .toList(growable: false);
+      final settlements = events
+          .where((event) {
+            if (event['event'] != 'DIRECT_NOTIFICATION_DURABLE_SETTLED') {
+              return false;
+            }
+            final details = event['details'];
+            return details is Map &&
+                details['sourceCustody'] == 'SQL_READY' &&
+                details['presentationOwner'] == 'INBOX_RECONCILER' &&
+                details['effectPhase'] == 'SETTLED' &&
+                details['presentationState'] == 'OS_POSTED';
+          })
+          .toList(growable: false);
+      if (acknowledgements.length > 1 ||
+          directShows.length > 1 ||
+          settlements.length > 1) {
+        throw _CampaignFailure(
+          _stage,
+          '$stem observed duplicate marker ACK or canonical notification show.',
+        );
+      }
+      final workerCompletions = events
+          .where(
+            (event) =>
+                event['event'] == 'plan374_headless_worker' &&
+                event['phase'] == 'completion' &&
+                event['generation'] == generation,
+          )
+          .toList(growable: false);
+      for (final event in workerCompletions) {
+        if (event['outcome'] == 'RETRY' && event['runAttemptCount'] is int) {
+          final attempt = event['runAttemptCount']! as int;
+          retryObservedAt.putIfAbsent(attempt, DateTime.now);
+          latestRetryAttempt = max(latestRetryAttempt, attempt);
+        }
+      }
+      final successfulWorkers = workerCompletions
+          .where(
+            (event) =>
+                event['outcome'] == 'SUCCESS' &&
+                event['pid'] is int &&
+                event['runAttemptCount'] is int &&
+                (event['runAttemptCount']! as int) >= 1 &&
+                event['pid'] != firstWorkerPid,
+          )
+          .toList(growable: false);
+      if (successfulWorkers.length > 1) {
+        throw _CampaignFailure(
+          _stage,
+          '$stem observed multiple resumed WorkManager SUCCESS completions.',
+        );
+      }
+      final worker = successfulWorkers.isEmpty
+          ? null
+          : successfulWorkers.single;
+      final workerPid = worker?['pid'];
+      final engineCompletions = events
+          .where(
+            (event) =>
+                event['event'] == 'plan374_headless_engine' &&
+                event['phase'] == 'dart_completion' &&
+                event['pid'] == workerPid &&
+                event['disposition'] == 'SUCCEEDED' &&
+                event['databaseClosed'] == true &&
+                event['leaseReleased'] == true,
+          )
+          .toList(growable: false);
+
+      final dump = await _notificationDump(recipientId);
+      final summary = _notificationSnapshot(dump);
+      snapshots.add(<String, Object?>{
+        'capturedAt': DateTime.now().toUtc().toIso8601String(),
+        ...summary,
+      });
+      final contentCards = extractActiveContentNotificationCards(
+        dump,
+        packageName: appPackage,
+      ).where((card) => card.id != 329 && card.id != 330).toList();
+      ActiveNotificationCard? canonical;
+      if (contentCards.length == 1) {
+        final errors = validateDirectReactionNotificationCard(
+          contentCards.single,
+          expectedTitle: sender.username,
+          emoji: _reactionEmoji,
+        );
+        if (errors.isEmpty) canonical = contentCards.single;
+      } else if (contentCards.length > 1) {
+        throw _CampaignFailure(
+          _stage,
+          '$stem has ${contentCards.length} canonical content cards.',
+        );
+      }
+
+      final ack = acknowledgements.isEmpty ? null : acknowledgements.single;
+      final show = directShows.isEmpty ? null : directShows.single;
+      final showDetails = show?['details'];
+      final exactShow = showDetails is Map && showDetails['silent'] == false;
+      final exactSettlement = settlements.length == 1;
+      final exactAck =
+          ack != null &&
+          (!requireHeadlessWorker ||
+              (ack['owner'] == 'headless' && ack['pid'] == workerPid));
+      final workerExact =
+          !requireHeadlessWorker ||
+          (worker != null && engineCompletions.length == 1);
+      final cardExact =
+          canonical != null &&
+          summary['genericCardPresent'] == false &&
+          summary['workerCardPresent'] == false;
+      if (exactShow &&
+          exactSettlement &&
+          exactAck &&
+          workerExact &&
+          cardExact) {
+        final runtimeEvidence = _writeRuntimeEvidence(
+          '$stem-runtime-completion.jsonl',
+          runtimeLog,
+        );
+        final snapshotEvidence = _writeJsonEvidence(
+          '$stem-notification-completion.json',
+          <String, Object?>{'snapshots': snapshots},
+        );
+        final jobAudit = requireHeadlessWorker
+            ? (File('${artifactDir.path}/$stem-jobscheduler-resume.log')
+                ..writeAsStringSync(forceAudit.toString(), flush: true))
+            : null;
+        return _FixedWakeCompletion(
+          canonicalCard: canonical,
+          acknowledgement: Map<String, Object?>.unmodifiable(ack),
+          directShow: Map<String, Object?>.unmodifiable(
+            showDetails.map<String, Object?>(
+              (key, value) => MapEntry('$key', value),
+            ),
+          ),
+          settlement: Map<String, Object?>.unmodifiable(
+            (settlements.single['details']! as Map).map<String, Object?>(
+              (key, value) => MapEntry('$key', value),
+            ),
+          ),
+          workerCompletion: worker == null
+              ? null
+              : Map<String, Object?>.unmodifiable(worker),
+          workerEngineCompletion: engineCompletions.isEmpty
+              ? null
+              : Map<String, Object?>.unmodifiable(engineCompletions.single),
+          runtimeLog: runtimeEvidence,
+          notificationSnapshots: snapshotEvidence,
+          jobSchedulerAudit: jobAudit,
+        );
+      }
+
+      if (requireHeadlessWorker && worker == null) {
+        final currentJobs = await _registeredRecoveryJobIds();
+        final incumbent = currentJobs.difference(baselineRecoveryJobs);
+        if (incumbent.length > 1) {
+          throw _CampaignFailure(
+            _stage,
+            'Multiple non-baseline recovery jobs make forcing ambiguous.',
+          );
+        }
+        if (incumbent.length == 1) {
+          final jobId = incumbent.single;
+          final forceKey = '$latestRetryAttempt';
+          if (!forcedKeys.contains(forceKey)) {
+            final retryAge = latestRetryAttempt < 0
+                ? const Duration(days: 1)
+                : DateTime.now().difference(
+                    retryObservedAt[latestRetryAttempt] ?? DateTime.now(),
+                  );
+            if (retryAge < const Duration(seconds: 31)) {
+              if (deferredForceKeys.add(forceKey)) {
+                forceAudit.writeln(
+                  'jobId=$jobId retry=$latestRetryAttempt '
+                  'result=awaiting_workmanager_backoff',
+                );
+              }
+              await Future<void>.delayed(const Duration(milliseconds: 500));
+              continue;
+            }
+            final state = await _adbShell(recipientId, <String>[
+              'cmd',
+              'jobscheduler',
+              'get-job-state',
+              '-n',
+              'androidx.work.systemjobscheduler',
+              appPackage,
+              '$jobId',
+            ], allowFail: true);
+            final unsafe = <String>[
+              'active',
+              'user-stopped',
+              'backing-up',
+              'no-component',
+            ].any(state.contains);
+            var forceResult = 'not_forced';
+            if (!unsafe) {
+              // Spend this attempt only when Android will receive a force-run.
+              // An active predecessor can become runnable after its PID dies.
+              forcedKeys.add(forceKey);
+              final result = await _adb(recipientId, <String>[
+                'shell',
+                'cmd',
+                'jobscheduler',
+                'run',
+                '-f',
+                '-n',
+                'androidx.work.systemjobscheduler',
+                appPackage,
+                '$jobId',
+              ], allowFail: true);
+              forceResult = result.exitCode == 0 ? 'forced' : 'force_race';
+            }
+            forceAudit.writeln(
+              'jobId=$jobId retry=$latestRetryAttempt state=${state.trim()} result=$forceResult',
+            );
+          }
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    throw _CampaignFailure(
+      _stage,
+      '$stem did not reach canonical show, exact marker ACK, card retirement, and worker success.',
+    );
+  }
+
+  Future<void> _killBarrierHeldWorker(int firstPid) async {
+    final result = await _adb(recipientId, <String>[
+      'shell',
+      'run-as',
+      appPackage,
+      'kill',
+      '-9',
+      '$firstPid',
+    ], allowFail: true);
+    if (result.exitCode != 0) {
+      throw _CampaignFailure(
+        _stage,
+        'The pinned package-UID process-death cut failed.',
+      );
+    }
+    await _waitFor(
+      'barrier-held worker PID termination',
+      const Duration(seconds: 10),
+      () async {
+        final pids = (await _adbShell(recipientId, <String>[
+          'pidof',
+          appPackage,
+        ], allowFail: true)).split(RegExp(r'\s+'));
+        return !pids.contains('$firstPid');
+      },
+    );
+  }
+
+  Future<Map<String, Object?>> _armFixedWakeBarrier() async {
+    final nonce =
+        'plan393-${DateTime.now().toUtc().microsecondsSinceEpoch}-'
+        '${Random.secure().nextInt(0x7fffffff)}';
+    final result = await _adb(recipientId, <String>[
+      'shell',
+      'am',
+      'broadcast',
+      '-W',
+      '--receiver-foreground',
+      '-a',
+      'com.mknoon.app.debug.CANONICAL_RUNTIME_H0_PROBE',
+      '-n',
+      '$appPackage/com.mknoon.app.CanonicalRuntimeH0ProbeReceiver',
+      '--es',
+      'plan374Phase',
+      'arm-fixed-wake',
+      '--es',
+      'runNonce',
+      nonce,
+    ], allowFail: true);
+    if (result.exitCode != 0) {
+      throw _CampaignFailure(
+        _stage,
+        'The arm-only fixed-wake broadcast failed.',
+      );
+    }
+    final raw = await _waitForValue<String>(
+      'arm-only fixed-wake receipt',
+      const Duration(seconds: 20),
+      () async {
+        final output = await _adb(recipientId, <String>[
+          'shell',
+          'run-as',
+          appPackage,
+          'cat',
+          'files/plan374-headless-recovery/arm-fixed-wake-latest.json',
+        ], allowFail: true);
+        return output.exitCode == 0 && output.stdout.trim().isNotEmpty
+            ? output.stdout.trim()
+            : null;
+      },
+    );
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map ||
+        decoded['status'] != 'PASS' ||
+        decoded['phase'] != 'arm-fixed-wake' ||
+        decoded['runNonce'] != nonce ||
+        decoded['processDeathBarrierArmed'] != true ||
+        decoded['productionIngressInvoked'] != false ||
+        decoded['pendingGenerationBefore'] != null ||
+        decoded['pendingGenerationAfter'] != null ||
+        decoded['mainActivityLaunchCount'] != 0) {
+      throw _CampaignFailure(
+        _stage,
+        'The arm-only receipt could inject ingress or carried stale recovery.',
+      );
+    }
+    return <String, Object?>{
+      'status': 'PASS',
+      'phase': 'arm-fixed-wake',
+      'processDeathBarrierArmed': true,
+      'productionIngressInvoked': false,
+      'pendingGenerationBefore': null,
+      'pendingGenerationAfter': null,
+      'mainActivityLaunchCount': 0,
+      'receiptSha256': sha256.convert(utf8.encode(raw)).toString(),
+    };
+  }
+
+  Future<Map<String, Object?>> _runNotificationPayloadAction(
+    String action,
+  ) async {
+    final runId =
+        'plan393-${DateTime.now().toUtc().microsecondsSinceEpoch}-'
+        '${Random.secure().nextInt(0x7fffffff)}';
+    final stepId = 'notification-$action-$runId';
+    await _deleteAppFile(recipientId, 'intro_e2e_result.json');
+    await _writeAppFile(
+      recipientId,
+      'intro_e2e_config.json',
+      jsonEncode(<String, Object?>{
+        'schema': 'mknoon.plan258.android-notification-request.v1',
+        'scenario': 'notifications.android_payload_campaign',
+        'transport_action': action,
+        'runId': runId,
+        'stepId': stepId,
+        'nonce':
+            'n-${DateTime.now().toUtc().microsecondsSinceEpoch}-'
+            '${Random.secure().nextInt(0x7fffffff)}',
+        'timeoutMs': 120000,
+      }),
+    );
+    await _launch(recipientId);
+    final raw = await _waitForValue<String>(
+      'authenticated notification action $action',
+      const Duration(minutes: 2),
+      () async {
+        final candidate = await _readAppFile(
+          recipientId,
+          'intro_e2e_result.json',
+        );
+        if (candidate == null) return null;
+        try {
+          final decoded = jsonDecode(candidate);
+          return decoded is Map &&
+                  decoded['stepId'] == stepId &&
+                  decoded['status'] == 'complete'
+              ? candidate
+              : null;
+        } on FormatException {
+          return null;
+        }
+      },
+    );
+    await _deleteAppFile(recipientId, 'intro_e2e_config.json');
+    await _deleteAppFile(recipientId, 'intro_e2e_result.json');
+    return (jsonDecode(raw) as Map).map<String, Object?>(
+      (key, value) => MapEntry('$key', value),
+    );
+  }
+
+  Future<Map<String, Object?>> _captureRouteAbsenceProbe(String marker) async {
+    if (!await _recipientProcessAndActivityAbsentWithin(
+      const Duration(seconds: 5),
+    )) {
+      throw _CampaignFailure(
+        _stage,
+        'Recipient was not absent for route-absence readback.',
+      );
+    }
+    await _adb(senderId, const <String>['logcat', '-c']);
+    await _adb(recipientId, const <String>['logcat', '-c']);
+    final before = await _fixedRouteSnapshot('route-absence-before');
+    await _longPressText(senderId, marker);
+    final windowStart = DateTime.now().toUtc();
+    await _tapText(senderId, _reactionEmoji);
+    final senderLog = await _waitForReactionSuccess();
+    final reactionId = extractReactionSuccessId(senderLog);
+    if (reactionId == null) {
+      throw _CampaignFailure(_stage, 'Route-absence reaction has no event id.');
+    }
+    final journal = await _waitForRelayStore(windowStart);
+    await Future<void>.delayed(const Duration(seconds: 15));
+    final after = await _fixedRouteSnapshot('route-absence-after');
+    if (after.opaque != before.opaque || after.rich != before.rich) {
+      throw _CampaignFailure(
+        _stage,
+        'Authenticated unregister left a selected push route.',
+      );
+    }
+    final recipientLog = (await _adb(recipientId, const <String>[
+      'logcat',
+      '-d',
+      '-v',
+      'brief',
+    ])).stdout;
+    if (recipientLog.contains('plan393_fixed_wake_ingress') ||
+        (await _appCardCount()) != 0) {
+      throw _CampaignFailure(
+        _stage,
+        'Route-absence probe still reached fixed ingress or posted a card.',
+      );
+    }
+    final relayEvidence = _writeRelayEvidence(
+      journal,
+      windowStart,
+      filename: 'route-absence-relay-window.log',
+    );
+    return <String, Object?>{
+      'reactionIdSha256': sha256.convert(utf8.encode(reactionId)).toString(),
+      'routeBefore': _routeJson(before),
+      'routeAfter': _routeJson(after),
+      'relayJournal': _evidenceReference(relayEvidence),
+    };
+  }
+
+  Future<_RelayRouteSnapshot> _fixedRouteSnapshot(String stem) async {
+    if (relayFixtureProbe != null) {
+      final snapshot = await _relayFixtureSnapshot(
+        DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      final routes = snapshot['selectedRoutes']! as Map<String, Object?>;
+      final opaque = routes['opaque']! as int;
+      final rich = routes['rich']! as int;
+      final processStart = snapshot['processStartTimeSeconds']! as num;
+      final kept =
+          '$_relaySelectedRouteCounter{route="opaque"} $opaque\n'
+          '$_relaySelectedRouteCounter{route="rich"} $rich\n'
+          'process_start_time_seconds $processStart';
+      final evidence = File('${artifactDir.path}/$stem.metrics')
+        ..writeAsStringSync('$kept\n', flush: true);
+      return _RelayRouteSnapshot(
+        opaque: opaque,
+        rich: rich,
+        evidence: evidence,
+      );
+    }
+    final result = await _ssh(<String>[
+      'curl',
+      '-sS',
+      '--max-time',
+      '15',
+      'http://127.0.0.1:2112/metrics',
+    ]);
+    if (result.exitCode != 0 ||
+        !result.stdout.contains('process_start_time_seconds')) {
+      throw _CampaignFailure(
+        _stage,
+        'The staging relay metrics endpoint is unreadable.',
+        environmentBlocked: true,
+      );
+    }
+    final kept = result.stdout
+        .split('\n')
+        .where(
+          (line) =>
+              line.startsWith(_relaySelectedRouteCounter) ||
+              line.startsWith('process_start_time_seconds'),
+        )
+        .join('\n');
+    final evidence = File('${artifactDir.path}/$stem.metrics')
+      ..writeAsStringSync('$kept\n', flush: true);
+    int value(String route) {
+      final match = RegExp(
+        '^${RegExp.escape(_relaySelectedRouteCounter)}\\{route="$route"\\}\\s+([^\\s]+)\\s*\$',
+        multiLine: true,
+      ).firstMatch(kept);
+      if (match == null) return 0;
+      final parsed = double.tryParse(match.group(1)!);
+      if (parsed == null ||
+          !parsed.isFinite ||
+          parsed < 0 ||
+          parsed != parsed.roundToDouble()) {
+        throw _CampaignFailure(_stage, 'Selected-route counter is invalid.');
+      }
+      return parsed.toInt();
+    }
+
+    return _RelayRouteSnapshot(
+      opaque: value('opaque'),
+      rich: value('rich'),
+      evidence: evidence,
+    );
+  }
+
+  Map<String, Object?> _routeJson(_RelayRouteSnapshot value) =>
+      <String, Object?>{
+        'opaque': value.opaque,
+        'rich': value.rich,
+        'evidence': _evidenceReference(value.evidence),
+      };
+
+  Future<String> _jobschedulerDump() async =>
+      _adbShell(recipientId, <String>['dumpsys', 'jobscheduler', appPackage]);
+
+  Future<Set<int>> _registeredRecoveryJobIds() async {
+    try {
+      return parseAndroidCanonicalRecoveryJobIds(
+        dump: await _jobschedulerDump(),
+        appPackage: appPackage,
+      );
+    } on FormatException catch (error) {
+      throw _CampaignFailure(_stage, error.message);
+    }
+  }
+
+  Map<String, Object?> _notificationSnapshot(String dump) {
+    final cards = extractActiveContentNotificationCards(
+      dump,
+      packageName: appPackage,
+    );
+    final records = _appNotificationRecords(dump);
+    return <String, Object?>{
+      'contentCardCount': cards.length,
+      'ids': cards.map((card) => card.id).toList(growable: false),
+      'cardDigests': cards
+          .map(
+            (card) => <String, Object?>{
+              'id': card.id,
+              'titleSha256': sha256.convert(utf8.encode(card.title)).toString(),
+              'bodySha256': sha256.convert(utf8.encode(card.body)).toString(),
+            },
+          )
+          .toList(growable: false),
+      'genericCardPresent':
+          RegExp(r'\bid=329\b').hasMatch(records) &&
+          RegExp(r'\btag=mknoon_dropped_push_recovery\b').hasMatch(records),
+      'workerCardPresent': RegExp(r'\bid=330\b').hasMatch(records),
+    };
+  }
+
+  Future<int> _appCardCount() async => extractActiveContentNotificationCards(
+    await _notificationDump(recipientId),
+    packageName: appPackage,
+  ).length;
+
+  Future<void> _waitForZeroAppCards(String label) => _waitFor(
+    label,
+    const Duration(seconds: 45),
+    () async => await _appCardCount() == 0,
+  );
+
+  List<Map<String, Object?>> _runtimeEvents(String logcat) {
+    final result = <Map<String, Object?>>[];
+    for (final line in logcat.split('\n')) {
+      final open = line.indexOf('{');
+      if (open < 0) continue;
+      try {
+        final decoded = jsonDecode(line.substring(open).trim());
+        if (decoded is Map) {
+          result.add(
+            decoded.map<String, Object?>(
+              (key, value) => MapEntry('$key', value),
+            ),
+          );
+        }
+      } on FormatException {
+        continue;
+      }
+    }
+    return result;
+  }
+
+  bool _containsRichFlutterFireCallback(String logcat) => <String>[
+    'PUSH_BACKGROUND_MESSAGE_RECEIVED',
+    'PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK',
+    'PUSH_ANDROID_DATA_DECRYPT_OK',
+  ].any(logcat.contains);
+
+  File _writeRuntimeEvidence(String filename, String logcat) {
+    final safe = _runtimeEvents(logcat)
+        .where((event) {
+          final name = event['event'];
+          return name == 'plan393_fixed_wake_ingress' ||
+              name == 'plan393_recovery_generation_acknowledged' ||
+              name == 'plan374_headless_worker' ||
+              name == 'plan374_headless_engine' ||
+              name == 'NOTIFICATION_SHOWN' ||
+              name == 'DIRECT_NOTIFICATION_DURABLE_SETTLED';
+        })
+        .map((event) {
+          final name = event['event'];
+          if (name == 'NOTIFICATION_SHOWN') {
+            final details = event['details'];
+            final values = details is Map
+                ? details
+                : const <Object?, Object?>{};
+            return <String, Object?>{
+              'event': name,
+              'details': <String, Object?>{
+                'durable': values['durable'],
+                'producer': values['producer'],
+                'disposition': values['disposition'],
+                'nativeEntry': values['nativeEntry'],
+                'silent': values['silent'],
+              },
+            };
+          }
+          return event;
+        })
+        .toList(growable: false);
+    return File('${artifactDir.path}/$filename')
+      ..writeAsStringSync("${safe.map(jsonEncode).join('\n')}\n", flush: true);
+  }
+
+  File _writeJsonEvidence(String filename, Map<String, Object?> value) =>
+      File('${artifactDir.path}/$filename')
+        ..writeAsStringSync('${jsonEncode(value)}\n', flush: true);
+
+  Map<String, Object?> _evidenceReference(File file) {
+    final bytes = file.readAsBytesSync();
+    return <String, Object?>{
+      'path': file.uri.pathSegments.last,
+      'sha256': sha256.convert(bytes).toString(),
+      'bytes': bytes.length,
+    };
+  }
+
+  Future<Map<String, Object?>> _captureFirstWakeProfileAot() async {
+    if (!firstWakeProfileAot || _build == null) {
+      throw _CampaignFailure(_stage, 'Profile-AOT capture was not prepared.');
+    }
+    final installedSha = await _installedApkSha256(recipientId);
+    if (installedSha != _build!.normalApkSha256) {
+      throw _CampaignFailure(
+        _stage,
+        'Installed profile receiver does not match the captured APK SHA-256.',
+      );
+    }
+    final before = await _g21MeasurementInventory();
+    if (!await _recipientProcessAndActivityAbsentWithin(
+      const Duration(seconds: 5),
+    )) {
+      throw _CampaignFailure(
+        _stage,
+        'The warmed profile receiver was not killed before the direct send.',
+      );
+    }
+    await _adb(recipientId, <String>['logcat', '-c']);
+    final marker = 'TC393G21${DateTime.now().toUtc().microsecondsSinceEpoch}';
+    await _sendUiMessageFromSender(marker);
+    final captured = await _waitForSingleOrdinaryMessageCard(marker);
+    final card = captured.$1;
+
+    Set<String> after = before;
+    if (measurementOnly) {
+      after = await _waitForValue<Set<String>>(
+        'one fresh G21 measurement receipt',
+        const Duration(seconds: 20),
+        () async {
+          final inventory = await _g21MeasurementInventory();
+          return inventory.difference(before).length == 1 ? inventory : null;
+        },
+      );
+    } else {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      after = await _g21MeasurementInventory();
+      if (after.difference(before).isNotEmpty) {
+        throw _CampaignFailure(
+          _stage,
+          'Production acceptance emitted a measurement-only receipt.',
+        );
+      }
+    }
+
+    Map<String, Object?>? receipt;
+    String? receiptPath;
+    String? receiptSha256;
+    var selectedReserveMs = _g21FrozenProductionReserveMs;
+    if (measurementOnly) {
+      final name = after.difference(before).single;
+      receipt = await _readG21MeasurementReceipt(name);
+      final localReceipt = File(
+        '${artifactDir.path}/android_first_wake_profile_aot_receipt.json',
+      )..writeAsStringSync(const JsonEncoder.withIndent('  ').convert(receipt));
+      receiptPath = localReceipt.path;
+      receiptSha256 = await _sha256(localReceipt);
+      final remaining = _positiveReceiptInt(
+        receipt,
+        'remainingAtEligibilityStartMs',
+      );
+      final eligibility = _nonNegativeReceiptInt(
+        receipt,
+        'eligibilityElapsedMs',
+      );
+      final nativeTail = _nonNegativeReceiptInt(receipt, 'nativeEntryTailMs');
+      selectedReserveMs = max(2000, nativeTail + 500);
+      if (selectedReserveMs != _g21FrozenProductionReserveMs) {
+        throw _CampaignFailure(
+          _stage,
+          'Measured reserve does not match the frozen production constant.',
+        );
+      }
+      if (eligibility > remaining - selectedReserveMs) {
+        throw _CampaignFailure(
+          _stage,
+          'Measured eligibility does not fit the remaining aggregate after '
+          'the required downstream reserve.',
+        );
+      }
+    }
+
+    _writeSanitizedCardEvidence(
+      'android_first_wake_profile_aot_card.txt',
+      card,
+    );
+    await _dismissSingleNotification(card.title);
+    await _requireCleanNotificationSlate();
+    return <String, Object?>{
+      'mode': measurementOnly ? 'measurement_only' : 'require_alert',
+      'profileReceiverWarmed': true,
+      'recipientProcessAbsentBeforeSend': true,
+      'notificationCount': 1,
+      'cardTitleSha256': sha256.convert(utf8.encode(card.title)).toString(),
+      'cardBodySha256': sha256.convert(utf8.encode(card.body)).toString(),
+      'cardId': card.id,
+      'receiptInventoryBefore': before.toList()..sort(),
+      'receiptInventoryAfter': after.toList()..sort(),
+      'freshReceiptCount': after.difference(before).length,
+      'receipt': receipt,
+      'receiptPath': receiptPath,
+      'receiptSha256': receiptSha256,
+      'selectedProductionReserveMs': selectedReserveMs,
+      'measurementFlagEnabled': measurementOnly,
+      'measurementFlagAbsentInAcceptance': !measurementOnly,
+      'cardStateClearedBeforeRestore': true,
+    };
+  }
+
+  Future<Set<String>> _g21MeasurementInventory() async {
+    const directory = 'files/BackgroundStorageLiveness';
+    final listed = await _adbShell(recipientId, <String>[
+      'run-as',
+      appPackage,
+      'ls',
+      '-1',
+      directory,
+    ], allowFail: true);
+    return listed
+        .split('\n')
+        .map((value) => value.trim())
+        .where(
+          (value) => RegExp(
+            r'^g21-measurement-v1-[0-9]+-[0-9a-f]{8}-[0-9a-f]{8}-[0-9]+\.json$',
+          ).hasMatch(value),
+        )
+        .toSet();
+  }
+
+  Future<Map<String, Object?>> _readG21MeasurementReceipt(String name) async {
+    if (!RegExp(
+      r'^g21-measurement-v1-[0-9]+-[0-9a-f]{8}-[0-9a-f]{8}-[0-9]+\.json$',
+    ).hasMatch(name)) {
+      throw _CampaignFailure(_stage, 'G21 receipt name is unsafe.');
+    }
+    final output = await _adb(recipientId, <String>[
+      'exec-out',
+      'run-as',
+      appPackage,
+      'cat',
+      'files/BackgroundStorageLiveness/$name',
+    ]);
+    final decoded = jsonDecode(output.stdout);
+    if (decoded is! Map<String, dynamic>) {
+      throw _CampaignFailure(_stage, 'G21 receipt is not a JSON object.');
+    }
+    final receipt = Map<String, Object?>.from(decoded);
+    const exactKeys = <String>{
+      'schema',
+      'kind',
+      'measurementMode',
+      'aggregateElapsedAtEligibilityStartMs',
+      'remainingAtEligibilityStartMs',
+      'eligibilityElapsedMs',
+      'nativeEntryTailMs',
+      'terminalOutcome',
+      'buildMode',
+      'engineRole',
+    };
+    if (receipt.keys.toSet().difference(exactKeys).isNotEmpty ||
+        exactKeys.difference(receipt.keys.toSet()).isNotEmpty ||
+        receipt['schema'] != 'mknoon.plan393.g21-measurement.v1' ||
+        receipt['kind'] != 'direct_message' ||
+        receipt['measurementMode'] != 'raw_aggregate_remainder' ||
+        receipt['terminalOutcome'] != 'shown' ||
+        receipt['buildMode'] != 'profile' ||
+        receipt['engineRole'] != 'flutterfire_background') {
+      throw _CampaignFailure(
+        _stage,
+        'G21 receipt fixed-domain contract was rejected.',
+      );
+    }
+    _nonNegativeReceiptInt(receipt, 'aggregateElapsedAtEligibilityStartMs');
+    _positiveReceiptInt(receipt, 'remainingAtEligibilityStartMs');
+    _nonNegativeReceiptInt(receipt, 'eligibilityElapsedMs');
+    _nonNegativeReceiptInt(receipt, 'nativeEntryTailMs');
+    return receipt;
+  }
+
+  int _nonNegativeReceiptInt(Map<String, Object?> receipt, String key) {
+    final value = int.tryParse(receipt[key]?.toString() ?? '');
+    if (value == null || value < 0 || value > 8000) {
+      throw _CampaignFailure(_stage, 'G21 receipt timing $key was rejected.');
+    }
+    return value;
+  }
+
+  int _positiveReceiptInt(Map<String, Object?> receipt, String key) {
+    final value = _nonNegativeReceiptInt(receipt, key);
+    if (value <= 0) {
+      throw _CampaignFailure(_stage, 'G21 receipt timing $key was zero.');
+    }
+    return value;
   }
 
   Future<Map<String, Object?>> _captureUnreadLifecycle({
@@ -2160,9 +4156,14 @@ class _HeadProvenanceCampaign {
         'revision': build.revision,
         'cleanCurrentBuild': !_workingTreeBuild,
         'workingTreeCandidate': _workingTreeBuild,
-        'reusedPrebuiltCandidate': reuseWorkingTreeApks,
+        'reusedPrebuiltCandidate': noChildBuilds || reuseWorkingTreeApks,
+        'buildMode': build.buildMode,
+        'buildProfile': build.buildProfile,
+        'childBuildCount': build.childBuildCount,
         'apkSha256': build.normalApkSha256,
         'senderHarnessApkSha256': build.e2eApkSha256,
+        'senderApkSha256': build.e2eApkSha256,
+        'recipientApkSha256': build.normalApkSha256,
         'senderDevice': senderId,
         'recipientDevice': recipientId,
       },
@@ -2975,6 +4976,90 @@ class _HeadProvenanceCampaign {
       value != '.' &&
       value != '..';
 
+  void _writeFirstWakeProfileAotArtifact({
+    required _RelayInfo relayInfo,
+    required Map<String, Object?> evidence,
+  }) {
+    if (!_exactRestorationComplete ||
+        _initialPackageStates.values.any(
+          (state) => !state.packageStateRestored || !state.privateDataRestored,
+        )) {
+      throw _CampaignFailure(
+        _stage,
+        'Profile-AOT proof cannot publish before exact state restoration.',
+      );
+    }
+    final build = _build!;
+    if (build.buildProfile != _firstWakeProfileAotBuildProfile ||
+        build.buildMode != 'standalone_child_builds' ||
+        build.childBuildCount != 2) {
+      throw _CampaignFailure(
+        _stage,
+        'Profile-AOT proof build provenance is incomplete.',
+      );
+    }
+    final staleFailure = File(
+      '${artifactDir.path}/${_artifactStem}_failure.json',
+    );
+    if (staleFailure.existsSync()) staleFailure.deleteSync();
+    final artifact = <String, Object?>{
+      'schema': 'mknoon.plan393.android-first-wake-profile-aot.v1',
+      'testCase': _testCase,
+      'scenario': _scenario,
+      'status': 'passed',
+      'capturedAt': DateTime.now().toUtc().toIso8601String(),
+      'mode': evidence['mode'],
+      'app': <String, Object?>{
+        'revision': build.revision,
+        'workingTreeCandidate': true,
+        'buildMode': build.buildMode,
+        'buildProfile': build.buildProfile,
+        'childBuildCount': build.childBuildCount,
+        'profileAot': true,
+        'senderHarnessApkSha256': build.e2eApkSha256,
+        'recipientProfileApkSha256': build.normalApkSha256,
+        'recipientDevice': recipientId,
+        'senderDevice': senderId,
+      },
+      'providerInputs': <String, Object?>{
+        'serviceAccountSha256': sha256
+            .convert(serviceAccount!.readAsBytesSync())
+            .toString(),
+        'stagingManifestSha256': sha256
+            .convert(stagingManifest!.readAsBytesSync())
+            .toString(),
+      },
+      'relay': <String, Object?>{
+        'revision': '${relayInfo.version}+sha256:${relayInfo.sha256}',
+        'realFcm': true,
+      },
+      'observation': evidence,
+      'restoration': <String, Object?>{
+        for (final entry in _initialPackageStates.entries)
+          entry.key: <String, Object?>{
+            'initiallyInstalled': entry.value.installed,
+            'packageStateRestored': entry.value.packageStateRestored,
+            'privateDataRestored': entry.value.privateDataRestored,
+            'notificationStateRestored': true,
+            'appProcessIdle': true,
+          },
+        'hostBackupDeleted': true,
+        'passWrittenAfterRestoration': true,
+      },
+      'redaction': const <String, Object?>{
+        'rawMessageIdentifierPersisted': false,
+        'rawPeerIdentifierPersisted': false,
+        'rawNotificationCopyPersisted': false,
+        'rawCredentialPersisted': false,
+        'receiptFixedDomain': true,
+      },
+      'containsSecrets': false,
+    };
+    File(
+      '${artifactDir.path}/$_artifactStem.json',
+    ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(artifact));
+  }
+
   void _writeDirectTextPassedArtifact({
     required _RelayInfo relayInfo,
     required Map<String, Object?> unreadLifecycle,
@@ -3308,6 +5393,10 @@ class _HeadProvenanceCampaign {
   }
 
   Future<String> _relayJournalSince(DateTime since) async {
+    if (relayFixtureProbe != null) {
+      final snapshot = await _relayFixtureSnapshot(since);
+      return snapshot['journal']! as String;
+    }
     final epochSeconds = since.millisecondsSinceEpoch ~/ 1000 - 2;
     return (await _ssh([
       'sudo',
@@ -3333,6 +5422,85 @@ class _HeadProvenanceCampaign {
       relayTarget,
       _shellJoin(remoteArgs),
     ]);
+  }
+
+  Future<Map<String, Object?>> _relayFixtureSnapshot(DateTime since) async {
+    final probe = relayFixtureProbe;
+    if (probe == null) {
+      throw _CampaignFailure(_stage, 'Relay fixture probe is unavailable.');
+    }
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final uri = probe.replace(
+        queryParameters: <String, String>{
+          'kind': 'plan393_relay_snapshot',
+          'sinceUnixMs':
+              '${since.toUtc().millisecondsSinceEpoch.clamp(0, 1 << 62)}',
+        },
+      );
+      final request = await client
+          .getUrl(uri)
+          .timeout(const Duration(seconds: 5));
+      final response = await request.close().timeout(
+        const Duration(seconds: 5),
+      );
+      final body = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != HttpStatus.ok) {
+        throw const FormatException('fixture snapshot status');
+      }
+      final decoded = jsonDecode(body);
+      if (decoded is! Map) {
+        throw const FormatException('fixture snapshot object');
+      }
+      final snapshot = decoded.map<String, Object?>(
+        (key, value) => MapEntry('$key', value),
+      );
+      final routesValue = snapshot['selectedRoutes'];
+      if (routesValue is! Map) {
+        throw const FormatException('fixture routes object');
+      }
+      final routes = routesValue.map<String, Object?>(
+        (key, value) => MapEntry('$key', value),
+      );
+      final opaque = routes['opaque'];
+      final rich = routes['rich'];
+      final processStart = snapshot['processStartTimeSeconds'];
+      if (snapshot['schema'] != 'mknoon.plan393.relay-fixture-snapshot.v1' ||
+          snapshot['backend'] != 'redis' ||
+          snapshot['ephemeral'] != true ||
+          snapshot['pushTokenState'] != 'encrypted' ||
+          snapshot['wakeOutcomeAdmissionEnabled'] != true ||
+          snapshot['wakeOutcomeCoordinatorStarted'] != true ||
+          snapshot['directReactionPushEnabled'] != true ||
+          snapshot['realFcmConfigured'] != true ||
+          snapshot['relayVersion'] is! String ||
+          !RegExp(
+            r'^[0-9a-f]{64}$',
+          ).hasMatch('${snapshot['relayBinarySha256']}') ||
+          processStart is! num ||
+          !processStart.isFinite ||
+          processStart <= 0 ||
+          opaque is! int ||
+          opaque < 0 ||
+          rich is! int ||
+          rich < 0 ||
+          snapshot['journal'] is! String) {
+        throw const FormatException('fixture snapshot attestation');
+      }
+      snapshot['selectedRoutes'] = routes;
+      return snapshot;
+    } on Object {
+      throw _CampaignFailure(
+        _stage,
+        'The encrypted Redis/FCM relay fixture snapshot is unreadable.',
+        environmentBlocked: true,
+      );
+    } finally {
+      client.close(force: true);
+    }
   }
 
   Future<_CommandOutput> _adb(
@@ -3502,4 +5670,21 @@ String? _valueFor(List<String> args, String name) {
     }
   }
   return null;
+}
+
+Uri? _parseRelayFixtureProbe(String? raw) {
+  final value = raw?.trim() ?? '';
+  if (value.isEmpty) return null;
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      uri.scheme != 'http' ||
+      uri.host.isEmpty ||
+      uri.port <= 0 ||
+      !RegExp(r'^/[0-9a-f]{64}$').hasMatch(uri.path) ||
+      uri.hasQuery ||
+      uri.hasFragment ||
+      uri.userInfo.isNotEmpty) {
+    return null;
+  }
+  return uri;
 }

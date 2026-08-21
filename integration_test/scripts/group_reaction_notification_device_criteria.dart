@@ -16,6 +16,8 @@ const String groupReactionNotificationStagingSchema =
     'mknoon.plan257.staging-prerequisites.v1';
 const String groupReactionBackgroundConnectedScenarioId =
     'android_group_reaction_recipient_background_connected';
+const String groupStrictNotificationScenarioId =
+    'android_strict_group_notification_closure';
 const int groupReactionBackgroundConnectedHomeToReactDelayMs = 3000;
 const int groupReactionBackgroundConnectedObservationWindowMs = 60000;
 const String groupReactionBackgroundConnectedObservationPrefix =
@@ -780,6 +782,27 @@ groupNotificationProjectionAndroidSourceScenario =
       evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[],
     );
 
+/// Plan 393 strict-authority source extension.
+///
+/// The shared capture driver supplies device/UI/relay mechanics; this row has
+/// a dedicated artifact grammar and never joins the legacy Plan-257 matrix.
+const GroupReactionNotificationScenario groupStrictNotificationSourceScenario =
+    GroupReactionNotificationScenario(
+      id: groupStrictNotificationScenarioId,
+      testCase: 'TC-393-08',
+      summary:
+          'strict group exact-chat suppression plus killed message and '
+          'author-targeted ADD wake on the Android pair',
+      groupType: 'chat',
+      senderRole: 'strict_member_reactor',
+      senderPlatform: 'android',
+      senderDeviceKind: 'emulator',
+      recipientRole: 'strict_target_author',
+      recipientPlatform: 'android',
+      recipientDeviceKind: 'physical',
+      evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[],
+    );
+
 /// Plan 379 muted-group source extensions (G4 closure).
 ///
 /// Like [groupNotificationProjectionAndroidSourceScenario] these deliberately
@@ -861,6 +884,9 @@ GroupReactionNotificationScenario? groupReactionNotificationScenario(
   if (id == groupNotificationProjectionAndroidSourceScenario.id) {
     return groupNotificationProjectionAndroidSourceScenario;
   }
+  if (id == groupStrictNotificationSourceScenario.id) {
+    return groupStrictNotificationSourceScenario;
+  }
   for (final scenario in groupMutedNotificationSourceScenarios) {
     if (scenario.id == id) return scenario;
   }
@@ -878,6 +904,7 @@ enum GroupReactionCaptureLifecycleStage {
   mutedMessageSuppression,
   mutedReactionBackgroundSuppression,
   groupTextKilledAppCard,
+  strictNotificationClosure,
 }
 
 /// Which SQLCipher probe shape a scenario id asks the installed app for.
@@ -898,6 +925,7 @@ enum GroupReactionCaptureValidatorKind {
   notificationProjection,
   muted,
   killedTextCard,
+  strictNotification,
 }
 
 final class GroupReactionCaptureDispatch {
@@ -956,6 +984,14 @@ GroupReactionCaptureDispatch? groupReactionCaptureDispatchFor(
       lifecycleStage: GroupReactionCaptureLifecycleStage.notificationProjection,
       observationKind: GroupReactionCaptureObservationKind.reactionTarget,
       validatorKind: GroupReactionCaptureValidatorKind.notificationProjection,
+    );
+  }
+  if (scenarioId == groupStrictNotificationSourceScenario.id) {
+    return const GroupReactionCaptureDispatch(
+      lifecycleStage:
+          GroupReactionCaptureLifecycleStage.strictNotificationClosure,
+      observationKind: GroupReactionCaptureObservationKind.reactionTarget,
+      validatorKind: GroupReactionCaptureValidatorKind.strictNotification,
     );
   }
   if (scenarioId.endsWith('_message_unread_lifecycle')) {

@@ -13,11 +13,13 @@ class DroppedPushRecoveryBridge internal constructor(
     private val store: DroppedPushRecoveryStore = DroppedPushRecoveryStore(context),
     recoverySignal: ((Long) -> Unit)? = null,
     cancelRecoveryNotification: (() -> Unit)? = null,
+    registerProcessSignals: Boolean = false,
     private val bindingScheduler: RecoveryBindingScheduler =
         DroppedPushRecoveryWorkScheduler(context),
 ) : MethodChannel.MethodCallHandler {
     companion object {
         internal const val CHANNEL_NAME = "mknoon/dropped_push_recovery"
+        internal const val PLAN393_DIAGNOSTIC_TAG = "MknoonPlan393Recovery"
         private const val RECOVERY_PENDING_CALLBACK = "recoveryPending"
 
         // Plan-375 Android consumer readiness version. Dart requires this exact
@@ -35,6 +37,11 @@ class DroppedPushRecoveryBridge internal constructor(
         MknoonFirebaseMessagingService.cancelRecoveryNotification(
             applicationContext,
         )
+    }
+    private val processSignalRegistration = if (registerProcessSignals) {
+        DroppedPushRecoveryProcessSignalRegistry.register(signalRecovery)
+    } else {
+        null
     }
 
     init {
@@ -86,13 +93,18 @@ class DroppedPushRecoveryBridge internal constructor(
                         null,
                     )
                 } else {
-                    result.success(
-                        store.acknowledgeRecovery(
-                            generation,
-                            binding,
-                            cancelRecoveryCard,
-                        ),
+                    val acknowledged = store.acknowledgeRecovery(
+                        generation,
+                        binding,
+                        cancelRecoveryCard,
                     )
+                    if (acknowledged) {
+                        emitPlan393AcknowledgementDiagnostic(
+                            generation = generation,
+                            owner = "warm",
+                        )
+                    }
+                    result.success(acknowledged)
                 }
             }
             "headlessAcknowledgeRecovery" -> {
@@ -111,18 +123,50 @@ class DroppedPushRecoveryBridge internal constructor(
                         null,
                     )
                 } else {
-                    result.success(
-                        store.acknowledgeHeadlessRecovery(
-                            generation,
-                            binding,
-                            authorityRevision,
-                            cancelRecoveryCard,
-                        ),
+                    val acknowledged = store.acknowledgeHeadlessRecovery(
+                        generation,
+                        binding,
+                        authorityRevision,
+                        cancelRecoveryCard,
                     )
+                    if (acknowledged) {
+                        emitPlan393AcknowledgementDiagnostic(
+                            generation = generation,
+                            owner = "headless",
+                        )
+                    }
+                    result.success(acknowledged)
                 }
             }
             else -> result.notImplemented()
         }
+    }
+
+    /** Identity-free acknowledgement/card-retirement proof for debug E2E. */
+    private fun emitPlan393AcknowledgementDiagnostic(
+        generation: Long,
+        owner: String,
+    ) {
+        if (
+            (
+                applicationContext.applicationInfo.flags and
+                    android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE
+                ) == 0
+        ) {
+            return
+        }
+        android.util.Log.i(
+            PLAN393_DIAGNOSTIC_TAG,
+            org.json.JSONObject()
+                .put("event", "plan393_recovery_generation_acknowledged")
+                .put("pid", android.os.Process.myPid())
+                .put("generation", generation)
+                .put("owner", owner)
+                .put("genericCardTag", MknoonFirebaseMessagingService.RECOVERY_NOTIFICATION_TAG)
+                .put("genericCardId", MknoonFirebaseMessagingService.RECOVERY_NOTIFICATION_ID)
+                .put("genericCardRetired", true)
+                .toString(),
+        )
     }
 
     private fun recoveryAuthorityMap(): Map<String, Any?> {
@@ -278,8 +322,19 @@ class DroppedPushRecoveryBridge internal constructor(
         "authorityMutationInProgress" to publication.authorityMutationInProgress,
     )
 
-    fun acknowledgeGeneration(generation: Long): Boolean =
-        store.acknowledgeGeneration(generation, cancelRecoveryCard)
+    fun acknowledgeGeneration(generation: Long): Boolean {
+        val acknowledged = store.acknowledgeGeneration(
+            generation,
+            cancelRecoveryCard,
+        )
+        if (acknowledged) {
+            emitPlan393AcknowledgementDiagnostic(
+                generation = generation,
+                owner = "warm",
+            )
+        }
+        return acknowledged
+    }
 
     /** Warm-intent acceleration only; the committed marker remains authoritative. */
     fun onWarmIntent(intent: Intent): Boolean {
@@ -324,6 +379,9 @@ class DroppedPushRecoveryBridge internal constructor(
     }
 
     fun dispose() {
+        processSignalRegistration?.let(
+            DroppedPushRecoveryProcessSignalRegistry::unregister,
+        )
         methodChannel?.setMethodCallHandler(null)
     }
 }

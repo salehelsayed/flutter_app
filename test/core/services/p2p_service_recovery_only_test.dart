@@ -297,6 +297,34 @@ void main() {
             envelope: _chatEnvelope('already-durable'),
             stagedAt: '2026-08-16T00:00:00.000Z',
           ),
+        )
+        ..seed(
+          InboxStagingEntry(
+            entryId: 'self-readiness',
+            ownerPeerId: 'self-peer',
+            senderPeerId: 'self-peer',
+            messageType: 'readiness_proof',
+            relayTimestamp: '2026-08-16T00:00:00.000Z',
+            envelope: jsonEncode(<String, dynamic>{
+              'type': 'readiness_proof',
+              'version': '1',
+            }),
+            stagedAt: '2026-08-16T00:00:00.000Z',
+          ),
+        )
+        ..seed(
+          InboxStagingEntry(
+            entryId: 'foreign-readiness',
+            ownerPeerId: 'self-peer',
+            senderPeerId: 'remote-peer',
+            messageType: 'readiness_proof',
+            relayTimestamp: '2026-08-16T00:00:00.000Z',
+            envelope: jsonEncode(<String, dynamic>{
+              'type': 'readiness_proof',
+              'version': '1',
+            }),
+            stagedAt: '2026-08-16T00:00:00.000Z',
+          ),
         );
       final service = P2PServiceImpl(
         bridge: bridge,
@@ -321,6 +349,12 @@ void main() {
       expect(repo.entry('already-durable')?.status, 'retryable');
       expect(
         repo.entry('already-durable')?.rejectReasonCode,
+        'typed_handler_unavailable',
+      );
+      expect(repo.entry('self-readiness'), isNull);
+      expect(repo.entry('foreign-readiness')?.status, 'retryable');
+      expect(
+        repo.entry('foreign-readiness')?.rejectReasonCode,
         'typed_handler_unavailable',
       );
       expect(genericMessages, 0);

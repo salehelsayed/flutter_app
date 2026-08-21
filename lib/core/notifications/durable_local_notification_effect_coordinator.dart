@@ -212,7 +212,6 @@ final class DurableLocalNotificationEffectCoordinator {
     required ConversationNotificationContentMetadata metadata,
     required Future<void> Function() prepareContent,
     required Future<void> Function() retireCurrent,
-    required Future<void> Function() retireAndActivateContent,
     required Future<bool> Function() ensureContentActivated,
     required Future<bool> Function() hasContentActivationIntent,
     required Future<void> Function() completeContentActivation,
@@ -450,48 +449,18 @@ final class DurableLocalNotificationEffectCoordinator {
       return const DurableLocalNotificationEffectResult.retryable();
     }
 
-    final activationCancel = await _armCancelAttemptLockHeld(
-      context: context,
-      record: record,
-    );
-    if (activationCancel == null) {
-      return const DurableLocalNotificationEffectResult.retryable();
-    }
-    record = activationCancel;
-
-    // The retired card and activated generation marker are both protected by
-    // the same registry lock as PUBLISHING and the callback below.
-    try {
-      await retireAndActivateContent();
-    } on Object {
-      // The old-card cancellation may have reached the platform while marker
-      // activation did not. The durable activation intent lets recovery
-      // resume this exact generation without overwriting a later sibling.
-      return const DurableLocalNotificationEffectResult.ambiguous(
-        currentNativeEntryAttempted: true,
-      );
-    }
-    final postAttempt = await _armPostAttemptLockHeld(
-      context: context,
-      record: record,
-    );
-    if (postAttempt == null) {
-      return const DurableLocalNotificationEffectResult.retryable();
-    }
-    record = postAttempt;
-    await completeContentActivation();
-
     DurableLocalNotificationCanonicalDisposition? canonical;
     AppVisibilityEvaluation? visibility;
     LocalNotificationPresentationState? terminalPresentation;
     Future<bool> authorizeNativeEntry() async {
       canonical = await context.readFinalCanonicalDisposition();
-      final contentIsCurrent = await exactContentIsCurrent();
+      final contentCanBeActivated =
+          await exactContentIsCurrent() || await hasContentActivationIntent();
       // This is the final awaited authority read. Production wraps this
       // closure inside the already-armed event/tone owners and enters the
       // platform callback immediately after its boolean result.
       visibility = await appVisibility.evaluate(conversationIdentity);
-      if (!contentIsCurrent ||
+      if (!contentCanBeActivated ||
           canonical ==
               DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
         return false;
@@ -560,12 +529,39 @@ final class DurableLocalNotificationEffectCoordinator {
           currentNativeEntryAttempted = true;
           await publishNative();
         } on Object {
-          // Native acceptance is ambiguous. PUBLISHING, token, generation and
-          // marker remain intact for exact-ID recovery; never lie as OS_POSTED.
+          // Native acceptance is ambiguous. PUBLISHING, token and the content
+          // activation intent remain intact for an exact silent repair.
           return const DurableLocalNotificationEffectResult.ambiguous(
             currentNativeEntryAttempted: true,
           );
         }
+      }
+    }
+
+    if (terminalPresentation == LocalNotificationPresentationState.osPosted) {
+      try {
+        if (!await ensureContentActivated()) {
+          return DurableLocalNotificationEffectResult.ambiguous(
+            currentNativeEntryAttempted: currentNativeEntryAttempted,
+          );
+        }
+        await completeContentActivation();
+      } on Object {
+        return DurableLocalNotificationEffectResult.ambiguous(
+          currentNativeEntryAttempted: currentNativeEntryAttempted,
+        );
+      }
+    } else {
+      // A final read/policy/visibility decision may retire the conversation
+      // card, but a contended publication that never reached this decision
+      // must leave the existing card untouched.
+      try {
+        await retireCurrent();
+        await completeContentActivation();
+      } on Object {
+        return const DurableLocalNotificationEffectResult.ambiguous(
+          currentNativeEntryAttempted: true,
+        );
       }
     }
 
@@ -627,54 +623,38 @@ final class DurableLocalNotificationEffectCoordinator {
   }) async {
     var currentRecord = record;
     final activationIntentPending = await hasContentActivationIntent();
-    if (activationIntentPending &&
-        currentRecord.attemptKind ==
-            LocalNotificationAttemptKind.postOrUpdate) {
-      final armed = await _armCancelAttemptLockHeld(
-        context: context,
-        record: currentRecord,
-      );
-      if (armed == null) {
-        return const DurableLocalNotificationEffectResult.retryable();
-      }
-      currentRecord = armed;
-    }
-    try {
-      if (!await ensureContentActivated()) {
-        return const DurableLocalNotificationEffectResult.retryable();
-      }
-    } on Object {
-      return const DurableLocalNotificationEffectResult.ambiguous(
-        currentNativeEntryAttempted: true,
-      );
-    }
-    if (activationIntentPending) {
-      final postAttempt = await _armPostAttemptLockHeld(
-        context: context,
-        record: currentRecord,
-      );
-      if (postAttempt == null) {
-        return const DurableLocalNotificationEffectResult.retryable();
-      }
-      currentRecord = postAttempt;
-      await completeContentActivation();
-    }
-    final canonical = await context.readFinalCanonicalDisposition();
     final contentIsCurrent = await exactContentIsCurrent();
 
+    // Versions before in-place replacement used CANCEL as an intermediate
+    // activation step. Preserve recovery of those on-disk records without
+    // introducing a new pre-publication cancel.
+    if (activationIntentPending &&
+        currentRecord.attemptKind == LocalNotificationAttemptKind.cancel) {
+      final resumed = await _armPostAttemptLockHeld(
+        context: context,
+        record: currentRecord,
+      );
+      if (resumed == null) {
+        return const DurableLocalNotificationEffectResult.retryable();
+      }
+      currentRecord = resumed;
+    }
+    final canonical = await context.readFinalCanonicalDisposition();
+
     var inventorySucceeded = false;
+    var stableIdIsActive = false;
     var exactIdIsActive = false;
-    if (contentIsCurrent &&
-        currentRecord.attemptKind != LocalNotificationAttemptKind.cancel &&
+    if (currentRecord.attemptKind != LocalNotificationAttemptKind.cancel &&
         canonical == DurableLocalNotificationCanonicalDisposition.eligible) {
       final resolveActive = activeNotificationIds;
       if (resolveActive != null) {
         try {
           final activeIds = await resolveActive();
           inventorySucceeded = true;
-          exactIdIsActive = activeIds.any(
+          stableIdIsActive = activeIds.any(
             (candidate) => candidate is int && candidate == notificationId,
           );
+          exactIdIsActive = contentIsCurrent && stableIdIsActive;
         } on Object {
           inventorySucceeded = false;
         }
@@ -685,9 +665,8 @@ final class DurableLocalNotificationEffectCoordinator {
     // Any cancel or silent repair callback below is entered immediately after
     // synchronous branches over these captured facts.
     final visibility = await appVisibility.evaluate(conversationIdentity);
-    if (!contentIsCurrent ||
-        canonical ==
-            DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
+    if (canonical ==
+        DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
       return const DurableLocalNotificationEffectResult.retryable();
     }
 
@@ -702,6 +681,7 @@ final class DurableLocalNotificationEffectCoordinator {
           currentNativeEntryAttempted: true,
         );
       }
+      await completeContentActivation();
       final pendingPresentation = switch (canonical) {
         DurableLocalNotificationCanonicalDisposition.suppressedPolicy =>
           LocalNotificationPresentationState.suppressedPolicy,
@@ -744,6 +724,7 @@ final class DurableLocalNotificationEffectCoordinator {
           currentNativeEntryAttempted: true,
         );
       }
+      await completeContentActivation();
       return _finishRecoveredPublishingLockHeld(
         context: context,
         record: currentRecord,
@@ -756,19 +737,6 @@ final class DurableLocalNotificationEffectCoordinator {
       );
     }
 
-    if (inventorySucceeded && exactIdIsActive) {
-      // Exact stable ID plus the exact on-disk generation proves the prior
-      // native post/update. Never invoke the native callback a second time.
-      return _finishRecoveredPublishingLockHeld(
-        context: context,
-        record: currentRecord,
-        visibility: visibility,
-        presentation: LocalNotificationPresentationState.osPosted,
-        clearActivatedContent: clearActivatedContent,
-        currentNativeEntryAttempted: false,
-      );
-    }
-
     final finalSameChat =
         visibility.maySuppress &&
         visibility.hasExactSnapshotMetadata &&
@@ -778,15 +746,8 @@ final class DurableLocalNotificationEffectCoordinator {
       if (!inventorySucceeded && !recoveryHorizonReached) {
         return const DurableLocalNotificationEffectResult.ambiguous();
       }
-      if (!inventorySucceeded) {
-        final armed = await _armCancelAttemptLockHeld(
-          context: context,
-          record: currentRecord,
-        );
-        if (armed == null) {
-          return const DurableLocalNotificationEffectResult.retryable();
-        }
-        currentRecord = armed;
+      final mustCancel = !inventorySucceeded || stableIdIsActive;
+      if (mustCancel) {
         try {
           await retireCurrent();
         } on Object {
@@ -795,13 +756,32 @@ final class DurableLocalNotificationEffectCoordinator {
           );
         }
       }
+      await completeContentActivation();
       return _finishRecoveredPublishingLockHeld(
         context: context,
         record: currentRecord,
         visibility: visibility,
         presentation: LocalNotificationPresentationState.inChat,
         clearActivatedContent: clearActivatedContent,
-        currentNativeEntryAttempted: !inventorySucceeded,
+        currentNativeEntryAttempted: mustCancel,
+      );
+    }
+
+    if (!contentIsCurrent && !activationIntentPending) {
+      return const DurableLocalNotificationEffectResult.retryable();
+    }
+
+    if (inventorySucceeded && exactIdIsActive) {
+      // Metadata activation now happens only after native show returns. Exact
+      // stable ID plus exact on-disk generation therefore proves the update.
+      await completeContentActivation();
+      return _finishRecoveredPublishingLockHeld(
+        context: context,
+        record: currentRecord,
+        visibility: visibility,
+        presentation: LocalNotificationPresentationState.osPosted,
+        clearActivatedContent: clearActivatedContent,
+        currentNativeEntryAttempted: false,
       );
     }
 
@@ -817,6 +797,13 @@ final class DurableLocalNotificationEffectCoordinator {
     }
     try {
       await publishSilent();
+      if (!await ensureContentActivated()) {
+        return const DurableLocalNotificationEffectResult.ambiguous(
+          currentNativeEntryAttempted: true,
+          currentNativeEntryWasSilentRepair: true,
+        );
+      }
+      await completeContentActivation();
     } on Object {
       return const DurableLocalNotificationEffectResult.ambiguous(
         currentNativeEntryAttempted: true,

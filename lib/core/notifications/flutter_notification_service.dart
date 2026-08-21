@@ -411,6 +411,12 @@ class FlutterNotificationService
           silent: silent,
           plugin: _plugin,
         );
+        final preservePrimaryAndroidChannel =
+            await shouldPreserveMknoonPrimaryChannelForSilentUpdate(
+              silent: effectiveSilent,
+              notificationId: notificationId,
+              plugin: _plugin,
+            );
         publishedSilently = effectiveSilent;
         return _plugin.show(
           notificationId,
@@ -419,6 +425,7 @@ class FlutterNotificationService
           mknoonConversationNotificationDetails(
             conversationKey: contactPeerId,
             silent: effectiveSilent,
+            preservePrimaryAndroidChannel: preservePrimaryAndroidChannel,
             autoCancel: metadata == null,
             snapshot: snapshot,
           ),
@@ -427,6 +434,7 @@ class FlutterNotificationService
       }
 
       DurableLocalNotificationEffectResult? durableResult;
+      var duplicateContentEvent = false;
       if (durableEffectContext != null) {
         final contentRegistry = await _resolveNotificationContentRegistry();
         if (metadata == null ||
@@ -463,16 +471,24 @@ class FlutterNotificationService
         await publishNative(show);
       } else {
         final contentRegistry = await _resolveNotificationContentRegistry();
-        await contentRegistry.replaceContent(
+        final replacement = await contentRegistry.replaceContent(
           conversationKey: contactPeerId,
           notificationId: notificationId,
           metadata: metadata,
-          retireCurrent: () => _plugin.cancel(notificationId),
           replace: () => publishNative(show),
         );
+        duplicateContentEvent =
+            replacement ==
+            ConversationNotificationContentReplacementResult.alreadyCurrent;
       }
 
-      if (durableResult == null ||
+      if (duplicateContentEvent) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'NOTIFICATION_DUPLICATE_CARD_PRESERVED',
+          details: const {'reason': 'same_content_event'},
+        );
+      } else if (durableResult == null ||
           (durableResult.disposition ==
                   DurableLocalNotificationEffectDisposition.osPosted &&
               durableResult.currentNativeEntryAttempted)) {
@@ -673,7 +689,6 @@ class FlutterNotificationService
         notificationId: notificationId,
         expectedGeneration: expectedGeneration,
         metadata: metadata,
-        retireCurrent: () => _plugin.cancel(notificationId),
         // Same withdrawal as the publication path: a same-ID rebuild is still
         // a post, and on a blocked primary channel it would otherwise CREATE a
         // card on the silent channel rather than refresh an existing one.
@@ -682,6 +697,12 @@ class FlutterNotificationService
             silent: true,
             plugin: _plugin,
           );
+          final preservePrimaryAndroidChannel =
+              await shouldPreserveMknoonPrimaryChannelForSilentUpdate(
+                silent: effectiveSilent,
+                notificationId: notificationId,
+                plugin: _plugin,
+              );
           await _plugin.show(
             notificationId,
             replacement.senderUsername,
@@ -689,6 +710,7 @@ class FlutterNotificationService
             mknoonConversationNotificationDetails(
               conversationKey: conversationKey,
               silent: effectiveSilent,
+              preservePrimaryAndroidChannel: preservePrimaryAndroidChannel,
               autoCancel: false,
               snapshot: replacement.snapshot,
             ),
