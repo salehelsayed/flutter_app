@@ -1643,7 +1643,7 @@ func TestRelayNotificationClosure_PushRouteEncryptedResolutionFeedsEveryRichSend
 		if err != nil {
 			t.Fatalf("glob production Go: %v", err)
 		}
-		var lookupOwners, resolveOwners, legacyLookupOwners, gatewayCallers []string
+		var lookupOwners, resolveOwners, legacyLookupOwners, gatewayCallers, directAdapterCallers []string
 		fset := token.NewFileSet()
 		var groupSelect, groupAttempted, groupGo token.Pos
 		for _, path := range files {
@@ -1672,6 +1672,8 @@ func TestRelayNotificationClosure_PushRouteEncryptedResolutionFeedsEveryRichSend
 								legacyLookupOwners = append(legacyLookupOwners, function.Name.Name)
 							case "sendSelectedPushThroughGateway":
 								gatewayCallers = append(gatewayCallers, function.Name.Name)
+							case "sendRichNotification":
+								directAdapterCallers = append(directAdapterCallers, function.Name.Name)
 							}
 						} else if identifier, ok := typed.Fun.(*ast.Ident); ok && identifier.Name == "sendSelectedPushThroughGateway" {
 							gatewayCallers = append(gatewayCallers, function.Name.Name)
@@ -1706,16 +1708,27 @@ func TestRelayNotificationClosure_PushRouteEncryptedResolutionFeedsEveryRichSend
 		sort.Strings(gatewayCallers)
 		wantCallers := []string{
 			"SendGroupNotification",
-			"SendNotification",
 			// G26: strict-authority group content never reaches the group
 			// topic, so it needs its own adapter onto the shared gateway.
 			"sendGroupContentNotificationForRoute",
 			"sendGroupReactionNotificationForRoute",
 			"sendOpaqueWakeThroughGateway",
 			"sendReactionNotificationForRoute",
+			// TC-395: public direct sends and stored-custody direct sends
+			// converge before route selection in this one rich adapter.
+			"sendRichNotification",
 		}
 		if !reflect.DeepEqual(gatewayCallers, wantCallers) {
 			t.Fatalf("selection gateway callers = %#v, want five adapters plus outcome gateway %#v", gatewayCallers, wantCallers)
+		}
+		sort.Strings(directAdapterCallers)
+		wantDirectAdapterCallers := []string{"SendNotification", "sendStoredNotification"}
+		if !reflect.DeepEqual(directAdapterCallers, wantDirectAdapterCallers) {
+			t.Fatalf(
+				"direct rich adapter callers = %#v, want public plus stored-custody entrypoints %#v",
+				directAdapterCallers,
+				wantDirectAdapterCallers,
+			)
 		}
 		if groupSelect == token.NoPos || groupAttempted == token.NoPos || groupGo == token.NoPos ||
 			!(groupSelect < groupAttempted && groupAttempted < groupGo) {

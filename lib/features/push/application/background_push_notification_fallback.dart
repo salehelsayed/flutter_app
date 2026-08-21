@@ -761,8 +761,11 @@ String _defaultBodyFor(RemoteMessage message) {
 }
 
 bool _routesToIntros(RemoteMessage message) {
-  return NotificationRouteTarget.fromRemoteMessageData(message.data)?.kind ==
-      NotificationRouteTargetKind.intros;
+  final kind = NotificationRouteTarget.fromRemoteMessageData(
+    message.data,
+  )?.kind;
+  return kind == NotificationRouteTargetKind.intros ||
+      kind == NotificationRouteTargetKind.groupInvite;
 }
 
 bool _routesToDirectReaction(RemoteMessage message) {

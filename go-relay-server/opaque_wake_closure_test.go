@@ -758,7 +758,7 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 			t.Fatalf("glob production Go: %v", err)
 		}
 		fileSet := token.NewFileSet()
-		var lookupOwners, resolveOwners, selectionCallers []string
+		var lookupOwners, resolveOwners, selectionCallers, directAdapterCallers []string
 		for _, path := range paths {
 			if strings.HasSuffix(path, "_test.go") {
 				continue
@@ -788,6 +788,8 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 						resolveOwners = append(resolveOwners, function.Name.Name)
 					case "sendSelectedPushThroughGateway":
 						selectionCallers = append(selectionCallers, function.Name.Name)
+					case "sendRichNotification":
+						directAdapterCallers = append(directAdapterCallers, function.Name.Name)
 					}
 					return true
 				})
@@ -802,19 +804,30 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 		sort.Strings(selectionCallers)
 		wantCallers := []string{
 			"SendGroupNotification",
-			"SendNotification",
 			// G26: strict-authority group content never reaches the group
 			// topic, so it needs its own adapter onto the shared gateway.
 			"sendGroupContentNotificationForRoute",
 			"sendGroupReactionNotificationForRoute",
 			"sendOpaqueWakeThroughGateway",
 			"sendReactionNotificationForRoute",
+			// TC-395: public direct sends and stored-custody direct sends
+			// converge before route selection in this one rich adapter.
+			"sendRichNotification",
 		}
 		if !reflect.DeepEqual(selectionCallers, wantCallers) {
 			t.Fatalf(
 				"selection callers = %#v, want five adapters plus outcome gateway %#v",
 				selectionCallers,
 				wantCallers,
+			)
+		}
+		sort.Strings(directAdapterCallers)
+		wantDirectAdapterCallers := []string{"SendNotification", "sendStoredNotification"}
+		if !reflect.DeepEqual(directAdapterCallers, wantDirectAdapterCallers) {
+			t.Fatalf(
+				"direct rich adapter callers = %#v, want public plus stored-custody entrypoints %#v",
+				directAdapterCallers,
+				wantDirectAdapterCallers,
 			)
 		}
 	})

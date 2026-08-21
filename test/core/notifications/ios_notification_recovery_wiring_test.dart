@@ -763,6 +763,12 @@ final class _RecoveryBridgeWithLease implements IosNotificationRecoveryBridge {
     required CanonicalNotificationLane lane,
     required String conversationId,
   }) async {}
+
+  @override
+  Future<void> retireGroupInvite({
+    required String groupId,
+    required String inviteId,
+  }) async {}
 }
 
 final class _AmbiguousConsumeRecoveryBridge
@@ -820,6 +826,12 @@ final class _AmbiguousConsumeRecoveryBridge
     required CanonicalNotificationLane lane,
     required String conversationId,
   }) async {}
+
+  @override
+  Future<void> retireGroupInvite({
+    required String groupId,
+    required String inviteId,
+  }) async {}
 }
 
 final class _LeaseThenNullRecoveryBridge
@@ -875,6 +887,12 @@ final class _LeaseThenNullRecoveryBridge
     required String accountPeerId,
     required CanonicalNotificationLane lane,
     required String conversationId,
+  }) async {}
+
+  @override
+  Future<void> retireGroupInvite({
+    required String groupId,
+    required String inviteId,
   }) async {}
 }
 

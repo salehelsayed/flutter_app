@@ -735,6 +735,57 @@ void main() {
 
   group('firebaseMessagingBackgroundHandler', () {
     test(
+      'TC-395-05 group invite fallback keeps a non-conversation exact route identity',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (message) async => buildBackgroundPushFallbackNotification(message),
+        );
+        final registry = await useIsolatedBackgroundNotificationRegistry(
+          'group-invite-exact-route',
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        for (final inviteId in const ['invite-a', 'invite-b']) {
+          await firebaseMessagingBackgroundHandler(
+            RemoteMessage(
+              messageId: 'provider-$inviteId',
+              data: <String, dynamic>{
+                'type': 'group_invite',
+                'groupId': 'group-395',
+                'message_id': inviteId,
+              },
+            ),
+          );
+        }
+
+        const firstKey = 'group_invite:group-395|message:invite-a';
+        const secondKey = 'group_invite:group-395|message:invite-b';
+        final firstId = await registry.lookup(firstKey);
+        final secondId = await registry.lookup(secondKey);
+        expect(firstId, isNotNull);
+        expect(secondId, isNotNull);
+        expect(firstId, isNot(secondId));
+        expect(await registry.lookup('group:group-395'), isNull);
+
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(2));
+        expect((shows.first.arguments as Map)['payload'], firstKey);
+        expect((shows.last.arguments as Map)['payload'], secondKey);
+      },
+    );
+
+    test(
       'TC-393-04 nondurable final barrier prevents canonical or visible race',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;

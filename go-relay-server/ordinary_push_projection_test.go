@@ -100,6 +100,53 @@ func wholeMessageMarshalLen(t *testing.T, msg *messaging.Message) int {
 	return len(raw)
 }
 
+type tc395PreflightCapableInboxBackend struct {
+	InboxBackend
+}
+
+func (b *tc395PreflightCapableInboxBackend) StoreWithWakeOutcome(
+	_ string,
+	_ inboxMessage,
+	_ wakeOutcomeAdmission,
+) (InboxStoreResult, wakeOutcomeAdmissionStatus, error) {
+	return "", "", fmt.Errorf("TC-395-01 fixture unexpectedly admitted a wake outcome")
+}
+
+func tc395GroupInviteEnvelope(inviteID string) string {
+	return fmt.Sprintf(
+		`{"type":"group_invite","version":"2","id":%q,"senderPeerId":"peer-from","senderUsername":"Alice","groupId":"group-395","groupName":"Book Club","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+		inviteID,
+	)
+}
+
+func tc395WaitForProviderCalls(
+	t *testing.T,
+	recorder *recordingPushSender,
+	want int,
+) {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for recorder.SendCallCount() < want {
+		select {
+		case <-recorder.sentSignal:
+		case <-timer.C:
+			t.Fatalf("provider sends = %d, want %d", recorder.SendCallCount(), want)
+		}
+	}
+	if got := recorder.SendCallCount(); got != want {
+		t.Fatalf("provider sends = %d, want exactly %d", got, want)
+	}
+}
+
+func tc395APNSCollapseID(message *messaging.Message) (string, bool) {
+	if message == nil || message.APNS == nil || message.APNS.Headers == nil {
+		return "", false
+	}
+	value, ok := message.APNS.Headers["apns-collapse-id"]
+	return value, ok
+}
+
 // TC-01 — android projection strips APNS on both ordinary lanes; the FCM leg
 // is byte-identical to the un-projected build's.
 func TestRelayNotificationClosure_OrdinaryPushAndroidProjectionStripsApns(t *testing.T) {
@@ -309,6 +356,211 @@ func TestRelayNotificationClosure_OrdinaryPushPlatformNormalization(t *testing.T
 			t.Fatalf("platform %q: fail-open shape diverged from dual-copy", tc.platform)
 		}
 	}
+}
+
+// TC-395-01 — only a stored rich iOS group invite carries the relay custody
+// row ID as its bounded APNs collapse identity. Provider retries reuse that ID;
+// ACK followed by a new custody for the same invite produces a new identity.
+func TestRelayNotificationClosure_GroupInviteCustodyRetryCollapse(t *testing.T) {
+	const (
+		recipient = "tc395-recipient"
+		sender    = "tc395-sender"
+	)
+	invite := tc395GroupInviteEnvelope("tc395-invite")
+
+	t.Run("normal stored rich retries reuse custody and a new row differs", func(t *testing.T) {
+		tokens := newMemoryPushTokenStore()
+		if err := tokens.RegisterToken(recipient, "tc395-ios-token", "ios"); err != nil {
+			t.Fatalf("register iOS route: %v", err)
+		}
+		push := NewPushServiceWithBackend(tokens)
+		push.retryDelays = []time.Duration{0}
+		recorder := newRecordingPushSender()
+		recorder.onSend = func(context.Context, *messaging.Message) (string, error) {
+			if recorder.SendCallCount() == 1 {
+				return "", fmt.Errorf("temporary provider outage")
+			}
+			return "tc395-provider-id", nil
+		}
+		push.sender = recorder.Send
+		inbox := NewInboxStore(push)
+
+		stored, err := inbox.Store(recipient, inboxMessage{
+			From:      sender,
+			Message:   invite,
+			Timestamp: time.Now().UnixMilli(),
+		})
+		if err != nil || stored != InboxStoreResultStored {
+			t.Fatalf("store custody A: result=%q err=%v", stored, err)
+		}
+		pending, _ := inbox.RetrievePendingWithMeta(recipient, 10)
+		if len(pending) != 1 || strings.TrimSpace(pending[0].ID) == "" {
+			t.Fatalf("pending custody A = %#v, want one generated ID", pending)
+		}
+		custodyA := pending[0].ID
+		tc395WaitForProviderCalls(t, recorder, 2)
+		for index, sent := range recorder.Messages()[:2] {
+			if got, ok := tc395APNSCollapseID(sent); !ok || got != custodyA {
+				t.Fatalf("custody A attempt %d collapse ID = %q present=%v, want %q", index+1, got, ok, custodyA)
+			}
+		}
+
+		removed, err := inbox.Ack(recipient, []string{custodyA})
+		if err != nil || removed != 1 {
+			t.Fatalf("ACK custody A: removed=%d err=%v", removed, err)
+		}
+		stored, err = inbox.Store(recipient, inboxMessage{
+			From:      sender,
+			Message:   invite,
+			Timestamp: time.Now().Add(time.Millisecond).UnixMilli(),
+		})
+		if err != nil || stored != InboxStoreResultStored {
+			t.Fatalf("store custody B: result=%q err=%v", stored, err)
+		}
+		pending, _ = inbox.RetrievePendingWithMeta(recipient, 10)
+		if len(pending) != 1 || strings.TrimSpace(pending[0].ID) == "" {
+			t.Fatalf("pending custody B = %#v, want one generated ID", pending)
+		}
+		custodyB := pending[0].ID
+		if custodyB == custodyA {
+			t.Fatalf("new custody reused ID %q", custodyA)
+		}
+		tc395WaitForProviderCalls(t, recorder, 3)
+		if got, ok := tc395APNSCollapseID(recorder.Messages()[2]); !ok || got != custodyB {
+			t.Fatalf("custody B collapse ID = %q present=%v, want %q", got, ok, custodyB)
+		}
+	})
+
+	t.Run("preflight-selected stored rich path keeps generated custody", func(t *testing.T) {
+		tokens := newMemoryPushTokenStore()
+		if err := tokens.RegisterToken(recipient, "tc395-preflight-token", "ios"); err != nil {
+			t.Fatalf("register preflight route: %v", err)
+		}
+		push := NewPushServiceWithBackend(tokens)
+		recorder := newRecordingPushSender()
+		push.sender = recorder.Send
+		backend := &tc395PreflightCapableInboxBackend{InboxBackend: newMemoryInboxBackend()}
+		inbox := NewInboxStoreWithBackend(backend, push)
+		inbox.SetWakeOutcomeAdmissionEnabled(true)
+
+		stored, err := inbox.Store(recipient, inboxMessage{
+			From:      sender,
+			Message:   invite,
+			Timestamp: time.Now().UnixMilli(),
+		})
+		if err != nil || stored != InboxStoreResultStored {
+			t.Fatalf("preflight-selected store: result=%q err=%v", stored, err)
+		}
+		pending, _ := inbox.RetrievePendingWithMeta(recipient, 10)
+		if len(pending) != 1 || strings.TrimSpace(pending[0].ID) == "" {
+			t.Fatalf("preflight pending = %#v, want one generated custody", pending)
+		}
+		tc395WaitForProviderCalls(t, recorder, 1)
+		if got, ok := tc395APNSCollapseID(recorder.Messages()[0]); !ok || got != pending[0].ID {
+			t.Fatalf("preflight collapse ID = %q present=%v, want %q", got, ok, pending[0].ID)
+		}
+	})
+
+	t.Run("custody header is bounded and exact-iOS only", func(t *testing.T) {
+		cases := []struct {
+			name       string
+			platform   string
+			custodyID  string
+			wantAPNS   bool
+			wantHeader bool
+		}{
+			{name: "trimmed empty iOS custody", platform: "ios", custodyID: "   ", wantAPNS: true},
+			{name: "over-64-byte iOS custody", platform: "ios", custodyID: strings.Repeat("é", 33), wantAPNS: true},
+			{name: "android", platform: "android", custodyID: "tc395-android-custody"},
+			{name: "unknown platform", platform: "web", custodyID: "tc395-unknown-custody", wantAPNS: true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				tokens := newMemoryPushTokenStore()
+				if err := tokens.RegisterToken(recipient, "tc395-bounds-token", tc.platform); err != nil {
+					t.Fatalf("register %q route: %v", tc.platform, err)
+				}
+				push := NewPushServiceWithBackend(tokens)
+				recorder := newRecordingPushSender()
+				push.sender = recorder.Send
+				inbox := NewInboxStore(push)
+				inbox.launchStoredDirectPush(recipient, inboxMessage{
+					ID:        tc.custodyID,
+					From:      sender,
+					Message:   invite,
+					Timestamp: time.Now().UnixMilli(),
+				})
+				tc395WaitForProviderCalls(t, recorder, 1)
+				sent := recorder.Messages()[0]
+				if (sent.APNS != nil) != tc.wantAPNS {
+					t.Fatalf("APNS present = %v, want %v", sent.APNS != nil, tc.wantAPNS)
+				}
+				if got, ok := tc395APNSCollapseID(sent); ok != tc.wantHeader {
+					t.Fatalf("collapse ID = %q present=%v, want present=%v", got, ok, tc.wantHeader)
+				}
+			})
+		}
+	})
+
+	t.Run("public non-invite and opaque paths stay unchanged", func(t *testing.T) {
+		t.Run("public group invite has no custody header", func(t *testing.T) {
+			push, recorder := ordinaryPushService("ios")
+			push.SendNotification(context.Background(), "recipient", sender, invite)
+			if got, ok := tc395APNSCollapseID(recorder.Messages()[0]); ok {
+				t.Fatalf("public group invite collapse ID = %q, want absent", got)
+			}
+		})
+
+		t.Run("stored non-invite rich send has no custody header", func(t *testing.T) {
+			tokens := newMemoryPushTokenStore()
+			if err := tokens.RegisterToken(recipient, "tc395-chat-token", "ios"); err != nil {
+				t.Fatalf("register chat route: %v", err)
+			}
+			push := NewPushServiceWithBackend(tokens)
+			recorder := newRecordingPushSender()
+			push.sender = recorder.Send
+			inbox := NewInboxStore(push)
+			inbox.launchStoredDirectPush(recipient, inboxMessage{
+				ID:        "tc395-chat-custody",
+				From:      sender,
+				Message:   ordinaryChatCiphertextEnvelope(8, 16),
+				Timestamp: time.Now().UnixMilli(),
+			})
+			tc395WaitForProviderCalls(t, recorder, 1)
+			if got, ok := tc395APNSCollapseID(recorder.Messages()[0]); ok {
+				t.Fatalf("stored chat collapse ID = %q, want absent", got)
+			}
+		})
+
+		t.Run("opaque wake retains mailbox collapse identity", func(t *testing.T) {
+			tokens := newMemoryPushTokenStore()
+			if err := tokens.RegisterToken(
+				recipient,
+				"tc395-opaque-token",
+				"ios",
+				opaqueWakeCapability,
+			); err != nil {
+				t.Fatalf("register opaque route: %v", err)
+			}
+			push := NewPushServiceWithBackend(tokens)
+			recorder := newRecordingPushSender()
+			push.sender = recorder.Send
+			inbox := NewInboxStore(push)
+			stored, err := inbox.Store(recipient, inboxMessage{
+				ID:        "tc395-opaque-custody",
+				From:      sender,
+				Message:   invite,
+				Timestamp: time.Now().UnixMilli(),
+			})
+			if err != nil || stored != InboxStoreResultStored {
+				t.Fatalf("opaque store: result=%q err=%v", stored, err)
+			}
+			tc395WaitForProviderCalls(t, recorder, 1)
+			if got, ok := tc395APNSCollapseID(recorder.Messages()[0]); !ok || got != "mailbox" {
+				t.Fatalf("opaque collapse ID = %q present=%v, want mailbox", got, ok)
+			}
+		})
+	})
 }
 
 // TC-09 — an ios-projected CHAT push that the provider still rejects for size

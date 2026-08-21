@@ -53,6 +53,7 @@ readonly -a XCODE_TESTS=(
   RunnerTests/NotificationServiceConfigurationTests/testRunnerAndNotificationServiceEntitlementsShareAppGroupAndKeychainGroup
   RunnerTests/NotificationServiceConfigurationTests/testNotificationServiceInfoPlistUsesUserNotificationsServicePoint
   RunnerTests/IosNotificationRecoveryTests/testProductionHandoffSeamClaimsBeforeHandlerAndCommitsAfter
+  RunnerTests/IosNotificationRecoveryTests/testTC395ExactGroupInviteRetirementIsSurgicalAndIdempotent
   RunnerTests/IosAppVisibilitySnapshotTests/testTC37106AtomicSnapshotLifecycleAndPrivacyContract
   RunnerTests/IosAppVisibilitySnapshotTests/testTC37106DuplicateUIApplicationAndUISceneActiveDoesNotClearInterleavedRouteCAS
 )
@@ -178,7 +179,7 @@ assert_unique_exact_count() {
 
 assert_unique_exact_count 4 "${FOCUSED_GO_TESTS[@]}"
 assert_unique_exact_count 4 "${PRESERVATION_GO_TESTS[@]}"
-assert_unique_exact_count 16 "${XCODE_TESTS[@]}"
+assert_unique_exact_count 17 "${XCODE_TESTS[@]}"
 
 run_go_test() {
   (
@@ -796,7 +797,7 @@ else
   )
   final_test_command+=("${only_testing_args[@]}")
   final_test_command+=(CODE_SIGNING_ALLOWED=NO test)
-  run_logged "the exact 16-method non-parallel Plan 373 XCTest set on $simulator_id" \
+  run_logged "the exact 17-method non-parallel Plan 373 XCTest set on $simulator_id" \
     "$RUNNER_BUILD_LOG" \
     "${final_test_command[@]}"
 
@@ -812,12 +813,12 @@ else
     >"$RESULT_DIR/ios-xctest-summary.json"
   jq -e '
     .result == "Passed" and
-    .totalTestCount == 16 and
-    .passedTests == 16 and
+    .totalTestCount == 17 and
+    .passedTests == 17 and
     .failedTests == 0 and
     .skippedTests == 0
   ' "$RESULT_DIR/ios-xctest-summary.json" >/dev/null ||
-    fail "Plan 373 XCTest summary was not exactly 16 passes and zero skips"
+    fail "Plan 373 XCTest summary was not exactly 17 passes and zero skips"
   xcrun xcresulttool get test-results tests \
     --path "$xctest_result" --compact \
     >"$RESULT_DIR/ios-xctest-tests.json"
@@ -828,7 +829,7 @@ else
   assert_xcresult_method_set "$RESULT_DIR/ios-xctest-tests.json" Passed \
     "${expected_method_names[@]}"
   verify_built_products "$xctest_derived"
-  printf 'PASS: 16/16 on %s\n' "$simulator_id" >"$IOS_DISPOSITION"
+  printf 'PASS: 17/17 on %s\n' "$simulator_id" >"$IOS_DISPOSITION"
 fi
 
 binding_digest_after="$(gomobile_binding_input_digest "$REPO_ROOT" ios)"
@@ -848,7 +849,7 @@ framework_digest_after="$(framework_content_digest)"
 
 [[ "$(wc -l <"$IOS_DISPOSITION" | tr -d '[:space:]')" -eq 1 ]] ||
   fail "iOS XCTest disposition must contain exactly one line"
-rg -x 'PASS: 16/16 on [0-9A-Fa-f-]{36}|N/A \(target unavailable by project policy\): no available iPhone simulator' \
+rg -x 'PASS: 17/17 on [0-9A-Fa-f-]{36}|N/A \(target unavailable by project policy\): no available iPhone simulator' \
   "$IOS_DISPOSITION" >/dev/null ||
   fail "iOS XCTest disposition is not the frozen PASS/N/A literal"
 [[ -s "$RUNNER_BUILD_LOG" ]] || fail "Runner simulator build log is empty"

@@ -76,6 +76,12 @@ abstract interface class IosNotificationRecoveryBridge {
     required String conversationId,
   });
 
+  /// Retires delivered cards for one exact group-invite identity only.
+  Future<void> retireGroupInvite({
+    required String groupId,
+    required String inviteId,
+  });
+
   /// Clears the native account owner through exact state-owned retirement.
   /// This is deliberately not a remove-all-notifications operation.
   Future<void> clearAccount();
@@ -183,6 +189,19 @@ final class MethodChannelIosNotificationRecoveryBridge
   }
 
   @override
+  Future<void> retireGroupInvite({
+    required String groupId,
+    required String inviteId,
+  }) async {
+    final response = await _channel
+        .invokeMethod<Object?>('retireGroupInvite', <String, Object?>{
+          'groupId': _requiredRetirementId(groupId, argumentName: 'groupId'),
+          'inviteId': _requiredRetirementId(inviteId, argumentName: 'inviteId'),
+        });
+    _requireAcknowledgement(response, method: 'retireGroupInvite');
+  }
+
+  @override
   Future<void> clearAccount() async {
     final response = await _channel.invokeMethod<Object?>(
       'clearAccount',
@@ -266,6 +285,14 @@ String _requiredId(String value) {
   final normalized = value.trim();
   if (normalized.isEmpty) {
     throw ArgumentError.value(value, 'value', 'must not be empty');
+  }
+  return normalized;
+}
+
+String _requiredRetirementId(String value, {required String argumentName}) {
+  final normalized = value.trim();
+  if (!_isBoundedPrintableString(normalized, maxUtf8Bytes: 512)) {
+    throw ArgumentError.value(value, argumentName, 'invalid identifier');
   }
   return normalized;
 }

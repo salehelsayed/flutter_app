@@ -464,6 +464,18 @@ readonly INTRO_TESTS=(
 )
 
 readonly GROUP_TESTS=(
+  # Plan 395: strict group-invite identity, provider-transport open dedupe,
+  # one direct preparation drain, ApplicationRoot group membership routing,
+  # and ordinary-group preservation are shared notification/group owners.
+  "test/core/notifications/notification_route_target_test.dart"
+  "test/core/notifications/notification_route_contract_matrix_test.dart"
+  "test/core/notifications/notification_open_dedupe_gate_test.dart"
+  "test/core/notifications/remote_notification_identity_test.dart"
+  "test/core/notifications/local_notification_exact_cancellation_wiring_test.dart"
+  "test/features/push/application/prepare_notification_open_use_case_test.dart"
+  "test/features/push/application/handle_foreground_remote_message_use_case_test.dart"
+  "test/features/push/application/chat_and_group_push_open_flow_test.dart"
+  "test/integration/notification_tap_smoke_test.dart"
   # 375: one live Android paired-capability readiness epoch gates the
   # producer, drainer and registration for both messaging families.
   "test/core/notifications/android_opaque_wake_readiness_test.dart"
@@ -882,6 +894,9 @@ readonly POSTS_TESTS=(
 )
 
 readonly TRANSPORT_TESTS=(
+  # Best-effort startup backfills are part of transport bootstrap and must
+  # remain failure-contained before any transport path is brought online.
+  "test/app/bootstrap/best_effort_startup_backfill_test.dart"
   # 295 DTR-17: the P2P ownership split is shared by every transport path.
   "test/core/services/p2p_service_impl_composition_contract_test.dart"
   "integration_test/background_reconnect_test.dart"

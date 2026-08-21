@@ -2597,6 +2597,7 @@ Future<_BackgroundSqlEffectAuthority?> _resolveBackgroundSqlEffectAuthority(
           '';
       conversationValue = 'group:$groupId';
     case NotificationRouteTargetKind.contactRequest ||
+        NotificationRouteTargetKind.groupInvite ||
         NotificationRouteTargetKind.intros ||
         NotificationRouteTargetKind.post ||
         NotificationRouteTargetKind.postComment:
@@ -2965,6 +2966,7 @@ String? _remoteNotificationConversationKey(
       final groupId = _trimToNull(routeTarget.groupId);
       return groupId == null ? null : 'group:$groupId';
     case NotificationRouteTargetKind.contactRequest:
+    case NotificationRouteTargetKind.groupInvite:
     case NotificationRouteTargetKind.intros:
     case NotificationRouteTargetKind.post:
     case NotificationRouteTargetKind.postComment:

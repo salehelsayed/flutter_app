@@ -4,6 +4,7 @@ enum NotificationRouteTargetKind {
   conversation,
   contactRequest,
   group,
+  groupInvite,
   intros,
   post,
   postComment,
@@ -45,6 +46,13 @@ class NotificationRouteTarget {
         messageId: messageId,
       );
 
+  const NotificationRouteTarget.groupInvite(String groupId, {String? messageId})
+    : this._(
+        kind: NotificationRouteTargetKind.groupInvite,
+        groupId: groupId,
+        messageId: messageId,
+      );
+
   /// An anchored Intros target carries the canonical introduction envelope
   /// `messageId` (`<introductionId>::<action>::<senderPeerId>`) so the
   /// notification-open flow can resolve an introducer acceptance to the
@@ -74,6 +82,10 @@ class NotificationRouteTarget {
         messageId == null || messageId!.isEmpty
             ? 'group:${groupId ?? ''}'
             : 'group:${groupId ?? ''}|message:${messageId!}',
+      NotificationRouteTargetKind.groupInvite =>
+        messageId == null || messageId!.isEmpty
+            ? 'group_invite:${groupId ?? ''}'
+            : 'group_invite:${groupId ?? ''}|message:${messageId!}',
       NotificationRouteTargetKind.intros =>
         messageId == null || messageId!.isEmpty
             ? 'intros'
@@ -109,6 +121,15 @@ class NotificationRouteTarget {
       return peerId.isEmpty
           ? null
           : NotificationRouteTarget.contactRequest(peerId);
+    }
+    if (payload.startsWith('group_invite:')) {
+      final remainder = payload.substring('group_invite:'.length).trim();
+      return _groupInviteFromPayloadRemainder(remainder);
+    }
+    // Reserve the new route namespace so malformed invite payloads never
+    // widen into the legacy bare-conversation catch-all below.
+    if (payload.startsWith('group_invite')) {
+      return null;
     }
     if (payload.startsWith('group:')) {
       final remainder = payload.substring('group:'.length).trim();
@@ -215,9 +236,15 @@ class NotificationRouteTarget {
       case 'group_message':
         return _groupRouteFromRemoteMessageData(data);
       case 'group_invite':
-        // Group invites are reviewed from the shared Intros surface, which
-        // already renders pending invites alongside introductions.
-        return const NotificationRouteTarget.intros();
+        final groupId = groupIdFromRemoteMessageData(data);
+        // Older relay/local payloads did not preserve the group identity. Keep
+        // those readable through the incumbent generic Intros route.
+        return groupId == null
+            ? const NotificationRouteTarget.intros()
+            : NotificationRouteTarget.groupInvite(
+                groupId,
+                messageId: messageIdFromRemoteMessageData(data),
+              );
       case 'intros':
         // 252: retain the canonical introduction envelope message ID so an
         // introducer acceptance tap can resolve to the recipient thread.
@@ -320,6 +347,39 @@ class NotificationRouteTarget {
       groupId,
       messageId: messageIdFromRemoteMessageData(data),
     );
+  }
+
+  static NotificationRouteTarget? _groupInviteFromPayloadRemainder(
+    String remainder,
+  ) {
+    if (remainder.isEmpty) {
+      return null;
+    }
+
+    const messageMarker = '|message:';
+    final markerIndex = remainder.indexOf(messageMarker);
+    if (markerIndex < 0) {
+      if (remainder.contains('|')) {
+        return null;
+      }
+      return NotificationRouteTarget.groupInvite(remainder);
+    }
+    if (remainder.indexOf(messageMarker, markerIndex + messageMarker.length) >=
+        0) {
+      return null;
+    }
+
+    final groupId = remainder.substring(0, markerIndex).trim();
+    final messageId = remainder
+        .substring(markerIndex + messageMarker.length)
+        .trim();
+    if (groupId.isEmpty ||
+        messageId.isEmpty ||
+        groupId.contains('|') ||
+        messageId.contains('|')) {
+      return null;
+    }
+    return NotificationRouteTarget.groupInvite(groupId, messageId: messageId);
   }
 
   static String? _trimToNull(String? value) {

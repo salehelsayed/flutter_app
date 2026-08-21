@@ -507,6 +507,21 @@ final class IosNotificationRecoveryCoordinator {
     );
   }
 
+  /// Starts exact native group-invite retirement without joining the caller's
+  /// acceptance or navigation path. Both a synchronous adapter throw and an
+  /// asynchronously failed MethodChannel future are contained here.
+  void scheduleGroupInviteRetirement({
+    required String groupId,
+    required String inviteId,
+  }) {
+    if (!_platformEnabled) return;
+    unawaited(
+      Future<void>.sync(
+        () => _bridge.retireGroupInvite(groupId: groupId, inviteId: inviteId),
+      ).then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+    );
+  }
+
   Future<void> clearAccount() async {
     if (!_platformEnabled) return;
     _accountClearFenced = true;

@@ -871,6 +871,7 @@ class FlutterNotificationService
     return switch (target?.kind) {
       NotificationRouteTargetKind.conversation => target!.peerId!,
       NotificationRouteTargetKind.group => 'group:${target!.groupId!}',
+      NotificationRouteTargetKind.groupInvite => target!.toPayload(),
       _ => payload?.trim().isNotEmpty == true ? payload!.trim() : title,
     };
   }

@@ -58,6 +58,17 @@ class NotificationOpenDedupeGate {
 
   static String? dedupeKeyFor(Map<String, dynamic> data) {
     final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
+    // An invite ID can be legitimately reused by another delivery. For raw
+    // group-invite opens, dedupe only the provider delivery observed through
+    // both native and Firebase callbacks; never create invite history. Keep
+    // the resolved-kind check for supported payload-only remote fallbacks,
+    // while the raw-type check still owns legacy missing-group invite maps.
+    if (_trimToNull(data['type']) == 'group_invite' ||
+        routeTarget?.kind == NotificationRouteTargetKind.groupInvite) {
+      final providerMessageId = _trimToNull(data['gcm.message_id']);
+      return providerMessageId == null ? null : 'fcm:$providerMessageId';
+    }
+
     final routeMessageId =
         remoteNotificationMessageIdFromData(data) ?? routeTarget?.messageId;
     if (routeTarget != null && routeMessageId != null) {
@@ -117,6 +128,8 @@ class NotificationOpenDedupeGate {
       NotificationRouteTargetKind.contactRequest =>
         'contact_request:${routeTarget.peerId ?? ''}',
       NotificationRouteTargetKind.group => 'group:${routeTarget.groupId ?? ''}',
+      NotificationRouteTargetKind.groupInvite =>
+        'group_invite:${routeTarget.groupId ?? ''}',
       NotificationRouteTargetKind.intros => 'intros',
       NotificationRouteTargetKind.post => 'post:${routeTarget.postId ?? ''}',
       NotificationRouteTargetKind.postComment =>

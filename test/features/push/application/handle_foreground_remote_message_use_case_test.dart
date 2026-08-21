@@ -240,8 +240,33 @@ void main() {
         expect(events.map((event) => event.details['kind']), [
           'contactRequest',
           'intros',
-          'intros',
+          'groupInvite',
         ]);
+      },
+    );
+
+    test(
+      'TC-395-05 foreground group invite drains direct inbox once',
+      () async {
+        var directDrains = 0;
+        final groupDrains = <String>[];
+
+        final result = await handleForegroundRemoteMessage(
+          data: const {
+            'type': 'group_invite',
+            'groupId': 'group-395',
+            'message_id': 'invite-395',
+          },
+          messageId: 'provider-395',
+          drainOfflineInbox: () async => directDrains += 1,
+          drainGroupOfflineInboxForGroup: (groupId) async {
+            groupDrains.add(groupId);
+          },
+        );
+
+        expect(result, ForegroundRemoteMessageResult.drained);
+        expect(directDrains, 1);
+        expect(groupDrains, isEmpty);
       },
     );
 

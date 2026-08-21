@@ -72,6 +72,7 @@ void main() {
         }
 
         await run(const NotificationRouteTarget.group('g1'));
+        await run(const NotificationRouteTarget.groupInvite('g1'));
         await run(const NotificationRouteTarget.intros());
         await run(const NotificationRouteTarget.contactRequest('peer-x'));
         await run(const NotificationRouteTarget.post('post-1'));
@@ -98,6 +99,29 @@ void main() {
         expect(result.ok, isTrue);
         expect(drainOfflineInboxCalls, 0);
         expect(drainedGroups, ['group-123']);
+      },
+    );
+
+    test(
+      'TC-395-05 group invite performs one direct drain and no group drain',
+      () async {
+        var directDrains = 0;
+        final groupDrains = <String>[];
+
+        final result = await prepareNotificationOpen(
+          routeTarget: const NotificationRouteTarget.groupInvite(
+            'group-123',
+            messageId: 'invite-123',
+          ),
+          drainOfflineInbox: () async => directDrains += 1,
+          drainGroupOfflineInboxForGroup: (groupId) async {
+            groupDrains.add(groupId);
+          },
+        );
+
+        expect(result.ok, isTrue, reason: result.error);
+        expect(directDrains, 1);
+        expect(groupDrains, isEmpty);
       },
     );
 

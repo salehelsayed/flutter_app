@@ -165,6 +165,7 @@ class _NotificationOpenHarnessAppState
               }
               break;
             case NotificationRouteTargetKind.contactRequest:
+            case NotificationRouteTargetKind.groupInvite:
             case NotificationRouteTargetKind.intros:
               _visibleIntros = List<String>.from(_pendingIntros);
               break;
@@ -193,7 +194,8 @@ class _NotificationOpenHarnessAppState
   }
 
   Future<void> _route(NotificationRouteTarget routeTarget) async {
-    if (routeTarget.kind == NotificationRouteTargetKind.group) {
+    if (routeTarget.kind == NotificationRouteTargetKind.group ||
+        routeTarget.kind == NotificationRouteTargetKind.groupInvite) {
       await _ensureGroupRouteStateSeeded();
       final groupId = routeTarget.groupId;
       if (groupId != null) {
@@ -202,11 +204,16 @@ class _NotificationOpenHarnessAppState
           groupRepo: _groupRepo,
           pendingInviteRepo: _pendingInviteRepo,
           localPeerId: _localPeerId,
-          drainOfflineInbox: () async {
-            setState(() {
-              _events.add('resolve-drain');
-            });
-          },
+          requireCurrentLocalMembership:
+              routeTarget.kind == NotificationRouteTargetKind.groupInvite,
+          drainOfflineInbox:
+              routeTarget.kind == NotificationRouteTargetKind.groupInvite
+              ? null
+              : () async {
+                  setState(() {
+                    _events.add('resolve-drain');
+                  });
+                },
         );
         if (resolution.group == null) {
           setState(() {
@@ -236,6 +243,7 @@ class _NotificationOpenHarnessAppState
           _screen = _HarnessScreen.intros;
           break;
         case NotificationRouteTargetKind.group:
+        case NotificationRouteTargetKind.groupInvite:
           _activeGroupId = routeTarget.groupId;
           _screen = _HarnessScreen.group;
           break;
@@ -283,6 +291,7 @@ class _NotificationOpenHarnessAppState
       data: const <String, dynamic>{
         'type': 'group_invite',
         'groupId': _groupWeekend,
+        'message_id': 'invite-weekend',
       },
       onBeforeOpen: _clearDeliveredNotifications,
       onBeforeRouteTarget: _prepare,
@@ -1135,7 +1144,7 @@ void main() {
     );
   });
 
-  testWidgets('group invite tap lands on intros surface with invite visible', (
+  testWidgets('group invite tap for current member opens the seeded group', (
     tester,
   ) async {
     await tester.pumpWidget(const _NotificationOpenHarnessApp());
@@ -1143,11 +1152,14 @@ void main() {
     await tester.tap(find.byKey(const Key('warm-group-invite-button')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('intros-screen')), findsOneWidget);
-    expect(find.text('Weekend Crew invite from Alice'), findsOneWidget);
+    expect(find.byKey(const Key('group-screen')), findsOneWidget);
+    expect(find.byKey(const Key('intros-screen')), findsNothing);
+    expect(find.text('Group: grp-weekend'), findsOneWidget);
     expect(
       find.textContaining(
-        'clear > prepare:intros > drain:inbox > route:intros',
+        'clear > prepare:group_invite:grp-weekend|message:invite-weekend > '
+        'drain:inbox > '
+        'route:group_invite:grp-weekend|message:invite-weekend',
       ),
       findsOneWidget,
     );

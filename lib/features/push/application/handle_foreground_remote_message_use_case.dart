@@ -108,6 +108,7 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
     switch (routeTarget.kind) {
       case NotificationRouteTargetKind.conversation:
       case NotificationRouteTargetKind.contactRequest:
+      case NotificationRouteTargetKind.groupInvite:
       case NotificationRouteTargetKind.intros:
         final complete = drainOfflineInboxCompletely == null
             ? await (() async {

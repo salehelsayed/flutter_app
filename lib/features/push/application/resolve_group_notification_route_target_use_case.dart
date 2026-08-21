@@ -32,10 +32,13 @@ Future<GroupNotificationRouteResolution> resolveGroupNotificationRouteTarget({
   PendingGroupInviteRepository? pendingInviteRepo,
   Future<void> Function()? drainOfflineInbox,
   String? localPeerId,
+  bool requireCurrentLocalMembership = false,
 }) async {
   final normalizedLocalPeerId = localPeerId?.trim();
-  final requiresCurrentLocalMembership =
+  final hasLocalPeerId =
       normalizedLocalPeerId != null && normalizedLocalPeerId.isNotEmpty;
+  final requiresCurrentLocalMembership =
+      requireCurrentLocalMembership || hasLocalPeerId;
 
   Future<GroupNotificationRouteResolution?> resolveCurrentState() async {
     final existingGroup = await groupRepo.getGroup(groupId);
@@ -43,12 +46,14 @@ Future<GroupNotificationRouteResolution> resolveGroupNotificationRouteTarget({
       if (!requiresCurrentLocalMembership) {
         return GroupNotificationRouteResolution.group(existingGroup);
       }
-      final localMember = await groupRepo.getMember(
-        groupId,
-        normalizedLocalPeerId,
-      );
-      if (localMember != null) {
-        return GroupNotificationRouteResolution.group(existingGroup);
+      if (hasLocalPeerId) {
+        final localMember = await groupRepo.getMember(
+          groupId,
+          normalizedLocalPeerId,
+        );
+        if (localMember != null) {
+          return GroupNotificationRouteResolution.group(existingGroup);
+        }
       }
     }
 

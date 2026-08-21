@@ -5,6 +5,7 @@
 /// If any notification type silently breaks (wrong kind, lost peerId, skipped
 /// drain, swallowed route) this test will catch it.
 library;
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
@@ -21,7 +22,8 @@ import '../shared/fakes/fake_notification_service.dart';
 
 class _NotificationSmokeHarness {
   final List<String> events = <String>[];
-  final List<NotificationRouteTarget> routedTargets = <NotificationRouteTarget>[];
+  final List<NotificationRouteTarget> routedTargets =
+      <NotificationRouteTarget>[];
   int missingCalls = 0;
 
   void reset() {
@@ -83,7 +85,10 @@ void main() {
         'drain:inbox',
         'route:peer-alice',
       ]);
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.conversation);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.conversation,
+      );
       expect(h.routedTargets.single.peerId, 'peer-alice');
       expect(h.missingCalls, 0);
     });
@@ -101,7 +106,10 @@ void main() {
         'drain:inbox',
         'route:contact_request:peer-bob',
       ]);
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.contactRequest);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.contactRequest,
+      );
       expect(h.routedTargets.single.peerId, 'peer-bob');
     });
 
@@ -113,28 +121,33 @@ void main() {
         onMissingRouteTarget: h.missing,
       );
 
-      expect(h.events, [
-        'prepare:intros',
-        'drain:inbox',
-        'route:intros',
-      ]);
+      expect(h.events, ['prepare:intros', 'drain:inbox', 'route:intros']);
       expect(h.routedTargets.single.kind, NotificationRouteTargetKind.intros);
     });
 
-    test('group_invite → intros', () async {
+    test('group_invite → exact groupInvite route', () async {
       await routeRemoteNotificationOpen(
-        data: const {'type': 'group_invite', 'groupId': 'grp-team'},
+        data: const {
+          'type': 'group_invite',
+          'groupId': 'grp-team',
+          'message_id': 'invite-team',
+        },
         onBeforeRouteTarget: h.prepare,
         onRouteTarget: h.route,
         onMissingRouteTarget: h.missing,
       );
 
       expect(h.events, [
-        'prepare:intros',
+        'prepare:group_invite:grp-team|message:invite-team',
         'drain:inbox',
-        'route:intros',
+        'route:group_invite:grp-team|message:invite-team',
       ]);
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.intros);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.groupInvite,
+      );
+      expect(h.routedTargets.single.groupId, 'grp-team');
+      expect(h.routedTargets.single.messageId, 'invite-team');
     });
 
     test('group_message → group', () async {
@@ -187,7 +200,10 @@ void main() {
         'prepare:post_comment:p-42:c-7',
         'route:post_comment:p-42:c-7',
       ]);
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.postComment);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.postComment,
+      );
       expect(h.routedTargets.single.postId, 'p-42');
       expect(h.routedTargets.single.commentId, 'c-7');
     });
@@ -224,7 +240,10 @@ void main() {
         'drain:inbox',
         'route:peer-alice',
       ]);
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.conversation);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.conversation,
+      );
     });
 
     test('contact_request → contactRequest', () async {
@@ -237,15 +256,17 @@ void main() {
         onMissingRouteTarget: h.missing,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.contactRequest);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.contactRequest,
+      );
       expect(h.routedTargets.single.peerId, 'peer-bob');
     });
 
     test('intros → intros', () async {
       await routeInitialRemoteNotificationOpen(
-        getInitialMessage: () async => const RemoteMessage(
-          data: {'type': 'intros'},
-        ),
+        getInitialMessage: () async =>
+            const RemoteMessage(data: {'type': 'intros'}),
         onBeforeRouteTarget: h.prepare,
         onRouteTarget: h.route,
         onMissingRouteTarget: h.missing,
@@ -255,17 +276,26 @@ void main() {
       expect(h.events, contains('drain:inbox'));
     });
 
-    test('group_invite → intros', () async {
+    test('group_invite → exact groupInvite route', () async {
       await routeInitialRemoteNotificationOpen(
         getInitialMessage: () async => const RemoteMessage(
-          data: {'type': 'group_invite', 'groupId': 'grp-team'},
+          data: {
+            'type': 'group_invite',
+            'groupId': 'grp-team',
+            'message_id': 'invite-team',
+          },
         ),
         onBeforeRouteTarget: h.prepare,
         onRouteTarget: h.route,
         onMissingRouteTarget: h.missing,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.intros);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.groupInvite,
+      );
+      expect(h.routedTargets.single.groupId, 'grp-team');
+      expect(h.routedTargets.single.messageId, 'invite-team');
       expect(h.events, contains('drain:inbox'));
     });
 
@@ -311,7 +341,10 @@ void main() {
         onMissingRouteTarget: h.missing,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.postComment);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.postComment,
+      );
       expect(h.routedTargets.single.postId, 'p-42');
       expect(h.routedTargets.single.commentId, 'c-7');
     });
@@ -346,7 +379,10 @@ void main() {
         'drain:inbox',
         'route:peer-alice',
       ]);
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.conversation);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.conversation,
+      );
     });
 
     test('contact_request payload', () async {
@@ -356,7 +392,10 @@ void main() {
         onRouteTarget: h.route,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.contactRequest);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.contactRequest,
+      );
       expect(h.routedTargets.single.peerId, 'peer-bob');
       expect(h.events, contains('drain:inbox'));
     });
@@ -370,6 +409,23 @@ void main() {
 
       expect(h.routedTargets.single.kind, NotificationRouteTargetKind.intros);
       expect(h.events, contains('drain:inbox'));
+    });
+
+    test('group invite payload preserves group and invite identity', () async {
+      await routeAppRootLocalNotificationTap(
+        payload: 'group_invite:grp-team|message:invite-team',
+        onBeforeRouteTarget: h.prepare,
+        onRouteTarget: h.route,
+      );
+
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.groupInvite,
+      );
+      expect(h.routedTargets.single.groupId, 'grp-team');
+      expect(h.routedTargets.single.messageId, 'invite-team');
+      expect(h.events, contains('drain:inbox'));
+      expect(h.events, isNot(anyElement(startsWith('drain:group:'))));
     });
 
     test('group payload', () async {
@@ -404,7 +460,10 @@ void main() {
         onRouteTarget: h.route,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.postComment);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.postComment,
+      );
       expect(h.routedTargets.single.postId, 'p-42');
       expect(h.routedTargets.single.commentId, 'c-7');
     });
@@ -416,7 +475,10 @@ void main() {
         onRouteTarget: h.route,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.postComment);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.postComment,
+      );
       expect(h.routedTargets.single.postId, 'p-42');
       expect(h.routedTargets.single.commentId, 'c:special:7');
     });
@@ -459,7 +521,10 @@ void main() {
         onRouteTarget: h.route,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.conversation);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.conversation,
+      );
       expect(h.routedTargets.single.peerId, 'peer-alice');
       expect(h.events, contains('drain:inbox'));
     });
@@ -477,7 +542,10 @@ void main() {
         onRouteTarget: h.route,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.contactRequest);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.contactRequest,
+      );
       expect(h.routedTargets.single.peerId, 'peer-bob');
     });
 
@@ -495,6 +563,31 @@ void main() {
       );
 
       expect(h.routedTargets.single.kind, NotificationRouteTargetKind.intros);
+    });
+
+    test('group invite initial launch', () async {
+      await simulateLaunchFromLocal(
+        title: 'Book Club',
+        body: 'Alice invited you',
+        target: const NotificationRouteTarget.groupInvite(
+          'grp-team',
+          messageId: 'invite-team',
+        ),
+      );
+
+      await routeAppRootInitialLocalNotificationOpen(
+        consumeInitialPayload: notificationService.consumeInitialPayload,
+        onBeforeRouteTarget: h.prepare,
+        onRouteTarget: h.route,
+      );
+
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.groupInvite,
+      );
+      expect(h.routedTargets.single.groupId, 'grp-team');
+      expect(h.routedTargets.single.messageId, 'invite-team');
+      expect(h.events, contains('drain:inbox'));
     });
 
     test('group initial launch', () async {
@@ -548,7 +641,10 @@ void main() {
         onRouteTarget: h.route,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.postComment);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.postComment,
+      );
       expect(h.routedTargets.single.postId, 'p-42');
       expect(h.routedTargets.single.commentId, 'c-7');
     });
@@ -594,20 +690,60 @@ void main() {
   // 5) Payload round-trip integrity (toPayload → fromPayload)
   // =========================================================================
   group('payload round-trip integrity', () {
-    final cases = <(String, NotificationRouteTarget, NotificationRouteTargetKind)>[
-      ('conversation', const NotificationRouteTarget.conversation('peer-abc'), NotificationRouteTargetKind.conversation),
-      ('contactRequest', const NotificationRouteTarget.contactRequest('peer-def'), NotificationRouteTargetKind.contactRequest),
-      ('group', const NotificationRouteTarget.group('grp-xyz'), NotificationRouteTargetKind.group),
-      ('intros', const NotificationRouteTarget.intros(), NotificationRouteTargetKind.intros),
-      ('post', const NotificationRouteTarget.post('p-99'), NotificationRouteTargetKind.post),
-      ('postComment', const NotificationRouteTarget.postComment(postId: 'p-99', commentId: 'c-3'), NotificationRouteTargetKind.postComment),
-    ];
+    final cases =
+        <(String, NotificationRouteTarget, NotificationRouteTargetKind)>[
+          (
+            'conversation',
+            const NotificationRouteTarget.conversation('peer-abc'),
+            NotificationRouteTargetKind.conversation,
+          ),
+          (
+            'contactRequest',
+            const NotificationRouteTarget.contactRequest('peer-def'),
+            NotificationRouteTargetKind.contactRequest,
+          ),
+          (
+            'group',
+            const NotificationRouteTarget.group('grp-xyz'),
+            NotificationRouteTargetKind.group,
+          ),
+          (
+            'groupInvite',
+            const NotificationRouteTarget.groupInvite(
+              'grp-xyz',
+              messageId: 'invite-xyz',
+            ),
+            NotificationRouteTargetKind.groupInvite,
+          ),
+          (
+            'intros',
+            const NotificationRouteTarget.intros(),
+            NotificationRouteTargetKind.intros,
+          ),
+          (
+            'post',
+            const NotificationRouteTarget.post('p-99'),
+            NotificationRouteTargetKind.post,
+          ),
+          (
+            'postComment',
+            const NotificationRouteTarget.postComment(
+              postId: 'p-99',
+              commentId: 'c-3',
+            ),
+            NotificationRouteTargetKind.postComment,
+          ),
+        ];
 
     for (final (label, target, expectedKind) in cases) {
       test('$label round-trips', () {
         final payload = target.toPayload();
         final parsed = NotificationRouteTarget.fromPayload(payload);
-        expect(parsed, isNotNull, reason: '$label payload "$payload" should parse');
+        expect(
+          parsed,
+          isNotNull,
+          reason: '$label payload "$payload" should parse',
+        );
         expect(parsed!.kind, expectedKind);
         expect(parsed.peerId, target.peerId);
         expect(parsed.groupId, target.groupId);
@@ -669,14 +805,17 @@ void main() {
       expect(h.events, contains('drain:inbox'));
     });
 
-    test('contact_request push → fallback → tap → contactRequest route', () async {
-      await simulateBackgroundPushThenTap(
-        pushData: const {'type': 'contact_request', 'sender_id': 'peer-bob'},
-        expectedKind: NotificationRouteTargetKind.contactRequest,
-      );
-      expect(h.routedTargets.single.peerId, 'peer-bob');
-      expect(h.events, contains('drain:inbox'));
-    });
+    test(
+      'contact_request push → fallback → tap → contactRequest route',
+      () async {
+        await simulateBackgroundPushThenTap(
+          pushData: const {'type': 'contact_request', 'sender_id': 'peer-bob'},
+          expectedKind: NotificationRouteTargetKind.contactRequest,
+        );
+        expect(h.routedTargets.single.peerId, 'peer-bob');
+        expect(h.events, contains('drain:inbox'));
+      },
+    );
 
     test('intros push → fallback → tap → intros route', () async {
       await simulateBackgroundPushThenTap(
@@ -686,11 +825,17 @@ void main() {
       expect(h.events, contains('drain:inbox'));
     });
 
-    test('group_invite push → fallback → tap → intros route', () async {
+    test('group_invite push → fallback → tap → exact invite route', () async {
       await simulateBackgroundPushThenTap(
-        pushData: const {'type': 'group_invite', 'groupId': 'grp-team'},
-        expectedKind: NotificationRouteTargetKind.intros,
+        pushData: const {
+          'type': 'group_invite',
+          'groupId': 'grp-team',
+          'message_id': 'invite-team',
+        },
+        expectedKind: NotificationRouteTargetKind.groupInvite,
       );
+      expect(h.routedTargets.single.groupId, 'grp-team');
+      expect(h.routedTargets.single.messageId, 'invite-team');
       expect(h.events, contains('drain:inbox'));
     });
 
@@ -851,7 +996,10 @@ void main() {
         onMissingRouteTarget: h.missing,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.conversation);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.conversation,
+      );
       expect(h.routedTargets.single.peerId, 'peer-legacy');
     });
 
@@ -878,7 +1026,10 @@ void main() {
         onMissingRouteTarget: h.missing,
       );
 
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.contactRequest);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.contactRequest,
+      );
       expect(h.routedTargets.single.peerId, 'peer-alt');
     });
 
@@ -925,7 +1076,10 @@ void main() {
       );
 
       // Falls through to fromPayload('peer-generic') → conversation
-      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.conversation);
+      expect(
+        h.routedTargets.single.kind,
+        NotificationRouteTargetKind.conversation,
+      );
       expect(h.routedTargets.single.peerId, 'peer-generic');
     });
 

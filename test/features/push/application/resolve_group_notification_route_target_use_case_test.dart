@@ -338,6 +338,54 @@ void main() {
         expect(drainCalls, 0);
       },
     );
+
+    test('TC-395-06 strict invite authority redirects an identity-unknown '
+        'retained shell to its pending invite', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+      var drainCalls = 0;
+
+      await groupRepo.saveGroup(_makeGroup());
+      await pendingInviteRepo.savePendingInvite(_makePendingInvite());
+
+      final result = await resolveGroupNotificationRouteTarget(
+        groupId: _groupId,
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        localPeerId: null,
+        requireCurrentLocalMembership: true,
+        drainOfflineInbox: () async {
+          drainCalls += 1;
+        },
+      );
+
+      expect(result.group, isNull);
+      expect(result.pendingInvite, isNotNull);
+      expect(result.pendingInvite!.groupId, _groupId);
+      expect(drainCalls, 0);
+    });
+
+    test('TC-395-06 strict invite authority treats an identity-unknown shell '
+        'without a pending invite as missing', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+
+      await groupRepo.saveGroup(_makeGroup());
+
+      final result = await resolveGroupNotificationRouteTarget(
+        groupId: _groupId,
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        localPeerId: null,
+        requireCurrentLocalMembership: true,
+        drainOfflineInbox: null,
+      );
+
+      expect(result.group, isNull);
+      expect(result.pendingInvite, isNull);
+      expect(result.hasGroup, isFalse);
+      expect(result.hasPendingInvite, isFalse);
+    });
   });
 
   group('resolveGroupMessageNotificationDisplayEligibility', () {

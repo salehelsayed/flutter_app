@@ -1839,7 +1839,7 @@ void main() {
     );
 
     test(
-      'display eligibility leaves group_invite fallback on the intros route',
+      'display eligibility leaves group_invite fallback on its direct-inbox route',
       () async {
         const message = RemoteMessage(
           data: {
@@ -1856,7 +1856,7 @@ void main() {
         expect(result.shouldDisplay, isTrue);
         expect(
           buildBackgroundPushFallbackNotification(message).payload,
-          'intros',
+          'group_invite:group-abc-123',
         );
       },
     );
@@ -2010,11 +2010,12 @@ void main() {
       expect(fallback.payload, 'contact_request:12D3KooWRequestPeer');
     });
 
-    test('shows fallback for group_invite type and routes to intros', () {
+    test('group_invite fallback retains exact route and invite-like copy', () {
       const message = RemoteMessage(
         data: {
           'type': 'group_invite',
           'groupId': 'group-abc-123',
+          'message_id': 'invite-abc-123',
           'title': 'Book Club',
           'body': 'Alice invited you to Book Club',
         },
@@ -2025,7 +2026,29 @@ void main() {
       final fallback = buildBackgroundPushFallbackNotification(message);
       expect(fallback.title, 'Book Club');
       expect(fallback.body, 'Alice invited you to Book Club');
-      expect(fallback.payload, 'intros');
+      expect(
+        fallback.payload,
+        'group_invite:group-abc-123|message:invite-abc-123',
+      );
+    });
+
+    test('copyless group_invite uses the intro-like fallback copy', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'group_invite',
+          'groupId': 'group-copyless',
+          'message_id': 'invite-copyless',
+        },
+      );
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+
+      expect(fallback.title, backgroundPushIntrosFallbackTitle);
+      expect(fallback.body, backgroundPushIntrosFallbackBody);
+      expect(
+        fallback.payload,
+        'group_invite:group-copyless|message:invite-copyless',
+      );
     });
 
     test('shows fallback for unknown type with payload data key', () {

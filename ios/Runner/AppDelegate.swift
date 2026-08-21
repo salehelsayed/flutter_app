@@ -1285,6 +1285,32 @@ final class IosNotificationForegroundDispositionGate {
         }
       }
 
+    case "retireGroupInvite":
+      guard let arguments = recoveryArguments(
+              call.arguments,
+              keys: ["groupId", "inviteId"]
+            ),
+            let groupId = nonEmptyRecoveryString(arguments["groupId"]),
+            let inviteId = nonEmptyRecoveryString(arguments["inviteId"])
+      else {
+        result(recoveryFlutterError(code: "bad_args"))
+        return
+      }
+      coordinator.retireGroupInvite(
+        groupId: groupId,
+        inviteId: inviteId
+      ) { ok in
+        DispatchQueue.main.async {
+          if ok {
+            result(["ok": true])
+          } else {
+            result(self.recoveryFlutterError(
+              code: "retire_group_invite_rejected"
+            ))
+          }
+        }
+      }
+
     case "clearAccount":
       guard let arguments = recoveryArguments(call.arguments, keys: []),
             arguments.isEmpty else {

@@ -684,6 +684,37 @@ void main() {
       );
     }
 
+    Future<GroupModel> seedCurrentMembership({
+      required String groupId,
+      required String groupName,
+      InMemoryGroupRepository? repository,
+    }) async {
+      final targetRepository = repository ?? groupRepo;
+      final joinedAt = DateTime.utc(2026, 8, 21, 18);
+      final group = GroupModel(
+        id: groupId,
+        name: groupName,
+        type: GroupType.chat,
+        topicName: 'topic-$groupId',
+        createdAt: joinedAt,
+        createdBy: '12D3KooWAlice',
+        myRole: GroupRole.member,
+      );
+      await targetRepository.saveGroup(group);
+      await targetRepository.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.writer,
+          publicKey: testIdentity.publicKey,
+          mlKemPublicKey: testIdentity.mlKemPublicKey,
+          joinedAt: joinedAt,
+        ),
+      );
+      return group;
+    }
+
     testWidgets(
       'TC-203-17 loads identity in orbit header without Close Friends text',
       (tester) async {
@@ -6100,6 +6131,452 @@ void main() {
     );
 
     testWidgets(
+      'TC-395-07 cached current-member accept opens group without terminal '
+      'invite state',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        const groupId = 'grp-current-member-cached-invite';
+        final invite = makePendingInvite(
+          groupId: groupId,
+          groupName: 'Already Joined Writers',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-$groupId')),
+          findsOneWidget,
+          reason: 'the test needs a genuinely cached stale invite row',
+        );
+
+        await seedCurrentMembership(
+          groupId: groupId,
+          groupName: 'Already Joined Writers',
+        );
+
+        await tapPendingGroupInviteAccept(tester, groupId);
+        await pumpOrbitFrames(tester, count: 12);
+
+        expect(
+          p2pService.drainOfflineInboxCallCount,
+          0,
+          reason: 'current membership must bypass invite parsing entirely',
+        );
+        expect(find.byType(GroupConversationWired), findsOneWidget);
+        expect(find.text('Already Joined Writers'), findsWidgets);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-outcome-$groupId')),
+          findsNothing,
+        );
+        expect(
+          await pendingInviteRepo.getPendingInvite(groupId),
+          same(invite),
+          reason: 'the stale display guard must not mutate durable invite data',
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-395-07 confirmed membership survives a failing group presentation '
+      'lookup',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final throwingGroupRepo = _ThrowingGroupLookupRepository();
+        const groupId = 'grp-member-group-lookup-fails';
+        final invite = makePendingInvite(
+          groupId: groupId,
+          groupName: 'Authority Without Presentation',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            groupRepository: throwingGroupRepo,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-$groupId')),
+          findsOneWidget,
+        );
+
+        await seedCurrentMembership(
+          groupId: groupId,
+          groupName: 'Authority Without Presentation',
+          repository: throwingGroupRepo,
+        );
+        throwingGroupRepo.throwOnGetGroup = true;
+
+        await tapPendingGroupInviteAccept(tester, groupId);
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(p2pService.drainOfflineInboxCallCount, 0);
+        expect(await pendingInviteRepo.getPendingInvite(groupId), same(invite));
+        expect(
+          find.byKey(ValueKey('pending-group-invite-outcome-$groupId')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(ValueKey('pending-group-invite-$groupId')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-395-07 authoritative membership filters invite before group '
+      'hydration completes',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final delayedGroupRepo = _DelayedOrbitGroupRepository();
+        const groupId = 'grp-member-before-hydration';
+        final invite = makePendingInvite(
+          groupId: groupId,
+          groupName: 'Hydration Writers',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        await seedCurrentMembership(
+          groupId: groupId,
+          groupName: 'Hydration Writers',
+          repository: delayedGroupRepo,
+        );
+        final activeLoadGate = Completer<void>();
+        delayedGroupRepo.activeGroupsGate = activeLoadGate;
+        addTearDown(() {
+          if (!activeLoadGate.isCompleted) activeLoadGate.complete();
+        });
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            groupRepository: delayedGroupRepo,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Hydration Writers'), findsNothing);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-$groupId')),
+          findsNothing,
+          reason: 'membership filtering must not wait for _activeGroups',
+        );
+
+        activeLoadGate.complete();
+        await pumpOrbitFrames(tester, count: 6);
+      },
+    );
+
+    testWidgets(
+      'TC-395-07 joined stream immediately purges invite and Ask state',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
+        final delayedGroupRepo = _DelayedOrbitGroupRepository();
+        const groupId = 'grp-joined-stream-purge';
+        final invite = makePendingInvite(
+          groupId: groupId,
+          groupName: 'Joined Stream Writers',
+          receivedAt: DateTime.now().toUtc().subtract(const Duration(days: 8)),
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            groupRepository: delayedGroupRepo,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 10);
+        final rowKey = ValueKey('pending-group-invite-$groupId');
+        final askKey = ValueKey('pending-group-invite-ask-new-$groupId');
+        expect(find.byKey(rowKey), findsOneWidget);
+        expect(find.byKey(askKey), findsOneWidget);
+
+        final group = await seedCurrentMembership(
+          groupId: groupId,
+          groupName: 'Joined Stream Writers',
+          repository: delayedGroupRepo,
+        );
+        final memberReadGate = Completer<void>();
+        delayedGroupRepo.memberReadGate = memberReadGate;
+        addTearDown(() {
+          if (!memberReadGate.isCompleted) memberReadGate.complete();
+        });
+        joinedGroupInviteController.add(group);
+        await tester.pump();
+
+        expect(find.byKey(rowKey), findsNothing);
+        expect(find.byKey(askKey), findsNothing);
+        memberReadGate.complete();
+        await pumpOrbitFrames(tester, count: 3);
+      },
+    );
+
+    testWidgets(
+      'TC-395-07 committed decline skips durable mutation for a current '
+      'member',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        const groupId = 'grp-decline-became-member';
+        final invite = makePendingInvite(
+          groupId: groupId,
+          groupName: 'Decline Guard Writers',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final decline = find.byKey(
+          ValueKey('pending-group-invite-decline-$groupId'),
+        );
+        await tester.ensureVisible(decline);
+        await tester.tap(decline, warnIfMissed: false);
+        await pumpOrbitFrames(tester, count: 3);
+        await seedCurrentMembership(
+          groupId: groupId,
+          groupName: 'Decline Guard Writers',
+        );
+
+        await tester.pump(const Duration(seconds: 4));
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(await pendingInviteRepo.getPendingInvite(groupId), same(invite));
+        expect(
+          flowEvents.any(
+            (event) => event['event'] == 'GROUP_INVITE_DECLINE_COMMITTED',
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-395-07 membership becoming current during duplicateGroup suppresses '
+      'terminal invite state',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        const groupId = 'grp-member-during-failure';
+        final invite = makePendingInvite(
+          groupId: groupId,
+          groupName: 'Converged Writers',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        bridge = _FirstSendHookBridge(
+          beforeFirstSend: () => seedCurrentMembership(
+            groupId: groupId,
+            groupName: 'Converged Writers',
+          ),
+        );
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tapPendingGroupInviteAccept(tester, groupId);
+        await pumpOrbitFrames(tester, count: 15);
+
+        expect(p2pService.drainOfflineInboxCallCount, 1);
+        expect(find.byType(GroupConversationWired), findsOneWidget);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-outcome-$groupId')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-395-07 Ask-new rechecks membership before opening a draft',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final gatedContactRepo = _GatedContactRepository();
+        contactRepo = gatedContactRepo;
+        gatedContactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
+        const groupId = 'grp-ask-became-member';
+        final invite = makePendingInvite(
+          groupId: groupId,
+          groupName: 'Ask Guard Writers',
+          receivedAt: DateTime.now().toUtc().subtract(const Duration(days: 8)),
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 10);
+        final ask = find.byKey(
+          ValueKey('pending-group-invite-ask-new-$groupId'),
+        );
+        expect(ask, findsOneWidget);
+
+        final contactReadStarted = Completer<void>();
+        final contactReadGate = Completer<void>();
+        gatedContactRepo
+          ..getContactStarted = contactReadStarted
+          ..getContactGate = contactReadGate;
+
+        await tester.ensureVisible(ask);
+        await tester.tap(ask, warnIfMissed: false);
+        await tester.pump();
+        expect(contactReadStarted.isCompleted, isTrue);
+
+        await seedCurrentMembership(
+          groupId: groupId,
+          groupName: 'Ask Guard Writers',
+        );
+        contactReadGate.complete();
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.byType(ConversationWired), findsNothing);
+        expect(ask, findsNothing);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-$groupId')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-395-07 membership becoming current during decline suppresses '
+      'terminal invite state',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        const groupId = 'grp-member-during-decline';
+        final racingPendingRepo = _AfterDeletePendingInviteRepository();
+        pendingInviteRepo = racingPendingRepo;
+        final invite = makePendingInvite(
+          groupId: groupId,
+          groupName: 'Decline Race Writers',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        racingPendingRepo.afterDelete = (_) => seedCurrentMembership(
+          groupId: groupId,
+          groupName: 'Decline Race Writers',
+        );
+        final listener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: listener,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final decline = find.byKey(
+          ValueKey('pending-group-invite-decline-$groupId'),
+        );
+        await tester.ensureVisible(decline);
+        await tester.tap(decline, warnIfMissed: false);
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.pump(const Duration(seconds: 5));
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(
+          await groupRepo.getMember(groupId, testIdentity.peerId),
+          isNotNull,
+        );
+        expect(
+          find.byKey(ValueKey('pending-group-invite-outcome-$groupId')),
+          findsNothing,
+        );
+        expect(find.text('Invite declined'), findsNothing);
+      },
+    );
+
+    testWidgets(
       'accepting a pending group invite from Intros joins the group',
       (tester) async {
         setLargeTestSurface(tester);
@@ -6128,10 +6605,15 @@ void main() {
           'cursor': '',
         };
 
+        final retiredInvites = <String>[];
         final groupInviteListener = _FakeGroupInviteListener(
           joinedStream: joinedGroupInviteController.stream,
           pendingStream: pendingInviteController.stream,
           pendingInviteRepo: pendingInviteRepo,
+          scheduleGroupInviteRetirement:
+              ({required groupId, required inviteId}) {
+                retiredInvites.add('$groupId:$inviteId');
+              },
         );
         final feedUnreadCountListenable = ValueNotifier<int>(0);
         addTearDown(feedUnreadCountListenable.dispose);
@@ -6166,6 +6648,7 @@ void main() {
         // B1: a successful accept auto-opens the joined group's conversation.
         expect(find.byType(GroupConversationWired), findsOneWidget);
         expect(find.text('Writers Room'), findsOneWidget);
+        expect(retiredInvites, ['${invite.groupId}:${invite.inviteId}']);
       },
     );
 
@@ -6186,10 +6669,14 @@ void main() {
         'cursor': '',
       };
 
+      var retirementCalls = 0;
       final groupInviteListener = _FakeGroupInviteListener(
         joinedStream: joinedGroupInviteController.stream,
         pendingStream: pendingInviteController.stream,
         pendingInviteRepo: pendingInviteRepo,
+        scheduleGroupInviteRetirement: ({required groupId, required inviteId}) {
+          retirementCalls++;
+        },
       );
       final feedUnreadCountListenable = ValueNotifier<int>(0);
       addTearDown(feedUnreadCountListenable.dispose);
@@ -6230,6 +6717,7 @@ void main() {
         find.byKey(ValueKey('pending-group-invite-outcome-${invite.groupId}')),
         findsOneWidget,
       );
+      expect(retirementCalls, 0);
       expect(find.byType(SnackBar), findsNothing);
     });
 
@@ -6665,6 +7153,11 @@ void main() {
           ),
         );
         await pumpOrbitFrames(tester, count: 6);
+        // The authoritative invite filter now loads identity too. Let that
+        // initial read settle; the later commit performs a fresh slow read and
+        // still exercises the in-flight Undo timing below.
+        await tester.pump(const Duration(seconds: 2));
+        await pumpOrbitFrames(tester, count: 2);
 
         final declineButton = find.byKey(
           ValueKey('pending-group-invite-decline-${invite.groupId}'),
@@ -6684,6 +7177,10 @@ void main() {
         // Let the slow commit finish; the invite is then deleted.
         await tester.pump(const Duration(seconds: 3));
         await pumpOrbitFrames(tester, count: 10);
+        // The post-commit authoritative invite reload performs one final slow
+        // identity read before it can settle the projection.
+        await tester.pump(const Duration(seconds: 3));
+        await pumpOrbitFrames(tester, count: 3);
         expect(
           await pendingInviteRepo.getPendingInvite(invite.groupId),
           isNull,
@@ -7675,6 +8172,17 @@ void main() {
             myRole: GroupRole.member,
           );
           await groupRepo.saveGroup(joinedGroup);
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: joinedGroup.id,
+              peerId: testIdentity.peerId,
+              username: testIdentity.username,
+              role: MemberRole.writer,
+              publicKey: testIdentity.publicKey,
+              mlKemPublicKey: testIdentity.mlKemPublicKey,
+              joinedAt: joinedGroup.createdAt,
+            ),
+          );
           joinedGroupInviteController.add(joinedGroup);
           await pumpOrbitFrames(tester, count: 6);
           // The orphan invite is re-delivered post-join (the cross-device B2
@@ -8581,6 +9089,80 @@ class _ThrowingIdentityRepository extends FakeIdentityRepository {
   }
 }
 
+class _DelayedOrbitGroupRepository extends InMemoryGroupRepository {
+  Completer<void>? activeGroupsGate;
+  Completer<void>? memberReadGate;
+
+  @override
+  Future<List<GroupModel>> getActiveGroups() async {
+    final gate = activeGroupsGate;
+    if (gate != null) await gate.future;
+    return super.getActiveGroups();
+  }
+
+  @override
+  Future<GroupMember?> getMember(String groupId, String peerId) async {
+    final gate = memberReadGate;
+    if (gate != null) await gate.future;
+    return super.getMember(groupId, peerId);
+  }
+}
+
+class _ThrowingGroupLookupRepository extends InMemoryGroupRepository {
+  bool throwOnGetGroup = false;
+
+  @override
+  Future<GroupModel?> getGroup(String groupId) async {
+    if (throwOnGetGroup) {
+      throw StateError('group presentation lookup failed');
+    }
+    return super.getGroup(groupId);
+  }
+}
+
+class _GatedContactRepository extends FakeContactRepository {
+  Completer<void>? getContactStarted;
+  Completer<void>? getContactGate;
+
+  @override
+  Future<ContactModel?> getContact(String peerId) async {
+    final gate = getContactGate;
+    if (gate != null) {
+      final started = getContactStarted;
+      if (started != null && !started.isCompleted) started.complete();
+      await gate.future;
+    }
+    return super.getContact(peerId);
+  }
+}
+
+class _AfterDeletePendingInviteRepository
+    extends InMemoryPendingGroupInviteRepository {
+  Future<void> Function(String groupId)? afterDelete;
+
+  @override
+  Future<void> deletePendingInvite(String groupId) async {
+    await super.deletePendingInvite(groupId);
+    await afterDelete?.call(groupId);
+  }
+}
+
+class _FirstSendHookBridge extends FakeBridge {
+  _FirstSendHookBridge({required this.beforeFirstSend});
+
+  final Future<void> Function() beforeFirstSend;
+  bool _didRunHook = false;
+
+  @override
+  Future<String> send(String message) async {
+    if (!_didRunHook) {
+      _didRunHook = true;
+      await beforeFirstSend();
+    }
+    return super.send(message);
+  }
+}
+
 class _FakeGroupInviteListener extends GroupInviteListener {
   final Stream<GroupModel> _joinedStream;
   final Stream<PendingGroupInvite> _pendingStream;
@@ -8589,6 +9171,7 @@ class _FakeGroupInviteListener extends GroupInviteListener {
     required Stream<GroupModel> joinedStream,
     required Stream<PendingGroupInvite> pendingStream,
     required InMemoryPendingGroupInviteRepository pendingInviteRepo,
+    ScheduleGroupInviteRetirement? scheduleGroupInviteRetirement,
   }) : _joinedStream = joinedStream,
        _pendingStream = pendingStream,
        super(
@@ -8598,6 +9181,7 @@ class _FakeGroupInviteListener extends GroupInviteListener {
          contactRepo: FakeContactRepository(),
          bridge: FakeBridge(),
          getOwnMlKemSecretKey: () async => null,
+         scheduleGroupInviteRetirement: scheduleGroupInviteRetirement,
        );
 
   @override

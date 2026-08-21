@@ -705,6 +705,38 @@ void main() {
   });
 
   test(
+    'TC-395-05 generic group invites use exact non-conversation identities',
+    () async {
+      final service = buildService();
+      await service.initialize();
+
+      await service.showNotification(
+        title: 'Book Club',
+        body: 'first invite',
+        payload: 'group_invite:group-1|message:invite-1',
+      );
+      final firstInvite = log.last.arguments as Map;
+      await service.showNotification(
+        title: 'Book Club',
+        body: 'second invite',
+        payload: 'group_invite:group-1|message:invite-2',
+      );
+      final secondInvite = log.last.arguments as Map;
+      await service.showNotification(
+        title: 'Book Club',
+        body: 'ordinary group message',
+        payload: 'group:group-1|message:message-1',
+      );
+      final ordinaryGroup = log.last.arguments as Map;
+
+      expect(firstInvite['id'], isNot(secondInvite['id']));
+      expect(firstInvite['id'], isNot(ordinaryGroup['id']));
+      expect(secondInvite['id'], isNot(ordinaryGroup['id']));
+      expect(secondInvite['payload'], 'group_invite:group-1|message:invite-2');
+    },
+  );
+
+  test(
     'allocation storage failure never reaches the plugin show call',
     () async {
       final blocked = File('${notificationIdDirectory.path}/blocked')

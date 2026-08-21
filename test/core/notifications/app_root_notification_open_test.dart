@@ -1017,6 +1017,27 @@ void main() {
           ),
           isFalse,
         );
+        expect(
+          isNotificationRouteTargetAlreadyActive(
+            routeTarget: const NotificationRouteTarget.groupInvite(
+              'group-123',
+              messageId: 'invite-123',
+            ),
+            appVisibilityRouteRegistry: topRoute,
+          ),
+          isTrue,
+          reason: 'invite identity must compare against the ordinary group',
+        );
+        expect(
+          isNotificationRouteTargetAlreadyActive(
+            routeTarget: const NotificationRouteTarget.groupInvite(
+              'group-456',
+              messageId: 'invite-123',
+            ),
+            appVisibilityRouteRegistry: topRoute,
+          ),
+          isFalse,
+        );
       },
     );
 

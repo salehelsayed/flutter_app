@@ -128,5 +128,90 @@ void main() {
         expect(firstKey, isNot(secondKey));
       },
     );
+
+    test('TC-395-04 distinct group invite transport ids both route', () {
+      final gate = NotificationOpenDedupeGate();
+
+      expect(
+        gate.shouldRoute(const {
+          'type': 'group_invite',
+          'groupId': 'group-123',
+          'message_id': 'invite-123',
+          'gcm.message_id': 'provider-delivery-a',
+        }),
+        isTrue,
+      );
+      expect(
+        gate.shouldRoute(const {
+          'type': 'group_invite',
+          'groupId': 'group-123',
+          'message_id': 'invite-123',
+          'gcm.message_id': 'provider-delivery-b',
+        }),
+        isTrue,
+      );
+    });
+
+    test('group invite native and Firebase opens share provider identity', () {
+      final gate = NotificationOpenDedupeGate();
+
+      expect(
+        gate.shouldRoute(const {
+          'type': 'group_invite',
+          'groupId': 'group-123',
+          'message_id': 'invite-123',
+          'gcm.message_id': 'provider-delivery-a',
+        }),
+        isTrue,
+      );
+      expect(
+        gate.shouldRoute(const {
+          'type': 'group_invite',
+          'group_id': 'group-123',
+          'messageId': 'invite-123',
+          'gcm.message_id': ' provider-delivery-a ',
+        }),
+        isFalse,
+      );
+    });
+
+    test('group invite without transport identity creates no history key', () {
+      const data = {
+        'type': 'group_invite',
+        'groupId': 'group-123',
+        'message_id': 'invite-123',
+      };
+      final gate = NotificationOpenDedupeGate();
+
+      expect(NotificationOpenDedupeGate.dedupeKeyFor(data), isNull);
+      expect(gate.shouldRoute(data), isTrue);
+      expect(gate.shouldRoute(data), isTrue);
+    });
+
+    test('payload-only group invite also creates no invite-history key', () {
+      const data = {'payload': 'group_invite:group-123|message:invite-123'};
+      final gate = NotificationOpenDedupeGate();
+
+      expect(NotificationOpenDedupeGate.dedupeKeyFor(data), isNull);
+      expect(gate.shouldRoute(data), isTrue);
+      expect(gate.shouldRoute(data), isTrue);
+
+      const providerData = {...data, 'gcm.message_id': 'provider-payload-only'};
+      expect(gate.shouldRoute(providerData), isTrue);
+      expect(gate.shouldRoute(providerData), isFalse);
+    });
+
+    test('legacy invite route also dedupes only by provider identity', () {
+      const data = {
+        'type': 'group_invite',
+        'message_id': 'invite-legacy',
+        'gcm.message_id': 'provider-legacy',
+      };
+
+      expect(
+        NotificationOpenDedupeGate.dedupeKeyFor(data),
+        'fcm:provider-legacy',
+      );
+    });
   });
 }

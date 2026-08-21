@@ -63,12 +63,17 @@ void main() {
         lane: CanonicalNotificationLane.direct,
         conversationId: 'peer-a',
       );
+      await bridge.retireGroupInvite(
+        groupId: ' group-a ',
+        inviteId: ' invite-a ',
+      );
       await bridge.clearAccount();
 
       expect(calls.map((call) => call.method), <String>[
         'beginReconciliation',
         'commitReconciliation',
         'retireConversation',
+        'retireGroupInvite',
         'clearAccount',
       ]);
       expect(calls.first.arguments, <String, Object?>{
@@ -91,7 +96,19 @@ void main() {
         'lane': 'direct',
         'conversationId': 'peer-a',
       });
-      expect(calls[3].arguments, isEmpty);
+      expect(calls[3].arguments, <String, Object?>{
+        'groupId': 'group-a',
+        'inviteId': 'invite-a',
+      });
+      expect(calls[4].arguments, isEmpty);
+
+      for (final malformed in <String>['', '   ', 'group\u0000id']) {
+        await expectLater(
+          bridge.retireGroupInvite(groupId: malformed, inviteId: 'invite-a'),
+          throwsArgumentError,
+        );
+      }
+      expect(calls, hasLength(5));
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
@@ -587,6 +604,75 @@ void main() {
       expect(bridge.clearCount, 0);
     },
   );
+
+  test(
+    'TC-395-03 group invite retirement scheduler contains failures and never waits',
+    () async {
+      final bridge = _FakeBridge(events: <String>[]);
+      final coordinator = IosNotificationRecoveryCoordinator(
+        platformEnabled: true,
+        bridge: bridge,
+        loadActiveAccountPeerId: () async => 'account-a',
+        loadCanonicalState: () async => _emptyState,
+      );
+      final pending = Completer<void>();
+      bridge.groupInviteRetirement =
+          ({required String groupId, required String inviteId}) {
+            expect(groupId, 'group-a');
+            expect(inviteId, 'invite-a');
+            return pending.future;
+          };
+
+      expect(
+        () => coordinator.scheduleGroupInviteRetirement(
+          groupId: 'group-a',
+          inviteId: 'invite-a',
+        ),
+        returnsNormally,
+      );
+      expect(pending.isCompleted, isFalse);
+      expect(bridge.groupInviteRetirements, <String>['group-a|invite-a']);
+
+      bridge.groupInviteRetirement =
+          ({required String groupId, required String inviteId}) =>
+              throw StateError('synchronous channel failure');
+      expect(
+        () => coordinator.scheduleGroupInviteRetirement(
+          groupId: 'group-sync',
+          inviteId: 'invite-sync',
+        ),
+        returnsNormally,
+      );
+
+      bridge.groupInviteRetirement =
+          ({required String groupId, required String inviteId}) =>
+              Future<void>.error(StateError('asynchronous channel failure'));
+      expect(
+        () => coordinator.scheduleGroupInviteRetirement(
+          groupId: 'group-async',
+          inviteId: 'invite-async',
+        ),
+        returnsNormally,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final disabled = IosNotificationRecoveryCoordinator(
+        platformEnabled: false,
+        bridge: bridge,
+        loadActiveAccountPeerId: () async => 'account-a',
+        loadCanonicalState: () async => _emptyState,
+      );
+      disabled.scheduleGroupInviteRetirement(
+        groupId: 'group-disabled',
+        inviteId: 'invite-disabled',
+      );
+      expect(bridge.groupInviteRetirements, <String>[
+        'group-a|invite-a',
+        'group-sync|invite-sync',
+        'group-async|invite-async',
+      ]);
+    },
+  );
 }
 
 final _emptyState = CanonicalNotificationBadgeState(
@@ -602,6 +688,9 @@ final class _FakeBridge implements IosNotificationRecoveryBridge {
   final Completer<void> firstBeginEntered = Completer<void>();
   final List<bool> completeness = <bool>[];
   final List<String> retired = <String>[];
+  final List<String> groupInviteRetirements = <String>[];
+  Future<void> Function({required String groupId, required String inviteId})?
+  groupInviteRetirement;
   int beginCount = 0;
   int clearCount = 0;
 
@@ -645,6 +734,16 @@ final class _FakeBridge implements IosNotificationRecoveryBridge {
     required String conversationId,
   }) async {
     retired.add('$accountPeerId|${lane.name}|$conversationId');
+  }
+
+  @override
+  Future<void> retireGroupInvite({
+    required String groupId,
+    required String inviteId,
+  }) {
+    groupInviteRetirements.add('$groupId|$inviteId');
+    return groupInviteRetirement?.call(groupId: groupId, inviteId: inviteId) ??
+        Future<void>.value();
   }
 
   @override

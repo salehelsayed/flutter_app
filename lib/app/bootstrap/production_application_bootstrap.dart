@@ -8059,6 +8059,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       getOwnKeyPackageId: groupIdentityCallbacks.getOwnKeyPackageId,
       getOwnKeyPackagePublicMaterial:
           groupIdentityCallbacks.getOwnKeyPackagePublicMaterial,
+      scheduleGroupInviteRetirement:
+          iosNotificationRecoveryCoordinator?.scheduleGroupInviteRetirement,
       appendGroupEventLogEntry:
           ({
             required groupId,

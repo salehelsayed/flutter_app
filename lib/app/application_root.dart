@@ -923,7 +923,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               'dataKeys': message.data.keys.toList(),
             },
           );
-          unawaited(_routeRemoteNotificationOpen(message.data));
+          unawaited(
+            _routeRemoteNotificationOpen(
+              withRemoteNotificationTransportIdentity(
+                message.data,
+                providerMessageId: message.messageId,
+              ),
+            ),
+          );
         });
       },
     );
@@ -1722,13 +1729,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         );
         return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.group:
+      case NotificationRouteTargetKind.groupInvite:
+        final isInviteRoute =
+            routeTarget.kind == NotificationRouteTargetKind.groupInvite;
         final identity = await widget.repository.loadIdentity();
         final resolution = await resolveGroupNotificationRouteTarget(
           groupId: routeTarget.groupId!,
           groupRepo: widget.groupRepository,
           pendingInviteRepo: widget.groupInviteListener.pendingInviteRepo,
-          drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+          // groupInvite preparation already performed the one direct inbox
+          // drain. A second group drain would duplicate work and turn the
+          // invite ID into an ordinary chat-message route by accident.
+          drainOfflineInbox: isInviteRoute
+              ? null
+              : widget.p2pService.drainOfflineInbox,
           localPeerId: identity?.peerId,
+          requireCurrentLocalMembership: isInviteRoute,
         );
         if (!_notificationRouteCoordinator.isLatest(context)) {
           return NotificationOpenRouteDisposition.superseded;
@@ -1778,6 +1794,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           return NotificationOpenRouteDisposition.routed;
         }
         final group = resolution.group!;
+        final inviteId = isInviteRoute ? routeTarget.messageId?.trim() : null;
+        if (inviteId != null && inviteId.isNotEmpty) {
+          // Fire-and-forget by contract. The coordinator owns synchronous
+          // throws, failed futures, and a native call that never completes.
+          widget.groupInviteListener.scheduleGroupInviteRetirement?.call(
+            groupId: routeTarget.groupId!,
+            inviteId: inviteId,
+          );
+        }
         if (isNotificationRouteTargetAlreadyActive(
           routeTarget: routeTarget,
           appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
@@ -1816,7 +1841,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               contactRepo: widget.contactRepository,
               p2pService: widget.p2pService,
               groupConversationTracker: widget.groupConversationTracker,
-              initialHighlightedMessageId: routeTarget.messageId,
+              initialHighlightedMessageId: isInviteRoute
+                  ? null
+                  : routeTarget.messageId,
               mediaAttachmentRepo: widget.mediaAttachmentRepository,
               mediaDeleteForMeCoordinator:
                   widget.groupMediaDeleteForMeCoordinator,

@@ -69,6 +69,19 @@ void main() {
       drainExpectation: _DrainExpectation.groupInbox,
     ),
     _RouteContractCase(
+      label: 'anchored group invite',
+      remoteData: {
+        'type': 'group_invite',
+        'groupId': 'group-team',
+        'message_id': 'invite-42',
+      },
+      target: NotificationRouteTarget.groupInvite(
+        'group-team',
+        messageId: 'invite-42',
+      ),
+      drainExpectation: _DrainExpectation.oneToOneInbox,
+    ),
+    _RouteContractCase(
       label: 'post',
       remoteData: {'type': 'post_create', 'post_id': 'post-42'},
       target: NotificationRouteTarget.post('post-42'),
@@ -102,6 +115,7 @@ void main() {
           expect(target!.kind, testCase.target.kind);
           expect(target.peerId, testCase.target.peerId);
           expect(target.groupId, testCase.target.groupId);
+          expect(target.messageId, testCase.target.messageId);
           expect(target.postId, testCase.target.postId);
           expect(target.commentId, testCase.target.commentId);
           expect(target.toPayload(), testCase.target.toPayload());
@@ -117,6 +131,7 @@ void main() {
         expect(parsed!.kind, testCase.target.kind);
         expect(parsed.peerId, testCase.target.peerId);
         expect(parsed.groupId, testCase.target.groupId);
+        expect(parsed.messageId, testCase.target.messageId);
         expect(parsed.postId, testCase.target.postId);
         expect(parsed.commentId, testCase.target.commentId);
         expect(parsed.toPayload(), testCase.target.toPayload());

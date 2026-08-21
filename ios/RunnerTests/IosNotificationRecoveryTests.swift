@@ -218,6 +218,177 @@ final class IosNotificationRecoveryTests: XCTestCase {
     XCTAssertTrue(store.containsRequestForTesting("pre-handler"))
   }
 
+  func testTC395ExactGroupInviteRetirementIsSurgicalAndIdempotent() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let groupId = "group-target"
+    let inviteId = "invite-target"
+    let exactLocalPayload =
+      "group_invite:\(groupId)|message:\(inviteId)"
+    let rawDeliveredRows: [(String, [AnyHashable: Any])] = [
+      (
+        "provider-exact-a",
+        [
+          "type": "group_invite",
+          "groupId": groupId,
+          "message_id": inviteId,
+        ]
+      ),
+      (
+        "provider-exact-b",
+        [
+          "type": "group_invite",
+          "groupId": groupId,
+          "message_id": inviteId,
+          "gcm.message_id": "provider-copy-b",
+        ]
+      ),
+      (
+        "local-exact",
+        ["NotificationId": 395, "payload": exactLocalPayload]
+      ),
+      (
+        "newer-same-group",
+        [
+          "type": "group_invite",
+          "groupId": groupId,
+          "message_id": "invite-newer",
+        ]
+      ),
+      (
+        "same-invite-another-group",
+        [
+          "type": "group_invite",
+          "groupId": "group-other",
+          "message_id": inviteId,
+        ]
+      ),
+      (
+        "ordinary-group",
+        [
+          "type": "group_message",
+          "groupId": groupId,
+          "message_id": inviteId,
+        ]
+      ),
+      (
+        "ordinary-direct",
+        ["type": "new_message", "message_id": inviteId]
+      ),
+      (
+        "provider-missing-type",
+        ["groupId": groupId, "message_id": inviteId]
+      ),
+      (
+        "provider-missing-group",
+        ["type": "group_invite", "message_id": inviteId]
+      ),
+      (
+        "provider-missing-invite",
+        ["type": "group_invite", "groupId": groupId]
+      ),
+      (
+        "provider-nested-only",
+        [
+          "data": [
+            "type": "group_invite",
+            "groupId": groupId,
+            "message_id": inviteId,
+          ]
+        ]
+      ),
+      (
+        "provider-substring",
+        [
+          "type": "group_invite_copy",
+          "groupId": groupId,
+          "message_id": inviteId,
+        ]
+      ),
+      (
+        "provider-edge-whitespace",
+        [
+          "type": "group_invite",
+          "groupId": " \(groupId)",
+          "message_id": inviteId,
+        ]
+      ),
+      ("local-missing-id", ["payload": exactLocalPayload]),
+      (
+        "local-malformed-id",
+        ["NotificationId": "395", "payload": exactLocalPayload]
+      ),
+      (
+        "local-newer-same-group",
+        [
+          "NotificationId": 396,
+          "payload": "group_invite:\(groupId)|message:invite-newer",
+        ]
+      ),
+      (
+        "local-substring",
+        ["NotificationId": 397, "payload": "\(exactLocalPayload)-copy"]
+      ),
+      (
+        "local-provider-triplet-wrong-payload",
+        [
+          "NotificationId": 398,
+          "payload": "group_invite:group-other|message:\(inviteId)",
+          "type": "group_invite",
+          "groupId": groupId,
+          "message_id": inviteId,
+        ]
+      ),
+    ]
+    let snapshots = rawDeliveredRows.map { row in
+      IosDeliveredNotificationSnapshot(
+        requestIdentifier: row.0,
+        userInfo: row.1
+      )
+    }
+    let center = MutableSnapshotRecoveryCenter(snapshots: snapshots)
+    let coordinator = IosNotificationRecoveryCoordinator(
+      store: IosNotificationRecoveryStore(directory: directory),
+      center: center,
+      badgeWriter: RecordingBadgeWriter()
+    )
+
+    let first = expectation(description: "first exact retirement")
+    coordinator.retireGroupInvite(
+      groupId: groupId,
+      inviteId: inviteId
+    ) { ok in
+      XCTAssertTrue(ok)
+      first.fulfill()
+    }
+    wait(for: [first], timeout: 2)
+
+    let exactIdentifiers: Set<String> = [
+      "provider-exact-a",
+      "provider-exact-b",
+      "local-exact",
+    ]
+    XCTAssertEqual(center.removals.map { Set($0) }, [exactIdentifiers])
+    XCTAssertEqual(
+      center.currentIdentifiers,
+      Set(rawDeliveredRows.map { $0.0 }).subtracting(exactIdentifiers)
+    )
+    XCTAssertEqual(center.snapshotInventoryCount, 2)
+
+    let second = expectation(description: "idempotent exact retirement")
+    coordinator.retireGroupInvite(
+      groupId: groupId,
+      inviteId: inviteId
+    ) { ok in
+      XCTAssertTrue(ok)
+      second.fulfill()
+    }
+    wait(for: [second], timeout: 2)
+
+    XCTAssertEqual(center.removals.map { Set($0) }, [exactIdentifiers])
+    XCTAssertEqual(center.snapshotInventoryCount, 4)
+  }
+
   func testCoordinatorWatermarkPreservesLaterAndUnrelatedDeliveredIds() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -887,6 +1058,13 @@ private final class MemoryRecoveryCenter: IosNotificationRecoveryCenter,
     completionHandler(value)
   }
 
+  func getDeliveredNotificationSnapshots(
+    completionHandler:
+      @escaping @Sendable ([IosDeliveredNotificationSnapshot]) -> Void
+  ) {
+    completionHandler([])
+  }
+
   func removeDeliveredNotifications(withIdentifiers identifiers: [String]) {
     lock.lock()
     removals.append(identifiers)
@@ -913,6 +1091,13 @@ private final class SuspendedRecoveryCenter: IosNotificationRecoveryCenter,
     requested.fulfill()
   }
 
+  func getDeliveredNotificationSnapshots(
+    completionHandler:
+      @escaping @Sendable ([IosDeliveredNotificationSnapshot]) -> Void
+  ) {
+    completionHandler([])
+  }
+
   func removeDeliveredNotifications(withIdentifiers identifiers: [String]) {}
 
   func resume(with identifiers: Set<String>) {
@@ -921,6 +1106,49 @@ private final class SuspendedRecoveryCenter: IosNotificationRecoveryCenter,
     self.completion = nil
     lock.unlock()
     completion?(identifiers)
+  }
+}
+
+private final class MutableSnapshotRecoveryCenter:
+  IosNotificationRecoveryCenter, @unchecked Sendable {
+  private let lock = NSLock()
+  private var snapshots: [IosDeliveredNotificationSnapshot]
+  private(set) var removals: [[String]] = []
+  private(set) var snapshotInventoryCount = 0
+
+  init(snapshots: [IosDeliveredNotificationSnapshot]) {
+    self.snapshots = snapshots
+  }
+
+  var currentIdentifiers: Set<String> {
+    lock.lock()
+    defer { lock.unlock() }
+    return Set(snapshots.map(\.requestIdentifier))
+  }
+
+  func getDeliveredRequestIdentifiers(
+    completionHandler: @escaping @Sendable (Set<String>) -> Void
+  ) {
+    completionHandler(currentIdentifiers)
+  }
+
+  func getDeliveredNotificationSnapshots(
+    completionHandler:
+      @escaping @Sendable ([IosDeliveredNotificationSnapshot]) -> Void
+  ) {
+    lock.lock()
+    snapshotInventoryCount += 1
+    let value = snapshots
+    lock.unlock()
+    completionHandler(value)
+  }
+
+  func removeDeliveredNotifications(withIdentifiers identifiers: [String]) {
+    lock.lock()
+    removals.append(identifiers)
+    let selected = Set(identifiers)
+    snapshots.removeAll { selected.contains($0.requestIdentifier) }
+    lock.unlock()
   }
 }
 

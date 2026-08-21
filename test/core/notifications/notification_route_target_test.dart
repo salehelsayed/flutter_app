@@ -349,14 +349,47 @@ void main() {
       },
     );
 
-    test('fromRemoteMessageData maps group_invite to intros route', () {
+    test('fromRemoteMessageData preserves exact group invite identity', () {
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+        'type': 'group_invite',
+        'groupId': 'group-123',
+        'message_id': 'invite-123',
+      });
+
+      expect(routeTarget, isNotNull);
+      expect(routeTarget!.kind, NotificationRouteTargetKind.groupInvite);
+      expect(routeTarget.groupId, 'group-123');
+      expect(routeTarget.messageId, 'invite-123');
+      expect(
+        routeTarget.toPayload(),
+        'group_invite:group-123|message:invite-123',
+      );
+    });
+
+    test('group-only remote invite keeps a safe exact group route', () {
       final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
         'type': 'group_invite',
         'groupId': 'group-123',
       });
 
       expect(routeTarget, isNotNull);
+      expect(routeTarget!.kind, NotificationRouteTargetKind.groupInvite);
+      expect(routeTarget.groupId, 'group-123');
+      expect(routeTarget.messageId, isNull);
+      expect(routeTarget.toPayload(), 'group_invite:group-123');
+    });
+
+    test('legacy remote invite missing group id stays on bare Intros', () {
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+        'type': 'group_invite',
+        'message_id': 'invite-legacy',
+      });
+
+      expect(routeTarget, isNotNull);
       expect(routeTarget!.kind, NotificationRouteTargetKind.intros);
+      expect(routeTarget.groupId, isNull);
+      expect(routeTarget.messageId, isNull);
+      expect(routeTarget.toPayload(), 'intros');
     });
 
     test('fromRemoteMessageData rejects group_message with empty groupId', () {
@@ -406,6 +439,42 @@ void main() {
       },
     );
 
+    test('anchored group invite payload round-trips exactly', () {
+      const routeTarget = NotificationRouteTarget.groupInvite(
+        'group-xyz',
+        messageId: 'invite-xyz',
+      );
+
+      final payload = routeTarget.toPayload();
+      final parsed = NotificationRouteTarget.fromPayload(payload);
+
+      expect(payload, 'group_invite:group-xyz|message:invite-xyz');
+      expect(parsed, isNotNull);
+      expect(parsed!.kind, NotificationRouteTargetKind.groupInvite);
+      expect(parsed.groupId, 'group-xyz');
+      expect(parsed.messageId, 'invite-xyz');
+    });
+
+    test('malformed group invite local payloads fail closed', () {
+      for (final payload in const <String>[
+        'group_invite',
+        'group_invite|message:invite-1',
+        'group_invite:',
+        'group_invite:   ',
+        'group_invite:group-1|message:',
+        'group_invite:|message:invite-1',
+        'group_invite:group-1|message:invite-1|message:invite-2',
+        'group_invite:group-1|unexpected',
+        'group_invite:group-1|message:invite-1|unexpected',
+      ]) {
+        expect(
+          NotificationRouteTarget.fromPayload(payload),
+          isNull,
+          reason: payload,
+        );
+      }
+    });
+
     test(
       'contact-request payload round-trips through toPayload and fromPayload',
       () {
@@ -453,50 +522,40 @@ void main() {
       },
     );
 
-    test(
-      'malformed acceptance identity and group invite fail closed to generic intros',
-      () {
-        final failClosedRemoteData = <Map<String, dynamic>>[
-          // Legacy bare introduction ID (pre-canonical relay).
-          {'type': 'intros', 'message_id': 'intro-legacy'},
-          // Missing sender segment.
-          {'type': 'intros', 'message_id': 'intro-1::accept'},
-          // Empty introduction ID.
-          {'type': 'intros', 'message_id': '::accept::peer-b'},
-          // Empty sender segment.
-          {'type': 'intros', 'message_id': 'intro-1::accept::'},
-          // Unsupported action.
-          {'type': 'intros', 'message_id': 'intro-1::approve::peer-b'},
-          // Group invites never become acceptance anchors, even with a
-          // canonical-looking message ID.
-          {
-            'type': 'group_invite',
-            'groupId': 'group-1',
-            'message_id': 'intro-1::accept::peer-b',
-          },
-        ];
+    test('malformed acceptance identity fails closed to generic intros', () {
+      final failClosedRemoteData = <Map<String, dynamic>>[
+        // Legacy bare introduction ID (pre-canonical relay).
+        {'type': 'intros', 'message_id': 'intro-legacy'},
+        // Missing sender segment.
+        {'type': 'intros', 'message_id': 'intro-1::accept'},
+        // Empty introduction ID.
+        {'type': 'intros', 'message_id': '::accept::peer-b'},
+        // Empty sender segment.
+        {'type': 'intros', 'message_id': 'intro-1::accept::'},
+        // Unsupported action.
+        {'type': 'intros', 'message_id': 'intro-1::approve::peer-b'},
+      ];
 
-        for (final data in failClosedRemoteData) {
-          final target = NotificationRouteTarget.fromRemoteMessageData(data);
-          expect(target, isNotNull, reason: data.toString());
-          expect(
-            target!.kind,
-            NotificationRouteTargetKind.intros,
-            reason: data.toString(),
-          );
-          expect(target.messageId, isNull, reason: data.toString());
-          expect(target.toPayload(), 'intros', reason: data.toString());
-        }
-
-        // Malformed local anchored payloads also fail closed to generic
-        // Intros instead of the conversation catch-all.
-        final malformedLocal = NotificationRouteTarget.fromPayload(
-          'intros|message:intro-legacy',
+      for (final data in failClosedRemoteData) {
+        final target = NotificationRouteTarget.fromRemoteMessageData(data);
+        expect(target, isNotNull, reason: data.toString());
+        expect(
+          target!.kind,
+          NotificationRouteTargetKind.intros,
+          reason: data.toString(),
         );
-        expect(malformedLocal, isNotNull);
-        expect(malformedLocal!.kind, NotificationRouteTargetKind.intros);
-        expect(malformedLocal.messageId, isNull);
-      },
-    );
+        expect(target.messageId, isNull, reason: data.toString());
+        expect(target.toPayload(), 'intros', reason: data.toString());
+      }
+
+      // Malformed local anchored payloads also fail closed to generic
+      // Intros instead of the conversation catch-all.
+      final malformedLocal = NotificationRouteTarget.fromPayload(
+        'intros|message:intro-legacy',
+      );
+      expect(malformedLocal, isNotNull);
+      expect(malformedLocal!.kind, NotificationRouteTargetKind.intros);
+      expect(malformedLocal.messageId, isNull);
+    });
   });
 }

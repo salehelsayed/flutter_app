@@ -995,17 +995,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     try {
       final invites = await inviteListener.pendingInviteRepo
           .getPendingInvites();
+      final currentMemberGroupIds = await _loadCurrentMemberGroupIds(
+        invites.map((invite) => invite.groupId),
+      );
       if (!mounted) return;
-      // B2: drop invites whose group is already joined (materialized orphan).
-      // Tolerates _activeGroups not yet loaded (empty set → no filtering).
-      // Membership-only filter; expired-but-unjoined invites keep their card.
-      final joinedGroupIds = _activeGroups
-          .map((group) => group.groupId)
-          .toSet();
+      // Current membership is repository authority, not the concurrently
+      // hydrated Orbit projection. A pending load may finish before
+      // [_loadGroupData], and a stale card must not win that race.
       _pendingGroupInvites = invites
           .where(
             (invite) =>
-                !joinedGroupIds.contains(invite.groupId) &&
+                !currentMemberGroupIds.contains(invite.groupId) &&
                 // 153: keep optimistically-declined rows hidden across every
                 // reactive reload until their deferred commit/undo resolves.
                 !_optimisticallyDeclinedInviteIds.contains(invite.groupId),
@@ -1020,6 +1020,94 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<Set<String>> _loadCurrentMemberGroupIds(
+    Iterable<String> groupIds,
+  ) async {
+    final groupRepository = widget.groupRepository;
+    if (groupRepository == null) return const <String>{};
+
+    String? peerId;
+    try {
+      peerId = (await widget.identityRepo.loadIdentity())?.peerId.trim();
+    } catch (_) {
+      return const <String>{};
+    }
+    if (peerId == null || peerId.isEmpty) return const <String>{};
+
+    final current = <String>{};
+    for (final groupId in groupIds.toSet()) {
+      try {
+        if (await groupRepository.getMember(groupId, peerId) != null) {
+          current.add(groupId);
+        }
+      } catch (_) {
+        // A failed authority read keeps the invite visible and actionable via
+        // the incumbent path; it never fabricates current membership.
+      }
+    }
+    return current;
+  }
+
+  Future<({bool isCurrentMember, GroupModel? group})> _loadCurrentMembership(
+    String groupId,
+  ) async {
+    final groupRepository = widget.groupRepository;
+    if (groupRepository == null) {
+      return (isCurrentMember: false, group: null);
+    }
+    String? peerId;
+    try {
+      peerId = (await widget.identityRepo.loadIdentity())?.peerId.trim();
+      if (peerId == null || peerId.isEmpty) {
+        return (isCurrentMember: false, group: null);
+      }
+      final member = await groupRepository.getMember(groupId, peerId);
+      if (member == null) {
+        return (isCurrentMember: false, group: null);
+      }
+    } catch (_) {
+      return (isCurrentMember: false, group: null);
+    }
+
+    // Membership is the action authority. A later presentation-model lookup
+    // may fail, but that must only prevent navigation; it cannot downgrade a
+    // confirmed member and re-enable stale invite actions.
+    GroupModel? group;
+    try {
+      group = await groupRepository.getGroup(groupId);
+    } catch (_) {
+      group = null;
+    }
+    return (isCurrentMember: true, group: group);
+  }
+
+  void _purgeCurrentMemberInviteState(String groupId) {
+    _declineUndoBars.remove(groupId)?.cancel();
+    _optimisticallyDeclinedInviteIds.remove(groupId);
+    _pendingGroupInvites = _pendingGroupInvites
+        .where((invite) => invite.groupId != groupId)
+        .toList();
+    _inviteRowOutcomes.remove(groupId);
+    _askNewInviteIds.remove(groupId);
+    _unavailableInviteContactIds.remove(groupId);
+    _publishListProjection();
+    unawaited(_refreshInviteRequestAvailability());
+  }
+
+  Future<bool> _handleCurrentMemberInvite(
+    String groupId, {
+    required bool openGroup,
+  }) async {
+    final membership = await _loadCurrentMembership(groupId);
+    if (!membership.isCurrentMember || !mounted) return false;
+    _purgeCurrentMemberInviteState(groupId);
+    final group = membership.group;
+    if (openGroup && group != null) {
+      _openGroupConversationFromModel(group);
+    }
+    return true;
   }
 
   Future<void> _loadIntroReviewSeenKeys() async {
@@ -1375,6 +1463,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     _groupJoinedInviteSubscription = listener.groupJoinedStream.listen(
       (group) {
+        // The joined event is already authoritative. Purge stale invite rows,
+        // outcomes, and Ask-new state synchronously before either refresh can
+        // race a cached projection back onto the screen.
+        _purgeCurrentMemberInviteState(group.id);
         _markGroupChanged(group.id);
         if (!_isOrbitActive) {
           _dirtyGroupIds.add(group.id);
@@ -1616,6 +1708,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     });
     _publishListProjection();
     try {
+      if (await _handleCurrentMemberInvite(invite.groupId, openGroup: true)) {
+        return;
+      }
       await _drainPendingGroupInviteInboxBeforeAccept(
         inviteListener,
         invite.groupId,
@@ -1646,8 +1741,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       if (!mounted) return;
 
       final l10n = AppLocalizations.of(context)!;
+      if (result != AcceptPendingGroupInviteResult.success &&
+          await _handleCurrentMemberInvite(invite.groupId, openGroup: true)) {
+        return;
+      }
       switch (result) {
         case AcceptPendingGroupInviteResult.success:
+          inviteListener.scheduleGroupInviteRetirement?.call(
+            groupId: invite.groupId,
+            inviteId: invite.inviteId,
+          );
           // 208: navigating accept — open the group chat with NO confirmation
           // snackbar.
           if (group != null && mounted) {
@@ -1711,14 +1814,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         },
       );
       await _loadPendingGroupInvites();
-      if (mounted) {
-        final l10n = AppLocalizations.of(context)!;
-        _setInviteRowOutcome(
-          invite,
-          PendingInviteRowState.retryable,
-          reason: l10n.group_invite_accept_failed,
-        );
+      if (!mounted) return;
+      if (await _handleCurrentMemberInvite(invite.groupId, openGroup: true)) {
+        return;
       }
+      if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
+      _setInviteRowOutcome(
+        invite,
+        PendingInviteRowState.retryable,
+        reason: l10n.group_invite_accept_failed,
+      );
     } finally {
       if (mounted) {
         setState(() => _processingPendingInviteIds.remove(invite.groupId));
@@ -1809,6 +1915,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final target = _inviteRequestTargets()[inviteId];
     if (target == null) return;
 
+    if (await _handleCurrentMemberInvite(inviteId, openGroup: false)) {
+      return;
+    }
+
     ContactModel? contact;
     try {
       contact = await widget.contactRepo.getContact(target.peerId);
@@ -1822,6 +1932,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       _publishListProjection();
       return;
     }
+    // Contact qualification is asynchronous. Membership may converge while
+    // it is in flight, so make the authority check immediately before opening
+    // the draft rather than relying on the tap-time preflight alone.
+    if (await _handleCurrentMemberInvite(inviteId, openGroup: false)) {
+      return;
+    }
+    if (!mounted) return;
 
     final initialText = AppLocalizations.of(
       context,
@@ -1998,6 +2115,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   /// still-present invite, while a successful commit keeps it gone.
   Future<void> _commitDecline(PendingGroupInvite invite) async {
     _declineUndoBars.remove(invite.groupId);
+    if (await _handleCurrentMemberInvite(invite.groupId, openGroup: false)) {
+      _optimisticallyDeclinedInviteIds.remove(invite.groupId);
+      _processingPendingInviteIds.remove(invite.groupId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      }
+      return;
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_DECLINE_COMMITTED',
@@ -2042,29 +2167,35 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       _optimisticallyDeclinedInviteIds.remove(invite.groupId);
       _processingPendingInviteIds.remove(invite.groupId);
       await _loadPendingGroupInvites();
+      final isCurrentMember = await _handleCurrentMemberInvite(
+        invite.groupId,
+        openGroup: false,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        final l10n = AppLocalizations.of(context)!;
-        if (error != null) {
-          _setInviteRowOutcome(
-            invite,
-            PendingInviteRowState.idle,
-            reason: l10n.group_invite_decline_failed,
-          );
-        } else if (result != null) {
-          switch (result) {
-            case DeclinePendingGroupInviteResult.success:
-              _setTerminalInviteOutcome(invite, l10n.group_invite_declined);
-              break;
-            case DeclinePendingGroupInviteResult.notFound:
-              _setTerminalInviteOutcome(
-                invite,
-                l10n.group_invite_no_longer_available,
-              );
-              break;
-            case DeclinePendingGroupInviteResult.expired:
-              _setTerminalInviteOutcome(invite, l10n.group_invite_expired);
-              break;
+        if (!isCurrentMember) {
+          final l10n = AppLocalizations.of(context)!;
+          if (error != null) {
+            _setInviteRowOutcome(
+              invite,
+              PendingInviteRowState.idle,
+              reason: l10n.group_invite_decline_failed,
+            );
+          } else if (result != null) {
+            switch (result) {
+              case DeclinePendingGroupInviteResult.success:
+                _setTerminalInviteOutcome(invite, l10n.group_invite_declined);
+                break;
+              case DeclinePendingGroupInviteResult.notFound:
+                _setTerminalInviteOutcome(
+                  invite,
+                  l10n.group_invite_no_longer_available,
+                );
+                break;
+              case DeclinePendingGroupInviteResult.expired:
+                _setTerminalInviteOutcome(invite, l10n.group_invite_expired);
+                break;
+            }
           }
         }
       }

@@ -91,6 +91,11 @@ type pushMessageFactory func() *messaging.Message
 
 type resolvedPushMessageFactory func(platform string) (*messaging.Message, error)
 
+type pushMessageProjector func(
+	message *messaging.Message,
+	platform string,
+) *messaging.Message
+
 // pushDeliveryResult is the deliberately coarse provider boundary shared by
 // immediate Plan-368 sends and the bounded wake-outcome coordinator. It never
 // carries provider, route, peer, or event material.
@@ -255,6 +260,7 @@ func (ps *PushService) sendRichPushThroughGateway(
 	ctx context.Context,
 	route pushRouteLease,
 	buildMessage pushMessageFactory,
+	projectMessage ...pushMessageProjector,
 ) error {
 	return ps.sendPushRouteThroughGateway(
 		ctx,
@@ -266,6 +272,9 @@ func (ps *PushService) sendRichPushThroughGateway(
 			}
 			if draft == nil {
 				return nil, nil
+			}
+			if len(projectMessage) > 0 && projectMessage[0] != nil {
+				return projectMessage[0](draft, platform), nil
 			}
 			return projectPushMessageForPlatform(draft, platform), nil
 		},
@@ -292,6 +301,7 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 	initialRoute pushRouteLease,
 	requiredCapability string,
 	buildRichMessage pushMessageFactory,
+	projectRichMessage ...pushMessageProjector,
 ) pushDeliveryResult {
 	route := copyPushRouteLease(initialRoute)
 	initialOpaque, eligible := classifySelectedPushRoute(route, requiredCapability)
@@ -320,7 +330,12 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 		if selectedOpaque {
 			err = ps.mailboxDirty(ctx, route)
 		} else {
-			err = ps.sendRichPushThroughGateway(ctx, route, buildRichMessage)
+			err = ps.sendRichPushThroughGateway(
+				ctx,
+				route,
+				buildRichMessage,
+				projectRichMessage...,
+			)
 		}
 		if errors.Is(err, ErrPushRouteStale) {
 			if selectionAttempt == 1 {
@@ -439,13 +454,42 @@ func (ps *PushService) SendNotification(
 	message string,
 	selectedRoute ...pushRouteLease,
 ) {
+	ps.sendRichNotification(ctx, toPeerId, fromPeerId, message, "", selectedRoute...)
+}
+
+func (ps *PushService) sendStoredNotification(
+	ctx context.Context,
+	toPeerID string,
+	fromPeerID string,
+	message string,
+	custodyID string,
+	selectedRoute ...pushRouteLease,
+) {
+	ps.sendRichNotification(
+		ctx,
+		toPeerID,
+		fromPeerID,
+		message,
+		custodyID,
+		selectedRoute...,
+	)
+}
+
+func (ps *PushService) sendRichNotification(
+	ctx context.Context,
+	toPeerID string,
+	fromPeerID string,
+	message string,
+	custodyID string,
+	selectedRoute ...pushRouteLease,
+) {
 	var route *pushRouteLease
 	if len(selectedRoute) > 0 {
 		copy := copyPushRouteLease(selectedRoute[0])
 		route = &copy
 	} else {
 		var err error
-		route, err = ps.selectPushRoute(toPeerId, "")
+		route, err = ps.selectPushRoute(toPeerID, "")
 		if err != nil {
 			pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
 			return
@@ -456,12 +500,21 @@ func (ps *PushService) SendNotification(
 		}
 	}
 
+	var projectMessage []pushMessageProjector
+	if custodyID != "" {
+		projectMessage = []pushMessageProjector{
+			func(message *messaging.Message, platform string) *messaging.Message {
+				return projectStoredDirectPushMessageForPlatform(message, platform, custodyID)
+			},
+		}
+	}
 	ps.sendSelectedPushThroughGateway(
 		ctx,
-		toPeerId,
+		toPeerID,
 		*route,
 		"",
-		func() *messaging.Message { return buildPushMessage("", fromPeerId, message) },
+		func() *messaging.Message { return buildPushMessage("", fromPeerID, message) },
+		projectMessage...,
 	)
 }
 
@@ -1193,6 +1246,40 @@ func projectPushMessageForPlatform(
 		}
 	}
 	return &projected
+}
+
+// projectStoredDirectPushMessageForPlatform adds a collapse identity only at
+// the stored-rich iOS group-invite boundary. The relay custody UUID is stable
+// across provider retries, while a separately stored row receives a new UUID.
+// Unknown platforms retain the incumbent fail-open dual-copy projection and
+// never inherit an iOS-only collapse header.
+func projectStoredDirectPushMessageForPlatform(
+	message *messaging.Message,
+	platform string,
+	custodyID string,
+) *messaging.Message {
+	projected := projectPushMessageForPlatform(message, platform)
+	if projected == nil ||
+		strings.ToLower(strings.TrimSpace(platform)) != "ios" ||
+		message == nil || message.Data["type"] != "group_invite" ||
+		projected.APNS == nil {
+		return projected
+	}
+
+	collapseID := strings.TrimSpace(custodyID)
+	if byteLength := len([]byte(collapseID)); byteLength == 0 || byteLength > 64 {
+		return projected
+	}
+
+	apns := *projected.APNS
+	headers := make(map[string]string, len(projected.APNS.Headers)+1)
+	for key, value := range projected.APNS.Headers {
+		headers[key] = value
+	}
+	headers["apns-collapse-id"] = collapseID
+	apns.Headers = headers
+	projected.APNS = &apns
+	return projected
 }
 
 func apnsCustomDataFromPushData(data map[string]string) map[string]interface{} {
@@ -2249,7 +2336,13 @@ func (is *InboxStore) launchStoredDirectPush(toPeerId string, entry inboxMessage
 	if metadata := extractChatPushMetadata(entry.Message); metadata.ShouldNotify && is.push != nil {
 		if is.wakeTokens == nil || !wakeTokenGateEnforced ||
 			is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken) {
-			go is.push.SendNotification(context.Background(), toPeerId, entry.From, entry.Message)
+			go is.push.sendStoredNotification(
+				context.Background(),
+				toPeerId,
+				entry.From,
+				entry.Message,
+				entry.ID,
+			)
 		} else {
 			pushSentCounter.WithLabelValues("unauthorized_wake").Inc()
 			log.Printf("[INBOX] Suppressed unauthorized wake for %s (no valid wake-token; message still stored)",
@@ -2301,11 +2394,12 @@ func (is *InboxStore) launchStoredDirectPushAfterPreflight(
 				entry.Message,
 			)
 		} else {
-			go is.push.SendNotification(
+			go is.push.sendStoredNotification(
 				context.Background(),
 				toPeerID,
 				entry.From,
 				entry.Message,
+				entry.ID,
 				route,
 			)
 		}

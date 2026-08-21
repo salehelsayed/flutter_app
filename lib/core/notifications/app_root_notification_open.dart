@@ -541,6 +541,13 @@ bool isNotificationRouteTargetAlreadyActive({
         lane: AppVisibilityConversationLane.group,
         value: routeTarget.toPayload(),
       );
+    case NotificationRouteTargetKind.groupInvite:
+      // Invite routes deliberately keep a distinct payload identity, but an
+      // already-open group is still the same visible conversation owner.
+      return appVisibilityRouteRegistry.isCurrentTopConversationValue(
+        lane: AppVisibilityConversationLane.group,
+        value: NotificationRouteTarget.group(routeTarget.groupId!).toPayload(),
+      );
     case NotificationRouteTargetKind.conversation:
       return appVisibilityRouteRegistry.isCurrentTopConversationValue(
         lane: AppVisibilityConversationLane.direct,

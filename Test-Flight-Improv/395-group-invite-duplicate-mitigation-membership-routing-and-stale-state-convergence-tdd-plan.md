@@ -1,9 +1,9 @@
 # 395 - Group Invite Duplicate Hardening, Membership Routing, And Stale UI Reconciliation
 
-Status: implementation-ready for the bounded mitigation below; exact incident transport attribution remains unresolved
+Status: implemented and simulator-closed for the bounded mitigation below; exact incident transport attribution remains unresolved
 Type: Bug
 Spec: free-text report from 2026-08-21: an iPhone receives a group invite, accepts it, later receives another notification for the same invite, and a tap opens Intros with “Invite no longer available / Ask for a new invite” even though the user is already a group member
-Classification: implementation-ready
+Classification: implemented
 Closure tier: simulator
 
 ## Planning Progress
@@ -13,6 +13,8 @@ Closure tier: simulator
 | 2026-08-21 17:35 CEST | Evidence collector | Relay payloads retain groupId and message_id, but Dart maps every group_invite to bare Intros. Acceptance deletes the pending row but does not retire exact delivered iOS cards. Orbit can retain a stale row and maps a cached missing result to a terminal ghost without checking membership. | Plan causal transport, route, and UI branches. |
 | 2026-08-21 18:20 CEST | Planner | Captured device logs do not contain the reported delivery/provider sequence. Avoid invite-ID history because multi-use invites legitimately reuse an invite ID. | Keep attribution evidence-gated and make late cards harmless. |
 | 2026-08-21 19:05 CEST | Critical reviewer | Pre-edit verdict: plan-fixes-required. The draft added an underpowered physical campaign, a needless custody hash, Feed-wide projection, request epoch, two-sided lock, redundant test owners, and oversized family gates. It also missed transport-aware open dedupe, pre-action membership checks, and existing latest/active-route guards. | Apply only source-backed deltas and rerun the counterexample sweep. |
+| 2026-08-21 21:05 CEST | Implementer | Representative relay, transport-dedupe, and cached-current-member REDs failed for their intended reasons. The relay, routing, native retirement, ApplicationRoot, and Orbit slices then passed their focused causal owners. | Run preservation, curated, and pinned-simulator closure gates. |
+| 2026-08-21 21:53 CEST | Closure reviewer | Focused Dart passed 502 tests; relay full package, groups (4,843 Flutter tests plus Go legs), intro (325), completeness (1,473/1,473), exact XCTest (1/1), and pinned iOS UI smoke (13/13) passed. Scoped analysis/format/syntax hygiene is clean. | Record final Graphify impact/refresh and commit the bounded closure without an exactly-once claim. |
 
 ## Critical Review Disposition
 
@@ -34,7 +36,7 @@ Added because the first draft missed real bypasses:
 - The invite route reuses the existing group resolver and preserves newest-route ownership, already-active-group suppression, direct-inbox preparation, and null chat-message highlight.
 - Exact iOS retirement is scheduled without awaiting it; a stuck MethodChannel can never block acceptance or navigation.
 
-Post-edit disposition: ready to execute the bounded plan. It does not claim to identify or eliminate every source of a second card.
+Post-edit disposition: the bounded plan is implemented and simulator-closed. It does not claim to identify or eliminate every source of a second card.
 
 ## Problem And Evidence
 
@@ -276,16 +278,16 @@ git diff --check
 
 ## Done Criteria
 
-- [ ] One relay custody supplies one stable iOS group-invite collapse ID across provider retries; another custody using the same invite gets a different ID. Android/non-invite/opaque routes are unchanged.
-- [ ] Exact native retirement removes only provider/local cards matching type + groupId + inviteId and is idempotent.
-- [ ] Successful acceptance and a late current-member tap schedule retirement without waiting; failures never block success/navigation.
-- [ ] groupInvite preserves group/invite identity, direct-inbox preparation, intro-like fallback copy, and a non-conversation registry identity.
-- [ ] Same provider delivery dedupes across native/Firebase callbacks; distinct provider transport IDs with the same invite both reach routing; SI5/recent-remote group-invite classification is unchanged.
-- [ ] Current-member taps open or keep the group with null highlight and preserve latest/active guards; pending/retained-removed and genuine missing states keep their correct fallbacks.
-- [ ] Orbit never renders/counts or mutates an invite for a current member, immediately purges joined derived state, and never offers Ask-new to a current member.
-- [ ] The existing genuine-missing localized case, normal accept/decline, multi-use replay, retained-shell rejoin, ordinary group route, and surgical-notification guards remain green.
-- [ ] Focused Dart/Go/Swift, groups, intro, completeness, scoped hygiene, Graphify affected, and incremental refresh pass. No per-plan family/full host-all or physical campaign runs.
-- [ ] Closure notes state that the original duplicate source remains unresolved and make no exactly-once claim.
+- [x] One relay custody supplies one stable iOS group-invite collapse ID across provider retries; another custody using the same invite gets a different ID. Android/non-invite/opaque routes are unchanged.
+- [x] Exact native retirement removes only provider/local cards matching type + groupId + inviteId and is idempotent.
+- [x] Successful acceptance and a late current-member tap schedule retirement without waiting; failures never block success/navigation.
+- [x] groupInvite preserves group/invite identity, direct-inbox preparation, intro-like fallback copy, and a non-conversation registry identity.
+- [x] Same provider delivery dedupes across native/Firebase callbacks; distinct provider transport IDs with the same invite both reach routing; SI5/recent-remote group-invite classification is unchanged.
+- [x] Current-member taps open or keep the group with null highlight and preserve latest/active guards; pending/retained-removed and genuine missing states keep their correct fallbacks.
+- [x] Orbit never renders/counts or mutates an invite for a current member, immediately purges joined derived state, and never offers Ask-new to a current member.
+- [x] The existing genuine-missing localized case, normal accept/decline, multi-use replay, retained-shell rejoin, ordinary group route, and surgical-notification guards remain green.
+- [x] Focused Dart/Go/Swift, groups, intro, completeness, scoped hygiene, Graphify affected, and incremental refresh pass. No per-plan family/full host-all or physical campaign runs.
+- [x] Closure notes state that the original duplicate source remains unresolved and make no exactly-once claim.
 
 ## Handoff
 
@@ -300,4 +302,9 @@ git diff --check
 
 | Time | Phase | Last result | Next |
 |---|---|---|---|
-| - | not started | Critical review completed; bounded plan ready | Capture representative REDs while preserving the dirty tree. |
+| 2026-08-21 19:40 CEST | representative REDs | TC-395-01 lacked `apns-collapse-id`; TC-395-04 rejected the second distinct provider delivery; TC-395-07 drained/parsing a cached current-member Accept | Implement only the three bounded causal branches. |
+| 2026-08-21 20:35 CEST | relay and routing GREEN | TC-395-01 passed across normal/preflight rich retry paths; strict `groupInvite` grammar, provider-only open identity, exact registry identity, direct preparation, and intro-like fallback passed the routing/push matrix | Integrate ApplicationRoot membership routing and exact retirement. |
+| 2026-08-21 20:55 CEST | native, bridge, ApplicationRoot, and Orbit GREEN | Exact native retirement passed 1/1; bridge/wiring passed 26; initial Orbit owner passed 123; initial focused Dart matrix passed 498 | Run preservation and curated lanes. |
+| 2026-08-21 21:17 CEST | host preservation and curated lanes | IJ005 and retained-shell exact owners passed; relay `go test ./...` passed; intro passed 325; completeness passed 1,473/1,473 | Run the pinned simulator UI wrapper, counterexample audit, and scoped hygiene. |
+| 2026-08-21 21:44 CEST | independent counterexample audit | Four causal REDs reproduced Ask-new and Decline membership races, a presentation-read downgrade of confirmed membership, and identity-unknown retained-shell routing; the audit also found nine missing GROUP_TESTS registrations | Add immediate/postflight membership guards, strict invite-only resolver authority, registration, and rerun every affected owner. |
+| 2026-08-21 21:55 CEST | simulator, curated, audit, and hygiene closure | Repaired Orbit owner passed 125; resolver 23; source owner 12; focused Dart 502; final groups 4,843 plus all Go legs; pinned simulator `674DFFF6-5F38-4235-93F6-AF7FBF86AE65` passed exact XCTest 1/1 and UI wrapper 13/13; scoped Dart analysis found no issues; Dart/Go format and shell syntax passed; independent audit found no remaining blocker; final affected query `b06cec07d0a247c9` and incremental refresh passed | Commit the bounded closure. |

@@ -243,6 +243,96 @@ void main() {
     },
   );
 
+  test('group invite route reuses group resolution without a second drain and '
+      'retires before the active-group return', () {
+    final source = File('lib/app/application_root.dart').readAsStringSync();
+    final notificationRouter = _between(
+      source,
+      'Future<NotificationOpenRouteDisposition> _handleNotificationRouteTarget(',
+      'void _revealPostsSurface()',
+    );
+    final groupRoute = _between(
+      notificationRouter,
+      'case NotificationRouteTargetKind.group:',
+      'case NotificationRouteTargetKind.conversation:',
+    );
+
+    final inviteCase = groupRoute.indexOf(
+      'case NotificationRouteTargetKind.groupInvite:',
+    );
+    final resolver = groupRoute.indexOf(
+      'resolveGroupNotificationRouteTarget(',
+      inviteCase,
+    );
+    final noSecondDrain = groupRoute.indexOf(
+      'drainOfflineInbox: isInviteRoute',
+      resolver,
+    );
+    final membershipRequired = groupRoute.indexOf(
+      'requireCurrentLocalMembership: isInviteRoute',
+      resolver,
+    );
+    final latest = groupRoute.indexOf(
+      '_notificationRouteCoordinator.isLatest(context)',
+      noSecondDrain,
+    );
+    final retirement = groupRoute.indexOf(
+      'scheduleGroupInviteRetirement?.call(',
+      latest,
+    );
+    final active = groupRoute.indexOf(
+      'isNotificationRouteTargetAlreadyActive(',
+      retirement,
+    );
+    final nullHighlight = groupRoute.indexOf(
+      'initialHighlightedMessageId: isInviteRoute',
+      active,
+    );
+
+    expect(inviteCase, isNonNegative);
+    expect(resolver, greaterThan(inviteCase));
+    expect(noSecondDrain, greaterThan(resolver));
+    expect(membershipRequired, greaterThan(resolver));
+    expect(latest, greaterThan(membershipRequired));
+    expect(latest, greaterThan(noSecondDrain));
+    expect(retirement, greaterThan(latest));
+    expect(active, greaterThan(retirement));
+    expect(nullHighlight, greaterThan(active));
+    expect(groupRoute, contains('? null'));
+    expect(groupRoute, contains(': routeTarget.messageId'));
+    expect(groupRoute, isNot(contains('await widget.groupInviteListener')));
+  });
+
+  test(
+    'warm Firebase opens preserve provider transport identity and production '
+    'injects one shared retirement scheduler',
+    () {
+      final appSource = File(
+        'lib/app/application_root.dart',
+      ).readAsStringSync();
+      final openedApp = _between(
+        appSource,
+        'FirebaseMessaging.onMessageOpenedApp.listen((message) {',
+        '// 164 (cold-start-1 regression #1):',
+      );
+      expect(openedApp, contains('withRemoteNotificationTransportIdentity('));
+      expect(openedApp, contains('message.data'));
+      expect(openedApp, contains('providerMessageId: message.messageId'));
+
+      final bootstrap = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      expect(
+        RegExp(
+          r'scheduleGroupInviteRetirement:\s*'
+          r'iosNotificationRecoveryCoordinator\?'
+          r'\.scheduleGroupInviteRetirement',
+        ).allMatches(bootstrap),
+        hasLength(1),
+      );
+    },
+  );
+
   test('prepared dispatch validates identity and enters coordinator', () {
     final source = File('lib/app/application_root.dart').readAsStringSync();
     final dispatch = _between(

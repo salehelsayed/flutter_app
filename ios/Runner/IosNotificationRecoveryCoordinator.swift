@@ -2,9 +2,62 @@ import Foundation
 import UIKit
 import UserNotifications
 
+/// Sendable, narrow projection of delivered notification content used only for
+/// exact group-invite retirement. Raw `userInfo` never crosses the notification
+/// center callback boundary.
+struct IosDeliveredNotificationSnapshot: Equatable, Sendable {
+  let requestIdentifier: String
+
+  private let hasFlutterLocalNotificationId: Bool
+  private let hasValidFlutterLocalNotificationId: Bool
+  private let localPayload: String?
+  private let providerType: String?
+  private let providerGroupId: String?
+  private let providerMessageId: String?
+
+  init(requestIdentifier: String, userInfo: [AnyHashable: Any]) {
+    self.requestIdentifier = requestIdentifier
+    hasFlutterLocalNotificationId = userInfo.keys.contains("NotificationId")
+    hasValidFlutterLocalNotificationId = Self.isValidFlutterNotificationId(
+      userInfo["NotificationId"]
+    )
+    localPayload = userInfo["payload"] as? String
+    providerType = userInfo["type"] as? String
+    providerGroupId = userInfo["groupId"] as? String
+    providerMessageId = userInfo["message_id"] as? String
+  }
+
+  func matchesGroupInvite(groupId: String, inviteId: String) -> Bool {
+    guard !requestIdentifier.isEmpty else { return false }
+    if hasFlutterLocalNotificationId {
+      return hasValidFlutterLocalNotificationId &&
+        localPayload == "group_invite:\(groupId)|message:\(inviteId)"
+    }
+    return providerType == "group_invite" &&
+      providerGroupId == groupId &&
+      providerMessageId == inviteId
+  }
+
+  private static func isValidFlutterNotificationId(_ value: Any?) -> Bool {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID(),
+          number.doubleValue.isFinite,
+          number.doubleValue.rounded() == number.doubleValue,
+          number.int64Value >= 0,
+          number.int64Value <= Int64(Int32.max) else {
+      return false
+    }
+    return true
+  }
+}
+
 protocol IosNotificationRecoveryCenter: AnyObject {
   func getDeliveredRequestIdentifiers(
     completionHandler: @escaping @Sendable (Set<String>) -> Void
+  )
+  func getDeliveredNotificationSnapshots(
+    completionHandler:
+      @escaping @Sendable ([IosDeliveredNotificationSnapshot]) -> Void
   )
   func removeDeliveredNotifications(withIdentifiers identifiers: [String])
 }
@@ -15,6 +68,20 @@ extension UNUserNotificationCenter: IosNotificationRecoveryCenter {
   ) {
     getDeliveredNotifications { notifications in
       completionHandler(Set(notifications.map(\.request.identifier)))
+    }
+  }
+
+  func getDeliveredNotificationSnapshots(
+    completionHandler:
+      @escaping @Sendable ([IosDeliveredNotificationSnapshot]) -> Void
+  ) {
+    getDeliveredNotifications { notifications in
+      completionHandler(notifications.map { notification in
+        IosDeliveredNotificationSnapshot(
+          requestIdentifier: notification.request.identifier,
+          userInfo: notification.request.content.userInfo
+        )
+      })
     }
   }
 }
@@ -211,6 +278,42 @@ final class IosNotificationRecoveryCoordinator {
     reconcile(watermark: watermark, completion: completion)
   }
 
+  /// Removes only delivered provider/local cards for this exact invite. This
+  /// path is independent of the canonical message ledger because group invite
+  /// cards are not canonical unread conversation events.
+  func retireGroupInvite(
+    groupId: String,
+    inviteId: String,
+    completion: @escaping (Bool) -> Void
+  ) {
+    guard Self.isStrictRetirementIdentifier(groupId),
+          Self.isStrictRetirementIdentifier(inviteId) else {
+      completion(false)
+      return
+    }
+    center.getDeliveredNotificationSnapshots { [weak self] delivered in
+      guard let self else {
+        completion(false)
+        return
+      }
+      let selected = Set(
+        delivered.lazy
+          .filter {
+            $0.matchesGroupInvite(groupId: groupId, inviteId: inviteId)
+          }
+          .map(\.requestIdentifier)
+      ).sorted()
+      if !selected.isEmpty {
+        self.center.removeDeliveredNotifications(withIdentifiers: selected)
+      }
+      self.center.getDeliveredNotificationSnapshots { remaining in
+        completion(!remaining.contains { snapshot in
+          snapshot.matchesGroupInvite(groupId: groupId, inviteId: inviteId)
+        })
+      }
+    }
+  }
+
   func clearAccount(completion: @escaping (Bool) -> Void) {
     sessionLock.lock()
     guard let watermark = store.clearAccount() else {
@@ -293,5 +396,16 @@ final class IosNotificationRecoveryCoordinator {
     }
     sessions.removeValue(forKey: token)
     return session
+  }
+
+  private static func isStrictRetirementIdentifier(_ value: String) -> Bool {
+    guard !value.isEmpty,
+          value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+          value.lengthOfBytes(using: .utf8) <= 512 else {
+      return false
+    }
+    return !value.unicodeScalars.contains { scalar in
+      scalar.value < 0x20 || (scalar.value >= 0x7f && scalar.value <= 0x9f)
+    }
   }
 }

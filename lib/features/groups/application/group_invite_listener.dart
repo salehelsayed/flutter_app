@@ -24,6 +24,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
+typedef ScheduleGroupInviteRetirement =
+    void Function({required String groupId, required String inviteId});
+
 /// Listener service that monitors P2P messages for group invites.
 ///
 /// Subscribes to the typed group invite stream (from IncomingMessageRouter),
@@ -47,6 +50,7 @@ class GroupInviteListener {
   final GroupMessageRepository? msgRepo;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final AppendGroupEventLogEntry? appendGroupEventLogEntry;
+  final ScheduleGroupInviteRetirement? scheduleGroupInviteRetirement;
 
   /// Inviter-side per-peer delivery-attempt store, used to flip a row to
   /// `declined` when an inbound decline-ack arrives. Null when not wired.
@@ -82,6 +86,7 @@ class GroupInviteListener {
     this.msgRepo,
     this.mediaAttachmentRepo,
     this.appendGroupEventLogEntry,
+    this.scheduleGroupInviteRetirement,
     this.deliveryRepo,
     this.p2pService,
     this.loadOwnIdentity,

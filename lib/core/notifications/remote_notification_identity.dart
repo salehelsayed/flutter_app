@@ -13,12 +13,33 @@ String? remoteNotificationMessageIdFromData(Map<String, dynamic> data) {
       _trimToNull(data['msgId']?.toString());
 }
 
+/// Returns a routable copy of Firebase data with its provider transport
+/// identity normalized into the key shared with native notification opens.
+/// An existing nonblank identity remains authoritative.
+Map<String, dynamic> withRemoteNotificationTransportIdentity(
+  Map<String, dynamic> data, {
+  String? providerMessageId,
+}) {
+  if (_trimToNull(data['gcm.message_id']?.toString()) != null) {
+    return Map<String, dynamic>.of(data);
+  }
+  final normalizedProviderMessageId = _trimToNull(providerMessageId);
+  if (normalizedProviderMessageId == null) {
+    return Map<String, dynamic>.of(data);
+  }
+  return <String, dynamic>{
+    ...data,
+    'gcm.message_id': normalizedProviderMessageId,
+  };
+}
+
 bool routeTargetSupportsMessageAwareRemoteDedupe(
   NotificationRouteTargetKind kind,
 ) {
   return switch (kind) {
     NotificationRouteTargetKind.conversation => true,
     NotificationRouteTargetKind.group => true,
+    NotificationRouteTargetKind.groupInvite => false,
     _ => false,
   };
 }

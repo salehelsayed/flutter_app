@@ -79,6 +79,7 @@ Future<PrepareNotificationOpenResult> prepareNotificationOpen({
         }
         break;
       case NotificationRouteTargetKind.contactRequest:
+      case NotificationRouteTargetKind.groupInvite:
       case NotificationRouteTargetKind.intros:
         await drainOfflineInbox();
         break;
