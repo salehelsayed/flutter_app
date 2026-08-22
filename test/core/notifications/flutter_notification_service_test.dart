@@ -12,6 +12,7 @@ import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/group_invite_android_notification_identity.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
@@ -733,6 +734,37 @@ void main() {
       expect(firstInvite['id'], isNot(ordinaryGroup['id']));
       expect(secondInvite['id'], isNot(ordinaryGroup['id']));
       expect(secondInvite['payload'], 'group_invite:group-1|message:invite-2');
+    },
+  );
+
+  test(
+    'group invite native identity is forwarded without durable history',
+    () async {
+      final service = buildService();
+      await service.initialize();
+      final tag = groupInviteAndroidNotificationTag(
+        groupId: 'group-1',
+        inviteId: 'invite-1',
+      );
+
+      for (var replay = 0; replay < 2; replay += 1) {
+        await service.showNotification(
+          title: 'Book Club',
+          body: 'Invited by Alice',
+          payload: 'group_invite:group-1|message:invite-1',
+          androidNotificationId: groupInviteAndroidNotificationId,
+          androidNotificationTag: tag,
+        );
+      }
+
+      final shows = log.where((call) => call.method == 'show').toList();
+      expect(shows, hasLength(2));
+      for (final show in shows) {
+        final arguments = show.arguments as Map;
+        expect(arguments['id'], groupInviteAndroidNotificationId);
+        expect((arguments['platformSpecifics'] as Map)['tag'], tag);
+        expect(arguments['payload'], 'group_invite:group-1|message:invite-1');
+      }
     },
   );
 

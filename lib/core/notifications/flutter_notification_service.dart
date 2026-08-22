@@ -529,16 +529,20 @@ class FlutterNotificationService
     required String title,
     required String body,
     String? payload,
+    int? androidNotificationId,
+    String? androidNotificationTag,
   }) async {
-    final notificationId = await _resolveNotificationId(
-      _genericNotificationConversationKey(payload: payload, title: title),
-    );
+    final notificationId =
+        androidNotificationId ??
+        await _resolveNotificationId(
+          _genericNotificationConversationKey(payload: payload, title: title),
+        );
     try {
       await _plugin.show(
         notificationId,
         title,
         body,
-        mknoonMessagesNotificationDetails,
+        mknoonGenericNotificationDetails(androidTag: androidNotificationTag),
         payload: payload,
       );
 

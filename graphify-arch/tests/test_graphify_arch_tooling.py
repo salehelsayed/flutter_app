@@ -995,8 +995,9 @@ print(json.dumps(_without_sources(data, {'lib/changed.dart'})))
             for entry in codex_entries
             for hook in entry["hooks"]
         ]
-        self.assertEqual(len(codex_commands), 1)
+        self.assertEqual(len(codex_commands), 2)
         self.assertIn("codex_graphify_reminder.py", codex_commands[0])
+        self.assertIn("codex_memory_reminder.py", codex_commands[1])
         claude = json.loads((ROOT / ".claude" / "settings.json").read_text())
         self.assertNotIn("permissions", claude)
         commands = [

@@ -347,7 +347,15 @@ class _RecordingNotificationService implements NotificationService {
     required String title,
     required String body,
     String? payload,
-  }) => _inner.showNotification(title: title, body: body, payload: payload);
+    int? androidNotificationId,
+    String? androidNotificationTag,
+  }) => _inner.showNotification(
+    title: title,
+    body: body,
+    payload: payload,
+    androidNotificationId: androidNotificationId,
+    androidNotificationTag: androidNotificationTag,
+  );
 
   @override
   Future<String?> consumeInitialPayload() => _inner.consumeInitialPayload();

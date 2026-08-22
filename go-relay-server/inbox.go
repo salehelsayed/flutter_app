@@ -35,16 +35,17 @@ const (
 	maxMessagesPerGroup = 500
 	groupMessageTTL     = 7 * 24 * time.Hour
 
-	pushNotificationTitle      = "New Message"
-	pushNotificationBody       = "You have a new message"
-	pushNotificationChannelID  = "mknoon_messages"
-	pushNotificationSound      = "default"
-	contactRequestPushTitle    = "New Contact Request"
-	contactRequestPushBody     = "Open Mknoon to respond"
-	groupInvitePushTitle       = "Group Invite"
-	groupInvitePushBody        = "Open Mknoon to review"
-	introPushNotificationTitle = "New Introduction"
-	introPushNotificationBody  = "Open Mknoon to review"
+	pushNotificationTitle       = "New Message"
+	pushNotificationBody        = "You have a new message"
+	pushNotificationChannelID   = "mknoon_messages"
+	pushNotificationSound       = "default"
+	contactRequestPushTitle     = "New Contact Request"
+	contactRequestPushBody      = "Open Mknoon to respond"
+	groupInvitePushTitle        = "Group Invite"
+	groupInvitePushBody         = "Open Mknoon to review"
+	groupInviteAndroidTagPrefix = "mknoon_group_invite_"
+	introPushNotificationTitle  = "New Introduction"
+	introPushNotificationBody   = "Open Mknoon to review"
 	// 252: role-neutral acceptance copy. Applied only when the canonical
 	// envelope message ID validates as an `accept` (and, for v1 plaintext,
 	// agrees with the cleartext payload action). No responder identity is
@@ -875,6 +876,18 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 		data["senderUsername"] = metadata.SenderUsername
 	}
 
+	androidNotification := &messaging.AndroidNotification{
+		Title:     resolvedTitle,
+		Body:      resolvedBody,
+		ChannelID: pushNotificationChannelID,
+	}
+	if metadata.RouteType == "group_invite" {
+		androidNotification.Tag = groupInviteAndroidNotificationTag(
+			metadata.GroupID,
+			metadata.MessageID,
+		)
+	}
+
 	return &messaging.Message{
 		Token: token,
 		Notification: &messaging.Notification{
@@ -883,12 +896,8 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 		},
 		Data: data,
 		Android: &messaging.AndroidConfig{
-			Priority: "high",
-			Notification: &messaging.AndroidNotification{
-				Title:     resolvedTitle,
-				Body:      resolvedBody,
-				ChannelID: pushNotificationChannelID,
-			},
+			Priority:     "high",
+			Notification: androidNotification,
 		},
 		APNS: &messaging.APNSConfig{
 			Headers: map[string]string{
@@ -907,6 +916,22 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 			},
 		},
 	}
+}
+
+// groupInviteAndroidNotificationTag returns the privacy-safe native identity
+// shared with the Android app's local group-invite publisher. Exact redelivery
+// of one invite therefore updates one OS card, while distinct invites remain
+// independently visible. Missing canonical routing identities deliberately
+// leave the notification untagged instead of collapsing unrelated invites.
+func groupInviteAndroidNotificationTag(groupID, inviteID string) string {
+	groupID = strings.TrimSpace(groupID)
+	inviteID = strings.TrimSpace(inviteID)
+	if groupID == "" || inviteID == "" {
+		return ""
+	}
+
+	digest := sha256.Sum256([]byte("group_invite\x00" + groupID + "\x00" + inviteID))
+	return fmt.Sprintf("%s%x", groupInviteAndroidTagPrefix, digest[:16])
 }
 
 func buildGroupPushMessage(

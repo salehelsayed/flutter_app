@@ -791,6 +791,8 @@ final class _GenerationNotificationService
     required String title,
     required String body,
     String? payload,
+    int? androidNotificationId,
+    String? androidNotificationTag,
   }) async {}
 
   @override

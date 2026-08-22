@@ -48,6 +48,28 @@ const mknoonMessagesNotificationDetails = NotificationDetails(
   ),
 );
 
+NotificationDetails mknoonGenericNotificationDetails({String? androidTag}) {
+  if (androidTag == null) {
+    return mknoonMessagesNotificationDetails;
+  }
+  return NotificationDetails(
+    android: AndroidNotificationDetails(
+      mknoonMessagesChannelId,
+      mknoonMessagesChannelName,
+      channelDescription: mknoonMessagesChannelDescription,
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: true,
+      tag: androidTag,
+    ),
+    iOS: const DarwinNotificationDetails(
+      presentSound: true,
+      presentAlert: true,
+      presentBadge: true,
+    ),
+  );
+}
+
 // 118 Phase 3: no-sound, no-vibration variant for the per-conversation tone
 // debounce. Reusing the same per-conversation notification id with these
 // details performs a silent in-place update of the existing notification.

@@ -170,6 +170,8 @@ class _RecordingNotificationService implements NotificationService {
     required String title,
     required String body,
     String? payload,
+    int? androidNotificationId,
+    String? androidNotificationTag,
   }) async {}
 
   @override
@@ -419,6 +421,7 @@ Future<void> _handleNotificationRouteTarget({
     case NotificationRouteTargetKind.contactRequest:
     case NotificationRouteTargetKind.intros:
     case NotificationRouteTargetKind.group:
+    case NotificationRouteTargetKind.groupInvite:
     case NotificationRouteTargetKind.post:
     case NotificationRouteTargetKind.postComment:
       trace.add('non-conversation-target:${routeTarget.kind}');

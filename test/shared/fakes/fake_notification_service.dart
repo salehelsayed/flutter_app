@@ -44,9 +44,17 @@ class FakeNotificationService implements NotificationService {
     required String title,
     required String body,
     String? payload,
+    int? androidNotificationId,
+    String? androidNotificationTag,
   }) async {
     shownGeneric.add(
-      FakeGenericNotification(title: title, body: body, payload: payload),
+      FakeGenericNotification(
+        title: title,
+        body: body,
+        payload: payload,
+        androidNotificationId: androidNotificationId,
+        androidNotificationTag: androidNotificationTag,
+      ),
     );
   }
 
@@ -96,10 +104,14 @@ class FakeGenericNotification {
   final String title;
   final String body;
   final String? payload;
+  final int? androidNotificationId;
+  final String? androidNotificationTag;
 
   const FakeGenericNotification({
     required this.title,
     required this.body,
     this.payload,
+    this.androidNotificationId,
+    this.androidNotificationTag,
   });
 }

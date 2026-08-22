@@ -20,6 +20,7 @@ import 'package:flutter_app/core/notifications/deterministic_notification_id.dar
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/group_invite_android_notification_identity.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
@@ -746,9 +747,6 @@ void main() {
         debugSetBackgroundPushNotificationResolver(
           (message) async => buildBackgroundPushFallbackNotification(message),
         );
-        final registry = await useIsolatedBackgroundNotificationRegistry(
-          'group-invite-exact-route',
-        );
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, (MethodCall call) async {
               log.add(call);
@@ -771,17 +769,78 @@ void main() {
 
         const firstKey = 'group_invite:group-395|message:invite-a';
         const secondKey = 'group_invite:group-395|message:invite-b';
-        final firstId = await registry.lookup(firstKey);
-        final secondId = await registry.lookup(secondKey);
-        expect(firstId, isNotNull);
-        expect(secondId, isNotNull);
-        expect(firstId, isNot(secondId));
-        expect(await registry.lookup('group:group-395'), isNull);
+        final shows = log.where((call) => call.method == 'show').toList();
+        expect(shows, hasLength(2));
+        final first = shows.first.arguments as Map;
+        final second = shows.last.arguments as Map;
+        expect(first['payload'], firstKey);
+        expect(second['payload'], secondKey);
+        expect(first['id'], groupInviteAndroidNotificationId);
+        expect(second['id'], groupInviteAndroidNotificationId);
+        expect(
+          (first['platformSpecifics'] as Map)['tag'],
+          groupInviteAndroidNotificationTag(
+            groupId: 'group-395',
+            inviteId: 'invite-a',
+          ),
+        );
+        expect(
+          (second['platformSpecifics'] as Map)['tag'],
+          groupInviteAndroidNotificationTag(
+            groupId: 'group-395',
+            inviteId: 'invite-b',
+          ),
+        );
+        expect(
+          (first['platformSpecifics'] as Map)['tag'],
+          isNot((second['platformSpecifics'] as Map)['tag']),
+        );
+      },
+    );
+
+    test(
+      'TC-395-06 repeated group invite delivery updates one native identity without history suppression',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        debugSetBackgroundPushNotificationDisplayEligibilityResolver(
+          (_) async => const PushFallbackNotificationDisplayEligibility.allow(),
+        );
+        debugSetBackgroundPushEnvelopeStager((_) async {});
+        debugSetBackgroundPushNotificationResolver(
+          (message) async => buildBackgroundPushFallbackNotification(message),
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+
+        for (final providerId in const ['provider-first', 'provider-replay']) {
+          await firebaseMessagingBackgroundHandler(
+            RemoteMessage(
+              messageId: providerId,
+              data: const <String, dynamic>{
+                'type': 'group_invite',
+                'groupId': 'group-395',
+                'message_id': 'invite-multi-use',
+              },
+            ),
+          );
+        }
 
         final shows = log.where((call) => call.method == 'show').toList();
         expect(shows, hasLength(2));
-        expect((shows.first.arguments as Map)['payload'], firstKey);
-        expect((shows.last.arguments as Map)['payload'], secondKey);
+        final first = shows.first.arguments as Map;
+        final second = shows.last.arguments as Map;
+        expect(first['id'], groupInviteAndroidNotificationId);
+        expect(second['id'], groupInviteAndroidNotificationId);
+        expect(
+          (first['platformSpecifics'] as Map)['tag'],
+          (second['platformSpecifics'] as Map)['tag'],
+        );
+        expect(first['payload'], second['payload']);
       },
     );
 
@@ -6261,6 +6320,56 @@ void main() {
           ),
           isTrue,
         );
+      },
+    );
+
+    test(
+      'visible Android group invite stays provider-owned without creating invite-id history',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        final coordinatorDirectory = Directory.systemTemp.createTempSync(
+          'visible-group-invite-no-history-',
+        );
+        addTearDown(() {
+          if (coordinatorDirectory.existsSync()) {
+            coordinatorDirectory.deleteSync(recursive: true);
+          }
+        });
+        final coordinator = DurableNotificationToneLease(
+          directory: coordinatorDirectory,
+          pendingClaimWait: Duration.zero,
+        );
+        debugSetBackgroundMessageNotificationCoordinatorResolver(
+          () async => coordinator,
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              return null;
+            });
+
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-visible-group-invite',
+            notification: RemoteNotification(
+              title: 'Book Club',
+              body: 'Invited by Alice',
+            ),
+            data: <String, dynamic>{
+              'type': 'group_invite',
+              'groupId': 'group-visible',
+              'message_id': 'invite-multi-use',
+            },
+          ),
+        );
+
+        expect(log.where((call) => call.method == 'show'), isEmpty);
+        final laterDelivery = await coordinator.claimMessageEvent(
+          type: 'group_invite',
+          eventIdentity: 'invite-multi-use',
+        );
+        expect(laterDelivery, isNotNull);
+        expect(await laterDelivery!.release(), isTrue);
       },
     );
 

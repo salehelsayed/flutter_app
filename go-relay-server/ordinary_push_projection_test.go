@@ -273,6 +273,74 @@ func TestRelayNotificationClosure_OrdinaryPushIosVisibleRouteKeepsData(t *testin
 	}
 }
 
+func TestGroupInviteAndroidNotificationTagKnownVector(t *testing.T) {
+	const want = "mknoon_group_invite_ed9a409a17e30f392210675cde7ed859"
+	if got := groupInviteAndroidNotificationTag(" group-1 ", " invite-1 "); got != want {
+		t.Fatalf("group-invite Android tag = %q, want %q", got, want)
+	}
+}
+
+func TestGroupInviteAndroidNotificationTagSeparatesInvites(t *testing.T) {
+	first := groupInviteAndroidNotificationTag("group-1", "invite-1")
+	second := groupInviteAndroidNotificationTag("group-1", "invite-2")
+	if first == "" || second == "" {
+		t.Fatalf("group-invite Android tags must be non-empty: %q / %q", first, second)
+	}
+	if first == second {
+		t.Fatalf("distinct invite IDs collapsed to one Android tag: %q", first)
+	}
+}
+
+func TestGroupInviteAndroidNotificationTagProjectionPreservesPlatforms(t *testing.T) {
+	envelope := `{"type":"group_invite","version":"2","id":"invite-1","senderPeerId":"peer-from","senderUsername":"Alice","groupId":"group-1","groupName":"Book Club","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`
+	unprojected := buildPushMessage("recipient-token", "peer-from", envelope)
+	wantTag := groupInviteAndroidNotificationTag("group-1", "invite-1")
+	if unprojected.Android == nil || unprojected.Android.Notification == nil ||
+		unprojected.Android.Notification.Tag != wantTag {
+		t.Fatalf("unprojected Android tag = %#v, want %q", unprojected.Android, wantTag)
+	}
+
+	android := projectPushMessageForPlatform(unprojected, "android")
+	if android.APNS != nil {
+		t.Fatalf("Android projection retained APNS: %#v", android.APNS)
+	}
+	if android.Android == nil || android.Android.Notification == nil ||
+		android.Android.Notification.Tag != wantTag {
+		t.Fatalf("Android projection lost group-invite tag: %#v", android.Android)
+	}
+	androidData, _ := json.Marshal(android.Data)
+	wantData, _ := json.Marshal(unprojected.Data)
+	if string(androidData) != string(wantData) {
+		t.Fatalf("Android projection changed group-invite Data")
+	}
+
+	ios := projectPushMessageForPlatform(unprojected, "ios")
+	if ios.Android != nil {
+		t.Fatalf("iOS projection retained Android config: %#v", ios.Android)
+	}
+	iosData, _ := json.Marshal(ios.Data)
+	if string(iosData) != string(wantData) {
+		t.Fatalf("iOS projection changed group-invite Data")
+	}
+	iosAPNS, _ := json.Marshal(ios.APNS)
+	wantAPNS, _ := json.Marshal(unprojected.APNS)
+	if string(iosAPNS) != string(wantAPNS) {
+		t.Fatalf("iOS projection changed group-invite APNS")
+	}
+
+	contact := buildPushMessage(
+		"recipient-token",
+		"peer-from",
+		`{"type":"contact_request","id":"contact-1","senderUsername":"Alice"}`,
+	)
+	if contact.Android == nil || contact.Android.Notification == nil {
+		t.Fatalf("contact fixture missing Android notification: %#v", contact.Android)
+	}
+	if contact.Android.Notification.Tag != "" {
+		t.Fatalf("non-group-invite Android tag = %q, want empty", contact.Android.Notification.Tag)
+	}
+}
+
 // TC-05 — the 1:1 reaction lane projects per platform, and its builder now
 // refuses an envelope whose single marshalled leg exceeds the provider budget.
 func TestRelayNotificationClosure_OrdinaryPushDirectReactionProjected(t *testing.T) {

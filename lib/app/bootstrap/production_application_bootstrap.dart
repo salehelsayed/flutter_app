@@ -218,6 +218,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
 import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/application/group_invite_notification_presenter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_repair_responder_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
@@ -6224,6 +6225,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     final notificationToneTracker = NotificationToneTracker();
     final durableReactionNotificationCoordinator =
         await DurableNotificationToneLease.openDefault();
+    final groupInviteNotificationPresenter = !kIsWeb && Platform.isAndroid
+        ? GroupInviteNotificationPresenter(
+            notificationService: notificationService,
+            appVisibility: appVisibilityAuthority,
+          )
+        : null;
     final directProjectionComposition =
         buildProductionCanonicalDirectProjectionComposition(
           ProductionCanonicalDirectProjectionDependencies(
@@ -8061,6 +8068,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           groupIdentityCallbacks.getOwnKeyPackagePublicMaterial,
       scheduleGroupInviteRetirement:
           iosNotificationRecoveryCoordinator?.scheduleGroupInviteRetirement,
+      presentPendingGroupInviteNotification:
+          groupInviteNotificationPresenter == null
+          ? null
+          : (invite) async {
+              await groupInviteNotificationPresenter.present(invite);
+            },
       appendGroupEventLogEntry:
           ({
             required groupId,

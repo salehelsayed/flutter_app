@@ -663,9 +663,22 @@ _loadForegroundGroupConversationNotificationProjection({
 }
 
 String? backgroundPushFallbackDedupeKey(RemoteMessage message) {
-  final payload = _payloadFromMessage(message);
+  final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
+    message.data,
+  );
+  final payload = routeTarget?.toPayload();
   if (payload == null) {
     return null;
+  }
+
+  // A group-invite credential may legally be reused. Its invite/message ID is
+  // therefore not a delivery identity and must not silence a later invitation
+  // for the gate's 12-hour lifetime. FCM's transport ID identifies only this
+  // delivery attempt; without one, fail open instead of creating invite
+  // history from payload data.
+  if (_trimToNull(message.data['type']?.toString()) == 'group_invite') {
+    final transportId = _trimToNull(message.messageId);
+    return transportId == null ? null : 'group_invite_transport=$transportId';
   }
 
   final uniqueId =

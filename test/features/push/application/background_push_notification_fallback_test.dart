@@ -2106,6 +2106,79 @@ void main() {
       );
     });
 
+    test('group_invite dedupes one provider transport delivery only', () {
+      const message = RemoteMessage(
+        messageId: 'fcm-invite-delivery-1',
+        data: {
+          'type': 'group_invite',
+          'groupId': 'group-reusable',
+          'message_id': 'invite-reusable',
+        },
+      );
+
+      expect(
+        backgroundPushFallbackDedupeKey(message),
+        'group_invite_transport=fcm-invite-delivery-1',
+      );
+    });
+
+    test(
+      'group_invite reuse with distinct provider transports is not history-suppressed',
+      () {
+        const first = RemoteMessage(
+          messageId: 'fcm-invite-delivery-1',
+          data: {
+            'type': 'group_invite',
+            'groupId': 'group-reusable',
+            'message_id': 'invite-reusable',
+          },
+        );
+        const second = RemoteMessage(
+          messageId: 'fcm-invite-delivery-2',
+          data: {
+            'type': 'group_invite',
+            'groupId': 'group-reusable',
+            'message_id': 'invite-reusable',
+          },
+        );
+
+        expect(
+          backgroundPushFallbackDedupeKey(first),
+          isNot(backgroundPushFallbackDedupeKey(second)),
+        );
+      },
+    );
+
+    test('group_invite without provider transport creates no history key', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'group_invite',
+          'groupId': 'group-reusable',
+          'message_id': 'invite-reusable',
+          'timestamp': '1787356800000',
+          'title': 'Reusable invite',
+        },
+      );
+
+      expect(backgroundPushFallbackDedupeKey(message), isNull);
+    });
+
+    test('legacy group_invite route also uses provider transport only', () {
+      const withTransport = RemoteMessage(
+        messageId: 'fcm-legacy-invite-delivery',
+        data: {'type': 'group_invite', 'message_id': 'legacy-invite-reusable'},
+      );
+      const withoutTransport = RemoteMessage(
+        data: {'type': 'group_invite', 'message_id': 'legacy-invite-reusable'},
+      );
+
+      expect(
+        backgroundPushFallbackDedupeKey(withTransport),
+        'group_invite_transport=fcm-legacy-invite-delivery',
+      );
+      expect(backgroundPushFallbackDedupeKey(withoutTransport), isNull);
+    });
+
     test(
       'GIRD-006 uses canonical group payload and message identity for fallback dedupe',
       () {
@@ -2301,9 +2374,17 @@ class _RaceFlippingNotificationService extends FakeNotificationService
     required String title,
     required String body,
     String? payload,
+    int? androidNotificationId,
+    String? androidNotificationTag,
   }) async {
     beforeNative();
     nativeCalls += 1;
-    await super.showNotification(title: title, body: body, payload: payload);
+    await super.showNotification(
+      title: title,
+      body: body,
+      payload: payload,
+      androidNotificationId: androidNotificationId,
+      androidNotificationTag: androidNotificationTag,
+    );
   }
 }

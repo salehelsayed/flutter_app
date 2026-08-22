@@ -27,6 +27,9 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 typedef ScheduleGroupInviteRetirement =
     void Function({required String groupId, required String inviteId});
 
+typedef PresentPendingGroupInviteNotification =
+    Future<void> Function(PendingGroupInvite invite);
+
 /// Listener service that monitors P2P messages for group invites.
 ///
 /// Subscribes to the typed group invite stream (from IncomingMessageRouter),
@@ -51,6 +54,8 @@ class GroupInviteListener {
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final AppendGroupEventLogEntry? appendGroupEventLogEntry;
   final ScheduleGroupInviteRetirement? scheduleGroupInviteRetirement;
+  final PresentPendingGroupInviteNotification?
+  presentPendingGroupInviteNotification;
 
   /// Inviter-side per-peer delivery-attempt store, used to flip a row to
   /// `declined` when an inbound decline-ack arrives. Null when not wired.
@@ -87,6 +92,7 @@ class GroupInviteListener {
     this.mediaAttachmentRepo,
     this.appendGroupEventLogEntry,
     this.scheduleGroupInviteRetirement,
+    this.presentPendingGroupInviteNotification,
     this.deliveryRepo,
     this.p2pService,
     this.loadOwnIdentity,
@@ -342,12 +348,49 @@ class GroupInviteListener {
           },
         );
         _pendingInviteController.add(pendingInvite);
+        final presentNotification = presentPendingGroupInviteNotification;
+        if (presentNotification != null) {
+          // Native publication is downstream of durable invite custody. Do not
+          // let a stalled platform callback block later invite, revocation,
+          // decline-ack, or config messages in the serialized listener queue.
+          unawaited(
+            _presentPendingInviteNotification(
+              presentNotification,
+              pendingInvite,
+            ),
+          );
+        }
       }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_INVITE_LISTENER_ERROR',
         details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _presentPendingInviteNotification(
+    PresentPendingGroupInviteNotification presentNotification,
+    PendingGroupInvite pendingInvite,
+  ) async {
+    try {
+      await presentNotification(pendingInvite);
+    } catch (error) {
+      // Publication failure must never undo persistence or suppress the UI
+      // refresh signal emitted before this detached effect.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_LISTENER_NOTIFICATION_ERROR',
+        details: {
+          'groupId': pendingInvite.groupId.length > 8
+              ? pendingInvite.groupId.substring(0, 8)
+              : pendingInvite.groupId,
+          'inviteId': pendingInvite.inviteId.length > 8
+              ? pendingInvite.inviteId.substring(0, 8)
+              : pendingInvite.inviteId,
+          'errorType': error.runtimeType.toString(),
+        },
       );
     }
   }

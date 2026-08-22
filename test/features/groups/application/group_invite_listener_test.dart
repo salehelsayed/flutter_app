@@ -971,6 +971,121 @@ void main() {
     );
 
     test(
+      'presents the canonical pending invite after durable storage',
+      () async {
+        final presented = <PendingGroupInvite>[];
+        final notificationListener = GroupInviteListener(
+          groupInviteStream: incomingController.stream,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnMlKemSecretKey: () async => 'mySecretKey',
+          getOwnPeerId: () async => '12D3KooWBob',
+          presentPendingGroupInviteNotification: (invite) async {
+            presented.add(invite);
+          },
+          now: () => listenerNow,
+        );
+        addTearDown(notificationListener.dispose);
+        notificationListener.start();
+
+        final pendingSignal = notificationListener.pendingInviteStream.first;
+        incomingController.add(_makeV2InviteMessage());
+        final emitted = await pendingSignal.timeout(const Duration(seconds: 2));
+        await notificationListener.waitForIdle();
+
+        final stored = await pendingInviteRepo.getPendingInvite('grp-abc123');
+        expect(stored, same(emitted));
+        expect(presented, hasLength(1));
+        expect(presented.single, same(emitted));
+        expect(presented.single.inviteId, 'invite-uuid-001');
+        expect(presented.single.groupName, 'Book Club');
+        expect(presented.single.senderUsername, 'Alice');
+      },
+    );
+
+    test(
+      'notification failure preserves storage and the pending invite UI signal',
+      () async {
+        final presented = <PendingGroupInvite>[];
+        final notificationListener = GroupInviteListener(
+          groupInviteStream: incomingController.stream,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnMlKemSecretKey: () async => 'mySecretKey',
+          getOwnPeerId: () async => '12D3KooWBob',
+          presentPendingGroupInviteNotification: (invite) async {
+            presented.add(invite);
+            throw StateError('notification unavailable');
+          },
+          now: () => listenerNow,
+        );
+        addTearDown(notificationListener.dispose);
+        notificationListener.start();
+
+        final pendingSignal = notificationListener.pendingInviteStream.first;
+        incomingController.add(_makeV2InviteMessage());
+        final emitted = await pendingSignal.timeout(const Duration(seconds: 2));
+        await notificationListener.waitForIdle();
+
+        final stored = await pendingInviteRepo.getPendingInvite('grp-abc123');
+        expect(stored, same(emitted));
+        expect(pendingInviteRepo.count, 1);
+        expect(presented, hasLength(1));
+        expect(presented.single, same(emitted));
+      },
+    );
+
+    test(
+      'stalled notification publication does not block later invite custody',
+      () async {
+        final neverCompletes = Completer<void>();
+        final presented = <PendingGroupInvite>[];
+        final notificationListener = GroupInviteListener(
+          groupInviteStream: incomingController.stream,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnMlKemSecretKey: () async => 'mySecretKey',
+          getOwnPeerId: () async => '12D3KooWBob',
+          presentPendingGroupInviteNotification: (invite) {
+            presented.add(invite);
+            return neverCompletes.future;
+          },
+          now: () => listenerNow,
+        );
+        addTearDown(notificationListener.dispose);
+        notificationListener.start();
+
+        final pendingSignals = notificationListener.pendingInviteStream
+            .take(2)
+            .toList();
+        incomingController.add(_makeV2InviteMessage());
+        incomingController.add(
+          _makeV2InviteMessage(groupId: 'grp-second-invite'),
+        );
+
+        final emitted = await pendingSignals.timeout(
+          const Duration(seconds: 2),
+        );
+        await notificationListener.waitForIdle().timeout(
+          const Duration(seconds: 2),
+        );
+
+        expect(emitted.map((invite) => invite.groupId).toSet(), {
+          'grp-abc123',
+          'grp-second-invite',
+        });
+        expect(pendingInviteRepo.count, 2);
+        expect(presented, hasLength(2));
+      },
+    );
+
+    test(
       'stores delayed policy-valid invite after old freshness window without joining',
       () async {
         final issuedAt = DateTime.utc(2026, 3, 2, 12);

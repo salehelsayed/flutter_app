@@ -287,6 +287,8 @@ abstract class NotificationService {
     required String title,
     required String body,
     String? payload,
+    int? androidNotificationId,
+    String? androidNotificationTag,
   });
 
   /// Callback invoked when the user taps a notification.

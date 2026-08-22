@@ -15,6 +15,7 @@ import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/group_invite_android_notification_identity.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
@@ -1022,6 +1023,23 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     final isReaction =
         pushType == 'message_reaction' ||
         groupContentKind == ConversationNotificationContentKind.reaction;
+    final isGroupInvite =
+        pushType == 'group_invite' &&
+        routeTarget?.kind == NotificationRouteTargetKind.groupInvite;
+    final groupInviteId = isGroupInvite
+        ? remoteNotificationMessageIdFromData(message.data) ??
+              routeTarget?.messageId
+        : null;
+    final groupInviteGroupId = isGroupInvite ? routeTarget?.groupId : null;
+    final groupInviteAndroidTag =
+        defaultTargetPlatform == TargetPlatform.android &&
+            groupInviteGroupId != null &&
+            groupInviteId != null
+        ? groupInviteAndroidNotificationTag(
+            groupId: groupInviteGroupId,
+            inviteId: groupInviteId,
+          )
+        : null;
     final resolvedEventIdentity = fallback.resolvedEventIdentity;
     final reactionEventId = isReaction
         ? _trimToNull(message.data['event_id']) ??
@@ -1184,18 +1202,21 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         );
       }
     }
-    late final DurableConversationNotificationIdRegistry notificationIdRegistry;
+    DurableConversationNotificationIdRegistry? notificationIdRegistry;
     late final int notificationId;
     try {
-      notificationIdRegistry =
-          await _backgroundConversationNotificationIdRegistryResolver();
-      notificationId = await notificationIdRegistry.resolve(
-        conversationKey,
-        activeNotificationIds: () async =>
-            (await _backgroundNotificationsPlugin.getActiveNotifications()).map(
-              (notification) => notification.id,
-            ),
-      );
+      if (groupInviteAndroidTag != null) {
+        notificationId = groupInviteAndroidNotificationId;
+      } else {
+        notificationIdRegistry =
+            await _backgroundConversationNotificationIdRegistryResolver();
+        notificationId = await notificationIdRegistry.resolve(
+          conversationKey,
+          activeNotificationIds: () async =>
+              (await _backgroundNotificationsPlugin.getActiveNotifications())
+                  .map((notification) => notification.id),
+        );
+      }
     } catch (error) {
       final allocationError = error is NotificationIdAllocationException
           ? error
@@ -1355,13 +1376,17 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         notificationId,
         fallback.title,
         fallback.body,
-        mknoonConversationNotificationDetails(
-          conversationKey: conversationKey,
-          silent: effectiveSilent,
-          preservePrimaryAndroidChannel: preservePrimaryAndroidChannel,
-          autoCancel: contentMetadata == null,
-          snapshot: fallback.snapshot,
-        ),
+        groupInviteAndroidTag == null
+            ? mknoonConversationNotificationDetails(
+                conversationKey: conversationKey,
+                silent: effectiveSilent,
+                preservePrimaryAndroidChannel: preservePrimaryAndroidChannel,
+                autoCancel: contentMetadata == null,
+                snapshot: fallback.snapshot,
+              )
+            : mknoonGenericNotificationDetails(
+                androidTag: groupInviteAndroidTag,
+              ),
         payload: nativePayload,
       );
       g21NativeEntryCompletedElapsed ??= storageDeadline.elapsed;
@@ -1372,7 +1397,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         await show(publicationSilent: publicationSilent);
         return;
       }
-      await notificationIdRegistry.replaceContent(
+      await notificationIdRegistry!.replaceContent(
         conversationKey: conversationKey,
         notificationId: notificationId,
         metadata: contentMetadata,
@@ -1551,7 +1576,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           );
           return;
         }
-        durableEffectResult = await notificationIdRegistry.runFinalEffect(
+        durableEffectResult = await notificationIdRegistry!.runFinalEffect(
           context: effectContext,
           appVisibility: visibility,
           conversationIdentity: conversationIdentity,
@@ -1572,7 +1597,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       } else if (contentMetadata == null) {
         await publishAtNativeBoundary();
       } else {
-        final replacement = await notificationIdRegistry.replaceContent(
+        final replacement = await notificationIdRegistry!.replaceContent(
           conversationKey: conversationKey,
           notificationId: notificationId,
           metadata: contentMetadata,
@@ -1731,7 +1756,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             : BackgroundGroupNotificationPostShowDecision.retire;
         if (decision == BackgroundGroupNotificationPostShowDecision.retire ||
             decision == BackgroundGroupNotificationPostShowDecision.read) {
-          final retired = await notificationIdRegistry
+          final retired = await notificationIdRegistry!
               .cancelContentIfGeneration(
                 conversationKey: conversationKey,
                 notificationId: notificationId,
@@ -1791,7 +1816,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
           );
           if (decision == BackgroundDirectNotificationPostShowDecision.retire ||
               decision == BackgroundDirectNotificationPostShowDecision.read) {
-            final retired = await notificationIdRegistry
+            final retired = await notificationIdRegistry!
                 .cancelContentIfGeneration(
                   conversationKey: conversationKey,
                   notificationId: notificationId,
