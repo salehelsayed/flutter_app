@@ -37,6 +37,7 @@ const Set<String> groupReactionE2EAndroidScenarios = <String>{
   // gate below requires them to send a target-only probe request.
   'android_group_muted_message_suppression',
   'android_group_muted_reaction_background_suppression',
+  'ios_chat_group_message_and_reaction_recipient',
 };
 
 bool isGroupReactionE2EProbeAction(Object? value) =>
@@ -55,6 +56,7 @@ final class GroupReactionE2EProbeRequest {
     this.firstMarker = '',
     this.secondMarker = '',
     this.targetMarker = '',
+    this.phase = '',
   });
 
   final String scenario;
@@ -62,6 +64,7 @@ final class GroupReactionE2EProbeRequest {
   final String firstMarker;
   final String secondMarker;
   final String targetMarker;
+  final String phase;
 }
 
 /// Runs one nonce-bound installed-app probe request.
@@ -95,6 +98,7 @@ Future<Map<String, Object?>> runGroupReactionE2EProbeAction({
   final firstMarker = token('firstMarker', maxLength: 120, allowEmpty: true);
   final secondMarker = token('secondMarker', maxLength: 120, allowEmpty: true);
   final targetMarker = token('targetMarker', maxLength: 120, allowEmpty: true);
+  final phase = token('phase', maxLength: 16, allowEmpty: true);
   if (config['schema'] != groupReactionE2EProbeRequestSchema ||
       !groupReactionE2EAndroidScenarios.contains(scenario) ||
       !<String>{
@@ -104,12 +108,23 @@ Future<Map<String, Object?>> runGroupReactionE2EProbeAction({
       stepId != 'plan257-$action-$runId') {
     throw const FormatException('Plan 257 runtime probe request rejected');
   }
+  final isCombinedIosJourney =
+      scenario == 'ios_chat_group_message_and_reaction_recipient';
   final isMessage = scenario.endsWith('_message_unread_lifecycle');
-  if ((isMessage &&
+  if ((isCombinedIosJourney &&
+          (action != groupReactionE2EObserveAction ||
+              !<String>{'message', 'reaction'}.contains(phase) ||
+              firstMarker.isEmpty ||
+              secondMarker.isNotEmpty ||
+              targetMarker.isEmpty)) ||
+      (!isCombinedIosJourney && phase.isNotEmpty) ||
+      (!isCombinedIosJourney &&
+          isMessage &&
           (firstMarker.isEmpty ||
               secondMarker.isEmpty ||
               targetMarker.isNotEmpty)) ||
-      (!isMessage &&
+      (!isCombinedIosJourney &&
+          !isMessage &&
           (firstMarker.isNotEmpty ||
               secondMarker.isNotEmpty ||
               targetMarker.isEmpty)) ||
@@ -125,6 +140,7 @@ Future<Map<String, Object?>> runGroupReactionE2EProbeAction({
     firstMarker: firstMarker,
     secondMarker: secondMarker,
     targetMarker: targetMarker,
+    phase: phase,
   );
   final observation = action == groupReactionE2EObserveAction
       ? await observeGroupReactionE2EState(
@@ -144,6 +160,7 @@ Future<Map<String, Object?>> runGroupReactionE2EProbeAction({
     'stepId': stepId,
     'runId': runId,
     'nonce': nonce,
+    if (isCombinedIosJourney) 'phase': phase,
     'status': 'complete',
     'success': true,
     'observation': observation,
@@ -247,6 +264,29 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
           <Object?>[groupId],
         );
 
+  final combinedIosJourney =
+      request.scenario == 'ios_chat_group_message_and_reaction_recipient';
+  final matchingAddRows = !combinedIosJourney || groupId == null
+      ? const <Map<String, Object?>>[]
+      : await database.rawQuery(
+          'SELECT o.reaction_id, o.group_id, o.message_id, o.delivery_status '
+          'FROM group_reaction_replay_outbox o '
+          'JOIN groups g ON g.id = o.group_id '
+          'JOIN group_messages gm ON gm.id = o.message_id '
+          'WHERE g.name = ? AND gm.text = ? AND o.action = ? '
+          'ORDER BY o.created_at DESC, o.rowid DESC LIMIT 2',
+          <Object?>[request.groupName, request.targetMarker, 'add'],
+        );
+  if (combinedIosJourney) {
+    _require(
+      request.phase == 'message'
+          ? matchingAddRows.isEmpty
+          : matchingAddRows.length == 1,
+      '${request.phase} phase matching ADD row count is '
+      '${matchingAddRows.length}',
+    );
+  }
+
   final markerObservations = messages
       .map((row) {
         final text = row['text'] as String? ?? '';
@@ -283,6 +323,7 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
   return <String, Object?>{
     'schema': 'mknoon.plan257.sqlcipher-observation.v1',
     'scenario': request.scenario,
+    if (combinedIosJourney) 'phase': request.phase,
     'groupName': request.groupName,
     'groupRows': groups.length,
     'groupIdSha256': groupId == null ? null : _sha256Text(groupId),
@@ -308,6 +349,10 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
     'reactionTargetIdSha256': reactions.length == 1
         ? _sha256Text(reactions.single['message_id'] as String)
         : null,
+    if (combinedIosJourney)
+      'reactionIdSha256': matchingAddRows.length == 1
+          ? _sha256Text(matchingAddRows.single['reaction_id'] as String)
+          : null,
     'canonicalBadgeState': canonicalBadgeState,
   };
 }

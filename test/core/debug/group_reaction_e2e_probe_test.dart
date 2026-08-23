@@ -196,6 +196,124 @@ void main() {
     },
   );
 
+  test(
+    'combined iOS group journey observes message then reaction without mutation',
+    () async {
+      await database.insert('groups', <String, Object?>{
+        'id': 'raw-plan397-group-id',
+        'name': 'Plan397Group',
+        'type': 'group',
+        'my_role': 'member',
+      });
+      await database.insert('group_messages', <String, Object?>{
+        'id': 'raw-plan397-target-id',
+        'group_id': 'raw-plan397-group-id',
+        'text': 'Plan397Target',
+        'is_incoming': 0,
+        'read_at': null,
+        'status': 'sent',
+      });
+      await database.insert('group_messages', <String, Object?>{
+        'id': 'raw-plan397-message-id',
+        'group_id': 'raw-plan397-group-id',
+        'text': 'Plan397Message',
+        'is_incoming': 1,
+        'read_at': null,
+        'status': 'received',
+      });
+
+      Map<String, Object?> request(String phase, String runId) =>
+          <String, Object?>{
+            'schema': groupReactionE2EProbeRequestSchema,
+            'transport_action': groupReactionE2EObserveAction,
+            'scenario': 'ios_chat_group_message_and_reaction_recipient',
+            'runId': runId,
+            'nonce': 'plan397-nonce-$phase',
+            'stepId': 'plan257-$groupReactionE2EObserveAction-$runId',
+            'phase': phase,
+            'groupName': 'Plan397Group',
+            'firstMarker': 'Plan397Message',
+            'secondMarker': '',
+            'targetMarker': 'Plan397Target',
+          };
+
+      final messageResult = await runGroupReactionE2EProbeAction(
+        database: database,
+        secureKeyStore: keyStore,
+        config: request('message', 'plan397-message-phase'),
+      );
+      final messageObservation = Map<String, Object?>.from(
+        messageResult['observation']! as Map,
+      );
+      expect(messageResult['phase'], 'message');
+      expect(messageObservation['phase'], 'message');
+      expect(messageObservation['reactionIdSha256'], isNull);
+      expect(
+        messageObservation['groupIdSha256'],
+        matches(RegExp(r'^[0-9a-f]{64}$')),
+      );
+      final messageMarkers = (messageObservation['markers']! as List)
+          .cast<Map>()
+          .map((value) => Map<String, Object?>.from(value))
+          .toList(growable: false);
+      expect(messageMarkers.map((value) => value['marker']).toSet(), <String>{
+        'first',
+        'target',
+      });
+
+      await database.insert('group_reaction_replay_outbox', <String, Object?>{
+        'reaction_id': 'raw-plan397-reaction-id',
+        'group_id': 'raw-plan397-group-id',
+        'message_id': 'raw-plan397-target-id',
+        'action': 'add',
+        'inbox_retry_payload': 'opaque-and-untouched',
+        'delivery_status': 'delivered',
+        'created_at': '2026-08-22T20:00:00.000Z',
+        'last_error': null,
+        'updated_at': '2026-08-22T20:00:00.000Z',
+      });
+      await database.insert('message_reactions', <String, Object?>{
+        'id': 'raw-plan397-reaction-state-id',
+        'message_id': 'raw-plan397-target-id',
+        'emoji': '👍',
+      });
+      final before = Map<String, Object?>.from(
+        (await database.query('group_reaction_replay_outbox')).single,
+      );
+
+      final reactionResult = await runGroupReactionE2EProbeAction(
+        database: database,
+        secureKeyStore: keyStore,
+        config: request('reaction', 'plan397-reaction-phase'),
+      );
+      final reactionObservation = Map<String, Object?>.from(
+        reactionResult['observation']! as Map,
+      );
+      expect(reactionResult['phase'], 'reaction');
+      expect(reactionObservation['phase'], 'reaction');
+      expect(
+        reactionObservation['reactionIdSha256'],
+        matches(RegExp(r'^[0-9a-f]{64}$')),
+      );
+      expect(
+        reactionObservation['groupIdSha256'],
+        messageObservation['groupIdSha256'],
+      );
+      expect(
+        (reactionObservation['markers']! as List),
+        hasLength(messageMarkers.length),
+      );
+      final after = Map<String, Object?>.from(
+        (await database.query('group_reaction_replay_outbox')).single,
+      );
+      expect(after, before);
+      expect(
+        jsonEncode(<Object?>[messageResult, reactionResult]),
+        isNot(contains('raw-plan397-')),
+      );
+    },
+  );
+
   test('installed-app action rejects cross-scenario marker shapes', () async {
     expect(
       () => runGroupReactionE2EProbeAction(

@@ -16,6 +16,7 @@ expected="$({
   printf '%s\n' android_announcement_reaction_recipient
   printf '%s\n' android_group_reaction_recipient_background_connected
   printf '%s\n' ios_announcement_reaction_recipient
+  printf '%s\n' ios_chat_group_message_and_reaction_recipient
 })"
 
 actual="$(
@@ -109,6 +110,9 @@ for required_seam in \
   'testAuthorAnnouncementReactionTarget' \
   'testPrepareWarmNotificationTap' \
   'testAnnouncementReactionNotificationTap' \
+  'testCreateChatGroupNotificationFixture' \
+  'testAuthorChatGroupReactionTarget' \
+  'testChatGroupNotificationTap' \
   "'copy'" \
   'appDataContainer' \
   'idevicesyslog' \

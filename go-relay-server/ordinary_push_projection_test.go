@@ -631,6 +631,145 @@ func TestRelayNotificationClosure_GroupInviteCustodyRetryCollapse(t *testing.T) 
 	})
 }
 
+// TC-397-01 — every rich iOS group-message send derives one bounded collapse
+// identity from the canonical message ID. Provider retries reuse it, distinct
+// messages remain independent, and routing-only fallbacks use the same seam.
+// Android and unknown routes deliberately remain non-collapsible.
+func TestRelayNotificationClosure_GroupMessageRetryCollapse(t *testing.T) {
+	const (
+		groupID = "39739739-7397-4397-8397-397397397397"
+		sender  = "tc397-sender-transport"
+	)
+	envelope := ordinaryGroupCiphertextEnvelope(16)
+
+	t.Run("ordinary iOS retry is stable and distinct messages differ", func(t *testing.T) {
+		tokens := newMemoryPushTokenStore()
+		if err := tokens.RegisterToken("recipient", "tc397-ios-token", "ios"); err != nil {
+			t.Fatalf("register iOS route: %v", err)
+		}
+		push := NewPushServiceWithBackend(tokens)
+		push.retryDelays = []time.Duration{0}
+		recorder := newRecordingPushSender()
+		recorder.onSend = func(context.Context, *messaging.Message) (string, error) {
+			if recorder.SendCallCount() == 1 {
+				return "", fmt.Errorf("temporary provider outage")
+			}
+			return "tc397-provider-id", nil
+		}
+		push.sender = recorder.Send
+
+		push.SendGroupNotification(
+			context.Background(),
+			"recipient",
+			groupID,
+			sender,
+			"tc397-message-a",
+			envelope,
+		)
+		if got := recorder.SendCallCount(); got != 2 {
+			t.Fatalf("message A sends = %d, want retry pair", got)
+		}
+		attempts := recorder.Messages()
+		identityA, ok := tc395APNSCollapseID(attempts[0])
+		if !ok || identityA == "" || len([]byte(identityA)) > 64 {
+			t.Fatalf("message A collapse ID = %q present=%v, want bounded identity", identityA, ok)
+		}
+		if retryIdentity, retryOK := tc395APNSCollapseID(attempts[1]); !retryOK || retryIdentity != identityA {
+			t.Fatalf("retry collapse ID = %q present=%v, want %q", retryIdentity, retryOK, identityA)
+		}
+
+		push.SendGroupNotification(
+			context.Background(),
+			"recipient",
+			groupID,
+			sender,
+			"tc397-message-b",
+			envelope,
+		)
+		identityB, ok := tc395APNSCollapseID(recorder.Messages()[2])
+		if !ok || identityB == "" || identityB == identityA {
+			t.Fatalf("message B collapse ID = %q present=%v, want distinct from %q", identityB, ok, identityA)
+		}
+	})
+
+	t.Run("strict and routing-only iOS call sites share the identity seam", func(t *testing.T) {
+		tokens := newMemoryPushTokenStore()
+		if err := tokens.RegisterToken("recipient", "tc397-ios-token", "ios"); err != nil {
+			t.Fatalf("register iOS route: %v", err)
+		}
+		push := NewPushServiceWithBackend(tokens)
+		recorder := newRecordingPushSender()
+		push.sender = recorder.Send
+		route, err := push.selectPushRoute("recipient", "")
+		if err != nil || route == nil {
+			t.Fatalf("select strict route: route=%#v err=%v", route, err)
+		}
+
+		push.sendGroupContentNotificationForRoute(
+			context.Background(),
+			"recipient",
+			*route,
+			groupContentPushMetadata{
+				GroupID:               groupID,
+				SenderTransportPeerID: sender,
+				MessageID:             "tc397-strict-message",
+				PayloadType:           groupContentPayloadTypeMessage,
+			},
+			`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","groupId":"39739739-7397-4397-8397-397397397397","messageId":"tc397-strict-message","senderTransportPeerId":"tc397-sender-transport","keyEpoch":7,"ciphertext":"gc","nonce":"gn"}`,
+		)
+		strict := recorder.Messages()[0]
+		strictIdentity, ok := tc395APNSCollapseID(strict)
+		if !ok || strictIdentity == "" || len([]byte(strictIdentity)) > 64 {
+			t.Fatalf("strict collapse ID = %q present=%v, want bounded identity", strictIdentity, ok)
+		}
+
+		push.SendGroupNotification(
+			context.Background(),
+			"recipient",
+			groupID,
+			sender,
+			"tc397-routing-only-message",
+			"not-json",
+		)
+		routingOnly := recorder.Messages()[1]
+		if !sentRoutingHas(routingOnly, "preview_unavailable") {
+			t.Fatalf("routing-only fixture did not preserve preview_unavailable: %#v", routingOnly)
+		}
+		routingIdentity, ok := tc395APNSCollapseID(routingOnly)
+		if !ok || routingIdentity == "" || routingIdentity == strictIdentity {
+			t.Fatalf("routing-only collapse ID = %q present=%v, want distinct identity", routingIdentity, ok)
+		}
+	})
+
+	t.Run("blank iOS Android and unknown routes remain headerless", func(t *testing.T) {
+		cases := []struct {
+			name      string
+			platform  string
+			messageID string
+		}{
+			{name: "blank iOS identity", platform: "ios", messageID: "  "},
+			{name: "Android", platform: "android", messageID: "tc397-android-message"},
+			{name: "unknown", platform: "web", messageID: "tc397-unknown-message"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				push, recorder := ordinaryPushService(tc.platform)
+				push.SendGroupNotification(
+					context.Background(),
+					"recipient",
+					groupID,
+					sender,
+					tc.messageID,
+					envelope,
+				)
+				if got, ok := tc395APNSCollapseID(recorder.Messages()[0]); ok {
+					t.Fatalf("%s route gained collapse ID %q", tc.platform, got)
+				}
+			})
+		}
+	})
+}
+
 // TC-09 — an ios-projected CHAT push that the provider still rejects for size
 // must be rescued by the strict routing fallback (routing sourced from the
 // APNs CustomData copy once Data is projected away).

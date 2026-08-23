@@ -48,5 +48,20 @@
     "expectedKey": "message:peer-reactor|reaction-event-123",
     "reactionEventId": "reaction-event-123",
     "expectedReactionIdentity": "reaction:813117a606a0d109f3414152f6092e5c33da6c311a4a7736"
+  },
+  {
+    "description": "group_reaction uses the target-anchored group route and ADD event identity",
+    "push": {
+      "type": "group_reaction",
+      "groupId": "group-397",
+      "event_id": "group-reaction-event-397",
+      "target_message_id": "group-target-message-397",
+      "action": "add"
+    },
+    "dartPayload": "group:group-397|message:group-target-message-397",
+    "dartMessageId": "group-reaction-event-397",
+    "expectedKey": "message:group:group-397|message:group-target-message-397|group-reaction-event-397",
+    "reactionEventId": "group-reaction-event-397",
+    "expectedReactionIdentity": "reaction:10c907601fe55501c75e69af43feb6e7d3f0461533b56089"
   }
 ]

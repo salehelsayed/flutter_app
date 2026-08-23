@@ -1,8 +1,205 @@
+import CryptoKit
 import Foundation
 import UserNotifications
 import XCTest
 
+@testable import Runner
+
 final class IosNotificationRecoveryTests: XCTestCase {
+  func testTC397GroupDeliveredInventoryClassifiesExactSources() throws {
+    func hash(_ value: String) -> String {
+      SHA256.hash(data: Data(value.utf8))
+        .map { String(format: "%02x", $0) }.joined()
+    }
+    func localPayload(kind: String, event: String) throws -> String {
+      let data = try JSONSerialization.data(withJSONObject: [
+        "v": 1,
+        "route": "group:group-397",
+        "conversation": "group:group-397",
+        "content": [
+          "v": 1,
+          "kind": kind,
+          "event": event,
+          "generation": "generation-397",
+        ],
+      ])
+      return "mknoon-conversation-card-v1:"
+        + data.base64EncodedString()
+          .replacingOccurrences(of: "+", with: "-")
+          .replacingOccurrences(of: "/", with: "_")
+          .replacingOccurrences(of: "=", with: "")
+    }
+    let messageExpected = IosGroupNotificationExpectedHashes(
+      phase: .message,
+      groupIdSha256: hash("group-397"),
+      eventIdSha256: hash("message-397"),
+      targetMessageIdSha256: hash("target-397")
+    )
+    let reactionExpected = IosGroupNotificationExpectedHashes(
+      phase: .reaction,
+      groupIdSha256: hash("group-397"),
+      eventIdSha256: hash("reaction-397"),
+      targetMessageIdSha256: hash("target-397")
+    )
+
+    XCTAssertEqual(
+      IosGroupNotificationSourceClassifier.classify(
+        triggerOrigin: .remote,
+        userInfo: [
+          "type": "group_message",
+          "groupId": "group-397",
+          "message_id": "message-397",
+        ],
+        title: "Plan 397 group",
+        body: "Plan 397 message",
+        expected: messageExpected
+      ),
+      .usefulProviderRich
+    )
+    XCTAssertEqual(
+      IosGroupNotificationSourceClassifier.classify(
+        triggerOrigin: .remote,
+        userInfo: [
+          "type": "group_reaction",
+          "action": "add",
+          "groupId": "group-397",
+          "event_id": "reaction-397",
+          "target_message_id": "target-397",
+        ],
+        title: "Plan 397 group",
+        body: "Alice reacted",
+        expected: reactionExpected
+      ),
+      .usefulProviderRich
+    )
+    XCTAssertEqual(
+      IosGroupNotificationSourceClassifier.classify(
+        triggerOrigin: .local,
+        userInfo: [
+          "NotificationId": 397,
+          "payload": try localPayload(kind: "message", event: "message-397"),
+        ],
+        title: "Plan 397 group",
+        body: "Plan 397 message",
+        expected: messageExpected
+      ),
+      .flutterLocal
+    )
+    XCTAssertEqual(
+      IosGroupNotificationSourceClassifier.classify(
+        triggerOrigin: .local,
+        userInfo: [
+          "NotificationId": 398,
+          "payload": try localPayload(kind: "reaction", event: "reaction-397"),
+        ],
+        title: "Plan 397 group",
+        body: "Alice reacted",
+        expected: reactionExpected
+      ),
+      .flutterLocal
+    )
+    XCTAssertEqual(
+      IosGroupNotificationSourceClassifier.classify(
+        triggerOrigin: .remote,
+        userInfo: [
+          "type": "group_reaction",
+          "action": "add",
+          "groupId": "group-397",
+          "event_id": "reaction-397",
+          "target_message_id": "wrong-target",
+        ],
+        title: "Plan 397 group",
+        body: "Alice reacted",
+        expected: reactionExpected
+      ),
+      .unknown
+    )
+    XCTAssertNil(
+      IosGroupNotificationSourceClassifier.classify(
+        triggerOrigin: .remote,
+        userInfo: [
+          "type": "group_message",
+          "groupId": "group-397",
+          "message_id": "another-message",
+        ],
+        title: "Other",
+        body: "Other",
+        expected: messageExpected
+      )
+    )
+    XCTAssertNotEqual(
+      IosGroupNotificationSourceClassifier.classify(
+        triggerOrigin: .local,
+        userInfo: [
+          "type": "group_message",
+          "groupId": "group-397",
+          "message_id": "message-397",
+        ],
+        title: "Forged provider",
+        body: "Forged provider",
+        expected: messageExpected
+      ),
+      .usefulProviderRich
+    )
+  }
+
+  func testTC397GroupInventoryRequiresFullHorizonAndRejectsTransientLateLocalSibling() {
+    func inventory(remote: Int, local: Int) -> Runner.IosGroupNotificationInventory {
+      Runner.IosGroupNotificationInventory(
+        matchingRemoteCount: remote,
+        matchingLocalCount: local,
+        matchingUsefulProviderCount: remote,
+        matchingSanitizedProviderCount: 0,
+        matchingFlutterLocalCount: local,
+        matchingUnknownCount: 0,
+        requestIdentifierSha256: (0..<(remote + local)).map {
+          String(repeating: String(format: "%x", $0 + 1), count: 64)
+        }
+      )
+    }
+    let providerOnly = inventory(remote: 1, local: 0)
+    let transientSibling = inventory(remote: 1, local: 1)
+    var samples = [providerOnly, providerOnly, providerOnly, transientSibling]
+      + Array(repeating: providerOnly, count: 12)
+    let now = Date(timeIntervalSince1970: 1_900_000_000)
+    var current = now
+    var scheduled: [(TimeInterval, () -> Void)] = []
+    var outcomes: [Runner.IosGroupNotificationFullHorizonOutcome] = []
+    let sampler = Runner.IosGroupNotificationFullHorizonSampler(
+      now: { current },
+      scheduleAfter: { delay, action in scheduled.append((delay, action)) },
+      fetchInventory: { callback in callback(samples.removeFirst()) }
+    )
+
+    sampler.start(
+      deadline: now.addingTimeInterval(8),
+      completion: { outcomes.append($0) }
+    )
+    XCTAssertTrue(outcomes.isEmpty, "three early equal samples must not complete")
+
+    while let index = scheduled.indices
+      .filter({ scheduled[$0].0 < 8 })
+      .min(by: { scheduled[$0].0 < scheduled[$1].0 }) {
+      let next = scheduled.remove(at: index)
+      current = current.addingTimeInterval(next.0)
+      next.1()
+    }
+    XCTAssertTrue(outcomes.isEmpty)
+    let deadlineIndex = try! XCTUnwrap(
+      scheduled.firstIndex(where: { $0.0 == 8 })
+    )
+    current = now.addingTimeInterval(8)
+    scheduled.remove(at: deadlineIndex).1()
+
+    XCTAssertEqual(outcomes.count, 1)
+    XCTAssertEqual(outcomes[0].resultCode, .complete)
+    XCTAssertEqual(outcomes[0].stableSampleCount, 3)
+    XCTAssertTrue(outcomes[0].sampledThroughDeadline)
+    XCTAssertTrue(outcomes[0].badSourceSeen)
+    XCTAssertTrue(outcomes[0].duplicateSeen)
+    XCTAssertEqual(outcomes[0].inventory, providerOnly)
+  }
+
   func testAtomicClaimsReopenAndCountOnePendingEventAcrossDuplicates() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }

@@ -9,6 +9,7 @@ import 'package:crypto/crypto.dart';
 
 import '../support/android_notification_payload_campaign.dart'
     show relayJournalContainsAndroidProviderSend;
+import '../support/ios_xctestrun_relocator.dart';
 import '_android_app_package.dart';
 import 'group_muted_notification_android_criteria.dart';
 import 'group_notification_projection_android_criteria.dart';
@@ -41,10 +42,24 @@ const _plan393StrictEndpointResultSchema =
     'mknoon.plan393.strict-authority-result.v1';
 const _relayGroupContentWakeCounter = 'relay_group_content_wake_total';
 const _iosTapTest = 'ios/RunnerUITests/NotificationTapUITests.swift';
-const _iosTapSelector = 'testAnnouncementReactionNotificationTap';
-const _iosFixtureCreateSelector = 'testCreateAnnouncementReactionFixture';
-const _iosFixtureAuthorSelector = 'testAuthorAnnouncementReactionTarget';
-const _iosNotificationPrepareSelector = 'testPrepareWarmNotificationTap';
+const _iosAnnouncementTapSelector = 'testAnnouncementReactionNotificationTap';
+const _iosAnnouncementFixtureCreateSelector =
+    'testCreateAnnouncementReactionFixture';
+const _iosAnnouncementFixtureAuthorSelector =
+    'testAuthorAnnouncementReactionTarget';
+const _iosChatTapSelector = 'testChatGroupNotificationTap';
+const _iosChatFixtureCreateSelector = 'testCreateChatGroupNotificationFixture';
+const _iosChatFixtureAuthorSelector = 'testAuthorChatGroupReactionTarget';
+const _iosSharedNotificationPrepareSelector = 'testPrepareWarmNotificationTap';
+const Set<String> _iosKnownSelectors = <String>{
+  _iosAnnouncementTapSelector,
+  _iosAnnouncementFixtureCreateSelector,
+  _iosAnnouncementFixtureAuthorSelector,
+  _iosChatTapSelector,
+  _iosChatFixtureCreateSelector,
+  _iosChatFixtureAuthorSelector,
+  _iosSharedNotificationPrepareSelector,
+};
 const _iosSystemLogExecutable = 'idevicesyslog';
 
 /// Stable Android semantics identifier for Orbit's create-group FAB.
@@ -365,6 +380,17 @@ Future<void> main(List<String> args) async {
   final prebuiltAndroidPath =
       _valueFor(args, '--prebuilt-android-apk') ??
       Platform.environment['SIMS_ARTIFACT_ANDROID_PRODUCTION_FCM'];
+  final prebuiltAndroidBuildReportPath = _valueFor(
+    args,
+    '--prebuilt-android-build-report',
+  );
+  final prebuiltIosBundlePath =
+      _valueFor(args, '--prebuilt-ios-bundle') ??
+      Platform.environment['SIMS_ARTIFACT_IOS_DEVICE_PRODUCTION'];
+  final prebuiltIosBuildReportPath = _valueFor(
+    args,
+    '--prebuilt-ios-build-report',
+  );
   final capture = _Plan257Capture(
     scenario: scenario,
     senderId: senderId,
@@ -389,6 +415,20 @@ Future<void> main(List<String> args) async {
         prebuiltAndroidPath == null || prebuiltAndroidPath.trim().isEmpty
         ? null
         : File(prebuiltAndroidPath).absolute,
+    prebuiltAndroidBuildReport:
+        prebuiltAndroidBuildReportPath == null ||
+            prebuiltAndroidBuildReportPath.trim().isEmpty
+        ? null
+        : File(prebuiltAndroidBuildReportPath).absolute,
+    prebuiltIosBundle:
+        prebuiltIosBundlePath == null || prebuiltIosBundlePath.trim().isEmpty
+        ? null
+        : Directory(prebuiltIosBundlePath).absolute,
+    prebuiltIosBuildReport:
+        prebuiltIosBuildReportPath == null ||
+            prebuiltIosBuildReportPath.trim().isEmpty
+        ? null
+        : File(prebuiltIosBuildReportPath).absolute,
     noChildBuilds: args.contains('--no-child-builds'),
     statePreparedByParent: args.contains('--android-state-prepared'),
     verbose: args.contains('--verbose'),
@@ -504,6 +544,9 @@ class _Plan257Capture {
     required this.relayKey,
     required this.serviceAccount,
     required this.prebuiltAndroidApk,
+    required this.prebuiltAndroidBuildReport,
+    required this.prebuiltIosBundle,
+    required this.prebuiltIosBuildReport,
     required this.noChildBuilds,
     required this.statePreparedByParent,
     required this.verbose,
@@ -529,6 +572,9 @@ class _Plan257Capture {
   final File relayKey;
   final File serviceAccount;
   final File? prebuiltAndroidApk;
+  final File? prebuiltAndroidBuildReport;
+  final Directory? prebuiltIosBundle;
+  final File? prebuiltIosBuildReport;
   final bool noChildBuilds;
   final bool statePreparedByParent;
   final bool verbose;
@@ -638,8 +684,20 @@ class _Plan257Capture {
   String _strictMetricsFinal = '';
   String _iosE2eAppSha256 = '';
   String _iosNormalAppSha256 = '';
+  GroupReactionCentralBuildValidation? _plan397AndroidBuild;
+  GroupReactionCentralBuildValidation? _plan397IosBuild;
+  GroupReactionIosBundleValidation? _plan397IosBundle;
+  File? _plan397PatchedXctestrun;
+  Directory? _plan397XctestrunDirectory;
+  final List<File> _plan397EphemeralFiles = <File>[];
+  final Map<String, File> _plan397RetainedCentralFiles = <String, File>{};
+  final List<Map<String, Object?>> _plan397Windows = <Map<String, Object?>>[];
+  String _plan397SetupAppSha256 = '';
+  String _plan397CentralAppSha256 = '';
+  bool _plan397SetupContainerPreserved = false;
   final Map<String, File> _iosInstallReceipts = <String, File>{};
   Process? _iosSystemLogProcess;
+  int _iosRegistrationLogCursor = 0;
   final StringBuffer _iosSystemLogStdout = StringBuffer();
   final StringBuffer _iosSystemLogStderr = StringBuffer();
   Future<void>? _iosSystemLogStdoutDone;
@@ -651,6 +709,7 @@ class _Plan257Capture {
   late final GroupFixtureTransientCleanup _transientCleanup =
       GroupFixtureTransientCleanup(<Future<void> Function()>[
         _deleteTransientFixtureFiles,
+        _deletePlan397EphemeralMaterialization,
         _collapseAndroidStatusBars,
         _deletePendingProofResidue,
         _stopDeviceLogStreams,
@@ -659,12 +718,38 @@ class _Plan257Capture {
   Map<String, Object?> get _iosCapture =>
       Map<String, Object?>.from(_staging['iosCapture'] as Map);
 
+  String _iosSelector(String key) {
+    final configured = _iosCapture[key];
+    if (configured is! String || configured.trim().isEmpty) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'physical_ios_selector_missing_$key',
+      );
+    }
+    final selector = configured.trim().split('/').last;
+    if (!_iosKnownSelectors.contains(selector)) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'physical_ios_selector_not_allowlisted_$key',
+      );
+    }
+    return selector;
+  }
+
+  String get _iosTapSelector => _iosSelector('notificationTapSelector');
+  String get _iosFixtureCreateSelector => _iosSelector('fixtureCreateSelector');
+  String get _iosFixtureAuthorSelector => _iosSelector('fixtureAuthorSelector');
+  String get _iosNotificationPrepareSelector =>
+      _iosSelector('notificationPrepareSelector');
+
   File get _commandJournalFile => File(
     '${artifactDirectory.path}${Platform.pathSeparator}'
     'automation_command_journal.json',
   );
 
   bool get _isPlan330 => scenario.id == groupNotificationProjectionScenarioId;
+  bool get _isPlan397 =>
+      scenario.id == iosChatGroupMessageAndReactionScenarioId;
 
   /// Which lifecycle/observation/validator this scenario id selects.
   ///
@@ -699,6 +784,23 @@ class _Plan257Capture {
 
   Future<void> cleanupTransientState() => _transientCleanup.run();
 
+  Future<void> _deletePlan397XctestrunDirectory() async {
+    final directory = _plan397XctestrunDirectory;
+    _plan397PatchedXctestrun = null;
+    _plan397XctestrunDirectory = null;
+    if (directory != null && await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+  }
+
+  Future<void> _deletePlan397EphemeralMaterialization() async {
+    await _deletePlan397XctestrunDirectory();
+    for (final file in _plan397EphemeralFiles) {
+      if (await file.exists()) await file.delete();
+    }
+    _plan397EphemeralFiles.clear();
+  }
+
   Future<void> run() async {
     await artifactDirectory.create(recursive: true);
     final staleArtifact = File(
@@ -713,6 +815,11 @@ class _Plan257Capture {
         .cast<String>()
         .map((value) => value.trim())
         .toList(growable: false);
+
+    if (_isPlan397) {
+      stage = 'prepared_artifact';
+      await _preparePlan397CentralArtifacts();
+    }
 
     if (noChildBuilds && scenario.recipientPlatform == 'android') {
       final prepared = prebuiltAndroidApk;
@@ -1139,17 +1246,86 @@ class _Plan257Capture {
         'list',
         'devices',
       ], environmentFailure: true);
-      final lines = ios.stdout
-          .split('\n')
-          .where((line) => line.contains(recipientId))
-          .where((line) => !line.toLowerCase().contains('simulator'));
-      if (lines.isEmpty) {
+      if (!groupReactionIosDeviceIsOnline(ios.stdout, recipientId)) {
         throw _CaptureFailure.environment(
           stage,
           'recipient_not_live_physical_ios_target',
         );
       }
     }
+  }
+
+  Future<void> _preparePlan397CentralArtifacts() async {
+    final androidApk = prebuiltAndroidApk;
+    final androidReport = prebuiltAndroidBuildReport;
+    final iosBundle = prebuiltIosBundle;
+    final iosReport = prebuiltIosBuildReport;
+    if (androidApk == null ||
+        androidReport == null ||
+        iosBundle == null ||
+        iosReport == null) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_ios_requires_central_android_ios_artifacts_and_reports',
+      );
+    }
+    final android = validateGroupReactionCentralBuildArtifact(
+      profileId: 'android.production_fcm',
+      artifact: androidApk,
+      buildReport: androidReport,
+    );
+    final ios = validateGroupReactionCentralBuildArtifact(
+      profileId: 'ios.device.production',
+      artifact: iosBundle,
+      buildReport: iosReport,
+    );
+    final bundle = validateGroupReactionIosProductionBundle(iosBundle);
+    if (!android.ok || !ios.ok || !bundle.ok) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_central_artifact_contract_rejected: '
+        'android=${android.detail}; ios=${ios.detail}; bundle=${bundle.detail}',
+      );
+    }
+    _plan397AndroidBuild = android;
+    _plan397IosBuild = ios;
+    _plan397IosBundle = bundle;
+    final retainedSources = <String, File>{
+      'androidBuildReport': androidReport,
+      'iosBuildReport': iosReport,
+      'androidAttestation': android.attestation!,
+      'iosAttestation': ios.attestation!,
+      'iosBundleManifest': bundle.manifest!,
+    };
+    for (final entry in retainedSources.entries) {
+      final retained = File(
+        '${artifactDirectory.path}${Platform.pathSeparator}'
+        'plan397_${entry.key}.json',
+      );
+      if (await retained.exists()) {
+        throw _CaptureFailure.configuration(
+          stage,
+          'chat_group_retained_central_file_already_exists_${entry.key}',
+        );
+      }
+      await entry.value.copy(retained.path);
+      _plan397RetainedCentralFiles[entry.key] = retained;
+    }
+    await File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'plan397_central_build_provenance.json',
+    ).writeAsString(
+      const JsonEncoder.withIndent(' ').convert(<String, Object?>{
+        'schema': 'mknoon.plan397.central-build-provenance.v1',
+        'android': android.redactedProvenance,
+        'ios': ios.redactedProvenance,
+        'iosBundleManifestSha256': await _sha256(bundle.manifest!),
+        'androidChildBuildCount': 0,
+        'iosNormalChildBuildCount': 0,
+        'recordedAt': DateTime.now().toUtc().toIso8601String(),
+      }),
+      flush: true,
+    );
   }
 
   List<String> _validateTopologyShape() {
@@ -1373,6 +1549,10 @@ class _Plan257Capture {
   }
 
   Future<void> _runIosAvailableStages() async {
+    if (_isPlan397) {
+      await _runPlan397IosAvailableStages();
+      return;
+    }
     stage = 'ios_android_sender_build';
     _androidBuilds = await _buildAndroidCandidate();
     await _installApk(senderId, _androidBuilds!.e2eApk);
@@ -1413,7 +1593,7 @@ class _Plan257Capture {
 
     final uiTest = File(_iosTapTest);
     final uiSource = uiTest.existsSync() ? await uiTest.readAsString() : '';
-    for (final selector in const <String>[
+    for (final selector in <String>[
       _iosFixtureCreateSelector,
       _iosFixtureAuthorSelector,
       _iosNotificationPrepareSelector,
@@ -1448,6 +1628,8 @@ class _Plan257Capture {
 
     stage = 'ios_candidate_install';
     await _installIosCandidate(normalApp, mode: 'normal');
+    await _startIosSystemLog();
+    _iosRegistrationLogCursor = _iosSystemLogStdout.length;
     final tokenWindow = DateTime.now().toUtc();
     await _launchIosCandidate();
     await _waitForRelayTokenRegistration(tokenWindow);
@@ -1503,6 +1685,785 @@ class _Plan257Capture {
     );
     stdout.writeln('PASS: ${scenario.id} captured at ${artifact.path}.');
     if (!keepBuildArtifacts) await _deleteBuildCopies();
+  }
+
+  Future<void> _runPlan397IosAvailableStages() async {
+    final androidApk = prebuiltAndroidApk;
+    final iosBundle = _plan397IosBundle;
+    if (androidApk == null ||
+        _plan397AndroidBuild?.ok != true ||
+        _plan397IosBuild?.ok != true ||
+        iosBundle == null ||
+        !iosBundle.ok ||
+        iosBundle.application == null) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_central_artifacts_not_prepared',
+      );
+    }
+
+    stage = 'plan397_android_sender_install';
+    _androidBuilds = await _loadPreparedAndroidCandidate(androidApk);
+    await _installApk(senderId, _androidBuilds!.normalApk);
+    await _clearAndroidPrivateEntries(senderId);
+    await _startDeviceLogStream(senderId);
+    await _prepareAndroidIdentity(sender);
+    await _launchAndroid(senderId);
+    await _collectAndroidIdentity(sender);
+
+    // Exactly one child build is allowed, and it exists only to establish the
+    // fixture through the shipping UI with E2E file controls. The graded app
+    // and the UI-test products both come from the central Sims bundle.
+    stage = 'plan397_ios_setup_build';
+    final setupApplication = await _buildIosCandidate(e2eMode: true);
+    _plan397SetupAppSha256 = await _sha256Directory(setupApplication);
+
+    stage = 'plan397_ios_initial_install';
+    await _run('xcrun', <String>[
+      'devicectl',
+      'device',
+      'uninstall',
+      'app',
+      '--device',
+      recipientId,
+      _iosCapture['bundleId']! as String,
+    ], allowFail: true);
+    await _installIosCandidate(setupApplication, mode: 'setup');
+
+    stage = 'plan397_fixture_staging';
+    await _stageIosAppFile(
+      'auto_setup.json',
+      jsonEncode(<String, Object?>{'username': recipient.username}),
+    );
+    await _launchIosCandidate();
+    await _collectIosIdentity(recipient);
+    await _prepopulateContact(sender, recipient);
+    await _prepopulateIosContact(recipient, sender);
+    final setupPeerId = recipient.peerId;
+
+    final stamp = DateTime.now().toUtc().microsecondsSinceEpoch;
+    _groupName = 'TC397Chat$stamp';
+    _firstMarker = 'TC397Msg$stamp';
+    _secondMarker = '';
+    _targetMarker = 'TC397Target$stamp';
+    final setupTapConfig = await _writeIosTapConfig(label: 'plan397_setup');
+
+    final uiSource = await File(_iosTapTest).readAsString();
+    for (final selector in <String>[
+      _iosFixtureCreateSelector,
+      _iosFixtureAuthorSelector,
+      _iosNotificationPrepareSelector,
+      _iosTapSelector,
+    ]) {
+      if (!uiSource.contains('func $selector(')) {
+        throw _CaptureFailure.environment(
+          stage,
+          'native_plan397_xcuitest_selector_missing: '
+          'RunnerUITests/NotificationTapUITests/$selector',
+        );
+      }
+    }
+
+    await _materializePlan397Xctestrun(
+      application: setupApplication,
+      tapConfig: setupTapConfig,
+      label: 'setup',
+    );
+    _iosXcuitestOutput += await _runIosUiSelector(
+      _iosFixtureCreateSelector,
+      setupTapConfig,
+    );
+    await _acceptIosCreatedGroupOnAndroid();
+    _iosXcuitestOutput += await _runIosUiSelector(
+      _iosFixtureAuthorSelector,
+      setupTapConfig,
+    );
+    await _openGroup(senderId);
+    await _waitForUiText(senderId, _targetMarker, const Duration(minutes: 2));
+
+    stage = 'plan397_central_normal_install';
+    final centralApplication = iosBundle.application!;
+    _plan397CentralAppSha256 = await _sha256Directory(centralApplication);
+    if (_plan397CentralAppSha256 == _plan397SetupAppSha256) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_setup_and_central_app_digests_must_differ',
+      );
+    }
+    // Deliberately no uninstall here: replacing the same bundle identifier in
+    // place is the contract that preserves the setup identity/group database.
+    await _startIosSystemLog();
+    await _installIosCandidate(centralApplication, mode: 'central_normal');
+    final retainedIdentity = await _readIosAppFile('intro_e2e_identity.json');
+    if (retainedIdentity == null ||
+        !_iosIdentityContainsPeer(retainedIdentity, setupPeerId)) {
+      throw _CaptureFailure.capture(
+        stage,
+        'chat_group_normal_install_did_not_preserve_setup_container',
+      );
+    }
+    _plan397SetupContainerPreserved = true;
+
+    _iosRegistrationLogCursor = _iosSystemLogStdout.length;
+    await _launchIosCandidate();
+    await _waitForRelayTokenRegistration(DateTime.now().toUtc());
+
+    final messageBody = '${sender.username}: $_firstMarker';
+    final messageTapConfig = await _writeIosTapConfig(
+      label: 'plan397_message',
+      notificationPhase: 'message',
+      expectedEventText: _firstMarker,
+      expectedBody: messageBody,
+    );
+    await _materializePlan397Xctestrun(
+      application: centralApplication,
+      tapConfig: messageTapConfig,
+      label: 'message',
+    );
+    _iosXcuitestOutput += await _runIosUiSelector(
+      _iosNotificationPrepareSelector,
+      messageTapConfig,
+    );
+
+    stage = 'plan397_message_window';
+    await _capturePlan397IosWindow(
+      phase: 'message',
+      payloadKind: 'group_message',
+      expectedBody: messageBody,
+      tapConfig: messageTapConfig,
+      performAction: () async {
+        await _openGroup(senderId);
+        await _sendGroupText(senderId, _firstMarker);
+      },
+    );
+
+    final reactionBody =
+        '${sender.username} reacted $_reactionEmoji to your message';
+    final reactionTapConfig = await _writeIosTapConfig(
+      label: 'plan397_reaction',
+      notificationPhase: 'reaction',
+      expectedEventText: _reactionEmoji,
+      expectedBody: reactionBody,
+    );
+    await _materializePlan397Xctestrun(
+      application: centralApplication,
+      tapConfig: reactionTapConfig,
+      label: 'reaction',
+    );
+    _iosXcuitestOutput += await _runIosUiSelector(
+      _iosNotificationPrepareSelector,
+      reactionTapConfig,
+    );
+
+    stage = 'plan397_reaction_window';
+    await _capturePlan397IosWindow(
+      phase: 'reaction',
+      payloadKind: 'group_reaction',
+      expectedBody: reactionBody,
+      tapConfig: reactionTapConfig,
+      performAction: () async {
+        final queuedBefore = countFlowEventOccurrences(
+          await _accumulatedSenderFlowLines(),
+          'GROUP_REACTION_SEND_QUEUED',
+        );
+        await _openGroup(senderId);
+        await _longPressText(senderId, _targetMarker);
+        await _tapText(senderId, _reactionEmoji);
+        await _waitForSenderEventCount(
+          'GROUP_REACTION_SEND_QUEUED',
+          queuedBefore + 1,
+        );
+      },
+    );
+
+    stage = 'plan397_artifact_capture';
+    await _deletePlan397EphemeralMaterialization();
+    _senderLogcat = await _accumulatedSenderFlowLines();
+    _relayJournal = _plan397Windows
+        .map((window) => window['relayJournalRedacted'] ?? '')
+        .join('\n');
+    await _writePlan397IosArtifact();
+
+    stage = 'plan397_artifact_self_validation';
+    final artifact = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    final validation = await validateGroupReactionNotificationArtifact(
+      scenario: scenario.id,
+      artifactFile: artifact,
+      expectedSenderDeviceId: senderId,
+      expectedRecipientDeviceId: recipientId,
+    );
+    if (!validation.ok) {
+      throw _CaptureFailure.capture(
+        stage,
+        'captured_plan397_evidence_rejected: ${validation.detail}',
+      );
+    }
+    await writeGroupReactionNotificationVerdict(
+      outputDirectory: artifactDirectory,
+      scenario: scenario.id,
+      ok: true,
+      stage: 'capture',
+      status: 'passed',
+      detail:
+          'central production artifacts, preserved iOS setup container, two '
+          'provider/NSE/native-inventory windows, and same-card cold taps '
+          'captured and self-validated',
+    );
+    stdout.writeln('PASS: ${scenario.id} captured at ${artifact.path}.');
+    if (!keepBuildArtifacts) await _deleteBuildCopies();
+  }
+
+  bool _iosIdentityContainsPeer(String raw, String expectedPeerId) {
+    try {
+      final exported = Map<String, Object?>.from(jsonDecode(raw) as Map);
+      final qr = Map<String, Object?>.from(
+        jsonDecode(exported['qrPayload']! as String) as Map,
+      );
+      return qr['ns'] == expectedPeerId;
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<void> _capturePlan397IosWindow({
+    required String phase,
+    required String payloadKind,
+    required String expectedBody,
+    required File tapConfig,
+    required Future<void> Function() performAction,
+  }) async {
+    if (!<String>{'message', 'reaction'}.contains(phase) ||
+        _plan397Windows.any((window) => window['phase'] == phase)) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_window_phase_invalid_or_reused_$phase',
+      );
+    }
+    final openedAt = DateTime.now().toUtc();
+    final syslogCursor = _iosSystemLogStdout.length;
+    final baseline = await _scrapeRelayMetrics();
+    await performAction();
+
+    final metricFamily = phase == 'message'
+        ? _relayGroupContentWakeCounter
+        : relayGroupReactionWakeCounter;
+    final provider = await _waitForPlan397ProviderWindow(
+      phase: phase,
+      family: metricFamily,
+      baseline: baseline,
+    );
+    final androidObservation = await _runInstalledGroupReactionProbe(
+      deviceId: senderId,
+      action: _runtimeObserveAction,
+      phase: phase,
+    );
+    final binding = _validatePlan397AndroidObservation(
+      phase,
+      androidObservation,
+    );
+    final groupDigest = binding['groupIdSha256']! as String;
+    final eventDigest = binding['eventIdSha256']! as String;
+    final targetDigest = binding['targetMessageIdSha256']! as String;
+    final nativeReceipt = await _observePlan397IosNotification(
+      phase: phase,
+      groupDigest: groupDigest,
+      eventDigest: eventDigest,
+      targetDigest: targetDigest,
+    );
+    final nse = await _waitForPlan397NseWindow(
+      phase: phase,
+      payloadKind: payloadKind,
+      cursor: syslogCursor,
+    );
+
+    final tapOutput = await _runIosUiSelector(_iosTapSelector, tapConfig);
+    _iosXcuitestOutput += tapOutput;
+    final tap = _validatePlan397TapOutput(
+      phase: phase,
+      output: tapOutput,
+      expectedBody: expectedBody,
+    );
+    // The native request/result fence may be released only after the host has
+    // pulled the receipt and the exact card has been tapped. This cleanup is a
+    // separate, explicitly later launch.
+    await _cleanupPlan397IosObservation(phase);
+
+    final relayJournal = await _relayJournalSince(openedAt);
+    _plan397Windows.add(<String, Object?>{
+      'phase': phase,
+      'ordinal': phase == 'message' ? 1 : 2,
+      'payloadKind': payloadKind,
+      'windowIdSha256': sha256
+          .convert(
+            utf8.encode('$_runtimeRunId|$phase|${openedAt.toIso8601String()}'),
+          )
+          .toString(),
+      'observerRunIdSha256': sha256
+          .convert(utf8.encode('$_runtimeRunId-$phase'))
+          .toString(),
+      'observerNonceSha256': sha256
+          .convert(utf8.encode('$_runtimeNonce-$phase'))
+          .toString(),
+      'androidObservation': binding,
+      'provider': provider,
+      'nse': nse,
+      'nativeInventory': nativeReceipt,
+      'tap': tap,
+      'diagnostics': <String, Object?>{
+        'runOwnedLocalPublicationCount': nse['runOwnedLocalPublicationCount'],
+        'contenderDisposition': nse['contenderDisposition'],
+        'contenderSuppressionCount': nse['contenderSuppressionCount'],
+        'rawIdentifiersPersisted': false,
+        'rawPayloadPersisted': false,
+      },
+      'relayJournalSha256': sha256
+          .convert(utf8.encode(relayJournal))
+          .toString(),
+      'relayJournalLineCount': relayJournal
+          .split('\n')
+          .where((line) => line.trim().isNotEmpty)
+          .length,
+      // Retained only in memory until the aggregate sender diagnostics are
+      // prepared; the artifact writer deliberately removes this field.
+      'relayJournalRedacted': _redact(relayJournal),
+      'openedAt': openedAt.toIso8601String(),
+      'closedAt': DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
+  Future<Map<String, Object?>> _waitForPlan397ProviderWindow({
+    required String phase,
+    required String family,
+    required String baseline,
+  }) {
+    return _waitForValue<Map<String, Object?>>(
+      'Plan 397 $phase exact provider metric window',
+      const Duration(minutes: 2),
+      () async {
+        final finalScrape = await _scrapeRelayMetrics();
+        final metrics = parseRelayMetricsWindow(
+          '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n$baseline'
+          '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n$finalScrape',
+        );
+        if (metrics == null) {
+          throw _CaptureFailure.environment(
+            stage,
+            'chat_group_${phase}_relay_metric_window_unusable',
+          );
+        }
+        final attempted = metrics.delta(
+          relayCounterSeries(family, const <String, String>{
+            'outcome': 'attempted',
+          }),
+        );
+        final push = relayCounterFamilyDelta(metrics, relayPushSentCounter);
+        if ((attempted != null && attempted > 1) ||
+            (push != null && push > 1)) {
+          throw _CaptureFailure.capture(
+            stage,
+            'chat_group_${phase}_provider_window_not_single: '
+            'attempted=$attempted push=$push',
+          );
+        }
+        if (attempted != 1 || push != 1) return null;
+        return <String, Object?>{
+          'metricFamily': family,
+          'attemptedDelta': attempted,
+          'pushSuccessDelta': push,
+          'baseline': baseline,
+          'final': finalScrape,
+          'baselineSha256': sha256.convert(utf8.encode(baseline)).toString(),
+          'finalSha256': sha256.convert(utf8.encode(finalScrape)).toString(),
+          'relayAttributed': true,
+          'providerResultCount': 1,
+          'deletedOrUnattributedEvidence': false,
+        };
+      },
+    );
+  }
+
+  Map<String, Object?> _validatePlan397AndroidObservation(
+    String phase,
+    Map<String, dynamic> observed,
+  ) {
+    final digest = RegExp(r'^[0-9a-f]{64}$');
+    final markers = (observed['markers'] as List<dynamic>? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((value) => Map<String, dynamic>.from(value))
+        .toList(growable: false);
+    Map<String, dynamic>? marker(String name) {
+      final matches = markers.where((value) => value['marker'] == name);
+      return matches.length == 1 ? matches.single : null;
+    }
+
+    final first = marker('first');
+    final target = marker('target');
+    final groupDigest = observed['groupIdSha256'];
+    final firstDigest = first?['idSha256'];
+    final targetDigest = target?['idSha256'];
+    final reactionDigest = observed['reactionIdSha256'];
+    final reactionTargetDigest = observed['reactionTargetIdSha256'];
+    final messageShape =
+        phase == 'message' &&
+        reactionDigest == null &&
+        reactionTargetDigest == null &&
+        observed['reactionRows'] == 0;
+    final reactionShape =
+        phase == 'reaction' &&
+        reactionDigest is String &&
+        digest.hasMatch(reactionDigest) &&
+        reactionTargetDigest == targetDigest &&
+        observed['reactionRows'] == 1 &&
+        observed['reactionEmoji'] == _reactionEmoji;
+    if (observed['schema'] != 'mknoon.plan257.sqlcipher-observation.v1' ||
+        observed['scenario'] != scenario.id ||
+        observed['phase'] != phase ||
+        observed['groupName'] != _groupName ||
+        observed['groupRows'] != 1 ||
+        observed['groupType'] != 'chat' ||
+        markers.length != 2 ||
+        first == null ||
+        target == null ||
+        groupDigest is! String ||
+        firstDigest is! String ||
+        targetDigest is! String ||
+        !digest.hasMatch(groupDigest) ||
+        !digest.hasMatch(firstDigest) ||
+        !digest.hasMatch(targetDigest) ||
+        first['incoming'] != false ||
+        target['incoming'] != true ||
+        target['read'] != true ||
+        (!messageShape && !reactionShape)) {
+      throw _CaptureFailure.capture(
+        stage,
+        'chat_group_${phase}_android_digest_observation_mismatch',
+      );
+    }
+    return <String, Object?>{
+      'schema': observed['schema'],
+      'phase': phase,
+      'groupIdSha256': groupDigest,
+      'messageIdSha256': firstDigest,
+      'targetMessageIdSha256': targetDigest,
+      'eventIdSha256': phase == 'message' ? firstDigest : reactionDigest,
+      'reactionIdSha256': phase == 'reaction' ? reactionDigest : null,
+      'reactionTargetIdSha256': phase == 'reaction'
+          ? reactionTargetDigest
+          : null,
+      'firstIncoming': false,
+      'targetIncoming': true,
+      'targetRead': true,
+      'reactionRows': observed['reactionRows'],
+      'reactionEmojiSha256': phase == 'reaction'
+          ? sha256.convert(utf8.encode(_reactionEmoji)).toString()
+          : null,
+      'rawIdentifiersPersisted': false,
+    };
+  }
+
+  Future<Map<String, Object?>> _observePlan397IosNotification({
+    required String phase,
+    required String groupDigest,
+    required String eventDigest,
+    required String targetDigest,
+  }) async {
+    final receipt = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'plan397_${phase}_native_inventory_receipt.json',
+    );
+    final nonce = '$_runtimeNonce-$phase';
+    await _runStreaming('python3', <String>[
+      'integration_test/scripts/ios_receiver_bootstrap.py',
+      '--action',
+      'observe-group',
+      '--receiver',
+      recipientId,
+      '--nonce',
+      nonce,
+      '--group-observation-receipt',
+      receipt.path,
+      '--phase',
+      phase,
+      '--expected-group-id-sha256',
+      groupDigest,
+      '--expected-event-id-sha256',
+      eventDigest,
+      '--expected-target-message-id-sha256',
+      targetDigest,
+      '--timeout-seconds',
+      '120',
+    ], environmentFailure: true);
+    if (!receipt.existsSync()) {
+      throw _CaptureFailure.capture(
+        stage,
+        'chat_group_${phase}_native_inventory_receipt_missing',
+      );
+    }
+    try {
+      return Map<String, Object?>.from(
+        jsonDecode(await receipt.readAsString()) as Map,
+      );
+    } on Object {
+      throw _CaptureFailure.capture(
+        stage,
+        'chat_group_${phase}_native_inventory_receipt_invalid',
+      );
+    }
+  }
+
+  Future<void> _cleanupPlan397IosObservation(String phase) async {
+    await _runStreaming('python3', <String>[
+      'integration_test/scripts/ios_receiver_bootstrap.py',
+      '--action',
+      'cleanup-group-observation',
+      '--receiver',
+      recipientId,
+      '--nonce',
+      '$_runtimeNonce-$phase',
+    ], environmentFailure: true);
+  }
+
+  Future<Map<String, Object?>> _waitForPlan397NseWindow({
+    required String phase,
+    required String payloadKind,
+    required int cursor,
+  }) {
+    return _waitForValue<Map<String, Object?>>(
+      'Plan 397 $phase NSE terminal evidence',
+      const Duration(minutes: 2),
+      () async {
+        final complete = _iosSystemLogStdout.toString();
+        final boundedCursor = cursor.clamp(0, complete.length);
+        final window = complete.substring(boundedCursor);
+        final lines = window.split('\n');
+        final expectedNseKind = payloadKind == 'group_message'
+            ? 'group'
+            : 'group_reaction';
+        bool hasKind(String line) =>
+            line.contains('kind=$expectedNseKind') ||
+            line.contains('kind: $expectedNseKind') ||
+            line.contains('"kind":"$expectedNseKind"');
+        final decryptOk = lines
+            .where(
+              (line) => line.contains('PUSH_NSE_DECRYPT_OK') && hasKind(line),
+            )
+            .length;
+        final didReceive = lines
+            .where((line) => line.contains('PUSH_NSE_DID_RECEIVE'))
+            .length;
+        final failure = lines
+            .where(
+              (line) =>
+                  line.contains('PUSH_NSE_DECRYPT_FAIL') ||
+                  line.contains('PUSH_NSE_TIMEOUT'),
+            )
+            .length;
+        if (decryptOk > 1 || didReceive > 1 || failure > 0) {
+          throw _CaptureFailure.capture(
+            stage,
+            'chat_group_${phase}_nse_not_single_success: '
+            'received=$didReceive decrypt=$decryptOk failure=$failure',
+          );
+        }
+        if (decryptOk != 1 || didReceive != 1) return null;
+        final localPublications = lines
+            .where(
+              (line) =>
+                  line.contains('PUSH_LOCAL_NOTIFICATION_SHOWN') ||
+                  line.contains('IOS_LOCAL_NOTIFICATION_PUBLISHED') ||
+                  line.contains('FLUTTER_LOCAL_NOTIFICATION_SHOWN') ||
+                  RegExp(
+                    r'(^|[^A-Z_])NOTIFICATION_SHOWN([^A-Z_]|$)',
+                  ).hasMatch(line),
+            )
+            .length;
+        final contenderSuppressions = lines.where((line) {
+          final normalized = line.toUpperCase();
+          return normalized.contains('RECENT_REMOTE') &&
+              (normalized.contains('SUPPRESS') || normalized.contains('SKIP'));
+        }).length;
+        if (localPublications > 0 || contenderSuppressions > 1) {
+          throw _CaptureFailure.capture(
+            stage,
+            'chat_group_${phase}_local_contender_diagnostics_rejected: '
+            'published=$localPublications suppressed=$contenderSuppressions',
+          );
+        }
+        return <String, Object?>{
+          'payloadKind': payloadKind,
+          'decryptOkCount': decryptOk,
+          'didReceiveCount': didReceive,
+          'decryptFailureCount': failure,
+          'timeoutCount': lines
+              .where((line) => line.contains('PUSH_NSE_TIMEOUT'))
+              .length,
+          'runOwnedLocalPublicationCount': localPublications,
+          'contenderDisposition': contenderSuppressions == 1
+              ? 'suppressed_recent_remote'
+              : 'not_observed',
+          'contenderSuppressionCount': contenderSuppressions,
+          'windowSha256': sha256.convert(utf8.encode(window)).toString(),
+          'rawPayloadPersisted': false,
+        };
+      },
+    );
+  }
+
+  Map<String, Object?> _validatePlan397TapOutput({
+    required String phase,
+    required String output,
+    required String expectedBody,
+  }) {
+    final cardMarker =
+        'MKNOON_397_IOS_NOTIFICATION_CARD phase=$phase same_card=true '
+        'matching_card_count=1 title_matched=true body_matched=true';
+    final tapMarker =
+        'MKNOON_397_CHAT_GROUP_TAP phase=$phase group_rendered=true '
+        'route_text_visible=true final_unread_clear=true manual_taps=0 '
+        'cold_launch=true';
+    if (!output.contains(cardMarker) || !output.contains(tapMarker)) {
+      throw _CaptureFailure.capture(
+        stage,
+        'chat_group_${phase}_same_card_or_route_marker_missing',
+      );
+    }
+    return <String, Object?>{
+      'selector': _iosTapSelector,
+      'passed': true,
+      'sameCardContainer': true,
+      'matchingCardCount': 1,
+      'titleMatched': true,
+      'bodyMatched': true,
+      'routeMatched': true,
+      'finalUnreadCount': 0,
+      'manualTaps': 0,
+      'coldLaunch': true,
+      'expectedTitleSha256': sha256.convert(utf8.encode(_groupName)).toString(),
+      'expectedBodySha256': sha256
+          .convert(utf8.encode(expectedBody))
+          .toString(),
+      'expectedRouteTextSha256': sha256
+          .convert(
+            utf8.encode(phase == 'message' ? _firstMarker : _targetMarker),
+          )
+          .toString(),
+    };
+  }
+
+  Future<void> _writePlan397IosArtifact() async {
+    if (_plan397Windows.length != 2 ||
+        _plan397Windows[0]['phase'] != 'message' ||
+        _plan397Windows[1]['phase'] != 'reaction' ||
+        !_plan397SetupContainerPreserved) {
+      throw _CaptureFailure.capture(
+        stage,
+        'chat_group_two_window_inventory_incomplete',
+      );
+    }
+    await _flushCommandJournal();
+    final centralProvenance = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'plan397_central_build_provenance.json',
+    );
+    final setupReceipt = _iosInstallReceipts['setup'];
+    final centralReceipt = _iosInstallReceipts['central_normal'];
+    if (setupReceipt == null || centralReceipt == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'chat_group_install_receipts_missing',
+      );
+    }
+    final windows = _plan397Windows
+        .map(
+          (window) => <String, Object?>{
+            for (final entry in window.entries)
+              if (entry.key != 'relayJournalRedacted') entry.key: entry.value,
+          },
+        )
+        .toList(growable: false);
+    final artifact = <String, Object?>{
+      'schema': iosChatGroupMessageAndReactionArtifactSchema,
+      'version': iosChatGroupMessageAndReactionArtifactVersion,
+      'scenario': scenario.id,
+      'testCase': scenario.testCase,
+      'status': 'passed',
+      'generatedBy': 'automated_capture_pipeline',
+      'topology': <String, Object?>{
+        'groupType': 'chat',
+        'sender': <String, Object?>{
+          'platform': 'android',
+          'deviceKind': scenario.senderDeviceKind,
+          'deviceId': senderId,
+          'liveDiscovered': true,
+        },
+        'recipient': <String, Object?>{
+          'platform': 'ios',
+          'deviceKind': 'physical',
+          'deviceId': recipientId,
+          'liveDiscovered': true,
+        },
+      },
+      'centralBuild': <String, Object?>{
+        'android': _plan397AndroidBuild!.redactedProvenance,
+        'ios': _plan397IosBuild!.redactedProvenance,
+        'setupApplicationSha256': _plan397SetupAppSha256,
+        'centralApplicationSha256': _plan397CentralAppSha256,
+        'setupSelectorsReusedOneProduct': true,
+        'setupChildBuildCount': 1,
+        'androidChildBuildCount': 0,
+        'iosNormalChildBuildCount': 0,
+        'normalInstalledInPlace': true,
+        'uninstallBetweenSetupAndNormal': false,
+        'setupContainerPreserved': true,
+      },
+      'capture': <String, Object?>{
+        'centralBuildProvenance': await _artifactFileReference(
+          centralProvenance,
+        ),
+        for (final entry in _plan397RetainedCentralFiles.entries)
+          entry.key: await _artifactFileReference(entry.value),
+        'setupInstall': await _artifactFileReference(setupReceipt),
+        'centralNormalInstall': await _artifactFileReference(centralReceipt),
+        'commandJournal': await _artifactFileReference(_commandJournalFile),
+      },
+      'identities': <String, Object?>{
+        'groupNameSha256': sha256.convert(utf8.encode(_groupName)).toString(),
+        'messageTextSha256': sha256
+            .convert(utf8.encode(_firstMarker))
+            .toString(),
+        'targetTextSha256': sha256
+            .convert(utf8.encode(_targetMarker))
+            .toString(),
+      },
+      'windows': windows,
+      'execution': const <String, Object?>{
+        'automation': 'fully_automated',
+        'manualTaps': 0,
+        'childBuildsDuringGradedWindows': 0,
+        'messageSendCount': 1,
+        'reactionAddCount': 1,
+        'reactionRemoveCount': 0,
+        'reactionReAddCount': 0,
+      },
+      'redaction': const <String, Object?>{
+        'pushTokensPersisted': false,
+        'secretKeysPersisted': false,
+        'ciphertextPersisted': false,
+        'plaintextPayloadPersisted': false,
+        'rawPeerIdsPersisted': false,
+        'rawGroupOrMessageIdsPersisted': false,
+      },
+    };
+    final encoded = const JsonEncoder.withIndent(' ').convert(artifact);
+    _rejectSensitivePersistence(encoded, 'plan397_artifact');
+    final output = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    final pending = File('${output.path}.pending');
+    await pending.writeAsString(encoded, flush: true);
+    await pending.rename(output.path);
   }
 
   Future<Directory> _buildIosCandidate({required bool e2eMode}) async {
@@ -1714,11 +2675,22 @@ class _Plan257Capture {
     }
   }
 
-  Future<File> _writeIosTapConfig() async {
-    final file = File(
-      '${artifactDirectory.path}${Platform.pathSeparator}'
-      'ios_announcement_reaction_tap_config.json',
-    );
+  Future<File> _writeIosTapConfig({
+    String label = 'announcement_reaction',
+    String? notificationPhase,
+    String? expectedEventText,
+    String? expectedBody,
+  }) async {
+    final file = _isPlan397
+        ? File(
+            '${Directory.systemTemp.path}${Platform.pathSeparator}'
+            'plan397_${DateTime.now().microsecondsSinceEpoch}_${label}_tap.json',
+          )
+        : File(
+            '${artifactDirectory.path}${Platform.pathSeparator}'
+            'ios_${label}_tap_config.json',
+          );
+    if (_isPlan397) _plan397EphemeralFiles.add(file);
     await file.writeAsString(
       const JsonEncoder.withIndent(' ').convert(<String, Object?>{
         'expectedTitle': _groupName,
@@ -1727,11 +2699,118 @@ class _Plan257Capture {
         'expectedMemberName': sender.username,
         'expectedActorName': sender.username,
         'expectedReactionEmoji': _reactionEmoji,
+        'notificationPhase': ?notificationPhase,
+        'expectedEventText': ?expectedEventText,
+        'expectedBody': ?expectedBody,
         'preBackgroundWaitSeconds': '12',
       }),
       flush: true,
     );
     return file;
+  }
+
+  Future<File> _materializePlan397Xctestrun({
+    required Directory application,
+    required File tapConfig,
+    required String label,
+  }) async {
+    final bundle = _plan397IosBundle;
+    if (bundle == null ||
+        !bundle.ok ||
+        bundle.xctestrun == null ||
+        bundle.testProducts == null) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_central_xctestrun_bundle_unavailable',
+      );
+    }
+    await _deletePlan397XctestrunDirectory();
+    final materialization = await Directory.systemTemp.createTemp(
+      'plan397_${label}_xctestrun_',
+    );
+    _plan397XctestrunDirectory = materialization;
+    final decoded = File(
+      '${materialization.path}${Platform.pathSeparator}'
+      'source.xctestrun.json',
+    );
+    await _run('plutil', <String>[
+      '-convert',
+      'json',
+      '-o',
+      decoded.path,
+      bundle.xctestrun!.path,
+    ], environmentFailure: true);
+    Object? raw;
+    try {
+      raw = jsonDecode(await decoded.readAsString());
+    } on Object {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_central_xctestrun_invalid_json',
+      );
+    }
+    if (raw is! Map) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_central_xctestrun_root_not_object',
+      );
+    }
+    final tapValues = Map<String, Object?>.from(
+      jsonDecode(await tapConfig.readAsString()) as Map,
+    );
+    final relocation = relocateIosXctestrun(
+      plist: Map<String, Object?>.from(raw),
+      cachedProducts: bundle.testProducts!,
+      cachedApplication: application,
+      uiTargetBundleIdentifier: _iosCapture['bundleId']! as String,
+      uiEnvironment: <String, String>{
+        'MKNOON_APNS_TAP_APP_BUNDLE_ID': _iosCapture['bundleId']! as String,
+        'MKNOON_APNS_TAP_CONFIG_FILE': tapConfig.path,
+        'MKNOON_APNS_TAP_EXPECTED_TITLE': _groupName,
+        'MKNOON_257_EXPECTED_GROUP_NAME': _groupName,
+        'MKNOON_257_EXPECTED_TARGET_TEXT': _targetMarker,
+        'MKNOON_257_EXPECTED_MEMBER_NAME': sender.username,
+        'MKNOON_257_EXPECTED_ACTOR_NAME': sender.username,
+        'MKNOON_257_EXPECTED_REACTION_EMOJI': _reactionEmoji,
+        if (tapValues['notificationPhase'] case final String value)
+          'MKNOON_397_NOTIFICATION_PHASE': value,
+        if (tapValues['expectedEventText'] case final String value)
+          'MKNOON_397_EXPECTED_EVENT_TEXT': value,
+        if (tapValues['expectedBody'] case final String value)
+          'MKNOON_APNS_TAP_EXPECTED_BODY': value,
+      },
+    );
+    if (relocation.uiTargetsPatched != 1 ||
+        relocation.productPathsPatched == 0) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_central_xctestrun_not_uniquely_relocatable',
+      );
+    }
+    final patchedJson = File(
+      '${materialization.path}${Platform.pathSeparator}'
+      'patched-xctestrun.json',
+    );
+    await patchedJson.writeAsString(jsonEncode(relocation.plist), flush: true);
+    final patched = File(
+      '${materialization.path}${Platform.pathSeparator}'
+      'RunnerUITests.xctestrun',
+    );
+    await _run('plutil', <String>[
+      '-convert',
+      'xml1',
+      '-o',
+      patched.path,
+      patchedJson.path,
+    ], environmentFailure: true);
+    if (!patched.existsSync() || patched.lengthSync() == 0) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'chat_group_patched_xctestrun_missing',
+      );
+    }
+    _plan397PatchedXctestrun = patched;
+    return patched;
   }
 
   Future<String> _runIosUiSelector(String selector, File tapConfig) async {
@@ -1742,22 +2821,40 @@ class _Plan257Capture {
     if (resultBundle.existsSync()) {
       await resultBundle.delete(recursive: true);
     }
+    final plan397Xctestrun = _plan397PatchedXctestrun;
+    final arguments = _isPlan397
+        ? iosTestWithoutBuildingArguments(
+            xctestrun:
+                plan397Xctestrun ??
+                (throw _CaptureFailure.configuration(
+                  stage,
+                  'chat_group_patched_xctestrun_not_prepared',
+                )),
+            receiverDeviceId: recipientId,
+            selector: selector,
+            resultBundle: resultBundle,
+          )
+        : <String>[
+            'test',
+            '-workspace',
+            _iosCapture['workspace']! as String,
+            '-scheme',
+            _iosCapture['scheme']! as String,
+            '-destination',
+            'platform=iOS,id=$recipientId',
+            '-only-testing:RunnerUITests/NotificationTapUITests/$selector',
+            '-resultBundlePath',
+            resultBundle.path,
+          ];
+    final tapValues = Map<String, Object?>.from(
+      jsonDecode(await tapConfig.readAsString()) as Map,
+    );
     final output = await _runStreaming(
       'xcodebuild',
-      <String>[
-        'test',
-        '-workspace',
-        _iosCapture['workspace']! as String,
-        '-scheme',
-        _iosCapture['scheme']! as String,
-        '-destination',
-        'platform=iOS,id=$recipientId',
-        '-only-testing:RunnerUITests/NotificationTapUITests/$selector',
-        '-resultBundlePath',
-        resultBundle.path,
-      ],
+      arguments,
       environmentFailure: true,
       environment: <String, String>{
+        if (_isPlan397) 'SIMS_CHILD_BUILDS_FORBIDDEN': '1',
         'MKNOON_APNS_TAP_APP_BUNDLE_ID': _iosCapture['bundleId']! as String,
         'MKNOON_APNS_TAP_CONFIG_FILE': tapConfig.path,
         'MKNOON_APNS_TAP_EXPECTED_TITLE': _groupName,
@@ -1766,6 +2863,12 @@ class _Plan257Capture {
         'MKNOON_257_EXPECTED_MEMBER_NAME': sender.username,
         'MKNOON_257_EXPECTED_ACTOR_NAME': sender.username,
         'MKNOON_257_EXPECTED_REACTION_EMOJI': _reactionEmoji,
+        if (tapValues['notificationPhase'] case final String value)
+          'MKNOON_397_NOTIFICATION_PHASE': value,
+        if (tapValues['expectedEventText'] case final String value)
+          'MKNOON_397_EXPECTED_EVENT_TEXT': value,
+        if (tapValues['expectedBody'] case final String value)
+          'MKNOON_APNS_TAP_EXPECTED_BODY': value,
       },
     );
     return '${output.stdout}\n${output.stderr}\n';
@@ -1784,6 +2887,7 @@ class _Plan257Capture {
   }
 
   Future<void> _startIosSystemLog() async {
+    if (_iosSystemLogProcess != null) return;
     _iosSystemLogProcess = await Process.start(
       _iosSystemLogExecutable,
       <String>['--udid', recipientId, '--no-colors'],
@@ -5472,20 +6576,18 @@ class _Plan257Capture {
     );
   }
 
-  /// iOS token registration still reads the relay journal.
-  ///
-  /// The same v1.8.0 removal applies, so this is expected to be dead — but the
-  /// iOS legs are deferred (GAP-N12) and unexercised, and rewriting them
-  /// against `idevicesyslog` without an iOS device to verify would be worse
-  /// than leaving the known-dead path clearly labelled.
-  Future<void> _waitForRelayTokenRegistration(DateTime since) async {
+  /// Waits for the recipient-owned registration success emitted by the app.
+  /// Relay v1.8.0 removed the former server journal phrase, so only the fresh
+  /// iOS syslog window is attributable here.
+  Future<void> _waitForRelayTokenRegistration(DateTime _) async {
     await _waitFor(
-      'recipient ios token registration (relay journal; dead on v1.8.0)',
+      'recipient ios token registration',
       const Duration(minutes: 3),
       () async {
-        final log = await _relayJournalSince(since);
-        return log.contains(
-          '[PUSH] Token registered for ${recipient.peerPrefix} (ios)',
+        final complete = _iosSystemLogStdout.toString();
+        final cursor = _iosRegistrationLogCursor.clamp(0, complete.length);
+        return groupReactionIosRelayRegistrationSucceeded(
+          complete.substring(cursor),
         );
       },
     );
@@ -6060,15 +7162,20 @@ class _Plan257Capture {
   Future<Map<String, dynamic>> _runInstalledGroupReactionProbe({
     required String deviceId,
     required String action,
+    String? phase,
   }) async {
-    final stepId = 'plan257-$action-$_runtimeRunId';
+    final phaseSuffix = phase == null ? '' : '-$phase';
+    final runId = '$_runtimeRunId$phaseSuffix';
+    final nonce = '$_runtimeNonce$phaseSuffix';
+    final stepId = 'plan257-$action-$runId';
     final request = <String, Object?>{
       'schema': _runtimeRequestSchema,
       'transport_action': action,
       'scenario': scenario.id,
       'stepId': stepId,
-      'runId': _runtimeRunId,
-      'nonce': _runtimeNonce,
+      'runId': runId,
+      'nonce': nonce,
+      'phase': ?phase,
       'groupName': _groupName,
       'firstMarker': _firstMarker,
       'secondMarker': _secondMarker,
@@ -6102,8 +7209,9 @@ class _Plan257Capture {
           if (result['schema'] != _runtimeResultSchema ||
               result['transport_action'] != action ||
               result['scenario'] != scenario.id ||
-              result['runId'] != _runtimeRunId ||
-              result['nonce'] != _runtimeNonce ||
+              result['runId'] != runId ||
+              result['nonce'] != nonce ||
+              (phase != null && result['phase'] != phase) ||
               result['status'] != 'complete' ||
               result['success'] != true ||
               result['observation'] is! Map) {

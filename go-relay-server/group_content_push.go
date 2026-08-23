@@ -125,6 +125,9 @@ func (ps *PushService) sendGroupContentNotificationForRoute(
 				message,
 			)
 		},
+		func(message *messaging.Message, platform string) *messaging.Message {
+			return projectGroupPushMessageForPlatform(message, platform, metadata.MessageID)
+		},
 	)
 }
 

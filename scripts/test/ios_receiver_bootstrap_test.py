@@ -418,6 +418,251 @@ class IosReceiverBootstrapTest(unittest.TestCase):
             self.assertEqual(state["lastAction"], "cleanup")
             self.assertIn("stage-recovery-command", " ".join(state["commands"]))
 
+    def test_group_observation_is_exact_source_bound_redacted_and_cleaned(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            fake = self._fake_xcrun(root)
+            receiver = "00008110-001A123E0E91801E"
+            nonce = "nonce-bootstrap-group-observation-1"
+            group_sha = hashlib.sha256(b"raw-group-id").hexdigest()
+            event_sha = hashlib.sha256(b"raw-reaction-id").hexdigest()
+            target_sha = hashlib.sha256(b"raw-target-message-id").hexdigest()
+            receipt = root / "group-observation-receipt.json"
+            environment = {
+                **os.environ,
+                "SIMS_IOS_RECEIVER_BOOTSTRAP_XCRUN": str(fake),
+                "FAKE_DEVICECTL_STATE": str(root / "state.json"),
+                "SIMS_IOS_PHYSICAL_DEVICE_ID": receiver,
+                "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE": nonce,
+                "SIMS_IOS_GROUP_NOTIFICATION_OBSERVATION_RECEIPT_PATH": str(
+                    receipt
+                ),
+            }
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(DRIVER),
+                    "--action",
+                    "observe-group",
+                    "--phase",
+                    "reaction",
+                    "--expected-group-id-sha256",
+                    group_sha,
+                    "--expected-event-id-sha256",
+                    event_sha,
+                    "--expected-target-message-id-sha256",
+                    target_sha,
+                    "--timeout-seconds",
+                    "10",
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(receipt.is_file())
+            self.assertEqual(stat.S_IMODE(receipt.stat().st_mode), 0o600)
+            value = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertEqual(
+                set(value),
+                {
+                    "schema",
+                    "action",
+                    "phase",
+                    "status",
+                    "containsSecrets",
+                    "bundleId",
+                    "captureNonceSha256",
+                    "receiverDeviceIdSha256",
+                    "expectedGroupIdSha256",
+                    "expectedEventIdSha256",
+                    "expectedTargetMessageIdSha256",
+                    "matchingRemoteCount",
+                    "matchingLocalCount",
+                    "matchingUsefulProviderCount",
+                    "matchingSanitizedProviderCount",
+                    "matchingFlutterLocalCount",
+                    "matchingUnknownCount",
+                    "matchingTotalCount",
+                    "stableSampleCount",
+                    "stableSampleIntervalMilliseconds",
+                    "observationDeadlineMilliseconds",
+                    "sampledThroughDeadline",
+                    "badSourceSeen",
+                    "duplicateSeen",
+                    "requestIdentifierSha256",
+                    "childBuildCount",
+                    "manualActionCount",
+                    "runnerTerminated",
+                    "preTapCleanupLaunchCount",
+                    "resultCode",
+                    "completedAt",
+                },
+            )
+            self.assertEqual(
+                {
+                    key: value[key]
+                    for key in (
+                        "schema",
+                        "action",
+                        "phase",
+                        "status",
+                        "containsSecrets",
+                        "expectedGroupIdSha256",
+                        "expectedEventIdSha256",
+                        "expectedTargetMessageIdSha256",
+                        "matchingRemoteCount",
+                        "matchingLocalCount",
+                        "matchingUsefulProviderCount",
+                        "matchingSanitizedProviderCount",
+                        "matchingFlutterLocalCount",
+                        "matchingUnknownCount",
+                        "matchingTotalCount",
+                        "stableSampleCount",
+                        "stableSampleIntervalMilliseconds",
+                        "observationDeadlineMilliseconds",
+                        "sampledThroughDeadline",
+                        "badSourceSeen",
+                        "duplicateSeen",
+                        "runnerTerminated",
+                        "preTapCleanupLaunchCount",
+                        "resultCode",
+                    )
+                },
+                {
+                    "schema": (
+                        "mknoon.sims.ios-group-notification-observation-"
+                        "host-receipt.v1"
+                    ),
+                    "action": "observe-group",
+                    "phase": "reaction",
+                    "status": "PASS",
+                    "containsSecrets": False,
+                    "expectedGroupIdSha256": group_sha,
+                    "expectedEventIdSha256": event_sha,
+                    "expectedTargetMessageIdSha256": target_sha,
+                    "matchingRemoteCount": 1,
+                    "matchingLocalCount": 0,
+                    "matchingUsefulProviderCount": 1,
+                    "matchingSanitizedProviderCount": 0,
+                    "matchingFlutterLocalCount": 0,
+                    "matchingUnknownCount": 0,
+                    "matchingTotalCount": 1,
+                    "stableSampleCount": 3,
+                    "stableSampleIntervalMilliseconds": 500,
+                    "observationDeadlineMilliseconds": 8000,
+                    "sampledThroughDeadline": True,
+                    "badSourceSeen": False,
+                    "duplicateSeen": False,
+                    "runnerTerminated": True,
+                    "preTapCleanupLaunchCount": 0,
+                    "resultCode": "ok",
+                },
+            )
+            encoded = receipt.read_text(encoding="utf-8") + result.stdout
+            self.assertNotIn("raw-group-id", encoded)
+            self.assertNotIn("raw-reaction-id", encoded)
+            self.assertNotIn("raw-target-message-id", encoded)
+            self.assertNotIn(nonce, encoded)
+            self.assertNotIn(receiver, encoded)
+
+            cleanup = subprocess.run(
+                [
+                    sys.executable,
+                    str(DRIVER),
+                    "--action",
+                    "cleanup-group-observation",
+                    "--timeout-seconds",
+                    "5",
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            self.assertEqual(cleanup.returncode, 0, cleanup.stderr)
+            state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["lastAction"], "cleanup")
+
+    def test_group_observation_holds_fence_until_pull_and_terminates_without_pretap_relaunch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            fake = self._fake_xcrun(root)
+            receiver = "00008110-001A123E0E91801E"
+            environment = {
+                **os.environ,
+                "SIMS_IOS_RECEIVER_BOOTSTRAP_XCRUN": str(fake),
+                "FAKE_DEVICECTL_STATE": str(root / "state.json"),
+                "SIMS_IOS_PHYSICAL_DEVICE_ID": receiver,
+                "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE": (
+                    "nonce-bootstrap-group-fence-1"
+                ),
+                "SIMS_IOS_GROUP_NOTIFICATION_OBSERVATION_RECEIPT_PATH": str(
+                    root / "message-receipt.json"
+                ),
+            }
+            digest = hashlib.sha256(b"message-phase").hexdigest()
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(DRIVER),
+                    "--action",
+                    "observe-group",
+                    "--phase",
+                    "message",
+                    "--expected-group-id-sha256",
+                    hashlib.sha256(b"group").hexdigest(),
+                    "--expected-event-id-sha256",
+                    digest,
+                    "--expected-target-message-id-sha256",
+                    hashlib.sha256(b"target").hexdigest(),
+                    "--timeout-seconds",
+                    "10",
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+            commands = state["commands"]
+            launches = [
+                (index, command)
+                for index, command in enumerate(commands)
+                if command.startswith("devicectl device process launch ")
+            ]
+            pulls = [
+                index
+                for index, command in enumerate(commands)
+                if command.startswith("devicectl device copy from ")
+                and "/group-observation-result.json" in command
+            ]
+            terminations = [
+                index
+                for index, command in enumerate(commands)
+                if command.startswith("devicectl device process terminate ")
+            ]
+            self.assertEqual(len(launches), 1, commands)
+            self.assertEqual(len(pulls), 1, commands)
+            self.assertEqual(len(terminations), 1, commands)
+            self.assertLess(launches[0][0], pulls[0], commands)
+            self.assertLess(pulls[0], terminations[0], commands)
+            self.assertEqual(terminations[0], len(commands) - 1, commands)
+            self.assertEqual(state["lastAction"], "observe_group")
+            self.assertNotIn("cleanup", " ".join(commands))
+
     def _fake_xcrun(self, root: Path) -> Path:
         script = root / "fake-xcrun.py"
         script.write_text(
@@ -442,7 +687,39 @@ elif args[:4] == ['devicectl','device','copy','from']:
   source=value('--source')
   sender_result=source.endswith('/sender-result.json')
   recovery_result=source.endswith('/recovery-result.json')
-  if recovery_result and request.get('action') == 'prove_recovery':
+  group_result=source.endswith('/group-observation-result.json')
+  if group_result and request.get('action') == 'observe_group':
+    response={
+      'schema':'mknoon.sims.ios-group-notification-observation-result.v1',
+      'action':'observe_group',
+      'phase':request['phase'],
+      'captureNonce':request['captureNonce'],
+      'receiverDeviceId':request['receiverDeviceId'],
+      'bundleId':'com.mknoon.app',
+      'expectedGroupIdSha256':request['expectedGroupIdSha256'],
+      'expectedEventIdSha256':request['expectedEventIdSha256'],
+      'expectedTargetMessageIdSha256':request['expectedTargetMessageIdSha256'],
+      'status':'passed',
+      'resultCode':'ok',
+      'matchingRemoteCount':1,
+      'matchingLocalCount':0,
+      'matchingUsefulProviderCount':1,
+      'matchingSanitizedProviderCount':0,
+      'matchingFlutterLocalCount':0,
+      'matchingUnknownCount':0,
+      'matchingTotalCount':1,
+      'stableSampleCount':3,
+      'stableSampleIntervalMilliseconds':500,
+      'observationDeadlineMilliseconds':8000,
+      'sampledThroughDeadline':True,
+      'badSourceSeen':False,
+      'duplicateSeen':False,
+      'requestIdentifierSha256':['b'*64],
+      'childBuildCount':0,
+      'manualActionCount':0,
+      'completedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z'),
+    }
+  elif recovery_result and request.get('action') == 'prove_recovery':
     response={
       'schema':'mknoon.sims.ios-notification-recovery-result.v1',
       'action':'prove_recovery',

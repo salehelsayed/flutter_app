@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_app/core/debug/ios_receiver_bootstrap_contract.dart';
 
@@ -51,5 +52,53 @@ void main() {
   if (!isIosReceiverBootstrapNotificationAlertSetting('enabled') ||
       isIosReceiverBootstrapNotificationAlertSetting('disabled')) {
     _fail('notification alert setting validation is not fail-closed');
+  }
+
+  final bootstrap = File(
+    'integration_test/scripts/ios_receiver_bootstrap.py',
+  ).readAsStringSync();
+  final inventory = File(
+    'ios/Runner/IosNotificationRecoveryCoordinator.swift',
+  ).readAsStringSync();
+  final handoff = File(
+    'ios/Runner/IosReceiverBootstrapHandoff.swift',
+  ).readAsStringSync();
+  final appDelegate = File('ios/Runner/AppDelegate.swift').readAsStringSync();
+  for (final required in const <String>[
+    'mknoon.sims.ios-group-notification-observation-request.v1',
+    'mknoon.sims.ios-group-notification-observation-result.v1',
+    'mknoon.sims.ios-group-notification-observation-host-receipt.v1',
+    '"expectedGroupIdSha256": group_sha256',
+    '"expectedEventIdSha256": event_sha256',
+    '"expectedTargetMessageIdSha256": target_message_sha256',
+    '"sampledThroughDeadline"',
+    '"badSourceSeen"',
+    '"duplicateSeen"',
+    'control.terminate(',
+    '"preTapCleanupLaunchCount": 0',
+  ]) {
+    if (!bootstrap.contains(required)) {
+      _fail('group observation bootstrap contract is missing: $required');
+    }
+  }
+  for (final required in const <String>[
+    'static let stableSampleTarget = 3',
+    'static let stableSampleIntervalMilliseconds = 500',
+    'static let observationDeadlineMilliseconds = 8_000',
+  ]) {
+    if (!inventory.contains(required)) {
+      _fail('native inventory timing contract is missing: $required');
+    }
+  }
+  if (!handoff.contains('takeGroupNotificationObservationRequest()') ||
+      !handoff.contains('completeGroupNotificationObservationRequest(') ||
+      !appDelegate.contains('IosGroupNotificationFullHorizonSampler') ||
+      !appDelegate.contains(
+        'processPendingIosGroupNotificationObservation()',
+      ) ||
+      !appDelegate.contains(
+        '// Intentionally do not release iosNotificationRecoveryProofInFlight.',
+      )) {
+    _fail('group observation fence and full-horizon sampler are incomplete');
   }
 }

@@ -118,7 +118,7 @@ void main() {
       expect(body, isNot(contains('👍')));
     });
 
-    test('lists the six availability-bounded scenarios in stable order', () {
+    test('lists the seven availability-bounded scenarios in stable order', () {
       expect(
         groupReactionNotificationScenarios.map((scenario) => scenario.id),
         const <String>[
@@ -128,6 +128,7 @@ void main() {
           'android_announcement_reaction_recipient',
           'android_group_reaction_recipient_background_connected',
           'ios_announcement_reaction_recipient',
+          iosChatGroupMessageAndReactionScenarioId,
         ],
       );
     });
@@ -154,6 +155,17 @@ void main() {
       expect(announcementReaction.senderDeviceKind, 'physical');
       expect(announcementReaction.recipientPlatform, 'ios');
       expect(announcementReaction.recipientDeviceKind, 'physical');
+
+      final chatGroupIos = groupReactionNotificationScenario(
+        iosChatGroupMessageAndReactionScenarioId,
+      )!;
+      expect(chatGroupIos.groupType, 'chat');
+      expect(chatGroupIos.senderRole, 'member_message_sender_and_reactor');
+      expect(chatGroupIos.recipientRole, 'chat_member_target_author');
+      expect(chatGroupIos.senderPlatform, 'android');
+      expect(chatGroupIos.senderDeviceKind, 'physical');
+      expect(chatGroupIos.recipientPlatform, 'ios');
+      expect(chatGroupIos.recipientDeviceKind, 'physical');
     });
   });
 
@@ -1400,6 +1412,84 @@ void main() {
       expect(result.ok, isTrue, reason: result.detail);
     });
 
+    test('chat-group iOS selectors are scenario-aware', () {
+      final scenario = groupReactionNotificationScenario(
+        iosChatGroupMessageAndReactionScenarioId,
+      )!;
+      final manifest = _validStagingManifest(
+        provider: 'apns',
+        includeIosCapture: true,
+      );
+      final iosCapture = Map<String, Object?>.from(
+        manifest['iosCapture']! as Map,
+      )..addAll(groupReactionNotificationIosSelectorsFor(scenario));
+      manifest['iosCapture'] = iosCapture;
+
+      final accepted = validateGroupReactionNotificationStagingManifest(
+        manifest,
+        scenario: scenario,
+      );
+      expect(accepted.ok, isTrue, reason: accepted.detail);
+
+      final legacySelectors = _validStagingManifest(
+        provider: 'apns',
+        includeIosCapture: true,
+      );
+      final rejected = validateGroupReactionNotificationStagingManifest(
+        legacySelectors,
+        scenario: scenario,
+      );
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('testCreateChatGroupNotificationFixture'),
+      );
+      expect(rejected.detail, contains('testChatGroupNotificationTap'));
+    });
+
+    test('iOS registration parser accepts only recipient relay success', () {
+      expect(
+        groupReactionIosRelayRegistrationSucceeded(
+          '2026-08-22T20:00:00Z app [PUSH_DIAG] '
+          'relay_push_registration_success platform=ios',
+        ),
+        isTrue,
+      );
+      expect(
+        groupReactionIosRelayRegistrationSucceeded(
+          '[PUSH] Token registered for peer (ios)',
+        ),
+        isFalse,
+      );
+      expect(
+        groupReactionIosRelayRegistrationSucceeded(
+          '[PUSH_DIAG] relay_push_registration_success platform=android',
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      'iOS inventory rejects identifiers listed only under Devices Offline',
+      () {
+        const deviceId = '00008110-00184D622289801E';
+        final offlineOnly = <String>[
+          '== Devices ==',
+          'Mac (00000000-0000000000000000)',
+          '== Devices Offline ==',
+          'Test iPhone (17.4) ($deviceId)',
+        ].join('\n');
+        expect(groupReactionIosDeviceIsOnline(offlineOnly, deviceId), isFalse);
+
+        final online = <String>[
+          '== Devices ==',
+          'Test iPhone (17.4) ($deviceId)',
+          '== Devices Offline ==',
+        ].join('\n');
+        expect(groupReactionIosDeviceIsOnline(online, deviceId), isTrue);
+      },
+    );
+
     test('rejects production deployment and disabled data reset authority', () {
       final manifest = _validStagingManifest(provider: 'fcm')
         ..['productionDeploymentPerformed'] = true
@@ -1414,6 +1504,367 @@ void main() {
       expect(result.ok, isFalse);
       expect(result.detail, contains('productionDeploymentPerformed'));
       expect(result.detail, contains('allowAppDataReset'));
+    });
+  });
+
+  group('Plan 397 central artifact contract', () {
+    test('chat-group iOS scenario requires central Android and iOS artifacts', () {
+      final runner = File(
+        'integration_test/scripts/run_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+      final capture = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+      for (final option in const <String>[
+        '--prebuilt-android-apk',
+        '--prebuilt-android-build-report',
+        '--prebuilt-ios-bundle',
+        '--prebuilt-ios-build-report',
+      ]) {
+        expect(runner, contains(option));
+        expect(capture, contains(option));
+      }
+      expect(
+        capture,
+        contains(
+          'chat_group_ios_requires_central_android_ios_artifacts_and_reports',
+        ),
+      );
+    });
+
+    test(
+      'chat-group iOS scenario rejects stale or unbound central build reports',
+      () async {
+        final root = await Directory.systemTemp.createTemp(
+          'plan397-central-build-',
+        );
+        try {
+          final fixture = _writeCentralBuildFixture(
+            root,
+            profileId: 'android.production_fcm',
+          );
+          final valid = validateGroupReactionCentralBuildArtifact(
+            profileId: fixture.profileId,
+            artifact: fixture.artifact,
+            buildReport: fixture.report,
+            now: fixture.generatedAt,
+          );
+          expect(valid.ok, isTrue, reason: valid.detail);
+
+          _writeBuildReport(
+            fixture.report,
+            profileId: fixture.profileId,
+            artifactDigest: fixture.artifactDigest,
+            generatedAt: fixture.generatedAt.subtract(const Duration(hours: 2)),
+          );
+          final stale = validateGroupReactionCentralBuildArtifact(
+            profileId: fixture.profileId,
+            artifact: fixture.artifact,
+            buildReport: fixture.report,
+            now: fixture.generatedAt,
+          );
+          expect(stale.ok, isFalse);
+          expect(stale.detail, contains('stale'));
+
+          _writeBuildReport(
+            fixture.report,
+            profileId: fixture.profileId,
+            artifactDigest: 'f' * 64,
+            generatedAt: fixture.generatedAt,
+          );
+          final unbound = validateGroupReactionCentralBuildArtifact(
+            profileId: fixture.profileId,
+            artifact: fixture.artifact,
+            buildReport: fixture.report,
+            now: fixture.generatedAt,
+          );
+          expect(unbound.ok, isFalse);
+          expect(unbound.detail, contains('digest'));
+        } finally {
+          await root.delete(recursive: true);
+        }
+      },
+    );
+
+    test(
+      'chat-group attempt two rejects attempt-one iOS artifact digest after client repair',
+      () {
+        final attemptTwo = GroupReactionCentralBuildValidation(
+          failures: const <String>[],
+          profileId: 'ios.device.production',
+          inputDigest: 'a' * 64,
+          artifactDigest: 'b' * 64,
+        );
+        final stale = validateGroupReactionAttemptTwoIosBuildFreshness(
+          attemptOneInputDigest: 'a' * 64,
+          attemptOneArtifactDigest: 'b' * 64,
+          attemptTwo: attemptTwo,
+        );
+        expect(stale.ok, isFalse);
+        expect(stale.detail, contains('input digest'));
+        expect(stale.detail, contains('artifact digest'));
+      },
+    );
+
+    test(
+      'chat-group central UI leg uses relocated xctestrun without building',
+      () {
+        final source = File(
+          'integration_test/scripts/capture_group_reaction_notification_device.dart',
+        ).readAsStringSync();
+        expect(source, contains('relocateIosXctestrun('));
+        expect(source, contains('iosTestWithoutBuildingArguments('));
+        expect(source, contains("'SIMS_CHILD_BUILDS_FORBIDDEN': '1'"));
+        expect(source, contains('chat_group_patched_xctestrun_not_prepared'));
+      },
+    );
+
+    test('chat-group iOS setup selectors reuse one setup product', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+      final setupLabel = source.indexOf("label: 'setup'");
+      final setupStart = source.lastIndexOf(
+        '_materializePlan397Xctestrun(',
+        setupLabel,
+      );
+      final centralInstall = source.indexOf(
+        "_installIosCandidate(centralApplication, mode: 'central_normal')",
+      );
+      final setupWindow = source.substring(setupStart, centralInstall);
+      expect(setupLabel, greaterThanOrEqualTo(0));
+      expect(setupStart, greaterThanOrEqualTo(0));
+      expect(centralInstall, greaterThan(setupStart));
+      expect(
+        RegExp(
+          '_materializePlan397Xctestrun\\(',
+        ).allMatches(setupWindow).length,
+        1,
+      );
+      expect(setupWindow, contains('_iosFixtureCreateSelector'));
+      expect(setupWindow, contains('_iosFixtureAuthorSelector'));
+      expect(setupWindow, contains('application: setupApplication'));
+    });
+
+    test('chat-group iOS normal install preserves setup container', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+      final setupPeer = source.indexOf('final setupPeerId = recipient.peerId');
+      final centralInstall = source.indexOf(
+        "_installIosCandidate(centralApplication, mode: 'central_normal')",
+      );
+      final retained = source.indexOf(
+        "_readIosAppFile('intro_e2e_identity.json')",
+        centralInstall,
+      );
+      final segment = source.substring(setupPeer, retained);
+      expect(setupPeer, greaterThanOrEqualTo(0));
+      expect(centralInstall, greaterThan(setupPeer));
+      expect(retained, greaterThan(centralInstall));
+      expect(segment, isNot(contains("'uninstall'")));
+      expect(source, contains('_plan397SetupContainerPreserved = true'));
+    });
+
+    test(
+      'chat-group iOS tap uses one card container and rejects independent text lookup',
+      () {
+        final source = File(
+          'ios/RunnerUITests/NotificationTapUITests.swift',
+        ).readAsStringSync();
+        final start = source.indexOf('func testChatGroupNotificationTap()');
+        final end = source.indexOf(
+          'func testAnnouncementReactionNotificationTap()',
+          start,
+        );
+        final method = source.substring(start, end);
+        expect(method, contains('findSameContainerNotificationCard('));
+        expect(method, contains('tapSameContainerNotificationCard('));
+        expect(method, contains('same_card=true matching_card_count=1'));
+        expect(method, isNot(contains('notificationTextExists(')));
+        expect(method, isNot(contains('tapVisibleNotificationChrome(')));
+      },
+    );
+  });
+
+  group('Plan 397 two-window proof contract', () {
+    late Directory root;
+
+    setUp(() async {
+      root = await Directory.systemTemp.createTemp('plan397-proof-');
+    });
+
+    tearDown(() async {
+      if (root.existsSync()) await root.delete(recursive: true);
+    });
+
+    test(
+      'accepts realistic chat-group iOS message and reaction evidence',
+      () async {
+        final artifact = await _writePlan397ArtifactFixture(root);
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: iosChatGroupMessageAndReactionScenarioId,
+          artifactFile: artifact,
+          expectedSenderDeviceId: '21071FDF600CSC',
+          expectedRecipientDeviceId: '00008150-001C3C6A3684401C',
+        );
+
+        expect(result.ok, isTrue, reason: result.detail);
+      },
+    );
+
+    test('chat-group iOS proof binds Android digest identities', () async {
+      final artifact = await _writePlan397ArtifactFixture(root);
+      final value = _readArtifact(artifact);
+      final reaction = (value['windows'] as List<dynamic>)[1] as Map;
+      final native = reaction['nativeInventory'] as Map;
+      native['expectedEventIdSha256'] = 'f' * 64;
+      _writeArtifact(artifact, value);
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: iosChatGroupMessageAndReactionScenarioId,
+        artifactFile: artifact,
+      );
+      expect(result.ok, isFalse);
+      expect(result.detail, contains('phase authority'));
+    });
+
+    test('rejects duplicate or local group source', () async {
+      for (final mutation in <void Function(Map<dynamic, dynamic>)>[
+        (native) => native['duplicateSeen'] = true,
+        (native) {
+          native['matchingRemoteCount'] = 0;
+          native['matchingLocalCount'] = 1;
+          native['matchingUsefulProviderCount'] = 0;
+        },
+      ]) {
+        final directory = Directory('${root.path}/${mutation.hashCode}')
+          ..createSync(recursive: true);
+        final artifact = await _writePlan397ArtifactFixture(directory);
+        final value = _readArtifact(artifact);
+        mutation(
+          ((value['windows'] as List<dynamic>)[0]
+                  as Map<dynamic, dynamic>)['nativeInventory']
+              as Map<dynamic, dynamic>,
+        );
+        _writeArtifact(artifact, value);
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: iosChatGroupMessageAndReactionScenarioId,
+          artifactFile: artifact,
+        );
+        expect(result.ok, isFalse);
+      }
+    });
+
+    test(
+      'rejects early, transient-local, unstable, or unhashed inventory',
+      () async {
+        final mutations = <void Function(Map<dynamic, dynamic>)>[
+          (native) => native['observationDeadlineMilliseconds'] = 3000,
+          (native) => native['badSourceSeen'] = true,
+          (native) => native['stableSampleCount'] = 2,
+          (native) => native['requestIdentifierSha256'] = <String>['raw-id'],
+        ];
+        for (var index = 0; index < mutations.length; index++) {
+          final directory = Directory('${root.path}/inventory-$index')
+            ..createSync(recursive: true);
+          final artifact = await _writePlan397ArtifactFixture(directory);
+          final value = _readArtifact(artifact);
+          final native =
+              ((value['windows'] as List<dynamic>)[0]
+                      as Map<dynamic, dynamic>)['nativeInventory']
+                  as Map<dynamic, dynamic>;
+          mutations[index](native);
+          _writeArtifact(artifact, value);
+          final result = await validateGroupReactionNotificationArtifact(
+            scenario: iosChatGroupMessageAndReactionScenarioId,
+            artifactFile: artifact,
+          );
+          expect(result.ok, isFalse, reason: '$index: ${result.detail}');
+        }
+      },
+    );
+
+    test('rejects deleted or unattributed provider evidence', () async {
+      for (var index = 0; index < 2; index++) {
+        final directory = Directory('${root.path}/provider-$index')
+          ..createSync(recursive: true);
+        final artifact = await _writePlan397ArtifactFixture(directory);
+        final value = _readArtifact(artifact);
+        final provider =
+            ((value['windows'] as List<dynamic>)[index]
+                    as Map<dynamic, dynamic>)['provider']
+                as Map<dynamic, dynamic>;
+        if (index == 0) {
+          provider['deletedOrUnattributedEvidence'] = true;
+        } else {
+          provider['relayAttributed'] = false;
+        }
+        _writeArtifact(artifact, value);
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: iosChatGroupMessageAndReactionScenarioId,
+          artifactFile: artifact,
+        );
+        expect(result.ok, isFalse);
+      }
+    });
+
+    test('rejects any run-owned local publication', () async {
+      final artifact = await _writePlan397ArtifactFixture(root);
+      final value = _readArtifact(artifact);
+      final window = (value['windows'] as List<dynamic>)[0] as Map;
+      (window['nse'] as Map)['runOwnedLocalPublicationCount'] = 1;
+      (window['diagnostics'] as Map)['runOwnedLocalPublicationCount'] = 1;
+      _writeArtifact(artifact, value);
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: iosChatGroupMessageAndReactionScenarioId,
+        artifactFile: artifact,
+      );
+      expect(result.ok, isFalse);
+      expect(result.detail, contains('runOwnedLocalPublicationCount'));
+    });
+
+    test('rejects wrong route or final unread UI', () async {
+      for (var index = 0; index < 2; index++) {
+        final directory = Directory('${root.path}/tap-$index')
+          ..createSync(recursive: true);
+        final artifact = await _writePlan397ArtifactFixture(directory);
+        final value = _readArtifact(artifact);
+        final tap =
+            ((value['windows'] as List<dynamic>)[index]
+                    as Map<dynamic, dynamic>)['tap']
+                as Map<dynamic, dynamic>;
+        if (index == 0) {
+          tap['routeMatched'] = false;
+        } else {
+          tap['finalUnreadCount'] = 1;
+        }
+        _writeArtifact(artifact, value);
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: iosChatGroupMessageAndReactionScenarioId,
+          artifactFile: artifact,
+        );
+        expect(result.ok, isFalse);
+      }
+    });
+
+    test('chat-group iOS provider evidence uses two metric windows', () async {
+      final artifact = await _writePlan397ArtifactFixture(root);
+      final value = _readArtifact(artifact);
+      final windows = value['windows'] as List<dynamic>;
+      final messageProvider = (windows[0] as Map)['provider'] as Map;
+      final reactionProvider = (windows[1] as Map)['provider'] as Map;
+      reactionProvider['baseline'] = messageProvider['baseline'];
+      reactionProvider['baselineSha256'] = messageProvider['baselineSha256'];
+      _writeArtifact(artifact, value);
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: iosChatGroupMessageAndReactionScenarioId,
+        artifactFile: artifact,
+      );
+      expect(result.ok, isFalse);
+      expect(result.detail, contains('distinct provider baselines'));
     });
   });
 
@@ -1444,6 +1895,85 @@ void main() {
       );
     });
   });
+}
+
+final class _CentralBuildFixture {
+  const _CentralBuildFixture({
+    required this.profileId,
+    required this.artifact,
+    required this.report,
+    required this.generatedAt,
+    required this.artifactDigest,
+  });
+
+  final String profileId;
+  final File artifact;
+  final File report;
+  final DateTime generatedAt;
+  final String artifactDigest;
+}
+
+_CentralBuildFixture _writeCentralBuildFixture(
+  Directory root, {
+  required String profileId,
+}) {
+  final inputDigest = 'c' * 64;
+  final cacheEntry = Directory(
+    '${root.path}${Platform.pathSeparator}$profileId'
+    '${Platform.pathSeparator}$inputDigest',
+  )..createSync(recursive: true);
+  final artifact = File(
+    '${cacheEntry.path}${Platform.pathSeparator}artifact.apk',
+  )..writeAsBytesSync(utf8.encode('plan397 central artifact'));
+  final artifactDigest = groupReactionSimsArtifactDigest(artifact);
+  final generatedAt = DateTime.utc(2026, 8, 22, 20);
+  File(
+    '${cacheEntry.path}${Platform.pathSeparator}attestation.json',
+  ).writeAsStringSync(
+    jsonEncode(<String, Object?>{
+      'schemaVersion': 1,
+      'profileId': profileId,
+      'inputDigest': inputDigest,
+      'artifactDigest': artifactDigest,
+      'artifactPath': artifact.absolute.path,
+      'redactedCommand': <String>['central-build'],
+      'createdAt': generatedAt.toIso8601String(),
+    }),
+  );
+  final report = File(
+    '${root.path}${Platform.pathSeparator}$profileId-report.json',
+  );
+  _writeBuildReport(
+    report,
+    profileId: profileId,
+    artifactDigest: artifactDigest,
+    generatedAt: generatedAt,
+  );
+  return _CentralBuildFixture(
+    profileId: profileId,
+    artifact: artifact,
+    report: report,
+    generatedAt: generatedAt,
+    artifactDigest: artifactDigest,
+  );
+}
+
+void _writeBuildReport(
+  File report, {
+  required String profileId,
+  required String artifactDigest,
+  required DateTime generatedAt,
+}) {
+  report.writeAsStringSync(
+    jsonEncode(<String, Object?>{
+      'schemaVersion': 1,
+      'generatedAt': generatedAt.toUtc().toIso8601String(),
+      'builds': <String, Object?>{
+        'artifactDigests': <String, String>{profileId: artifactDigest},
+        'failedProfileIds': <String>[],
+      },
+    }),
+  );
 }
 
 String _uiNode({
@@ -1562,6 +2092,370 @@ void _rewriteEvidence(File artifact, String kind, String contents) {
   file.writeAsStringSync(contents, flush: true);
   _updateEvidenceDigest(record, file);
   _writeArtifact(artifact, decoded);
+}
+
+String _plan397FixtureDigest(String value) =>
+    sha256.convert(utf8.encode(value)).toString();
+
+Future<File> _writePlan397ArtifactFixture(Directory root) async {
+  final scenario = groupReactionNotificationScenario(
+    iosChatGroupMessageAndReactionScenarioId,
+  )!;
+  final directory = Directory('${root.path}${Platform.pathSeparator}plan397')
+    ..createSync(recursive: true);
+  const senderId = '21071FDF600CSC';
+  const recipientId = '00008150-001C3C6A3684401C';
+  final groupId = _plan397FixtureDigest('group-id');
+  final messageId = _plan397FixtureDigest('message-id');
+  final targetId = _plan397FixtureDigest('target-id');
+  final reactionId = _plan397FixtureDigest('reaction-id');
+  final groupName = _plan397FixtureDigest('Garden Club');
+  final messageText = _plan397FixtureDigest('plan397-message');
+  final targetText = _plan397FixtureDigest('plan397-target');
+  final androidInput = _plan397FixtureDigest('android-input');
+  final androidArtifact = _plan397FixtureDigest('android-artifact');
+  final iosInput = _plan397FixtureDigest('ios-input');
+  final iosArtifact = _plan397FixtureDigest('ios-artifact');
+
+  final iosManifestValue = <String, Object?>{
+    'schema': 'mknoon.sims.ios-device-production-bundle.v1',
+    'profileId': 'ios.device.production',
+    'centralCompileCommands': 1,
+    'logicalBuildCount': 1,
+    'childBuildCount': 0,
+    'applicationApp': 'Runner.app',
+    'xctestrun': 'RunnerUITests.xctestrun',
+    'testProducts': 'test-products',
+  };
+  final iosManifestEncoded = jsonEncode(iosManifestValue);
+
+  final centralBuildProvenance = await _writeReferencedJson(
+    directory,
+    'plan397_central_build_provenance.json',
+    <String, Object?>{
+      'schema': 'mknoon.plan397.central-build-provenance.v1',
+      'android': <String, Object?>{
+        'profileId': 'android.production_fcm',
+        'inputDigest': androidInput,
+        'artifactDigest': androidArtifact,
+        'attestationAdjacent': true,
+      },
+      'ios': <String, Object?>{
+        'profileId': 'ios.device.production',
+        'inputDigest': iosInput,
+        'artifactDigest': iosArtifact,
+        'attestationAdjacent': true,
+      },
+      'iosBundleManifestSha256': _plan397FixtureDigest(iosManifestEncoded),
+      'androidChildBuildCount': 0,
+      'iosNormalChildBuildCount': 0,
+      'recordedAt': '2026-08-22T11:59:00.000Z',
+    },
+  );
+  final androidBuildReport = await _writeReferencedJson(
+    directory,
+    'android-attempt-1-build-report.json',
+    <String, Object?>{
+      'builds': <String, Object?>{
+        'artifactDigests': <String, Object?>{
+          'android.production_fcm': androidArtifact,
+        },
+      },
+    },
+  );
+  final iosBuildReport = await _writeReferencedJson(
+    directory,
+    'ios-attempt-1-build-report.json',
+    <String, Object?>{
+      'builds': <String, Object?>{
+        'artifactDigests': <String, Object?>{
+          'ios.device.production': iosArtifact,
+        },
+      },
+    },
+  );
+  final androidAttestation = await _writeReferencedJson(
+    directory,
+    'android-attestation.json',
+    <String, Object?>{
+      'schemaVersion': 1,
+      'profileId': 'android.production_fcm',
+      'inputDigest': androidInput,
+      'artifactDigest': androidArtifact,
+    },
+  );
+  final iosAttestation = await _writeReferencedJson(
+    directory,
+    'ios-attestation.json',
+    <String, Object?>{
+      'schemaVersion': 1,
+      'profileId': 'ios.device.production',
+      'inputDigest': iosInput,
+      'artifactDigest': iosArtifact,
+    },
+  );
+  final iosBundleManifest = await _writeReferencedJson(
+    directory,
+    'bundle_manifest.json',
+    iosManifestValue,
+  );
+  final setupInstall = await _writeReferencedJson(
+    directory,
+    'ios_setup_installed_app_inventory.json',
+    <String, Object?>{'bundleIdentifier': 'com.mknoon.app', 'mode': 'setup'},
+  );
+  final centralInstall = await _writeReferencedJson(
+    directory,
+    'ios_central_normal_installed_app_inventory.json',
+    <String, Object?>{
+      'bundleIdentifier': 'com.mknoon.app',
+      'mode': 'central_normal',
+      'containerPreserved': true,
+    },
+  );
+  final commandJournal = await _writeReferencedJson(
+    directory,
+    'automation_command_journal.json',
+    <String, Object?>{
+      'schema': 'mknoon.plan397.command-journal.v1',
+      'commands': <Object?>[
+        <String, Object?>{'stage': 'plan397_ios_setup_build'},
+        <String, Object?>{'stage': 'plan397_central_normal_install'},
+        <String, Object?>{'stage': 'plan397_message_window'},
+        <String, Object?>{'stage': 'plan397_reaction_window'},
+      ],
+    },
+  );
+
+  Map<String, Object?> metricWindow(String phase, String family, int offset) {
+    final attempted = 40 + offset;
+    final pushed = 900 + offset;
+    final baseline =
+        '$relayMetricsLivenessSentinel ${2300 + offset}\n'
+        '$family{outcome="attempted"} $attempted\n'
+        '$relayPushSentCounter{result="success"} $pushed\n';
+    final finalScrape =
+        '$relayMetricsLivenessSentinel ${2301 + offset}\n'
+        '$family{outcome="attempted"} ${attempted + 1}\n'
+        '$relayPushSentCounter{result="success"} ${pushed + 1}\n';
+    return <String, Object?>{
+      'metricFamily': family,
+      'attemptedDelta': 1,
+      'pushSuccessDelta': 1,
+      'baseline': baseline,
+      'final': finalScrape,
+      'baselineSha256': _plan397FixtureDigest(baseline),
+      'finalSha256': _plan397FixtureDigest(finalScrape),
+      'relayAttributed': true,
+      'providerResultCount': 1,
+      'deletedOrUnattributedEvidence': false,
+    };
+  }
+
+  Map<String, Object?> window(String phase, int ordinal) {
+    final reaction = phase == 'reaction';
+    final eventId = reaction ? reactionId : messageId;
+    final observerNonce = _plan397FixtureDigest('observer-nonce-$phase');
+    return <String, Object?>{
+      'phase': phase,
+      'ordinal': ordinal,
+      'payloadKind': reaction ? 'group_reaction' : 'group_message',
+      'windowIdSha256': _plan397FixtureDigest('window-$phase'),
+      'observerRunIdSha256': _plan397FixtureDigest('observer-run-$phase'),
+      'observerNonceSha256': observerNonce,
+      'androidObservation': <String, Object?>{
+        'schema': 'mknoon.plan257.sqlcipher-observation.v1',
+        'phase': phase,
+        'groupIdSha256': groupId,
+        'messageIdSha256': messageId,
+        'targetMessageIdSha256': targetId,
+        'eventIdSha256': eventId,
+        'reactionIdSha256': reaction ? reactionId : null,
+        'reactionTargetIdSha256': reaction ? targetId : null,
+        'firstIncoming': false,
+        'targetIncoming': true,
+        'targetRead': true,
+        'reactionRows': reaction ? 1 : 0,
+        'reactionEmojiSha256': reaction
+            ? _plan397FixtureDigest('thumbs-up')
+            : null,
+        'rawIdentifiersPersisted': false,
+      },
+      'provider': metricWindow(
+        phase,
+        reaction
+            ? relayGroupReactionWakeCounter
+            : 'relay_group_content_wake_total',
+        reaction ? 20 : 0,
+      ),
+      'nse': <String, Object?>{
+        'payloadKind': reaction ? 'group_reaction' : 'group_message',
+        'decryptOkCount': 1,
+        'didReceiveCount': 1,
+        'decryptFailureCount': 0,
+        'timeoutCount': 0,
+        'runOwnedLocalPublicationCount': 0,
+        'contenderDisposition': 'not_observed',
+        'contenderSuppressionCount': 0,
+        'windowSha256': _plan397FixtureDigest('nse-window-$phase'),
+        'rawPayloadPersisted': false,
+      },
+      'nativeInventory': <String, Object?>{
+        'schema':
+            'mknoon.sims.ios-group-notification-observation-host-receipt.v1',
+        'action': 'observe-group',
+        'phase': phase,
+        'status': 'PASS',
+        'containsSecrets': false,
+        'bundleId': 'com.mknoon.app',
+        'captureNonceSha256': observerNonce,
+        'receiverDeviceIdSha256': _plan397FixtureDigest(recipientId),
+        'expectedGroupIdSha256': groupId,
+        'expectedEventIdSha256': eventId,
+        'expectedTargetMessageIdSha256': targetId,
+        'matchingRemoteCount': 1,
+        'matchingLocalCount': 0,
+        'matchingUsefulProviderCount': 1,
+        'matchingSanitizedProviderCount': 0,
+        'matchingFlutterLocalCount': 0,
+        'matchingUnknownCount': 0,
+        'matchingTotalCount': 1,
+        'stableSampleCount': 3,
+        'stableSampleIntervalMilliseconds': 500,
+        'observationDeadlineMilliseconds': 8000,
+        'sampledThroughDeadline': true,
+        'badSourceSeen': false,
+        'duplicateSeen': false,
+        'requestIdentifierSha256': <String>[
+          _plan397FixtureDigest('request-identifier-$phase'),
+        ],
+        'childBuildCount': 0,
+        'manualActionCount': 0,
+        'runnerTerminated': true,
+        'preTapCleanupLaunchCount': 0,
+        'resultCode': 'ok',
+        'completedAt': reaction
+            ? '2026-08-22T12:03:00.000Z'
+            : '2026-08-22T12:01:00.000Z',
+      },
+      'tap': <String, Object?>{
+        'selector': 'testChatGroupNotificationTap',
+        'passed': true,
+        'sameCardContainer': true,
+        'matchingCardCount': 1,
+        'titleMatched': true,
+        'bodyMatched': true,
+        'routeMatched': true,
+        'finalUnreadCount': 0,
+        'manualTaps': 0,
+        'coldLaunch': true,
+        'expectedTitleSha256': groupName,
+        'expectedBodySha256': _plan397FixtureDigest('body-$phase'),
+        'expectedRouteTextSha256': reaction ? targetText : messageText,
+      },
+      'diagnostics': <String, Object?>{
+        'runOwnedLocalPublicationCount': 0,
+        'contenderDisposition': 'not_observed',
+        'contenderSuppressionCount': 0,
+        'rawIdentifiersPersisted': false,
+        'rawPayloadPersisted': false,
+      },
+      'relayJournalSha256': _plan397FixtureDigest('relay-journal-$phase'),
+      'relayJournalLineCount': 1,
+      'openedAt': reaction
+          ? '2026-08-22T12:02:00.000Z'
+          : '2026-08-22T12:00:00.000Z',
+      'closedAt': reaction
+          ? '2026-08-22T12:03:00.000Z'
+          : '2026-08-22T12:01:00.000Z',
+    };
+  }
+
+  final artifact = File(
+    '${directory.path}${Platform.pathSeparator}'
+    '$iosChatGroupMessageAndReactionScenarioId.json',
+  );
+  _writeArtifact(artifact, <String, Object?>{
+    'schema': iosChatGroupMessageAndReactionArtifactSchema,
+    'version': iosChatGroupMessageAndReactionArtifactVersion,
+    'scenario': scenario.id,
+    'testCase': scenario.testCase,
+    'status': 'passed',
+    'generatedBy': 'automated_capture_pipeline',
+    'topology': <String, Object?>{
+      'groupType': 'chat',
+      'sender': <String, Object?>{
+        'platform': 'android',
+        'deviceKind': 'physical',
+        'deviceId': senderId,
+        'liveDiscovered': true,
+      },
+      'recipient': <String, Object?>{
+        'platform': 'ios',
+        'deviceKind': 'physical',
+        'deviceId': recipientId,
+        'liveDiscovered': true,
+      },
+    },
+    'centralBuild': <String, Object?>{
+      'android': <String, Object?>{
+        'profileId': 'android.production_fcm',
+        'inputDigest': androidInput,
+        'artifactDigest': androidArtifact,
+        'attestationAdjacent': true,
+      },
+      'ios': <String, Object?>{
+        'profileId': 'ios.device.production',
+        'inputDigest': iosInput,
+        'artifactDigest': iosArtifact,
+        'attestationAdjacent': true,
+      },
+      'setupApplicationSha256': _plan397FixtureDigest('setup-app'),
+      'centralApplicationSha256': _plan397FixtureDigest('central-app'),
+      'setupSelectorsReusedOneProduct': true,
+      'setupChildBuildCount': 1,
+      'androidChildBuildCount': 0,
+      'iosNormalChildBuildCount': 0,
+      'normalInstalledInPlace': true,
+      'uninstallBetweenSetupAndNormal': false,
+      'setupContainerPreserved': true,
+    },
+    'capture': <String, Object?>{
+      'centralBuildProvenance': centralBuildProvenance,
+      'androidBuildReport': androidBuildReport,
+      'iosBuildReport': iosBuildReport,
+      'androidAttestation': androidAttestation,
+      'iosAttestation': iosAttestation,
+      'iosBundleManifest': iosBundleManifest,
+      'setupInstall': setupInstall,
+      'centralNormalInstall': centralInstall,
+      'commandJournal': commandJournal,
+    },
+    'identities': <String, Object?>{
+      'groupNameSha256': groupName,
+      'messageTextSha256': messageText,
+      'targetTextSha256': targetText,
+    },
+    'windows': <Object?>[window('message', 1), window('reaction', 2)],
+    'execution': <String, Object?>{
+      'automation': 'fully_automated',
+      'manualTaps': 0,
+      'childBuildsDuringGradedWindows': 0,
+      'messageSendCount': 1,
+      'reactionAddCount': 1,
+      'reactionRemoveCount': 0,
+      'reactionReAddCount': 0,
+    },
+    'redaction': <String, Object?>{
+      'pushTokensPersisted': false,
+      'secretKeysPersisted': false,
+      'ciphertextPersisted': false,
+      'plaintextPayloadPersisted': false,
+      'rawPeerIdsPersisted': false,
+      'rawGroupOrMessageIdsPersisted': false,
+    },
+  });
+  return artifact;
 }
 
 Future<File> _writeArtifactFixture(

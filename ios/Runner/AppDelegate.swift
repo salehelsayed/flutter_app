@@ -100,6 +100,150 @@ final class IosNotificationForegroundDispositionGate {
   }
 }
 
+enum IosGroupNotificationFullHorizonResultCode: Equatable {
+  case complete
+  case unstableAtDeadline
+}
+
+struct IosGroupNotificationFullHorizonOutcome {
+  let inventory: IosGroupNotificationInventory
+  let stableSampleCount: Int
+  let sampledThroughDeadline: Bool
+  let badSourceSeen: Bool
+  let duplicateSeen: Bool
+  let resultCode: IosGroupNotificationFullHorizonResultCode
+}
+
+/// Group-only sampler that deliberately never completes on three early equal
+/// samples. It remains alive through the 8-second horizon and latches any
+/// matching local/sanitized/unknown source or duplicate seen along the way.
+final class IosGroupNotificationFullHorizonSampler {
+  typealias ScheduleAfter = (TimeInterval, @escaping () -> Void) -> Void
+  typealias FetchInventory = (@escaping (IosGroupNotificationInventory) -> Void) -> Void
+
+  private let now: () -> Date
+  private let scheduleAfter: ScheduleAfter
+  private let fetchInventory: FetchInventory
+  private let lock = NSLock()
+  private var completed = false
+  private var completion: ((IosGroupNotificationFullHorizonOutcome) -> Void)?
+  private var latestInventory = IosGroupNotificationInventory.empty
+  private var latestStableSampleCount = 0
+  private var badSourceSeen = false
+  private var duplicateSeen = false
+
+  init(
+    now: @escaping () -> Date,
+    scheduleAfter: @escaping ScheduleAfter,
+    fetchInventory: @escaping FetchInventory
+  ) {
+    self.now = now
+    self.scheduleAfter = scheduleAfter
+    self.fetchInventory = fetchInventory
+  }
+
+  func start(
+    deadline requestedDeadline: Date,
+    completion: @escaping (IosGroupNotificationFullHorizonOutcome) -> Void
+  ) {
+    let startedAt = now()
+    let maximumDeadline = startedAt.addingTimeInterval(
+      Double(IosGroupNotificationInventory.observationDeadlineMilliseconds) / 1_000
+    )
+    let deadline = min(requestedDeadline, maximumDeadline)
+    lock.lock()
+    guard self.completion == nil, !completed else {
+      lock.unlock()
+      return
+    }
+    self.completion = completion
+    lock.unlock()
+    scheduleAfter(max(0, deadline.timeIntervalSince(startedAt))) { [self] in
+      completeAtDeadline()
+    }
+    sample(deadline: deadline, previous: nil, consecutiveSampleCount: 0)
+  }
+
+  private func sample(
+    deadline: Date,
+    previous: IosGroupNotificationInventory?,
+    consecutiveSampleCount: Int
+  ) {
+    guard isPending else { return }
+    fetchInventory { [self] inventory in
+      guard isPending else { return }
+      let nextCount = previous == inventory ? consecutiveSampleCount + 1 : 1
+      guard remember(inventory: inventory, stableSampleCount: nextCount) else {
+        return
+      }
+      let interval =
+        Double(IosGroupNotificationInventory.stableSampleIntervalMilliseconds) / 1_000
+      let sampledAt = now()
+      guard sampledAt.addingTimeInterval(interval) < deadline else { return }
+      scheduleAfter(interval) { [self] in
+        sample(
+          deadline: deadline,
+          previous: inventory,
+          consecutiveSampleCount: nextCount
+        )
+      }
+    }
+  }
+
+  private var isPending: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return !completed
+  }
+
+  private func remember(
+    inventory: IosGroupNotificationInventory,
+    stableSampleCount: Int
+  ) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !completed else { return false }
+    latestInventory = inventory
+    latestStableSampleCount = min(
+      stableSampleCount,
+      IosGroupNotificationInventory.stableSampleTarget
+    )
+    badSourceSeen = badSourceSeen
+      || inventory.matchingLocalCount > 0
+      || inventory.matchingSanitizedProviderCount > 0
+      || inventory.matchingFlutterLocalCount > 0
+      || inventory.matchingUnknownCount > 0
+    duplicateSeen = duplicateSeen || inventory.matchingTotalCount > 1
+    return true
+  }
+
+  private func completeAtDeadline() {
+    lock.lock()
+    guard !completed, let callback = completion else {
+      lock.unlock()
+      return
+    }
+    completed = true
+    completion = nil
+    let stable = min(
+      latestStableSampleCount,
+      IosGroupNotificationInventory.stableSampleTarget
+    )
+    let outcome = IosGroupNotificationFullHorizonOutcome(
+      inventory: latestInventory,
+      stableSampleCount: stable,
+      sampledThroughDeadline: true,
+      badSourceSeen: badSourceSeen,
+      duplicateSeen: duplicateSeen,
+      resultCode: stable == IosGroupNotificationInventory.stableSampleTarget
+        ? .complete
+        : .unstableAtDeadline
+    )
+    lock.unlock()
+    callback(outcome)
+  }
+}
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
 #if canImport(GoMknoon)
@@ -567,6 +711,7 @@ final class IosNotificationForegroundDispositionGate {
   }
 
   private func processPendingIosNotificationRecoveryProof() {
+    if processPendingIosGroupNotificationObservation() { return }
     guard
       !iosNotificationRecoveryProofInFlight,
       let request = iosReceiverBootstrapHandoff.takeNotificationRecoveryRequest()
@@ -715,6 +860,77 @@ final class IosNotificationForegroundDispositionGate {
     }
   }
 
+  @discardableResult
+  private func processPendingIosGroupNotificationObservation() -> Bool {
+    guard
+      !iosNotificationRecoveryProofInFlight,
+      let request = iosReceiverBootstrapHandoff
+        .takeGroupNotificationObservationRequest(),
+      let phaseText = request["phase"],
+      let phase = IosGroupNotificationPhase(rawValue: phaseText),
+      let groupHash = request["expectedGroupIdSha256"],
+      let eventHash = request["expectedEventIdSha256"],
+      let targetHash = request["expectedTargetMessageIdSha256"]
+    else { return false }
+    iosNotificationRecoveryProofInFlight = true
+    let expected = IosGroupNotificationExpectedHashes(
+      phase: phase,
+      groupIdSha256: groupHash,
+      eventIdSha256: eventHash,
+      targetMessageIdSha256: targetHash
+    )
+    waitForFullHorizonIosGroupInventory(
+      expected: expected,
+      deadline: Date().addingTimeInterval(
+        Double(IosGroupNotificationInventory.observationDeadlineMilliseconds) / 1_000
+      )
+    ) { [weak self] outcome in
+      guard let self else { return }
+      let inventory = outcome.inventory
+      let exactUsefulSource =
+        outcome.resultCode == .complete
+          && outcome.sampledThroughDeadline
+          && outcome.stableSampleCount
+            == IosGroupNotificationInventory.stableSampleTarget
+          && !outcome.badSourceSeen
+          && !outcome.duplicateSeen
+          && inventory.matchingRemoteCount == 1
+          && inventory.matchingLocalCount == 0
+          && inventory.matchingUsefulProviderCount == 1
+          && inventory.matchingSanitizedProviderCount == 0
+          && inventory.matchingFlutterLocalCount == 0
+          && inventory.matchingUnknownCount == 0
+          && inventory.matchingTotalCount == 1
+      let resultCode: String
+      if exactUsefulSource {
+        resultCode = "ok"
+      } else if outcome.resultCode == .unstableAtDeadline {
+        resultCode = "source_inventory_unstable"
+      } else if outcome.badSourceSeen {
+        resultCode = "bad_source_seen"
+      } else if outcome.duplicateSeen {
+        resultCode = "duplicate_seen"
+      } else {
+        resultCode = "source_inventory_mismatch"
+      }
+      _ = self.iosReceiverBootstrapHandoff
+        .completeGroupNotificationObservationRequest(
+          request: request,
+          status: exactUsefulSource ? "passed" : "failed",
+          resultCode: resultCode,
+          inventory: inventory,
+          stableSampleCount: outcome.stableSampleCount,
+          sampledThroughDeadline: outcome.sampledThroughDeadline,
+          badSourceSeen: outcome.badSourceSeen,
+          duplicateSeen: outcome.duplicateSeen
+        )
+      // Intentionally do not release iosNotificationRecoveryProofInFlight.
+      // The host must pull the protected receipt and terminate Runner before
+      // SpringBoard tap routing; a cleanup relaunch would consume the card.
+    }
+    return true
+  }
+
   private func waitForIosDeliveredIdentifiers(
     deadline: Date,
     predicate: @escaping (Set<String>) -> Bool,
@@ -735,6 +951,33 @@ final class IosNotificationForegroundDispositionGate {
         )
       }
     }
+  }
+
+  private func waitForFullHorizonIosGroupInventory(
+    expected: IosGroupNotificationExpectedHashes,
+    deadline: Date,
+    completion: @escaping (IosGroupNotificationFullHorizonOutcome) -> Void
+  ) {
+    let center = UNUserNotificationCenter.current()
+    let sampler = IosGroupNotificationFullHorizonSampler(
+      now: Date.init,
+      scheduleAfter: { delay, action in
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, delay)) {
+          action()
+        }
+      },
+      fetchInventory: { callback in
+        center.getDeliveredNotifications { notifications in
+          callback(
+            IosGroupNotificationInventory.project(
+              notifications,
+              expected: expected
+            )
+          )
+        }
+      }
+    )
+    sampler.start(deadline: deadline, completion: completion)
   }
 
   private func finishIosNotificationRecoveryProof(

@@ -387,6 +387,209 @@ final class NotificationTapUITests: XCTestCase {
     )
   }
 
+  /// Plan 397 setup step 1. The host has staged both real peer identities and
+  /// this selector creates the ordinary chat group through the shipping UI.
+  func testCreateChatGroupNotificationFixture() throws {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    guard let expectedGroupName = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_GROUP_NAME",
+      configKey: "expectedGroupName"
+    ), !expectedGroupName.isEmpty else {
+      XCTFail("Plan 397 fixture creation requires expectedGroupName")
+      return
+    }
+    guard let expectedMemberName = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_MEMBER_NAME",
+      configKey: "expectedMemberName"
+    ), !expectedMemberName.isEmpty else {
+      XCTFail("Plan 397 fixture creation requires expectedMemberName")
+      return
+    }
+
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    app.terminate()
+    app.launch()
+    XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+
+    app.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.08)).tap()
+    let newGroup = element(in: app, containing: "New Group")
+    XCTAssertTrue(newGroup.waitForExistence(timeout: 15))
+    newGroup.tap()
+
+    let member = element(in: app, containing: expectedMemberName)
+    XCTAssertTrue(member.waitForExistence(timeout: 30))
+    member.tap()
+
+    let nameField = app.textFields.matching(
+      NSPredicate(
+        format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+        "Group name",
+        "Group name"
+      )
+    ).firstMatch
+    XCTAssertTrue(nameField.waitForExistence(timeout: 15))
+    nameField.tap()
+    nameField.typeText(expectedGroupName)
+
+    let start = element(in: app, containing: "Start group chat")
+    XCTAssertTrue(start.waitForExistence(timeout: 15))
+    start.tap()
+    let group = element(in: app, containing: expectedGroupName)
+    XCTAssertTrue(group.waitForExistence(timeout: 90))
+    NSLog(
+      "MKNOON_397_CHAT_GROUP_FIXTURE_CREATED group=%@ member=%@",
+      expectedGroupName,
+      expectedMemberName
+    )
+  }
+
+  /// Plan 397 setup step 2. The Android member has accepted the chat group;
+  /// this iPhone authors the reaction target through the normal composer.
+  func testAuthorChatGroupReactionTarget() throws {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    guard let expectedGroupName = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_GROUP_NAME",
+      configKey: "expectedGroupName"
+    ), !expectedGroupName.isEmpty else {
+      XCTFail("Plan 397 target authoring requires expectedGroupName")
+      return
+    }
+    guard let expectedTargetText = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_TARGET_TEXT",
+      configKey: "expectedTargetMessageText"
+    ), !expectedTargetText.isEmpty else {
+      XCTFail("Plan 397 target authoring requires expectedTargetMessageText")
+      return
+    }
+
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    app.terminate()
+    app.launch()
+    XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+    let group = element(in: app, containing: expectedGroupName)
+    XCTAssertTrue(group.waitForExistence(timeout: 60))
+    group.tap()
+
+    let compose = firstComposeElement(in: app)
+    XCTAssertTrue(compose.waitForExistence(timeout: 30))
+    compose.tap()
+    compose.typeText(expectedTargetText)
+    let send = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+      .withOffset(
+        CGVector(
+          dx: min(compose.frame.maxX + 20, app.frame.maxX - 12),
+          dy: compose.frame.midY
+        )
+      )
+    send.tap()
+    let rendered = element(in: app, containing: expectedTargetText)
+    XCTAssertTrue(rendered.waitForExistence(timeout: 90))
+    NSLog(
+      "MKNOON_397_CHAT_GROUP_TARGET_AUTHORED group=%@ target=%@",
+      expectedGroupName,
+      expectedTargetText
+    )
+  }
+
+  /// Plan 397's single selector is parameterized by `notificationPhase` and is
+  /// run once for the ordinary message card and once for the ADD reaction card.
+  /// Both copies must belong to one SpringBoard card container before it taps.
+  func testChatGroupNotificationTap() throws {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    guard let phase = configuredValue(
+      environmentName: "MKNOON_397_NOTIFICATION_PHASE",
+      configKey: "notificationPhase"
+    ), phase == "message" || phase == "reaction" else {
+      XCTFail("Plan 397 notification tap requires message or reaction phase")
+      return
+    }
+    guard let expectedGroupName = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_GROUP_NAME",
+      configKey: "expectedGroupName"
+    ), !expectedGroupName.isEmpty else {
+      XCTFail("Plan 397 notification tap requires expectedGroupName")
+      return
+    }
+    guard let expectedTargetText = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_TARGET_TEXT",
+      configKey: "expectedTargetMessageText"
+    ), !expectedTargetText.isEmpty else {
+      XCTFail("Plan 397 notification tap requires expectedTargetMessageText")
+      return
+    }
+    guard let expectedEventText = configuredValue(
+      environmentName: "MKNOON_397_EXPECTED_EVENT_TEXT",
+      configKey: "expectedEventText"
+    ), !expectedEventText.isEmpty else {
+      XCTFail("Plan 397 notification tap requires expectedEventText")
+      return
+    }
+    guard let expectedBody = configuredValue(
+      environmentName: "MKNOON_APNS_TAP_EXPECTED_BODY",
+      configKey: "expectedBody"
+    ), !expectedBody.isEmpty else {
+      XCTFail("Plan 397 same-card tap requires expectedBody")
+      return
+    }
+    let title = configuredValue(
+      environmentName: "MKNOON_APNS_TAP_EXPECTED_TITLE",
+      configKey: "expectedTitle"
+    ) ?? expectedGroupName
+
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    app.terminate()
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    XCUIDevice.shared.press(.home)
+    XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 10))
+    settleOnSpringboard()
+
+    let match = try XCTUnwrap(
+      findSameContainerNotificationCard(
+        title: title,
+        body: expectedBody,
+        springboard: springboard,
+        timeout: 20
+      ),
+      "Plan 397 could not find title and body in one notification card"
+    )
+    XCTAssertEqual(match.count, 1, "Plan 397 requires one same-copy card")
+    NSLog(
+      "MKNOON_397_IOS_NOTIFICATION_CARD phase=%@ same_card=true matching_card_count=1 title_matched=true body_matched=true",
+      phase
+    )
+    XCTAssertTrue(
+      tapSameContainerNotificationCard(
+        match.card,
+        title: title,
+        springboard: springboard
+      ),
+      "Plan 397 could not tap the exact same-copy card container"
+    )
+    XCTAssertTrue(
+      app.wait(for: .runningForeground, timeout: 30),
+      "Plan 397 card tap did not cold-launch the app"
+    )
+
+    let group = element(in: app, containing: expectedGroupName)
+    let expectedRouteText = phase == "message"
+      ? expectedEventText
+      : expectedTargetText
+    let route = element(in: app, containing: expectedRouteText)
+    XCTAssertTrue(group.waitForExistence(timeout: 20))
+    XCTAssertTrue(route.waitForExistence(timeout: 20))
+    let unread = app.descendants(matching: .any).matching(
+      NSPredicate(format: "label ==[c] %@ OR value ==[c] %@", "Unread", "Unread")
+    ).firstMatch
+    XCTAssertFalse(
+      unread.waitForExistence(timeout: 2),
+      "Plan 397 final group UI retained an unread marker"
+    )
+    NSLog(
+      "MKNOON_397_CHAT_GROUP_TAP phase=%@ group_rendered=true route_text_visible=true final_unread_clear=true manual_taps=0 cold_launch=true",
+      phase
+    )
+  }
+
   /// Plan 257 TC-16: cold-tap a real announcement-reaction card prepared by
   /// the host capture driver and require both the announcement and reacted-to
   /// target to render. The staged config is authoritative; this selector never
@@ -481,6 +684,127 @@ final class NotificationTapUITests: XCTestCase {
       return textField
     }
     return app.textViews.firstMatch
+  }
+
+  private func findSameContainerNotificationCard(
+    title: String,
+    body: String,
+    springboard: XCUIApplication,
+    timeout: TimeInterval
+  ) -> (card: XCUIElement, count: Int)? {
+    let deadline = Date().addingTimeInterval(timeout)
+    var surface = 0
+    while Date() < deadline {
+      let matches = sameContainerNotificationCards(
+        title: title,
+        body: body,
+        springboard: springboard
+      )
+      if let card = matches.first {
+        return (card, matches.count)
+      }
+      if surface == 0 {
+        openNotificationCenter(from: springboard)
+        surface = 1
+      } else if surface == 1 {
+        revealNotificationHistory(from: springboard)
+        surface = 2
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+    }
+    return nil
+  }
+
+  private func sameContainerNotificationCards(
+    title: String,
+    body: String,
+    springboard: XCUIApplication
+  ) -> [XCUIElement] {
+    let chrome = NSPredicate(
+      format: "identifier CONTAINS[c] %@ OR identifier CONTAINS[c] %@ OR identifier CONTAINS[c] %@",
+      "NotificationShortLookView",
+      "NotificationCell",
+      "NotificationListCell"
+    )
+    let preferred = springboard.descendants(matching: .any).matching(chrome)
+    let preferredMatches = matchingSameContainerCards(
+      in: preferred,
+      title: title,
+      body: body,
+      limit: 30
+    )
+    if !preferredMatches.isEmpty {
+      return preferredMatches
+    }
+    return matchingSameContainerCards(
+      in: springboard.cells,
+      title: title,
+      body: body,
+      limit: 40
+    )
+  }
+
+  private func matchingSameContainerCards(
+    in candidates: XCUIElementQuery,
+    title: String,
+    body: String,
+    limit: Int
+  ) -> [XCUIElement] {
+    var matches: [XCUIElement] = []
+    for index in 0..<min(candidates.count, limit) {
+      let card = candidates.element(boundBy: index)
+      if card.exists
+        && notificationCard(card, containsExactText: title)
+        && notificationCard(card, containsExactText: body)
+      {
+        matches.append(card)
+      }
+    }
+    return matches
+  }
+
+  private func notificationCard(
+    _ card: XCUIElement,
+    containsExactText text: String
+  ) -> Bool {
+    if card.label.compare(text, options: [.caseInsensitive]) == .orderedSame
+      || String(describing: card.value)
+        .compare(text, options: [.caseInsensitive]) == .orderedSame
+    {
+      return true
+    }
+    let predicate = NSPredicate(
+      format: "label ==[c] %@ OR value ==[c] %@",
+      text,
+      text
+    )
+    return card.descendants(matching: .any).matching(predicate).firstMatch.exists
+  }
+
+  private func tapSameContainerNotificationCard(
+    _ card: XCUIElement,
+    title: String,
+    springboard: XCUIApplication
+  ) -> Bool {
+    if card.isHittable && !card.frame.isEmpty {
+      card.tap()
+      tapNotificationOpenActionIfPresent(in: springboard)
+      return true
+    }
+    let titlePredicate = NSPredicate(
+      format: "label ==[c] %@ OR value ==[c] %@",
+      title,
+      title
+    )
+    let titleInsideCard = card.descendants(matching: .any)
+      .matching(titlePredicate)
+      .firstMatch
+    if titleInsideCard.exists && titleInsideCard.isHittable {
+      titleInsideCard.tap()
+      tapNotificationOpenActionIfPresent(in: springboard)
+      return true
+    }
+    return false
   }
 
   private func observeAnnouncementReactionNotification(

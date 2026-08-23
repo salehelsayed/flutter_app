@@ -15,6 +15,10 @@ final class IosReceiverBootstrapHandoff {
   static let senderResultSchema = "mknoon.sims.ios-sender-projection-result.v1"
   static let recoveryRequestSchema = "mknoon.sims.ios-notification-recovery-request.v1"
   static let recoveryResultSchema = "mknoon.sims.ios-notification-recovery-result.v1"
+  static let groupObservationRequestSchema =
+    "mknoon.sims.ios-group-notification-observation-request.v1"
+  static let groupObservationResultSchema =
+    "mknoon.sims.ios-group-notification-observation-result.v1"
   static let relativeDirectory = "mknoon.sims.ios-receiver-bootstrap"
   static let requestFileName = "request.json"
   static let responseFileName = "response.json"
@@ -22,6 +26,8 @@ final class IosReceiverBootstrapHandoff {
   static let senderResultFileName = "sender-result.json"
   static let recoveryRequestFileName = "recovery-request.json"
   static let recoveryResultFileName = "recovery-result.json"
+  static let groupObservationRequestFileName = "group-observation-request.json"
+  static let groupObservationResultFileName = "group-observation-result.json"
   static let apnsEnvironment = "development"
 
   enum Outcome: Equatable {
@@ -76,6 +82,20 @@ final class IosReceiverBootstrapHandoff {
 
   var recoveryResultURL: URL {
     rootDirectory.appendingPathComponent(Self.recoveryResultFileName, isDirectory: false)
+  }
+
+  var groupObservationRequestURL: URL {
+    rootDirectory.appendingPathComponent(
+      Self.groupObservationRequestFileName,
+      isDirectory: false
+    )
+  }
+
+  var groupObservationResultURL: URL {
+    rootDirectory.appendingPathComponent(
+      Self.groupObservationResultFileName,
+      isDirectory: false
+    )
   }
 
   @discardableResult
@@ -293,6 +313,114 @@ final class IosReceiverBootstrapHandoff {
     }
   }
 
+  /// Returns one hash-only group observation command from its own protected
+  /// files so Plan 396's direct request/result bytes remain unchanged.
+  func takeGroupNotificationObservationRequest() -> [String: String]? {
+    guard enabled else { return nil }
+    do {
+      try createProtectedDirectory()
+      guard fileManager.fileExists(atPath: groupObservationRequestURL.path) else {
+        return nil
+      }
+      guard try isNonSymlinkRegularFile(groupObservationRequestURL) else {
+        try? fileManager.removeItem(at: groupObservationRequestURL)
+        return nil
+      }
+      try protectFile(groupObservationRequestURL)
+      guard let request = try validatedGroupNotificationObservationRequest() else {
+        try? fileManager.removeItem(at: groupObservationRequestURL)
+        return nil
+      }
+      if fileManager.fileExists(atPath: groupObservationResultURL.path) {
+        try fileManager.removeItem(at: groupObservationResultURL)
+      }
+      return request
+    } catch {
+      return nil
+    }
+  }
+
+  @discardableResult
+  func completeGroupNotificationObservationRequest(
+    request: [String: String],
+    status: String,
+    resultCode: String,
+    inventory: IosGroupNotificationInventory,
+    stableSampleCount: Int,
+    sampledThroughDeadline: Bool,
+    badSourceSeen: Bool,
+    duplicateSeen: Bool
+  ) -> Bool {
+    guard
+      enabled,
+      request["schema"] == Self.groupObservationRequestSchema,
+      request["action"] == "observe_group",
+      status == "passed" || status == "failed",
+      Self.isResultCode(resultCode),
+      stableSampleCount >= 0,
+      stableSampleCount <= IosGroupNotificationInventory.stableSampleTarget,
+      inventory.matchingRemoteCount >= 0,
+      inventory.matchingLocalCount >= 0,
+      inventory.matchingUsefulProviderCount >= 0,
+      inventory.matchingSanitizedProviderCount >= 0,
+      inventory.matchingFlutterLocalCount >= 0,
+      inventory.matchingUnknownCount >= 0,
+      inventory.matchingTotalCount <= 8,
+      inventory.requestIdentifierSha256.count == inventory.matchingTotalCount,
+      inventory.requestIdentifierSha256.allSatisfy(Self.isSha256),
+      let captureNonce = request["captureNonce"],
+      let receiverDeviceId = request["receiverDeviceId"],
+      let phase = request["phase"],
+      phase == "message" || phase == "reaction",
+      let groupHash = request["expectedGroupIdSha256"],
+      let eventHash = request["expectedEventIdSha256"],
+      let targetHash = request["expectedTargetMessageIdSha256"]
+    else { return false }
+    do {
+      let result: [String: Any] = [
+        "schema": Self.groupObservationResultSchema,
+        "action": "observe_group",
+        "phase": phase,
+        "captureNonce": captureNonce,
+        "receiverDeviceId": receiverDeviceId,
+        "bundleId": "com.mknoon.app",
+        "expectedGroupIdSha256": groupHash,
+        "expectedEventIdSha256": eventHash,
+        "expectedTargetMessageIdSha256": targetHash,
+        "status": status,
+        "resultCode": resultCode,
+        "matchingRemoteCount": inventory.matchingRemoteCount,
+        "matchingLocalCount": inventory.matchingLocalCount,
+        "matchingUsefulProviderCount": inventory.matchingUsefulProviderCount,
+        "matchingSanitizedProviderCount": inventory.matchingSanitizedProviderCount,
+        "matchingFlutterLocalCount": inventory.matchingFlutterLocalCount,
+        "matchingUnknownCount": inventory.matchingUnknownCount,
+        "matchingTotalCount": inventory.matchingTotalCount,
+        "stableSampleCount": stableSampleCount,
+        "stableSampleIntervalMilliseconds":
+          IosGroupNotificationInventory.stableSampleIntervalMilliseconds,
+        "observationDeadlineMilliseconds":
+          IosGroupNotificationInventory.observationDeadlineMilliseconds,
+        "sampledThroughDeadline": sampledThroughDeadline,
+        "badSourceSeen": badSourceSeen,
+        "duplicateSeen": duplicateSeen,
+        "requestIdentifierSha256": inventory.requestIdentifierSha256,
+        "childBuildCount": 0,
+        "manualActionCount": 0,
+        "completedAt": Self.timestamp(now()),
+      ]
+      try publishAtomically(
+        result,
+        to: groupObservationResultURL,
+        temporaryPrefix: ".group-observation-result"
+      )
+      try? fileManager.removeItem(at: groupObservationRequestURL)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   private func consumePendingRequest() throws -> Outcome {
     guard fileManager.fileExists(atPath: requestURL.path) else { return .waiting }
     guard try isNonSymlinkRegularFile(requestURL) else {
@@ -333,6 +461,8 @@ final class IosReceiverBootstrapHandoff {
       try? fileManager.removeItem(at: senderResultURL)
       try? fileManager.removeItem(at: recoveryRequestURL)
       try? fileManager.removeItem(at: recoveryResultURL)
+      try? fileManager.removeItem(at: groupObservationRequestURL)
+      try? fileManager.removeItem(at: groupObservationResultURL)
       try? fileManager.removeItem(at: requestURL)
       return .cleaned
     case "capture":
@@ -439,6 +569,67 @@ final class IosReceiverBootstrapHandoff {
       "senderPeerId": senderPeerId,
       "senderUsername": senderUsername,
       "apnsPayloadSha256": apnsPayloadSha256,
+      "createdAt": createdAtText,
+      "expiresAt": expiresAtText,
+    ]
+  }
+
+  private func validatedGroupNotificationObservationRequest() throws
+    -> [String: String]?
+  {
+    guard fileManager.fileExists(atPath: groupObservationRequestURL.path) else {
+      return nil
+    }
+    guard try isNonSymlinkRegularFile(groupObservationRequestURL) else {
+      return nil
+    }
+    try protectFile(groupObservationRequestURL)
+    let decoded = try decodeObject(at: groupObservationRequestURL)
+    let expectedKeys = Set([
+      "schema", "action", "phase", "captureNonce", "receiverDeviceId",
+      "bundleId", "expectedGroupIdSha256", "expectedEventIdSha256",
+      "expectedTargetMessageIdSha256", "createdAt", "expiresAt",
+    ])
+    guard
+      Set(decoded.keys) == expectedKeys,
+      decoded["schema"] as? String == Self.groupObservationRequestSchema,
+      decoded["action"] as? String == "observe_group",
+      let phase = decoded["phase"] as? String,
+      phase == "message" || phase == "reaction",
+      let captureNonce = decoded["captureNonce"] as? String,
+      Self.isNonce(captureNonce),
+      let receiverDeviceId = decoded["receiverDeviceId"] as? String,
+      Self.isReceiverDeviceId(receiverDeviceId),
+      decoded["bundleId"] as? String == "com.mknoon.app",
+      let groupHash = decoded["expectedGroupIdSha256"] as? String,
+      Self.isSha256(groupHash),
+      let eventHash = decoded["expectedEventIdSha256"] as? String,
+      Self.isSha256(eventHash),
+      let targetHash = decoded["expectedTargetMessageIdSha256"] as? String,
+      Self.isSha256(targetHash),
+      let createdAtText = decoded["createdAt"] as? String,
+      let createdAt = Self.parseTimestamp(createdAtText),
+      let expiresAtText = decoded["expiresAt"] as? String,
+      let expiresAt = Self.parseTimestamp(expiresAtText)
+    else { return nil }
+    let current = now()
+    guard
+      createdAt <= current.addingTimeInterval(15),
+      current.timeIntervalSince(createdAt) <= 300,
+      expiresAt >= current,
+      expiresAt.timeIntervalSince(current) <= 300,
+      expiresAt >= createdAt
+    else { return nil }
+    return [
+      "schema": Self.groupObservationRequestSchema,
+      "action": "observe_group",
+      "phase": phase,
+      "captureNonce": captureNonce,
+      "receiverDeviceId": receiverDeviceId,
+      "bundleId": "com.mknoon.app",
+      "expectedGroupIdSha256": groupHash,
+      "expectedEventIdSha256": eventHash,
+      "expectedTargetMessageIdSha256": targetHash,
       "createdAt": createdAtText,
       "expiresAt": expiresAtText,
     ]

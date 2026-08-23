@@ -16,6 +16,11 @@ const String groupReactionNotificationStagingSchema =
     'mknoon.plan257.staging-prerequisites.v1';
 const String groupReactionBackgroundConnectedScenarioId =
     'android_group_reaction_recipient_background_connected';
+const String iosChatGroupMessageAndReactionScenarioId =
+    'ios_chat_group_message_and_reaction_recipient';
+const String iosChatGroupMessageAndReactionArtifactSchema =
+    'mknoon.plan397.ios-chat-group-notification-proof.v1';
+const int iosChatGroupMessageAndReactionArtifactVersion = 1;
 const String groupStrictNotificationScenarioId =
     'android_strict_group_notification_closure';
 const int groupReactionBackgroundConnectedHomeToReactDelayMs = 3000;
@@ -194,20 +199,9 @@ validateGroupReactionNotificationStagingManifest(
         failures,
       );
       _expectValue(iosCapture, 'scheme', 'Runner', r'$.iosCapture', failures);
-      const requiredSelectors = <String, String>{
-        'fixtureCreateSelector':
-            'RunnerUITests/NotificationTapUITests/'
-            'testCreateAnnouncementReactionFixture',
-        'fixtureAuthorSelector':
-            'RunnerUITests/NotificationTapUITests/'
-            'testAuthorAnnouncementReactionTarget',
-        'notificationPrepareSelector':
-            'RunnerUITests/NotificationTapUITests/'
-            'testPrepareWarmNotificationTap',
-        'notificationTapSelector':
-            'RunnerUITests/NotificationTapUITests/'
-            'testAnnouncementReactionNotificationTap',
-      };
+      final requiredSelectors = groupReactionNotificationIosSelectorsFor(
+        scenario,
+      );
       for (final entry in requiredSelectors.entries) {
         _expectValue(
           iosCapture,
@@ -228,6 +222,387 @@ validateGroupReactionNotificationStagingManifest(
   }
   return GroupReactionNotificationStagingValidation(failures);
 }
+
+Map<String, String> groupReactionNotificationIosSelectorsFor(
+  GroupReactionNotificationScenario scenario,
+) {
+  const owner = 'RunnerUITests/NotificationTapUITests/';
+  if (scenario.id == iosChatGroupMessageAndReactionScenarioId) {
+    return const <String, String>{
+      'fixtureCreateSelector': '${owner}testCreateChatGroupNotificationFixture',
+      'fixtureAuthorSelector': '${owner}testAuthorChatGroupReactionTarget',
+      'notificationPrepareSelector': '${owner}testPrepareWarmNotificationTap',
+      'notificationTapSelector': '${owner}testChatGroupNotificationTap',
+    };
+  }
+  return const <String, String>{
+    'fixtureCreateSelector': '${owner}testCreateAnnouncementReactionFixture',
+    'fixtureAuthorSelector': '${owner}testAuthorAnnouncementReactionTarget',
+    'notificationPrepareSelector': '${owner}testPrepareWarmNotificationTap',
+    'notificationTapSelector':
+        '${owner}testAnnouncementReactionNotificationTap',
+  };
+}
+
+final class GroupReactionCentralBuildValidation {
+  GroupReactionCentralBuildValidation({
+    required List<String> failures,
+    this.profileId,
+    this.inputDigest,
+    this.artifactDigest,
+    this.attestation,
+  }) : failures = List<String>.unmodifiable(failures);
+
+  final List<String> failures;
+  final String? profileId;
+  final String? inputDigest;
+  final String? artifactDigest;
+  final File? attestation;
+
+  bool get ok => failures.isEmpty;
+
+  String get detail => ok ? 'accepted' : failures.join('; ');
+
+  Map<String, Object?> get redactedProvenance => <String, Object?>{
+    if (profileId != null) 'profileId': profileId,
+    if (inputDigest != null) 'inputDigest': inputDigest,
+    if (artifactDigest != null) 'artifactDigest': artifactDigest,
+    'attestationAdjacent': attestation != null,
+  };
+}
+
+/// Verifies a Sims build report against the cache-adjacent attestation and the
+/// exact artifact bytes. No environment path can substitute for this join.
+GroupReactionCentralBuildValidation validateGroupReactionCentralBuildArtifact({
+  required String profileId,
+  required FileSystemEntity artifact,
+  required File buildReport,
+  DateTime? now,
+}) {
+  final failures = <String>[];
+  String? reportDigest;
+  String? inputDigest;
+  String? attestedDigest;
+  File? attestationFile;
+  final artifactType = FileSystemEntity.typeSync(
+    artifact.path,
+    followLinks: false,
+  );
+  if (artifactType != FileSystemEntityType.file &&
+      artifactType != FileSystemEntityType.directory) {
+    failures.add('central artifact must be a regular file or directory');
+  }
+  if (FileSystemEntity.typeSync(buildReport.path, followLinks: false) !=
+      FileSystemEntityType.file) {
+    failures.add('central build report is missing or not a regular file');
+  } else {
+    try {
+      final decoded = jsonDecode(buildReport.readAsStringSync());
+      if (decoded is! Map) {
+        failures.add('central build report root must be an object');
+      } else {
+        final report = decoded.map<String, Object?>(
+          (key, value) => MapEntry('$key', value),
+        );
+        final generatedAt = DateTime.tryParse('${report['generatedAt']}');
+        final reference = (now ?? DateTime.now()).toUtc();
+        if (generatedAt == null ||
+            generatedAt.toUtc().isAfter(
+              reference.add(const Duration(minutes: 1)),
+            ) ||
+            reference.difference(generatedAt.toUtc()) >
+                const Duration(hours: 1)) {
+          failures.add('central build report is stale or has invalid time');
+        }
+        final builds = report['builds'];
+        final digests = builds is Map ? builds['artifactDigests'] : null;
+        final candidate = digests is Map ? digests[profileId] : null;
+        if (!_isSha256(candidate)) {
+          failures.add('central build report lacks the exact profile digest');
+        } else {
+          reportDigest = candidate! as String;
+        }
+        final failedProfiles = builds is Map
+            ? builds['failedProfileIds']
+            : null;
+        if (failedProfiles is List && failedProfiles.contains(profileId)) {
+          failures.add('central build report marks the profile failed');
+        }
+      }
+    } on Object {
+      failures.add('central build report is not valid JSON');
+    }
+  }
+
+  if (artifactType == FileSystemEntityType.file ||
+      artifactType == FileSystemEntityType.directory) {
+    final parent = artifact is File
+        ? artifact.absolute.parent
+        : (artifact as Directory).absolute.parent;
+    attestationFile = File(
+      '${parent.path}${Platform.pathSeparator}attestation.json',
+    );
+    if (FileSystemEntity.typeSync(attestationFile.path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      failures.add('cache-adjacent attestation is missing');
+    } else {
+      try {
+        final decoded = jsonDecode(attestationFile.readAsStringSync());
+        if (decoded is! Map) {
+          failures.add('cache-adjacent attestation root must be an object');
+        } else {
+          final attestation = decoded.map<String, Object?>(
+            (key, value) => MapEntry('$key', value),
+          );
+          inputDigest = attestation['inputDigest'] as String?;
+          attestedDigest = attestation['artifactDigest'] as String?;
+          final attestedPath = attestation['artifactPath'];
+          if (attestation['schemaVersion'] != 1 ||
+              attestation['profileId'] != profileId ||
+              !_isSha256(inputDigest) ||
+              !_isSha256(attestedDigest) ||
+              attestedPath is! String ||
+              File(attestedPath).absolute.path != artifact.absolute.path ||
+              parent.uri.pathSegments
+                      .where((segment) => segment.isNotEmpty)
+                      .last !=
+                  inputDigest) {
+            failures.add('cache-adjacent attestation is not artifact-bound');
+          }
+        }
+      } on Object {
+        failures.add('cache-adjacent attestation is not valid JSON');
+      }
+    }
+    try {
+      final actualDigest = groupReactionSimsArtifactDigest(artifact);
+      if (reportDigest != null && actualDigest != reportDigest) {
+        failures.add('central artifact digest does not match build report');
+      }
+      if (attestedDigest != null && actualDigest != attestedDigest) {
+        failures.add('central artifact digest does not match attestation');
+      }
+    } on FormatException catch (error) {
+      failures.add(error.message);
+    }
+  }
+  if (reportDigest != null &&
+      attestedDigest != null &&
+      reportDigest != attestedDigest) {
+    failures.add('build report and attestation artifact digests differ');
+  }
+
+  return GroupReactionCentralBuildValidation(
+    failures: failures,
+    profileId: profileId,
+    inputDigest: inputDigest,
+    artifactDigest: attestedDigest ?? reportDigest,
+    attestation: attestationFile,
+  );
+}
+
+/// Matches the content-addressed directory digest used by the Sims cache,
+/// including modes and symlink targets.
+String groupReactionSimsArtifactDigest(FileSystemEntity entity) {
+  final type = FileSystemEntity.typeSync(entity.path, followLinks: false);
+  if (type == FileSystemEntityType.file) {
+    return sha256.convert(File(entity.path).readAsBytesSync()).toString();
+  }
+  if (type != FileSystemEntityType.directory) {
+    throw const FormatException(
+      'central artifact must be a regular file or directory',
+    );
+  }
+  final root = Directory(entity.path).absolute;
+  final records = <String>[];
+  final entries = root.listSync(recursive: true, followLinks: false)
+    ..sort((left, right) => left.path.compareTo(right.path));
+  for (final entry in entries) {
+    final relative = entry.path.substring(root.path.length + 1);
+    final entryType = FileSystemEntity.typeSync(entry.path, followLinks: false);
+    switch (entryType) {
+      case FileSystemEntityType.file:
+        final mode = entry.statSync().mode & 0x1ff;
+        records.add(
+          'file\t$relative\t${mode.toRadixString(8)}\t'
+          '${sha256.convert(File(entry.path).readAsBytesSync())}',
+        );
+      case FileSystemEntityType.directory:
+        final mode = entry.statSync().mode & 0x1ff;
+        records.add('directory\t$relative\t${mode.toRadixString(8)}');
+      case FileSystemEntityType.link:
+        records.add('link\t$relative\t${Link(entry.path).targetSync()}');
+      case FileSystemEntityType.notFound:
+        records.add('missing\t$relative');
+      case FileSystemEntityType.pipe:
+      case FileSystemEntityType.unixDomainSock:
+        throw FormatException(
+          'central artifact contains unsupported entry $relative',
+        );
+    }
+  }
+  return sha256.convert(utf8.encode(records.join('\n'))).toString();
+}
+
+final class GroupReactionIosBundleValidation {
+  GroupReactionIosBundleValidation({
+    required List<String> failures,
+    this.application,
+    this.xctestrun,
+    this.testProducts,
+    this.manifest,
+  }) : failures = List<String>.unmodifiable(failures);
+
+  final List<String> failures;
+  final Directory? application;
+  final File? xctestrun;
+  final Directory? testProducts;
+  final File? manifest;
+
+  bool get ok => failures.isEmpty;
+  String get detail => ok ? 'accepted' : failures.join('; ');
+}
+
+GroupReactionCentralBuildValidation
+validateGroupReactionAttemptTwoIosBuildFreshness({
+  required String attemptOneInputDigest,
+  required String attemptOneArtifactDigest,
+  required GroupReactionCentralBuildValidation attemptTwo,
+}) {
+  final failures = <String>[...attemptTwo.failures];
+  if (!_isSha256(attemptOneInputDigest) ||
+      !_isSha256(attemptOneArtifactDigest)) {
+    failures.add('attempt-one iOS digests are invalid');
+  }
+  if (attemptTwo.inputDigest == attemptOneInputDigest) {
+    failures.add('attempt two reused attempt-one iOS input digest');
+  }
+  if (attemptTwo.artifactDigest == attemptOneArtifactDigest) {
+    failures.add('attempt two reused attempt-one iOS artifact digest');
+  }
+  return GroupReactionCentralBuildValidation(
+    failures: failures,
+    profileId: attemptTwo.profileId,
+    inputDigest: attemptTwo.inputDigest,
+    artifactDigest: attemptTwo.artifactDigest,
+    attestation: attemptTwo.attestation,
+  );
+}
+
+GroupReactionIosBundleValidation validateGroupReactionIosProductionBundle(
+  Directory bundle,
+) {
+  final failures = <String>[];
+  final manifest = File(
+    '${bundle.absolute.path}${Platform.pathSeparator}bundle_manifest.json',
+  );
+  Directory? application;
+  File? xctestrun;
+  Directory? testProducts;
+  if (FileSystemEntity.typeSync(manifest.path, followLinks: false) !=
+      FileSystemEntityType.file) {
+    failures.add('central iOS bundle manifest is missing');
+  } else {
+    try {
+      final decoded = jsonDecode(manifest.readAsStringSync());
+      if (decoded is! Map) {
+        failures.add('central iOS bundle manifest root must be an object');
+      } else {
+        final value = decoded.map<String, Object?>(
+          (key, item) => MapEntry('$key', item),
+        );
+        String? safeMember(String key) {
+          final member = value[key];
+          if (member is! String ||
+              member.trim().isEmpty ||
+              member.startsWith('/') ||
+              member.split('/').contains('..')) {
+            failures.add('central iOS bundle has unsafe $key member');
+            return null;
+          }
+          return member;
+        }
+
+        if (value['schema'] != 'mknoon.sims.ios-device-production-bundle.v1' ||
+            value['profileId'] != 'ios.device.production' ||
+            value['centralCompileCommands'] != 1 ||
+            value['logicalBuildCount'] != 1 ||
+            value['childBuildCount'] != 0) {
+          failures.add('central iOS bundle manifest contract is invalid');
+        }
+        final appMember = safeMember('applicationApp');
+        final xctestrunMember = safeMember('xctestrun');
+        final productsMember = safeMember('testProducts');
+        if (appMember != null) {
+          application = Directory('${bundle.absolute.path}/$appMember');
+          if (!appMember.endsWith('.app') ||
+              FileSystemEntity.typeSync(application.path, followLinks: false) !=
+                  FileSystemEntityType.directory) {
+            failures.add('central iOS application member is missing');
+          }
+        }
+        if (xctestrunMember != null) {
+          xctestrun = File('${bundle.absolute.path}/$xctestrunMember');
+          if (!xctestrunMember.endsWith('.xctestrun') ||
+              FileSystemEntity.typeSync(xctestrun.path, followLinks: false) !=
+                  FileSystemEntityType.file ||
+              xctestrun.lengthSync() == 0) {
+            failures.add('central iOS xctestrun member is missing');
+          }
+        }
+        if (productsMember != null) {
+          testProducts = Directory('${bundle.absolute.path}/$productsMember');
+          if (FileSystemEntity.typeSync(
+                testProducts.path,
+                followLinks: false,
+              ) !=
+              FileSystemEntityType.directory) {
+            failures.add('central iOS test-products member is missing');
+          }
+        }
+      }
+    } on Object {
+      failures.add('central iOS bundle manifest is not valid JSON');
+    }
+  }
+  return GroupReactionIosBundleValidation(
+    failures: failures,
+    application: application,
+    xctestrun: xctestrun,
+    testProducts: testProducts,
+    manifest: manifest,
+  );
+}
+
+bool groupReactionIosDeviceIsOnline(String xctraceOutput, String deviceId) {
+  if (!RegExp(r'^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}$').hasMatch(deviceId)) {
+    return false;
+  }
+  final online = <String>[];
+  for (final line in const LineSplitter().convert(xctraceOutput)) {
+    if (RegExp(
+      r'^=*[ ]*Devices Offline\b',
+      caseSensitive: false,
+    ).hasMatch(line.trim())) {
+      break;
+    }
+    online.add(line);
+  }
+  final boundary = RegExp(
+    '(^|[^0-9A-Fa-f-])${RegExp.escape(deviceId)}([^0-9A-Fa-f-]|\$)',
+    caseSensitive: false,
+  );
+  return online.any(boundary.hasMatch);
+}
+
+bool groupReactionIosRelayRegistrationSucceeded(String recipientLog) =>
+    const LineSplitter()
+        .convert(recipientLog)
+        .any(
+          (line) =>
+              line.contains('[PUSH_DIAG] relay_push_registration_success') &&
+              RegExp(r'\bplatform=ios\b').hasMatch(line),
+        );
 
 class GroupReactionNotificationEvidenceRequirement {
   const GroupReactionNotificationEvidenceRequirement({
@@ -756,6 +1131,73 @@ groupReactionNotificationScenarios = <GroupReactionNotificationScenario>[
       ),
     ],
   ),
+  GroupReactionNotificationScenario(
+    id: iosChatGroupMessageAndReactionScenarioId,
+    testCase: 'TC-397-07/08',
+    summary:
+        'physical iOS ordinary chat-group recipient receives one provider '
+        'message card and one provider ADD-reaction card with exact cold taps',
+    groupType: 'chat',
+    senderRole: 'member_message_sender_and_reactor',
+    senderPlatform: 'android',
+    senderDeviceKind: 'physical',
+    recipientRole: 'chat_member_target_author',
+    recipientPlatform: 'ios',
+    recipientDeviceKind: 'physical',
+    evidenceRequirements: <GroupReactionNotificationEvidenceRequirement>[
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'relay',
+        markers: <String>[
+          'message_window=complete',
+          'reaction_window=complete',
+          'duplicate_provider_send=false',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'provider_apns',
+        markers: <String>[
+          'message_provider_result=true',
+          'reaction_attempted_delta=1',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'sender_app',
+        markers: <String>[
+          'message_phase_observed=true',
+          'reaction_phase_observed=true',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'recipient_app',
+        markers: <String>[
+          'message_route_matched=true',
+          'reaction_route_matched=true',
+          'unread_after_tap=0',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'nse_log',
+        markers: <String>['kind=group_message', 'kind=group_reaction'],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'native_inventory',
+        markers: <String>[
+          'message_matchingUsefulProviderCount=1',
+          'reaction_matchingUsefulProviderCount=1',
+          'matchingFlutterLocalCount=0',
+        ],
+      ),
+      GroupReactionNotificationEvidenceRequirement(
+        kind: 'xcuitest',
+        markers: <String>[
+          'testChatGroupNotificationTap',
+          'message_target_visible=true',
+          'reaction_target_visible=true',
+          'manual_taps=0',
+        ],
+      ),
+    ],
+  ),
 ];
 
 /// Named source extension consumed only by the Plan-330 Android adapter.
@@ -1055,6 +1497,18 @@ validateGroupReactionNotificationArtifact({
   }
   final root = _asStringMap(decoded, r'$', failures);
   if (root == null) {
+    return GroupReactionNotificationArtifactValidation(failures);
+  }
+
+  if (scenario == iosChatGroupMessageAndReactionScenarioId) {
+    await _validateIosChatGroupMessageAndReactionArtifact(
+      root: root,
+      artifactFile: artifactFile,
+      requirement: requirement,
+      expectedSenderDeviceId: expectedSenderDeviceId,
+      expectedRecipientDeviceId: expectedRecipientDeviceId,
+      failures: failures,
+    );
     return GroupReactionNotificationArtifactValidation(failures);
   }
 
@@ -2126,6 +2580,1057 @@ const String _plan257SqlProbe =
 const String _plan257DuplicateRedrivePrefix =
     'MKNOON_257_DUPLICATE_REDRIVE_OBSERVATION ';
 
+Future<void> _validateIosChatGroupMessageAndReactionArtifact({
+  required Map<String, Object?> root,
+  required File artifactFile,
+  required GroupReactionNotificationScenario requirement,
+  required String? expectedSenderDeviceId,
+  required String? expectedRecipientDeviceId,
+  required List<String> failures,
+}) async {
+  const rootPath = r'$';
+  _expectExactKeys(
+    root,
+    const <String>{
+      'schema',
+      'version',
+      'scenario',
+      'testCase',
+      'status',
+      'generatedBy',
+      'topology',
+      'centralBuild',
+      'capture',
+      'identities',
+      'windows',
+      'execution',
+      'redaction',
+    },
+    rootPath,
+    failures,
+  );
+  _expectValue(
+    root,
+    'schema',
+    iosChatGroupMessageAndReactionArtifactSchema,
+    rootPath,
+    failures,
+  );
+  _expectValue(
+    root,
+    'version',
+    iosChatGroupMessageAndReactionArtifactVersion,
+    rootPath,
+    failures,
+  );
+  _expectValue(root, 'scenario', requirement.id, rootPath, failures);
+  _expectValue(root, 'testCase', requirement.testCase, rootPath, failures);
+  _expectValue(root, 'status', 'passed', rootPath, failures);
+  _expectValue(
+    root,
+    'generatedBy',
+    'automated_capture_pipeline',
+    rootPath,
+    failures,
+  );
+
+  final topology = _mapField(root, 'topology', rootPath, failures);
+  if (topology != null) {
+    _expectExactKeys(
+      topology,
+      const <String>{'groupType', 'sender', 'recipient'},
+      r'$.topology',
+      failures,
+    );
+    _expectValue(topology, 'groupType', 'chat', r'$.topology', failures);
+    final sender = _mapField(topology, 'sender', r'$.topology', failures);
+    final recipient = _mapField(topology, 'recipient', r'$.topology', failures);
+    void validateParty(
+      Map<String, Object?>? party, {
+      required String path,
+      required String platform,
+      required String deviceKind,
+      required String? expectedId,
+    }) {
+      if (party == null) return;
+      _expectExactKeys(
+        party,
+        const <String>{'platform', 'deviceKind', 'deviceId', 'liveDiscovered'},
+        path,
+        failures,
+      );
+      _expectValue(party, 'platform', platform, path, failures);
+      _expectValue(party, 'deviceKind', deviceKind, path, failures);
+      _expectValue(party, 'liveDiscovered', true, path, failures);
+      final deviceId = _requiredString(party, 'deviceId', path, failures);
+      if (expectedId != null && deviceId != expectedId) {
+        failures.add('$path.deviceId does not match the pinned live target');
+      }
+    }
+
+    validateParty(
+      sender,
+      path: r'$.topology.sender',
+      platform: 'android',
+      deviceKind: 'physical',
+      expectedId: expectedSenderDeviceId,
+    );
+    validateParty(
+      recipient,
+      path: r'$.topology.recipient',
+      platform: 'ios',
+      deviceKind: 'physical',
+      expectedId: expectedRecipientDeviceId,
+    );
+  }
+
+  final central = _mapField(root, 'centralBuild', rootPath, failures);
+  if (central != null) {
+    _expectExactKeys(
+      central,
+      const <String>{
+        'android',
+        'ios',
+        'setupApplicationSha256',
+        'centralApplicationSha256',
+        'setupSelectorsReusedOneProduct',
+        'setupChildBuildCount',
+        'androidChildBuildCount',
+        'iosNormalChildBuildCount',
+        'normalInstalledInPlace',
+        'uninstallBetweenSetupAndNormal',
+        'setupContainerPreserved',
+      },
+      r'$.centralBuild',
+      failures,
+    );
+    final android = _mapField(central, 'android', r'$.centralBuild', failures);
+    final ios = _mapField(central, 'ios', r'$.centralBuild', failures);
+    void validateCentralProfile(
+      Map<String, Object?>? value, {
+      required String path,
+      required String profile,
+    }) {
+      if (value == null) return;
+      _expectExactKeys(
+        value,
+        const <String>{
+          'profileId',
+          'inputDigest',
+          'artifactDigest',
+          'attestationAdjacent',
+        },
+        path,
+        failures,
+      );
+      _expectValue(value, 'profileId', profile, path, failures);
+      _expectValue(value, 'attestationAdjacent', true, path, failures);
+      for (final key in const <String>['inputDigest', 'artifactDigest']) {
+        if (!_isSha256(value[key])) {
+          failures.add('$path.$key must be a bound SHA-256 digest');
+        }
+      }
+    }
+
+    validateCentralProfile(
+      android,
+      path: r'$.centralBuild.android',
+      profile: 'android.production_fcm',
+    );
+    validateCentralProfile(
+      ios,
+      path: r'$.centralBuild.ios',
+      profile: 'ios.device.production',
+    );
+    final setupDigest = central['setupApplicationSha256'];
+    final normalDigest = central['centralApplicationSha256'];
+    if (!_isSha256(setupDigest) ||
+        !_isSha256(normalDigest) ||
+        setupDigest == normalDigest) {
+      failures.add(
+        r'$.centralBuild must bind distinct setup and central app digests',
+      );
+    }
+    for (final entry in const <String, Object?>{
+      'setupSelectorsReusedOneProduct': true,
+      'setupChildBuildCount': 1,
+      'androidChildBuildCount': 0,
+      'iosNormalChildBuildCount': 0,
+      'normalInstalledInPlace': true,
+      'uninstallBetweenSetupAndNormal': false,
+      'setupContainerPreserved': true,
+    }.entries) {
+      _expectValue(
+        central,
+        entry.key,
+        entry.value,
+        r'$.centralBuild',
+        failures,
+      );
+    }
+  }
+
+  final capture = _mapField(root, 'capture', rootPath, failures);
+  if (capture != null) {
+    _expectExactKeys(
+      capture,
+      const <String>{
+        'centralBuildProvenance',
+        'androidBuildReport',
+        'iosBuildReport',
+        'androidAttestation',
+        'iosAttestation',
+        'iosBundleManifest',
+        'setupInstall',
+        'centralNormalInstall',
+        'commandJournal',
+      },
+      r'$.capture',
+      failures,
+    );
+    final retained = <String, String>{};
+    for (final key in const <String>[
+      'centralBuildProvenance',
+      'androidBuildReport',
+      'iosBuildReport',
+      'androidAttestation',
+      'iosAttestation',
+      'iosBundleManifest',
+      'setupInstall',
+      'centralNormalInstall',
+      'commandJournal',
+    ]) {
+      final text = await _readReferencedText(
+        capture[key],
+        artifactFile: artifactFile,
+        path: r'$.capture.' + key,
+        failures: failures,
+      );
+      if (text != null) retained[key] = text;
+    }
+    if (central != null) {
+      _validatePlan397RetainedCentralFiles(
+        retained: retained,
+        central: central,
+        failures: failures,
+      );
+    }
+  }
+
+  final identities = _mapField(root, 'identities', rootPath, failures);
+  if (identities != null) {
+    _expectExactKeys(
+      identities,
+      const <String>{
+        'groupNameSha256',
+        'messageTextSha256',
+        'targetTextSha256',
+      },
+      r'$.identities',
+      failures,
+    );
+    for (final key in const <String>[
+      'groupNameSha256',
+      'messageTextSha256',
+      'targetTextSha256',
+    ]) {
+      if (!_isSha256(identities[key])) {
+        failures.add('\$.identities.$key must be SHA-256');
+      }
+    }
+    if (identities.values.toSet().length != 3) {
+      failures.add(r'$.identities digests must be pairwise distinct');
+    }
+  }
+
+  final rawWindows = root['windows'];
+  if (rawWindows is! List || rawWindows.length != 2) {
+    failures.add(r'$.windows must contain exactly message then reaction');
+  }
+  final windows = rawWindows is List
+      ? rawWindows
+            .asMap()
+            .entries
+            .map(
+              (entry) => _asStringMap(
+                entry.value,
+                '\$.windows[${entry.key}]',
+                failures,
+              ),
+            )
+            .whereType<Map<String, Object?>>()
+            .toList(growable: false)
+      : const <Map<String, Object?>>[];
+  if (windows.length == 2) {
+    final message = _validatePlan397Window(
+      window: windows[0],
+      index: 0,
+      phase: 'message',
+      payloadKind: 'group_message',
+      expectedMetricFamily: 'relay_group_content_wake_total',
+      identities: identities,
+      expectedRecipientDeviceId: expectedRecipientDeviceId,
+      failures: failures,
+    );
+    final reaction = _validatePlan397Window(
+      window: windows[1],
+      index: 1,
+      phase: 'reaction',
+      payloadKind: 'group_reaction',
+      expectedMetricFamily: relayGroupReactionWakeCounter,
+      identities: identities,
+      expectedRecipientDeviceId: expectedRecipientDeviceId,
+      failures: failures,
+    );
+    if (message != null && reaction != null) {
+      for (final key in const <String>[
+        'groupIdSha256',
+        'messageIdSha256',
+        'targetMessageIdSha256',
+      ]) {
+        if (message.android[key] != reaction.android[key]) {
+          failures.add(
+            r'$.windows must retain the same Android-observed ' + key,
+          );
+        }
+      }
+      if (message.android['eventIdSha256'] ==
+          reaction.android['eventIdSha256']) {
+        failures.add(r'$.windows event identities must be phase-distinct');
+      }
+      final distinctPairs = <String, List<Object?>>{
+        'window ids': <Object?>[
+          message.window['windowIdSha256'],
+          reaction.window['windowIdSha256'],
+        ],
+        'observer run ids': <Object?>[
+          message.window['observerRunIdSha256'],
+          reaction.window['observerRunIdSha256'],
+        ],
+        'observer nonces': <Object?>[
+          message.window['observerNonceSha256'],
+          reaction.window['observerNonceSha256'],
+        ],
+        'provider baselines': <Object?>[
+          message.provider['baselineSha256'],
+          reaction.provider['baselineSha256'],
+        ],
+        'provider finals': <Object?>[
+          message.provider['finalSha256'],
+          reaction.provider['finalSha256'],
+        ],
+        'NSE windows': <Object?>[
+          message.nse['windowSha256'],
+          reaction.nse['windowSha256'],
+        ],
+        'native request identifiers': <Object?>[
+          (message.native['requestIdentifierSha256'] as List?)?.singleOrNull,
+          (reaction.native['requestIdentifierSha256'] as List?)?.singleOrNull,
+        ],
+      };
+      for (final entry in distinctPairs.entries) {
+        if (entry.value.length != 2 || entry.value.toSet().length != 2) {
+          failures.add(r'$.windows must use distinct ' + entry.key);
+        }
+      }
+      final messageClosed = DateTime.tryParse('${message.window['closedAt']}');
+      final reactionOpened = DateTime.tryParse(
+        '${reaction.window['openedAt']}',
+      );
+      if (messageClosed == null ||
+          reactionOpened == null ||
+          reactionOpened.isBefore(messageClosed)) {
+        failures.add(r'$.windows reaction must open after message closes');
+      }
+    }
+  }
+
+  final execution = _mapField(root, 'execution', rootPath, failures);
+  if (execution != null) {
+    _expectExactKeys(
+      execution,
+      const <String>{
+        'automation',
+        'manualTaps',
+        'childBuildsDuringGradedWindows',
+        'messageSendCount',
+        'reactionAddCount',
+        'reactionRemoveCount',
+        'reactionReAddCount',
+      },
+      r'$.execution',
+      failures,
+    );
+    for (final entry in const <String, Object?>{
+      'automation': 'fully_automated',
+      'manualTaps': 0,
+      'childBuildsDuringGradedWindows': 0,
+      'messageSendCount': 1,
+      'reactionAddCount': 1,
+      'reactionRemoveCount': 0,
+      'reactionReAddCount': 0,
+    }.entries) {
+      _expectValue(execution, entry.key, entry.value, r'$.execution', failures);
+    }
+  }
+
+  final redaction = _mapField(root, 'redaction', rootPath, failures);
+  if (redaction != null) {
+    _expectExactKeys(
+      redaction,
+      const <String>{
+        'pushTokensPersisted',
+        'secretKeysPersisted',
+        'ciphertextPersisted',
+        'plaintextPayloadPersisted',
+        'rawPeerIdsPersisted',
+        'rawGroupOrMessageIdsPersisted',
+      },
+      r'$.redaction',
+      failures,
+    );
+    for (final key in redaction.keys) {
+      _expectValue(redaction, key, false, r'$.redaction', failures);
+    }
+  }
+}
+
+final class _Plan397WindowEvidence {
+  const _Plan397WindowEvidence({
+    required this.window,
+    required this.android,
+    required this.provider,
+    required this.nse,
+    required this.native,
+  });
+
+  final Map<String, Object?> window;
+  final Map<String, Object?> android;
+  final Map<String, Object?> provider;
+  final Map<String, Object?> nse;
+  final Map<String, Object?> native;
+}
+
+void _validatePlan397RetainedCentralFiles({
+  required Map<String, String> retained,
+  required Map<String, Object?> central,
+  required List<String> failures,
+}) {
+  Map<String, Object?>? decode(String key) {
+    final raw = retained[key];
+    return raw == null ? null : _decodeObject(raw, '\$.capture.$key', failures);
+  }
+
+  final provenance = decode('centralBuildProvenance');
+  final androidReport = decode('androidBuildReport');
+  final iosReport = decode('iosBuildReport');
+  final androidAttestation = decode('androidAttestation');
+  final iosAttestation = decode('iosAttestation');
+  final manifest = decode('iosBundleManifest');
+  final centralAndroid = _asStringMap(
+    central['android'],
+    r'$.centralBuild.android',
+    failures,
+  );
+  final centralIos = _asStringMap(
+    central['ios'],
+    r'$.centralBuild.ios',
+    failures,
+  );
+
+  void validateProfile({
+    required String profile,
+    required Map<String, Object?>? summary,
+    required Map<String, Object?>? report,
+    required Map<String, Object?>? attestation,
+    required String path,
+  }) {
+    if (summary == null || report == null || attestation == null) return;
+    final builds = report['builds'];
+    final digests = builds is Map ? builds['artifactDigests'] : null;
+    final reportDigest = digests is Map ? digests[profile] : null;
+    if (reportDigest != summary['artifactDigest']) {
+      failures.add('$path build report is not artifact-digest bound');
+    }
+    if (attestation['schemaVersion'] != 1 ||
+        attestation['profileId'] != profile ||
+        attestation['inputDigest'] != summary['inputDigest'] ||
+        attestation['artifactDigest'] != summary['artifactDigest']) {
+      failures.add('$path adjacent attestation is not summary-bound');
+    }
+  }
+
+  validateProfile(
+    profile: 'android.production_fcm',
+    summary: centralAndroid,
+    report: androidReport,
+    attestation: androidAttestation,
+    path: r'$.capture.android',
+  );
+  validateProfile(
+    profile: 'ios.device.production',
+    summary: centralIos,
+    report: iosReport,
+    attestation: iosAttestation,
+    path: r'$.capture.ios',
+  );
+
+  if (provenance != null) {
+    final provenanceAndroid = _asStringMap(
+      provenance['android'],
+      r'$.capture.centralBuildProvenance.android',
+      failures,
+    );
+    final provenanceIos = _asStringMap(
+      provenance['ios'],
+      r'$.capture.centralBuildProvenance.ios',
+      failures,
+    );
+    bool sameSummary(
+      Map<String, Object?>? retainedSummary,
+      Map<String, Object?>? artifactSummary,
+    ) {
+      if (retainedSummary == null || artifactSummary == null) return false;
+      return retainedSummary['profileId'] == artifactSummary['profileId'] &&
+          retainedSummary['inputDigest'] == artifactSummary['inputDigest'] &&
+          retainedSummary['artifactDigest'] ==
+              artifactSummary['artifactDigest'] &&
+          retainedSummary['attestationAdjacent'] == true;
+    }
+
+    final manifestRaw = retained['iosBundleManifest'];
+    final manifestDigest = manifestRaw == null
+        ? null
+        : sha256.convert(utf8.encode(manifestRaw)).toString();
+    if (provenance['schema'] != 'mknoon.plan397.central-build-provenance.v1' ||
+        !sameSummary(provenanceAndroid, centralAndroid) ||
+        !sameSummary(provenanceIos, centralIos) ||
+        provenance['iosBundleManifestSha256'] != manifestDigest ||
+        provenance['androidChildBuildCount'] != 0 ||
+        provenance['iosNormalChildBuildCount'] != 0 ||
+        DateTime.tryParse('${provenance['recordedAt']}') == null) {
+      failures.add(
+        r'$.capture.centralBuildProvenance is not retained-source bound',
+      );
+    }
+  }
+
+  if (manifest != null &&
+      (manifest['schema'] != 'mknoon.sims.ios-device-production-bundle.v1' ||
+          manifest['profileId'] != 'ios.device.production' ||
+          manifest['centralCompileCommands'] != 1 ||
+          manifest['logicalBuildCount'] != 1 ||
+          manifest['childBuildCount'] != 0 ||
+          manifest['applicationApp'] is! String ||
+          manifest['xctestrun'] is! String ||
+          manifest['testProducts'] is! String)) {
+    failures.add(r'$.capture.iosBundleManifest is not the central bundle');
+  }
+}
+
+_Plan397WindowEvidence? _validatePlan397Window({
+  required Map<String, Object?> window,
+  required int index,
+  required String phase,
+  required String payloadKind,
+  required String expectedMetricFamily,
+  required Map<String, Object?>? identities,
+  required String? expectedRecipientDeviceId,
+  required List<String> failures,
+}) {
+  final path = '\$.windows[$index]';
+  _expectExactKeys(
+    window,
+    const <String>{
+      'phase',
+      'ordinal',
+      'payloadKind',
+      'windowIdSha256',
+      'observerRunIdSha256',
+      'observerNonceSha256',
+      'androidObservation',
+      'provider',
+      'nse',
+      'nativeInventory',
+      'tap',
+      'diagnostics',
+      'relayJournalSha256',
+      'relayJournalLineCount',
+      'openedAt',
+      'closedAt',
+    },
+    path,
+    failures,
+  );
+  _expectValue(window, 'phase', phase, path, failures);
+  _expectValue(window, 'ordinal', index + 1, path, failures);
+  _expectValue(window, 'payloadKind', payloadKind, path, failures);
+  for (final key in const <String>[
+    'windowIdSha256',
+    'observerRunIdSha256',
+    'observerNonceSha256',
+    'relayJournalSha256',
+  ]) {
+    if (!_isSha256(window[key])) failures.add('$path.$key must be SHA-256');
+  }
+  final opened = DateTime.tryParse('${window['openedAt']}');
+  final closed = DateTime.tryParse('${window['closedAt']}');
+  if (opened == null || closed == null || closed.isBefore(opened)) {
+    failures.add('$path must contain an ordered UTC observation interval');
+  }
+  if (window['relayJournalLineCount'] is! int ||
+      (window['relayJournalLineCount']! as int) < 1) {
+    failures.add('$path.relayJournalLineCount must be positive');
+  }
+
+  final android = _mapField(window, 'androidObservation', path, failures);
+  final provider = _mapField(window, 'provider', path, failures);
+  final nse = _mapField(window, 'nse', path, failures);
+  final native = _mapField(window, 'nativeInventory', path, failures);
+  final tap = _mapField(window, 'tap', path, failures);
+  final diagnostics = _mapField(window, 'diagnostics', path, failures);
+  if (android == null || provider == null || nse == null || native == null) {
+    return null;
+  }
+
+  _expectExactKeys(
+    android,
+    const <String>{
+      'schema',
+      'phase',
+      'groupIdSha256',
+      'messageIdSha256',
+      'targetMessageIdSha256',
+      'eventIdSha256',
+      'reactionIdSha256',
+      'reactionTargetIdSha256',
+      'firstIncoming',
+      'targetIncoming',
+      'targetRead',
+      'reactionRows',
+      'reactionEmojiSha256',
+      'rawIdentifiersPersisted',
+    },
+    '$path.androidObservation',
+    failures,
+  );
+  _expectValue(
+    android,
+    'schema',
+    'mknoon.plan257.sqlcipher-observation.v1',
+    '$path.androidObservation',
+    failures,
+  );
+  _expectValue(android, 'phase', phase, '$path.androidObservation', failures);
+  for (final key in const <String>[
+    'groupIdSha256',
+    'messageIdSha256',
+    'targetMessageIdSha256',
+    'eventIdSha256',
+  ]) {
+    if (!_isSha256(android[key])) {
+      failures.add('$path.androidObservation.$key must be SHA-256');
+    }
+  }
+  for (final entry in const <String, Object?>{
+    'firstIncoming': false,
+    'targetIncoming': true,
+    'targetRead': true,
+    'rawIdentifiersPersisted': false,
+  }.entries) {
+    _expectValue(
+      android,
+      entry.key,
+      entry.value,
+      '$path.androidObservation',
+      failures,
+    );
+  }
+  if (phase == 'message') {
+    _expectValue(
+      android,
+      'reactionIdSha256',
+      null,
+      '$path.androidObservation',
+      failures,
+    );
+    _expectValue(
+      android,
+      'reactionTargetIdSha256',
+      null,
+      '$path.androidObservation',
+      failures,
+    );
+    _expectValue(
+      android,
+      'reactionEmojiSha256',
+      null,
+      '$path.androidObservation',
+      failures,
+    );
+    _expectValue(
+      android,
+      'reactionRows',
+      0,
+      '$path.androidObservation',
+      failures,
+    );
+    if (android['eventIdSha256'] != android['messageIdSha256']) {
+      failures.add('$path message event must bind its Android message digest');
+    }
+  } else {
+    for (final key in const <String>[
+      'reactionIdSha256',
+      'reactionTargetIdSha256',
+      'reactionEmojiSha256',
+    ]) {
+      if (!_isSha256(android[key])) {
+        failures.add('$path.androidObservation.$key must be SHA-256');
+      }
+    }
+    _expectValue(
+      android,
+      'reactionRows',
+      1,
+      '$path.androidObservation',
+      failures,
+    );
+    if (android['eventIdSha256'] != android['reactionIdSha256'] ||
+        android['reactionTargetIdSha256'] != android['targetMessageIdSha256']) {
+      failures.add(
+        '$path reaction does not bind its Android ADD/target digests',
+      );
+    }
+  }
+
+  _expectExactKeys(
+    provider,
+    const <String>{
+      'metricFamily',
+      'attemptedDelta',
+      'pushSuccessDelta',
+      'baseline',
+      'final',
+      'baselineSha256',
+      'finalSha256',
+      'relayAttributed',
+      'providerResultCount',
+      'deletedOrUnattributedEvidence',
+    },
+    '$path.provider',
+    failures,
+  );
+  _expectValue(
+    provider,
+    'metricFamily',
+    expectedMetricFamily,
+    '$path.provider',
+    failures,
+  );
+  final baseline = provider['baseline'];
+  final finalScrape = provider['final'];
+  if (baseline is! String || finalScrape is! String) {
+    failures.add('$path.provider metric scrapes must be strings');
+  } else {
+    final metrics = parseRelayMetricsWindow(
+      '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n$baseline'
+      '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n$finalScrape',
+    );
+    final attempted = metrics?.delta(
+      relayCounterSeries(expectedMetricFamily, const <String, String>{
+        'outcome': 'attempted',
+      }),
+    );
+    final push = metrics == null
+        ? null
+        : relayCounterFamilyDelta(metrics, relayPushSentCounter);
+    if (attempted != 1 || push != 1) {
+      failures.add('$path.provider does not re-derive one attributed send');
+    }
+    if (sha256.convert(utf8.encode(baseline)).toString() !=
+            provider['baselineSha256'] ||
+        sha256.convert(utf8.encode(finalScrape)).toString() !=
+            provider['finalSha256'] ||
+        baseline == finalScrape) {
+      failures.add('$path.provider metric digests are stale or unbound');
+    }
+  }
+  for (final entry in const <String, Object?>{
+    'attemptedDelta': 1,
+    'pushSuccessDelta': 1,
+    'relayAttributed': true,
+    'providerResultCount': 1,
+    'deletedOrUnattributedEvidence': false,
+  }.entries) {
+    final actual = provider[entry.key];
+    final equal = actual is num && entry.value is num
+        ? actual.toDouble() == (entry.value! as num).toDouble()
+        : actual == entry.value;
+    if (!equal) {
+      failures.add('$path.provider.${entry.key} must equal ${entry.value}');
+    }
+  }
+  if (!_isSha256(provider['baselineSha256']) ||
+      !_isSha256(provider['finalSha256'])) {
+    failures.add('$path.provider metric hashes must be SHA-256');
+  }
+
+  _expectExactKeys(
+    nse,
+    const <String>{
+      'payloadKind',
+      'decryptOkCount',
+      'didReceiveCount',
+      'decryptFailureCount',
+      'timeoutCount',
+      'runOwnedLocalPublicationCount',
+      'contenderDisposition',
+      'contenderSuppressionCount',
+      'windowSha256',
+      'rawPayloadPersisted',
+    },
+    '$path.nse',
+    failures,
+  );
+  for (final entry in <String, Object?>{
+    'payloadKind': payloadKind,
+    'decryptOkCount': 1,
+    'didReceiveCount': 1,
+    'decryptFailureCount': 0,
+    'timeoutCount': 0,
+    'runOwnedLocalPublicationCount': 0,
+    'rawPayloadPersisted': false,
+  }.entries) {
+    _expectValue(nse, entry.key, entry.value, '$path.nse', failures);
+  }
+  if (!_isSha256(nse['windowSha256'])) {
+    failures.add('$path.nse.windowSha256 must be SHA-256');
+  }
+  final contenderDisposition = nse['contenderDisposition'];
+  final contenderSuppressionCount = nse['contenderSuppressionCount'];
+  if (!<String>{
+        'not_observed',
+        'suppressed_recent_remote',
+      }.contains(contenderDisposition) ||
+      contenderSuppressionCount !=
+          (contenderDisposition == 'suppressed_recent_remote' ? 1 : 0)) {
+    failures.add('$path.nse contender disposition is incomplete');
+  }
+
+  _validatePlan397NativeInventory(
+    native: native,
+    path: '$path.nativeInventory',
+    phase: phase,
+    android: android,
+    observerNonceSha256: window['observerNonceSha256'],
+    expectedRecipientDeviceId: expectedRecipientDeviceId,
+    failures: failures,
+  );
+
+  if (tap != null) {
+    _expectExactKeys(
+      tap,
+      const <String>{
+        'selector',
+        'passed',
+        'sameCardContainer',
+        'matchingCardCount',
+        'titleMatched',
+        'bodyMatched',
+        'routeMatched',
+        'finalUnreadCount',
+        'manualTaps',
+        'coldLaunch',
+        'expectedTitleSha256',
+        'expectedBodySha256',
+        'expectedRouteTextSha256',
+      },
+      '$path.tap',
+      failures,
+    );
+    for (final entry in const <String, Object?>{
+      'selector': 'testChatGroupNotificationTap',
+      'passed': true,
+      'sameCardContainer': true,
+      'matchingCardCount': 1,
+      'titleMatched': true,
+      'bodyMatched': true,
+      'routeMatched': true,
+      'finalUnreadCount': 0,
+      'manualTaps': 0,
+      'coldLaunch': true,
+    }.entries) {
+      _expectValue(tap, entry.key, entry.value, '$path.tap', failures);
+    }
+    for (final key in const <String>[
+      'expectedTitleSha256',
+      'expectedBodySha256',
+      'expectedRouteTextSha256',
+    ]) {
+      if (!_isSha256(tap[key])) failures.add('$path.tap.$key must be SHA-256');
+    }
+    if (identities != null &&
+        (tap['expectedTitleSha256'] != identities['groupNameSha256'] ||
+            tap['expectedRouteTextSha256'] !=
+                identities[phase == 'message'
+                    ? 'messageTextSha256'
+                    : 'targetTextSha256'])) {
+      failures.add('$path.tap title/route digests are not artifact-bound');
+    }
+  }
+
+  if (diagnostics != null) {
+    _expectExactKeys(
+      diagnostics,
+      const <String>{
+        'runOwnedLocalPublicationCount',
+        'contenderDisposition',
+        'contenderSuppressionCount',
+        'rawIdentifiersPersisted',
+        'rawPayloadPersisted',
+      },
+      '$path.diagnostics',
+      failures,
+    );
+    for (final entry in const <String, Object?>{
+      'runOwnedLocalPublicationCount': 0,
+      'rawIdentifiersPersisted': false,
+      'rawPayloadPersisted': false,
+    }.entries) {
+      _expectValue(
+        diagnostics,
+        entry.key,
+        entry.value,
+        '$path.diagnostics',
+        failures,
+      );
+    }
+    if (diagnostics['contenderDisposition'] != contenderDisposition ||
+        diagnostics['contenderSuppressionCount'] != contenderSuppressionCount) {
+      failures.add('$path.diagnostics contender disposition is not NSE-bound');
+    }
+  }
+
+  return _Plan397WindowEvidence(
+    window: window,
+    android: android,
+    provider: provider,
+    nse: nse,
+    native: native,
+  );
+}
+
+void _validatePlan397NativeInventory({
+  required Map<String, Object?> native,
+  required String path,
+  required String phase,
+  required Map<String, Object?> android,
+  required Object? observerNonceSha256,
+  required String? expectedRecipientDeviceId,
+  required List<String> failures,
+}) {
+  _expectExactKeys(
+    native,
+    const <String>{
+      'schema',
+      'action',
+      'phase',
+      'status',
+      'containsSecrets',
+      'bundleId',
+      'captureNonceSha256',
+      'receiverDeviceIdSha256',
+      'expectedGroupIdSha256',
+      'expectedEventIdSha256',
+      'expectedTargetMessageIdSha256',
+      'matchingRemoteCount',
+      'matchingLocalCount',
+      'matchingUsefulProviderCount',
+      'matchingSanitizedProviderCount',
+      'matchingFlutterLocalCount',
+      'matchingUnknownCount',
+      'matchingTotalCount',
+      'stableSampleCount',
+      'stableSampleIntervalMilliseconds',
+      'observationDeadlineMilliseconds',
+      'sampledThroughDeadline',
+      'badSourceSeen',
+      'duplicateSeen',
+      'requestIdentifierSha256',
+      'childBuildCount',
+      'manualActionCount',
+      'runnerTerminated',
+      'preTapCleanupLaunchCount',
+      'resultCode',
+      'completedAt',
+    },
+    path,
+    failures,
+  );
+  for (final entry in <String, Object?>{
+    'schema': 'mknoon.sims.ios-group-notification-observation-host-receipt.v1',
+    'action': 'observe-group',
+    'phase': phase,
+    'status': 'PASS',
+    'containsSecrets': false,
+    'bundleId': 'com.mknoon.app',
+    'matchingRemoteCount': 1,
+    'matchingLocalCount': 0,
+    'matchingUsefulProviderCount': 1,
+    'matchingSanitizedProviderCount': 0,
+    'matchingFlutterLocalCount': 0,
+    'matchingUnknownCount': 0,
+    'matchingTotalCount': 1,
+    'stableSampleCount': 3,
+    'stableSampleIntervalMilliseconds': 500,
+    'observationDeadlineMilliseconds': 8000,
+    'sampledThroughDeadline': true,
+    'badSourceSeen': false,
+    'duplicateSeen': false,
+    'childBuildCount': 0,
+    'manualActionCount': 0,
+    'runnerTerminated': true,
+    'preTapCleanupLaunchCount': 0,
+    'resultCode': 'ok',
+  }.entries) {
+    _expectValue(native, entry.key, entry.value, path, failures);
+  }
+  final digestBindings = <String, Object?>{
+    'captureNonceSha256': observerNonceSha256,
+    'expectedGroupIdSha256': android['groupIdSha256'],
+    'expectedEventIdSha256': android['eventIdSha256'],
+    'expectedTargetMessageIdSha256': android['targetMessageIdSha256'],
+  };
+  if (expectedRecipientDeviceId != null) {
+    digestBindings['receiverDeviceIdSha256'] = sha256
+        .convert(utf8.encode(expectedRecipientDeviceId))
+        .toString();
+  }
+  for (final entry in digestBindings.entries) {
+    if (!_isSha256(native[entry.key]) || native[entry.key] != entry.value) {
+      failures.add('$path.${entry.key} is not bound to the phase authority');
+    }
+  }
+  for (final key in const <String>[
+    'captureNonceSha256',
+    'receiverDeviceIdSha256',
+    'expectedGroupIdSha256',
+    'expectedEventIdSha256',
+    'expectedTargetMessageIdSha256',
+  ]) {
+    if (!_isSha256(native[key])) failures.add('$path.$key must be SHA-256');
+  }
+  final identifiers = native['requestIdentifierSha256'];
+  if (identifiers is! List ||
+      identifiers.length != 1 ||
+      !_isSha256(identifiers.single)) {
+    failures.add('$path.requestIdentifierSha256 must contain one hashed id');
+  }
+  if (DateTime.tryParse('${native['completedAt']}') == null) {
+    failures.add('$path.completedAt must be an ISO-8601 timestamp');
+  }
+}
+
 Future<String?> _readReferencedText(
   Object? rawReference, {
   required File artifactFile,
@@ -3145,7 +4650,7 @@ String? _requiredString(
 void _expectValue(
   Map<String, Object?> parent,
   String key,
-  Object expected,
+  Object? expected,
   String path,
   List<String> failures,
 ) {

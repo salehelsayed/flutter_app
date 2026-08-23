@@ -291,6 +291,95 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: handoff.recoveryResultURL.path))
   }
 
+  func testTC397GroupObservationReceiptIsProtectedAndRedacted() throws {
+    let root = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+    let handoff = IosReceiverBootstrapHandoff(
+      enabled: true,
+      now: { self.now },
+      rootDirectory: root
+    )
+    XCTAssertEqual(handoff.prepareContainer(), .waiting)
+    let groupHash = String(repeating: "a", count: 64)
+    let eventHash = String(repeating: "b", count: 64)
+    let targetHash = String(repeating: "c", count: 64)
+    try writeGroupObservationRequest(
+      handoff.groupObservationRequestURL,
+      phase: "reaction",
+      groupHash: groupHash,
+      eventHash: eventHash,
+      targetHash: targetHash
+    )
+
+    let command = try XCTUnwrap(
+      handoff.takeGroupNotificationObservationRequest()
+    )
+    XCTAssertEqual(command["phase"], "reaction")
+    XCTAssertEqual(command["expectedGroupIdSha256"], groupHash)
+    XCTAssertNil(command["groupId"])
+    XCTAssertTrue(
+      handoff.completeGroupNotificationObservationRequest(
+        request: command,
+        status: "passed",
+        resultCode: "ok",
+        inventory: Runner.IosGroupNotificationInventory(
+          matchingRemoteCount: 1,
+          matchingLocalCount: 0,
+          matchingUsefulProviderCount: 1,
+          matchingSanitizedProviderCount: 0,
+          matchingFlutterLocalCount: 0,
+          matchingUnknownCount: 0,
+          requestIdentifierSha256: [String(repeating: "d", count: 64)]
+        ),
+        stableSampleCount: 3,
+        sampledThroughDeadline: true,
+        badSourceSeen: false,
+        duplicateSeen: false
+      )
+    )
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: handoff.groupObservationRequestURL.path)
+    )
+    let result = try json(handoff.groupObservationResultURL)
+    XCTAssertEqual(
+      Set(result.keys),
+      Set([
+        "schema", "action", "phase", "captureNonce", "receiverDeviceId",
+        "bundleId", "expectedGroupIdSha256", "expectedEventIdSha256",
+        "expectedTargetMessageIdSha256", "status", "resultCode",
+        "matchingRemoteCount", "matchingLocalCount",
+        "matchingUsefulProviderCount", "matchingSanitizedProviderCount",
+        "matchingFlutterLocalCount", "matchingUnknownCount", "matchingTotalCount",
+        "stableSampleCount", "stableSampleIntervalMilliseconds",
+        "observationDeadlineMilliseconds", "sampledThroughDeadline",
+        "badSourceSeen", "duplicateSeen", "requestIdentifierSha256",
+        "childBuildCount", "manualActionCount", "completedAt",
+      ])
+    )
+    XCTAssertEqual(
+      result["schema"] as? String,
+      IosReceiverBootstrapHandoff.groupObservationResultSchema
+    )
+    XCTAssertEqual(result["sampledThroughDeadline"] as? Bool, true)
+    XCTAssertEqual(result["badSourceSeen"] as? Bool, false)
+    XCTAssertEqual(result["duplicateSeen"] as? Bool, false)
+    let encoded = try XCTUnwrap(
+      String(data: Data(contentsOf: handoff.groupObservationResultURL), encoding: .utf8)
+    )
+    XCTAssertFalse(encoded.contains("raw-group"))
+    let attributes = try FileManager.default.attributesOfItem(
+      atPath: handoff.groupObservationResultURL.path
+    )
+    XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    assertCompleteFileProtection(attributes)
+
+    try writeRequest(handoff.requestURL, action: "cleanup")
+    XCTAssertEqual(handoff.prepareContainer(), .cleaned)
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: handoff.groupObservationResultURL.path)
+    )
+  }
+
   private func assertCompleteFileProtection(
     _ attributes: [FileAttributeKey: Any],
     file: StaticString = #filePath,
@@ -386,6 +475,36 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       "accountPeerId": peer,
       "sentinelIdentifier": sentinel,
       "apnsPayloadSha256": payloadDigest,
+      "createdAt": formatter.string(from: now),
+      "expiresAt": formatter.string(from: now.addingTimeInterval(180)),
+    ]
+    let data = try JSONSerialization.data(withJSONObject: object)
+    FileManager.default.createFile(
+      atPath: url.path,
+      contents: data,
+      attributes: [.posixPermissions: 0o600]
+    )
+  }
+
+  private func writeGroupObservationRequest(
+    _ url: URL,
+    phase: String,
+    groupHash: String,
+    eventHash: String,
+    targetHash: String
+  ) throws {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let object: [String: Any] = [
+      "schema": IosReceiverBootstrapHandoff.groupObservationRequestSchema,
+      "action": "observe_group",
+      "phase": phase,
+      "captureNonce": nonce,
+      "receiverDeviceId": receiver,
+      "bundleId": "com.mknoon.app",
+      "expectedGroupIdSha256": groupHash,
+      "expectedEventIdSha256": eventHash,
+      "expectedTargetMessageIdSha256": targetHash,
       "createdAt": formatter.string(from: now),
       "expiresAt": formatter.string(from: now.addingTimeInterval(180)),
     ]

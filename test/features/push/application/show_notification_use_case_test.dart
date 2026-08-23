@@ -1408,6 +1408,38 @@ void main() {
       },
     );
 
+    test(
+      'suppresses local group reaction when recent remote event matches',
+      () async {
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'group:group-397',
+          routePayload: 'group:group-397|message:group-target-message-397',
+          senderUsername: 'Plan 397 Chat',
+          messageText: 'Alice reacted',
+          messageId: 'group-reaction-event-397',
+          notificationEventIdentity: boundedReactionEventIdentity(
+            'group-reaction-event-397',
+          ),
+          notificationEventType: 'message_reaction',
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required payload, String? messageId}) async {
+                expect(
+                  payload,
+                  'group:group-397|message:group-target-message-397',
+                );
+                expect(messageId, 'group-reaction-event-397');
+                return true;
+              },
+          backgroundDuplicateGuardDelay: Duration.zero,
+        );
+
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
     test('suppresses notification during recovery replay', () async {
       await maybeShowNotification(
         notificationService: notificationService,

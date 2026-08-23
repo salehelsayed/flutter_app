@@ -1867,6 +1867,9 @@ func TestPushService_SendGroupNotification_RetriesTransientFailure(t *testing.T)
 		if sentRoutingString(msg, "groupId") != "group-1" {
 			t.Fatalf("groupId = %q, want %q", sentRoutingString(msg, "groupId"), "group-1")
 		}
+		if got, ok := tc395APNSCollapseID(msg); !ok || got != boundedGroupMessageIdentity("group-msg-1") {
+			t.Fatalf("retry collapse ID = %q present=%v, want %q", got, ok, boundedGroupMessageIdentity("group-msg-1"))
+		}
 	}
 }
 

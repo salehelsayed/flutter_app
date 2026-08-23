@@ -38,6 +38,12 @@ DEVICE_SENDER_REQUEST = f"{DEVICE_DIRECTORY}/sender-request.json"
 DEVICE_SENDER_RESULT = f"{DEVICE_DIRECTORY}/sender-result.json"
 DEVICE_RECOVERY_REQUEST = f"{DEVICE_DIRECTORY}/recovery-request.json"
 DEVICE_RECOVERY_RESULT = f"{DEVICE_DIRECTORY}/recovery-result.json"
+DEVICE_GROUP_OBSERVATION_REQUEST = (
+    f"{DEVICE_DIRECTORY}/group-observation-request.json"
+)
+DEVICE_GROUP_OBSERVATION_RESULT = (
+    f"{DEVICE_DIRECTORY}/group-observation-result.json"
+)
 SENDER_REQUEST_SCHEMA = "mknoon.sims.ios-sender-projection-request.v1"
 SENDER_RESULT_SCHEMA = "mknoon.sims.ios-sender-projection-result.v1"
 SENDER_HOST_RECEIPT_SCHEMA = "mknoon.sims.ios-sender-projection-host-receipt.v1"
@@ -46,10 +52,20 @@ RECOVERY_RESULT_SCHEMA = "mknoon.sims.ios-notification-recovery-result.v1"
 RECOVERY_HOST_RECEIPT_SCHEMA = (
     "mknoon.sims.ios-notification-recovery-host-receipt.v1"
 )
+GROUP_OBSERVATION_REQUEST_SCHEMA = (
+    "mknoon.sims.ios-group-notification-observation-request.v1"
+)
+GROUP_OBSERVATION_RESULT_SCHEMA = (
+    "mknoon.sims.ios-group-notification-observation-result.v1"
+)
+GROUP_OBSERVATION_HOST_RECEIPT_SCHEMA = (
+    "mknoon.sims.ios-group-notification-observation-host-receipt.v1"
+)
 PRIVATE_PAYLOAD_SCHEMA = "mknoon.sims.ios-payload-private-fixture.v1"
 RESULT_PREFIX = "IOS_RECEIVER_BOOTSTRAP_RESULT_JSON="
 SENDER_RESULT_PREFIX = "IOS_SENDER_PROJECTION_RESULT_JSON="
 RECOVERY_RESULT_PREFIX = "IOS_NOTIFICATION_RECOVERY_RESULT_JSON="
+GROUP_OBSERVATION_RESULT_PREFIX = "IOS_GROUP_NOTIFICATION_OBSERVATION_RESULT_JSON="
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{4,160}$")
 _SAFE_NONCE = re.compile(r"^[A-Za-z0-9._:-]{12,160}$")
@@ -249,6 +265,19 @@ class _DeviceControl:
                 "--device",
                 self.receiver,
                 "--terminate-existing",
+            ],
+            label,
+            trailing=[BUNDLE_ID],
+        )
+
+    def terminate(self, label: str) -> bool:
+        return self.run(
+            [
+                "device",
+                "process",
+                "terminate",
+                "--device",
+                self.receiver,
             ],
             label,
             trailing=[BUNDLE_ID],
@@ -835,6 +864,351 @@ def _notification_recovery_action(args: argparse.Namespace) -> dict[str, Any]:
     return host_receipt
 
 
+def _read_group_observation_result(
+    path: Path,
+    *,
+    nonce: str,
+    receiver: str,
+    phase: str,
+    group_sha256: str,
+    event_sha256: str,
+    target_message_sha256: str,
+) -> dict[str, Any]:
+    try:
+        metadata = path.lstat()
+        raw = path.read_bytes()
+        result = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise BootstrapFailure(
+            "the group notification observation result is unreadable"
+        ) from error
+    exact_keys = {
+        "schema",
+        "action",
+        "phase",
+        "captureNonce",
+        "receiverDeviceId",
+        "bundleId",
+        "expectedGroupIdSha256",
+        "expectedEventIdSha256",
+        "expectedTargetMessageIdSha256",
+        "status",
+        "resultCode",
+        "matchingRemoteCount",
+        "matchingLocalCount",
+        "matchingUsefulProviderCount",
+        "matchingSanitizedProviderCount",
+        "matchingFlutterLocalCount",
+        "matchingUnknownCount",
+        "matchingTotalCount",
+        "stableSampleCount",
+        "stableSampleIntervalMilliseconds",
+        "observationDeadlineMilliseconds",
+        "sampledThroughDeadline",
+        "badSourceSeen",
+        "duplicateSeen",
+        "requestIdentifierSha256",
+        "childBuildCount",
+        "manualActionCount",
+        "completedAt",
+    }
+    completed_at = _parse_utc(result.get("completedAt") if isinstance(result, dict) else None)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    integer_keys = (
+        "matchingRemoteCount",
+        "matchingLocalCount",
+        "matchingUsefulProviderCount",
+        "matchingSanitizedProviderCount",
+        "matchingFlutterLocalCount",
+        "matchingUnknownCount",
+        "matchingTotalCount",
+        "stableSampleCount",
+        "stableSampleIntervalMilliseconds",
+        "observationDeadlineMilliseconds",
+        "childBuildCount",
+        "manualActionCount",
+    )
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or path.is_symlink()
+        or metadata.st_mode & 0o077
+        or not isinstance(result, dict)
+        or len(raw) > 4096
+        or set(result) != exact_keys
+        or result.get("schema") != GROUP_OBSERVATION_RESULT_SCHEMA
+        or result.get("action") != "observe_group"
+        or result.get("phase") != phase
+        or result.get("captureNonce") != nonce
+        or result.get("receiverDeviceId") != receiver
+        or result.get("bundleId") != BUNDLE_ID
+        or result.get("expectedGroupIdSha256") != group_sha256
+        or result.get("expectedEventIdSha256") != event_sha256
+        or result.get("expectedTargetMessageIdSha256") != target_message_sha256
+        or result.get("status") not in {"passed", "failed"}
+        or _RESULT_CODE.fullmatch(str(result.get("resultCode", ""))) is None
+        or any(
+            not isinstance(result.get(key), int)
+            or isinstance(result.get(key), bool)
+            or int(result[key]) < 0
+            for key in integer_keys
+        )
+        or not isinstance(result.get("sampledThroughDeadline"), bool)
+        or not isinstance(result.get("badSourceSeen"), bool)
+        or not isinstance(result.get("duplicateSeen"), bool)
+        or not isinstance(result.get("requestIdentifierSha256"), list)
+        or len(result["requestIdentifierSha256"]) != result.get("matchingTotalCount")
+        or len(result["requestIdentifierSha256"]) > 8
+        or any(
+            not isinstance(value, str) or _SHA256.fullmatch(value) is None
+            for value in result["requestIdentifierSha256"]
+        )
+        or len(set(result["requestIdentifierSha256"]))
+        != len(result["requestIdentifierSha256"])
+        or completed_at is None
+        or completed_at > now + datetime.timedelta(seconds=15)
+        or now - completed_at > datetime.timedelta(minutes=5)
+    ):
+        raise BootstrapFailure(
+            "the group notification observation result failed exact validation"
+        )
+    exact_source = (
+        result["matchingRemoteCount"] == 1
+        and result["matchingLocalCount"] == 0
+        and result["matchingUsefulProviderCount"] == 1
+        and result["matchingSanitizedProviderCount"] == 0
+        and result["matchingFlutterLocalCount"] == 0
+        and result["matchingUnknownCount"] == 0
+        and result["matchingTotalCount"] == 1
+        and result["stableSampleCount"] == 3
+        and result["stableSampleIntervalMilliseconds"] == 500
+        and result["observationDeadlineMilliseconds"] == 8000
+        and result["sampledThroughDeadline"] is True
+        and result["badSourceSeen"] is False
+        and result["duplicateSeen"] is False
+        and result["childBuildCount"] == 0
+        and result["manualActionCount"] == 0
+    )
+    if result["status"] == "passed" and (
+        result["resultCode"] != "ok" or not exact_source
+    ):
+        raise BootstrapFailure(
+            "the group notification observation pass result is incomplete"
+        )
+    return result
+
+
+def _group_notification_observation_action(
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    receiver = args.receiver.strip()
+    nonce = args.nonce.strip()
+    phase = args.phase.strip()
+    group_sha256 = args.expected_group_id_sha256.strip()
+    event_sha256 = args.expected_event_id_sha256.strip()
+    target_message_sha256 = args.expected_target_message_id_sha256.strip()
+    if _SAFE_ID.fullmatch(receiver) is None or _SAFE_NONCE.fullmatch(nonce) is None:
+        raise BootstrapBlocked("receiver or capture nonce is invalid")
+    if phase not in {"message", "reaction"} or any(
+        _SHA256.fullmatch(value) is None
+        for value in (group_sha256, event_sha256, target_message_sha256)
+    ):
+        raise BootstrapBlocked("group observation phase or expected digest is invalid")
+    receipt_path = Path(args.group_observation_receipt).expanduser().absolute()
+    try:
+        receipt_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise BootstrapBlocked(
+            "the group observation receipt cannot be replaced"
+        ) from error
+    now = datetime.datetime.now(datetime.timezone.utc)
+    request = {
+        "schema": GROUP_OBSERVATION_REQUEST_SCHEMA,
+        "action": "observe_group",
+        "phase": phase,
+        "captureNonce": nonce,
+        "receiverDeviceId": receiver,
+        "bundleId": BUNDLE_ID,
+        "expectedGroupIdSha256": group_sha256,
+        "expectedEventIdSha256": event_sha256,
+        "expectedTargetMessageIdSha256": target_message_sha256,
+        "createdAt": _utc(now),
+        "expiresAt": _utc(now + datetime.timedelta(minutes=3)),
+    }
+    timeout = max(10, min(args.timeout_seconds, 180))
+    native_result: dict[str, Any] | None = None
+    primary: BaseException | None = None
+    termination_failed = False
+    with tempfile.TemporaryDirectory(prefix="mknoon-ios-group-observation-") as raw:
+        temporary = Path(raw)
+        os.chmod(temporary, 0o700)
+        control = _DeviceControl(receiver=receiver, temporary=temporary)
+        request_path = temporary / "group-observation-request.json"
+        pulled_result = temporary / "group-observation-result.json"
+        _write_json_private(request_path, request)
+        try:
+            if not control.copy_to(
+                request_path,
+                "stage-group-observation",
+                DEVICE_GROUP_OBSERVATION_REQUEST,
+            ):
+                raise BootstrapFailure(
+                    "the protected group observation could not be staged"
+                )
+            if not control.launch("process-group-observation"):
+                raise BootstrapFailure(
+                    "the app could not process the group observation"
+                )
+            deadline = time.monotonic() + timeout
+            attempt = 0
+            while time.monotonic() < deadline:
+                attempt += 1
+                pulled_result.unlink(missing_ok=True)
+                if control.copy_from(
+                    pulled_result,
+                    f"pull-group-observation-{attempt}",
+                    DEVICE_GROUP_OBSERVATION_RESULT,
+                ):
+                    try:
+                        os.chmod(pulled_result, 0o600)
+                    except OSError:
+                        pass
+                    native_result = _read_group_observation_result(
+                        pulled_result,
+                        nonce=nonce,
+                        receiver=receiver,
+                        phase=phase,
+                        group_sha256=group_sha256,
+                        event_sha256=event_sha256,
+                        target_message_sha256=target_message_sha256,
+                    )
+                    break
+                time.sleep(0.5)
+            if native_result is None:
+                raise BootstrapFailure(
+                    "the app did not finish the group observation in time"
+                )
+        except BaseException as error:
+            primary = error
+        finally:
+            # No cleanup request is staged here. Runner remains fenced until
+            # this pull completes, then is terminated so SpringBoard owns the
+            # next launch for the exact notification-card tap.
+            termination_failed = not control.terminate(
+                "terminate-after-group-observation"
+            )
+    if primary is not None:
+        raise primary
+    if termination_failed:
+        raise BootstrapFailure(
+            "Runner could not be terminated after the group observation pull"
+        )
+    assert native_result is not None
+    host_receipt = {
+        "schema": GROUP_OBSERVATION_HOST_RECEIPT_SCHEMA,
+        "action": "observe-group",
+        "phase": phase,
+        "status": "PASS" if native_result["status"] == "passed" else "FAIL",
+        "containsSecrets": False,
+        "bundleId": BUNDLE_ID,
+        "captureNonceSha256": hashlib.sha256(nonce.encode()).hexdigest(),
+        "receiverDeviceIdSha256": hashlib.sha256(receiver.encode()).hexdigest(),
+        "expectedGroupIdSha256": group_sha256,
+        "expectedEventIdSha256": event_sha256,
+        "expectedTargetMessageIdSha256": target_message_sha256,
+        "matchingRemoteCount": native_result["matchingRemoteCount"],
+        "matchingLocalCount": native_result["matchingLocalCount"],
+        "matchingUsefulProviderCount": native_result[
+            "matchingUsefulProviderCount"
+        ],
+        "matchingSanitizedProviderCount": native_result[
+            "matchingSanitizedProviderCount"
+        ],
+        "matchingFlutterLocalCount": native_result["matchingFlutterLocalCount"],
+        "matchingUnknownCount": native_result["matchingUnknownCount"],
+        "matchingTotalCount": native_result["matchingTotalCount"],
+        "stableSampleCount": native_result["stableSampleCount"],
+        "stableSampleIntervalMilliseconds": native_result[
+            "stableSampleIntervalMilliseconds"
+        ],
+        "observationDeadlineMilliseconds": native_result[
+            "observationDeadlineMilliseconds"
+        ],
+        "sampledThroughDeadline": native_result["sampledThroughDeadline"],
+        "badSourceSeen": native_result["badSourceSeen"],
+        "duplicateSeen": native_result["duplicateSeen"],
+        "requestIdentifierSha256": native_result["requestIdentifierSha256"],
+        "childBuildCount": native_result["childBuildCount"],
+        "manualActionCount": native_result["manualActionCount"],
+        "runnerTerminated": True,
+        "preTapCleanupLaunchCount": 0,
+        "resultCode": native_result["resultCode"],
+        "completedAt": native_result["completedAt"],
+    }
+    _write_json_private(receipt_path, host_receipt)
+    if native_result["status"] != "passed":
+        raise BootstrapFailure(
+            "native group observation failed closed: "
+            f"{native_result['resultCode']}"
+        )
+    return host_receipt
+
+
+def _cleanup_group_notification_observation_action(
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    receiver = args.receiver.strip()
+    nonce = args.nonce.strip()
+    if _SAFE_ID.fullmatch(receiver) is None or _SAFE_NONCE.fullmatch(nonce) is None:
+        raise BootstrapBlocked("receiver or capture nonce is invalid")
+    with tempfile.TemporaryDirectory(prefix="mknoon-ios-group-cleanup-") as raw:
+        temporary = Path(raw)
+        os.chmod(temporary, 0o700)
+        control = _DeviceControl(receiver=receiver, temporary=temporary)
+        request_path = temporary / "cleanup-request.json"
+        result_probe = temporary / "group-observation-result-probe.json"
+        request_probe = temporary / "group-observation-request-probe.json"
+        _write_json_private(
+            request_path,
+            _request(
+                action="cleanup",
+                nonce=nonce,
+                receiver=receiver,
+                now=datetime.datetime.now(datetime.timezone.utc),
+            ),
+        )
+        if not (
+            control.copy_to(request_path, "stage-group-observation-cleanup")
+            and control.launch("finish-group-observation-cleanup")
+        ):
+            raise BootstrapFailure(
+                "group notification observation cleanup could not be staged"
+            )
+        time.sleep(0.25)
+        if control.copy_from(
+            result_probe,
+            "verify-group-observation-result-cleanup",
+            DEVICE_GROUP_OBSERVATION_RESULT,
+        ) or control.copy_from(
+            request_probe,
+            "verify-group-observation-request-cleanup",
+            DEVICE_GROUP_OBSERVATION_REQUEST,
+        ):
+            raise BootstrapFailure(
+                "group notification observation cleanup did not complete"
+            )
+    return {
+        "schema": GROUP_OBSERVATION_HOST_RECEIPT_SCHEMA,
+        "action": "cleanup-group-observation",
+        "status": "PASS",
+        "containsSecrets": False,
+        "bundleId": BUNDLE_ID,
+        "captureNonceSha256": hashlib.sha256(nonce.encode()).hexdigest(),
+        "receiverDeviceIdSha256": hashlib.sha256(receiver.encode()).hexdigest(),
+    }
+
+
 def _capture(args: argparse.Namespace) -> dict[str, Any]:
     receiver = args.receiver.strip()
     nonce = args.nonce.strip()
@@ -1001,6 +1375,23 @@ def _recovery_die(status: str, detail: str, code: int) -> NoReturn:
     raise SystemExit(code)
 
 
+def _group_observation_die(status: str, detail: str, code: int) -> NoReturn:
+    print(
+        GROUP_OBSERVATION_RESULT_PREFIX
+        + json.dumps(
+            {
+                "schema": GROUP_OBSERVATION_HOST_RECEIPT_SCHEMA,
+                "status": status,
+                "containsSecrets": False,
+                "detail": detail,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+    raise SystemExit(code)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Capture a protected iOS APNs/provider receiver handoff"
@@ -1012,6 +1403,8 @@ def main() -> None:
             "seed-sender",
             "cleanup-sender",
             "prove-recovery",
+            "observe-group",
+            "cleanup-group-observation",
         ),
         default="capture-receiver",
     )
@@ -1022,10 +1415,19 @@ def main() -> None:
     parser.add_argument("--sender-receipt")
     parser.add_argument("--handoff")
     parser.add_argument("--recovery-receipt")
+    parser.add_argument("--group-observation-receipt")
+    parser.add_argument("--phase", choices=("message", "reaction"))
+    parser.add_argument("--expected-group-id-sha256")
+    parser.add_argument("--expected-event-id-sha256")
+    parser.add_argument("--expected-target-message-id-sha256")
     parser.add_argument("--timeout-seconds", type=int, default=120)
     options = parser.parse_args()
     sender_action = options.action in {"seed-sender", "cleanup-sender"}
     recovery_action = options.action == "prove-recovery"
+    group_observation_action = options.action in {
+        "observe-group",
+        "cleanup-group-observation",
+    }
     try:
         options.receiver = _required(options.receiver, "SIMS_IOS_PHYSICAL_DEVICE_ID")
         options.nonce = _required(
@@ -1052,24 +1454,59 @@ def main() -> None:
                 "SIMS_IOS_NOTIFICATION_RECOVERY_RECEIPT_PATH",
             )
             receipt = _notification_recovery_action(options)
+        elif group_observation_action:
+            if options.action == "observe-group":
+                options.group_observation_receipt = _required(
+                    options.group_observation_receipt,
+                    "SIMS_IOS_GROUP_NOTIFICATION_OBSERVATION_RECEIPT_PATH",
+                )
+                options.phase = _required(
+                    options.phase,
+                    "SIMS_IOS_GROUP_NOTIFICATION_PHASE",
+                )
+                options.expected_group_id_sha256 = _required(
+                    options.expected_group_id_sha256,
+                    "SIMS_IOS_GROUP_NOTIFICATION_EXPECTED_GROUP_ID_SHA256",
+                )
+                options.expected_event_id_sha256 = _required(
+                    options.expected_event_id_sha256,
+                    "SIMS_IOS_GROUP_NOTIFICATION_EXPECTED_EVENT_ID_SHA256",
+                )
+                options.expected_target_message_id_sha256 = _required(
+                    options.expected_target_message_id_sha256,
+                    "SIMS_IOS_GROUP_NOTIFICATION_EXPECTED_TARGET_MESSAGE_ID_SHA256",
+                )
+                receipt = _group_notification_observation_action(options)
+            else:
+                receipt = _cleanup_group_notification_observation_action(options)
         else:
             options.output = _required(
                 options.output, "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH"
             )
             handoff = _capture(options)
     except BootstrapBlocked as error:
+        if group_observation_action:
+            _group_observation_die("BLOCKED", str(error), 78)
         if recovery_action:
             _recovery_die("BLOCKED", str(error), 78)
         if sender_action:
             _sender_die("BLOCKED", str(error), 78)
         _die("BLOCKED", str(error), 78)
     except BootstrapFailure as error:
+        if group_observation_action:
+            _group_observation_die("FAIL", str(error), 1)
         if recovery_action:
             _recovery_die("FAIL", str(error), 1)
         if sender_action:
             _sender_die("FAIL", str(error), 1)
         _die("FAIL", str(error), 1)
     except BaseException as error:
+        if group_observation_action:
+            _group_observation_die(
+                "FAIL",
+                f"group notification observation stopped: {error.__class__.__name__}",
+                1,
+            )
         if recovery_action:
             _recovery_die(
                 "FAIL",
@@ -1087,6 +1524,12 @@ def main() -> None:
     if sender_action:
         print(
             SENDER_RESULT_PREFIX
+            + json.dumps(receipt, separators=(",", ":"), sort_keys=True)
+        )
+        return
+    if group_observation_action:
+        print(
+            GROUP_OBSERVATION_RESULT_PREFIX
             + json.dumps(receipt, separators=(",", ":"), sort_keys=True)
         )
         return

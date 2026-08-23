@@ -1,6 +1,84 @@
+import CryptoKit
 import Foundation
 import UIKit
 import UserNotifications
+
+struct IosGroupNotificationInventory: Equatable, Sendable {
+  static let stableSampleTarget = 3
+  static let stableSampleIntervalMilliseconds = 500
+  static let observationDeadlineMilliseconds = 8_000
+
+  let matchingRemoteCount: Int
+  let matchingLocalCount: Int
+  let matchingUsefulProviderCount: Int
+  let matchingSanitizedProviderCount: Int
+  let matchingFlutterLocalCount: Int
+  let matchingUnknownCount: Int
+  let requestIdentifierSha256: [String]
+
+  var matchingTotalCount: Int {
+    matchingUsefulProviderCount + matchingSanitizedProviderCount
+      + matchingFlutterLocalCount + matchingUnknownCount
+  }
+
+  static let empty = IosGroupNotificationInventory(
+    matchingRemoteCount: 0,
+    matchingLocalCount: 0,
+    matchingUsefulProviderCount: 0,
+    matchingSanitizedProviderCount: 0,
+    matchingFlutterLocalCount: 0,
+    matchingUnknownCount: 0,
+    requestIdentifierSha256: []
+  )
+
+  static func project(
+    _ notifications: [UNNotification],
+    expected: IosGroupNotificationExpectedHashes
+  ) -> IosGroupNotificationInventory {
+    var remote = 0
+    var local = 0
+    var useful = 0
+    var sanitized = 0
+    var flutterLocal = 0
+    var unknown = 0
+    var requestHashes: [String] = []
+    for notification in notifications.prefix(8) {
+      let request = notification.request
+      guard let source = IosGroupNotificationSourceClassifier.classify(
+        trigger: request.trigger,
+        userInfo: request.content.userInfo,
+        title: request.content.title,
+        body: request.content.body,
+        expected: expected
+      ) else { continue }
+      if request.trigger is UNPushNotificationTrigger {
+        remote += 1
+      } else {
+        local += 1
+      }
+      switch source {
+      case .usefulProviderRich: useful += 1
+      case .sanitizedProviderRich: sanitized += 1
+      case .flutterLocal: flutterLocal += 1
+      case .unknown: unknown += 1
+      }
+      requestHashes.append(sha256(request.identifier))
+    }
+    return IosGroupNotificationInventory(
+      matchingRemoteCount: remote,
+      matchingLocalCount: local,
+      matchingUsefulProviderCount: useful,
+      matchingSanitizedProviderCount: sanitized,
+      matchingFlutterLocalCount: flutterLocal,
+      matchingUnknownCount: unknown,
+      requestIdentifierSha256: requestHashes.sorted()
+    )
+  }
+
+  private static func sha256(_ value: String) -> String {
+    SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
+}
 
 /// Sendable, narrow projection of delivered notification content used only for
 /// exact group-invite retirement. Raw `userInfo` never crosses the notification

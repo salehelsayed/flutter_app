@@ -116,6 +116,9 @@ Future<int> _run(List<String> args) async {
       '--service-account',
       '--staging-manifest',
       '--prebuilt-android-apk',
+      '--prebuilt-android-build-report',
+      '--prebuilt-ios-bundle',
+      '--prebuilt-ios-build-report',
     ]) ...<String>[
       if (_valueFor(args, option) case final value?) ...<String>[option, value],
     ],

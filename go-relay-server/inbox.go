@@ -641,6 +641,9 @@ func (ps *PushService) SendGroupNotification(
 				message,
 			)
 		},
+		func(message *messaging.Message, platform string) *messaging.Message {
+			return projectGroupPushMessageForPlatform(message, platform, messageID)
+		},
 	)
 }
 
@@ -1271,6 +1274,47 @@ func projectPushMessageForPlatform(
 		}
 	}
 	return &projected
+}
+
+// boundedGroupMessageIdentity converts the canonical message ID into a stable
+// 62-byte maximum APNs collapse identity (`group-message:` plus 48 SHA-256 hex
+// characters). Blank IDs remain non-collapsible instead of merging unrelated
+// messages.
+func boundedGroupMessageIdentity(messageID string) string {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(messageID))
+	return fmt.Sprintf("group-message:%x", digest[:24])
+}
+
+// projectGroupPushMessageForPlatform adds the per-message retry identity only
+// to the iOS group-message copy. It delegates all platform stripping to the
+// shared projector and clones APNS/header ownership before mutation.
+func projectGroupPushMessageForPlatform(
+	message *messaging.Message,
+	platform string,
+	messageID string,
+) *messaging.Message {
+	projected := projectPushMessageForPlatform(message, platform)
+	identity := boundedGroupMessageIdentity(messageID)
+	if projected == nil ||
+		strings.ToLower(strings.TrimSpace(platform)) != "ios" ||
+		identity == "" ||
+		projected.APNS == nil {
+		return projected
+	}
+
+	apns := *projected.APNS
+	headers := make(map[string]string, len(projected.APNS.Headers)+1)
+	for key, value := range projected.APNS.Headers {
+		headers[key] = value
+	}
+	headers["apns-collapse-id"] = identity
+	apns.Headers = headers
+	projected.APNS = &apns
+	return projected
 }
 
 // projectStoredDirectPushMessageForPlatform adds a collapse identity only at
