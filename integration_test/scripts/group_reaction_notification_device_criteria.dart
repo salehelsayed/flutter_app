@@ -2867,7 +2867,7 @@ Future<void> _validateIosChatGroupMessageAndReactionArtifact({
       index: 0,
       phase: 'message',
       payloadKind: 'group_message',
-      expectedMetricFamily: 'relay_group_content_wake_total',
+      expectedMetricFamily: relayPushSentCounter,
       identities: identities,
       expectedRecipientDeviceId: expectedRecipientDeviceId,
       failures: failures,
@@ -3329,6 +3329,7 @@ _Plan397WindowEvidence? _validatePlan397Window({
   );
   final baseline = provider['baseline'];
   final finalScrape = provider['final'];
+  final messageProvider = phase == 'message';
   if (baseline is! String || finalScrape is! String) {
     failures.add('$path.provider metric scrapes must be strings');
   } else {
@@ -3336,16 +3337,29 @@ _Plan397WindowEvidence? _validatePlan397Window({
       '$relayMetricsPhaseMarker$relayMetricsBaselinePhase\n$baseline'
       '$relayMetricsPhaseMarker$relayMetricsFinalPhase\n$finalScrape',
     );
-    final attempted = metrics?.delta(
-      relayCounterSeries(expectedMetricFamily, const <String, String>{
-        'outcome': 'attempted',
-      }),
-    );
+    final attempted = messageProvider
+        ? null
+        : metrics?.delta(
+            relayCounterSeries(expectedMetricFamily, const <String, String>{
+              'outcome': 'attempted',
+            }),
+          );
     final push = metrics == null
         ? null
         : relayCounterFamilyDelta(metrics, relayPushSentCounter);
-    if (attempted != 1 || push != 1) {
+    if (messageProvider) {
+      if (push == null || push < 1) {
+        failures.add(
+          '$path.provider does not re-derive the shared provider-result floor',
+        );
+      }
+    } else if (attempted != 1 || push != 1) {
       failures.add('$path.provider does not re-derive one attributed send');
+    }
+    final recordedPush = provider['pushSuccessDelta'];
+    if (push != null &&
+        (recordedPush is! num || recordedPush.toDouble() != push)) {
+      failures.add('$path.provider.pushSuccessDelta is not scrape-derived');
     }
     if (sha256.convert(utf8.encode(baseline)).toString() !=
             provider['baselineSha256'] ||
@@ -3355,13 +3369,21 @@ _Plan397WindowEvidence? _validatePlan397Window({
       failures.add('$path.provider metric digests are stale or unbound');
     }
   }
-  for (final entry in const <String, Object?>{
-    'attemptedDelta': 1,
-    'pushSuccessDelta': 1,
-    'relayAttributed': true,
-    'providerResultCount': 1,
-    'deletedOrUnattributedEvidence': false,
-  }.entries) {
+  final exactProviderValues = messageProvider
+      ? const <String, Object?>{
+          'attemptedDelta': null,
+          'relayAttributed': false,
+          'providerResultCount': null,
+          'deletedOrUnattributedEvidence': false,
+        }
+      : const <String, Object?>{
+          'attemptedDelta': 1,
+          'pushSuccessDelta': 1,
+          'relayAttributed': true,
+          'providerResultCount': 1,
+          'deletedOrUnattributedEvidence': false,
+        };
+  for (final entry in exactProviderValues.entries) {
     final actual = provider[entry.key];
     final equal = actual is num && entry.value is num
         ? actual.toDouble() == (entry.value! as num).toDouble()
@@ -3369,6 +3391,13 @@ _Plan397WindowEvidence? _validatePlan397Window({
     if (!equal) {
       failures.add('$path.provider.${entry.key} must equal ${entry.value}');
     }
+  }
+  if (messageProvider &&
+      (provider['pushSuccessDelta'] is! num ||
+          (provider['pushSuccessDelta']! as num) < 1)) {
+    failures.add(
+      '$path.provider.pushSuccessDelta must satisfy the shared floor',
+    );
   }
   if (!_isSha256(provider['baselineSha256']) ||
       !_isSha256(provider['finalSha256'])) {

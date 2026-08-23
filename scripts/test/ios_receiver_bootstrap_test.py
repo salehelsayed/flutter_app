@@ -660,6 +660,8 @@ class IosReceiverBootstrapTest(unittest.TestCase):
             self.assertLess(launches[0][0], pulls[0], commands)
             self.assertLess(pulls[0], terminations[0], commands)
             self.assertEqual(terminations[0], len(commands) - 1, commands)
+            self.assertIn("--pid 4242", commands[terminations[0]], commands)
+            self.assertNotIn("com.mknoon.app", commands[terminations[0]], commands)
             self.assertEqual(state["lastAction"], "observe_group")
             self.assertNotIn("cleanup", " ".join(commands))
 
@@ -788,7 +790,10 @@ elif args[:4] == ['devicectl','device','copy','from']:
   destination.chmod(0o600)
 for option in ('--json-output','--log-output'):
   if option in args:
-    pathlib.Path(value(option)).write_text('{}')
+    output={}
+    if option == '--json-output' and args[:4] == ['devicectl','device','process','launch']:
+      output={'result':{'process':{'processIdentifier':4242}}}
+    pathlib.Path(value(option)).write_text(json.dumps(output))
 state_path.write_text(json.dumps(state))
 '''
             ),

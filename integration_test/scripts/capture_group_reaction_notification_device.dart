@@ -1944,7 +1944,7 @@ class _Plan257Capture {
     await performAction();
 
     final metricFamily = phase == 'message'
-        ? _relayGroupContentWakeCounter
+        ? relayPushSentCounter
         : relayGroupReactionWakeCounter;
     final provider = await _waitForPlan397ProviderWindow(
       phase: phase,
@@ -2050,21 +2050,33 @@ class _Plan257Capture {
             'chat_group_${phase}_relay_metric_window_unusable',
           );
         }
-        final attempted = metrics.delta(
-          relayCounterSeries(family, const <String, String>{
-            'outcome': 'attempted',
-          }),
-        );
+        final messagePhase = phase == 'message';
+        final attempted = messagePhase
+            ? null
+            : metrics.delta(
+                relayCounterSeries(family, const <String, String>{
+                  'outcome': 'attempted',
+                }),
+              );
         final push = relayCounterFamilyDelta(metrics, relayPushSentCounter);
-        if ((attempted != null && attempted > 1) ||
-            (push != null && push > 1)) {
+        if (!messagePhase &&
+            ((attempted != null && attempted > 1) ||
+                (push != null && push > 1))) {
           throw _CaptureFailure.capture(
             stage,
             'chat_group_${phase}_provider_window_not_single: '
             'attempted=$attempted push=$push',
           );
         }
-        if (attempted != 1 || push != 1) return null;
+        if (messagePhase) {
+          // Ordinary group traffic is stored by GroupInboxStore.fanOutPush,
+          // which has no group-scoped wake counter. The shared provider-result
+          // family can therefore provide only a floor; exact sender/custody,
+          // NSE, native inventory, and tap evidence below supplies attribution.
+          if (push == null || push < 1) return null;
+        } else if (attempted != 1 || push != 1) {
+          return null;
+        }
         return <String, Object?>{
           'metricFamily': family,
           'attemptedDelta': attempted,
@@ -2073,8 +2085,8 @@ class _Plan257Capture {
           'final': finalScrape,
           'baselineSha256': sha256.convert(utf8.encode(baseline)).toString(),
           'finalSha256': sha256.convert(utf8.encode(finalScrape)).toString(),
-          'relayAttributed': true,
-          'providerResultCount': 1,
+          'relayAttributed': !messagePhase,
+          'providerResultCount': messagePhase ? null : 1,
           'deletedOrUnattributedEvidence': false,
         };
       },
@@ -3130,10 +3142,12 @@ class _Plan257Capture {
     await _waitForGroupInviteEntry(senderId, const Duration(minutes: 3));
     await _waitForUiText(senderId, _groupName, const Duration(minutes: 1));
     await _tapText(senderId, 'Accept');
-    await _waitForUiText(
-      senderId,
-      'Open group $_groupName',
+    await _waitForValue<bool>(
+      'accepted group surface for $_groupName on $senderId',
       const Duration(minutes: 3),
+      () async => isAcceptedGroupSurface(await _uiDump(senderId), _groupName)
+          ? true
+          : null,
     );
   }
 

@@ -221,14 +221,15 @@ class _DeviceControl:
         self.receiver = receiver
         self.temporary = temporary
         self.command_index = 0
+        self.launched_process_identifier: int | None = None
 
-    def run(
+    def _run_with_json(
         self,
         arguments: list[str],
         label: str,
         timeout: int = 30,
         trailing: list[str] | None = None,
-    ) -> bool:
+    ) -> tuple[bool, Path]:
         self.command_index += 1
         json_output = self.temporary / f"{self.command_index}-{label}.json"
         log_output = self.temporary / f"{self.command_index}-{label}.log"
@@ -253,11 +254,26 @@ class _DeviceControl:
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
-            return False
-        return result.returncode == 0
+            return False, json_output
+        return result.returncode == 0, json_output
+
+    def run(
+        self,
+        arguments: list[str],
+        label: str,
+        timeout: int = 30,
+        trailing: list[str] | None = None,
+    ) -> bool:
+        succeeded, _ = self._run_with_json(
+            arguments,
+            label,
+            timeout,
+            trailing,
+        )
+        return succeeded
 
     def launch(self, label: str) -> bool:
-        return self.run(
+        succeeded, json_output = self._run_with_json(
             [
                 "device",
                 "process",
@@ -269,19 +285,41 @@ class _DeviceControl:
             label,
             trailing=[BUNDLE_ID],
         )
+        if not succeeded:
+            return False
+        try:
+            payload = json.loads(json_output.read_text(encoding="utf-8"))
+            process_identifier = payload["result"]["process"]["processIdentifier"]
+        except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError):
+            return False
+        if (
+            not isinstance(process_identifier, int)
+            or isinstance(process_identifier, bool)
+            or process_identifier <= 0
+        ):
+            return False
+        self.launched_process_identifier = process_identifier
+        return True
 
     def terminate(self, label: str) -> bool:
-        return self.run(
+        process_identifier = self.launched_process_identifier
+        if process_identifier is None:
+            return False
+        succeeded = self.run(
             [
                 "device",
                 "process",
                 "terminate",
                 "--device",
                 self.receiver,
+                "--pid",
+                str(process_identifier),
             ],
             label,
-            trailing=[BUNDLE_ID],
         )
+        if succeeded:
+            self.launched_process_identifier = None
+        return succeeded
 
     def copy_to(
         self,

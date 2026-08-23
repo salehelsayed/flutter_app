@@ -1803,6 +1803,30 @@ void main() {
       expect(method, contains('allowFail: true'));
     });
 
+    test(
+      'chat-group Android invite acceptance permits direct conversation destination',
+      () {
+        final source = File(
+          'integration_test/scripts/capture_group_reaction_notification_device.dart',
+        ).readAsStringSync();
+        final methodStart = source.indexOf(
+          'Future<void> _acceptIosCreatedGroupOnAndroid()',
+        );
+        final methodEnd = source.indexOf(
+          'Future<void> _startIosSystemLog()',
+          methodStart,
+        );
+        expect(methodStart, greaterThanOrEqualTo(0));
+        expect(methodEnd, greaterThan(methodStart));
+
+        final method = source.substring(methodStart, methodEnd);
+        expect(method, contains("await _tapText(senderId, 'Accept');"));
+        expect(method, contains('isAcceptedGroupSurface('));
+        expect(method, contains('await _uiDump(senderId)'));
+        expect(method, isNot(contains("'Open group \$_groupName'")));
+      },
+    );
+
     test('chat-group iOS setup app launches without debug tooling', () {
       final source = File(
         'integration_test/scripts/capture_group_reaction_notification_device.dart',
@@ -2144,6 +2168,39 @@ void main() {
       expect(result.ok, isFalse);
       expect(result.detail, contains('distinct provider baselines'));
     });
+
+    test(
+      'chat-group ordinary message accepts shared provider floor without group-content wake counter',
+      () async {
+        final artifact = await _writePlan397ArtifactFixture(root);
+        final value = _readArtifact(artifact);
+        final windows = value['windows'] as List<dynamic>;
+        final provider = (windows[0] as Map)['provider'] as Map;
+        const baseline =
+            '$relayMetricsLivenessSentinel 4100\n'
+            '$relayPushSentCounter{result="success"} 700\n';
+        const finalScrape =
+            '$relayMetricsLivenessSentinel 4101\n'
+            '$relayPushSentCounter{result="success"} 702\n';
+        provider
+          ..['metricFamily'] = relayPushSentCounter
+          ..['attemptedDelta'] = null
+          ..['pushSuccessDelta'] = 2
+          ..['baseline'] = baseline
+          ..['final'] = finalScrape
+          ..['baselineSha256'] = _plan397FixtureDigest(baseline)
+          ..['finalSha256'] = _plan397FixtureDigest(finalScrape)
+          ..['relayAttributed'] = false
+          ..['providerResultCount'] = null;
+        _writeArtifact(artifact, value);
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: iosChatGroupMessageAndReactionScenarioId,
+          artifactFile: artifact,
+        );
+        expect(result.ok, isTrue, reason: result.detail);
+      },
+    );
   });
 
   group('Plan 257 relay process flag preflight', () {
@@ -2505,27 +2562,32 @@ Future<File> _writePlan397ArtifactFixture(Directory root) async {
     },
   );
 
-  Map<String, Object?> metricWindow(String phase, String family, int offset) {
+  Map<String, Object?> metricWindow(String phase, int offset) {
+    final reaction = phase == 'reaction';
+    final family = reaction
+        ? relayGroupReactionWakeCounter
+        : relayPushSentCounter;
     final attempted = 40 + offset;
     final pushed = 900 + offset;
+    final pushDelta = reaction ? 1 : 2;
     final baseline =
         '$relayMetricsLivenessSentinel ${2300 + offset}\n'
-        '$family{outcome="attempted"} $attempted\n'
+        '${reaction ? '$family{outcome="attempted"} $attempted\n' : ''}'
         '$relayPushSentCounter{result="success"} $pushed\n';
     final finalScrape =
         '$relayMetricsLivenessSentinel ${2301 + offset}\n'
-        '$family{outcome="attempted"} ${attempted + 1}\n'
-        '$relayPushSentCounter{result="success"} ${pushed + 1}\n';
+        '${reaction ? '$family{outcome="attempted"} ${attempted + 1}\n' : ''}'
+        '$relayPushSentCounter{result="success"} ${pushed + pushDelta}\n';
     return <String, Object?>{
       'metricFamily': family,
-      'attemptedDelta': 1,
-      'pushSuccessDelta': 1,
+      'attemptedDelta': reaction ? 1 : null,
+      'pushSuccessDelta': pushDelta,
       'baseline': baseline,
       'final': finalScrape,
       'baselineSha256': _plan397FixtureDigest(baseline),
       'finalSha256': _plan397FixtureDigest(finalScrape),
-      'relayAttributed': true,
-      'providerResultCount': 1,
+      'relayAttributed': reaction,
+      'providerResultCount': reaction ? 1 : null,
       'deletedOrUnattributedEvidence': false,
     };
   }
@@ -2559,13 +2621,7 @@ Future<File> _writePlan397ArtifactFixture(Directory root) async {
             : null,
         'rawIdentifiersPersisted': false,
       },
-      'provider': metricWindow(
-        phase,
-        reaction
-            ? relayGroupReactionWakeCounter
-            : 'relay_group_content_wake_total',
-        reaction ? 20 : 0,
-      ),
+      'provider': metricWindow(phase, reaction ? 20 : 0),
       'nse': <String, Object?>{
         'payloadKind': reaction ? 'group_reaction' : 'group_message',
         'decryptOkCount': 1,
