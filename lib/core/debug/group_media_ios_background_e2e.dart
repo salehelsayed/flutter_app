@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 import 'group_media_ios_background_e2e_contract.dart';
+import 'group_reaction_notification_ios_setup_profile.dart';
 export 'group_media_ios_background_e2e_contract.dart';
 
 typedef GroupMediaIosLoadAttachment =
@@ -870,16 +871,19 @@ Future<Map<String, Object?>> runGroupMediaIosBackgroundE2EAction({
   throw StateError('unreachable iOS group-media action');
 }
 
-/// Exact release-mode exception for the signed physical-iOS E2E profile.
+/// Exact release-mode exceptions for signed physical-iOS E2E profiles.
 /// Arbitrary release builds remain ineligible even if a caller accidentally
-/// sets `E2E_TEST_MODE`.
+/// sets `E2E_TEST_MODE`. Plan 397's setup profile owns only the temporary
+/// identity/config file channel; it does not become a disposable P269 build.
 bool allowsGroupMediaIosIntroFileChannel({
   required bool isDebugMode,
   required bool e2eTestMode,
   required String installedProfileId,
 }) =>
     e2eTestMode &&
-    (isDebugMode || installedProfileId == groupMediaIosBackgroundBuildProfile);
+    (isDebugMode ||
+        installedProfileId == groupMediaIosBackgroundBuildProfile ||
+        installedProfileId == groupReactionNotificationIosSetupBuildProfile);
 
 Future<Map<String, Object?>> _waitForGroupMediaIosObservation({
   required GroupMediaIosBackgroundE2EController controller,

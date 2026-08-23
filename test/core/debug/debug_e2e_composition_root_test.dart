@@ -116,6 +116,12 @@ void main() {
       directTextProofMode: false,
       installedSimsProfile: 'ios.device.production',
     );
+    const plan397IosSetup = DebugE2EActivation(
+      isDebugMode: false,
+      e2eTestMode: true,
+      directTextProofMode: false,
+      installedSimsProfile: 'ios.device.group_reaction_notification_397',
+    );
 
     expect(emptyDebug.constructsControllerRoot, isFalse);
     expect(emptyRelease.constructsControllerRoot, isFalse);
@@ -126,6 +132,7 @@ void main() {
       androidDisposable,
       iosDisposableRelease,
       iosProduction,
+      plan397IosSetup,
     ]) {
       expect(activation.constructsControllerRoot, isTrue);
       expect(activation.constructsPrivateMediaController, isTrue);
@@ -137,6 +144,7 @@ void main() {
     expect(androidDisposable.startsIntroPoller, isTrue);
     expect(iosDisposableRelease.startsIntroPoller, isTrue);
     expect(iosProduction.startsIntroPoller, isFalse);
+    expect(plan397IosSetup.startsIntroPoller, isTrue);
     expect(iosProduction.startsIosSenderProjection, isTrue);
     expect(iosProduction.publishesIosReceiverBootstrap, isTrue);
     expect(iosProduction.decoratesIosGroupMediaProof, isFalse);
@@ -144,6 +152,8 @@ void main() {
     expect(androidDisposable.suppliesDisposableNodeStart, isTrue);
     expect(iosDisposableRelease.suppliesDisposableNodeStart, isTrue);
     expect(iosDisposableRelease.decoratesIosGroupMediaProof, isTrue);
+    expect(plan397IosSetup.suppliesDisposableNodeStart, isFalse);
+    expect(plan397IosSetup.decoratesIosGroupMediaProof, isFalse);
   });
 
   test(

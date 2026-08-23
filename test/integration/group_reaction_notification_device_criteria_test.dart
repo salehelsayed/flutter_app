@@ -211,64 +211,74 @@ void main() {
     // on the relay's own counters rather than on a journal substring.
     // -----------------------------------------------------------------------
 
-    test('reaction provider evidence accepts the v1.8.0 outcome journal', () async {
-      const scenario = 'android_group_reaction_recipient';
-      final artifact = await _writeArtifactFixture(tempDirectory, scenario);
-      _rewriteEvidence(
-        artifact,
-        'provider_fcm',
-        '2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
-            'total_attempts=3\n'
-            '2026-07-12T12:00:05.000Z [PUSH] outcome=success '
-            'fallback=strict\n',
-      );
-
-      final result = await validateGroupReactionNotificationArtifact(
-        scenario: scenario,
-        artifactFile: artifact,
-      );
-
-      expect(result.ok, isTrue, reason: result.detail);
-    });
-
-    test('reaction provider evidence rejects a journal with no accepted send', () async {
-      const scenario = 'android_group_reaction_recipient';
-      // Reused VERBATIM from the payload lane's rejection list
-      // (`android_notification_payload_campaign_support_test.dart:401-417`),
-      // plus `[PUSH] outcome=registered`. `registered` is named here rather
-      // than left to the executor because it is the one negative that a lazy
-      // repair — `contains('[PUSH]')` — would let through.
-      for (final journal in const <String>[
-        '2026-07-12T12:00:04.000Z [PUSH] outcome=failed attempts=3',
-        '2026-07-12T12:00:04.000Z [PUSH] outcome=retrying attempt=1 '
-            'total_attempts=3',
-        '2026-07-12T12:00:04.000Z [PUSH] outcome=invalid_token '
-            'reason=typed_unregistered',
-        '2026-07-12T12:00:04.000Z [PUSH] provider unavailable '
-            'outcome=provider_unavailable',
-        '2026-07-12T12:00:04.000Z [PUSH] outcome=success_but_not_really',
-        '2026-07-12T12:00:04.000Z [PUSH] outcome=registered',
-        // The pre-v1.8.0 recipient-bearing line `8d86501e4` deleted. Accepting
-        // it would let a rolled-back relay pass the repaired grammar.
-        '2026-07-12T12:00:04.000Z [PUSH] Notification sent to '
-            '12D3KooWRecipientPee (attempt 1/3)',
-      ]) {
-        final artifact = await _writeArtifactFixture(
-          Directory('${tempDirectory.path}/${journal.hashCode}')
-            ..createSync(recursive: true),
-          scenario,
+    test(
+      'reaction provider evidence accepts the v1.8.0 outcome journal',
+      () async {
+        const scenario = 'android_group_reaction_recipient';
+        final artifact = await _writeArtifactFixture(tempDirectory, scenario);
+        _rewriteEvidence(
+          artifact,
+          'provider_fcm',
+          '2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
+              'total_attempts=3\n'
+              '2026-07-12T12:00:05.000Z [PUSH] outcome=success '
+              'fallback=strict\n',
         );
-        _rewriteEvidence(artifact, 'provider_fcm', '$journal\n');
 
         final result = await validateGroupReactionNotificationArtifact(
           scenario: scenario,
           artifactFile: artifact,
         );
 
-        expect(result.ok, isFalse, reason: journal);
-        expect(result.detail, contains('provider acceptance'), reason: journal);
-      }
-    });
+        expect(result.ok, isTrue, reason: result.detail);
+      },
+    );
+
+    test(
+      'reaction provider evidence rejects a journal with no accepted send',
+      () async {
+        const scenario = 'android_group_reaction_recipient';
+        // Reused VERBATIM from the payload lane's rejection list
+        // (`android_notification_payload_campaign_support_test.dart:401-417`),
+        // plus `[PUSH] outcome=registered`. `registered` is named here rather
+        // than left to the executor because it is the one negative that a lazy
+        // repair — `contains('[PUSH]')` — would let through.
+        for (final journal in const <String>[
+          '2026-07-12T12:00:04.000Z [PUSH] outcome=failed attempts=3',
+          '2026-07-12T12:00:04.000Z [PUSH] outcome=retrying attempt=1 '
+              'total_attempts=3',
+          '2026-07-12T12:00:04.000Z [PUSH] outcome=invalid_token '
+              'reason=typed_unregistered',
+          '2026-07-12T12:00:04.000Z [PUSH] provider unavailable '
+              'outcome=provider_unavailable',
+          '2026-07-12T12:00:04.000Z [PUSH] outcome=success_but_not_really',
+          '2026-07-12T12:00:04.000Z [PUSH] outcome=registered',
+          // The pre-v1.8.0 recipient-bearing line `8d86501e4` deleted. Accepting
+          // it would let a rolled-back relay pass the repaired grammar.
+          '2026-07-12T12:00:04.000Z [PUSH] Notification sent to '
+              '12D3KooWRecipientPee (attempt 1/3)',
+        ]) {
+          final artifact = await _writeArtifactFixture(
+            Directory('${tempDirectory.path}/${journal.hashCode}')
+              ..createSync(recursive: true),
+            scenario,
+          );
+          _rewriteEvidence(artifact, 'provider_fcm', '$journal\n');
+
+          final result = await validateGroupReactionNotificationArtifact(
+            scenario: scenario,
+            artifactFile: artifact,
+          );
+
+          expect(result.ok, isFalse, reason: journal);
+          expect(
+            result.detail,
+            contains('provider acceptance'),
+            reason: journal,
+          );
+        }
+      },
+    );
 
     test('provider evidence is graded by counter delta, per lane', () async {
       for (final scenario in const <String>[
@@ -360,41 +370,44 @@ void main() {
       }
     });
 
-    test('background-connected push origin is proven by the v1.8.0 wake line', () async {
-      const scenario = groupReactionBackgroundConnectedScenarioId;
-      final artifact = await _writeArtifactFixture(tempDirectory, scenario);
+    test(
+      'background-connected push origin is proven by the v1.8.0 wake line',
+      () async {
+        const scenario = groupReactionBackgroundConnectedScenarioId;
+        final artifact = await _writeArtifactFixture(tempDirectory, scenario);
 
-      final accepted = await validateGroupReactionNotificationArtifact(
-        scenario: scenario,
-        artifactFile: artifact,
-      );
-      expect(accepted.ok, isTrue, reason: accepted.detail);
+        final accepted = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+        expect(accepted.ok, isTrue, reason: accepted.detail);
 
-      // The deleted `remote_type=` attribute must not come back as a
-      // requirement: a real v1.8.0 journal does not carry it.
-      final withoutDispatch = await _writeArtifactFixture(
-        Directory('${tempDirectory.path}/no-dispatch')
-          ..createSync(recursive: true),
-        scenario,
-      );
-      _rewriteEvidence(
-        withoutDispatch,
-        'relay',
-        '2026-07-12T12:00:01.000Z [GROUP_INBOX] Stored message for group '
-            'group_hash=group-257\n'
-            '2026-07-12T12:00:03.500Z [GROUP_REACTION_WAKE] '
-            'outcome=no_wake_recipients\n'
-            '2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
-            'total_attempts=3\n',
-      );
+        // The deleted `remote_type=` attribute must not come back as a
+        // requirement: a real v1.8.0 journal does not carry it.
+        final withoutDispatch = await _writeArtifactFixture(
+          Directory('${tempDirectory.path}/no-dispatch')
+            ..createSync(recursive: true),
+          scenario,
+        );
+        _rewriteEvidence(
+          withoutDispatch,
+          'relay',
+          '2026-07-12T12:00:01.000Z [GROUP_INBOX] Stored message for group '
+              'group_hash=group-257\n'
+              '2026-07-12T12:00:03.500Z [GROUP_REACTION_WAKE] '
+              'outcome=no_wake_recipients\n'
+              '2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
+              'total_attempts=3\n',
+        );
 
-      final rejected = await validateGroupReactionNotificationArtifact(
-        scenario: scenario,
-        artifactFile: withoutDispatch,
-      );
-      expect(rejected.ok, isFalse);
-      expect(rejected.detail, contains('push-origin discrimination'));
-    });
+        final rejected = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: withoutDispatch,
+        );
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('push-origin discrimination'));
+      },
+    );
 
     test('the reaction lane calls the shared v1.8.0 predicate', () {
       final criteria = File(
@@ -422,14 +435,16 @@ void main() {
         r"r'\[PUSH\]\s+outcome=success",
       ].join();
       final definingFiles = <String>[];
-      for (final entity in Directory('integration_test')
-          .listSync(recursive: true)
-          .followedBy(Directory('lib').listSync(recursive: true))
-          .followedBy(Directory('test').listSync(recursive: true))) {
+      for (final entity
+          in Directory('integration_test')
+              .listSync(recursive: true)
+              .followedBy(Directory('lib').listSync(recursive: true))
+              .followedBy(Directory('test').listSync(recursive: true))) {
         if (entity is! File || !entity.path.endsWith('.dart')) continue;
-        if (entity.readAsStringSync().replaceAll(RegExp(r'\s+'), '').contains(
-          needle,
-        )) {
+        if (entity
+            .readAsStringSync()
+            .replaceAll(RegExp(r'\s+'), '')
+            .contains(needle)) {
           definingFiles.add(entity.path);
         }
       }
@@ -1046,18 +1061,16 @@ void main() {
         _notificationRecordBlocks(
           appPackage: appPackage,
           blocks: <String, List<({int id, String title, String body})>>{
-            'notification_reaction_first.log': <
-              ({int id, String title, String body})
-            >[
-              card(257, gradedGroup, reactionBody),
-              card(389, warmupGroup, warmupBody),
-            ],
-            'notification_reaction_replacement.log': <
-              ({int id, String title, String body})
-            >[
-              card(257, gradedGroup, reactionBody),
-              card(389, warmupGroup, warmupBody),
-            ],
+            'notification_reaction_first.log':
+                <({int id, String title, String body})>[
+                  card(257, gradedGroup, reactionBody),
+                  card(389, warmupGroup, warmupBody),
+                ],
+            'notification_reaction_replacement.log':
+                <({int id, String title, String body})>[
+                  card(257, gradedGroup, reactionBody),
+                  card(389, warmupGroup, warmupBody),
+                ],
           },
         ),
       );
@@ -1085,15 +1098,15 @@ void main() {
         _notificationRecordBlocks(
           appPackage: appPackage,
           blocks: <String, List<({int id, String title, String body})>>{
-            'notification_reaction_first.log': <
-              ({int id, String title, String body})
-            >[
-              card(257, gradedGroup, reactionBody),
-              card(389, warmupGroup, warmupBody),
-            ],
-            'notification_reaction_replacement.log': <
-              ({int id, String title, String body})
-            >[card(389, warmupGroup, warmupBody)],
+            'notification_reaction_first.log':
+                <({int id, String title, String body})>[
+                  card(257, gradedGroup, reactionBody),
+                  card(389, warmupGroup, warmupBody),
+                ],
+            'notification_reaction_replacement.log':
+                <({int id, String title, String body})>[
+                  card(389, warmupGroup, warmupBody),
+                ],
           },
         ),
       );
@@ -1111,42 +1124,46 @@ void main() {
     // warm-up group would accept any third card, and with it a duplicate card
     // in an unrelated conversation, a leaked card, and a card posted by a path
     // the lane never exercises.
-    test('an app card outside the graded and warm-up groups is rejected', () async {
-      final artifact = await _writeArtifactFixture(
-        tempDirectory,
-        reactionScenario,
-      );
-      _rewriteEvidence(
-        artifact,
-        'android_notification_records',
-        _notificationRecordBlocks(
-          appPackage: appPackage,
-          blocks: <String, List<({int id, String title, String body})>>{
-            'notification_reaction_first.log': <
-              ({int id, String title, String body})
-            >[
-              card(257, gradedGroup, reactionBody),
-              card(389, warmupGroup, warmupBody),
-              card(701, foreignGroup, 'unrelated conversation copy'),
-            ],
-            'notification_reaction_replacement.log': <
-              ({int id, String title, String body})
-            >[
-              card(257, gradedGroup, reactionBody),
-              card(389, warmupGroup, warmupBody),
-            ],
-          },
-        ),
-      );
+    test(
+      'an app card outside the graded and warm-up groups is rejected',
+      () async {
+        final artifact = await _writeArtifactFixture(
+          tempDirectory,
+          reactionScenario,
+        );
+        _rewriteEvidence(
+          artifact,
+          'android_notification_records',
+          _notificationRecordBlocks(
+            appPackage: appPackage,
+            blocks: <String, List<({int id, String title, String body})>>{
+              'notification_reaction_first.log':
+                  <({int id, String title, String body})>[
+                    card(257, gradedGroup, reactionBody),
+                    card(389, warmupGroup, warmupBody),
+                    card(701, foreignGroup, 'unrelated conversation copy'),
+                  ],
+              'notification_reaction_replacement.log':
+                  <({int id, String title, String body})>[
+                    card(257, gradedGroup, reactionBody),
+                    card(389, warmupGroup, warmupBody),
+                  ],
+            },
+          ),
+        );
 
-      final result = await validateGroupReactionNotificationArtifact(
-        scenario: reactionScenario,
-        artifactFile: artifact,
-      );
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: reactionScenario,
+          artifactFile: artifact,
+        );
 
-      expect(result.ok, isFalse);
-      expect(result.detail, contains('outside the graded and warm-up groups'));
-    });
+        expect(result.ok, isFalse);
+        expect(
+          result.detail,
+          contains('outside the graded and warm-up groups'),
+        );
+      },
+    );
 
     // TC-389-04. The graded card is still pinned exactly. At HEAD this gate was
     // unreachable: the per-block count `continue`d before the card was ever
@@ -1164,18 +1181,16 @@ void main() {
         _notificationRecordBlocks(
           appPackage: appPackage,
           blocks: <String, List<({int id, String title, String body})>>{
-            'notification_reaction_first.log': <
-              ({int id, String title, String body})
-            >[
-              card(257, gradedGroup, 'TC257Target1755600000000000'),
-              card(389, warmupGroup, warmupBody),
-            ],
-            'notification_reaction_replacement.log': <
-              ({int id, String title, String body})
-            >[
-              card(257, gradedGroup, reactionBody),
-              card(389, warmupGroup, warmupBody),
-            ],
+            'notification_reaction_first.log':
+                <({int id, String title, String body})>[
+                  card(257, gradedGroup, 'TC257Target1755600000000000'),
+                  card(389, warmupGroup, warmupBody),
+                ],
+            'notification_reaction_replacement.log':
+                <({int id, String title, String body})>[
+                  card(257, gradedGroup, reactionBody),
+                  card(389, warmupGroup, warmupBody),
+                ],
           },
         ),
       );
@@ -1251,7 +1266,10 @@ void main() {
       );
 
       expect(leakedResult.ok, isFalse);
-      expect(leakedResult.detail, contains('reaction created unread semantics'));
+      expect(
+        leakedResult.detail,
+        contains('reaction created unread semantics'),
+      );
     });
 
     // TC-389-06. The message branch keeps today's PACKAGE-WIDE card contract.
@@ -1275,12 +1293,15 @@ void main() {
           _notificationRecordBlocks(
             appPackage: appPackage,
             blocks: <String, List<({int id, String title, String body})>>{
-              'notification_message_first.log': <
-                ({int id, String title, String body})
-              >[card(257, gradedGroup, 'plan257-first-message'), extra],
-              'notification_message_second.log': <
-                ({int id, String title, String body})
-              >[card(257, gradedGroup, 'plan257-second-message')],
+              'notification_message_first.log':
+                  <({int id, String title, String body})>[
+                    card(257, gradedGroup, 'plan257-first-message'),
+                    extra,
+                  ],
+              'notification_message_second.log':
+                  <({int id, String title, String body})>[
+                    card(257, gradedGroup, 'plan257-second-message'),
+                  ],
             },
           ),
         );
@@ -1355,25 +1376,28 @@ void main() {
     // TC-389-07, negative half of the gate: the background-connected reaction
     // keeps its process alive, pays no cold-isolate cost, sends no warm-up, and
     // must NOT be held to the post-kill floor.
-    test('the background-connected lane is exempt from the wake floor', () async {
-      final artifact = await _writeArtifactFixture(
-        tempDirectory,
-        groupReactionBackgroundConnectedScenarioId,
-      );
+    test(
+      'the background-connected lane is exempt from the wake floor',
+      () async {
+        final artifact = await _writeArtifactFixture(
+          tempDirectory,
+          groupReactionBackgroundConnectedScenarioId,
+        );
 
-      final result = await validateGroupReactionNotificationArtifact(
-        scenario: groupReactionBackgroundConnectedScenarioId,
-        artifactFile: artifact,
-      );
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: groupReactionBackgroundConnectedScenarioId,
+          artifactFile: artifact,
+        );
 
-      expect(result.ok, isTrue, reason: result.detail);
-      expect(
-        File(
-          '${artifact.parent.path}${Platform.pathSeparator}recipient_app.log',
-        ).readAsStringSync(),
-        isNot(contains('PUSH_BACKGROUND_MESSAGE_RECEIVED')),
-      );
-    });
+        expect(result.ok, isTrue, reason: result.detail);
+        expect(
+          File(
+            '${artifact.parent.path}${Platform.pathSeparator}recipient_app.log',
+          ).readAsStringSync(),
+          isNot(contains('PUSH_BACKGROUND_MESSAGE_RECEIVED')),
+        );
+      },
+    );
   });
 
   group('Plan 257 staging declaration contract', () {
@@ -1489,6 +1513,130 @@ void main() {
         expect(groupReactionIosDeviceIsOnline(online, deviceId), isTrue);
       },
     );
+
+    test(
+      'iOS inventory mounts DDI immediately before xctrace classification',
+      () {
+        final source = File(
+          'integration_test/scripts/capture_group_reaction_notification_device.dart',
+        ).readAsStringSync();
+        final methodStart = source.indexOf(
+          'Future<void> _verifyLiveDeviceTopology()',
+        );
+        final methodEnd = source.indexOf(
+          'Future<void> _preparePlan397CentralArtifacts()',
+          methodStart,
+        );
+        expect(methodStart, greaterThanOrEqualTo(0));
+        expect(methodEnd, greaterThan(methodStart));
+
+        final method = source.substring(methodStart, methodEnd);
+        final ddiMount = method.indexOf("'devicectl'");
+        final xctraceInventory = method.indexOf("'xctrace'");
+        expect(ddiMount, greaterThanOrEqualTo(0));
+        expect(method, contains("'ddiServices'"));
+        expect(method, contains("'--auto-mount-ddis'"));
+        expect(xctraceInventory, greaterThan(ddiMount));
+      },
+    );
+
+    test('iOS file channel remounts DDI before every CoreDevice copy', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+
+      void expectMountBeforeCopy(String start, String end) {
+        final methodStart = source.indexOf(start);
+        final methodEnd = source.indexOf(end, methodStart);
+        expect(methodStart, greaterThanOrEqualTo(0));
+        expect(methodEnd, greaterThan(methodStart));
+
+        final method = source.substring(methodStart, methodEnd);
+        final mount = method.indexOf(
+          'await _mountIosDeveloperDiskImageForCoreDevice();',
+        );
+        final copy = method.indexOf("'copy'");
+        final timeout = method.indexOf("'--timeout'", copy);
+        expect(mount, greaterThanOrEqualTo(0), reason: start);
+        expect(copy, greaterThan(mount), reason: start);
+        expect(timeout, greaterThan(copy), reason: start);
+        expect(method.substring(timeout), contains("'15'"), reason: start);
+      }
+
+      expectMountBeforeCopy(
+        'Future<void> _stageIosAppFile(',
+        'Future<String?> _readIosAppFile(',
+      );
+      expectMountBeforeCopy(
+        'Future<String?> _readIosAppFile(',
+        'Future<void> _collectIosIdentity(',
+      );
+    });
+
+    test('iOS app operations remount DDI and carry explicit timeouts', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+
+      void expectBoundedCoreDeviceOperation(
+        String start,
+        String end,
+        String operation,
+        String timeout,
+      ) {
+        final methodStart = source.indexOf(start);
+        final methodEnd = source.indexOf(end, methodStart);
+        expect(methodStart, greaterThanOrEqualTo(0));
+        expect(methodEnd, greaterThan(methodStart));
+        final method = source.substring(methodStart, methodEnd);
+        final mount = method.indexOf(
+          'await _mountIosDeveloperDiskImageForCoreDevice();',
+        );
+        final operationIndex = method.indexOf("'$operation'");
+        final timeoutIndex = method.indexOf("'--timeout'", operationIndex);
+        expect(mount, greaterThanOrEqualTo(0), reason: start);
+        expect(operationIndex, greaterThan(mount), reason: start);
+        expect(timeoutIndex, greaterThan(operationIndex), reason: start);
+        expect(
+          method.substring(timeoutIndex),
+          contains("'$timeout'"),
+          reason: start,
+        );
+      }
+
+      expectBoundedCoreDeviceOperation(
+        'Future<void> _uninstallIosCandidateIfPresent()',
+        'Future<void> _installIosCandidate(',
+        'uninstall',
+        '60',
+      );
+      expectBoundedCoreDeviceOperation(
+        'Future<void> _installIosCandidate(',
+        'Future<void> _launchIosCandidate()',
+        'install',
+        '120',
+      );
+      expectBoundedCoreDeviceOperation(
+        'Future<void> _launchIosCandidate()',
+        'Future<void> _stageIosAppFile(',
+        'launch',
+        '60',
+      );
+    });
+
+    test('iOS file channel falls back to bounded House Arrest copies', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+
+      expect(source, contains('bool _preferIosAfcFileChannel = false;'));
+      expect(source, contains('Future<_CommandOutput> _runIosAfcCommands('));
+      expect(source, contains("Process.start('afcclient'"));
+      expect(source, contains('const Duration(seconds: 15)'));
+      expect(source, contains('_copyIosAppFileToContainerWithAfc('));
+      expect(source, contains('_copyIosAppFileFromContainerWithAfc('));
+      expect(source, contains("'--stdin-command-count=\${commands.length}'"));
+    });
 
     test('rejects production deployment and disabled data reset authority', () {
       final manifest = _validStagingManifest(provider: 'fcm')
@@ -1618,6 +1766,136 @@ void main() {
         expect(source, contains('chat_group_patched_xctestrun_not_prepared'));
       },
     );
+
+    test('chat-group setup UI permits one exact automation warm retry', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+      final methodStart = source.indexOf('Future<String> _runIosUiSelector(');
+      final methodEnd = source.indexOf(
+        'Future<void> _acceptIosCreatedGroupOnAndroid()',
+        methodStart,
+      );
+      expect(methodStart, greaterThanOrEqualTo(0));
+      expect(methodEnd, greaterThan(methodStart));
+      final method = source.substring(methodStart, methodEnd);
+
+      expect(method, contains('const maximumAttempts = 2;'));
+      expect(method, contains('_iosFixtureCreateSelector'));
+      expect(method, contains('_iosFixtureAuthorSelector'));
+      expect(method, contains("stage == 'plan397_fixture_staging'"));
+      expect(method, contains('Timed out while enabling automation mode.'));
+      expect(method, contains("'_automation_retry'"));
+      expect(
+        method,
+        contains(
+          'final attemptLimit = permitsAutomationWarmRetry ? '
+          'maximumAttempts : 1;',
+        ),
+      );
+      expect(method, contains('PLAN397_SETUP_AUTOMATION_WARM_RETRY_USED'));
+      expect(method, isNot(contains('_iosNotificationPrepareSelector')));
+      expect(method, isNot(contains('_iosTapSelector')));
+      expect(
+        method,
+        contains('await _mountIosDeveloperDiskImageForCoreDevice();'),
+      );
+      expect(method, contains('allowFail: true'));
+    });
+
+    test('chat-group iOS setup app launches without debug tooling', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+      final methodStart = source.indexOf(
+        'Future<Directory> _buildIosCandidate({required bool e2eMode})',
+      );
+      final methodEnd = source.indexOf(
+        'Future<void> _installIosCandidate(',
+        methodStart,
+      );
+      expect(methodStart, greaterThanOrEqualTo(0));
+      expect(methodEnd, greaterThan(methodStart));
+
+      final method = source.substring(methodStart, methodEnd);
+      expect(method, contains("'--profile'"));
+      expect(method, isNot(contains("'--debug'")));
+    });
+
+    test('chat-group iOS setup app embeds the exact Plan 397 profile', () {
+      final source = File(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      ).readAsStringSync();
+      final methodStart = source.indexOf(
+        'Future<Directory> _buildIosCandidate({required bool e2eMode})',
+      );
+      final methodEnd = source.indexOf(
+        'Future<void> _installIosCandidate(',
+        methodStart,
+      );
+      expect(methodStart, greaterThanOrEqualTo(0));
+      expect(methodEnd, greaterThan(methodStart));
+
+      final method = source.substring(methodStart, methodEnd);
+      expect(method, contains('if (_isPlan397 && e2eMode)'));
+      expect(method, contains("'--dart-define=SIMS_BUILD_PROFILE_ID='"));
+      expect(
+        method,
+        contains(r"'$groupReactionNotificationIosSetupBuildProfile'"),
+      );
+    });
+
+    test('chat-group iOS identity export uses the exact profile gate', () {
+      final source = File(
+        'lib/core/debug/intro_e2e_runner.dart',
+      ).readAsStringSync();
+      final methodStart = source.indexOf(
+        'Future<void> exportIdentityForIntroE2E(',
+      );
+      final methodEnd = source.indexOf(
+        'Future<bool> prePopulateContactsFromIntroE2EConfig(',
+        methodStart,
+      );
+      expect(methodStart, greaterThanOrEqualTo(0));
+      expect(methodEnd, greaterThan(methodStart));
+
+      final method = source.substring(methodStart, methodEnd);
+      expect(method, contains('allowsGroupMediaIosIntroFileChannel('));
+      expect(method, contains("'SIMS_BUILD_PROFILE_ID'"));
+      expect(method, isNot(contains('if (!kDebugMode) return;')));
+    });
+
+    test('chat-group profile poller admits only exact setup actions', () {
+      final source = File(
+        'lib/core/debug/intro_e2e_runner.dart',
+      ).readAsStringSync();
+      final actionsStart = source.indexOf('Future<void> runIntroE2EActions(');
+      final actionsEnd = source.indexOf(
+        'Future<void> _runConnectivityRestoreObservation(',
+        actionsStart,
+      );
+      final pollerStart = source.indexOf('void startIntroE2EPoller(');
+      final pollerEnd = source.indexOf(
+        'Future<Map<String, dynamic>?> _openConversationIfRequested(',
+        pollerStart,
+      );
+      expect(actionsStart, greaterThanOrEqualTo(0));
+      expect(actionsEnd, greaterThan(actionsStart));
+      expect(pollerStart, greaterThanOrEqualTo(0));
+      expect(pollerEnd, greaterThan(pollerStart));
+
+      final actions = source.substring(actionsStart, actionsEnd);
+      final poller = source.substring(pollerStart, pollerEnd);
+      expect(
+        actions,
+        contains('allowsGroupReactionNotificationIosSetupActions('),
+      );
+      expect(actions, isNot(contains('if (!kDebugMode || !kE2ETestMode)')));
+      expect(
+        poller,
+        contains('if (!kDebugMode && !allowsPlan397SetupActions)'),
+      );
+    });
 
     test('chat-group iOS setup selectors reuse one setup product', () {
       final source = File(
@@ -2785,7 +3063,11 @@ List<Map<String, Object?>> _commandJournal({
     ]);
   }
   if (scenario.recipientPlatform == 'ios') {
-    add('ios_candidate_build', 'flutter', <String>['build', 'ios', '--debug']);
+    add('ios_candidate_build', 'flutter', <String>[
+      'build',
+      'ios',
+      '--profile',
+    ]);
     for (final mode in const <String>['e2e', 'normal']) {
       add('ios_candidate_install', 'xcrun', <String>[
         'devicectl',
@@ -2980,12 +3262,9 @@ String _rawEvidence({
       // line, and the vocabulary is frozen that way by the relay's own private
       // -value closure test. What survives is the attribution-free acceptance,
       // which is why the COUNT moved onto the relay's counters.
-      return '${<String>[
-        '2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
-            'total_attempts=3 event=$event delivery_matched=true',
-        '2026-07-12T12:00:05.000Z [PUSH] outcome=success attempt=1 '
-            'total_attempts=3 event=$event delivery_matched=true',
-      ].join('\n')}\n';
+      return '${<String>['2026-07-12T12:00:04.000Z [PUSH] outcome=success attempt=1 '
+          'total_attempts=3 event=$event delivery_matched=true', '2026-07-12T12:00:05.000Z [PUSH] outcome=success attempt=1 '
+          'total_attempts=3 event=$event delivery_matched=true'].join('\n')}\n';
     case 'relay_metrics':
       return groupReactionRelayMetricsFixture();
     case 'provider_apns':

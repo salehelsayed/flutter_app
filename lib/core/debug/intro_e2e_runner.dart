@@ -17,6 +17,7 @@ import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/core/debug/group_media_ios_background_e2e.dart';
 import 'package:flutter_app/core/debug/keepalive_drop_e2e.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
+import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_profile.dart';
 import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -368,7 +369,12 @@ Future<void> exportIdentityForIntroE2E({
   required String signedQrPayloadJson,
   required String? mlKemPublicKey,
 }) async {
-  if (!kDebugMode) return;
+  final allowsIosReleaseFileChannel = allowsGroupMediaIosIntroFileChannel(
+    isDebugMode: kDebugMode,
+    e2eTestMode: kE2ETestMode,
+    installedProfileId: const String.fromEnvironment('SIMS_BUILD_PROFILE_ID'),
+  );
+  if (!allowsIosReleaseFileChannel) return;
   final dir = await getApplicationDocumentsDirectory();
   final file = File('${dir.path}/$_kExportFile');
   await file.writeAsString(
@@ -382,7 +388,16 @@ Future<void> exportIdentityForIntroE2E({
 Future<bool> prePopulateContactsFromIntroE2EConfig({
   required ContactRepository contactRepo,
 }) async {
-  if (!kDebugMode || !kE2ETestMode) return false;
+  final allowsPlan397SetupActions =
+      allowsGroupReactionNotificationIosSetupActions(
+        e2eTestMode: kE2ETestMode,
+        installedProfileId: const String.fromEnvironment(
+          'SIMS_BUILD_PROFILE_ID',
+        ),
+      );
+  if (!(kDebugMode && kE2ETestMode) && !allowsPlan397SetupActions) {
+    return false;
+  }
 
   final config = await _loadConfig();
   if (config == null) return false;
@@ -415,7 +430,14 @@ Future<void> runIntroE2EActions({
   ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
   OpenConversationForIntroE2EFn? openConversationByPeerId,
 }) async {
-  if (!kDebugMode || !kE2ETestMode) return;
+  final allowsPlan397SetupActions =
+      allowsGroupReactionNotificationIosSetupActions(
+        e2eTestMode: kE2ETestMode,
+        installedProfileId: const String.fromEnvironment(
+          'SIMS_BUILD_PROFILE_ID',
+        ),
+      );
+  if (!(kDebugMode && kE2ETestMode) && !allowsPlan397SetupActions) return;
 
   final config = await _loadConfig();
   if (config == null) return;
@@ -823,6 +845,13 @@ void startIntroE2EPoller({
     e2eTestMode: kE2ETestMode,
     installedProfileId: const String.fromEnvironment('SIMS_BUILD_PROFILE_ID'),
   );
+  final allowsPlan397SetupActions =
+      allowsGroupReactionNotificationIosSetupActions(
+        e2eTestMode: kE2ETestMode,
+        installedProfileId: const String.fromEnvironment(
+          'SIMS_BUILD_PROFILE_ID',
+        ),
+      );
   if (!(kDebugMode && (kE2ETestMode || directTextRelayTokenProofMode)) &&
       !allowsIosReleaseFileChannel) {
     return;
@@ -879,10 +908,11 @@ void startIntroE2EPoller({
         return;
       }
 
-      // The signed physical-iOS production profile exposes only the exact
-      // group-media action above. Never route a generic intro command through
-      // the release file channel.
-      if (!kDebugMode) {
+      // The signed P269 profile exposes only the exact group-media action
+      // above. Plan 397's separately signed setup profile may run the generic
+      // fixture actions needed to create its real group, but no ordinary
+      // profile/release build may route a generic intro command.
+      if (!kDebugMode && !allowsPlan397SetupActions) {
         await _deleteConfigIfPresent();
         return;
       }

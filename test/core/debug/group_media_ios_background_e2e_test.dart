@@ -829,6 +829,25 @@ void main() {
     }
   });
 
+  test('Plan 397 signed iOS setup profile owns the intro file channel', () {
+    expect(
+      allowsGroupMediaIosIntroFileChannel(
+        isDebugMode: false,
+        e2eTestMode: true,
+        installedProfileId: 'ios.device.group_reaction_notification_397',
+      ),
+      isTrue,
+    );
+    expect(
+      allowsGroupMediaIosIntroFileChannel(
+        isDebugMode: false,
+        e2eTestMode: false,
+        installedProfileId: 'ios.device.group_reaction_notification_397',
+      ),
+      isFalse,
+    );
+  });
+
   test(
     'P269 iOS production entry wiring exposes only the exact action and exact recovery callbacks',
     () {
@@ -922,7 +941,7 @@ void main() {
         "config['transport_action'] == groupMediaIosBackgroundE2EAction",
       );
       final releaseRejection = introSource.indexOf(
-        'if (!kDebugMode)',
+        'if (!kDebugMode && !allowsPlan397SetupActions)',
         exactAction,
       );
       final genericAndroidAction = introSource.indexOf(

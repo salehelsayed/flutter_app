@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_profile.dart';
 
 import '../support/android_notification_payload_campaign.dart'
     show relayJournalContainsAndroidProviderSend;
@@ -702,6 +703,7 @@ class _Plan257Capture {
   final StringBuffer _iosSystemLogStderr = StringBuffer();
   Future<void>? _iosSystemLogStdoutDone;
   Future<void>? _iosSystemLogStderrDone;
+  bool _preferIosAfcFileChannel = false;
   final List<Map<String, Object?>> _commandJournal = <Map<String, Object?>>[];
   final Random _random = Random.secure();
   late final String _runtimeRunId = _runtimeToken('run');
@@ -1241,6 +1243,17 @@ class _Plan257Capture {
       throw _CaptureFailure.environment(stage, 'recipient_absent_from_adb');
     }
     if (scenario.recipientPlatform == 'ios') {
+      await _run('xcrun', <String>[
+        'devicectl',
+        'device',
+        'info',
+        'ddiServices',
+        '--device',
+        recipientId,
+        '--auto-mount-ddis',
+        '--timeout',
+        '60',
+      ], environmentFailure: true);
       final ios = await _run('xcrun', const <String>[
         'xctrace',
         'list',
@@ -1565,15 +1578,7 @@ class _Plan257Capture {
     final e2eApp = await _buildIosCandidate(e2eMode: true);
 
     stage = 'ios_candidate_install';
-    await _run('xcrun', <String>[
-      'devicectl',
-      'device',
-      'uninstall',
-      'app',
-      '--device',
-      recipientId,
-      _iosCapture['bundleId']! as String,
-    ], allowFail: true);
+    await _uninstallIosCandidateIfPresent();
     await _installIosCandidate(e2eApp, mode: 'e2e');
 
     stage = 'ios_fixture_staging';
@@ -1719,15 +1724,7 @@ class _Plan257Capture {
     _plan397SetupAppSha256 = await _sha256Directory(setupApplication);
 
     stage = 'plan397_ios_initial_install';
-    await _run('xcrun', <String>[
-      'devicectl',
-      'device',
-      'uninstall',
-      'app',
-      '--device',
-      recipientId,
-      _iosCapture['bundleId']! as String,
-    ], allowFail: true);
+    await _uninstallIosCandidateIfPresent();
     await _installIosCandidate(setupApplication, mode: 'setup');
 
     stage = 'plan397_fixture_staging';
@@ -2470,9 +2467,12 @@ class _Plan257Capture {
     await _runStreaming('flutter', <String>[
       'build',
       'ios',
-      '--debug',
+      '--profile',
       '--no-pub',
       '--dart-define=E2E_TEST_MODE=$e2eMode',
+      if (_isPlan397 && e2eMode)
+        '--dart-define=SIMS_BUILD_PROFILE_ID='
+            '$groupReactionNotificationIosSetupBuildProfile',
       '--dart-define=MKNOON_RELAY_ADDRESSES=${_relayAddresses.join(',')}',
     ], environmentFailure: true);
     final app = Directory('build/ios/iphoneos/Runner.app').absolute;
@@ -2491,10 +2491,26 @@ class _Plan257Capture {
     return app;
   }
 
+  Future<void> _uninstallIosCandidateIfPresent() async {
+    await _mountIosDeveloperDiskImageForCoreDevice();
+    await _run('xcrun', <String>[
+      'devicectl',
+      'device',
+      'uninstall',
+      'app',
+      '--device',
+      recipientId,
+      _iosCapture['bundleId']! as String,
+      '--timeout',
+      '60',
+    ], allowFail: true);
+  }
+
   Future<void> _installIosCandidate(
     Directory app, {
     required String mode,
   }) async {
+    await _mountIosDeveloperDiskImageForCoreDevice();
     await _run('xcrun', <String>[
       'devicectl',
       'device',
@@ -2503,12 +2519,15 @@ class _Plan257Capture {
       '--device',
       recipientId,
       app.path,
+      '--timeout',
+      '120',
     ], environmentFailure: true);
     final receipt = File(
       '${artifactDirectory.path}${Platform.pathSeparator}'
       'ios_${mode}_installed_app_inventory.json',
     );
     if (receipt.existsSync()) await receipt.delete();
+    await _mountIosDeveloperDiskImageForCoreDevice();
     await _run('xcrun', <String>[
       'devicectl',
       'device',
@@ -2520,6 +2539,8 @@ class _Plan257Capture {
       _iosCapture['bundleId']! as String,
       '--json-output',
       receipt.path,
+      '--timeout',
+      '60',
     ], environmentFailure: true);
     if (!receipt.existsSync() ||
         !await receipt.readAsString().then(
@@ -2534,6 +2555,7 @@ class _Plan257Capture {
   }
 
   Future<void> _launchIosCandidate() async {
+    await _mountIosDeveloperDiskImageForCoreDevice();
     await _run('xcrun', <String>[
       'devicectl',
       'device',
@@ -2543,6 +2565,8 @@ class _Plan257Capture {
       recipientId,
       '--terminate-existing',
       _iosCapture['bundleId']! as String,
+      '--timeout',
+      '60',
     ], environmentFailure: true);
   }
 
@@ -2553,22 +2577,33 @@ class _Plan257Capture {
     );
     await local.writeAsString(contents, flush: true);
     try {
-      await _run('xcrun', <String>[
-        'devicectl',
-        'device',
-        'copy',
-        'to',
-        '--device',
-        recipientId,
-        '--source',
-        local.path,
-        '--destination',
-        'Documents/$name',
-        '--domain-type',
-        'appDataContainer',
-        '--domain-identifier',
-        _iosCapture['bundleId']! as String,
-      ], environmentFailure: true);
+      var copied = false;
+      if (!_preferIosAfcFileChannel) {
+        await _mountIosDeveloperDiskImageForCoreDevice();
+        final output = await _run('xcrun', <String>[
+          'devicectl',
+          'device',
+          'copy',
+          'to',
+          '--device',
+          recipientId,
+          '--source',
+          local.path,
+          '--destination',
+          'Documents/$name',
+          '--domain-type',
+          'appDataContainer',
+          '--domain-identifier',
+          _iosCapture['bundleId']! as String,
+          '--timeout',
+          '15',
+        ], allowFail: true);
+        copied = output.exitCode == 0;
+        _preferIosAfcFileChannel = !copied;
+      }
+      if (!copied) {
+        await _copyIosAppFileToContainerWithAfc(local, name);
+      }
     } finally {
       if (local.existsSync()) await local.delete();
     }
@@ -2579,24 +2614,35 @@ class _Plan257Capture {
       'plan257_ios_read_',
     );
     try {
-      final output = await _run('xcrun', <String>[
-        'devicectl',
-        'device',
-        'copy',
-        'from',
-        '--device',
-        recipientId,
-        '--source',
-        'Documents/$name',
-        '--destination',
-        directory.path,
-        '--domain-type',
-        'appDataContainer',
-        '--domain-identifier',
-        _iosCapture['bundleId']! as String,
-      ], allowFail: true);
-      if (output.exitCode != 0) return null;
       final direct = File('${directory.path}${Platform.pathSeparator}$name');
+      var copied = false;
+      if (!_preferIosAfcFileChannel) {
+        await _mountIosDeveloperDiskImageForCoreDevice();
+        final output = await _run('xcrun', <String>[
+          'devicectl',
+          'device',
+          'copy',
+          'from',
+          '--device',
+          recipientId,
+          '--source',
+          'Documents/$name',
+          '--destination',
+          directory.path,
+          '--domain-type',
+          'appDataContainer',
+          '--domain-identifier',
+          _iosCapture['bundleId']! as String,
+          '--timeout',
+          '15',
+        ], allowFail: true);
+        copied = output.exitCode == 0;
+        _preferIosAfcFileChannel = !copied;
+      }
+      if (!copied) {
+        copied = await _copyIosAppFileFromContainerWithAfc(name, direct);
+      }
+      if (!copied) return null;
       if (direct.existsSync()) return direct.readAsString();
       final files = directory.listSync(recursive: true).whereType<File>();
       for (final file in files) {
@@ -2606,6 +2652,174 @@ class _Plan257Capture {
     } finally {
       if (directory.existsSync()) await directory.delete(recursive: true);
     }
+  }
+
+  Future<void> _mountIosDeveloperDiskImageForCoreDevice() async {
+    await _run('xcrun', <String>[
+      'devicectl',
+      'device',
+      'info',
+      'ddiServices',
+      '--device',
+      recipientId,
+      '--auto-mount-ddis',
+      '--timeout',
+      '60',
+    ], environmentFailure: true);
+  }
+
+  Future<void> _copyIosAppFileToContainerWithAfc(
+    File local,
+    String name,
+  ) async {
+    final remote = 'Documents/$name';
+    _requireSafeAfcPath(local.path);
+    _requireSafeAfcPath(remote);
+    final expectedSize = await local.length();
+    final output = await _runIosAfcCommands(<String>[
+      'put ${local.path} $remote',
+      'info $remote',
+    ], allowFail: true);
+    if (output.exitCode != 0 ||
+        _lastAfcReportedSize(output.stdout) != expectedSize) {
+      throw _CaptureFailure.environment(
+        stage,
+        'afc_house_arrest_copy_to_failed_for_$name',
+      );
+    }
+  }
+
+  Future<bool> _copyIosAppFileFromContainerWithAfc(
+    String name,
+    File local,
+  ) async {
+    final remote = 'Documents/$name';
+    _requireSafeAfcPath(local.path);
+    _requireSafeAfcPath(remote);
+    final output = await _runIosAfcCommands(<String>[
+      'get $remote ${local.path}',
+      'info $remote',
+    ], allowFail: true);
+    if (output.exitCode != 0 || !await local.exists()) return false;
+    final remoteSize = _lastAfcReportedSize(output.stdout);
+    return remoteSize != null && await local.length() == remoteSize;
+  }
+
+  Future<_CommandOutput> _runIosAfcCommands(
+    List<String> commands, {
+    bool allowFail = false,
+  }) async {
+    const timeout = Duration(seconds: 15);
+    final args = <String>[
+      '-u',
+      recipientId,
+      '--container',
+      _iosCapture['bundleId']! as String,
+    ];
+    final journalArgs = <String>[
+      ...args,
+      '--stdin-command-count=${commands.length}',
+      ...commands.map((command) => command.split(' ').first),
+    ];
+    Process process;
+    try {
+      process = await Process.start('afcclient', args);
+    } on ProcessException catch (error) {
+      _recordCommand('afcclient', journalArgs, 127);
+      final output = _CommandOutput(
+        exitCode: 127,
+        stdout: '',
+        stderr: error.toString(),
+      );
+      if (!allowFail) {
+        throw _CaptureFailure.environment(
+          stage,
+          'afcclient unavailable: ${_lastLine(output.stderr)}',
+        );
+      }
+      return output;
+    }
+
+    final out = StringBuffer();
+    final err = StringBuffer();
+    final commandsComplete = Completer<void>();
+    final requiredPromptCount = commands.length + 1;
+    final outDone = process.stdout.transform(utf8.decoder).forEach((chunk) {
+      out.write(chunk);
+      final promptCount = RegExp(r'> ').allMatches(out.toString()).length;
+      if (promptCount >= requiredPromptCount && !commandsComplete.isCompleted) {
+        commandsComplete.complete();
+      }
+    });
+    final errDone = process.stderr.transform(utf8.decoder).forEach(err.write);
+    final exitCodeFuture = process.exitCode;
+    unawaited(
+      exitCodeFuture.then((exitCode) {
+        if (!commandsComplete.isCompleted) {
+          commandsComplete.completeError(
+            StateError('afcclient exited $exitCode before command completion'),
+          );
+        }
+      }),
+    );
+
+    String? failure;
+    try {
+      process.stdin.write('${commands.join('\n')}\n');
+      await process.stdin.flush();
+      await process.stdin.close();
+      await commandsComplete.future.timeout(timeout);
+    } on Object catch (error) {
+      failure = error.toString();
+    } finally {
+      process.kill(ProcessSignal.sigint);
+    }
+
+    final processExitCode = await exitCodeFuture.timeout(
+      const Duration(seconds: 3),
+      onTimeout: () {
+        process.kill(ProcessSignal.sigkill);
+        return 124;
+      },
+    );
+    await Future.wait<void>(<Future<void>>[
+      outDone.timeout(const Duration(seconds: 3), onTimeout: () {}),
+      errDone.timeout(const Duration(seconds: 3), onTimeout: () {}),
+    ]);
+    if (failure != null) err.writeln(failure);
+    final combined = '${out.toString()}\n${err.toString()}';
+    final commandFailed = RegExp(
+      r'Error:|Failed to|AFC_E_',
+      caseSensitive: false,
+    ).hasMatch(combined);
+    final effectiveExitCode = failure == null && !commandFailed
+        ? 0
+        : (processExitCode == 0 ? 1 : processExitCode);
+    _recordCommand('afcclient', journalArgs, effectiveExitCode);
+    final output = _CommandOutput(
+      exitCode: effectiveExitCode,
+      stdout: out.toString(),
+      stderr: err.toString(),
+    );
+    if (effectiveExitCode != 0 && !allowFail) {
+      throw _CaptureFailure.environment(
+        stage,
+        'afcclient command failed: ${_lastLine(output.combined)}',
+      );
+    }
+    return output;
+  }
+
+  void _requireSafeAfcPath(String value) {
+    if (!RegExp(r'^[A-Za-z0-9_./:-]+$').hasMatch(value)) {
+      throw _CaptureFailure.configuration(stage, 'unsafe_afc_path');
+    }
+  }
+
+  int? _lastAfcReportedSize(String output) {
+    final matches = RegExp(r'"st_size"\s*:\s*(\d+)').allMatches(output);
+    if (matches.isEmpty) return null;
+    return int.tryParse(matches.last.group(1)!);
   }
 
   Future<void> _collectIosIdentity(_Party party) async {
@@ -2814,64 +3028,101 @@ class _Plan257Capture {
   }
 
   Future<String> _runIosUiSelector(String selector, File tapConfig) async {
-    final resultBundle = Directory(
-      '${artifactDirectory.path}${Platform.pathSeparator}'
-      '${selector.replaceAll(RegExp(r'[^A-Za-z0-9]'), '_')}.xcresult',
-    );
-    if (resultBundle.existsSync()) {
-      await resultBundle.delete(recursive: true);
-    }
     final plan397Xctestrun = _plan397PatchedXctestrun;
-    final arguments = _isPlan397
-        ? iosTestWithoutBuildingArguments(
-            xctestrun:
-                plan397Xctestrun ??
-                (throw _CaptureFailure.configuration(
-                  stage,
-                  'chat_group_patched_xctestrun_not_prepared',
-                )),
-            receiverDeviceId: recipientId,
-            selector: selector,
-            resultBundle: resultBundle,
-          )
-        : <String>[
-            'test',
-            '-workspace',
-            _iosCapture['workspace']! as String,
-            '-scheme',
-            _iosCapture['scheme']! as String,
-            '-destination',
-            'platform=iOS,id=$recipientId',
-            '-only-testing:RunnerUITests/NotificationTapUITests/$selector',
-            '-resultBundlePath',
-            resultBundle.path,
-          ];
     final tapValues = Map<String, Object?>.from(
       jsonDecode(await tapConfig.readAsString()) as Map,
     );
-    final output = await _runStreaming(
-      'xcodebuild',
-      arguments,
-      environmentFailure: true,
-      environment: <String, String>{
-        if (_isPlan397) 'SIMS_CHILD_BUILDS_FORBIDDEN': '1',
-        'MKNOON_APNS_TAP_APP_BUNDLE_ID': _iosCapture['bundleId']! as String,
-        'MKNOON_APNS_TAP_CONFIG_FILE': tapConfig.path,
-        'MKNOON_APNS_TAP_EXPECTED_TITLE': _groupName,
-        'MKNOON_257_EXPECTED_GROUP_NAME': _groupName,
-        'MKNOON_257_EXPECTED_TARGET_TEXT': _targetMarker,
-        'MKNOON_257_EXPECTED_MEMBER_NAME': sender.username,
-        'MKNOON_257_EXPECTED_ACTOR_NAME': sender.username,
-        'MKNOON_257_EXPECTED_REACTION_EMOJI': _reactionEmoji,
-        if (tapValues['notificationPhase'] case final String value)
-          'MKNOON_397_NOTIFICATION_PHASE': value,
-        if (tapValues['expectedEventText'] case final String value)
-          'MKNOON_397_EXPECTED_EVENT_TEXT': value,
-        if (tapValues['expectedBody'] case final String value)
-          'MKNOON_APNS_TAP_EXPECTED_BODY': value,
-      },
+    final environment = <String, String>{
+      if (_isPlan397) 'SIMS_CHILD_BUILDS_FORBIDDEN': '1',
+      'MKNOON_APNS_TAP_APP_BUNDLE_ID': _iosCapture['bundleId']! as String,
+      'MKNOON_APNS_TAP_CONFIG_FILE': tapConfig.path,
+      'MKNOON_APNS_TAP_EXPECTED_TITLE': _groupName,
+      'MKNOON_257_EXPECTED_GROUP_NAME': _groupName,
+      'MKNOON_257_EXPECTED_TARGET_TEXT': _targetMarker,
+      'MKNOON_257_EXPECTED_MEMBER_NAME': sender.username,
+      'MKNOON_257_EXPECTED_ACTOR_NAME': sender.username,
+      'MKNOON_257_EXPECTED_REACTION_EMOJI': _reactionEmoji,
+      if (tapValues['notificationPhase'] case final String value)
+        'MKNOON_397_NOTIFICATION_PHASE': value,
+      if (tapValues['expectedEventText'] case final String value)
+        'MKNOON_397_EXPECTED_EVENT_TEXT': value,
+      if (tapValues['expectedBody'] case final String value)
+        'MKNOON_APNS_TAP_EXPECTED_BODY': value,
+    };
+    final setupSelector =
+        selector == _iosFixtureCreateSelector ||
+        selector == _iosFixtureAuthorSelector;
+    final permitsAutomationWarmRetry =
+        _isPlan397 && stage == 'plan397_fixture_staging' && setupSelector;
+    const maximumAttempts = 2;
+    final attemptLimit = permitsAutomationWarmRetry ? maximumAttempts : 1;
+
+    for (var attempt = 1; attempt <= attemptLimit; attempt += 1) {
+      final resultSuffix = attempt == 1 ? '' : '_automation_retry';
+      final resultBundle = Directory(
+        '${artifactDirectory.path}${Platform.pathSeparator}'
+        '${selector.replaceAll(RegExp(r'[^A-Za-z0-9]'), '_')}'
+        '$resultSuffix.xcresult',
+      );
+      if (resultBundle.existsSync()) {
+        await resultBundle.delete(recursive: true);
+      }
+      final arguments = _isPlan397
+          ? iosTestWithoutBuildingArguments(
+              xctestrun:
+                  plan397Xctestrun ??
+                  (throw _CaptureFailure.configuration(
+                    stage,
+                    'chat_group_patched_xctestrun_not_prepared',
+                  )),
+              receiverDeviceId: recipientId,
+              selector: selector,
+              resultBundle: resultBundle,
+            )
+          : <String>[
+              'test',
+              '-workspace',
+              _iosCapture['workspace']! as String,
+              '-scheme',
+              _iosCapture['scheme']! as String,
+              '-destination',
+              'platform=iOS,id=$recipientId',
+              '-only-testing:RunnerUITests/NotificationTapUITests/$selector',
+              '-resultBundlePath',
+              resultBundle.path,
+            ];
+      final output = await _runStreaming(
+        'xcodebuild',
+        arguments,
+        allowFail: true,
+        environmentFailure: true,
+        environment: environment,
+      );
+      if (output.exitCode == 0) {
+        final retryMarker = attempt == 1
+            ? ''
+            : 'PLAN397_SETUP_AUTOMATION_WARM_RETRY_USED\n';
+        return '$retryMarker${output.stdout}\n${output.stderr}\n';
+      }
+
+      final exactAutomationWarmFailure = output.combined.contains(
+        'Timed out while enabling automation mode.',
+      );
+      if (attempt < attemptLimit && exactAutomationWarmFailure) {
+        await _mountIosDeveloperDiskImageForCoreDevice();
+        await Future<void>.delayed(const Duration(seconds: 2));
+        continue;
+      }
+      throw _CaptureFailure.environment(
+        stage,
+        'xcodebuild exited ${output.exitCode}: '
+        '${_lastLine(output.combined)}',
+      );
+    }
+    throw _CaptureFailure.environment(
+      stage,
+      'chat_group_setup_automation_retry_exhausted',
     );
-    return '${output.stdout}\n${output.stderr}\n';
   }
 
   Future<void> _acceptIosCreatedGroupOnAndroid() async {
@@ -8446,6 +8697,7 @@ class _Plan257Capture {
   Future<_CommandOutput> _runStreaming(
     String executable,
     List<String> args, {
+    bool allowFail = false,
     bool environmentFailure = false,
     Map<String, String>? environment,
   }) async {
@@ -8474,7 +8726,7 @@ class _Plan257Capture {
       stdout: out.toString(),
       stderr: err.toString(),
     );
-    if (exitCode != 0) {
+    if (exitCode != 0 && !allowFail) {
       final message =
           '$executable exited $exitCode: ${_lastLine(output.combined)}';
       throw environmentFailure

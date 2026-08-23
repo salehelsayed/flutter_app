@@ -1,6 +1,6 @@
 # 397 - Physical iPhone Group-Chat Notification Verification
 
-Status: execution-ready
+Status: execution-in-progress
 Type: Modification
 Spec: free-text intent — close physical-iPhone ordinary group-chat message and
 reaction notification evidence after Plan 396
@@ -152,6 +152,17 @@ In scope:
   Create one ordinary chat group, have the iPhone author one target, send one
   unique group text from Android, then send one ADD reaction from Android to
   the authored target.
+- Grade an attempt only after deterministic fixture staging has created and
+  joined the group, authored the target, installed the central production
+  products, backgrounded the receiver, and opened the first provider/native
+  baseline window. USB/DDI/CoreDevice/setup-XCUITest failures before that
+  boundary are sealed as `environment_blocked` pre-grade runs, are never
+  promoted to notification evidence, and do not consume the message/reaction
+  attempt budget. An exact
+  `Timed out while enabling automation mode.` during either setup selector may
+  receive one setup-only warm retry after a DDI remount, in a distinct
+  `.xcresult`; notification-prepare/tap selectors and both graded event windows
+  remain non-retriable.
 - Keep the incumbent local E2E iOS setup build only for deterministic group
   creation/target authoring. Install the centrally attested
   `ios.device.production` app in place, without uninstalling between setup and
@@ -170,7 +181,11 @@ In scope:
   product and may be zero when a compatible setup product already exists. If it
   is built, the first setup selector builds once into one DerivedData directory
   and the later target-authoring selector reuses that exact product without a
-  clean or rebuild; no new setup profile is created.
+  clean or rebuild. The profile-mode fallback may carry the unregistered local
+  attestation ID `ios.device.group_reaction_notification_397` together with
+  `E2E_TEST_MODE=true` solely to open the identity/config/setup-action channel.
+  This is not added to Sims, does not create a central artifact/capability, and
+  remains ineligible for P269 disposable behavior or production bootstrap.
 - Pass the two retained central Sims build reports with the artifacts. The
   runner must resolve each cache-adjacent `attestation.json`, verify exact
   profile/input/artifact digests and artifact membership, and copy only redacted
@@ -291,9 +306,10 @@ Must preserve:
 
 Hard `Do not`:
 
-- Do not create a new notification architecture, source service, build profile,
-  Sims capability, general iPhone controller, artifact framework, DB probe, or
-  second app.
+- Do not create a new notification architecture, source service, registered or
+  central Sims build profile/capability, general iPhone controller, artifact
+  framework, DB probe, or second app. The exact unregistered local setup
+  attestation described above is the only setup-product exception.
 - Do not obtain exact IDs from short log prefixes or retain raw group, message,
   target, or reaction identifiers. Reuse the incumbent redacted Android
   observer and do not schedule an exact-redrive probe in this scenario.
@@ -507,7 +523,8 @@ jq -e '
   .productionDeploymentPerformed == false and
   .allowAppDataReset == true
 ' "$MKNOON_257_STAGING_MANIFEST" >/dev/null
-ideviceinfo -u "$PLAN397_IPHONE_ID" -k Language | rg '^en'
+ideviceinfo -u "$PLAN397_IPHONE_ID" -q com.apple.international | \
+  rg '^Language: en'
 
 # First causal Go RED after authoring the exact test. The list assertion keeps
 # a misspelled/absent Go test from returning a vacuous green.
@@ -668,13 +685,13 @@ export PLAN397_IOS_MANIFEST_SHA="$(shasum -a 256 "$PLAN397_IOS_MANIFEST" | awk '
 # Reversible staging deployment. The immutable binary/manifest backups and one
 # small redacted receipt are the resume authority; never recapture "prior" from
 # a possibly-candidate live binary.
-export PLAN397_RELAY_RUN_ID=plan397-20260822-01
-export PLAN397_RELAY_BACKUP=/usr/local/bin/relay-server.plan397-20260822-01.bak
-export PLAN397_RELAY_REMOTE_CANDIDATE=/tmp/relay-server.plan397-20260822-01
+export PLAN397_RELAY_RUN_ID=plan397-20260823-02
+export PLAN397_RELAY_BACKUP=/usr/local/bin/relay-server.plan397-20260823-02.bak
+export PLAN397_RELAY_REMOTE_CANDIDATE=/tmp/relay-server.plan397-20260823-02
 export PLAN397_RELAY_REVISION='relay-server v1.9.0'
-export PLAN397_DEPLOYMENT_RECEIPT="$PWD/build/plan397/deployment-state.json"
-export PLAN397_STAGING_MANIFEST_BACKUP="$PWD/build/plan397/staging-manifest.prior.json"
-export PLAN397_STAGING_MANIFEST_CANDIDATE="$PWD/build/plan397/staging-manifest.candidate.json"
+export PLAN397_DEPLOYMENT_RECEIPT="$PWD/build/plan397/deployment-state-02.json"
+export PLAN397_STAGING_MANIFEST_BACKUP="$PWD/build/plan397/staging-manifest.prior-02.json"
+export PLAN397_STAGING_MANIFEST_CANDIDATE="$PWD/build/plan397/staging-manifest.candidate-02.json"
 if ! mkdir -p build/plan397; then
   exit 1
 fi
@@ -778,6 +795,11 @@ if ! jq --arg revision "$PLAN397_RELAY_REVISION" \
    --arg relaySha "$PLAN397_RELAY_SHA" '
   .candidateRelayRevision = $revision |
   .candidateRelaySha256 = $relaySha |
+  .provider = "apns" |
+  .iosCapture.bundleId = "com.mknoon.app" |
+  .iosCapture.workspace = "ios/Runner.xcworkspace" |
+  .iosCapture.scheme = "Runner" |
+  .iosCapture.systemLogExecutable = "idevicesyslog" |
   .iosCapture.fixtureCreateSelector =
     "RunnerUITests/NotificationTapUITests/testCreateChatGroupNotificationFixture" |
   .iosCapture.fixtureAuthorSelector =
@@ -794,6 +816,11 @@ if ! jq -e --arg revision "$PLAN397_RELAY_REVISION" \
   .candidateRelayRevision == $revision and
   .candidateRelaySha256 == $relaySha and
   .productionDeploymentPerformed == false and
+  .provider == "apns" and
+  .iosCapture.bundleId == "com.mknoon.app" and
+  .iosCapture.workspace == "ios/Runner.xcworkspace" and
+  .iosCapture.scheme == "Runner" and
+  .iosCapture.systemLogExecutable == "idevicesyslog" and
   .iosCapture.fixtureCreateSelector ==
     "RunnerUITests/NotificationTapUITests/testCreateChatGroupNotificationFixture" and
   .iosCapture.fixtureAuthorSelector ==
@@ -903,8 +930,19 @@ plan397_restore_staging() {
       return 1
     fi
   fi
-  if ! ssh -i "$MKNOON_257_RELAY_KEY" "$MKNOON_257_RELAY_TARGET" \
-    "sudo systemctl restart relay-server && systemctl is-active --quiet relay-server"; then
+  if ! ssh -i "$MKNOON_257_RELAY_KEY" "$MKNOON_257_RELAY_TARGET" '
+    sudo systemctl restart relay-server || exit 1
+    systemctl is-active --quiet relay-server || exit 1
+    health_attempt=1
+    while [ "$health_attempt" -le 20 ]; do
+      if curl -fsS http://127.0.0.1:2112/metrics >/dev/null; then
+        exit 0
+      fi
+      health_attempt=$((health_attempt + 1))
+      sleep 1
+    done
+    exit 1
+  '; then
     return 1
   fi
   if [ "$(ssh -i "$MKNOON_257_RELAY_KEY" "$MKNOON_257_RELAY_TARGET" \
@@ -977,8 +1015,18 @@ elif [ "$PLAN397_RELAY_LIVE_SHA" = "$PLAN397_RELAY_SHA" ]; then
 else
   exit 1
 fi
-if ! ssh -i "$MKNOON_257_RELAY_KEY" "$MKNOON_257_RELAY_TARGET" \
-  "systemctl is-active --quiet relay-server && curl -fsS http://127.0.0.1:2112/metrics >/dev/null"; then
+if ! ssh -i "$MKNOON_257_RELAY_KEY" "$MKNOON_257_RELAY_TARGET" '
+  systemctl is-active --quiet relay-server || exit 1
+  health_attempt=1
+  while [ "$health_attempt" -le 20 ]; do
+    if curl -fsS http://127.0.0.1:2112/metrics >/dev/null; then
+      exit 0
+    fi
+    health_attempt=$((health_attempt + 1))
+    sleep 1
+  done
+  exit 1
+'; then
   if ! plan397_restore_staging; then
     exit 1
   fi
@@ -1186,9 +1234,9 @@ do not run this block:
 export MKNOON_257_STAGING_MANIFEST="$(cd \
   "$(dirname "$MKNOON_257_STAGING_MANIFEST")" && pwd -P)/$(basename \
   "$MKNOON_257_STAGING_MANIFEST")"
-export PLAN397_DEPLOYMENT_RECEIPT="$PWD/build/plan397/deployment-state.json"
-export PLAN397_STAGING_MANIFEST_BACKUP="$PWD/build/plan397/staging-manifest.prior.json"
-export PLAN397_RELAY_BACKUP=/usr/local/bin/relay-server.plan397-20260822-01.bak
+export PLAN397_DEPLOYMENT_RECEIPT="$PWD/build/plan397/deployment-state-02.json"
+export PLAN397_STAGING_MANIFEST_BACKUP="$PWD/build/plan397/staging-manifest.prior-02.json"
+export PLAN397_RELAY_BACKUP=/usr/local/bin/relay-server.plan397-20260823-02.bak
 export PLAN397_RELAY_TARGET_SHA="$(printf '%s' "$MKNOON_257_RELAY_TARGET" | \
   shasum -a 256 | awk '{print $1}')"
 export PLAN397_STAGING_MANIFEST_PATH_SHA="$(printf '%s' \
@@ -1200,7 +1248,7 @@ fi
 if ! jq -e --arg relayTargetSha "$PLAN397_RELAY_TARGET_SHA" \
       --arg manifestPathSha "$PLAN397_STAGING_MANIFEST_PATH_SHA" '
   .schema == "mknoon.plan397.deployment-state.v1" and
-  .runId == "plan397-20260822-01" and
+  .runId == "plan397-20260823-02" and
   .relayTargetSha256 == $relayTargetSha and
   .stagingManifestPathSha256 == $manifestPathSha
 ' "$PLAN397_DEPLOYMENT_RECEIPT" >/dev/null; then
@@ -1248,8 +1296,19 @@ elif [ "$PLAN397_RELAY_LIVE_SHA" = "$PLAN397_RELAY_SHA" ]; then
 else
   exit 1
 fi
-if ! ssh -i "$MKNOON_257_RELAY_KEY" "$MKNOON_257_RELAY_TARGET" \
-  "sudo systemctl restart relay-server && systemctl is-active --quiet relay-server"; then
+if ! ssh -i "$MKNOON_257_RELAY_KEY" "$MKNOON_257_RELAY_TARGET" '
+  sudo systemctl restart relay-server || exit 1
+  systemctl is-active --quiet relay-server || exit 1
+  health_attempt=1
+  while [ "$health_attempt" -le 20 ]; do
+    if curl -fsS http://127.0.0.1:2112/metrics >/dev/null; then
+      exit 0
+    fi
+    health_attempt=$((health_attempt + 1))
+    sleep 1
+  done
+  exit 1
+'; then
   exit 1
 fi
 if [ "$(ssh -i "$MKNOON_257_RELAY_KEY" "$MKNOON_257_RELAY_TARGET" \
@@ -1303,6 +1362,10 @@ test -z "$(gofmt -l \
   go-relay-server/ordinary_push_projection_test.go)"
 dart format --output=none --set-exit-if-changed \
   lib/core/debug/group_reaction_e2e_probe.dart \
+  lib/core/debug/group_reaction_notification_ios_setup_profile.dart \
+  lib/core/debug/group_media_ios_background_e2e.dart \
+  lib/core/debug/intro_e2e_runner.dart \
+  lib/debug/debug_e2e_composition_root.dart \
   integration_test/scripts/group_reaction_notification_device_criteria.dart \
   integration_test/scripts/capture_group_reaction_notification_device.dart \
   integration_test/scripts/reaction_notification_proof_support.dart \
@@ -1310,9 +1373,16 @@ dart format --output=none --set-exit-if-changed \
   integration_test/group_announcement_reaction_notification_proof_test.dart \
   test/integration/group_reaction_notification_device_criteria_test.dart \
   test/core/debug/group_reaction_e2e_probe_test.dart \
+  test/core/debug/group_reaction_notification_ios_setup_profile_test.dart \
+  test/core/debug/group_media_ios_background_e2e_test.dart \
+  test/core/debug/debug_e2e_composition_root_test.dart \
   scripts/test/ios_receiver_bootstrap_contract_test.dart
 dart analyze \
   lib/core/debug/group_reaction_e2e_probe.dart \
+  lib/core/debug/group_reaction_notification_ios_setup_profile.dart \
+  lib/core/debug/group_media_ios_background_e2e.dart \
+  lib/core/debug/intro_e2e_runner.dart \
+  lib/debug/debug_e2e_composition_root.dart \
   integration_test/scripts/group_reaction_notification_device_criteria.dart \
   integration_test/scripts/capture_group_reaction_notification_device.dart \
   integration_test/scripts/reaction_notification_proof_support.dart \
@@ -1320,18 +1390,27 @@ dart analyze \
   integration_test/group_announcement_reaction_notification_proof_test.dart \
   test/integration/group_reaction_notification_device_criteria_test.dart \
   test/core/debug/group_reaction_e2e_probe_test.dart \
+  test/core/debug/group_reaction_notification_ios_setup_profile_test.dart \
+  test/core/debug/group_media_ios_background_e2e_test.dart \
+  test/core/debug/debug_e2e_composition_root_test.dart \
   scripts/test/ios_receiver_bootstrap_contract_test.dart
 python3 -m py_compile \
   integration_test/scripts/ios_receiver_bootstrap.py \
   scripts/test/ios_receiver_bootstrap_test.py
 bash -n scripts/test/group_reaction_notification_device_contract_test.sh
-git diff --check
+# Stage only the Plan-397 paths enumerated by this plan; the shared worktree may
+# contain unrelated user-owned changes that this closure must not inspect.
+git diff --cached --check
 
 # App-owned impact and one incremental Graphify refresh after implementation.
 python3 graphify-arch/tdd_context.py affected \
   go-relay-server/inbox.go \
   go-relay-server/group_content_push.go \
   lib/core/debug/group_reaction_e2e_probe.dart \
+  lib/core/debug/group_reaction_notification_ios_setup_profile.dart \
+  lib/core/debug/group_media_ios_background_e2e.dart \
+  lib/core/debug/intro_e2e_runner.dart \
+  lib/debug/debug_e2e_composition_root.dart \
   integration_test/scripts/group_reaction_notification_device_criteria.dart \
   integration_test/scripts/capture_group_reaction_notification_device.dart \
   integration_test/scripts/reaction_notification_proof_support.dart \
@@ -1368,10 +1447,12 @@ candidate in place only through its one permitted repair/rerun.
 - Registration: existing `classify_path` ownership for the Plan-257 runner,
   plus one enumerated scenario and named proof. No new Sims manifest row.
 - Manual action count: zero inside the campaign.
-- Retry policy: no automatic retry. Retain the first failure; permit at most one
-  rerun after an exact causal RED, repair, and fresh central iOS build. A
-  second/unclassified failure blocks and restores the prior staging relay plus
-  redacted manifest.
+- Retry policy: after the first graded notification baseline opens, no
+  automatic retry. Before that boundary, only the exact setup-XCUITest
+  automation timeout may receive the one warm retry defined above. Retain the
+  first graded product failure; permit at most one campaign rerun after an exact
+  causal RED, repair, and fresh central iOS build. A second/unclassified graded
+  failure blocks and restores the prior staging relay plus redacted manifest.
 
 ## Execution Interpretation And Done Criteria
 
@@ -1385,9 +1466,9 @@ candidate in place only through its one permitted repair/rerun.
   SI-5 parity.
 - Missing/stale credentials, signing, central artifacts, staging health, or a
   live target produces a typed blocker/N/A result. It is never PASS.
-- A need for a new build profile/capability, DB/Redis migration, third device,
-  general source abstraction, or notification redesign is scope drift and
-  stops execution.
+- A need for a new registered/central Sims build profile or capability,
+  DB/Redis migration, third device, general source abstraction, or notification
+  redesign is scope drift and stops execution.
 
 - [ ] TC-397-01 through TC-397-06 record causal RED/GREEN or explicit sentinel
       GREEN with their representative mutation re-reds.
@@ -1460,4 +1541,8 @@ candidate in place only through its one permitted repair/rerun.
 |---|---|---|---|---|---|---|
 | 2026-08-23 | implementation | relay projection, iOS recovery/handoff, device capture/criteria, probe fixtures, and focused tests | TC-397 host/native implementation completed | two ordered message/reaction windows; independent provider, Android, NSE, native-inventory, and same-card tap evidence; central-build provenance and privacy validation | none for implementation | run focused closure gates |
 | 2026-08-23 | focused verification | Plan 397 production/test surfaces | exact five Go sentinels PASS; paired Flutter lane 91 PASS; criteria suite 73 PASS; Python observer tests PASS; iOS bootstrap contracts PASS; exact 12-selector simulator XCUITest PASS; analysis/format/compile/syntax checks PASS | host and available-simulator causal coverage is green | physical notification delivery is not simulated or claimed | run availability-bounded physical preflight |
-| 2026-08-23 | physical preflight | live device and staging matrix | `flutter devices --machine`, `adb devices -l`, `xcrun xctrace list devices`, `xcrun devicectl list devices`, `idevice_id -l`, and pairing validation rerun after two iPhones restarted | two iPhones are USB-visible with valid pairing; Xcode now lists the iPhone 11 online, while CoreDevice reports it `connected (no DDI)` and reports the required iPhone 13 `available (paired)` | the required iPhone 13 remains under Xcode `Devices Offline`; `MKNOON_257_STAGING_MANIFEST`, `MKNOON_257_RELAY_TARGET`, `MKNOON_257_RELAY_KEY`, `FIREBASE_SERVICE_ACCOUNT`, and `MKNOON_RELAY_ADDRESSES` are absent | withhold physical PASS, staging mutation, final `groups` gate, and UI-23 coverage/index updates until the device and credential preflight is satisfiable |
+| 2026-08-23 | physical preflight | live device and staging matrix | rediscovered `flutter`, ADB, CoreDevice, `xctrace`, libimobiledevice, simulator, relay, manifest, and credential inputs after the two iPhones restarted; explicitly mounted the required iPhone DDI | Pixel 6 `21071FDF600CSC` is online; iPhone 13 `00008110-00184D622289801E` is paired, unlocked-since-boot, Developer Mode enabled, DDI-compatible, and moves into Xcode's online section after mount; all staging inputs are present and project-bound | no credential/device-selection blocker; iOS UI Automation remains a separate OS prerequisite | keep physical PASS, final `groups`, and UI-23 updates withheld until a graded run validates |
+| 2026-08-23 | execution repair and central products | Plan-397 profile setup seam, CoreDevice/AFC file channel, DDI/timeouts, setup-only XCUITest warm retry, and criteria tests | causal RED/GREEN repairs; affected suites PASS (119 profile/intro/media/composition/criteria tests plus 14 fixture neighbors); latest criteria suite 82 PASS; scoped analysis clean; Graphify affected + incremental refresh PASS | latest final-tree central reports are `android-pregrade-10-build-report.json` and `ios-pregrade-10-build-report.json`; both were cache hits with Android input/artifact `8674a0c6…`/`2d3a5003…` and iOS input/artifact `cb1911be…`/`f25e01b2…`; relocated iOS bundle membership verified | none for host implementation; physical grade still required; regenerate only the reports if their validator freshness window expires before the next run | use these retained central artifacts and freshness-valid reports for the next fresh run |
+| 2026-08-23 | reversible staging | immutable deployment run `plan397-20260823-02` | compare-and-swap deployed and rolled back around each pre-grade run; bounded 20×1-second metrics poll handles relay startup | prior/candidate relay SHAs `0ae5c7d7…`/`231e3074…`; prior/candidate manifest SHAs `8ea8ddf5…`/`9359ed84…`; receipt and immutable backups verified on every transition | staging is currently restored to the prior relay and prior manifest; service active and metrics healthy | redeploy only for a fresh physical run; retain candidate on PASS |
+| 2026-08-23 | pre-grade physical setup | sealed `run-06` through `run-12` environment evidence | identity/file-channel/profile seams progressed fixture setup; `run-10` exposed Xcode automation warm-up timeout; `run-11` exposed a stale Mac CoreDevice launch timeout; restarting only the resolved stale CoreDevice processes made the same launch complete in about one second; `run-12` exercised the exact setup-only automation retry and both invocations ended with the same OS timeout | no run opened a provider/native message or reaction window; no graded notification attempt or retry was consumed; both Xcode-generated diagnostics ZIPs in `run-12` were absent after result finalization, and no ZIP/TAR/GZ is retained | required iPhone reports `Timed out while enabling automation mode.` even though it is unlocked, Developer Mode is enabled, DDI is usable, and the test runner launches | confirm Settings → Developer → Enable UI Automation on the required iPhone, keep it awake, then run a fresh sealed pre-grade directory |
+| 2026-08-23 | physical blocker revalidation | sealed `run-13` and `run-14` environment evidence | `run-13` stopped at prepared-artifact validation because both retained reports had aged outside the freshness window; regenerated report pair `pregrade-10` hit the same attestations with zero child builds; `run-14` then rebuilt the one permitted setup product and ran the exact fixture selector plus its one setup-only retry | `run-14` again produced `Timed out while enabling automation mode.` for both invocations; neither run opened a provider/native baseline or consumed a graded attempt; Xcode mentioned diagnostics ZIPs while finalizing, but no ZIP/TAR/GZ exists in the sealed artifact; relay and manifest are restored to exact prior SHAs and metrics are healthy | the same iOS UI Automation prerequisite remains the sole physical blocker after three independently sealed goal turns | user must enable Settings → Developer → Enable UI Automation on `00008110-00184D622289801E`, accept the prompt, and leave the phone awake/unlocked before execution can continue |

@@ -15,6 +15,7 @@ import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
 import 'package:flutter_app/core/debug/group_media_ios_disposable_reset.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e_main_actions.dart';
+import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_profile.dart';
 import 'package:flutter_app/core/debug/intro_e2e_runner.dart';
 import 'package:flutter_app/core/debug/ios_receiver_bootstrap.dart';
 import 'package:flutter_app/core/debug/ios_receiver_bootstrap_contract.dart';
@@ -222,16 +223,20 @@ final class DebugE2EActivation {
   bool get isIosProductionProofProfile =>
       installedSimsProfile == iosReceiverBootstrapBuildProfile;
 
+  bool get isPlan397IosSetupProfile =>
+      installedSimsProfile == groupReactionNotificationIosSetupBuildProfile;
+
   bool get constructsControllerRoot =>
       (isDebugMode && (e2eTestMode || directTextProofMode)) ||
       (e2eTestMode && isIosDisposableProfile) ||
+      (e2eTestMode && isPlan397IosSetupProfile) ||
       isIosProductionProofProfile;
 
   bool get constructsPrivateMediaController => constructsControllerRoot;
   bool get constructsWakeTokenObserver => constructsControllerRoot;
   bool get startsIntroPoller =>
       (isDebugMode && (e2eTestMode || directTextProofMode)) ||
-      (e2eTestMode && isIosDisposableProfile);
+      (e2eTestMode && (isIosDisposableProfile || isPlan397IosSetupProfile));
   bool get startsIosSenderProjection => isIosProductionProofProfile;
   bool get publishesIosReceiverBootstrap => isIosProductionProofProfile;
   bool get decoratesIosGroupMediaProof => isIosDisposableProfile;
