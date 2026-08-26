@@ -550,8 +550,9 @@ dbHandoffDirectNotificationDisplayOutboxEntryIfExact(
 /// Exact SQL transaction B after the file-ledger record is SETTLED.
 ///
 /// The caller supplies the same final READY revision used by transaction A.
-/// Deletion and the peer reconciliation trigger commit together. A different
-/// revision or sibling event is never consumed.
+/// Successful durable settlement already published the current peer card, so
+/// this transaction retires only the exact SQL custody. A different revision or
+/// sibling event is never consumed.
 Future<bool>
 dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(
   Database db, {
@@ -661,10 +662,6 @@ dbRetireDirectNotificationDisplayOutboxAfterDurableSettlementIfExact(
     );
     if (deleted != 1) return false;
   }
-  await dbEnqueueDirectNotificationReconciliationOutbox(
-    txn,
-    peerId: expectedPeerId,
-  );
   return true;
 }, exclusive: true);
 

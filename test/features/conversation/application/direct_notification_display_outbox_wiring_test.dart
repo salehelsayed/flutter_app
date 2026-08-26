@@ -485,7 +485,10 @@ void main() {
       );
       expect(
         await dbLoadDirectNotificationReconciliationOutboxEntry(db, peerId),
-        isNotNull,
+        isNull,
+        reason:
+            'a successfully settled display must retire exact custody without '
+            'immediately republishing the same peer card',
       );
 
       final newerRevision = entry.copyWith(revision: entry.revision + 1);

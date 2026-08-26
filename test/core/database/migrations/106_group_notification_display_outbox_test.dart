@@ -1106,6 +1106,119 @@ void main() {
   );
 
   test(
+    'settled group display retires exact READY without immediate reconciliation',
+    () async {
+      final db = await databaseFactoryFfi.openDatabase(
+        path,
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        ),
+      );
+      addTearDown(db.close);
+      const eventId = 'settled-group-message';
+      const correlation =
+          'abababababababababababababababababababababababababababababababab';
+      await db.insert('group_messages', <String, Object?>{
+        'id': eventId,
+        'group_id': 'group-a',
+        'sender_peer_id': 'peer-sender',
+        'text': 'one settled group notification',
+        'timestamp': _t0,
+        'created_at': _t0,
+      });
+      final custody = _message(eventId, messageId: eventId);
+      await dbStageGroupNotificationDisplayOutboxEntry(db, custody.toMap());
+      expect(
+        await dbPromoteGroupNotificationDisplayOutboxReadyIfExact(
+          db,
+          eventId: eventId,
+          expectedRevision: 1,
+          updatedAt: _t1,
+        ),
+        isTrue,
+      );
+      final ready = GroupNotificationDisplayOutboxEntry.fromMap(
+        (await dbBindGroupNotificationDisplayOutboxDurableCorrelationIfExact(
+          db,
+          eventId: eventId,
+          expectedRevision: 2,
+          expectedEventKind: custody.eventKind,
+          expectedGroupId: custody.groupId,
+          expectedMessageId: custody.messageId,
+          expectedActorPeerId: custody.actorPeerId,
+          expectedEventTimestamp: custody.eventTimestamp,
+          expectedReactionId: custody.reactionId,
+          expectedReactionAction: custody.reactionAction,
+          expectedReactionTombstone: custody.reactionTombstone,
+          durableEventCorrelation: correlation,
+          updatedAt: _t1,
+        ))!,
+      );
+      expect(
+        await dbCompleteOrVerifyGroupNotificationDisplayOutboxEntryIfExact(
+          db,
+          eventId: ready.eventId,
+          expectedRevision: ready.revision,
+          expectedEventKind: ready.eventKind,
+          expectedGroupId: ready.groupId,
+          expectedMessageId: ready.messageId,
+          expectedActorPeerId: ready.actorPeerId,
+          expectedEventTimestamp: ready.eventTimestamp,
+          expectedReactionId: ready.reactionId,
+          expectedReactionAction: ready.reactionAction,
+          expectedReactionTombstone: ready.reactionTombstone,
+          completedAt: _t2,
+          durableEventCorrelation: correlation,
+        ),
+        DurableLocalNotificationSqlHandoffResult.committed,
+      );
+      expect(
+        await db.query(
+          'group_notification_reconciliation_outbox',
+          where: 'group_id = ?',
+          whereArgs: const <Object?>['group-a'],
+        ),
+        isEmpty,
+      );
+
+      expect(
+        await dbRetireGroupNotificationDisplayOutboxAfterDurableSettlementIfExact(
+          db,
+          eventId: ready.eventId,
+          expectedRevision: ready.revision,
+          expectedEventKind: ready.eventKind,
+          expectedGroupId: ready.groupId,
+          expectedMessageId: ready.messageId,
+          expectedActorPeerId: ready.actorPeerId,
+          expectedEventTimestamp: ready.eventTimestamp,
+          expectedReactionId: ready.reactionId,
+          expectedReactionAction: ready.reactionAction,
+          expectedReactionTombstone: ready.reactionTombstone,
+          durableEventCorrelation: correlation,
+        ),
+        isTrue,
+      );
+      expect(
+        await dbLoadGroupNotificationDisplayOutboxEntry(db, eventId),
+        isNull,
+      );
+      expect(
+        await db.query(
+          'group_notification_reconciliation_outbox',
+          where: 'group_id = ?',
+          whereArgs: const <Object?>['group-a'],
+        ),
+        isEmpty,
+        reason:
+            'a successfully settled display already published canonical content',
+      );
+    },
+  );
+
+  test(
     'message terminal marker and exact custody completion roll back together',
     () async {
       final db = await databaseFactoryFfi.openDatabase(

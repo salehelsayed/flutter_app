@@ -505,7 +505,9 @@ Future<void> _verifyGroupFinalCanonicalReadBarrier(Directory root) async {
   );
   expect(
     await dbLoadGroupNotificationReconciliationOutboxEntry(db, _groupId),
-    isNotNull,
+    isNull,
+    reason:
+        'a settled canonical read already applied its final native retirement',
   );
 }
 
@@ -1664,7 +1666,9 @@ Future<void> _verifyGroupSingleEffectAndExactHandoff(Directory root) async {
   );
   expect(
     await dbLoadGroupNotificationReconciliationOutboxEntry(db, _groupId),
-    isNotNull,
+    isNull,
+    reason:
+        'a successfully settled post must not schedule the same group card again',
   );
   expect(await db.query('notification_completed_outcome_outbox'), hasLength(1));
 }
@@ -1871,7 +1875,8 @@ Future<void> _verifyGroupEffectTerminalSqlReplay(Directory root) async {
   );
   expect(
     await dbLoadGroupNotificationReconciliationOutboxEntry(db, _groupId),
-    isNotNull,
+    isNull,
+    reason: 'SETTLED replay retires SQL custody with zero native follow-up',
   );
 
   final conflicting = afterCrash.outcome(
@@ -2081,8 +2086,10 @@ Future<void> _verifyDirectEffectTerminalFreshProcessReplay(
   );
   expect(
     await dbLoadDirectNotificationReconciliationOutboxEntry(db, _directPeerId),
-    isNotNull,
-    reason: 'transaction B atomically retires READY and signals reconciliation',
+    isNull,
+    reason:
+        'transaction B retires READY without re-presenting an already settled '
+        'direct card',
   );
   final awaitingSqlRetirement = await afterCrash.registry
       .listSqlReadyEffectTerminals(currentOpaqueBinding: afterCrash.binding);
@@ -2205,7 +2212,8 @@ Future<void> _verifyDirectSettledSqlRetirementRecovery(Directory root) async {
   );
   expect(
     await dbLoadDirectNotificationReconciliationOutboxEntry(db, _directPeerId),
-    isNotNull,
+    isNull,
+    reason: 'SETTLED recovery is zero-native-effect through SQL retirement',
   );
   expect(nativeEffects, 1, reason: 'SETTLED recovery is zero-native-effect');
   expect(

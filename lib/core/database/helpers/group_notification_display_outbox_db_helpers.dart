@@ -9,7 +9,6 @@ import '../../notifications/notification_completed_outcome_correlation.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
 import 'notification_completed_outcome_outbox_db_helpers.dart';
-import 'group_notification_reconciliation_outbox_db_helpers.dart';
 import 'protected_group_reaction_display_terminal_db_helpers.dart';
 
 const String _table = 'group_notification_display_outbox';
@@ -620,9 +619,11 @@ dbCompleteOrVerifyGroupNotificationDisplayOutboxEntryIfExact(
 
 /// Deletes the exact raw READY row only after its ledger record settled.
 ///
-/// The reconciliation trigger is committed in the same transaction, so a
-/// crash after deletion cannot strand a canonical card cleanup. Missing-row
-/// replay is accepted only with the same typed SQL terminal evidence.
+/// Successful settlement already proves that canonical content reached its
+/// final native effect, so this retirement must not enqueue an immediate
+/// replacement of that same content. Canonical mutations own reconciliation
+/// separately. Missing-row replay is accepted only with the same typed SQL
+/// terminal evidence.
 Future<bool>
 dbRetireGroupNotificationDisplayOutboxAfterDurableSettlementIfExact(
   Database db, {
@@ -738,10 +739,6 @@ dbRetireGroupNotificationDisplayOutboxAfterDurableSettlementIfExact(
     );
     if (deleted != 1) return false;
   }
-  await dbEnqueueGroupNotificationReconciliationOutbox(
-    txn,
-    groupId: expectedGroupId,
-  );
   return true;
 }, exclusive: true);
 
