@@ -76,6 +76,14 @@ func buildOpaqueWakeMessage(platform string, now time.Time) (*messaging.Message,
 // fixed provider request for its registered platform. The opaque handle itself
 // never becomes part of the provider message.
 func (ps *PushService) mailboxDirty(ctx context.Context, route pushRouteLease) error {
+	return ps.mailboxDirtyWithAdmission(ctx, route, nil)
+}
+
+func (ps *PushService) mailboxDirtyWithAdmission(
+	ctx context.Context,
+	route pushRouteLease,
+	admissionIdentity *groupMessageDispatchAdmissionIdentity,
+) error {
 	return ps.sendPushRouteThroughGateway(
 		ctx,
 		route,
@@ -83,5 +91,6 @@ func (ps *PushService) mailboxDirty(ctx context.Context, route pushRouteLease) e
 			return buildOpaqueWakeMessage(platform, ps.opaqueWakeNow())
 		},
 		false,
+		admissionIdentity,
 	)
 }

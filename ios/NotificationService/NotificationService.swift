@@ -70,6 +70,8 @@ final class NotificationService: UNNotificationServiceExtension {
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
+    previewEventEmitter.emit(event: "PUSH_NSE_DID_RECEIVE", details: [:])
+
     // The fixed wake is classified from Apple's immutable original before any
     // rich-route staging, copying or resolver work. It never becomes a fake
     // provider envelope.
@@ -238,18 +240,27 @@ final class NotificationService: UNNotificationServiceExtension {
         case .rejected:
           sanitizeNotificationContentForUnresolvedExpiry(mutableContent)
           didApplyPreview = false
+        case .sameRequestDuplicate
+          where preview?.recoveryIdentity?.kind == .ordinary:
+          didApplyPreview = applyTrustedPassiveOrdinaryRetryPreviewResult(
+            preview,
+            to: mutableContent
+          )
         case .duplicate
           where preview?.recoveryIdentity?.kind == .ordinary:
-          // Without the filtering entitlement this is privacy clearing, not a
-          // claim that iOS will suppress delivery.
-          sanitizeNotificationContentForUnresolvedExpiry(mutableContent)
-          didApplyPreview = false
+          didApplyPreview =
+            applyTrustedPassiveOrdinaryDifferentRequestDuplicatePreviewResult(
+              preview,
+              disposition: disposition,
+              to: mutableContent
+            )
         default:
           didApplyPreview = applyOrSanitizeNotificationPreviewResult(
             preview,
             to: mutableContent
           )
-          if disposition == .duplicate,
+          if (disposition == .duplicate ||
+              disposition == .sameRequestDuplicate),
              preview?.recoveryIdentity?.kind == .reaction {
             mutableContent.sound = nil
             if #available(iOS 15.0, *) {
@@ -265,13 +276,22 @@ final class NotificationService: UNNotificationServiceExtension {
             userInfo: mutableContent.userInfo
           )
         }
+        let presentation = didApplyPreview
+          ? disposition == .sameRequestDuplicate || disposition == .duplicate
+            ? "trusted_passive"
+            : "active"
+          : "sanitized"
         self?.previewEventEmitter.emit(
           event: "PUSH_NSE_CONTENT_HANDOFF",
-          details: ["authorized": didApplyPreview ? "true" : "false"]
+          details: [
+            "authorized": didApplyPreview ? "true" : "false",
+            "presentation": presentation,
+          ]
         )
       },
       beforeContentHandler: { disposition in
-        if disposition == .unique || disposition == .duplicate {
+        if disposition == .unique || disposition == .sameRequestDuplicate ||
+           disposition == .duplicate {
           // Submission is queued before Apple's handoff so extension teardown
           // cannot lose it, but the handler never waits for the async writer.
           badgeWriter?.requestWrite()
@@ -281,6 +301,7 @@ final class NotificationService: UNNotificationServiceExtension {
     )
     let toneReservation = preview?.toneReservation
     if didApplyPreview &&
+       recoveryDisposition != .sameRequestDuplicate &&
        recoveryDisposition != .duplicate &&
        preview?.markAsShown == true {
       if let toneReservation, !toneReservation.commit(now: Date()) {

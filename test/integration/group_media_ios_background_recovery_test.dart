@@ -1653,15 +1653,16 @@ void main() {
       final intro = File(
         'lib/core/debug/intro_e2e_runner.dart',
       ).readAsStringSync();
-      final introBranch = intro.substring(
-        intro.indexOf(
-          "if (config['transport_action'] == "
-          'groupMediaIosBackgroundE2EAction)',
-        ),
-        intro.indexOf(
-          '// The signed physical-iOS production profile exposes only',
-        ),
+      final introBranchStart = intro.indexOf(
+        "if (config['transport_action'] == "
+        'groupMediaIosBackgroundE2EAction)',
       );
+      final introBranchEnd = intro.indexOf(
+        'if (!kDebugMode && !allowsPlan397SetupActions)',
+      );
+      expect(introBranchStart, greaterThanOrEqualTo(0));
+      expect(introBranchEnd, greaterThan(introBranchStart));
+      final introBranch = intro.substring(introBranchStart, introBranchEnd);
       expect(introBranch, contains('onReceiverObservationAccepted:'));
       expect(introBranch, contains('onReceiverObservationComplete:'));
       expect(
@@ -1738,22 +1739,28 @@ void main() {
       final actionSource = File(
         'lib/core/debug/group_media_ios_background_e2e.dart',
       ).readAsStringSync();
-      final action = actionSource.substring(
-        actionSource.indexOf(
-          'Future<Map<String, Object?>> '
-          'runGroupMediaIosBackgroundE2EAction({',
-        ),
-        actionSource.indexOf(
-          '/// Exact release-mode exception for the signed physical-iOS',
-        ),
+      final actionStart = actionSource.indexOf(
+        'Future<Map<String, Object?>> '
+        'runGroupMediaIosBackgroundE2EAction({',
       );
+      final actionEnd = actionSource.indexOf(
+        'bool allowsGroupMediaIosIntroFileChannel({',
+      );
+      expect(actionStart, greaterThanOrEqualTo(0));
+      expect(actionEnd, greaterThan(actionStart));
+      final action = actionSource.substring(actionStart, actionEnd);
       expect(action, contains('onReceiverObservationAccepted'));
       expect(action, contains('onReceiverObservationComplete'));
       expect(action, contains('reserveReceiveCriticalTask'));
-      final observeCase = action.substring(
-        action.indexOf('case groupMediaIosReceiverObservePhase:'),
-        action.indexOf('case groupMediaIosReceiverRecoverPhase:'),
+      final observeCaseStart = action.indexOf(
+        'case groupMediaIosReceiverObservePhase:',
       );
+      final observeCaseEnd = action.indexOf(
+        'case groupMediaIosReceiverRecoverPhase:',
+      );
+      expect(observeCaseStart, greaterThanOrEqualTo(0));
+      expect(observeCaseEnd, greaterThan(observeCaseStart));
+      final observeCase = action.substring(observeCaseStart, observeCaseEnd);
       expect(observeCase, contains('onReceiverObservationAccepted'));
       expect(observeCase, contains('onReceiverObservationComplete'));
       expect(observeCase, contains('reserveReceiveCriticalTask'));

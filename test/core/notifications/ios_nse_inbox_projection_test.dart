@@ -31,6 +31,15 @@ const _relayB = '/dns4/relay-b.example/udp/4002/p2p/12D3KooWRelayB';
 String get _privateKey => base64Encode(List<int>.generate(64, (i) => i));
 
 void main() {
+  test('memory-bounded iOS NSE does not advertise opaque inbox wakes', () {
+    expect(
+      isIosNseOpaqueInboxConsumerCompiledIn(),
+      isFalse,
+      reason:
+          'GoMknoonNSE excludes libp2p; fixed wakes must remain unavailable',
+    );
+  });
+
   test(
     'TC-373-02 exact physical transport projection gates paired iOS capability',
     () async {
@@ -782,9 +791,31 @@ void main() {
       expect(
         goAdapter,
         allOf(
+          contains('nsepush.RetrievePending(paramsJSON)'),
+          isNot(contains('BridgeInitialize(')),
+          isNot(contains('BridgeStartNode(')),
+        ),
+      );
+      final sharedRetriever = File(
+        'go-mknoon/internal/nsepush/retrieve.go',
+      ).readAsStringSync();
+      expect(
+        sharedRetriever,
+        allOf(
           contains('node.NSEInboxRetrievePendingOneShot('),
           isNot(contains('BridgeInitialize(')),
           isNot(contains('BridgeStartNode(')),
+        ),
+      );
+      final leanRetriever = File(
+        'go-mknoon/nsebridge/nse_inbox_lite.go',
+      ).readAsStringSync();
+      expect(
+        leanRetriever,
+        allOf(
+          contains('INBOX_UNAVAILABLE'),
+          isNot(contains('internal/nsepush')),
+          isNot(contains('go-mknoon/node')),
         ),
       );
     },

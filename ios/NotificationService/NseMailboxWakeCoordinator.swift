@@ -2,8 +2,8 @@ import CoreFoundation
 import Foundation
 import UserNotifications
 
-#if canImport(GoMknoon)
-import GoMknoon
+#if canImport(GoMknoonNSE)
+import GoMknoonNSE
 #endif
 
 enum NseMailboxWakeClassifier {
@@ -76,7 +76,7 @@ protocol NseInboxRetrieving {
 
 struct GoNseInboxRetriever: NseInboxRetrieving {
   func retrievePending(requestJSON: String) throws -> String {
-#if canImport(GoMknoon)
+#if canImport(GoMknoonNSE)
     return BridgeNSEInboxRetrievePending(requestJSON)
 #else
     throw NseMailboxWakeError.bridgeUnavailable

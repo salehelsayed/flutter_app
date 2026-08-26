@@ -113,6 +113,8 @@ enum LocalNotificationEffectPhase {
 
 enum LocalNotificationAttemptKind {
   postOrUpdate('POST_OR_UPDATE'),
+  adoptExistingRemote('ADOPT_EXISTING_REMOTE'),
+  cancelLocalForRemoteAdoption('CANCEL_LOCAL_FOR_REMOTE_ADOPTION'),
   cancel('CANCEL');
 
   const LocalNotificationAttemptKind(this.wireName);
@@ -546,7 +548,8 @@ abstract final class LocalNotificationLedgerStateMachineV1 {
         current.eventCorrelation != next.eventCorrelation ||
         current.conversationDigest != next.conversationDigest ||
         current.producerKind != next.producerKind ||
-        current.presentationOwner != next.presentationOwner ||
+        (current.presentationOwner != next.presentationOwner &&
+            !_isEstablishedRemoteOwnerTransfer(current, next)) ||
         current.notificationId != next.notificationId ||
         current.contentGeneration != next.contentGeneration ||
         current.createdAtUtc != next.createdAtUtc ||
@@ -582,8 +585,15 @@ abstract final class LocalNotificationLedgerStateMachineV1 {
     }
     if (current.effectPhase == LocalNotificationEffectPhase.claimed &&
         next.effectPhase == LocalNotificationEffectPhase.claimed &&
-        (current.attemptKind != next.attemptKind ||
-            current.effectToken != next.effectToken)) {
+        current.effectToken != next.effectToken) {
+      return null;
+    }
+    if (current.effectPhase == LocalNotificationEffectPhase.claimed &&
+        next.effectPhase == LocalNotificationEffectPhase.claimed &&
+        current.attemptKind != next.attemptKind &&
+        !(current.attemptKind == LocalNotificationAttemptKind.postOrUpdate &&
+            next.attemptKind ==
+                LocalNotificationAttemptKind.adoptExistingRemote)) {
       return null;
     }
     if (current.effectPhase == LocalNotificationEffectPhase.publishing &&
@@ -611,6 +621,11 @@ abstract final class LocalNotificationLedgerStateMachineV1 {
       final preservesAttempt =
           current.attemptKind == next.attemptKind &&
           current.effectToken == next.effectToken;
+      final reconcilesEstablishedRemote =
+          current.attemptKind == LocalNotificationAttemptKind.postOrUpdate &&
+          next.attemptKind ==
+              LocalNotificationAttemptKind.cancelLocalForRemoteAdoption &&
+          next.effectToken == current.effectToken;
       final armsExactCancel =
           current.attemptKind == LocalNotificationAttemptKind.postOrUpdate &&
           next.attemptKind == LocalNotificationAttemptKind.cancel &&
@@ -620,6 +635,7 @@ abstract final class LocalNotificationLedgerStateMachineV1 {
           next.attemptKind == LocalNotificationAttemptKind.postOrUpdate &&
           next.effectToken == current.effectToken;
       if (!preservesAttempt &&
+          !reconcilesEstablishedRemote &&
           !armsExactCancel &&
           !resumesPostAfterActivation) {
         return null;
@@ -632,6 +648,36 @@ abstract final class LocalNotificationLedgerStateMachineV1 {
     }
     return next;
   }
+}
+
+bool _isEstablishedRemoteOwnerTransfer(
+  LocalNotificationRecordV1 current,
+  LocalNotificationRecordV1 next,
+) {
+  if (current.producerKind != LocalNotificationProducerKind.groupMessage ||
+      next.presentationOwner != LocalNotificationPresentationOwner.iosNse ||
+      current.sourceCustody != next.sourceCustody) {
+    return false;
+  }
+  final sameToken = current.effectToken == next.effectToken;
+  final adoptsBeforePublication =
+      ((current.effectPhase == LocalNotificationEffectPhase.ready &&
+              current.attemptKind == null &&
+              next.effectPhase == LocalNotificationEffectPhase.claimed) ||
+          (current.effectPhase == LocalNotificationEffectPhase.claimed &&
+              current.attemptKind ==
+                  LocalNotificationAttemptKind.postOrUpdate &&
+              next.effectPhase == LocalNotificationEffectPhase.claimed &&
+              sameToken)) &&
+      next.attemptKind == LocalNotificationAttemptKind.adoptExistingRemote;
+  final reconcilesAmbiguousPublication =
+      current.effectPhase == LocalNotificationEffectPhase.publishing &&
+      current.attemptKind == LocalNotificationAttemptKind.postOrUpdate &&
+      next.effectPhase == LocalNotificationEffectPhase.publishing &&
+      next.attemptKind ==
+          LocalNotificationAttemptKind.cancelLocalForRemoteAdoption &&
+      sameToken;
+  return adoptsBeforePublication || reconcilesAmbiguousPublication;
 }
 
 bool _isPhasePreservingCustodyUpgrade(

@@ -334,6 +334,41 @@ EDITS_V2_GO = [
     ),
 ]
 
+# Newer 0.9.x extractors preserve qualified names such as `testing.T`, so only
+# unqualified single-letter generic references still need filtering. Keep this
+# as a separate exact-anchor variant: an unrecognized upstream shape must still
+# fail closed instead of receiving a speculative patch.
+EDITS_V2_GO_QUALIFIED = [
+    (
+        '''    if t == "type_identifier":
+        text = _read_text(node, source)
+        if text and text not in _GO_PREDECLARED_TYPES:
+            out.append((text, "generic_arg" if generic else "type"))
+        return
+    if t == "qualified_type":
+        # Keep the package qualifier so the generic stub rewire cannot attach
+        # `testing.T` to an unrelated local type or function named T.
+        text = _read_text(node, source)
+        if text:
+            out.append((text, "generic_arg" if generic else "type"))
+        return''',
+        '''    # ''' + MARKER_V2_GO + ''': single-letter unqualified type refs
+    # (generic params) are query noise. Qualified refs retain their package.
+    if t == "type_identifier":
+        text = _read_text(node, source)
+        if text and len(text) > 1 and text not in _GO_PREDECLARED_TYPES:
+            out.append((text, "generic_arg" if generic else "type"))
+        return
+    if t == "qualified_type":
+        # Keep the package qualifier so the generic stub rewire cannot attach
+        # `testing.T` to an unrelated local type or function named T.
+        text = _read_text(node, source)
+        if text:
+            out.append((text, "generic_arg" if generic else "type"))
+        return''',
+    ),
+]
+
 # 0.9.x detect() hardening skips symlinks whose target resolves outside the
 # scan root — which empties the arch corpus (.graphify-arch-src/ is nothing but
 # repo-owned symlinks pointing back into the repository). Opt-in override: when
@@ -390,6 +425,24 @@ DEDUP_EDITS = [
                     if norm_label != neighbor_norm:
                         continue
                     # Identical labels across different source files almost always''',
+    ),
+]
+
+# Newer upstream versions expanded the merge commentary and moved the old
+# anchor, while still permitting differently named non-code nodes to fuzzy
+# merge. Preserve the repo's exact-normalized-label policy at the new seam.
+DEDUP_EDITS_CURRENT = [
+    (
+        '''                if score >= _MERGE_THRESHOLD:
+                    # Belt-and-braces (#1046, narrowed by #2182): candidates are''',
+        '''                if score >= _MERGE_THRESHOLD:
+                    # ''' + DEDUP_MARKER + ''': this repo uses systematic IDs and
+                    # template-shaped labels whose small differences are semantic.
+                    # Only exact normalized labels may merge; differently named
+                    # entities must remain distinct regardless of fuzzy score.
+                    if norm_label != neighbor_norm:
+                        continue
+                    # Belt-and-braces (#1046, narrowed by #2182): candidates are''',
     ),
 ]
 
@@ -454,11 +507,27 @@ def main() -> None:
         ]
     else:
         # 0.9.x split layout: per-language files under graphify/extractors/.
+        go_src = go_py.read_text(encoding="utf-8")
+        if MARKER_V2_GO in go_src or EDITS_V2_GO[0][0] in go_src:
+            go_edits = EDITS_V2_GO
+        elif EDITS_V2_GO_QUALIFIED[0][0] in go_src:
+            go_edits = EDITS_V2_GO_QUALIFIED
+        else:
+            # Preserve patch_file's exact-anchor failure for unknown upstream
+            # shapes rather than silently skipping a still-relevant safeguard.
+            go_edits = EDITS_V2_GO
         targets = [
             (dart_py, MARKER_V2, EDITS + EDITS_V2, (MARKER, MARKER_V2)),
-            (go_py, MARKER_V2_GO, EDITS_V2_GO, (MARKER_V2_GO,)),
+            (go_py, MARKER_V2_GO, go_edits, (MARKER_V2_GO,)),
         ]
-    targets.append((dedup_py, DEDUP_MARKER, DEDUP_EDITS,
+    dedup_src = dedup_py.read_text(encoding="utf-8")
+    if DEDUP_MARKER in dedup_src or DEDUP_EDITS[0][0] in dedup_src:
+        dedup_edits = DEDUP_EDITS
+    elif DEDUP_EDITS_CURRENT[0][0] in dedup_src:
+        dedup_edits = DEDUP_EDITS_CURRENT
+    else:
+        dedup_edits = DEDUP_EDITS
+    targets.append((dedup_py, DEDUP_MARKER, dedup_edits,
                     (DEDUP_MARKER_V1, DEDUP_MARKER)))
 
     detect_py = _resolve_module_file("graphify.detect")

@@ -14,15 +14,37 @@ const String iosNotificationStagingManifestSchema =
 const String iosNotificationProviderRequestSchema =
     'mknoon.sims.ios-payload-fast-path-provider-request.v1';
 const String iosNotificationProviderReceiptSchema =
-    'mknoon.sims.ios-payload-fast-path-provider-receipt.v1';
+    'mknoon.sims.ios-payload-fast-path-provider-receipt.v2';
+const String iosNotificationProviderRetryReceiptSchema =
+    'mknoon.sims.ios-payload-fast-path-provider-retry-receipt.v1';
 const String iosNotificationProviderCleanupReceiptSchema =
     'mknoon.sims.ios-payload-fast-path-provider-cleanup-receipt.v1';
 const String iosNotificationAutomationReceiptSchema =
     'mknoon.sims.ios-payload-fast-path-automation-receipt.v1';
 const String iosNotificationRecoveryAutomationReceiptSchema =
-    'mknoon.sims.ios-notification-recovery-automation-receipt.v1';
+    'mknoon.sims.ios-notification-recovery-automation-receipt.v2';
+const String iosNotificationRetryAutomationReceiptSchema =
+    'mknoon.sims.ios-notification-retry-automation-receipt.v1';
 
 final RegExp _sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
+
+const Set<String> _iosNotificationCleanupOwnerKeys = <String>{
+  'ui',
+  'sender',
+  'providerCleanup',
+  'providerRecovery',
+  'directInstall',
+};
+const Set<String> _iosNotificationRequiredCleanupOwners = <String>{
+  'ui',
+  'sender',
+  'providerCleanup',
+};
+const Set<String> _iosNotificationCleanupStateKeys = <String>{
+  'required',
+  'attempted',
+  'completed',
+};
 
 final class IosNotificationContractResult {
   const IosNotificationContractResult._(this.ok, this.detail);
@@ -212,6 +234,9 @@ IosNotificationContractResult validateIosNotificationProviderReceipt(
     'apnsPayloadSha256',
     'receiverHandoffSha256',
     'providerMessageIdSha256',
+    'collapseIdentitySha256',
+    'syntheticMessageIdSha256',
+    'submissionStage',
     'relayLogPath',
     'relayLogSha256',
     'stagedEnvelopeSha256',
@@ -234,6 +259,7 @@ IosNotificationContractResult validateIosNotificationProviderReceipt(
     'cleanupDriverAvailable': true,
     'childBuildCount': 0,
     'manualActionCount': 0,
+    'submissionStage': 'first',
   };
   for (final entry in exact.entries) {
     if (receipt[entry.key] != entry.value) {
@@ -255,9 +281,11 @@ IosNotificationContractResult validateIosNotificationProviderReceipt(
       'payload, and receiver handoff',
     );
   }
-  if (!_isSha256(receipt['providerMessageIdSha256'])) {
+  if (!_isSha256(receipt['providerMessageIdSha256']) ||
+      !_isSha256(receipt['collapseIdentitySha256']) ||
+      !_isSha256(receipt['syntheticMessageIdSha256'])) {
     return const IosNotificationContractResult.fail(
-      'provider receipt requires a redacted provider message ID hash',
+      'provider receipt requires redacted provider, collapse, and synthetic ID hashes',
     );
   }
   if (!_isSafeNonemptyString(receipt['relayLogPath']) ||
@@ -274,6 +302,94 @@ IosNotificationContractResult validateIosNotificationProviderReceipt(
   }
   return const IosNotificationContractResult.pass(
     'provider receipt proves relay custody and APNs acceptance for this run',
+  );
+}
+
+IosNotificationContractResult validateIosNotificationProviderRetryReceipt(
+  Map<String, Object?> receipt, {
+  required String runId,
+  required String nonce,
+  required String receiverDeviceId,
+  required String requestSha256,
+  required String apnsPayloadSha256,
+  required String receiverHandoffSha256,
+  required String collapseIdentitySha256,
+  required String firstProviderReceiptSha256,
+  required String firstProviderMessageIdSha256,
+}) {
+  final secret = findIosNotificationSecretBearingField(receipt);
+  if (secret != null) {
+    return IosNotificationContractResult.fail(
+      'provider retry receipt contains forbidden secret-bearing field $secret',
+    );
+  }
+  const exactKeys = <String>{
+    'schema',
+    'action',
+    'status',
+    'provider',
+    'runId',
+    'nonce',
+    'receiverDeviceIdSha256',
+    'requestSha256',
+    'apnsPayloadSha256',
+    'receiverHandoffSha256',
+    'collapseIdentitySha256',
+    'firstProviderReceiptSha256',
+    'firstProviderMessageIdSha256',
+    'secondProviderMessageIdSha256',
+    'firstAcceptedAt',
+    'secondAcceptedAt',
+    'providerAcceptedCount',
+    'payloadBytesIdentical',
+    'collapseIdentityReused',
+    'providerIdsDistinct',
+    'childBuildCount',
+    'manualActionCount',
+  };
+  if (!_hasExactKeys(receipt, exactKeys)) {
+    return const IosNotificationContractResult.fail(
+      'provider retry receipt fields must match the exact schema',
+    );
+  }
+  const exact = <String, Object?>{
+    'schema': iosNotificationProviderRetryReceiptSchema,
+    'action': 'retry',
+    'status': 'accepted',
+    'provider': 'apns',
+    'providerAcceptedCount': 2,
+    'payloadBytesIdentical': true,
+    'collapseIdentityReused': true,
+    'providerIdsDistinct': true,
+    'childBuildCount': 0,
+    'manualActionCount': 0,
+  };
+  if (exact.entries.any((entry) => receipt[entry.key] != entry.value) ||
+      receipt['runId'] != runId ||
+      receipt['nonce'] != nonce ||
+      receipt['receiverDeviceIdSha256'] != sha256String(receiverDeviceId) ||
+      receipt['requestSha256'] != requestSha256 ||
+      receipt['apnsPayloadSha256'] != apnsPayloadSha256 ||
+      receipt['receiverHandoffSha256'] != receiverHandoffSha256 ||
+      receipt['collapseIdentitySha256'] != collapseIdentitySha256 ||
+      receipt['firstProviderReceiptSha256'] != firstProviderReceiptSha256 ||
+      receipt['firstProviderMessageIdSha256'] != firstProviderMessageIdSha256 ||
+      !_isSha256(receipt['secondProviderMessageIdSha256']) ||
+      receipt['secondProviderMessageIdSha256'] ==
+          firstProviderMessageIdSha256) {
+    return const IosNotificationContractResult.fail(
+      'provider retry receipt is not bound to two distinct identical-payload submissions',
+    );
+  }
+  final first = _utcTimestamp(receipt['firstAcceptedAt']);
+  final second = _utcTimestamp(receipt['secondAcceptedAt']);
+  if (first == null || second == null || second.isBefore(first)) {
+    return const IosNotificationContractResult.fail(
+      'provider retry acceptance timestamps are invalid or out of order',
+    );
+  }
+  return const IosNotificationContractResult.pass(
+    'provider retry receipt binds two distinct APNs acceptances to identical bytes and collapse identity',
   );
 }
 
@@ -612,8 +728,11 @@ IosNotificationContractResult validateIosNotificationRecoveryAutomationReceipt(
     'apnsPayloadSha256',
     'childBuildCount',
     'manualActionCount',
+    'passDiagnosticRetained',
+    'cleanupOwners',
     'checks',
     'counts',
+    'requestIdentifierSha256',
     'timestamps',
     'evidenceSha256',
   };
@@ -632,6 +751,7 @@ IosNotificationContractResult validateIosNotificationRecoveryAutomationReceipt(
     'receiverPhysical': true,
     'childBuildCount': 0,
     'manualActionCount': 0,
+    'passDiagnosticRetained': true,
   };
   for (final entry in exact.entries) {
     if (receipt[entry.key] != entry.value) {
@@ -678,6 +798,12 @@ IosNotificationContractResult validateIosNotificationRecoveryAutomationReceipt(
     'zeroBadgePublished',
     'providerCleanupAutomated',
     'testStateCleared',
+    'sourceInventoryStable',
+    'directSourceUsefulProviderOnly',
+    'backgroundHandlerReached',
+    'backgroundContenderSuppressed',
+    'noMatchingLocalShow',
+    'completeWindowNseBound',
   };
   if (checksValue.keys.toSet().difference(requiredChecks).isNotEmpty ||
       requiredChecks.difference(checksValue.keys.toSet()).isNotEmpty) {
@@ -694,6 +820,14 @@ IosNotificationContractResult validateIosNotificationRecoveryAutomationReceipt(
       '${failedChecks.join(', ')}',
     );
   }
+  if (!_hasExpectedSuccessfulIosNotificationCleanupOwners(
+    receipt['cleanupOwners'],
+  )) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt cleanupOwners must expose exact successful '
+      'per-owner required, attempted, and completed state',
+    );
+  }
 
   final countsValue = receipt['counts'];
   if (countsValue is! Map) {
@@ -707,6 +841,26 @@ IosNotificationContractResult validateIosNotificationRecoveryAutomationReceipt(
     'deliveredBefore': 1,
     'deliveredWithSentinel': 2,
     'deliveredAfter': 1,
+    'matchingRemoteCount': 1,
+    'matchingLocalCount': 0,
+    'matchingUsefulProviderCount': 1,
+    'matchingSanitizedProviderCount': 0,
+    'matchingFlutterLocalCount': 0,
+    'matchingUnknownCount': 0,
+    'matchingTotalCount': 1,
+    'stableSampleCount': 3,
+    'stableSampleIntervalMilliseconds': 500,
+    'settleDelayMilliseconds': 3000,
+    'observationDeadlineMilliseconds': 8000,
+    'backgroundHandlerCount': 1,
+    'recentRemoteSuppressionCount': 1,
+    'matchingNotificationShownCount': 0,
+    'nseEnvelopeStagedCount': 1,
+    'nseDecryptOkCount': 1,
+    'nseAuthorizedHandoffCount': 1,
+    'nseActiveHandoffCount': 1,
+    'nseTrustedPassiveHandoffCount': 0,
+    'nseSanitizedHandoffCount': 0,
   };
   if (countsValue.keys
           .toSet()
@@ -727,6 +881,15 @@ IosNotificationContractResult validateIosNotificationRecoveryAutomationReceipt(
         '${entry.value}',
       );
     }
+  }
+  final requestHashes = receipt['requestIdentifierSha256'];
+  if (requestHashes is! List ||
+      requestHashes.length != 1 ||
+      requestHashes.toSet().length != 1 ||
+      !_isSha256(requestHashes.single)) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt requires one bounded hashed request identity',
+    );
   }
 
   final timestampsValue = receipt['timestamps'];
@@ -803,6 +966,7 @@ IosNotificationContractResult validateIosNotificationRecoveryAutomationReceipt(
     'recipientLog',
     'uiAutomationLog',
     'stagedEnvelope',
+    'causalDiagnostic',
   };
   if (evidenceValue.keys.toSet().difference(requiredEvidence).isNotEmpty ||
       requiredEvidence.difference(evidenceValue.keys.toSet()).isNotEmpty) {
@@ -826,19 +990,233 @@ IosNotificationContractResult validateIosNotificationRecoveryAutomationReceipt(
     );
   }
   return const IosNotificationContractResult.pass(
-    'physical APNs recovery retired only its exact notification and converged '
-    'the absolute badge while preserving unrelated delivery',
+    'physical APNs recovery proved one stable useful provider source, one '
+    'background-handler contender suppression, and exact retirement',
+  );
+}
+
+IosNotificationContractResult validateIosNotificationRetryAutomationReceipt(
+  Map<String, Object?> receipt, {
+  required String runId,
+  required String nonce,
+  required String receiverDeviceId,
+  required String peerDeviceId,
+  required String preparedApplicationSha256,
+  required String providerRequestSha256,
+  required String payloadProducerSha256,
+  required String apnsPayloadSha256,
+}) {
+  final secret = findIosNotificationSecretBearingField(receipt);
+  if (secret != null) {
+    return IosNotificationContractResult.fail(
+      'retry automation receipt contains forbidden secret-bearing field $secret',
+    );
+  }
+  const exactKeys = <String>{
+    'schema',
+    'scenario',
+    'phase',
+    'status',
+    'platform',
+    'receiverPhysical',
+    'runId',
+    'nonce',
+    'receiverDeviceId',
+    'peerDeviceId',
+    'preparedApplicationSha256',
+    'providerRequestSha256',
+    'payloadProducerSha256',
+    'apnsPayloadSha256',
+    'collapseIdentitySha256',
+    'requestIdentifierSha256',
+    'childBuildCount',
+    'manualActionCount',
+    'passDiagnosticRetained',
+    'cleanupOwners',
+    'checks',
+    'counts',
+    'timestamps',
+    'providerMessageIdSha256',
+    'evidenceSha256',
+  };
+  if (!_hasExactKeys(receipt, exactKeys)) {
+    return const IosNotificationContractResult.fail(
+      'retry automation receipt fields must match the exact schema',
+    );
+  }
+  const exact = <String, Object?>{
+    'schema': iosNotificationRetryAutomationReceiptSchema,
+    'scenario': iosNotificationPayloadScenario,
+    'phase': 'retry',
+    'status': 'passed',
+    'platform': 'ios',
+    'receiverPhysical': true,
+    'childBuildCount': 0,
+    'manualActionCount': 0,
+    'passDiagnosticRetained': true,
+  };
+  if (exact.entries.any((entry) => receipt[entry.key] != entry.value) ||
+      receipt['runId'] != runId ||
+      receipt['nonce'] != nonce ||
+      receipt['receiverDeviceId'] != receiverDeviceId ||
+      receipt['peerDeviceId'] != peerDeviceId ||
+      receipt['preparedApplicationSha256'] != preparedApplicationSha256 ||
+      receipt['providerRequestSha256'] != providerRequestSha256 ||
+      receipt['payloadProducerSha256'] != payloadProducerSha256 ||
+      receipt['apnsPayloadSha256'] != apnsPayloadSha256 ||
+      !_isSha256(receipt['collapseIdentitySha256']) ||
+      receipt['requestIdentifierSha256'] != receipt['collapseIdentitySha256']) {
+    return const IosNotificationContractResult.fail(
+      'retry automation receipt is not bound to the exact run and final collapse identity',
+    );
+  }
+  const requiredChecks = <String>{
+    'firstDeliveryFenced',
+    'secondTrustedPassiveHandoff',
+    'providerAcceptancesDistinct',
+    'payloadBytesIdentical',
+    'collapseIdentityReused',
+    'finalRequestIdentifierMatchesCollapse',
+    'samePayloadRetrySingleUsefulCard',
+    'noSanitizedProviderCard',
+    'noFlutterLocalCard',
+    'noUnknownCard',
+    'noMatchingLocalShow',
+    'completeWindowNseBound',
+    'providerCleanupAutomated',
+    'testStateCleared',
+  };
+  final checks = receipt['checks'];
+  if (checks is! Map ||
+      !_hasExactKeys(checks, requiredChecks) ||
+      requiredChecks.any((key) => checks[key] != true)) {
+    return const IosNotificationContractResult.fail(
+      'retry automation receipt requires every exact retry and cleanup check',
+    );
+  }
+  if (!_hasExpectedSuccessfulIosNotificationCleanupOwners(
+    receipt['cleanupOwners'],
+  )) {
+    return const IosNotificationContractResult.fail(
+      'retry automation receipt cleanupOwners must expose exact successful '
+      'per-owner required, attempted, and completed state',
+    );
+  }
+  const exactCounts = <String, int>{
+    'providerAcceptedCount': 2,
+    'matchingUsefulProviderCount': 1,
+    'matchingSanitizedProviderCount': 0,
+    'matchingFlutterLocalCount': 0,
+    'matchingUnknownCount': 0,
+    'matchingTotalCount': 1,
+    'stableSampleCount': 3,
+    'nseEnvelopeStagedCount': 2,
+    'nseDecryptOkCount': 2,
+    'nseAuthorizedHandoffCount': 2,
+    'nseActiveHandoffCount': 1,
+    'nseTrustedPassiveHandoffCount': 1,
+    'nseSanitizedHandoffCount': 0,
+    'backgroundHandlerCount': 2,
+    'recentRemoteSuppressionCount': 2,
+    'matchingNotificationShownCount': 0,
+  };
+  final counts = receipt['counts'];
+  if (counts is! Map ||
+      !_hasExactKeys(counts, exactCounts.keys.toSet()) ||
+      exactCounts.entries.any((entry) => counts[entry.key] != entry.value)) {
+    return const IosNotificationContractResult.fail(
+      'retry automation receipt counts do not prove the complete two-send window',
+    );
+  }
+  final providerIds = receipt['providerMessageIdSha256'];
+  if (providerIds is! List ||
+      providerIds.length != 2 ||
+      providerIds.toSet().length != 2 ||
+      providerIds.any((value) => !_isSha256(value))) {
+    return const IosNotificationContractResult.fail(
+      'retry automation receipt requires two distinct hashed provider IDs',
+    );
+  }
+  const timestampKeys = <String>{
+    'firstAcceptedAt',
+    'firstNseObservedAt',
+    'firstCardObservedAt',
+    'secondAcceptedAt',
+    'secondNseObservedAt',
+    'secondCardObservedAt',
+  };
+  final timestamps = receipt['timestamps'];
+  if (timestamps is! Map || !_hasExactKeys(timestamps, timestampKeys)) {
+    return const IosNotificationContractResult.fail(
+      'retry automation receipt timestamps must match the exact schema',
+    );
+  }
+  final firstAccepted = _utcTimestamp(timestamps['firstAcceptedAt']);
+  final firstNse = _utcTimestamp(timestamps['firstNseObservedAt']);
+  final firstCard = _utcTimestamp(timestamps['firstCardObservedAt']);
+  final secondAccepted = _utcTimestamp(timestamps['secondAcceptedAt']);
+  final secondNse = _utcTimestamp(timestamps['secondNseObservedAt']);
+  final secondCard = _utcTimestamp(timestamps['secondCardObservedAt']);
+  if (<DateTime?>[
+        firstAccepted,
+        firstNse,
+        firstCard,
+        secondAccepted,
+        secondNse,
+        secondCard,
+      ].any((value) => value == null) ||
+      firstNse!.isBefore(firstAccepted!) ||
+      secondAccepted!.isBefore(firstAccepted) ||
+      secondNse!.isBefore(secondAccepted) ||
+      secondCard!.isBefore(firstCard!)) {
+    return const IosNotificationContractResult.fail(
+      'retry automation receipt timestamps do not fence first then second delivery',
+    );
+  }
+  const evidenceKeys = <String>{
+    'preparedApplication',
+    'payloadProducer',
+    'apnsPayload',
+    'firstProviderReceipt',
+    'secondProviderReceipt',
+    'providerCleanupReceipt',
+    'firstInventoryReceipt',
+    'secondInventoryReceipt',
+    'relayLog',
+    'nseLog',
+    'recipientLog',
+    'uiAutomationLog',
+    'causalDiagnostic',
+    'stagedEnvelope',
+  };
+  final evidence = receipt['evidenceSha256'];
+  if (evidence is! Map ||
+      !_hasExactKeys(evidence, evidenceKeys) ||
+      evidenceKeys.any((key) => !_isSha256(evidence[key])) ||
+      evidence['preparedApplication'] != preparedApplicationSha256 ||
+      evidence['payloadProducer'] != payloadProducerSha256 ||
+      evidence['apnsPayload'] != apnsPayloadSha256) {
+    return const IosNotificationContractResult.fail(
+      'retry automation evidence hashes are incomplete or unbound',
+    );
+  }
+  return const IosNotificationContractResult.pass(
+    'two accepted identical APNs requests fenced active then trusted-passive handoffs and one useful card',
   );
 }
 
 Map<String, Object?> buildIosNotificationArtifact({
   required Map<String, Object?> automationReceipt,
   required Map<String, Object?> recoveryAutomationReceipt,
+  required Map<String, Object?> retryAutomationReceipt,
   required String capturedAt,
 }) {
   final checks = Map<String, Object?>.from(automationReceipt['checks']! as Map);
   final recoveryChecks = Map<String, Object?>.from(
     recoveryAutomationReceipt['checks']! as Map,
+  );
+  final retryChecks = Map<String, Object?>.from(
+    retryAutomationReceipt['checks']! as Map,
   );
   final timestamps = Map<String, Object?>.from(
     automationReceipt['timestamps']! as Map,
@@ -852,9 +1230,20 @@ Map<String, Object?> buildIosNotificationArtifact({
   final recoveryEvidence = Map<String, Object?>.from(
     recoveryAutomationReceipt['evidenceSha256']! as Map,
   );
+  final retryEvidence = Map<String, Object?>.from(
+    retryAutomationReceipt['evidenceSha256']! as Map,
+  );
+  final recoveryCleanupOwners = _copyIosNotificationCleanupOwners(
+    recoveryAutomationReceipt['cleanupOwners']! as Map,
+  );
+  final retryCleanupOwners = _copyIosNotificationCleanupOwners(
+    retryAutomationReceipt['cleanupOwners']! as Map,
+  );
   final artifact = <String, Object?>{
     'testCase': 'TC-B12',
     'recoveryTestCase': 'TC-333-08',
+    'directSourceTestCase': 'TC-396-03',
+    'retryTestCase': 'TC-396-04',
     'scenario': iosNotificationPayloadScenario,
     'status': 'passed',
     'platform': 'ios',
@@ -889,6 +1278,26 @@ Map<String, Object?> buildIosNotificationArtifact({
       'unrelatedSentinelSurvived':
           recoveryChecks['unrelatedSentinelSurvived'] == true,
       'zeroBadgePublished': recoveryChecks['zeroBadgePublished'] == true,
+      'directSourceUsefulProviderOnly':
+          recoveryChecks['directSourceUsefulProviderOnly'] == true,
+      'backgroundContenderSuppressed':
+          recoveryChecks['backgroundContenderSuppressed'] == true,
+      'samePayloadRetrySingleUsefulCard':
+          retryChecks['samePayloadRetrySingleUsefulCard'] == true,
+      'retryReceiptsDistinctAndBound':
+          retryChecks['providerAcceptancesDistinct'] == true &&
+          retryChecks['payloadBytesIdentical'] == true &&
+          retryChecks['collapseIdentityReused'] == true &&
+          retryChecks['finalRequestIdentifierMatchesCollapse'] == true,
+      'hostFailureDiagnosticRetentionContract': true,
+      'hostUnconditionalCleanupContract': true,
+    },
+    'passDiagnosticRetained':
+        recoveryAutomationReceipt['passDiagnosticRetained'] == true &&
+        retryAutomationReceipt['passDiagnosticRetained'] == true,
+    'cleanupOwners': <String, Object?>{
+      'recovery': recoveryCleanupOwners,
+      'retry': retryCleanupOwners,
     },
     'messageVisibleAt': timestamps['messageVisibleAt'],
     'networkRestoredAt': timestamps['networkRestoredAt'],
@@ -899,13 +1308,23 @@ Map<String, Object?> buildIosNotificationArtifact({
     'nonce': automationReceipt['nonce'],
     'recoveryRunId': recoveryAutomationReceipt['runId'],
     'recoveryNonce': recoveryAutomationReceipt['nonce'],
+    'retryRunId': retryAutomationReceipt['runId'],
+    'retryNonce': retryAutomationReceipt['nonce'],
     'providerRequestSha256': automationReceipt['providerRequestSha256'],
     'payloadProducerSha256': automationReceipt['payloadProducerSha256'],
     'apnsPayloadSha256': automationReceipt['apnsPayloadSha256'],
     'recoveryApnsPayloadSha256': recoveryAutomationReceipt['apnsPayloadSha256'],
+    'retryApnsPayloadSha256': retryAutomationReceipt['apnsPayloadSha256'],
+    'retryCollapseIdentitySha256':
+        retryAutomationReceipt['collapseIdentitySha256'],
+    'retryRequestIdentifierSha256':
+        retryAutomationReceipt['requestIdentifierSha256'],
+    'retryProviderMessageIdSha256':
+        retryAutomationReceipt['providerMessageIdSha256'],
     'childBuildCount': automationReceipt['childBuildCount'],
     'manualActionCount': automationReceipt['manualActionCount'],
     'recoveryCounts': recoveryAutomationReceipt['counts'],
+    'retryCounts': retryAutomationReceipt['counts'],
     'evidenceSha256': <String, Object?>{
       ...fastEvidence,
       'recoveryPreparedApplication': recoveryEvidence['preparedApplication'],
@@ -921,6 +1340,21 @@ Map<String, Object?> buildIosNotificationArtifact({
       'recoveryRecipientLog': recoveryEvidence['recipientLog'],
       'recoveryUiAutomationLog': recoveryEvidence['uiAutomationLog'],
       'recoveryStagedEnvelope': recoveryEvidence['stagedEnvelope'],
+      'recoveryCausalDiagnostic': recoveryEvidence['causalDiagnostic'],
+      'retryPreparedApplication': retryEvidence['preparedApplication'],
+      'retryPayloadProducer': retryEvidence['payloadProducer'],
+      'retryApnsPayload': retryEvidence['apnsPayload'],
+      'retryFirstProviderReceipt': retryEvidence['firstProviderReceipt'],
+      'retrySecondProviderReceipt': retryEvidence['secondProviderReceipt'],
+      'retryProviderCleanupReceipt': retryEvidence['providerCleanupReceipt'],
+      'retryFirstInventoryReceipt': retryEvidence['firstInventoryReceipt'],
+      'retrySecondInventoryReceipt': retryEvidence['secondInventoryReceipt'],
+      'retryRelayLog': retryEvidence['relayLog'],
+      'retryNseLog': retryEvidence['nseLog'],
+      'retryRecipientLog': retryEvidence['recipientLog'],
+      'retryUiAutomationLog': retryEvidence['uiAutomationLog'],
+      'retryCausalDiagnostic': retryEvidence['causalDiagnostic'],
+      'retryStagedEnvelope': retryEvidence['stagedEnvelope'],
     },
   };
   return artifact;
@@ -1019,6 +1453,39 @@ String sha256FileSystemEntity(FileSystemEntity entity) {
 
 bool _isSha256(Object? value) =>
     value is String && _sha256Pattern.hasMatch(value);
+
+bool _hasExactKeys(Map value, Set<String> expected) {
+  if (value.keys.any((key) => key is! String)) return false;
+  final actual = value.keys.cast<String>().toSet();
+  return actual.length == expected.length && actual.containsAll(expected);
+}
+
+bool _hasExpectedSuccessfulIosNotificationCleanupOwners(Object? value) {
+  if (value is! Map ||
+      !_hasExactKeys(value, _iosNotificationCleanupOwnerKeys)) {
+    return false;
+  }
+  for (final owner in _iosNotificationCleanupOwnerKeys) {
+    final state = value[owner];
+    if (state is! Map ||
+        !_hasExactKeys(state, _iosNotificationCleanupStateKeys)) {
+      return false;
+    }
+    final required = _iosNotificationRequiredCleanupOwners.contains(owner);
+    if (state['required'] != required ||
+        state['attempted'] != required ||
+        state['completed'] != required) {
+      return false;
+    }
+  }
+  return true;
+}
+
+Map<String, Object?> _copyIosNotificationCleanupOwners(Map value) =>
+    <String, Object?>{
+      for (final owner in _iosNotificationCleanupOwnerKeys)
+        owner: Map<String, Object?>.from(value[owner]! as Map),
+    };
 
 bool _isSafeNonemptyString(Object? value) =>
     value is String &&

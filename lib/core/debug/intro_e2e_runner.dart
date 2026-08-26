@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -365,24 +366,104 @@ Future<bool> runDirectTextRelayTokenProofIfPresent({
   return true;
 }
 
-Future<void> exportIdentityForIntroE2E({
+Future<String?> exportIdentityForIntroE2E({
   required String signedQrPayloadJson,
   required String? mlKemPublicKey,
+  String? documentsPath,
 }) async {
   final allowsIosReleaseFileChannel = allowsGroupMediaIosIntroFileChannel(
     isDebugMode: kDebugMode,
     e2eTestMode: kE2ETestMode,
     installedProfileId: const String.fromEnvironment('SIMS_BUILD_PROFILE_ID'),
   );
-  if (!allowsIosReleaseFileChannel) return;
-  final dir = await getApplicationDocumentsDirectory();
+  if (!allowsIosReleaseFileChannel) return null;
+  final dir = documentsPath == null
+      ? await getApplicationDocumentsDirectory()
+      : Directory(documentsPath);
   final file = File('${dir.path}/$_kExportFile');
-  await file.writeAsString(
-    jsonEncode({
+  final temporary = File('${file.path}.tmp');
+  final bytes = utf8.encode(
+    jsonEncode(<String, Object?>{
       'qrPayload': signedQrPayloadJson,
       'mlKemPublicKey': mlKemPublicKey,
     }),
   );
+  await temporary.writeAsBytes(bytes, flush: true);
+  await temporary.rename(file.path);
+  final retained = await file.readAsBytes();
+  if (retained.length != bytes.length ||
+      sha256.convert(retained) != sha256.convert(bytes) ||
+      await temporary.exists()) {
+    return null;
+  }
+  return sha256.convert(retained).toString();
+}
+
+Future<void> writeGroupReactionNotificationIosSetupReadinessReceipt({
+  required String documentsPath,
+  required Map<String, Object?> receipt,
+}) async {
+  final launchAttemptSha256 = receipt['launchAttemptSha256'];
+  if (launchAttemptSha256 is! String ||
+      classifyGroupReactionNotificationIosSetupReadinessReceipt(
+            receipt,
+            expectedLaunchAttemptSha256: launchAttemptSha256,
+          ) ==
+          GroupReactionNotificationIosSetupReadinessDisposition.invalid) {
+    throw const FormatException('invalid iOS setup-readiness receipt');
+  }
+  final bytes = utf8.encode(jsonEncode(receipt));
+  if (bytes.length > 2048) {
+    throw const FormatException('oversize iOS setup-readiness receipt');
+  }
+  final file = File(
+    '$documentsPath/$groupReactionNotificationIosSetupReadinessFileName',
+  );
+  if (await FileSystemEntity.type(file.path, followLinks: false) !=
+      FileSystemEntityType.file) {
+    throw StateError('iOS setup-readiness receipt is unavailable');
+  }
+  final previousBytes = await file.readAsBytes();
+  if (previousBytes.length > 2048) {
+    throw const FormatException(
+      'oversize retained iOS setup-readiness receipt',
+    );
+  }
+  Object? previous;
+  try {
+    previous = jsonDecode(utf8.decode(previousBytes));
+  } on Object {
+    throw const FormatException('invalid retained iOS setup-readiness receipt');
+  }
+  if (!isAllowedGroupReactionNotificationIosSetupReadinessTransition(
+    previous: previous,
+    next: receipt,
+  )) {
+    throw StateError('non-monotonic iOS setup-readiness transition');
+  }
+
+  final random = Random.secure();
+  final suffix = List<int>.generate(
+    16,
+    (_) => random.nextInt(256),
+  ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  final temporary = File('${file.path}.$suffix.tmp');
+  try {
+    await temporary.writeAsBytes(bytes, mode: FileMode.writeOnly, flush: true);
+    await temporary.rename(file.path);
+    final retained = await file.readAsBytes();
+    if (retained.length != bytes.length ||
+        sha256.convert(retained) != sha256.convert(bytes) ||
+        await temporary.exists()) {
+      throw StateError(
+        'iOS setup-readiness receipt was not retained atomically',
+      );
+    }
+  } finally {
+    if (await temporary.exists()) {
+      await temporary.delete();
+    }
+  }
 }
 
 Future<bool> prePopulateContactsFromIntroE2EConfig({

@@ -721,10 +721,34 @@ const results = await Promise.all([
                 )
                 + "\n"
             )
+            reminders = root / "reminders.jsonl"
+            reminders.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "ts": "2026-01-01T00:03:00+00:00",
+                        "session_sha256": session_sha,
+                        "agent_sha256": "root",
+                        "event": "code_browse",
+                        "raw_since_context": 1,
+                        "reminder": None,
+                        "tool_use_sha256": CONTEXT._session_digest("nested-call-3"),
+                        "command_sha256s": [
+                            CONTEXT._command_digest(
+                                "sed -n '1,1p' lib/example.dart"
+                            )
+                        ],
+                        "batch_size_hint": 1,
+                        "batch_budget": 8,
+                    }
+                )
+                + "\n"
+            )
             audit = CONTEXT._session_audit(
                 rollout,
                 root=root,
                 usage_path=usage,
+                reminder_path=reminders,
             )
             self.assertEqual(audit["compact_code_queries"], 1)
             self.assertEqual(audit["compact_code_queries_parsed"], 1)
@@ -732,6 +756,9 @@ const results = await Promise.all([
             self.assertEqual(audit["compact_code_queries_pretelemetry"], 1)
             self.assertEqual(audit["branch_graphify_first"], 1)
             self.assertEqual(audit["raw_browse_current_gap"], 1)
+            self.assertEqual(audit["hook_tool_identity_events"], 1)
+            self.assertEqual(audit["hook_tool_identity_linked"], 1)
+            self.assertEqual(audit["hook_modern_identity_linked"], 1)
             self.assertGreater(audit["code_output_tokens_estimate"], 0)
             lines, passed = CONTEXT._workflow_benchmark_lines(
                 audit,
@@ -739,6 +766,20 @@ const results = await Promise.all([
             )
             self.assertTrue(passed, "\n".join(lines))
             self.assertIn("telemetry parity", "\n".join(lines))
+
+            blocked_record = json.loads(reminders.read_text())
+            blocked_record["blocked"] = True
+            blocked_record["gate"] = "ceiling"
+            reminders.write_text(json.dumps(blocked_record) + "\n")
+            blocked = CONTEXT._session_audit(
+                rollout,
+                root=root,
+                usage_path=usage,
+                reminder_path=reminders,
+            )
+            self.assertEqual(blocked["blocked_rollout_calls"], 1)
+            self.assertEqual(blocked["code_browse_calls"], 0)
+            self.assertEqual(blocked["raw_browse_max_gap"], 0)
 
     def test_checkpoint_requests_query_for_new_branch_or_read_ceiling(self):
         audit = {
@@ -768,6 +809,61 @@ const results = await Promise.all([
         self.assertIn("REQUERY_REQUIRED", output)
         self.assertIn("new investigation branch", output)
         self.assertIn("20-call ceiling", output)
+
+    def test_session_stats_can_cohort_root_and_subagent_rollouts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            sessions = Path(temporary)
+            root_log = sessions / "root.jsonl"
+            subagent_log = sessions / "subagent.jsonl"
+            root_log.write_text(
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "root-session",
+                            "timestamp": "2026-08-20T12:00:00Z",
+                            "thread_source": "user",
+                            "cli_version": "0.149.0",
+                        },
+                    }
+                )
+                + "\n"
+            )
+            subagent_log.write_text(
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "subagent-session",
+                            "timestamp": "2026-08-21T12:00:00Z",
+                            "thread_source": "subagent",
+                            "cli_version": "0.149.0",
+                        },
+                    }
+                )
+                + "\n"
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                CONTEXT.session_stats(
+                    selector=None,
+                    recent=10,
+                    exclude_current=False,
+                    roots_only=True,
+                    sessions_root=sessions,
+                )
+            self.assertIn("1 recent sessions (roots=1, subagents=0", output.getvalue())
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                CONTEXT.session_stats(
+                    selector=None,
+                    recent=10,
+                    exclude_current=False,
+                    started_after="2026-08-21T00:00:00Z",
+                    sessions_root=sessions,
+                )
+            self.assertIn("1 recent sessions (roots=0, subagents=1", output.getvalue())
 
     def test_codex_reminder_excludes_documents_and_nudges_at_code_ceiling(self):
         def payload(
@@ -801,7 +897,9 @@ const results = await Promise.all([
                 },
             )
             self.assertIsNone(
-                REMINDER.process_hook(query, state_dir=state_dir, ceiling=3)
+                REMINDER.process_hook(
+                    query, state_dir=state_dir, ceiling=3, enforce=False
+                )
             )
             document = payload(
                 session,
@@ -810,9 +908,12 @@ const results = await Promise.all([
                 {"file_path": str(ROOT / "docs" / "plans" / "example.md")},
             )
             self.assertIsNone(
-                REMINDER.process_hook(document, state_dir=state_dir, ceiling=3)
+                REMINDER.process_hook(
+                    document, state_dir=state_dir, ceiling=3, enforce=False
+                )
             )
 
+            results = []
             for index in range(1, 4):
                 code = payload(
                     session,
@@ -828,10 +929,17 @@ const results = await Promise.all([
                     code,
                     state_dir=state_dir,
                     ceiling=3,
+                    enforce=False,
                     timestamp=f"2026-08-21T12:00:0{index}+00:00",
                 )
-                if index < 3:
+                results.append(result)
+                if index == 2:
                     self.assertIsNone(result)
+                elif index == 1:
+                    self.assertIsNotNone(result)
+                    rendered = result["hookSpecificOutput"]["additionalContext"]
+                    self.assertIn("plan→code handoff", rendered)
+                    self.assertIn("main.dart", rendered)
                 else:
                     self.assertIsNotNone(result)
                     rendered = json.dumps(result)
@@ -842,7 +950,9 @@ const results = await Promise.all([
 
             # Hook retries for the same tool use id must not double-count or nag.
             self.assertIsNone(
-                REMINDER.process_hook(code, state_dir=state_dir, ceiling=3)
+                REMINDER.process_hook(
+                    code, state_dir=state_dir, ceiling=3, enforce=False
+                )
             )
             ledger = [
                 json.loads(line)
@@ -850,10 +960,12 @@ const results = await Promise.all([
             ]
             self.assertEqual([row["event"] for row in ledger], [
                 "context",
+                "document_read",
                 "code_browse",
                 "code_browse",
                 "code_browse",
             ])
+            self.assertTrue(all(row.get("tool_use_sha256") for row in ledger))
             self.assertTrue(all("command" not in row for row in ledger))
             self.assertTrue(all("path" not in row for row in ledger))
 
@@ -872,6 +984,7 @@ const results = await Promise.all([
                     unrelated,
                     state_dir=Path(directory),
                     ceiling=20,
+                    enforce=False,
                 )
             )
             payload = {
@@ -886,6 +999,7 @@ const results = await Promise.all([
                 payload,
                 state_dir=Path(directory),
                 ceiling=20,
+                enforce=False,
             )
             self.assertIsNotNone(result)
             rendered = json.dumps(result)
@@ -897,22 +1011,423 @@ const results = await Promise.all([
                     payload,
                     state_dir=Path(directory),
                     ceiling=20,
+                    enforce=False,
                 )
             )
 
+    def test_codex_reminder_query_after_document_clears_handoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+
+            def event(tool_id: str, command: str):
+                return {
+                    "session_id": "handoff-cleared",
+                    "cwd": str(ROOT),
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "exec_command",
+                    "tool_input": {"cmd": command},
+                    "tool_use_id": tool_id,
+                }
+
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    event("doc", "sed -n '1,40p' docs/example.md"),
+                    state_dir=state_dir,
+                )
+            )
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    event(
+                        "query",
+                        "python3 graphify-arch/tdd_context.py query main.dart "
+                        "--profile general --budget 600",
+                    ),
+                    state_dir=state_dir,
+                )
+            )
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    event("code", "sed -n '1,20p' lib/main.dart"),
+                    state_dir=state_dir,
+                    ceiling=10,
+                )
+            )
+            rows = [
+                json.loads(line)
+                for line in (state_dir / "events.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(
+                [row["event"] for row in rows],
+                ["document_read", "context", "code_browse"],
+            )
+            self.assertIsNone(rows[-1]["reminder"])
+
+    def test_codex_reminder_flags_over_budget_functions_exec_cell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+            query = {
+                "session_id": "batch-session",
+                "cwd": str(ROOT),
+                "hook_event_name": "PreToolUse",
+                "tool_name": "functions.exec",
+                "tool_input": (
+                    "const r = await tools.exec_command({cmd: "
+                    "\"python3 graphify-arch/tdd_context.py query main.dart "
+                    "--profile general --budget 600\"}); text(r.output);"
+                ),
+                "tool_use_id": "query",
+            }
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    query, state_dir=state_dir, ceiling=50, enforce=False
+                )
+            )
+            calls = "\n".join(
+                "await tools.exec_command({{cmd: \"sed -n '{}p' lib/main.dart\"}});".format(
+                    index
+                )
+                for index in range(1, 10)
+            )
+            batch = {
+                "session_id": "batch-session",
+                "cwd": str(ROOT),
+                "hook_event_name": "PreToolUse",
+                "tool_name": "functions.exec",
+                "tool_input": calls,
+                "tool_use_id": "batch",
+            }
+            result = REMINDER.process_hook(
+                batch,
+                state_dir=state_dir,
+                ceiling=50,
+                batch_budget=8,
+                enforce=False,
+            )
+            self.assertIsNotNone(result)
+            self.assertIn("9 raw code-browse commands", json.dumps(result))
+            ledger = [
+                json.loads(line)
+                for line in (state_dir / "events.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(ledger[-1]["reminder"], "batch")
+            self.assertEqual(ledger[-1]["batch_size_hint"], 9)
+            self.assertEqual(ledger[-1]["batch_budget"], 8)
+            self.assertEqual(
+                ledger[-1]["batch_sha256"], ledger[-1]["tool_use_sha256"]
+            )
+
+    def test_codex_gate_denies_until_context_then_allows_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+
+            def event(tool_id: str, command: str):
+                return {
+                    "session_id": "enforced-session",
+                    "cwd": str(ROOT),
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "exec_command",
+                    "tool_input": {"cmd": command},
+                    "tool_use_id": tool_id,
+                }
+
+            browse = event("browse", "sed -n '1,20p' lib/main.dart")
+            denied = REMINDER.process_hook(browse, state_dir=state_dir, ceiling=3)
+            self.assertEqual(
+                denied["hookSpecificOutput"]["permissionDecision"], "deny"
+            )
+            self.assertIn(
+                "did not run",
+                denied["hookSpecificOutput"]["permissionDecisionReason"],
+            )
+            # A host retry of the same tool id must remain denied.
+            self.assertEqual(
+                REMINDER.process_hook(browse, state_dir=state_dir, ceiling=3),
+                denied,
+            )
+
+            query = event(
+                "query",
+                "python3 graphify-arch/tdd_context.py query main.dart "
+                "--profile general --budget 600",
+            )
+            self.assertIsNone(
+                REMINDER.process_hook(query, state_dir=state_dir, ceiling=3)
+            )
+            # Context clears the denied-id cache, so an exact retry can run.
+            self.assertIsNone(
+                REMINDER.process_hook(browse, state_dir=state_dir, ceiling=3)
+            )
+            rows = [
+                json.loads(line)
+                for line in (state_dir / "events.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(
+                [(row["event"], row.get("blocked")) for row in rows],
+                [("code_browse", True), ("context", None), ("code_browse", False)],
+            )
+            self.assertEqual(rows[0]["raw_since_context"], 0)
+            self.assertEqual(rows[-1]["raw_since_context"], 1)
+            self.assertTrue(all(row.get("tool_input_sha256") for row in rows))
+            self.assertTrue(all("tool_input" not in row for row in rows))
+
+    def test_codex_gate_enforces_plan_handoff_batch_and_ceiling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+
+            def event(tool_id: str, command: str):
+                return {
+                    "session_id": "cadence-session",
+                    "cwd": str(ROOT),
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "exec_command",
+                    "tool_input": {"cmd": command},
+                    "tool_use_id": tool_id,
+                }
+
+            query_command = (
+                "python3 graphify-arch/tdd_context.py query main.dart "
+                "--profile general --budget 600"
+            )
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    event("query-1", query_command), state_dir=state_dir, ceiling=2
+                )
+            )
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    event("doc", "sed -n '1,20p' docs/example.md"),
+                    state_dir=state_dir,
+                    ceiling=2,
+                )
+            )
+            handoff = REMINDER.process_hook(
+                event("handoff", "sed -n '1,20p' lib/main.dart"),
+                state_dir=state_dir,
+                ceiling=2,
+            )
+            self.assertIn("handoff gate", json.dumps(handoff))
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    event("query-2", query_command), state_dir=state_dir, ceiling=2
+                )
+            )
+            for index in range(2):
+                self.assertIsNone(
+                    REMINDER.process_hook(
+                        event(
+                            f"allowed-{index}",
+                            f"sed -n '{index + 1}p' lib/main.dart",
+                        ),
+                        state_dir=state_dir,
+                        ceiling=2,
+                    )
+                )
+            ceiling = REMINDER.process_hook(
+                event("ceiling", "sed -n '3p' lib/main.dart"),
+                state_dir=state_dir,
+                ceiling=2,
+            )
+            self.assertIn("ceiling gate", json.dumps(ceiling))
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    event("query-3", query_command), state_dir=state_dir, ceiling=20
+                )
+            )
+            batch_command = "\n".join(
+                "await tools.exec_command({{cmd: \"sed -n '{}p' lib/main.dart\"}});".format(
+                    index
+                )
+                for index in range(1, 10)
+            )
+            batch_event = event("batch", "unused")
+            batch_event["tool_name"] = "functions.exec"
+            batch_event["tool_input"] = batch_command
+            batch = REMINDER.process_hook(
+                batch_event,
+                state_dir=state_dir,
+                ceiling=20,
+                batch_budget=8,
+            )
+            self.assertIn("batch gate", json.dumps(batch))
+            metrics = CONTEXT._reminder_metrics(
+                [
+                    json.loads(line)
+                    for line in (state_dir / "events.jsonl").read_text().splitlines()
+                ]
+            )
+            self.assertEqual(metrics["hook_code_browse_events"], 2)
+            self.assertEqual(metrics["hook_blocked_code_browses"], 3)
+            self.assertEqual(metrics["hook_handoff_blocks"], 1)
+            self.assertEqual(metrics["hook_ceiling_blocks"], 1)
+            self.assertEqual(metrics["hook_batch_blocks"], 1)
+            self.assertEqual(metrics["hook_batch_violations"], 0)
+
+    def test_codex_gate_requires_context_packet_for_code_subagents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+
+            def spawn(tool_id: str, message: str, agent_type: str = "explorer"):
+                return {
+                    "session_id": "spawn-session",
+                    "cwd": str(ROOT),
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "collaboration.spawn_agent",
+                    "tool_input": {
+                        "agent_type": agent_type,
+                        "message": message,
+                        "task_name": tool_id,
+                    },
+                    "tool_use_id": tool_id,
+                }
+
+            denied = REMINDER.process_hook(
+                spawn("missing", "Inspect the code and tests for MainApp."),
+                state_dir=state_dir,
+            )
+            self.assertEqual(
+                denied["hookSpecificOutput"]["permissionDecision"], "deny"
+            )
+            query = {
+                "session_id": "spawn-session",
+                "cwd": str(ROOT),
+                "hook_event_name": "PreToolUse",
+                "tool_name": "exec_command",
+                "tool_input": {
+                    "cmd": "python3 graphify-arch/tdd_context.py query main.dart "
+                    "--profile general --budget 600"
+                },
+                "tool_use_id": "query",
+            }
+            self.assertIsNone(REMINDER.process_hook(query, state_dir=state_dir))
+            complete = (
+                "Inspect lib/main.dart and test/main_test.dart. "
+                "query_id=12345678 evidence_digest=abcdef1234567890 "
+                "open proof question: which caller owns startup?"
+            )
+            self.assertIsNone(
+                REMINDER.process_hook(spawn("complete", complete), state_dir=state_dir)
+            )
+            child_browse = {
+                "session_id": "spawn-session",
+                "agent_id": "child-agent",
+                "cwd": str(ROOT),
+                "hook_event_name": "PreToolUse",
+                "tool_name": "exec_command",
+                "tool_input": {"cmd": "sed -n '1,20p' lib/main.dart"},
+                "tool_use_id": "child-browse",
+            }
+            self.assertIsNone(
+                REMINDER.process_hook(child_browse, state_dir=state_dir)
+            )
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    spawn("docs", "Docs-only: summarize the named plan."),
+                    state_dir=state_dir,
+                )
+            )
+            rows = [
+                json.loads(line)
+                for line in (state_dir / "events.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(len(rows), 5)
+            self.assertTrue(rows[0]["blocked"])
+            self.assertTrue(rows[2]["context_packet"])
+            self.assertTrue(rows[3]["inherited"])
+            self.assertFalse(rows[4]["blocked"])
+
     def test_reminder_metrics_distinguish_response_ignore_and_pending(self):
         records = [
-            {"agent_sha256": "root", "event": "code_browse", "reminder": "initial"},
-            {"agent_sha256": "root", "event": "context"},
-            {"agent_sha256": "root", "event": "code_browse", "reminder": "ceiling"},
-            {"agent_sha256": "root", "event": "code_browse", "reminder": "ceiling"},
-            {"agent_sha256": "child", "event": "code_browse", "reminder": "initial"},
+            {
+                "agent_sha256": "root",
+                "event": "code_browse",
+                "reminder": "initial",
+                "raw_since_context": 1,
+                "ts": "2026-08-21T12:00:00+00:00",
+            },
+            {"agent_sha256": "root", "event": "context", "ts": "2026-08-21T12:00:01+00:00"},
+            {
+                "agent_sha256": "root",
+                "event": "code_browse",
+                "reminder": "batch",
+                "raw_since_context": 9,
+                "batch_sha256": "same",
+                "batch_size_hint": 9,
+                "batch_budget": 8,
+                "ts": "2026-08-21T12:00:02+00:00",
+            },
+            {
+                "agent_sha256": "root",
+                "event": "code_browse",
+                "reminder": "ceiling",
+                "raw_since_context": 10,
+                "batch_sha256": "same",
+                "ts": "2026-08-21T12:00:02.100000+00:00",
+            },
+            {"agent_sha256": "root", "event": "context", "ts": "2026-08-21T12:00:03+00:00"},
+            {
+                "agent_sha256": "root",
+                "event": "code_browse",
+                "reminder": "handoff",
+                "raw_since_context": 1,
+                "ts": "2026-08-21T12:00:04+00:00",
+            },
+            {
+                "agent_sha256": "root",
+                "event": "code_browse",
+                "reminder": "ceiling",
+                "raw_since_context": 10,
+                "ts": "2026-08-21T12:00:06+00:00",
+            },
+            {
+                "agent_sha256": "child",
+                "event": "code_browse",
+                "reminder": "initial",
+                "raw_since_context": 1,
+                "ts": "2026-08-21T12:00:07+00:00",
+            },
         ]
         metrics = CONTEXT._reminder_metrics(records)
-        self.assertEqual(metrics["hook_reminders"], 4)
-        self.assertEqual(metrics["hook_reminders_responded"], 1)
+        self.assertEqual(metrics["hook_reminders"], 6)
+        self.assertEqual(metrics["hook_reminders_responded"], 2)
         self.assertEqual(metrics["hook_reminders_ignored"], 1)
+        self.assertEqual(metrics["hook_reminders_batched"], 1)
         self.assertEqual(metrics["hook_reminders_pending"], 2)
+        self.assertEqual(metrics["hook_batch_violations"], 1)
+        self.assertEqual(metrics["hook_agent_summaries"][0]["agent_sha256"], "root")
+
+    def test_reminder_metrics_use_rollout_visibility_for_nested_batches(self):
+        first = {
+            "agent_sha256": "root",
+            "event": "code_browse",
+            "reminder": "initial",
+            "tool_use_sha256": "nested-a",
+            "ts": "2026-08-21T12:00:00+00:00",
+        }
+        second = {
+            "agent_sha256": "root",
+            "event": "code_browse",
+            "reminder": "ceiling",
+            "tool_use_sha256": "nested-b",
+            "ts": "2026-08-21T12:00:02+00:00",
+        }
+        batched = CONTEXT._reminder_metrics(
+            [first, second], model_visible_tool_hashes={"outer-cell"}
+        )
+        self.assertEqual(batched["hook_reminders_batched"], 1)
+        self.assertEqual(batched["hook_reminders_ignored"], 0)
+
+        boundary = {
+            "agent_sha256": "root",
+            "event": "code_browse",
+            "reminder": None,
+            "tool_use_sha256": "outer-cell",
+            "ts": "2026-08-21T12:00:01+00:00",
+        }
+        visible = CONTEXT._reminder_metrics(
+            [first, boundary, second], model_visible_tool_hashes={"outer-cell"}
+        )
+        self.assertEqual(visible["hook_reminders_batched"], 0)
+        self.assertEqual(visible["hook_reminders_ignored"], 1)
 
     def test_precision_benchmark_fixture_passes(self):
         output = io.StringIO()
@@ -987,17 +1502,37 @@ print(json.dumps(_without_sources(data, {'lib/changed.dart'})))
     def test_local_hook_configuration_separates_codex_advisory_and_claude_enforcement(self):
         codex = json.loads((ROOT / ".codex" / "hooks.json").read_text())
         self.assertIn("non-blocking", codex["description"].lower())
-        codex_entries = codex["hooks"]["PreToolUse"]
-        self.assertEqual(len(codex_entries), 1)
-        self.assertEqual(codex_entries[0]["matcher"], ".*")
-        codex_commands = [
-            hook["command"]
-            for entry in codex_entries
-            for hook in entry["hooks"]
-        ]
-        self.assertEqual(len(codex_commands), 2)
-        self.assertIn("codex_graphify_reminder.py", codex_commands[0])
-        self.assertIn("codex_memory_reminder.py", codex_commands[1])
+        pre_entries = codex["hooks"]["PreToolUse"]
+        self.assertEqual(len(pre_entries), 2)
+        graphify_entry = next(
+            entry
+            for entry in pre_entries
+            if any(
+                "codex_graphify_reminder.py" in hook["command"]
+                for hook in entry["hooks"]
+            )
+        )
+        memory_entry = next(
+            entry
+            for entry in pre_entries
+            if any(
+                "codex_memory_reminder.py" in hook["command"]
+                for hook in entry["hooks"]
+            )
+        )
+        self.assertEqual(graphify_entry["matcher"], ".*")
+        self.assertNotEqual(memory_entry["matcher"], ".*")
+        self.assertIn("read", memory_entry["matcher"].lower())
+
+        post_entries = codex["hooks"]["PostToolUse"]
+        self.assertEqual(len(post_entries), 1)
+        self.assertEqual(post_entries[0]["matcher"], memory_entry["matcher"])
+        self.assertTrue(
+            any(
+                "codex_memory_reminder.py" in hook["command"]
+                for hook in post_entries[0]["hooks"]
+            )
+        )
         claude = json.loads((ROOT / ".claude" / "settings.json").read_text())
         self.assertNotIn("permissions", claude)
         commands = [

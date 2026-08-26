@@ -77,6 +77,13 @@ SCRIPT
   end
   target 'RunnerTests' do
     inherit! :search_paths
+
+    # RunnerTests compiles the notification-service sources directly and must
+    # exercise the same bounded bridge (including its fail-closed inbox stub)
+    # as the extension, never the full app/libp2p bridge by accident.
+    if File.exist?(File.join(__dir__, 'Runner', 'GoMknoonNSE.xcframework'))
+      pod 'GoMknoonNSE', :path => '.'
+    end
   end
 end
 
@@ -84,10 +91,11 @@ target 'NotificationService' do
   use_frameworks!
   use_modular_headers!
 
-  # The notification service decrypts message previews with the same gomobile
-  # bridge as Runner, but without linking the full Flutter plugin graph.
-  if File.exist?(File.join(__dir__, 'Runner', 'GoMknoon.xcframework'))
-    pod 'GoMknoon', :path => '.'
+  # Keep the full app/libp2p bridge out of the memory-constrained extension.
+  # This bounded bridge contains only direct/group preview decryption; the
+  # opaque mailbox capability remains unadvertised on iOS.
+  if File.exist?(File.join(__dir__, 'Runner', 'GoMknoonNSE.xcframework'))
+    pod 'GoMknoonNSE', :path => '.'
   end
 end
 

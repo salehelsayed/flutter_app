@@ -1,9 +1,9 @@
 # 396 - Physical iPhone Direct-Notification Single-Card And Retry Closure
 
-Status: execution-ready after independent review fixes; evidence-gated local-duplicate repair; not executed
+Status: complete by explicit user acceptance on 2026-08-22; automated physical PASS waived and not claimed
 Type: Verification with bounded direct-retry hardening
 Spec: 2026-08-21 user report that manual iPhone testing may show the same notification twice, possibly from an old and a new presentation path, after Plans 394 and 395 completed
-Classification: planned
+Classification: completed with documented physical-proof limitation
 Closure tier: physical device
 
 ## Planning Progress
@@ -16,6 +16,7 @@ Closure tier: physical device
 | 2026-08-21 CEST | Initial sufficiency audit | The draft reused one capability and one iPhone, selected focused owners plus the affected `1to1` lane, and excluded family/full aggregates and optional device matrices. | Run the independent counterexample review before execution. |
 | 2026-08-21 CEST | Independent `$tdd-review` | The direction was confirmed, but the direct-APNs fixture could not invoke FlutterFire's background callback, the local classifier did not cover the real typed payload envelope, the retry oracle could pass on a sanitized replacement, early recovery failures lacked an exact cleanup owner, and the Sims artifact-schema entrypoint was omitted. | Apply exact plan fixes without adding a harness, peer, capability, or broad test gate. |
 | 2026-08-21 CEST | Review-fix integration | The plan now uses one FCM-shaped direct-APNs fixture, OS-trigger plus bounded-envelope source attribution, a first-delivery-fenced retry proof with useful-content authority, same-request passive replacement preservation, unconditional bounded rollback, and the incumbent artifact-schema entrypoint. | Execute the revised focused contract once; allow at most one evidence-backed rerun after a plan-owned repair. |
+| 2026-08-22 CEST | Execution and closure | The deterministic TC-396-01/02/04/06 implementation landed in the working tree. Two registered iPhone 13 attempts failed before a complete source/retry result: the first before provider setup and the sole rerun after first-request APNs acceptance, with a 155-second NSE observation containing zero markers. A later manual Pixel-to-iPhone 11 diagnostic on the sole remaining `com.mknoon.app` installation produced one visible card and live NSE `envelope staged`, `decrypt OK`, and authorized content-handoff evidence. | The user explicitly directed Codex to assume the plan finished and update this document. Close administratively without another campaign and without representing the manual diagnostic as the missing content-addressed PASS. |
 
 ## Problem And Evidence
 
@@ -297,27 +298,34 @@ The conditional block is skipped on a no-local-duplicate result because that cap
 
 ## Done Criteria
 
-- [ ] TC-396-01/02 representative source, envelope, FCM-shape, complete-window, artifact-schema, and useful-content tests RED for the stated gaps, then all focused host/native tests GREEN.
-- [ ] `TestRelayNotificationClosure_DirectMessageCustodyRetryCollapse` REDs before the relay edit and passes with same-custody/same-ID, distinct-custody/different-ID, bounds, and platform/path preservation.
-- [ ] The same-request native RED proves the old ordinary duplicate becomes a blank/passive shell; GREEN retains trusted content passively/silently only for the exact same request/identity while a different-request duplicate remains sanitized.
-- [ ] The existing `notifications.ios_payload_fast_path` row remains the only capability, and both its row and `--artifact-schema` entrypoint advertise every added source/background/retry/useful-content/cleanup assertion exactly once.
-- [ ] One content-addressed physical PASS on one explicitly pinned available dedicated iPhone proves the single-submission FCM-shaped direct-rich path reached the background Dart handler, emitted exactly one `recent_remote_push` suppression and zero matching local shows, and settled with exactly one authorized NSE sequence, useful-provider=1, sanitized-provider=0, local=0, unknown=0, total matching cards=1.
-- [ ] The same run proves the first accepted same-payload request reached an authorized NSE handoff and stable useful card before the second submission; the second accepted request reached a trusted-passive NSE handoff with the same collapse/request identity; the final state is useful-provider=1, sanitized-provider=0, local=0, unknown=0, local-show=0, with two distinct accepted provider-ID hashes.
-- [ ] If a local duplicate/show was observed, its sanitized causal test REDs before the minimal existing-seam repair and the one allowed physical rerun passes. If none was observed, no additional recent-remote/Dart dedupe behavior changed.
-- [ ] PASS and every typed FAIL retain bounded secret-free source/effect diagnostics before unconditional cleanup; raw syslog, tokens, raw IDs, payloads, ciphertext, and message content do not survive cleanup.
-- [ ] Pre-provider, post-sender-seed, and mid-retry failure tests prove idempotent sender/fixture/notification/candidate-app cleanup without a generalized rollback layer.
-- [ ] Plan 395's exact group-invite collapse and surgical retirement sentinels remain green.
-- [ ] Only the relevant focused tests and sole affected `1to1` curated lane above run; no per-plan family or full host aggregate runs.
-- [ ] UI-23 documents and the index state the exact composed direct-rich claim, the direct-APNs/FCM-shaped-fixture boundary, the no-sound/no-live-P2P/no-full-Apple limitations, and any actual causal repair.
+- [x] TC-396-01/02 source, envelope, FCM-shape, bounded-window, artifact-schema, and useful-content implementation and focused contract coverage are present. The complete post-timing host/native replay is waived by the user-directed closure rather than claimed green.
+- [x] `TestRelayNotificationClosure_DirectMessageCustodyRetryCollapse` and the narrow direct-message custody-collapse production projection are present, with the Plan 395 group-invite behavior retained. The final exact Go replay is waived rather than newly claimed.
+- [x] The same-request native handling and focused tests retain trusted content passively for the exact replacement while preserving different-request sanitization. The final native selector replay is waived rather than newly claimed.
+- [x] `notifications.ios_payload_fast_path` remains the sole capability, and its row plus `--artifact-schema` surface the added source/background/retry/useful-content/cleanup checks.
+- [x] **User-accepted waiver, not a PASS claim:** no content-addressed physical PASS produced the required source-count tuple. The sole rerun timed out with zero NSE markers after APNs accepted its first request. The later one-card manual iPhone 11 result is retained only as diagnostic evidence.
+- [x] **User-accepted waiver, not a retry-proof claim:** no registered run reached the fenced second submission, so the two-acceptance/two-handoff retry tuple remains absent.
+- [x] No speculative recent-remote/Dart dedupe edit was made. Because TC-396-03 produced no valid source/effect receipt, the conditional branch was not evaluated as `local=0`; that distinction is retained.
+- [x] Bounded redacted failure diagnostics were retained and raw temporary syslog/result bundles were deleted. Network restoration and candidate removal were attested. The sole rerun's missing final relay/sender cleanup receipt and retained `rollback_spawn_pending` lifecycle are accepted as an evidence limitation, not represented as a clean cleanup PASS.
+- [x] The bounded cleanup owners and structural failure contracts are implemented without a generalized rollback layer. A complete final pre-provider/post-seed/mid-retry gate replay is waived rather than newly claimed.
+- [x] Plan 395 preservation owners remain present; their final exact replay is waived rather than newly claimed.
+- [x] No per-plan family or full-host aggregate was run. The remaining complete focused/native/`1to1` replay is waived by the closure decision.
+- [x] This plan records the exact composed-proof boundary, failed physical evidence, manual diagnostic limitation, and no-sound/no-live-P2P/no-full-Apple limitations. Separate UI-23/index edits are waived by the user's instruction to update this document and close.
 
-Plan 396 is complete either when the first instrumented physical run is fully green after the deterministic host/native hardening, or when one source-backed in-scope device defect is reproduced by an exact RED, repaired within the named existing seam, and the single allowed rerun is green. An absent background-handler marker, unknown source, unstable inventory, missing retry handoff, sanitized final provider card, secret-bearing receipt, incomplete cleanup, or any failure of the sole rerun is retained as evidence and blocks this plan; it does not authorize another harness, topology, or speculative dedupe layer.
+Original technical closure required a fully green first physical run or one green source-backed rerun. That technical condition was not met. By explicit user direction on 2026-08-22, it is superseded for this document's status only: Plan 396 is administratively complete, with the absent content-addressed source/retry PASS and incomplete rerun-cleanup attestation preserved as limitations. This closure must not be cited as automated physical acceptance.
 
 ## Handoff
 
-Implement with `$tdd-exec Test-Flight-Improv/396-physical-iphone-direct-notification-single-card-and-retry-closure-tdd-plan.md` only when explicitly requested. The implementer should preserve the user's unrelated dirty files, run the physical capability once after focused gates, and report the source-count tuple and retry-count tuple before describing any notification behavior as closed.
+Closed by explicit user acceptance. Do not run another Plan 396 campaign or add recovery infrastructure under this document. Any future request for automated source-count and retry-count closure must be handled as an explicitly authorized follow-up rather than retroactively upgrading this record.
 
 Independent `$tdd-review` completed on 2026-08-21 with `plan-fixes-required`; its exact causal-boundary, classifier, retry, cleanup, registration, and command corrections are incorporated above. No second review is required unless the plan changes materially again.
 
 ## Execution Progress
 
-Not started.
+Completed by user-directed administrative acceptance on 2026-08-22.
+
+- Deterministic implementation: TC-396-01/02/04/06 production and contract surfaces are present in the working tree. TC-396-05 made no speculative recent-remote/Dart product change.
+- Registered attempt 1: `capture-1787397116874127-76166` on iPhone 13 stopped before provider setup. Its recovery receipt records candidate removal and relay-fixture cleanup.
+- Sole registered rerun: `capture-1787398527524646-90356` on iPhone 13 reached first-request APNs acceptance at `2026-08-22T11:36:48.580Z`, then timed out after 155 seconds with all NSE marker counts equal to zero. It produced no recovery/retry phase, source-count tuple, retry-count tuple, or content-addressed PASS artifact.
+- Cleanup evidence: network restoration, candidate uninstall, and private temporary-file deletion were observed. The retained provider lifecycle remains `rollback_spawn_pending`, so final relay/sender cleanup is not claimed as fully attested.
+- Manual diagnostic: after removing the obsolete `com.mknoon.sims.groupmedia269` installation, the remaining `com.mknoon.app` on iPhone 11 registered APNs/FCM and its relay route. A later Pixel-to-iPhone message produced one visible notification; live logs recorded `PUSH_NSE_ENVELOPE_STAGED success=true`, `PUSH_NSE_DECRYPT_OK`, and `PUSH_NSE_CONTENT_HANDOFF authorized=true`. This was manual FCM-path diagnosis, not the plan's direct-APNs campaign proof.
+- Closure decision: the user instructed, “assume the plan is finished, update the document.” No third campaign was run. Missing aggregate gate replay, physical source/retry PASS, final cleanup attestation, and separate UI-23/index updates are accepted limitations and are not silently promoted to passing evidence.

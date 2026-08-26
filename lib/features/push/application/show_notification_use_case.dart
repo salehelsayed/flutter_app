@@ -7,6 +7,8 @@ import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/ios_mailbox_alert_silent_replay_context.dart';
+import 'package:flutter_app/core/notifications/local_notification_ledger.dart'
+    show LocalNotificationPresentationOwner, LocalNotificationProducerKind;
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -17,6 +19,9 @@ import 'package:flutter_app/features/push/application/private_media_notification
 
 typedef ConsumeRecentRemoteNotificationAnnouncement =
     Future<bool> Function({required String payload, String? messageId});
+typedef ProbeRecentRemoteNotificationAnnouncement =
+    Future<bool> Function({required String payload, String? messageId});
+typedef ConsumeEstablishedRemotePresentationProof = Future<bool> Function();
 
 /// 118 Phase 2: writes a dedup marker after a LIVE (foreground/resumed) message
 /// is shown, so a late FCM background isolate that fires for the same messageId
@@ -85,6 +90,10 @@ Future<NotificationPresentationResult> maybeShowNotification({
   String? notificationEventIdentity,
   ConsumeRecentRemoteNotificationAnnouncement?
   consumeRecentRemoteNotificationAnnouncement,
+  ProbeRecentRemoteNotificationAnnouncement?
+  probeRecentRemoteNotificationAnnouncement,
+  ConsumeEstablishedRemotePresentationProof?
+  consumeEstablishedRemotePresentationProof,
   MarkRecentRemoteNotificationAnnouncement?
   markRecentRemoteNotificationAnnouncement,
   NotificationToneTracker? toneTracker,
@@ -138,21 +147,42 @@ Future<NotificationPresentationResult> maybeShowNotification({
     return NotificationPresentationResult.terminalWithoutOutcome;
   }
 
-  if (consumeRecentRemoteNotificationAnnouncement != null) {
+  var establishedRemotePresentation = false;
+  final mayAdoptEstablishedIosMessagePresentation =
+      defaultTargetPlatform == TargetPlatform.iOS &&
+      durableEffectContext != null &&
+      messageId?.trim().isNotEmpty == true &&
+      probeRecentRemoteNotificationAnnouncement != null &&
+      (notificationEventType == 'group_message' &&
+              contactPeerId.trim().startsWith('group:') &&
+              durableEffectContext.producerKind ==
+                  LocalNotificationProducerKind.groupMessage ||
+          notificationEventType == 'new_message' &&
+              visibilityIdentity?.lane ==
+                  AppVisibilityConversationLane.direct &&
+              durableEffectContext.producerKind ==
+                  LocalNotificationProducerKind.directMessage);
+  final readRecentRemoteNotificationAnnouncement =
+      mayAdoptEstablishedIosMessagePresentation
+      ? probeRecentRemoteNotificationAnnouncement
+      : consumeRecentRemoteNotificationAnnouncement;
+  if (readRecentRemoteNotificationAnnouncement != null) {
     if (!visibility.isForegroundActive &&
         backgroundDuplicateGuardDelay > Duration.zero) {
       await Future<void>.delayed(backgroundDuplicateGuardDelay);
     }
 
     final remoteAnnouncementPayload = routePayload ?? contactPeerId;
-    final shouldSuppress = await consumeRecentRemoteNotificationAnnouncement(
+    final shouldSuppress = await readRecentRemoteNotificationAnnouncement(
       payload: remoteAnnouncementPayload,
       messageId: messageId,
     );
     if (shouldSuppress) {
       emitFlowEvent(
         layer: 'FL',
-        event: durableEffectContext == null
+        event: mayAdoptEstablishedIosMessagePresentation
+            ? 'NOTIFICATION_REMOTE_PRESENTATION_ADOPT'
+            : durableEffectContext == null
             ? 'NOTIFICATION_SUPPRESSED'
             : 'NOTIFICATION_LEGACY_DEDUPE_RECONCILE',
         details: {
@@ -166,11 +196,21 @@ Future<NotificationPresentationResult> maybeShowNotification({
       if (durableEffectContext == null) {
         return NotificationPresentationResult.terminalWithoutOutcome;
       }
-      // The legacy marker is not durable final-effect authority. An anchored
-      // attempt continues into the ledger, where an already-terminal sibling
-      // replays its receipt and an in-flight sibling remains retryable.
+      if (mayAdoptEstablishedIosMessagePresentation) {
+        establishedRemotePresentation = true;
+      }
+      // Every durable hit continues into the ledger. The exact iOS group path
+      // and direct-message path persist a remote-adoption attempt; legacy hits
+      // still reconcile only against an existing terminal sibling and never
+      // early-return here.
     }
   }
+
+  final finalEffectContext = establishedRemotePresentation
+      ? durableEffectContext!.withEstablishedRemotePresentation(
+          presentationOwner: LocalNotificationPresentationOwner.iosNse,
+        )
+      : durableEffectContext;
 
   DurableNotificationToneLease? durableNotificationCoordinator;
   try {
@@ -389,7 +429,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
       }
     }
 
-    if (durableEffectContext != null) {
+    if (finalEffectContext != null) {
       if (visibilityIdentity == null ||
           contentKind == null ||
           eventIdentity == null ||
@@ -411,7 +451,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
             contentKind: contentKind,
             contentEventIdentity: eventIdentity,
             snapshot: snapshot,
-            durableEffectContext: durableEffectContext,
+            durableEffectContext: finalEffectContext,
             finalVisibility: appVisibility,
             conversationIdentity: visibilityIdentity,
             publishNative: publishAtNativeBoundary,
@@ -450,18 +490,35 @@ Future<NotificationPresentationResult> maybeShowNotification({
 
     final durableReceipt = durableEffectResult?.receipt;
     if (durableReceipt != null) {
+      final terminalContext = finalEffectContext!;
       final handoffCompleted = await _notifyDurableEffectTerminal(
-        context: durableEffectContext!,
+        context: terminalContext,
         receipt: durableReceipt,
         notificationEventType: notificationEventType,
       );
       if (handoffCompleted &&
-          durableEffectContext.terminalObserverCompletesSqlHandoff &&
+          terminalContext.terminalObserverCompletesSqlHandoff &&
           notificationService
               is MessageNotificationDurablePostHandoffReconciliation) {
         await (notificationService
                 as MessageNotificationDurablePostHandoffReconciliation)
             .notifyDurableEffectHandoffComplete(durableReceipt);
+      }
+      if (establishedRemotePresentation &&
+          handoffCompleted &&
+          terminalContext.terminalObserverCompletesSqlHandoff) {
+        try {
+          await consumeEstablishedRemotePresentationProof?.call();
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'NOTIFICATION_REMOTE_PRESENTATION_PROOF_CLEANUP_FAILED',
+            details: {
+              'type': notificationEventType,
+              'errorType': error.runtimeType.toString(),
+            },
+          );
+        }
       }
     }
 

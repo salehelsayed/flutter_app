@@ -365,6 +365,23 @@ var groupContentWakeCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Strict-authority group content wake decisions by outcome.",
 }, []string{"outcome"})
 
+// One terminal logical result per group-message gateway invocation. The
+// closed source labels identify only the two repository adapters; retries and
+// provider fallback attempts remain internal to that single invocation.
+var groupMessageDispatchCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_group_message_dispatch_total",
+	Help: "Terminal group-message dispatch results by closed source adapter.",
+}, []string{"source", "result"})
+
+// Exact iOS group-message provider admission is deliberately identity-free in
+// telemetry. The fixed result labels distinguish a real provider dispatch
+// from a duplicate or storage uncertainty without exposing recipient, group,
+// message, route, or provider identifiers.
+var groupMessageDispatchAdmissionCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_group_message_dispatch_admission_total",
+	Help: "Exact iOS group-message provider-dispatch admission decisions by fixed result class.",
+}, []string{"result"})
+
 // Rendezvous counters
 
 var rendezvousRegisteredCounter = promauto.NewCounter(prometheus.CounterOpts{

@@ -1498,6 +1498,71 @@ final class IosNseMailboxWakeCoordinatorTests: XCTestCase {
     XCTAssertEqual(effectOrder, ["cancel", "handler"])
   }
 
+  func testDartRemoteAdoptionAttemptsDecodeAndRemainPassive() throws {
+    for testCase in [
+      (phase: "CLAIMED", attempt: "ADOPT_EXISTING_REMOTE"),
+      (
+        phase: "PUBLISHING",
+        attempt: "CANCEL_LOCAL_FOR_REMOTE_ADOPTION"
+      ),
+    ] {
+      let harness = try makeEffectHarness(
+        phase: testCase.phase,
+        updatedAt: "2026-08-16T09:58:00.000Z",
+        now: "2026-08-16T10:00:00.000Z",
+        inventory: .unavailable
+      )
+      defer { try? FileManager.default.removeItem(at: harness.root) }
+
+      try replaceLedgerAttemptKind(
+        testCase.attempt,
+        candidate: harness.candidate,
+        registry: harness.registry
+      )
+      let ledgerURL = harness.registry.appendingPathComponent(
+        IosLocalNotificationFinalEffect.ledgerFileName
+      )
+      let before = try Data(contentsOf: ledgerURL)
+      var output: UNNotificationContent?
+      var handlers = 0
+
+      XCTAssertEqual(
+        harness.effect.complete(
+          candidate: harness.candidate,
+          lease: harness.lease,
+          originalContent: genericContent(),
+          contentHandler: {
+            handlers += 1
+            output = $0
+          }
+        ),
+        .handled,
+        testCase.attempt
+      )
+      XCTAssertEqual(handlers, 1, testCase.attempt)
+      assertPrivacyCleanPassive(
+        output,
+        targetNotificationId: nil,
+        message: testCase.attempt
+      )
+      XCTAssertEqual(
+        try Data(contentsOf: ledgerURL),
+        before,
+        "NSE must not reconcile Dart-owned \(testCase.attempt)"
+      )
+      XCTAssertEqual(
+        try ledgerRecord(at: harness.registry)["attemptKind"] as? String,
+        testCase.attempt
+      )
+      XCTAssertEqual(
+        harness.recovery.beginReconciliation(accountPeerId: account)?
+          .mailboxAlertLease?.phase,
+        .publishing,
+        "passive ambiguity remains available to canonical Dart recovery"
+      )
+    }
+  }
+
   func testTC37306LegacyGroupAndUnsupportedRowsDoNotInventAuthority() throws {
     let hasMoreJSON =
       #"{"ok":true,"messages":[],"hasMore":true,"custodyContract":"ack_or_expiry_v1"}"#
@@ -2351,6 +2416,31 @@ final class IosNseMailboxWakeCoordinatorTests: XCTestCase {
     )
     let records = try XCTUnwrap(root["records"] as? [String: Any])
     return try XCTUnwrap(records.values.first as? [String: Any])
+  }
+
+  private func replaceLedgerAttemptKind(
+    _ attemptKind: String,
+    candidate: NseInboxCandidate,
+    registry: URL
+  ) throws {
+    let url = registry.appendingPathComponent(
+      IosLocalNotificationFinalEffect.ledgerFileName
+    )
+    let data = try Data(contentsOf: url)
+    var root = try XCTUnwrap(
+      try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    var records = try XCTUnwrap(root["records"] as? [String: Any])
+    var record = try XCTUnwrap(
+      records[candidate.eventCorrelation] as? [String: Any]
+    )
+    record["attemptKind"] = attemptKind
+    records[candidate.eventCorrelation] = record
+    root["records"] = records
+    try JSONSerialization.data(
+      withJSONObject: root,
+      options: [.sortedKeys]
+    ).write(to: url, options: .atomic)
   }
 
   private func stableId(_ value: String) -> Int {

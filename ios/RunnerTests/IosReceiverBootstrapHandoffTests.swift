@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import UserNotifications
 import XCTest
 
 @testable import Runner
@@ -9,6 +11,57 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
   private let nonce = "nonce-bootstrap-native-1"
   private let peer = "12D3KooW" + String(repeating: "1", count: 44)
   private let mlKem = Data(repeating: 0x41, count: 1184).base64EncodedString()
+
+  func testTC396StableSamplerCompletesAtHardDeadlineWhenCallbackIsMissing() {
+    var fetchCallback: (([UNNotification]) -> Void)?
+    var scheduled: [(TimeInterval, () -> Void)] = []
+    var outcomes: [IosDirectNotificationStableSampleOutcome] = []
+    let sampler = IosDirectNotificationStableSampler(
+      now: { self.now },
+      scheduleAfter: { delay, action in scheduled.append((delay, action)) },
+      fetchDeliveredNotifications: { callback in fetchCallback = callback }
+    )
+
+    sampler.start(
+      expectedPeerId: peer,
+      expectedMessageId: "direct-message-396",
+      deadline: now.addingTimeInterval(8),
+      completion: { outcomes.append($0) }
+    )
+
+    XCTAssertNotNil(fetchCallback)
+    XCTAssertEqual(scheduled.count, 1)
+    XCTAssertEqual(scheduled[0].0, 8, accuracy: 0.001)
+    XCTAssertTrue(outcomes.isEmpty)
+    scheduled[0].1()
+    XCTAssertEqual(outcomes.count, 1)
+    XCTAssertEqual(outcomes[0].resultCode, .deadlineExceeded)
+    XCTAssertEqual(outcomes[0].stableSampleCount, 0)
+    XCTAssertEqual(outcomes[0].inventory, .empty)
+  }
+
+  func testTC396StableSamplerIgnoresCallbackAfterHardDeadlineCompletion() {
+    var fetchCallback: (([UNNotification]) -> Void)?
+    var scheduled: [(TimeInterval, () -> Void)] = []
+    var outcomes: [IosDirectNotificationStableSampleOutcome] = []
+    let sampler = IosDirectNotificationStableSampler(
+      now: { self.now },
+      scheduleAfter: { delay, action in scheduled.append((delay, action)) },
+      fetchDeliveredNotifications: { callback in fetchCallback = callback }
+    )
+
+    sampler.start(
+      expectedPeerId: peer,
+      expectedMessageId: "direct-message-396",
+      deadline: now.addingTimeInterval(8),
+      completion: { outcomes.append($0) }
+    )
+    scheduled[0].1()
+    fetchCallback?([])
+
+    XCTAssertEqual(outcomes.count, 1)
+    XCTAssertEqual(outcomes[0].resultCode, .deadlineExceeded)
+  }
 
   func testCaptureWaitsForBothValuesThenPublishesProtectedNonceBoundFile() throws {
     let root = try temporaryRoot()
@@ -221,7 +274,7 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertNil(handoff.takeSenderProjectionRequest())
   }
 
-  func testNotificationRecoveryCommandIsProtectedBoundAndSecretFreeOnCompletion() throws {
+  func testTC396RecoveryResultPublishesBoundedSourceCounts() throws {
     let root = try temporaryRoot()
     defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
     let handoff = IosReceiverBootstrapHandoff(
@@ -241,6 +294,8 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     let command = try XCTUnwrap(handoff.takeNotificationRecoveryRequest())
     XCTAssertEqual(command["captureNonce"], nonce)
     XCTAssertEqual(command["accountPeerId"], peer)
+    XCTAssertEqual(command["expectedSenderPeerId"], peer)
+    XCTAssertEqual(command["expectedMessageId"], "direct-message-396")
     XCTAssertEqual(command["sentinelIdentifier"], sentinel)
     XCTAssertTrue(
       handoff.completeNotificationRecoveryRequest(
@@ -254,7 +309,17 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
         deliveredAfter: 1,
         deliveredNotificationBadgeWasNil: true,
         sentinelSurvived: true,
-        removedExactOwnedNotification: true
+        removedExactOwnedNotification: true,
+        inventory: Runner.IosDirectNotificationInventory(
+          matchingRemoteCount: 1,
+          matchingLocalCount: 0,
+          matchingUsefulProviderCount: 1,
+          matchingSanitizedProviderCount: 0,
+          matchingFlutterLocalCount: 0,
+          matchingUnknownCount: 0,
+          requestIdentifierSha256: [String(repeating: "a", count: 64)]
+        ),
+        stableSampleCount: 3
       )
     )
     XCTAssertFalse(FileManager.default.fileExists(atPath: handoff.recoveryRequestURL.path))
@@ -262,12 +327,16 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertEqual(
       Set(result.keys),
       Set([
-        "schema", "action", "captureNonce", "receiverDeviceId", "bundleId",
+        "schema", "action", "proofStage", "captureNonce", "receiverDeviceId", "bundleId",
         "apnsPayloadSha256", "status", "resultCode", "badgeBefore", "badgeAfter",
         "deliveredBefore", "deliveredWithSentinel", "deliveredAfter",
         "deliveredNotificationBadgeWasNil", "sentinelSurvived",
         "removedExactOwnedNotification", "childBuildCount", "manualActionCount",
-        "completedAt",
+        "matchingRemoteCount", "matchingLocalCount", "matchingUsefulProviderCount",
+        "matchingSanitizedProviderCount", "matchingFlutterLocalCount",
+        "matchingUnknownCount", "matchingTotalCount", "stableSampleCount",
+        "stableSampleIntervalMilliseconds", "settleDelayMilliseconds",
+        "observationDeadlineMilliseconds", "requestIdentifierSha256", "completedAt",
       ])
     )
     XCTAssertEqual(result["schema"] as? String, IosReceiverBootstrapHandoff.recoveryResultSchema)
@@ -275,6 +344,13 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertEqual(result["badgeAfter"] as? Int, 0)
     XCTAssertEqual(result["deliveredWithSentinel"] as? Int, 2)
     XCTAssertEqual(result["deliveredNotificationBadgeWasNil"] as? Bool, true)
+    XCTAssertEqual(result["matchingUsefulProviderCount"] as? Int, 1)
+    XCTAssertEqual(result["matchingFlutterLocalCount"] as? Int, 0)
+    XCTAssertEqual(result["stableSampleCount"] as? Int, 3)
+    XCTAssertEqual(
+      result["requestIdentifierSha256"] as? [String],
+      [String(repeating: "a", count: 64)]
+    )
     XCTAssertNil(result["accountPeerId"])
     XCTAssertNil(result["sentinelIdentifier"])
     let encoded = try XCTUnwrap(String(data: Data(contentsOf: handoff.recoveryResultURL), encoding: .utf8))
@@ -317,6 +393,15 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertEqual(command["phase"], "reaction")
     XCTAssertEqual(command["expectedGroupIdSha256"], groupHash)
     XCTAssertNil(command["groupId"])
+    let requestHash = String(repeating: "d", count: 64)
+    let diagnosticRecord = Runner.IosGroupNotificationDiagnosticRecord(
+      requestIdentifierSha256: requestHash,
+      triggerOrigin: .remote,
+      sourceClass: .usefulProviderRich,
+      reason: .exactUseful,
+      expectedCollapseIdentifierMatch: true,
+      dispatchClaim: .groupInbox
+    )
     XCTAssertTrue(
       handoff.completeGroupNotificationObservationRequest(
         request: command,
@@ -329,12 +414,15 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
           matchingSanitizedProviderCount: 0,
           matchingFlutterLocalCount: 0,
           matchingUnknownCount: 0,
-          requestIdentifierSha256: [String(repeating: "d", count: 64)]
+          requestIdentifierSha256: [requestHash],
+          diagnosticRecords: [diagnosticRecord]
         ),
         stableSampleCount: 3,
         sampledThroughDeadline: true,
         badSourceSeen: false,
-        duplicateSeen: false
+        duplicateSeen: false,
+        diagnosticRecords: [diagnosticRecord],
+        diagnosticComplete: true
       )
     )
     XCTAssertFalse(
@@ -346,13 +434,16 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       Set([
         "schema", "action", "phase", "captureNonce", "receiverDeviceId",
         "bundleId", "expectedGroupIdSha256", "expectedEventIdSha256",
-        "expectedTargetMessageIdSha256", "status", "resultCode",
+        "expectedTargetMessageIdSha256",
+        "expectedCollapseIdentifierSha256", "status", "resultCode",
         "matchingRemoteCount", "matchingLocalCount",
         "matchingUsefulProviderCount", "matchingSanitizedProviderCount",
         "matchingFlutterLocalCount", "matchingUnknownCount", "matchingTotalCount",
         "stableSampleCount", "stableSampleIntervalMilliseconds",
         "observationDeadlineMilliseconds", "sampledThroughDeadline",
         "badSourceSeen", "duplicateSeen", "requestIdentifierSha256",
+        "diagnosticSchema", "diagnosticRecords", "diagnosticRecordCount",
+        "diagnosticOverflow", "diagnosticConflict", "diagnosticComplete",
         "childBuildCount", "manualActionCount", "completedAt",
       ])
     )
@@ -378,6 +469,662 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: handoff.groupObservationResultURL.path)
     )
+  }
+
+  func testTC398GroupObservationReceiptPersistsBoundedPerCardDiagnostics() throws {
+    func hash(_ value: String) -> String {
+      SHA256.hash(data: Data(value.utf8))
+        .map { String(format: "%02x", $0) }.joined()
+    }
+    let root = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+    let handoff = IosReceiverBootstrapHandoff(
+      enabled: true,
+      now: { self.now },
+      rootDirectory: root
+    )
+    XCTAssertEqual(handoff.prepareContainer(), .waiting)
+    let dispatchCorrelation = "01234567-89ab-4cde-8fab-0123456789ab"
+    let claimedCollapseIdentifier =
+      "group-message:" + String(repeating: "d", count: 48)
+    let providerMessageId = "0:1900000398%aabbccdd"
+    let expectedHash = hash(claimedCollapseIdentifier)
+    try writeGroupObservationRequest(
+      handoff.groupObservationRequestURL,
+      phase: "message",
+      groupHash: String(repeating: "a", count: 64),
+      eventHash: String(repeating: "b", count: 64),
+      targetHash: String(repeating: "c", count: 64),
+      expectedCollapseIdentifierSha256: expectedHash
+    )
+
+    let command = try XCTUnwrap(
+      handoff.takeGroupNotificationObservationRequest(),
+      "TC-398-02 protected receipt"
+    )
+    XCTAssertEqual(
+      command["expectedCollapseIdentifierSha256"],
+      expectedHash
+    )
+    let validRecord = Runner.IosGroupNotificationDiagnosticRecord(
+      requestIdentifierSha256: expectedHash,
+      triggerOrigin: .remote,
+      sourceClass: .usefulProviderRich,
+      reason: .exactUseful,
+      expectedCollapseIdentifierMatch: true,
+      dispatchClaim: .groupInbox,
+      dispatchCorrelationSha256: hash(dispatchCorrelation),
+      claimedCollapseIdentifierSha256: hash(claimedCollapseIdentifier),
+      providerMessageIdSha256: hash(providerMessageId)
+    )
+    let invalidRecord = Runner.IosGroupNotificationDiagnosticRecord(
+      requestIdentifierSha256: String(repeating: "e", count: 64),
+      triggerOrigin: .remote,
+      sourceClass: .usefulProviderRich,
+      reason: .partialContent,
+      expectedCollapseIdentifierMatch: false,
+      dispatchClaim: .absent
+    )
+    let malformedDigestRecord = Runner.IosGroupNotificationDiagnosticRecord(
+      requestIdentifierSha256: String(repeating: "e", count: 64),
+      triggerOrigin: .remote,
+      sourceClass: .usefulProviderRich,
+      reason: .exactUseful,
+      expectedCollapseIdentifierMatch: false,
+      dispatchClaim: .groupInbox,
+      dispatchCorrelationSha256: "raw-dispatch-id"
+    )
+    let contradictoryCollapseRecord =
+      Runner.IosGroupNotificationDiagnosticRecord(
+        requestIdentifierSha256: expectedHash,
+        triggerOrigin: .remote,
+        sourceClass: .usefulProviderRich,
+        reason: .exactUseful,
+        expectedCollapseIdentifierMatch: false,
+        dispatchClaim: .groupInbox,
+        dispatchCorrelationSha256: hash(dispatchCorrelation),
+        claimedCollapseIdentifierSha256: hash(claimedCollapseIdentifier),
+        providerMessageIdSha256: hash(providerMessageId)
+      )
+    let inventory = Runner.IosGroupNotificationInventory(
+      matchingRemoteCount: 1,
+      matchingLocalCount: 0,
+      matchingUsefulProviderCount: 1,
+      matchingSanitizedProviderCount: 0,
+      matchingFlutterLocalCount: 0,
+      matchingUnknownCount: 0,
+      requestIdentifierSha256: [expectedHash],
+      diagnosticRecords: [validRecord]
+    )
+
+    XCTAssertTrue(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "passed",
+      resultCode: "ok",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: false,
+      duplicateSeen: false,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+
+    let missingFinalDiagnosticsInventory =
+      Runner.IosGroupNotificationInventory(
+        matchingRemoteCount: 1,
+        matchingLocalCount: 0,
+        matchingUsefulProviderCount: 1,
+        matchingSanitizedProviderCount: 0,
+        matchingFlutterLocalCount: 0,
+        matchingUnknownCount: 0,
+        requestIdentifierSha256: [expectedHash]
+      )
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "bad_source_seen",
+      inventory: missingFinalDiagnosticsInventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+
+    // The handoff must reproduce AppDelegate's closed producer mapping rather
+    // than accept any syntactically valid non-ok result code.
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "open",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: false,
+      duplicateSeen: false,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "source_inventory_mismatch",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: false,
+      duplicateSeen: false,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "bad_source_seen",
+      inventory: inventory,
+      stableSampleCount: 2,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+    XCTAssertTrue(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "source_inventory_unstable",
+      inventory: inventory,
+      stableSampleCount: 2,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+    XCTAssertTrue(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "source_inventory_unstable",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: false,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: false
+    ))
+    XCTAssertTrue(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "source_inventory_mismatch",
+      inventory: .empty,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: false,
+      duplicateSeen: false,
+      diagnosticComplete: false
+    ))
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [malformedDigestRecord],
+      diagnosticComplete: true
+    ))
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [contradictoryCollapseRecord],
+      diagnosticComplete: true
+    ))
+    let contradictoryCountInventory = Runner.IosGroupNotificationInventory(
+      matchingRemoteCount: 2,
+      matchingLocalCount: 0,
+      matchingUsefulProviderCount: 1,
+      matchingSanitizedProviderCount: 0,
+      matchingFlutterLocalCount: 0,
+      matchingUnknownCount: 0,
+      requestIdentifierSha256: [expectedHash],
+      diagnosticRecords: [validRecord]
+    )
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: contradictoryCountInventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+    let contradictoryCategoryInventory = Runner.IosGroupNotificationInventory(
+      matchingRemoteCount: 0,
+      matchingLocalCount: 1,
+      matchingUsefulProviderCount: 1,
+      matchingSanitizedProviderCount: 0,
+      matchingFlutterLocalCount: 0,
+      matchingUnknownCount: 0,
+      requestIdentifierSha256: [expectedHash],
+      diagnosticRecords: [validRecord]
+    )
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: contradictoryCategoryInventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+    let duplicateHashInventory = Runner.IosGroupNotificationInventory(
+      matchingRemoteCount: 2,
+      matchingLocalCount: 0,
+      matchingUsefulProviderCount: 2,
+      matchingSanitizedProviderCount: 0,
+      matchingFlutterLocalCount: 0,
+      matchingUnknownCount: 0,
+      requestIdentifierSha256: [expectedHash, expectedHash],
+      diagnosticRecords: [validRecord]
+    )
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: duplicateHashInventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [invalidRecord],
+      diagnosticComplete: true
+    ))
+    let nineRecords = (0..<9).map { index in
+      Runner.IosGroupNotificationDiagnosticRecord(
+        requestIdentifierSha256: String(
+          repeating: String(format: "%x", index),
+          count: 64
+        ),
+        triggerOrigin: .remote,
+        sourceClass: .unknown,
+        reason: .unclassifiedRemote,
+        expectedCollapseIdentifierMatch: false,
+        dispatchClaim: .absent
+      )
+    }
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: nineRecords,
+      diagnosticOverflow: true,
+      diagnosticComplete: false
+    ))
+    XCTAssertFalse(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: false
+    ))
+    XCTAssertTrue(handoff.completeGroupNotificationObservationRequest(
+      request: command,
+      status: "failed",
+      resultCode: "bad_source_seen",
+      inventory: inventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: true,
+      duplicateSeen: true,
+      diagnosticRecords: [validRecord],
+      diagnosticComplete: true
+    ))
+
+    let result = try json(handoff.groupObservationResultURL)
+    XCTAssertEqual(result["status"] as? String, "failed")
+    XCTAssertEqual(
+      result["expectedCollapseIdentifierSha256"] as? String,
+      expectedHash
+    )
+    XCTAssertEqual(
+      result["diagnosticSchema"] as? String,
+      IosReceiverBootstrapHandoff.groupObservationDiagnosticSchema
+    )
+    XCTAssertEqual(
+      IosReceiverBootstrapHandoff.groupObservationResultSchema,
+      "mknoon.sims.ios-group-notification-observation-result.v3"
+    )
+    XCTAssertEqual(
+      IosReceiverBootstrapHandoff.groupObservationDiagnosticSchema,
+      "mknoon.sims.ios-group-notification-diagnostics.v2"
+    )
+    XCTAssertEqual(result["diagnosticRecordCount"] as? Int, 1)
+    XCTAssertEqual(result["diagnosticOverflow"] as? Bool, false)
+    XCTAssertEqual(result["diagnosticConflict"] as? Bool, false)
+    XCTAssertEqual(result["diagnosticComplete"] as? Bool, true)
+    let records = try XCTUnwrap(
+      result["diagnosticRecords"] as? [[String: Any]]
+    )
+    XCTAssertEqual(Set(records[0].keys), Set([
+      "requestIdentifierSha256", "triggerOrigin", "sourceClass", "reason",
+      "expectedCollapseIdentifierMatch", "dispatchClaim",
+      "dispatchCorrelationSha256", "claimedCollapseIdentifierSha256",
+      "providerMessageIdSha256",
+    ]))
+    XCTAssertEqual(records[0]["triggerOrigin"] as? String, "remote")
+    XCTAssertEqual(records[0]["sourceClass"] as? String, "usefulProviderRich")
+    XCTAssertEqual(records[0]["reason"] as? String, "exactUseful")
+    XCTAssertEqual(records[0]["dispatchClaim"] as? String, "groupInbox")
+    XCTAssertEqual(
+      records[0]["dispatchCorrelationSha256"] as? String,
+      hash(dispatchCorrelation)
+    )
+    XCTAssertEqual(
+      records[0]["claimedCollapseIdentifierSha256"] as? String,
+      hash(claimedCollapseIdentifier)
+    )
+    XCTAssertEqual(
+      records[0]["providerMessageIdSha256"] as? String,
+      hash(providerMessageId)
+    )
+    let nilRecord = Runner.IosGroupNotificationDiagnosticRecord(
+      requestIdentifierSha256: String(repeating: "f", count: 64),
+      triggerOrigin: .remote,
+      sourceClass: .unknown,
+      reason: .unclassifiedRemote,
+      expectedCollapseIdentifierMatch: false,
+      dispatchClaim: .absent
+    )
+    XCTAssertTrue(nilRecord.jsonObject["dispatchCorrelationSha256"] is NSNull)
+    XCTAssertTrue(
+      nilRecord.jsonObject["claimedCollapseIdentifierSha256"] is NSNull
+    )
+    XCTAssertTrue(nilRecord.jsonObject["providerMessageIdSha256"] is NSNull)
+    let encoded = try Data(contentsOf: handoff.groupObservationResultURL)
+    XCTAssertLessThanOrEqual(encoded.count, 8_192)
+    let text = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+    XCTAssertFalse(text.contains("group-398"))
+    XCTAssertFalse(text.contains("message-398"))
+    XCTAssertFalse(text.contains("collapse-398"))
+    XCTAssertFalse(text.contains(dispatchCorrelation))
+    XCTAssertFalse(text.contains(claimedCollapseIdentifier))
+    XCTAssertFalse(text.contains(providerMessageId))
+
+    let maximumRoot = try temporaryRoot()
+    defer {
+      try? FileManager.default.removeItem(
+        at: maximumRoot.deletingLastPathComponent()
+      )
+    }
+    let maximumHandoff = IosReceiverBootstrapHandoff(
+      enabled: true,
+      now: { self.now },
+      rootDirectory: maximumRoot
+    )
+    XCTAssertEqual(maximumHandoff.prepareContainer(), .waiting)
+    try writeGroupObservationRequest(
+      maximumHandoff.groupObservationRequestURL,
+      phase: "message",
+      groupHash: String(repeating: "a", count: 64),
+      eventHash: String(repeating: "b", count: 64),
+      targetHash: String(repeating: "c", count: 64),
+      expectedCollapseIdentifierSha256: expectedHash
+    )
+    let maximumCommand = try XCTUnwrap(
+      maximumHandoff.takeGroupNotificationObservationRequest()
+    )
+    let maximumRecords = (0..<8).map { index in
+      Runner.IosGroupNotificationDiagnosticRecord(
+        requestIdentifierSha256: String(
+          repeating: String(format: "%x", index),
+          count: 64
+        ),
+        triggerOrigin: .remote,
+        sourceClass: .usefulProviderRich,
+        reason: .exactUseful,
+        expectedCollapseIdentifierMatch: false,
+        dispatchClaim: .groupContent,
+        dispatchCorrelationSha256: hash(
+          "00000000-0000-4000-8000-00000000000\(index)"
+        ),
+        claimedCollapseIdentifierSha256: hash(
+          "group-message:" + String(repeating: String(format: "%x", index), count: 48)
+        ),
+        providerMessageIdSha256: hash(
+          "0:1900000398%aabbccd\(index)"
+        )
+      )
+    }
+    let maximumHashes = maximumRecords.map(\.requestIdentifierSha256).sorted()
+    let maximumInventory = Runner.IosGroupNotificationInventory(
+      matchingRemoteCount: 8,
+      matchingLocalCount: 0,
+      matchingUsefulProviderCount: 8,
+      matchingSanitizedProviderCount: 0,
+      matchingFlutterLocalCount: 0,
+      matchingUnknownCount: 0,
+      requestIdentifierSha256: maximumHashes,
+      diagnosticRecords: maximumRecords
+    )
+    XCTAssertTrue(maximumHandoff.completeGroupNotificationObservationRequest(
+      request: maximumCommand,
+      status: "failed",
+      resultCode: "duplicate_seen",
+      inventory: maximumInventory,
+      stableSampleCount: 3,
+      sampledThroughDeadline: true,
+      badSourceSeen: false,
+      duplicateSeen: true,
+      diagnosticRecords: maximumRecords,
+      diagnosticComplete: true
+    ))
+    let maximumEncoded = try Data(
+      contentsOf: maximumHandoff.groupObservationResultURL
+    )
+    XCTAssertGreaterThan(maximumEncoded.count, 4_096)
+    XCTAssertLessThanOrEqual(maximumEncoded.count, 8_192)
+  }
+
+  func testTC398SetupEntryReceiptAdvancesNativeToDartAndRejectsGateBypass() throws {
+    let parent = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: parent.deletingLastPathComponent()) }
+    let rawAttempt = "plan398-v3-entry-attempt-0001"
+    let attemptSha256 = SHA256.hash(data: Data(rawAttempt.utf8))
+      .map { String(format: "%02x", $0) }
+      .joined()
+    let validEnvironment = [
+      IosSetupReadinessEntryCoordinator.attemptEnvironmentKey: rawAttempt,
+      IosSetupReadinessEntryCoordinator.profileEnvironmentKey:
+        IosSetupReadinessEntryCoordinator.expectedProfileId,
+    ]
+    let validRoot = parent.appendingPathComponent("valid", isDirectory: true)
+    let coordinator = IosSetupReadinessEntryCoordinator(
+      documentsDirectory: validRoot
+    )
+
+    XCTAssertEqual(
+      coordinator.armNativeLaunch(environment: validEnvironment),
+      .published
+    )
+    var receipt = try json(coordinator.receiptURL)
+    XCTAssertEqual(Set(receipt.keys), Set([
+      "schema", "status", "stage", "reason", "profileId",
+      "launchAttemptSha256", "nativeEntryAcknowledged",
+      "dartEntryAcknowledged", "launchInputPresent",
+      "identityInitiallyPresent", "generationAttempted",
+      "generationSucceeded", "reloadSucceeded", "qrPayloadBuilt",
+      "identityExported", "identityExportSha256", "containsSecrets",
+    ]))
+    XCTAssertEqual(
+      receipt["schema"] as? String,
+      "mknoon.plan398.ios-setup-readiness.v3"
+    )
+    XCTAssertEqual(receipt["status"] as? String, "FAIL")
+    XCTAssertEqual(receipt["stage"] as? String, "native_app_delegate")
+    XCTAssertEqual(receipt["reason"] as? String, "dart_main_not_reached")
+    XCTAssertEqual(receipt["profileId"] as? String, "ios.device.group_reaction_notification_397")
+    XCTAssertEqual(receipt["launchAttemptSha256"] as? String, attemptSha256)
+    XCTAssertEqual(receipt["nativeEntryAcknowledged"] as? Bool, true)
+    XCTAssertEqual(receipt["dartEntryAcknowledged"] as? Bool, false)
+    XCTAssertEqual(receipt["containsSecrets"] as? Bool, false)
+    let nativeBytes = try Data(contentsOf: coordinator.receiptURL)
+    XCTAssertLessThanOrEqual(nativeBytes.count, 2_048)
+    XCTAssertFalse(String(decoding: nativeBytes, as: UTF8.self).contains(rawAttempt))
+    let attributes = try FileManager.default.attributesOfItem(
+      atPath: coordinator.receiptURL.path
+    )
+    XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    assertCompleteFileProtection(attributes)
+
+    XCTAssertThrowsError(try coordinator.acknowledgeDartMain(arguments: [
+      "schema": IosSetupReadinessEntryCoordinator.schema,
+      "profileId": IosSetupReadinessEntryCoordinator.expectedProfileId,
+      "launchAttemptSha256": String(repeating: "f", count: 64),
+    ]))
+    XCTAssertThrowsError(try coordinator.acknowledgeDartMain(arguments: [
+      "schema": IosSetupReadinessEntryCoordinator.schema,
+      "profileId": IosSetupReadinessEntryCoordinator.expectedProfileId,
+      "launchAttemptSha256": attemptSha256,
+      "rawAttempt": rawAttempt,
+    ]))
+    XCTAssertEqual(
+      try json(coordinator.receiptURL)["stage"] as? String,
+      "native_app_delegate"
+    )
+
+    let acknowledgement = try coordinator.acknowledgeDartMain(arguments: [
+      "schema": IosSetupReadinessEntryCoordinator.schema,
+      "profileId": IosSetupReadinessEntryCoordinator.expectedProfileId,
+      "launchAttemptSha256": attemptSha256,
+    ])
+    XCTAssertEqual(Set(acknowledgement.keys), Set([
+      "schema", "status", "stage", "reason", "profileId",
+      "launchAttemptSha256", "nativeEntryAcknowledged",
+      "dartEntryAcknowledged", "launchInputPresent",
+      "identityInitiallyPresent", "generationAttempted",
+      "generationSucceeded", "reloadSucceeded", "qrPayloadBuilt",
+      "identityExported", "identityExportSha256", "containsSecrets",
+    ]))
+    receipt = try json(coordinator.receiptURL)
+    XCTAssertEqual(receipt["stage"] as? String, "dart_main")
+    XCTAssertEqual(
+      receipt["reason"] as? String,
+      "application_documents_not_ready"
+    )
+    XCTAssertEqual(receipt["nativeEntryAcknowledged"] as? Bool, true)
+    XCTAssertEqual(receipt["dartEntryAcknowledged"] as? Bool, true)
+    XCTAssertEqual(
+      acknowledgement["launchAttemptSha256"] as? String,
+      attemptSha256
+    )
+    XCTAssertThrowsError(try coordinator.acknowledgeDartMain(arguments: [
+      "schema": IosSetupReadinessEntryCoordinator.schema,
+      "profileId": IosSetupReadinessEntryCoordinator.expectedProfileId,
+      "launchAttemptSha256": attemptSha256,
+    ]))
+
+    let gateCases: [([String: String], IosSetupReadinessEntryCoordinator.ArmOutcome)] = [
+      ([:], .inactive),
+      ([IosSetupReadinessEntryCoordinator.attemptEnvironmentKey: rawAttempt], .rejected),
+      ([
+        IosSetupReadinessEntryCoordinator.profileEnvironmentKey:
+          IosSetupReadinessEntryCoordinator.expectedProfileId,
+      ], .rejected),
+      ([
+        IosSetupReadinessEntryCoordinator.attemptEnvironmentKey: "too short",
+        IosSetupReadinessEntryCoordinator.profileEnvironmentKey:
+          IosSetupReadinessEntryCoordinator.expectedProfileId,
+      ], .rejected),
+      ([
+        IosSetupReadinessEntryCoordinator.attemptEnvironmentKey: rawAttempt,
+        IosSetupReadinessEntryCoordinator.profileEnvironmentKey: "ios.device.production",
+      ], .rejected),
+    ]
+    for (index, gateCase) in gateCases.enumerated() {
+      let rejected = IosSetupReadinessEntryCoordinator(
+        documentsDirectory: parent.appendingPathComponent(
+          "gate-\(index)",
+          isDirectory: true
+        )
+      )
+      XCTAssertEqual(
+        rejected.armNativeLaunch(environment: gateCase.0),
+        gateCase.1,
+        "gate case \(index)"
+      )
+      XCTAssertFalse(FileManager.default.fileExists(atPath: rejected.receiptURL.path))
+      XCTAssertThrowsError(try rejected.acknowledgeDartMain(arguments: [
+        "schema": IosSetupReadinessEntryCoordinator.schema,
+        "profileId": IosSetupReadinessEntryCoordinator.expectedProfileId,
+        "launchAttemptSha256": attemptSha256,
+      ]))
+    }
+
+    let blockedRoot = parent.appendingPathComponent("blocked", isDirectory: false)
+    XCTAssertTrue(FileManager.default.createFile(atPath: blockedRoot.path, contents: Data()))
+    let blocked = IosSetupReadinessEntryCoordinator(documentsDirectory: blockedRoot)
+    XCTAssertEqual(
+      blocked.armNativeLaunch(environment: validEnvironment),
+      .rejected
+    )
+    XCTAssertThrowsError(try blocked.acknowledgeDartMain(arguments: [
+      "schema": IosSetupReadinessEntryCoordinator.schema,
+      "profileId": IosSetupReadinessEntryCoordinator.expectedProfileId,
+      "launchAttemptSha256": attemptSha256,
+    ]))
   }
 
   private func assertCompleteFileProtection(
@@ -473,7 +1220,10 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       "receiverDeviceId": receiver,
       "bundleId": "com.mknoon.app",
       "accountPeerId": peer,
+      "expectedSenderPeerId": peer,
+      "expectedMessageId": "direct-message-396",
       "sentinelIdentifier": sentinel,
+      "proofStage": "single_submission",
       "apnsPayloadSha256": payloadDigest,
       "createdAt": formatter.string(from: now),
       "expiresAt": formatter.string(from: now.addingTimeInterval(180)),
@@ -491,11 +1241,15 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     phase: String,
     groupHash: String,
     eventHash: String,
-    targetHash: String
+    targetHash: String,
+    expectedCollapseIdentifierSha256: String = String(
+      repeating: "d",
+      count: 64
+    )
   ) throws {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let object: [String: Any] = [
+    var object: [String: Any] = [
       "schema": IosReceiverBootstrapHandoff.groupObservationRequestSchema,
       "action": "observe_group",
       "phase": phase,
@@ -508,6 +1262,8 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       "createdAt": formatter.string(from: now),
       "expiresAt": formatter.string(from: now.addingTimeInterval(180)),
     ]
+    object["expectedCollapseIdentifierSha256"] =
+      expectedCollapseIdentifierSha256
     let data = try JSONSerialization.data(withJSONObject: object)
     FileManager.default.createFile(
       atPath: url.path,

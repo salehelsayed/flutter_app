@@ -88,13 +88,14 @@ func wakeOutcomePolicyForProducer(producer wakeOutcomeProducerKind) (wakeOutcome
 }
 
 type wakeOutcomeAdmission struct {
-	recipientPeerID  string
-	correlation      string
-	producer         wakeOutcomeProducerKind
-	policy           wakeOutcomeRoutePolicy
-	route            pushRouteLease
-	storedAtMs       int64
-	eventExpiresAtMs int64
+	recipientPeerID                  string
+	correlation                      string
+	producer                         wakeOutcomeProducerKind
+	policy                           wakeOutcomeRoutePolicy
+	groupMessageDispatchAdmissionKey string
+	route                            pushRouteLease
+	storedAtMs                       int64
+	eventExpiresAtMs                 int64
 }
 
 func (a wakeOutcomeAdmission) RecipientPeerID() string { return a.recipientPeerID }
@@ -418,19 +419,24 @@ const (
 )
 
 type redisWakeOutcomeRecord struct {
-	State        wakeOutcomeState       `json:"state"`
-	Revision     uint64                 `json:"revision"`
-	DueAtMs      int64                  `json:"due_at_ms,omitempty"`
-	ClaimUntilMs int64                  `json:"claim_until_ms,omitempty"`
-	ClaimToken   string                 `json:"claim_token,omitempty"`
-	RetryCount   int                    `json:"retry_count"`
-	ExpiresAtMs  int64                  `json:"expires_at_ms"`
-	Policy       wakeOutcomeRoutePolicy `json:"policy"`
+	State                            wakeOutcomeState       `json:"state"`
+	Revision                         uint64                 `json:"revision"`
+	DueAtMs                          int64                  `json:"due_at_ms,omitempty"`
+	ClaimUntilMs                     int64                  `json:"claim_until_ms,omitempty"`
+	ClaimToken                       string                 `json:"claim_token,omitempty"`
+	RetryCount                       int                    `json:"retry_count"`
+	ExpiresAtMs                      int64                  `json:"expires_at_ms"`
+	Policy                           wakeOutcomeRoutePolicy `json:"policy"`
+	GroupMessageDispatchAdmissionKey string                 `json:"group_message_dispatch_admission_key,omitempty"`
 }
 
 func (record redisWakeOutcomeRecord) validate() error {
 	if record.Revision == 0 || record.RetryCount < 0 || record.ExpiresAtMs <= 0 || !record.Policy.valid() {
 		return errors.New("wake outcome record metadata is invalid")
+	}
+	if record.GroupMessageDispatchAdmissionKey != "" &&
+		!canonicalGroupMessageDispatchAdmissionStorageKey(record.GroupMessageDispatchAdmissionKey) {
+		return errors.New("wake outcome group-message dispatch admission key is invalid")
 	}
 	switch record.State {
 	case wakeOutcomeStatePending:
@@ -820,6 +826,7 @@ func (s *redisWakeOutcomeStore) prepareAdmission(
 	records[admission.correlation] = redisWakeOutcomeRecord{
 		State: wakeOutcomeStatePending, Revision: 1, DueAtMs: dueAtMs,
 		ExpiresAtMs: expiresAtMs, Policy: admission.policy,
+		GroupMessageDispatchAdmissionKey: admission.groupMessageDispatchAdmissionKey,
 	}
 	prepared.dirty = true
 	prepared.dueAtMs = dueAtMs
@@ -1268,11 +1275,12 @@ func (b *redisInboxBackend) StoreAckCustodyWithWakeOutcome(
 }
 
 type wakeOutcomeClaim struct {
-	peerID      string
-	correlation string
-	policy      wakeOutcomeRoutePolicy
-	token       string
-	revision    uint64
+	peerID                           string
+	correlation                      string
+	policy                           wakeOutcomeRoutePolicy
+	token                            string
+	revision                         uint64
+	groupMessageDispatchAdmissionKey string
 }
 
 func (s *redisWakeOutcomeStore) newClaimToken() (string, error) {
@@ -1378,6 +1386,7 @@ func (s *redisWakeOutcomeStore) claimOne(
 			result = wakeOutcomeClaim{
 				peerID: peerID, correlation: correlation, policy: record.Policy,
 				token: token, revision: record.Revision,
+				groupMessageDispatchAdmissionKey: record.GroupMessageDispatchAdmissionKey,
 			}
 		}
 		if !dirty {
@@ -1437,7 +1446,7 @@ func (s *redisWakeOutcomeStore) settle(
 		}
 		record.Revision++
 		switch result {
-		case pushDeliveryAccepted, pushDeliveryPermanent:
+		case pushDeliveryAccepted, pushDeliveryPermanent, pushDeliverySuppressed:
 			record.State = wakeOutcomeStateCompleted
 			record.DueAtMs = 0
 			record.ClaimUntilMs = 0
@@ -1483,10 +1492,17 @@ func (s *redisWakeOutcomeStore) settle(
 }
 
 type wakeOutcomeSendFunc func(context.Context, string, wakeOutcomeRoutePolicy) pushDeliveryResult
+type wakeOutcomeGroupSendFunc func(
+	context.Context,
+	string,
+	wakeOutcomeRoutePolicy,
+	string,
+) pushDeliveryResult
 
 type wakeOutcomeCoordinator struct {
 	backend   *redisWakeOutcomeStore
 	send      wakeOutcomeSendFunc
+	sendGroup wakeOutcomeGroupSendFunc
 	now       func() time.Time
 	startOnce sync.Once
 	runMu     sync.Mutex
@@ -1549,7 +1565,21 @@ func (c *wakeOutcomeCoordinator) RunDue(ctx context.Context) error {
 			continue
 		}
 		result := pushDeliveryRetryable
-		if c.send != nil {
+		if claim.groupMessageDispatchAdmissionKey != "" {
+			// A keyed group claim may use only the exact group provider
+			// admission callback. Missing wiring is retryable/fail-closed; it
+			// must never reopen the generic mailbox-wake bypass.
+			if c.sendGroup != nil {
+				providerCtx, cancel := context.WithTimeout(ctx, wakeOutcomeProviderTimeout)
+				result = c.sendGroup(
+					providerCtx,
+					claim.peerID,
+					claim.policy,
+					claim.groupMessageDispatchAdmissionKey,
+				)
+				cancel()
+			}
+		} else if c.send != nil {
 			providerCtx, cancel := context.WithTimeout(ctx, wakeOutcomeProviderTimeout)
 			result = c.send(providerCtx, claim.peerID, claim.policy)
 			cancel()

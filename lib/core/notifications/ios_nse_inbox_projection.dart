@@ -226,6 +226,14 @@ Future<T> runWithRetiredIosNseTransportAuthority<T>({
 
 typedef OpaqueWakeConsumerReadBack = Future<bool> Function();
 
+/// Whether the shipped iOS notification-service binary can consume fixed
+/// opaque inbox wakes.
+///
+/// The memory-bounded `GoMknoonNSE` build intentionally excludes libp2p, so
+/// production must not advertise `opaque_wake_v1` on iOS. Keep this false
+/// until the extension has a bounded, end-to-end mailbox transport again.
+bool isIosNseOpaqueInboxConsumerCompiledIn() => false;
+
 /// The one production platform predicate applied to paired opaque/outcome
 /// capability registration, the completed-outcome producer and the outcome
 /// drainer. Plan 373 supplies iOS; Plan 375 supplies the live Android

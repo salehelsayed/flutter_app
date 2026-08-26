@@ -66,6 +66,241 @@ void main() {
       },
     );
 
+    test('probes an exact announcement without consuming it', () async {
+      await gate.markAnnouncement(payload: 'peer-123', messageId: 'msg-1');
+
+      expect(
+        await gate.hasRecentAnnouncement(
+          payload: 'peer-123',
+          messageId: 'msg-1',
+        ),
+        isTrue,
+      );
+      expect(
+        await gate.hasRecentAnnouncement(
+          payload: 'peer-123',
+          messageId: 'msg-1',
+        ),
+        isTrue,
+        reason: 'a durable adopter must retain proof until SQL handoff',
+      );
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'peer-123',
+          messageId: 'msg-1',
+        ),
+        isTrue,
+      );
+      expect(
+        await gate.hasRecentAnnouncement(
+          payload: 'peer-123',
+          messageId: 'msg-1',
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      'exact APIs reject payload-only proof and leave legacy proof intact',
+      () async {
+        await gate.markAnnouncement(payload: 'peer-123');
+
+        expect(
+          await gate.hasRecentExactAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-b',
+          ),
+          isFalse,
+          reason: 'conversation-level proof cannot authorize message B',
+        );
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-b',
+          ),
+          isFalse,
+        );
+        expect(
+          await gate.consumeIfRecentPayload('peer-123'),
+          isTrue,
+          reason: 'an exact miss must not delete the legacy payload marker',
+        );
+      },
+    );
+
+    test(
+      'exact APIs never substitute another message in the same chat',
+      () async {
+        await gate.markAnnouncement(payload: 'peer-123', messageId: 'msg-a');
+
+        expect(
+          await gate.hasRecentExactAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-b',
+          ),
+          isFalse,
+        );
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-b',
+          ),
+          isFalse,
+        );
+        expect(
+          await gate.hasRecentExactAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-a',
+          ),
+          isTrue,
+          reason: 'message B must not consume message A proof',
+        );
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-a',
+          ),
+          isTrue,
+        );
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-a',
+          ),
+          isFalse,
+          reason: 'exact consumption remains one-shot',
+        );
+      },
+    );
+
+    test('exact APIs reject blank payload or message identities', () async {
+      await gate.markAnnouncement(payload: 'peer-123', messageId: 'msg-a');
+
+      expect(
+        await gate.hasRecentExactAnnouncement(payload: ' ', messageId: 'msg-a'),
+        isFalse,
+      );
+      expect(
+        await gate.consumeIfRecentExactAnnouncement(
+          payload: 'peer-123',
+          messageId: ' ',
+        ),
+        isFalse,
+      );
+      expect(
+        await gate.hasRecentExactAnnouncement(
+          payload: 'peer-123',
+          messageId: 'msg-a',
+        ),
+        isTrue,
+      );
+    });
+
+    test(
+      'exact consumption leaves a coexisting legacy payload marker',
+      () async {
+        await gate.markAnnouncement(payload: 'peer-123');
+        await gate.markAnnouncement(payload: 'peer-123', messageId: 'msg-a');
+
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-a',
+          ),
+          isTrue,
+        );
+        expect(
+          await gate.consumeIfRecentPayload('peer-123'),
+          isTrue,
+          reason: 'exact cleanup must never remove payload-only state',
+        );
+      },
+    );
+
+    test(
+      'promotes only an explicit exact alias proof without consuming it',
+      () async {
+        const sourcePayload = 'group:g-1|message:alias-a';
+        const sourceMessageId = 'alias-a';
+        const targetPayload = 'group:g-1|message:canonical-c';
+        const targetMessageId = 'canonical-c';
+        await gate.markAnnouncement(
+          payload: sourcePayload,
+          messageId: sourceMessageId,
+        );
+
+        expect(
+          await gate.promoteExactAnnouncementAlias(
+            sourcePayload: sourcePayload,
+            sourceMessageId: sourceMessageId,
+            targetPayload: targetPayload,
+            targetMessageId: targetMessageId,
+          ),
+          isTrue,
+        );
+        expect(
+          await gate.hasRecentAnnouncement(
+            payload: targetPayload,
+            messageId: targetMessageId,
+          ),
+          isTrue,
+        );
+        expect(
+          await gate.hasRecentAnnouncement(
+            payload: sourcePayload,
+            messageId: sourceMessageId,
+          ),
+          isTrue,
+          reason: 'promotion must preserve retry proof at the source identity',
+        );
+        expect(
+          await gate.promoteExactAnnouncementAlias(
+            sourcePayload: sourcePayload,
+            sourceMessageId: sourceMessageId,
+            targetPayload: targetPayload,
+            targetMessageId: targetMessageId,
+          ),
+          isTrue,
+          reason: 'an exact promotion must be idempotent',
+        );
+
+        expect(
+          await gate.hasRecentAnnouncement(
+            payload: 'group:g-1|message:newer-b',
+            messageId: 'newer-b',
+          ),
+          isFalse,
+          reason: 'another message in the same group must remain eligible',
+        );
+        expect(
+          await gate.hasRecentAnnouncement(
+            payload: 'group:g-2|message:canonical-c',
+            messageId: targetMessageId,
+          ),
+          isFalse,
+          reason: 'the same message id in another group must remain eligible',
+        );
+
+        expect(
+          await gate.promoteExactAnnouncementAlias(
+            sourcePayload: 'group:g-1|message:newer-b',
+            sourceMessageId: 'newer-b',
+            targetPayload: 'group:g-1|message:canonical-d',
+            targetMessageId: 'canonical-d',
+          ),
+          isFalse,
+          reason: 'promotion must never discover proof by scanning a group',
+        );
+        expect(
+          await gate.hasRecentAnnouncement(
+            payload: 'group:g-1|message:canonical-d',
+            messageId: 'canonical-d',
+          ),
+          isFalse,
+        );
+      },
+    );
+
     test(
       'does not suppress a different message id in the same conversation',
       () async {
@@ -160,8 +395,9 @@ void main() {
     test(
       'resolves a durable path under the injected support dir; explicit filePath wins',
       () async {
-        final supportDir =
-            await Directory.systemTemp.createTemp('remote-gate-support-');
+        final supportDir = await Directory.systemTemp.createTemp(
+          'remote-gate-support-',
+        );
         addTearDown(() => supportDir.deleteSync(recursive: true));
 
         var providerCalls = 0;
@@ -299,60 +535,226 @@ void main() {
       );
     });
 
-    test('consumes a GROUP sidecar marker (double message: key shape)', () async {
-      // Group payload = 'group:<gid>|message:<id>', so the gate key is
-      // 'message:group:<gid>|message:<id>|<id>' — the NSE must reproduce this.
-      await writeMarker('message:group:g-1|message:m-9|m-9', now);
-
-      expect(
-        await gate.consumeIfRecentAnnouncement(
-          payload: 'group:g-1|message:m-9',
-          messageId: 'm-9',
-        ),
-        isTrue,
-      );
-    });
-
     test(
-      'discardSidecarMarker removes the marker without a suppression hit '
-      'and leaves Dart-map entries intact',
+      'consumes a GROUP sidecar marker (double message: key shape)',
       () async {
-        await writeMarker('message:group:g-2|message:m-5|m-5', now);
-        await gate.markAnnouncement(
-          payload: 'group:g-other|message:m-1',
-          messageId: 'm-1',
-        );
-
-        await gate.discardSidecarMarker(
-          payload: 'group:g-2|message:m-5',
-          messageId: 'm-5',
-        );
+        // Group payload = 'group:<gid>|message:<id>', so the gate key is
+        // 'message:group:<gid>|message:<id>|<id>' — the NSE must reproduce this.
+        await writeMarker('message:group:g-1|message:m-9|m-9', now);
 
         expect(
-          File(
-            '${sidecarDir.path}/${markerName('message:group:g-2|message:m-5|m-5')}',
-          ).existsSync(),
-          isFalse,
-        );
-        // The never-presented foreground push no longer suppresses the
-        // local banner.
-        expect(
           await gate.consumeIfRecentAnnouncement(
-            payload: 'group:g-2|message:m-5',
-            messageId: 'm-5',
-          ),
-          isFalse,
-        );
-        // Dart-map dedupe (live-first / recovery paths) is unaffected.
-        expect(
-          await gate.consumeIfRecentAnnouncement(
-            payload: 'group:g-other|message:m-1',
-            messageId: 'm-1',
+            payload: 'group:g-1|message:m-9',
+            messageId: 'm-9',
           ),
           isTrue,
         );
       },
     );
+
+    test('probes a GROUP sidecar without deleting NSE proof', () async {
+      const payload = 'group:g-1|message:m-9';
+      const messageId = 'm-9';
+      final marker = File(
+        '${sidecarDir.path}/${markerName('message:$payload|$messageId')}',
+      );
+      await writeMarker('message:$payload|$messageId', now);
+
+      expect(
+        await gate.hasRecentAnnouncement(
+          payload: payload,
+          messageId: messageId,
+        ),
+        isTrue,
+      );
+      expect(marker.existsSync(), isTrue);
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: payload,
+          messageId: messageId,
+        ),
+        isTrue,
+      );
+      expect(marker.existsSync(), isFalse);
+    });
+
+    test(
+      'exact APIs probe and consume only the matching NSE sidecar',
+      () async {
+        const payload = 'peer-123';
+        const messageA = 'msg-a';
+        const messageB = 'msg-b';
+        final markerA = File(
+          '${sidecarDir.path}/${markerName('message:$payload|$messageA')}',
+        );
+        await writeMarker('message:$payload|$messageA', now);
+
+        expect(
+          await gate.hasRecentExactAnnouncement(
+            payload: payload,
+            messageId: messageB,
+          ),
+          isFalse,
+        );
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: payload,
+            messageId: messageB,
+          ),
+          isFalse,
+        );
+        expect(markerA.existsSync(), isTrue);
+        expect(
+          await gate.hasRecentExactAnnouncement(
+            payload: payload,
+            messageId: messageA,
+          ),
+          isTrue,
+        );
+        expect(
+          markerA.existsSync(),
+          isTrue,
+          reason: 'probe is non-destructive',
+        );
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: payload,
+            messageId: messageA,
+          ),
+          isTrue,
+        );
+        expect(markerA.existsSync(), isFalse);
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: payload,
+            messageId: messageA,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'exact consumption clears matching Dart and NSE proof together',
+      () async {
+        const payload = 'peer-123';
+        const messageId = 'msg-a';
+        final marker = File(
+          '${sidecarDir.path}/${markerName('message:$payload|$messageId')}',
+        );
+        await gate.markAnnouncement(payload: payload, messageId: messageId);
+        await writeMarker('message:$payload|$messageId', now);
+
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: payload,
+            messageId: messageId,
+          ),
+          isTrue,
+        );
+        expect(marker.existsSync(), isFalse);
+        expect(
+          await gate.hasRecentExactAnnouncement(
+            payload: payload,
+            messageId: messageId,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'exact sidecar alias promotion keeps source proof retryable on write failure',
+      () async {
+        const sourcePayload = 'group:g-1|message:alias-a';
+        const sourceMessageId = 'alias-a';
+        const targetPayload = 'group:g-1|message:canonical-c';
+        const targetMessageId = 'canonical-c';
+        final sourceMarker = File(
+          '${sidecarDir.path}/${markerName('message:$sourcePayload|$sourceMessageId')}',
+        );
+        await writeMarker('message:$sourcePayload|$sourceMessageId', now);
+        final blockedGatePath = '${container.path}/blocked-gate-path';
+        await Directory(blockedGatePath).create();
+        final blockedGate = RecentRemoteNotificationGate(
+          filePath: blockedGatePath,
+          now: () => now,
+          appGroupSidecarDirProvider: () async => container,
+        );
+
+        await expectLater(
+          blockedGate.promoteExactAnnouncementAlias(
+            sourcePayload: sourcePayload,
+            sourceMessageId: sourceMessageId,
+            targetPayload: targetPayload,
+            targetMessageId: targetMessageId,
+          ),
+          throwsA(isA<FileSystemException>()),
+        );
+        expect(
+          sourceMarker.existsSync(),
+          isTrue,
+          reason: 'a failed target write must not consume exact source proof',
+        );
+
+        await Directory(blockedGatePath).delete();
+        expect(
+          await blockedGate.promoteExactAnnouncementAlias(
+            sourcePayload: sourcePayload,
+            sourceMessageId: sourceMessageId,
+            targetPayload: targetPayload,
+            targetMessageId: targetMessageId,
+          ),
+          isTrue,
+        );
+        expect(
+          await blockedGate.hasRecentAnnouncement(
+            payload: targetPayload,
+            messageId: targetMessageId,
+          ),
+          isTrue,
+        );
+        expect(sourceMarker.existsSync(), isTrue);
+      },
+    );
+
+    test('discardSidecarMarker removes the marker without a suppression hit '
+        'and leaves Dart-map entries intact', () async {
+      await writeMarker('message:group:g-2|message:m-5|m-5', now);
+      await gate.markAnnouncement(
+        payload: 'group:g-other|message:m-1',
+        messageId: 'm-1',
+      );
+
+      await gate.discardSidecarMarker(
+        payload: 'group:g-2|message:m-5',
+        messageId: 'm-5',
+      );
+
+      expect(
+        File(
+          '${sidecarDir.path}/${markerName('message:group:g-2|message:m-5|m-5')}',
+        ).existsSync(),
+        isFalse,
+      );
+      // The never-presented foreground push no longer suppresses the
+      // local banner.
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'group:g-2|message:m-5',
+          messageId: 'm-5',
+        ),
+        isFalse,
+      );
+      // Dart-map dedupe (live-first / recovery paths) is unaffected.
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'group:g-other|message:m-1',
+          messageId: 'm-1',
+        ),
+        isTrue,
+      );
+    });
 
     test(
       'discardSidecarMarker is a no-op for a missing marker or null messageId',
@@ -416,108 +818,102 @@ void main() {
       );
     });
 
-    test(
-      're-resolves the sidecar dir after a transient first-launch failure '
-      '(does not negative-cache null)',
-      () async {
-        // Reproduces the first-ever-launch race: main() persists the app-group
-        // path via an UNAWAITED call, so an early push can hit the gate before
-        // the provider can resolve. The provider throws on the first consume,
-        // then succeeds. A naive `??=` would pin the transient null and disable
-        // SI-5 for the whole session; the gate must retry and still honor the
-        // marker once the path becomes available.
-        var pathReady = false;
-        final racingGate = RecentRemoteNotificationGate(
-          filePath: '${container.path}/race.json',
-          now: () => now,
-          appGroupSidecarDirProvider: () async {
-            if (!pathReady) {
-              throw StateError('app-group container path not persisted yet');
-            }
-            return container;
-          },
-        );
-        await racingGate.clear();
-        await writeMarker('message:peer-race|m-r', now);
-
-        // First consume loses the race: provider throws, marker untouched.
-        expect(
-          await racingGate.consumeIfRecentAnnouncement(
-            payload: 'peer-race',
-            messageId: 'm-r',
-          ),
-          isFalse,
-        );
-        expect(
-          File(
-            '${sidecarDir.path}/${markerName('message:peer-race|m-r')}',
-          ).existsSync(),
-          isTrue,
-        );
-
-        // Path becomes available — a later consume must now read the marker.
-        pathReady = true;
-        expect(
-          await racingGate.consumeIfRecentAnnouncement(
-            payload: 'peer-race',
-            messageId: 'm-r',
-          ),
-          isTrue,
-        );
-      },
-    );
-
-    test(
-      'matches the shared SI-5 dedupe-key fixture (cross-process key parity '
-      'with the Swift NSE)',
-      () async {
-        // G-S5-1: test_fixtures/si5_dedupe_keys.json is the SINGLE source of
-        // truth for the NSE<->Dart dedupe key. The Swift XCTest
-        // (NotificationPreviewResolverTests.testGateMessageKeyMatchesSharedDedupeFixture)
-        // reads the SAME file and asserts RecentRemoteShownMarkerStore
-        // .gateMessageKey(push) == expectedKey. Here we assert the Dart side
-        // produces the same expectedKey, so any drift on either side fails both.
-        final cases =
-            jsonDecode(
-                  File('test_fixtures/si5_dedupe_keys.json').readAsStringSync(),
-                )
-                as List;
-        expect(cases, isNotEmpty);
-
-        for (final raw in cases) {
-          final c = (raw as Map).cast<String, dynamic>();
-          final description = c['description'];
-          final push = (c['push'] as Map).cast<String, dynamic>();
-          final expectedKey = c['expectedKey'] as String?;
-          final dartMessageId = c['dartMessageId'] as String?;
-          final dartPayload = c['dartPayload'] as String?;
-
-          // messageId derivation must mirror the Swift alias list (message_id /
-          // messageId / id / msgId, never 'm') — incl. null for non-keyed pushes.
-          expect(
-            remoteNotificationMessageIdFromData(push),
-            dartMessageId,
-            reason: 'messageId derivation drift for "$description"',
-          );
-
-          if (expectedKey == null) {
-            continue; // non-keyed push: no sidecar marker to consume.
+    test('re-resolves the sidecar dir after a transient first-launch failure '
+        '(does not negative-cache null)', () async {
+      // Reproduces the first-ever-launch race: main() persists the app-group
+      // path via an UNAWAITED call, so an early push can hit the gate before
+      // the provider can resolve. The provider throws on the first consume,
+      // then succeeds. A naive `??=` would pin the transient null and disable
+      // SI-5 for the whole session; the gate must retry and still honor the
+      // marker once the path becomes available.
+      var pathReady = false;
+      final racingGate = RecentRemoteNotificationGate(
+        filePath: '${container.path}/race.json',
+        now: () => now,
+        appGroupSidecarDirProvider: () async {
+          if (!pathReady) {
+            throw StateError('app-group container path not persisted yet');
           }
+          return container;
+        },
+      );
+      await racingGate.clear();
+      await writeMarker('message:peer-race|m-r', now);
 
-          // Gate key-shape parity: a marker named sha256(expectedKey) must be
-          // consumable via the route (payload,messageId), proving the gate's
-          // internal _messageKey == expectedKey byte-for-byte with the NSE.
-          await writeMarker(expectedKey, now);
-          expect(
-            await gate.consumeIfRecentAnnouncement(
-              payload: dartPayload!,
-              messageId: dartMessageId,
-            ),
-            isTrue,
-            reason: 'gate key-shape drift for "$description"',
-          );
+      // First consume loses the race: provider throws, marker untouched.
+      expect(
+        await racingGate.consumeIfRecentAnnouncement(
+          payload: 'peer-race',
+          messageId: 'm-r',
+        ),
+        isFalse,
+      );
+      expect(
+        File(
+          '${sidecarDir.path}/${markerName('message:peer-race|m-r')}',
+        ).existsSync(),
+        isTrue,
+      );
+
+      // Path becomes available — a later consume must now read the marker.
+      pathReady = true;
+      expect(
+        await racingGate.consumeIfRecentAnnouncement(
+          payload: 'peer-race',
+          messageId: 'm-r',
+        ),
+        isTrue,
+      );
+    });
+
+    test('matches the shared SI-5 dedupe-key fixture (cross-process key parity '
+        'with the Swift NSE)', () async {
+      // G-S5-1: test_fixtures/si5_dedupe_keys.json is the SINGLE source of
+      // truth for the NSE<->Dart dedupe key. The Swift XCTest
+      // (NotificationPreviewResolverTests.testGateMessageKeyMatchesSharedDedupeFixture)
+      // reads the SAME file and asserts RecentRemoteShownMarkerStore
+      // .gateMessageKey(push) == expectedKey. Here we assert the Dart side
+      // produces the same expectedKey, so any drift on either side fails both.
+      final cases =
+          jsonDecode(
+                File('test_fixtures/si5_dedupe_keys.json').readAsStringSync(),
+              )
+              as List;
+      expect(cases, isNotEmpty);
+
+      for (final raw in cases) {
+        final c = (raw as Map).cast<String, dynamic>();
+        final description = c['description'];
+        final push = (c['push'] as Map).cast<String, dynamic>();
+        final expectedKey = c['expectedKey'] as String?;
+        final dartMessageId = c['dartMessageId'] as String?;
+        final dartPayload = c['dartPayload'] as String?;
+
+        // messageId derivation must mirror the Swift alias list (message_id /
+        // messageId / id / msgId, never 'm') — incl. null for non-keyed pushes.
+        expect(
+          remoteNotificationMessageIdFromData(push),
+          dartMessageId,
+          reason: 'messageId derivation drift for "$description"',
+        );
+
+        if (expectedKey == null) {
+          continue; // non-keyed push: no sidecar marker to consume.
         }
-      },
-    );
+
+        // Gate key-shape parity: a marker named sha256(expectedKey) must be
+        // consumable via the route (payload,messageId), proving the gate's
+        // internal _messageKey == expectedKey byte-for-byte with the NSE.
+        await writeMarker(expectedKey, now);
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: dartPayload!,
+            messageId: dartMessageId,
+          ),
+          isTrue,
+          reason: 'gate key-shape drift for "$description"',
+        );
+      }
+    });
   });
 }

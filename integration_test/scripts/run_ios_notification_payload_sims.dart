@@ -34,6 +34,12 @@ Future<void> main(List<String> args) async {
           'exactOwnedNotificationRetired',
           'unrelatedSentinelSurvived',
           'zeroBadgePublished',
+          'directSourceUsefulProviderOnly',
+          'backgroundContenderSuppressed',
+          'samePayloadRetrySingleUsefulCard',
+          'retryReceiptsDistinctAndBound',
+          'hostFailureDiagnosticRetentionContract',
+          'hostUnconditionalCleanupContract',
         ],
       }),
     );

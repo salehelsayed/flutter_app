@@ -386,33 +386,119 @@ void main() {
     },
   );
 
-  test('live read preserves a different reaction that won after capture', () async {
-    final readEvents = StreamController<String>(sync: true);
-    addTearDown(readEvents.close);
-    final cancellations = <String>[];
-    final projector = GroupNotificationReadProjector(
-      coordinator: GroupNotificationPresentationCoordinator(),
-      readEvents: readEvents.stream,
-      unreadCountForGroup: (_) async => 0,
-      contentEventIsAcknowledged: (_, metadata) async => false,
-      cancellation: _FakeCancellation(
-        (key) async => cancellations.add(key),
-        metadata: const <String, ConversationNotificationContentMetadata>{
-          'group:new-reaction': ConversationNotificationContentMetadata(
-            kind: ConversationNotificationContentKind.reaction,
-            eventIdentity: 'event-after-read',
-            generation: 'generation-after-read',
-          ),
+  test(
+    'live read settles the canonical badge without local notification metadata',
+    () async {
+      final readEvents = StreamController<String>(sync: true);
+      addTearDown(readEvents.close);
+      final cancellations = <String>[];
+      final settlements = <String>[];
+      var acknowledgementQueries = 0;
+      final projector = GroupNotificationReadProjector(
+        coordinator: GroupNotificationPresentationCoordinator(),
+        readEvents: readEvents.stream,
+        unreadCountForGroup: (_) async => 0,
+        contentEventIsAcknowledged: (_, _) async {
+          acknowledgementQueries += 1;
+          return true;
         },
-      ),
-    )..start();
-    addTearDown(projector.dispose);
+        cancellation: _MetadataFreeCancellation(cancellations.add),
+        readSettlement: _RecordingReadSettlement(settlements.add),
+      )..start();
+      addTearDown(projector.dispose);
 
-    readEvents.add('new-reaction');
-    await projector.waitForIdle();
+      readEvents.add('provider-card');
+      await projector.waitForIdle();
 
-    expect(cancellations, isEmpty);
-  });
+      expect(acknowledgementQueries, 0);
+      expect(cancellations, isEmpty);
+      expect(settlements, <String>['group:provider-card']);
+    },
+  );
+
+  test(
+    'live read settles the badge when a newer unread message raced in',
+    () async {
+      final readEvents = StreamController<String>(sync: true);
+      addTearDown(readEvents.close);
+      final cancellations = <String>[];
+      final settlements = <String>[];
+      final projector = GroupNotificationReadProjector(
+        coordinator: GroupNotificationPresentationCoordinator(),
+        readEvents: readEvents.stream,
+        unreadCountForGroup: (_) async => 1,
+        cancellation: _FakeCancellation(
+          (conversationKey) async => cancellations.add(conversationKey),
+        ),
+        readSettlement: _RecordingReadSettlement(settlements.add),
+      )..start();
+      addTearDown(projector.dispose);
+
+      readEvents.add('raced-message');
+      await projector.waitForIdle();
+
+      expect(cancellations, isEmpty);
+      expect(settlements, <String>['group:raced-message']);
+    },
+  );
+
+  test(
+    'live badge settlement does not require a cancellable OS card',
+    () async {
+      final readEvents = StreamController<String>(sync: true);
+      addTearDown(readEvents.close);
+      final settlements = <String>[];
+      var unreadQueries = 0;
+      final projector = GroupNotificationReadProjector(
+        coordinator: GroupNotificationPresentationCoordinator(),
+        readEvents: readEvents.stream,
+        unreadCountForGroup: (_) async {
+          unreadQueries += 1;
+          return 0;
+        },
+        cancellation: null,
+        readSettlement: _RecordingReadSettlement(settlements.add),
+      )..start();
+      addTearDown(projector.dispose);
+
+      readEvents.add('settlement-only');
+      await projector.waitForIdle();
+
+      expect(unreadQueries, 0);
+      expect(settlements, <String>['group:settlement-only']);
+    },
+  );
+
+  test(
+    'live read preserves a different reaction that won after capture',
+    () async {
+      final readEvents = StreamController<String>(sync: true);
+      addTearDown(readEvents.close);
+      final cancellations = <String>[];
+      final projector = GroupNotificationReadProjector(
+        coordinator: GroupNotificationPresentationCoordinator(),
+        readEvents: readEvents.stream,
+        unreadCountForGroup: (_) async => 0,
+        contentEventIsAcknowledged: (_, metadata) async => false,
+        cancellation: _FakeCancellation(
+          (key) async => cancellations.add(key),
+          metadata: const <String, ConversationNotificationContentMetadata>{
+            'group:new-reaction': ConversationNotificationContentMetadata(
+              kind: ConversationNotificationContentKind.reaction,
+              eventIdentity: 'event-after-read',
+              generation: 'generation-after-read',
+            ),
+          },
+        ),
+      )..start();
+      addTearDown(projector.dispose);
+
+      readEvents.add('new-reaction');
+      await projector.waitForIdle();
+
+      expect(cancellations, isEmpty);
+    },
+  );
 
   test(
     'live acknowledgement retires an unanchored message card without canonical identity',
@@ -714,6 +800,51 @@ final class _FakeCancellation
       return;
     }
     await onCancel(conversationKey);
+  }
+}
+
+final class _MetadataFreeCancellation
+    implements
+        ConversationNotificationCancellation,
+        ConversationNotificationGenerationCancellation {
+  const _MetadataFreeCancellation(this.onUnexpectedCancellation);
+
+  final void Function(String conversationKey) onUnexpectedCancellation;
+
+  @override
+  Future<ConversationNotificationContentMetadata?>
+  lookupConversationNotificationContentMetadata(String conversationKey) async {
+    return null;
+  }
+
+  @override
+  Future<bool> cancelConversationNotificationGeneration(
+    String conversationKey,
+    String generation,
+  ) async {
+    onUnexpectedCancellation(conversationKey);
+    return true;
+  }
+
+  @override
+  Future<void> cancelConversationNotification(
+    String conversationKey, {
+    ConversationNotificationContentKind? onlyIfContentKind,
+    ConversationNotificationContentCancellationPredicate? shouldCancelContent,
+  }) async {
+    onUnexpectedCancellation(conversationKey);
+  }
+}
+
+final class _RecordingReadSettlement
+    implements ConversationNotificationReadSettlement {
+  const _RecordingReadSettlement(this.onSettle);
+
+  final void Function(String conversationKey) onSettle;
+
+  @override
+  Future<void> settleConversationRead(String conversationKey) async {
+    onSettle(conversationKey);
   }
 }
 

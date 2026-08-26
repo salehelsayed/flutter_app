@@ -2300,7 +2300,10 @@ Future<void> _verifyDirectReactionTerminalMutationCrashReplay(
     directory: ledgerDirectory,
     localNotificationEffectCoordinator:
         DurableLocalNotificationEffectCoordinator(
-          ledgerStore: LocalNotificationLedgerStore(directory: ledgerDirectory),
+          ledgerStore: LocalNotificationLedgerStore(
+            directory: ledgerDirectory,
+            nowUtc: () => DateTime.parse(_completedAt).toUtc(),
+          ),
           nowUtc: () => DateTime.parse(_completedAt).toUtc(),
           effectTokenFactory: () => 'a' * 64,
         ),
@@ -2313,6 +2316,7 @@ Future<void> _verifyDirectReactionTerminalMutationCrashReplay(
   expect(
     await LocalNotificationLedgerStore(
       directory: ledgerDirectory,
+      nowUtc: () => DateTime.parse(_completedAt).toUtc(),
     ).initializeOrRebind(currentOpaqueBinding: binding),
     isNotNull,
   );
@@ -2391,7 +2395,10 @@ Future<void> _verifyDirectReactionTerminalMutationCrashReplay(
     directory: ledgerDirectory,
     localNotificationEffectCoordinator:
         DurableLocalNotificationEffectCoordinator(
-          ledgerStore: LocalNotificationLedgerStore(directory: ledgerDirectory),
+          ledgerStore: LocalNotificationLedgerStore(
+            directory: ledgerDirectory,
+            nowUtc: () => DateTime.parse(_completedAt).toUtc(),
+          ),
           nowUtc: () => DateTime.parse(_completedAt).toUtc(),
           effectTokenFactory: () => 'b' * 64,
         ),
@@ -2673,7 +2680,10 @@ final class _GroupEffectFixture {
     directory: directory,
     localNotificationEffectCoordinator:
         DurableLocalNotificationEffectCoordinator(
-          ledgerStore: LocalNotificationLedgerStore(directory: directory),
+          ledgerStore: LocalNotificationLedgerStore(
+            directory: directory,
+            nowUtc: () => DateTime.parse(_completedAt).toUtc(),
+          ),
           nowUtc: () => DateTime.parse(_completedAt).toUtc(),
           effectTokenFactory: () => 'e' * 64,
         ),
@@ -2711,6 +2721,7 @@ final class _GroupEffectFixture {
     expect(
       await LocalNotificationLedgerStore(
         directory: directory,
+        nowUtc: () => DateTime.parse(_completedAt).toUtc(),
       ).initializeOrRebind(currentOpaqueBinding: binding),
       isNotNull,
     );
@@ -2778,7 +2789,10 @@ final class _DirectEffectFixture {
     directory: directory,
     localNotificationEffectCoordinator:
         DurableLocalNotificationEffectCoordinator(
-          ledgerStore: LocalNotificationLedgerStore(directory: directory),
+          ledgerStore: LocalNotificationLedgerStore(
+            directory: directory,
+            nowUtc: () => DateTime.parse(_completedAt).toUtc(),
+          ),
           nowUtc: () => DateTime.parse(_completedAt).toUtc(),
           effectTokenFactory: () => 'd' * 64,
         ),
@@ -2816,6 +2830,7 @@ final class _DirectEffectFixture {
     expect(
       await LocalNotificationLedgerStore(
         directory: directory,
+        nowUtc: () => DateTime.parse(_completedAt).toUtc(),
       ).initializeOrRebind(currentOpaqueBinding: binding),
       isNotNull,
     );

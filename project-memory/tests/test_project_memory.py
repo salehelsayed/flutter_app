@@ -823,12 +823,14 @@ class TestMemoryPass(unittest.TestCase):
         if not HAS_MEMORY:
             self.skipTest("real-memory pins need the session-memory directory")
         rows = memory_rows(real_db_with_memory())
-        for slug in ("test-unit-invisible-to-per-plan-gates",
-                     "host-all-not-runnable-from-container"):
+        # Re-pinned 2026-08-25: the memory trim deleted the original four
+        # pinned files (their facts were folded into survivors), so the pins
+        # now name the current live examples of each marker class.
+        for slug in ("android-background-durable-effect-deferral",):
             self.assertEqual(rows[slug][3], "superseded",
                              "real pin drifted: {}".format(slug))
-        for slug in ("group-exit-reliability-plans",
-                     "plan-303-view-once-minimal-presentation"):
+        for slug in ("1to1-reaction-lane-dead-relay-grammar",
+                     "android-notification-os-state-landmines-380"):
             self.assertEqual(rows[slug][3], "corrected",
                              "real pin drifted: {}".format(slug))
         for slug in ("project-memory-recall-layer", "relay-ec2-deployment"):

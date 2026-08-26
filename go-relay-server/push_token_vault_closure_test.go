@@ -1643,7 +1643,7 @@ func TestRelayNotificationClosure_PushRouteEncryptedResolutionFeedsEveryRichSend
 		if err != nil {
 			t.Fatalf("glob production Go: %v", err)
 		}
-		var lookupOwners, resolveOwners, legacyLookupOwners, gatewayCallers, directAdapterCallers []string
+		var lookupOwners, resolveOwners, legacyLookupOwners, gatewayCallers, groupGatewayCallers, directAdapterCallers []string
 		fset := token.NewFileSet()
 		var groupSelect, groupAttempted, groupGo token.Pos
 		for _, path := range files {
@@ -1672,6 +1672,8 @@ func TestRelayNotificationClosure_PushRouteEncryptedResolutionFeedsEveryRichSend
 								legacyLookupOwners = append(legacyLookupOwners, function.Name.Name)
 							case "sendSelectedPushThroughGateway":
 								gatewayCallers = append(gatewayCallers, function.Name.Name)
+							case "sendSelectedGroupPushThroughGateway":
+								groupGatewayCallers = append(groupGatewayCallers, function.Name.Name)
 							case "sendRichNotification":
 								directAdapterCallers = append(directAdapterCallers, function.Name.Name)
 							}
@@ -1707,19 +1709,25 @@ func TestRelayNotificationClosure_PushRouteEncryptedResolutionFeedsEveryRichSend
 		}
 		sort.Strings(gatewayCallers)
 		wantCallers := []string{
-			"SendGroupNotification",
-			// G26: strict-authority group content never reaches the group
-			// topic, so it needs its own adapter onto the shared gateway.
-			"sendGroupContentNotificationForRoute",
 			"sendGroupReactionNotificationForRoute",
 			"sendOpaqueWakeThroughGateway",
 			"sendReactionNotificationForRoute",
 			// TC-395: public direct sends and stored-custody direct sends
 			// converge before route selection in this one rich adapter.
 			"sendRichNotification",
+			"sendSelectedGroupPushThroughGateway",
 		}
 		if !reflect.DeepEqual(gatewayCallers, wantCallers) {
-			t.Fatalf("selection gateway callers = %#v, want five adapters plus outcome gateway %#v", gatewayCallers, wantCallers)
+			t.Fatalf("selection gateway callers = %#v, want shared adapters plus group admission wrapper %#v", gatewayCallers, wantCallers)
+		}
+		sort.Strings(groupGatewayCallers)
+		wantGroupGatewayCallers := []string{
+			"SendGroupNotification",
+			"sendGroupContentNotificationForRoute",
+			"sendGroupOpaqueWakeThroughGateway",
+		}
+		if !reflect.DeepEqual(groupGatewayCallers, wantGroupGatewayCallers) {
+			t.Fatalf("group selection gateway callers = %#v, want exact group entrypoints %#v", groupGatewayCallers, wantGroupGatewayCallers)
 		}
 		sort.Strings(directAdapterCallers)
 		wantDirectAdapterCallers := []string{"SendNotification", "sendStoredNotification"}

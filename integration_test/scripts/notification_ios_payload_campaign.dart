@@ -95,6 +95,8 @@ final class _IosNotificationPayloadCampaign {
     final fastNonce = _safeRunToken('nonce-fast');
     final recoveryRunId = _safeRunToken('ios-payload-recovery');
     final recoveryNonce = _safeRunToken('nonce-recovery');
+    final retryRunId = _safeRunToken('ios-payload-retry');
+    final retryNonce = _safeRunToken('nonce-retry');
     final captureDirectory = Directory(
       '${proofDirectory.path}${Platform.pathSeparator}'
       'capture-${DateTime.now().toUtc().microsecondsSinceEpoch}-$pid',
@@ -159,12 +161,45 @@ final class _IosNotificationPayloadCampaign {
       apnsPayloadSha256:
           recoveryAutomationReceipt['apnsPayloadSha256']! as String,
     );
-    final totalAssertions =
-        fastPhase.assertionsAttempted + recoveryPhase.assertionsAttempted;
     if (!recoveryValidation.ok) {
       throw _CampaignFailure(
         'The physical iOS recovery receipt was rejected: '
         '${recoveryValidation.detail}',
+        attempts:
+            fastPhase.assertionsAttempted + recoveryPhase.assertionsAttempted,
+      );
+    }
+    // Recovery cleanup removes the candidate and every private provider
+    // intermediate. The retry leg therefore starts from a third fresh install
+    // and cannot inherit the single-send inventory it is intended to fence.
+    final retryPhase = await _runAutomationPhase(
+      phase: 'retry',
+      runId: retryRunId,
+      nonce: retryNonce,
+      directory: Directory(
+        '${captureDirectory.path}${Platform.pathSeparator}retry',
+      ),
+    );
+    final retryAutomationReceipt = retryPhase.receipt;
+    final retryValidation = validateIosNotificationRetryAutomationReceipt(
+      retryAutomationReceipt,
+      runId: retryRunId,
+      nonce: retryNonce,
+      receiverDeviceId: receiverDeviceId,
+      peerDeviceId: peerDeviceId,
+      preparedApplicationSha256: applicationSha256,
+      providerRequestSha256: providerRequestSha256,
+      payloadProducerSha256: staging['payloadProducerSha256']! as String,
+      apnsPayloadSha256: retryAutomationReceipt['apnsPayloadSha256']! as String,
+    );
+    final totalAssertions =
+        fastPhase.assertionsAttempted +
+        recoveryPhase.assertionsAttempted +
+        retryPhase.assertionsAttempted;
+    if (!retryValidation.ok) {
+      throw _CampaignFailure(
+        'The physical iOS retry receipt was rejected: '
+        '${retryValidation.detail}',
         attempts: totalAssertions,
       );
     }
@@ -172,6 +207,7 @@ final class _IosNotificationPayloadCampaign {
     final exactArtifact = buildIosNotificationArtifact(
       automationReceipt: automationReceipt,
       recoveryAutomationReceipt: recoveryAutomationReceipt,
+      retryAutomationReceipt: retryAutomationReceipt,
       capturedAt: capturedAt,
     );
     final evidence = writeSimsArtifactEvidenceSync(
@@ -190,6 +226,9 @@ final class _IosNotificationPayloadCampaign {
             .toString(),
         'recoveryAutomationReceiptSha256': sha256
             .convert(recoveryPhase.receiptFile.readAsBytesSync())
+            .toString(),
+        'retryAutomationReceiptSha256': sha256
+            .convert(retryPhase.receiptFile.readAsBytesSync())
             .toString(),
       },
     );
@@ -226,8 +265,11 @@ final class _IosNotificationPayloadCampaign {
           'tap rendered the message with zero relay drain before visibility. '
           'A fresh second APNs leg then proved delivered badge=nil, absolute '
           'badge convergence, exact owned-card retirement, and unrelated-card '
-          'survival; both legs reused the central ios.device.production '
-          'signed app/XCUITest bundle with zero child builds.',
+          'survival. A third fresh leg fenced the first delivery before a '
+          'private identical-payload retry, then proved one useful card and '
+          'active-to-trusted-passive NSE handoffs across the complete window; '
+          'all legs reused the central ios.device.production signed '
+          'app/XCUITest bundle with zero child builds.',
       'artifactEvidence': evidence.toJson(),
     });
   }

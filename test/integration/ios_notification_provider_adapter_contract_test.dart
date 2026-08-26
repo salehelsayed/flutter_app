@@ -37,7 +37,7 @@ void main() {
     expect(source, contains('apns_host_for_manifest(staging)'));
     expect(
       source,
-      contains('choices=("probe", "setup", "cleanup", "rollback")'),
+      contains('choices=("probe", "setup", "retry", "cleanup", "rollback")'),
     );
     expect(source, contains('[str(security), "cms", "-D", "-i"'));
     expect(source, contains('f"--extract-certificates={prefix}"'));
@@ -56,6 +56,28 @@ void main() {
     expect(source, contains('SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE'));
     expect(source, contains('start_new_session=True'));
     expect(source, contains('apnsPayloadSha256'));
+    expect(
+      source,
+      contains('mknoon.sims.ios-payload-fast-path-provider-receipt.v2'),
+    );
+    expect(
+      source,
+      contains('mknoon.sims.ios-payload-fast-path-provider-retry-receipt.v1'),
+    );
+    expect(source, contains('apns-collapse-id: '));
+    expect(source, contains('apns-unique-id:'));
+    expect(
+      source,
+      contains('mknoon.sims.ios-apns-unique-id-private-provenance.v1'),
+    );
+    expect(source, contains('_remove_apns_unique_id_provenance'));
+    expect(source, contains('"providerMessageIdSha256": _sha256_text('));
+    expect(source, contains('"gcm.message_id"'));
+    expect(source, contains('"content-available"'));
+    expect(source, contains('"payloadBytesIdentical": True'));
+    expect(source, contains('"collapseIdentityReused": True'));
+    expect(source, contains('"providerIdsDistinct":'));
+    expect(source, contains('"firstProviderReceiptSha256": first_receipt_sha'));
     expect(source, contains('action="rollback"'));
     expect(source, contains('SIMS_CHILD_BUILDS_FORBIDDEN'));
     expect(source, contains('SIMS_MANUAL_ACTIONS_FORBIDDEN'));

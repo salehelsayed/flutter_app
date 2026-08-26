@@ -1,6 +1,8 @@
 import Flutter
 import FirebaseMessaging
 import CoreFoundation
+import CryptoKit
+import Darwin
 import os.log
 import UIKit
 import UserNotifications
@@ -100,6 +102,200 @@ final class IosNotificationForegroundDispositionGate {
   }
 }
 
+enum IosDirectNotificationStableSampleResultCode: Equatable {
+  case stable
+  case deadlineExceeded
+}
+
+struct IosDirectNotificationStableSampleOutcome {
+  let notifications: [UNNotification]
+  let inventory: IosDirectNotificationInventory
+  let stableSampleCount: Int
+  let resultCode: IosDirectNotificationStableSampleResultCode
+}
+
+final class IosDirectNotificationStableSampler {
+  typealias ScheduleAfter = (TimeInterval, @escaping () -> Void) -> Void
+  typealias FetchDeliveredNotifications = (@escaping ([UNNotification]) -> Void) -> Void
+
+  private let now: () -> Date
+  private let scheduleAfter: ScheduleAfter
+  private let fetchDeliveredNotifications: FetchDeliveredNotifications
+  private let lock = NSLock()
+  private var completed = false
+  private var completion: ((IosDirectNotificationStableSampleOutcome) -> Void)?
+  private var latestNotifications: [UNNotification] = []
+  private var latestInventory = IosDirectNotificationInventory.empty
+  private var latestStableSampleCount = 0
+
+  init(
+    now: @escaping () -> Date,
+    scheduleAfter: @escaping ScheduleAfter,
+    fetchDeliveredNotifications: @escaping FetchDeliveredNotifications
+  ) {
+    self.now = now
+    self.scheduleAfter = scheduleAfter
+    self.fetchDeliveredNotifications = fetchDeliveredNotifications
+  }
+
+  func start(
+    expectedPeerId: String,
+    expectedMessageId: String,
+    deadline requestedDeadline: Date,
+    completion: @escaping (IosDirectNotificationStableSampleOutcome) -> Void
+  ) {
+    let startedAt = now()
+    let maximumDeadline = startedAt.addingTimeInterval(
+      Double(IosDirectNotificationInventory.observationDeadlineMilliseconds) / 1_000
+    )
+    let deadline = min(requestedDeadline, maximumDeadline)
+
+    lock.lock()
+    guard self.completion == nil, !completed else {
+      lock.unlock()
+      return
+    }
+    self.completion = completion
+    lock.unlock()
+
+    scheduleAfter(max(0, deadline.timeIntervalSince(startedAt))) { [self] in
+      completeAtDeadline()
+    }
+    sample(
+      expectedPeerId: expectedPeerId,
+      expectedMessageId: expectedMessageId,
+      deadline: deadline,
+      previous: nil,
+      consecutiveSampleCount: 0
+    )
+  }
+
+  private func sample(
+    expectedPeerId: String,
+    expectedMessageId: String,
+    deadline: Date,
+    previous: IosDirectNotificationInventory?,
+    consecutiveSampleCount: Int
+  ) {
+    guard isPending else { return }
+    fetchDeliveredNotifications { [self] notifications in
+      guard isPending else { return }
+      let inventory = IosDirectNotificationInventory.project(
+        notifications,
+        expectedPeerId: expectedPeerId,
+        expectedMessageId: expectedMessageId
+      )
+      let nextCount = previous == inventory ? consecutiveSampleCount + 1 : 1
+      let sampledAt = now()
+      guard sampledAt < deadline else {
+        complete(
+          notifications: notifications,
+          inventory: inventory,
+          stableSampleCount: min(
+            consecutiveSampleCount,
+            IosDirectNotificationInventory.stableSampleTarget - 1
+          ),
+          resultCode: .deadlineExceeded
+        )
+        return
+      }
+      if nextCount >= IosDirectNotificationInventory.stableSampleTarget {
+        complete(
+          notifications: notifications,
+          inventory: inventory,
+          stableSampleCount: IosDirectNotificationInventory.stableSampleTarget,
+          resultCode: .stable
+        )
+        return
+      }
+      guard remember(
+        notifications: notifications,
+        inventory: inventory,
+        stableSampleCount: nextCount
+      ) else { return }
+      let interval =
+        Double(IosDirectNotificationInventory.stableSampleIntervalMilliseconds) / 1_000
+      guard sampledAt.addingTimeInterval(interval) <= deadline else {
+        return
+      }
+      scheduleAfter(interval) { [self] in
+        sample(
+          expectedPeerId: expectedPeerId,
+          expectedMessageId: expectedMessageId,
+          deadline: deadline,
+          previous: inventory,
+          consecutiveSampleCount: nextCount
+        )
+      }
+    }
+  }
+
+  private var isPending: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return !completed
+  }
+
+  private func remember(
+    notifications: [UNNotification],
+    inventory: IosDirectNotificationInventory,
+    stableSampleCount: Int
+  ) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !completed else { return false }
+    latestNotifications = notifications
+    latestInventory = inventory
+    latestStableSampleCount = stableSampleCount
+    return true
+  }
+
+  private func completeAtDeadline() {
+    lock.lock()
+    guard !completed, let callback = completion else {
+      lock.unlock()
+      return
+    }
+    completed = true
+    completion = nil
+    let outcome = IosDirectNotificationStableSampleOutcome(
+      notifications: latestNotifications,
+      inventory: latestInventory,
+      stableSampleCount: min(
+        latestStableSampleCount,
+        IosDirectNotificationInventory.stableSampleTarget - 1
+      ),
+      resultCode: .deadlineExceeded
+    )
+    lock.unlock()
+    callback(outcome)
+  }
+
+  private func complete(
+    notifications: [UNNotification],
+    inventory: IosDirectNotificationInventory,
+    stableSampleCount: Int,
+    resultCode: IosDirectNotificationStableSampleResultCode
+  ) {
+    lock.lock()
+    guard !completed, let callback = completion else {
+      lock.unlock()
+      return
+    }
+    completed = true
+    completion = nil
+    lock.unlock()
+    callback(
+      IosDirectNotificationStableSampleOutcome(
+        notifications: notifications,
+        inventory: inventory,
+        stableSampleCount: stableSampleCount,
+        resultCode: resultCode
+      )
+    )
+  }
+}
+
 enum IosGroupNotificationFullHorizonResultCode: Equatable {
   case complete
   case unstableAtDeadline
@@ -111,7 +307,39 @@ struct IosGroupNotificationFullHorizonOutcome {
   let sampledThroughDeadline: Bool
   let badSourceSeen: Bool
   let duplicateSeen: Bool
+  let diagnosticRecords: [IosGroupNotificationDiagnosticRecord]
+  let diagnosticOverflow: Bool
+  let diagnosticConflict: Bool
+  let diagnosticComplete: Bool
   let resultCode: IosGroupNotificationFullHorizonResultCode
+
+  func isExactUsefulSource(
+    expectedCollapseIdentifierSha256: String
+  ) -> Bool {
+    guard diagnosticRecords.count == 1 else { return false }
+    let record = diagnosticRecords[0]
+    return resultCode == .complete
+      && sampledThroughDeadline
+      && diagnosticComplete
+      && stableSampleCount == IosGroupNotificationInventory.stableSampleTarget
+      && !badSourceSeen
+      && !duplicateSeen
+      && !diagnosticOverflow
+      && !diagnosticConflict
+      && inventory.matchingRemoteCount == 1
+      && inventory.matchingLocalCount == 0
+      && inventory.matchingUsefulProviderCount == 1
+      && inventory.matchingSanitizedProviderCount == 0
+      && inventory.matchingFlutterLocalCount == 0
+      && inventory.matchingUnknownCount == 0
+      && inventory.matchingTotalCount == 1
+      && inventory.requestIdentifierSha256 == [expectedCollapseIdentifierSha256]
+      && record.requestIdentifierSha256 == expectedCollapseIdentifierSha256
+      && record.expectedCollapseIdentifierMatch
+      && record.triggerOrigin == .remote
+      && record.sourceClass == .usefulProviderRich
+      && record.reason == .exactUseful
+  }
 }
 
 /// Group-only sampler that deliberately never completes on three early equal
@@ -124,22 +352,31 @@ final class IosGroupNotificationFullHorizonSampler {
   private let now: () -> Date
   private let scheduleAfter: ScheduleAfter
   private let fetchInventory: FetchInventory
+  private let expectedCollapseIdentifierSha256Valid: Bool
   private let lock = NSLock()
   private var completed = false
+  private var finalFetchStarted = false
   private var completion: ((IosGroupNotificationFullHorizonOutcome) -> Void)?
   private var latestInventory = IosGroupNotificationInventory.empty
   private var latestStableSampleCount = 0
   private var badSourceSeen = false
   private var duplicateSeen = false
+  private var diagnosticRecordsByHash:
+    [String: IosGroupNotificationDiagnosticRecord] = [:]
+  private var diagnosticOverflow = false
+  private var diagnosticConflict = false
 
   init(
     now: @escaping () -> Date,
     scheduleAfter: @escaping ScheduleAfter,
-    fetchInventory: @escaping FetchInventory
+    fetchInventory: @escaping FetchInventory,
+    expectedCollapseIdentifierSha256Valid: Bool = true
   ) {
     self.now = now
     self.scheduleAfter = scheduleAfter
     self.fetchInventory = fetchInventory
+    self.expectedCollapseIdentifierSha256Valid =
+      expectedCollapseIdentifierSha256Valid
   }
 
   func start(
@@ -159,7 +396,7 @@ final class IosGroupNotificationFullHorizonSampler {
     self.completion = completion
     lock.unlock()
     scheduleAfter(max(0, deadline.timeIntervalSince(startedAt))) { [self] in
-      completeAtDeadline()
+      beginFinalFetch()
     }
     sample(deadline: deadline, previous: nil, consecutiveSampleCount: 0)
   }
@@ -169,9 +406,9 @@ final class IosGroupNotificationFullHorizonSampler {
     previous: IosGroupNotificationInventory?,
     consecutiveSampleCount: Int
   ) {
-    guard isPending else { return }
+    guard isSamplingPending else { return }
     fetchInventory { [self] inventory in
-      guard isPending else { return }
+      guard isSamplingPending else { return }
       let nextCount = previous == inventory ? consecutiveSampleCount + 1 : 1
       guard remember(inventory: inventory, stableSampleCount: nextCount) else {
         return
@@ -190,10 +427,10 @@ final class IosGroupNotificationFullHorizonSampler {
     }
   }
 
-  private var isPending: Bool {
+  private var isSamplingPending: Bool {
     lock.lock()
     defer { lock.unlock() }
-    return !completed
+    return !completed && !finalFetchStarted
   }
 
   private func remember(
@@ -202,7 +439,15 @@ final class IosGroupNotificationFullHorizonSampler {
   ) -> Bool {
     lock.lock()
     defer { lock.unlock() }
-    guard !completed else { return false }
+    guard !completed, !finalFetchStarted else { return false }
+    rememberLocked(inventory: inventory, stableSampleCount: stableSampleCount)
+    return true
+  }
+
+  private func rememberLocked(
+    inventory: IosGroupNotificationInventory,
+    stableSampleCount: Int
+  ) {
     latestInventory = inventory
     latestStableSampleCount = min(
       stableSampleCount,
@@ -213,11 +458,54 @@ final class IosGroupNotificationFullHorizonSampler {
       || inventory.matchingSanitizedProviderCount > 0
       || inventory.matchingFlutterLocalCount > 0
       || inventory.matchingUnknownCount > 0
-    duplicateSeen = duplicateSeen || inventory.matchingTotalCount > 1
-    return true
+    diagnosticOverflow = diagnosticOverflow || inventory.diagnosticOverflow
+    diagnosticConflict = diagnosticConflict || inventory.diagnosticConflict
+    for record in inventory.diagnosticRecords {
+      if let existing = diagnosticRecordsByHash[record.requestIdentifierSha256] {
+        if existing != record { diagnosticConflict = true }
+      } else if diagnosticRecordsByHash.count < 8 {
+        diagnosticRecordsByHash[record.requestIdentifierSha256] = record
+      } else {
+        diagnosticOverflow = true
+      }
+    }
+    duplicateSeen = duplicateSeen
+      || inventory.matchingTotalCount > 1
+      || diagnosticRecordsByHash.count > 1
+      || diagnosticOverflow
   }
 
-  private func completeAtDeadline() {
+  private func beginFinalFetch() {
+    lock.lock()
+    guard !completed, !finalFetchStarted else {
+      lock.unlock()
+      return
+    }
+    finalFetchStarted = true
+    lock.unlock()
+
+    let watchdogDelay = Double(
+      IosGroupNotificationInventory.stableSampleIntervalMilliseconds
+    ) / 1_000
+    scheduleAfter(watchdogDelay) { [self] in
+      finishAtDeadline(sampledThroughDeadline: false)
+    }
+    fetchInventory { [self] inventory in
+      lock.lock()
+      guard !completed, finalFetchStarted else {
+        lock.unlock()
+        return
+      }
+      let nextCount = latestInventory == inventory
+        ? latestStableSampleCount + 1
+        : 1
+      rememberLocked(inventory: inventory, stableSampleCount: nextCount)
+      lock.unlock()
+      finishAtDeadline(sampledThroughDeadline: true)
+    }
+  }
+
+  private func finishAtDeadline(sampledThroughDeadline: Bool) {
     lock.lock()
     guard !completed, let callback = completion else {
       lock.unlock()
@@ -229,18 +517,298 @@ final class IosGroupNotificationFullHorizonSampler {
       latestStableSampleCount,
       IosGroupNotificationInventory.stableSampleTarget
     )
+    let records = diagnosticRecordsByHash.values.sorted {
+      $0.requestIdentifierSha256 < $1.requestIdentifierSha256
+    }
+    let diagnosticsAreComplete = sampledThroughDeadline
+      && expectedCollapseIdentifierSha256Valid
+      && !diagnosticOverflow
+      && !diagnosticConflict
+      && !records.isEmpty
+      && records.allSatisfy(\.isClosedAndConsistent)
     let outcome = IosGroupNotificationFullHorizonOutcome(
       inventory: latestInventory,
       stableSampleCount: stable,
-      sampledThroughDeadline: true,
+      sampledThroughDeadline: sampledThroughDeadline,
       badSourceSeen: badSourceSeen,
       duplicateSeen: duplicateSeen,
-      resultCode: stable == IosGroupNotificationInventory.stableSampleTarget
+      diagnosticRecords: records,
+      diagnosticOverflow: diagnosticOverflow,
+      diagnosticConflict: diagnosticConflict,
+      diagnosticComplete: diagnosticsAreComplete,
+      resultCode: sampledThroughDeadline
+          && stable == IosGroupNotificationInventory.stableSampleTarget
         ? .complete
         : .unstableAtDeadline
     )
     lock.unlock()
     callback(outcome)
+  }
+}
+
+/// Owns the native half of the Plan-398 setup-readiness entry handshake.
+///
+/// The raw per-launch attempt is accepted only from the exact XCTest/profile
+/// gate and is reduced to a SHA-256 before anything is persisted or returned
+/// to Dart. A successful native arm can advance to `dart_main` exactly once.
+final class IosSetupReadinessEntryCoordinator {
+  enum ArmOutcome: Equatable {
+    case inactive
+    case published
+    case rejected
+  }
+
+  enum EntryError: Error {
+    case rejected
+  }
+
+  static let attemptEnvironmentKey = "MKNOON_398_SETUP_READINESS_ATTEMPT"
+  static let profileEnvironmentKey = "MKNOON_398_SETUP_ENTRY_PROFILE_ID"
+  static let expectedProfileId = "ios.device.group_reaction_notification_397"
+  static let schema = "mknoon.plan398.ios-setup-readiness.v3"
+  static let channelName = "mknoon/plan398_ios_setup_entry"
+  static let acknowledgeMethod = "acknowledgeDartMain"
+
+  private static let receiptFileName = "intro_e2e_setup_readiness.json"
+  private static let receiptMaximumBytes = 2_048
+  private static let acknowledgementKeys: Set<String> = [
+    "schema",
+    "profileId",
+    "launchAttemptSha256",
+  ]
+
+  let receiptURL: URL
+
+  private let documentsDirectory: URL
+  private let fileManager: FileManager
+  private let lock = NSLock()
+  private var nativeArmAttempted = false
+  private var armedLaunchAttemptSha256: String?
+  private var dartEntryAcknowledged = false
+  private var advancementPermanentlyRejected = false
+
+  init(
+    documentsDirectory: URL,
+    fileManager: FileManager = .default
+  ) {
+    self.documentsDirectory = documentsDirectory
+    self.fileManager = fileManager
+    receiptURL = documentsDirectory.appendingPathComponent(
+      Self.receiptFileName,
+      isDirectory: false
+    )
+  }
+
+  func armNativeLaunch(environment: [String: String]) -> ArmOutcome {
+    let rawAttempt = environment[Self.attemptEnvironmentKey]
+    let profileId = environment[Self.profileEnvironmentKey]
+    if rawAttempt == nil && profileId == nil {
+      return .inactive
+    }
+
+    guard
+      let rawAttempt,
+      Self.isCanonicalAttempt(rawAttempt),
+      profileId == Self.expectedProfileId
+    else {
+      removeReceiptIfPresent()
+      return .rejected
+    }
+
+    let launchAttemptSha256 = SHA256.hash(data: Data(rawAttempt.utf8))
+      .map { String(format: "%02x", $0) }
+      .joined()
+
+    lock.lock()
+    defer { lock.unlock() }
+    guard !nativeArmAttempted else { return .rejected }
+    nativeArmAttempted = true
+
+    do {
+      try publish(
+        receipt(
+          stage: "native_app_delegate",
+          reason: "dart_main_not_reached",
+          launchAttemptSha256: launchAttemptSha256,
+          dartEntryAcknowledged: false
+        )
+      )
+      armedLaunchAttemptSha256 = launchAttemptSha256
+      return .published
+    } catch {
+      advancementPermanentlyRejected = true
+      removeReceiptIfPresent()
+      return .rejected
+    }
+  }
+
+  func acknowledgeDartMain(arguments: [String: Any]) throws -> [String: Any] {
+    lock.lock()
+    defer { lock.unlock() }
+
+    guard
+      let launchAttemptSha256 = armedLaunchAttemptSha256,
+      !dartEntryAcknowledged,
+      !advancementPermanentlyRejected,
+      Set(arguments.keys) == Self.acknowledgementKeys,
+      arguments["schema"] as? String == Self.schema,
+      arguments["profileId"] as? String == Self.expectedProfileId,
+      arguments["launchAttemptSha256"] as? String == launchAttemptSha256
+    else {
+      throw EntryError.rejected
+    }
+
+    let nextReceipt = receipt(
+      stage: "dart_main",
+      reason: "application_documents_not_ready",
+      launchAttemptSha256: launchAttemptSha256,
+      dartEntryAcknowledged: true
+    )
+    do {
+      try publish(nextReceipt)
+    } catch {
+      advancementPermanentlyRejected = true
+      throw EntryError.rejected
+    }
+    dartEntryAcknowledged = true
+    return nextReceipt
+  }
+
+  private func receipt(
+    stage: String,
+    reason: String,
+    launchAttemptSha256: String,
+    dartEntryAcknowledged: Bool
+  ) -> [String: Any] {
+    return [
+      "schema": Self.schema,
+      "status": "FAIL",
+      "stage": stage,
+      "reason": reason,
+      "profileId": Self.expectedProfileId,
+      "launchAttemptSha256": launchAttemptSha256,
+      "nativeEntryAcknowledged": true,
+      "dartEntryAcknowledged": dartEntryAcknowledged,
+      "launchInputPresent": false,
+      "identityInitiallyPresent": NSNull(),
+      "generationAttempted": false,
+      "generationSucceeded": false,
+      "reloadSucceeded": false,
+      "qrPayloadBuilt": false,
+      "identityExported": false,
+      "identityExportSha256": NSNull(),
+      "containsSecrets": false,
+    ]
+  }
+
+  private func publish(_ receipt: [String: Any]) throws {
+    let data = try JSONSerialization.data(
+      withJSONObject: receipt,
+      options: [.sortedKeys]
+    )
+    guard data.count <= Self.receiptMaximumBytes else {
+      throw EntryError.rejected
+    }
+    try fileManager.createDirectory(
+      at: documentsDirectory,
+      withIntermediateDirectories: true,
+      attributes: [
+        .posixPermissions: 0o700,
+        .protectionKey: FileProtectionType.complete,
+      ]
+    )
+
+    let temporary = documentsDirectory.appendingPathComponent(
+      ".plan398-setup-entry-\(UUID().uuidString).tmp",
+      isDirectory: false
+    )
+    guard fileManager.createFile(
+      atPath: temporary.path,
+      contents: nil,
+      attributes: [
+        .posixPermissions: 0o600,
+        .protectionKey: FileProtectionType.complete,
+      ]
+    ) else {
+      throw EntryError.rejected
+    }
+
+    var renamed = false
+    do {
+      let handle = try FileHandle(forWritingTo: temporary)
+      if #available(iOS 13.4, *) {
+        try handle.write(contentsOf: data)
+        try handle.synchronize()
+        try handle.close()
+      } else {
+        handle.write(data)
+        handle.synchronizeFile()
+        handle.closeFile()
+      }
+      try protectFile(at: temporary)
+      guard Darwin.rename(temporary.path, receiptURL.path) == 0 else {
+        throw NSError(
+          domain: NSPOSIXErrorDomain,
+          code: Int(errno),
+          userInfo: nil
+        )
+      }
+      renamed = true
+      try protectFile(at: receiptURL)
+      try synchronizeDirectory()
+      let retained = try Data(contentsOf: receiptURL, options: [.mappedIfSafe])
+      guard retained == data, !fileManager.fileExists(atPath: temporary.path) else {
+        throw EntryError.rejected
+      }
+    } catch {
+      try? fileManager.removeItem(at: temporary)
+      if renamed {
+        try? fileManager.removeItem(at: receiptURL)
+      }
+      throw error
+    }
+  }
+
+  private func protectFile(at url: URL) throws {
+    try fileManager.setAttributes(
+      [
+        .posixPermissions: 0o600,
+        .protectionKey: FileProtectionType.complete,
+      ],
+      ofItemAtPath: url.path
+    )
+  }
+
+  private func synchronizeDirectory() throws {
+    let descriptor = Darwin.open(documentsDirectory.path, O_RDONLY)
+    guard descriptor >= 0 else {
+      throw NSError(
+        domain: NSPOSIXErrorDomain,
+        code: Int(errno),
+        userInfo: nil
+      )
+    }
+    defer { Darwin.close(descriptor) }
+    guard Darwin.fsync(descriptor) == 0 else {
+      throw NSError(
+        domain: NSPOSIXErrorDomain,
+        code: Int(errno),
+        userInfo: nil
+      )
+    }
+  }
+
+  private static func isCanonicalAttempt(_ value: String) -> Bool {
+    guard (16...160).contains(value.utf8.count) else { return false }
+    let allowed = CharacterSet(
+      charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-"
+    )
+    return value.unicodeScalars.allSatisfy(allowed.contains)
+  }
+
+  private func removeReceiptIfPresent() {
+    guard fileManager.fileExists(atPath: receiptURL.path) else { return }
+    try? fileManager.removeItem(at: receiptURL)
   }
 }
 
@@ -284,6 +852,16 @@ final class IosGroupNotificationFullHorizonSampler {
   private var receivedMediaEgressCoordinator: ReceivedMediaEgressCoordinator?
   private var privateMediaProtectionCoordinator: PrivateMediaProtectionCoordinator?
   private var privateMediaImageViewFactory: PrivateMediaCaptureProtectedImageViewFactory?
+  private var iosSetupReadinessEntryChannel: FlutterMethodChannel?
+  private lazy var iosSetupReadinessEntryCoordinator: IosSetupReadinessEntryCoordinator = {
+    let documentsDirectory = FileManager.default.urls(
+      for: .documentDirectory,
+      in: .userDomainMask
+    ).first ?? URL(fileURLWithPath: "/dev/null", isDirectory: true)
+    return IosSetupReadinessEntryCoordinator(
+      documentsDirectory: documentsDirectory
+    )
+  }()
 
   // 191 (Fix N1): the FCM plugin's published UNUserNotificationCenterDelegate,
   // captured at plugin-registration time (scene-connect). Under UIScene the
@@ -304,6 +882,9 @@ final class IosGroupNotificationFullHorizonSampler {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    _ = iosSetupReadinessEntryCoordinator.armNativeLaunch(
+      environment: ProcessInfo.processInfo.environment
+    )
     // Install the cold-start invalidation before `super` can expose a Flutter
     // messenger. Native lifecycle is the durable generation owner; Dart may
     // publish only after observing the resulting generation.
@@ -503,6 +1084,7 @@ final class IosGroupNotificationFullHorizonSampler {
       withId: PrivateMediaCaptureProtectedImageViewFactory.viewType
     )
     self.privateMediaImageViewFactory = privateMediaImageViewFactory
+    setupIosSetupReadinessEntryBridge(messenger: messenger)
     setupIosNotificationOpenBridge(messenger: messenger)
 #if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
     setupIosReceiverBootstrapBridge(messenger: messenger)
@@ -718,12 +1300,108 @@ final class IosGroupNotificationFullHorizonSampler {
     else { return }
     iosNotificationRecoveryProofInFlight = true
     let center = UNUserNotificationCenter.current()
-    center.getDeliveredNotifications { [weak self] notifications in
+    guard
+      let expectedSenderPeerId = request["expectedSenderPeerId"],
+      let expectedMessageId = request["expectedMessageId"],
+      let action = request["action"]
+    else {
+      finishIosNotificationRecoveryProof(
+        request: request,
+        status: "failed",
+        resultCode: "invalid_protected_request",
+        badgeBefore: max(0, UIApplication.shared.applicationIconBadgeNumber),
+        badgeAfter: max(0, UIApplication.shared.applicationIconBadgeNumber),
+        deliveredBefore: 0,
+        deliveredWithSentinel: 0,
+        deliveredAfter: 0,
+        deliveredNotificationBadgeWasNil: false,
+        sentinelSurvived: false,
+        removedExactOwnedNotification: false,
+        inventory: .empty,
+        stableSampleCount: 0
+      )
+      return
+    }
+    waitForStableIosDirectInventory(
+      expectedPeerId: expectedSenderPeerId,
+      expectedMessageId: expectedMessageId,
+      deadline: Date().addingTimeInterval(
+        Double(IosDirectNotificationInventory.observationDeadlineMilliseconds) / 1_000
+      )
+    ) { [weak self] outcome in
       guard let self else { return }
+      let notifications = outcome.notifications
+      let inventory = outcome.inventory
+      let stableSampleCount = outcome.stableSampleCount
       let before = Set(notifications.map(\.request.identifier))
       let badgeBefore = UIApplication.shared.applicationIconBadgeNumber
       let deliveredNotificationBadgeWasNil =
         notifications.count == 1 && notifications[0].request.content.badge == nil
+      guard outcome.resultCode == .stable else {
+        self.finishIosNotificationRecoveryProof(
+          request: request,
+          status: "failed",
+          resultCode: "source_inventory_deadline_exceeded",
+          badgeBefore: max(0, badgeBefore),
+          badgeAfter: max(0, badgeBefore),
+          deliveredBefore: before.count,
+          deliveredWithSentinel: before.count,
+          deliveredAfter: before.count,
+          deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
+          sentinelSurvived: false,
+          removedExactOwnedNotification: false,
+          inventory: inventory,
+          stableSampleCount: stableSampleCount
+        )
+        return
+      }
+      let exactUsefulSource =
+        stableSampleCount == IosDirectNotificationInventory.stableSampleTarget
+          && inventory.matchingRemoteCount == 1
+          && inventory.matchingLocalCount == 0
+          && inventory.matchingUsefulProviderCount == 1
+          && inventory.matchingSanitizedProviderCount == 0
+          && inventory.matchingFlutterLocalCount == 0
+          && inventory.matchingUnknownCount == 0
+          && inventory.matchingTotalCount == 1
+      guard exactUsefulSource else {
+        self.finishIosNotificationRecoveryProof(
+          request: request,
+          status: "failed",
+          resultCode: stableSampleCount == IosDirectNotificationInventory.stableSampleTarget
+            ? "source_inventory_mismatch"
+            : "source_inventory_unstable",
+          badgeBefore: max(0, badgeBefore),
+          badgeAfter: max(0, badgeBefore),
+          deliveredBefore: before.count,
+          deliveredWithSentinel: before.count,
+          deliveredAfter: before.count,
+          deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
+          sentinelSurvived: false,
+          removedExactOwnedNotification: false,
+          inventory: inventory,
+          stableSampleCount: stableSampleCount
+        )
+        return
+      }
+      if action == "observe_direct" {
+        self.finishIosNotificationRecoveryProof(
+          request: request,
+          status: "passed",
+          resultCode: "ok",
+          badgeBefore: max(0, badgeBefore),
+          badgeAfter: max(0, badgeBefore),
+          deliveredBefore: before.count,
+          deliveredWithSentinel: before.count,
+          deliveredAfter: before.count,
+          deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
+          sentinelSurvived: false,
+          removedExactOwnedNotification: false,
+          inventory: inventory,
+          stableSampleCount: stableSampleCount
+        )
+        return
+      }
       guard
         before.count == 1,
         badgeBefore == 1,
@@ -742,7 +1420,9 @@ final class IosGroupNotificationFullHorizonSampler {
           deliveredAfter: before.count,
           deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
           sentinelSurvived: false,
-          removedExactOwnedNotification: false
+          removedExactOwnedNotification: false,
+          inventory: inventory,
+          stableSampleCount: stableSampleCount
         )
         return
       }
@@ -771,7 +1451,9 @@ final class IosGroupNotificationFullHorizonSampler {
             deliveredAfter: before.count,
             deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
             sentinelSurvived: false,
-            removedExactOwnedNotification: false
+            removedExactOwnedNotification: false,
+            inventory: inventory,
+            stableSampleCount: stableSampleCount
           )
           return
         }
@@ -798,7 +1480,9 @@ final class IosGroupNotificationFullHorizonSampler {
               deliveredAfter: identifiersWithSentinel.count,
               deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
               sentinelSurvived: identifiersWithSentinel.contains(sentinelIdentifier),
-              removedExactOwnedNotification: false
+              removedExactOwnedNotification: false,
+              inventory: inventory,
+              stableSampleCount: stableSampleCount
             )
             return
           }
@@ -822,7 +1506,9 @@ final class IosGroupNotificationFullHorizonSampler {
                 deliveredAfter: identifiersWithSentinel.count,
                 deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
                 sentinelSurvived: identifiersWithSentinel.contains(sentinelIdentifier),
-                removedExactOwnedNotification: false
+                removedExactOwnedNotification: false,
+                inventory: inventory,
+                stableSampleCount: stableSampleCount
               )
               return
             }
@@ -851,7 +1537,9 @@ final class IosGroupNotificationFullHorizonSampler {
                 removedExactOwnedNotification:
                   before.count == 1
                     && identifiersWithSentinel.count == 2
-                    && remaining.count == 1
+                    && remaining.count == 1,
+                inventory: inventory,
+                stableSampleCount: stableSampleCount
               )
             }
           }
@@ -870,14 +1558,17 @@ final class IosGroupNotificationFullHorizonSampler {
       let phase = IosGroupNotificationPhase(rawValue: phaseText),
       let groupHash = request["expectedGroupIdSha256"],
       let eventHash = request["expectedEventIdSha256"],
-      let targetHash = request["expectedTargetMessageIdSha256"]
+      let targetHash = request["expectedTargetMessageIdSha256"],
+      let expectedCollapseHash =
+        request["expectedCollapseIdentifierSha256"]
     else { return false }
     iosNotificationRecoveryProofInFlight = true
     let expected = IosGroupNotificationExpectedHashes(
       phase: phase,
       groupIdSha256: groupHash,
       eventIdSha256: eventHash,
-      targetMessageIdSha256: targetHash
+      targetMessageIdSha256: targetHash,
+      expectedCollapseIdentifierSha256: expectedCollapseHash
     )
     waitForFullHorizonIosGroupInventory(
       expected: expected,
@@ -887,20 +1578,9 @@ final class IosGroupNotificationFullHorizonSampler {
     ) { [weak self] outcome in
       guard let self else { return }
       let inventory = outcome.inventory
-      let exactUsefulSource =
-        outcome.resultCode == .complete
-          && outcome.sampledThroughDeadline
-          && outcome.stableSampleCount
-            == IosGroupNotificationInventory.stableSampleTarget
-          && !outcome.badSourceSeen
-          && !outcome.duplicateSeen
-          && inventory.matchingRemoteCount == 1
-          && inventory.matchingLocalCount == 0
-          && inventory.matchingUsefulProviderCount == 1
-          && inventory.matchingSanitizedProviderCount == 0
-          && inventory.matchingFlutterLocalCount == 0
-          && inventory.matchingUnknownCount == 0
-          && inventory.matchingTotalCount == 1
+      let exactUsefulSource = outcome.isExactUsefulSource(
+        expectedCollapseIdentifierSha256: expectedCollapseHash
+      )
       let resultCode: String
       if exactUsefulSource {
         resultCode = "ok"
@@ -922,7 +1602,11 @@ final class IosGroupNotificationFullHorizonSampler {
           stableSampleCount: outcome.stableSampleCount,
           sampledThroughDeadline: outcome.sampledThroughDeadline,
           badSourceSeen: outcome.badSourceSeen,
-          duplicateSeen: outcome.duplicateSeen
+          duplicateSeen: outcome.duplicateSeen,
+          diagnosticRecords: outcome.diagnosticRecords,
+          diagnosticOverflow: outcome.diagnosticOverflow,
+          diagnosticConflict: outcome.diagnosticConflict,
+          diagnosticComplete: outcome.diagnosticComplete
         )
       // Intentionally do not release iosNotificationRecoveryProofInFlight.
       // The host must pull the protected receipt and terminate Runner before
@@ -953,6 +1637,32 @@ final class IosGroupNotificationFullHorizonSampler {
     }
   }
 
+  private func waitForStableIosDirectInventory(
+    expectedPeerId: String,
+    expectedMessageId: String,
+    deadline: Date,
+    completion: @escaping (IosDirectNotificationStableSampleOutcome) -> Void
+  ) {
+    let center = UNUserNotificationCenter.current()
+    let sampler = IosDirectNotificationStableSampler(
+      now: Date.init,
+      scheduleAfter: { delay, action in
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, delay)) {
+          action()
+        }
+      },
+      fetchDeliveredNotifications: { callback in
+        center.getDeliveredNotifications(completionHandler: callback)
+      }
+    )
+    sampler.start(
+      expectedPeerId: expectedPeerId,
+      expectedMessageId: expectedMessageId,
+      deadline: deadline,
+      completion: completion
+    )
+  }
+
   private func waitForFullHorizonIosGroupInventory(
     expected: IosGroupNotificationExpectedHashes,
     deadline: Date,
@@ -975,7 +1685,8 @@ final class IosGroupNotificationFullHorizonSampler {
             )
           )
         }
-      }
+      },
+      expectedCollapseIdentifierSha256Valid: expected.isValid
     )
     sampler.start(deadline: deadline, completion: completion)
   }
@@ -991,7 +1702,9 @@ final class IosGroupNotificationFullHorizonSampler {
     deliveredAfter: Int,
     deliveredNotificationBadgeWasNil: Bool,
     sentinelSurvived: Bool,
-    removedExactOwnedNotification: Bool
+    removedExactOwnedNotification: Bool,
+    inventory: IosDirectNotificationInventory,
+    stableSampleCount: Int
   ) {
     _ = iosReceiverBootstrapHandoff.completeNotificationRecoveryRequest(
       request: request,
@@ -1004,7 +1717,9 @@ final class IosGroupNotificationFullHorizonSampler {
       deliveredAfter: deliveredAfter,
       deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
       sentinelSurvived: sentinelSurvived,
-      removedExactOwnedNotification: removedExactOwnedNotification
+      removedExactOwnedNotification: removedExactOwnedNotification,
+      inventory: inventory,
+      stableSampleCount: stableSampleCount
     )
     iosNotificationRecoveryProofInFlight = false
   }
@@ -1058,13 +1773,15 @@ final class IosGroupNotificationFullHorizonSampler {
         )
       }
 #endif
-      NSLog(
-        "[PUSH_DIAG] native_notification_settings context=%@ authorization=%@ alert=%@ badge=%@ sound=%@",
-        context,
-        String(describing: settings.authorizationStatus),
-        String(describing: settings.alertSetting),
-        String(describing: settings.badgeSetting),
-        String(describing: settings.soundSetting)
+      os_log(
+        "[PUSH_DIAG] native_notification_settings context=%{public}@ authorization=%{public}@ alert=%{public}@ badge=%{public}@ sound=%{public}@",
+        log: .default,
+        type: .info,
+        context as NSString,
+        String(describing: settings.authorizationStatus) as NSString,
+        String(describing: settings.alertSetting) as NSString,
+        String(describing: settings.badgeSetting) as NSString,
+        String(describing: settings.soundSetting) as NSString
       )
     }
   }
@@ -1073,6 +1790,7 @@ final class IosGroupNotificationFullHorizonSampler {
     guard let controller = window?.rootViewController as? FlutterViewController else {
       return
     }
+    setupIosSetupReadinessEntryBridge(messenger: controller.binaryMessenger)
     setupIosNotificationOpenBridge(messenger: controller.binaryMessenger)
     setupIosNotificationRecoveryBridge(messenger: controller.binaryMessenger)
     setupIosAppVisibilityBridge(messenger: controller.binaryMessenger)
@@ -1080,6 +1798,47 @@ final class IosGroupNotificationFullHorizonSampler {
     setupDiskSpaceBridge(messenger: controller.binaryMessenger)
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
     setupPrivateMediaProtectionBridge(messenger: controller.binaryMessenger)
+  }
+
+  private func setupIosSetupReadinessEntryBridge(
+    messenger: FlutterBinaryMessenger
+  ) {
+    guard iosSetupReadinessEntryChannel == nil else { return }
+    let channel = FlutterMethodChannel(
+      name: IosSetupReadinessEntryCoordinator.channelName,
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == IosSetupReadinessEntryCoordinator.acknowledgeMethod else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard
+        let arguments = call.arguments as? [String: Any],
+        let self
+      else {
+        result(FlutterError(
+          code: "plan398_setup_entry_rejected",
+          message: nil,
+          details: nil
+        ))
+        return
+      }
+      do {
+        result(
+          try self.iosSetupReadinessEntryCoordinator.acknowledgeDartMain(
+            arguments: arguments
+          )
+        )
+      } catch {
+        result(FlutterError(
+          code: "plan398_setup_entry_rejected",
+          message: nil,
+          details: nil
+        ))
+      }
+    }
+    iosSetupReadinessEntryChannel = channel
   }
 
   private func setupPrivateMediaProtectionBridge(messenger: FlutterBinaryMessenger) {

@@ -79,13 +79,15 @@ type apnsAlert struct {
 }
 
 type apnsControl struct {
-	Alert          apnsAlert `json:"alert"`
-	MutableContent int       `json:"mutable-content"`
+	Alert            apnsAlert `json:"alert"`
+	MutableContent   int       `json:"mutable-content"`
+	ContentAvailable int       `json:"content-available"`
 }
 
 type apnsPayload struct {
 	FixtureSchema string      `json:"fixture_schema"`
 	APS           apnsControl `json:"aps"`
+	GCMMessageID  string      `json:"gcm.message_id"`
 	Type          string      `json:"type"`
 	SenderID      string      `json:"sender_id"`
 	MessageID     string      `json:"message_id"`
@@ -347,6 +349,7 @@ func producePayload(request providerRequest, handoff receiverHandoff, runID, non
 		senderID.String(),
 	}, "\x00")))
 	messageID := "ios-sims-" + hex.EncodeToString(messageDigest[:16])
+	gcmMessageID := "ios-sims-bg-" + hex.EncodeToString(messageDigest[16:])
 	inner := innerMessage{
 		ID:             messageID,
 		Text:           request.ExpectedMessageText,
@@ -388,14 +391,16 @@ func producePayload(request providerRequest, handoff receiverHandoff, runID, non
 				Title: request.ExpectedTitle,
 				Body:  request.ExpectedBody,
 			},
-			MutableContent: 1,
+			MutableContent:   1,
+			ContentAvailable: 1,
 		},
-		Type:       "new_message",
-		SenderID:   envelope.SenderPeerID,
-		MessageID:  envelope.ID,
-		Kem:        envelope.Encrypted.Kem,
-		Ciphertext: envelope.Encrypted.Ciphertext,
-		Nonce:      envelope.Encrypted.Nonce,
+		GCMMessageID: gcmMessageID,
+		Type:         "new_message",
+		SenderID:     envelope.SenderPeerID,
+		MessageID:    envelope.ID,
+		Kem:          envelope.Encrypted.Kem,
+		Ciphertext:   envelope.Encrypted.Ciphertext,
+		Nonce:        envelope.Encrypted.Nonce,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

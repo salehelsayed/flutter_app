@@ -81,11 +81,14 @@ func defaultPushRetryDelays() []time.Duration {
 // --- Push service ---
 
 type PushService struct {
-	client       *messaging.Client
-	tokenBackend PushTokenBackend
-	sender       func(context.Context, *messaging.Message) (string, error)
-	retryDelays  []time.Duration
-	now          func() time.Time
+	client                             *messaging.Client
+	tokenBackend                       PushTokenBackend
+	sender                             func(context.Context, *messaging.Message) (string, error)
+	retryDelays                        []time.Duration
+	now                                func() time.Time
+	newGroupMessageDispatchID          groupMessageDispatchIDGenerator
+	journalGroupMessageProviderAttempt groupMessageProviderAttemptJournal
+	groupMessageDispatchAdmission      groupMessageDispatchAdmissionBackend
 }
 
 type pushMessageFactory func() *messaging.Message
@@ -103,10 +106,215 @@ type pushMessageProjector func(
 type pushDeliveryResult string
 
 const (
-	pushDeliveryAccepted  pushDeliveryResult = "accepted"
-	pushDeliveryPermanent pushDeliveryResult = "permanent"
-	pushDeliveryRetryable pushDeliveryResult = "retryable"
+	pushDeliveryAccepted   pushDeliveryResult = "accepted"
+	pushDeliveryPermanent  pushDeliveryResult = "permanent"
+	pushDeliveryRetryable  pushDeliveryResult = "retryable"
+	pushDeliverySuppressed pushDeliveryResult = "suppressed"
 )
+
+type groupMessageDispatchSource string
+
+type groupMessageDispatchIDGenerator func() (string, error)
+
+type groupMessageProviderAttemptJournal func(groupMessageProviderAttemptJournalRecord)
+
+type groupMessageDispatchProjection struct {
+	Source groupMessageDispatchSource
+	ID     string
+}
+
+type groupMessageProviderAttemptJournalRecord struct {
+	Schema                          string `json:"schema"`
+	Source                          string `json:"source"`
+	Provenance                      string `json:"provenance"`
+	DispatchCorrelationSha256       string `json:"dispatchCorrelationSha256,omitempty"`
+	ClaimedCollapseIdentifierSha256 string `json:"claimedCollapseIdentifierSha256,omitempty"`
+	ProviderAttempt                 int    `json:"providerAttempt"`
+	AttemptKind                     string `json:"attemptKind"`
+	Outcome                         string `json:"outcome"`
+	FirebaseResponseNameSha256      string `json:"firebaseResponseNameSha256,omitempty"`
+	ProviderMessageIDSha256         string `json:"providerMessageIdSha256,omitempty"`
+}
+
+const (
+	groupMessageDispatchSourceInbox   groupMessageDispatchSource = "group_inbox"
+	groupMessageDispatchSourceContent groupMessageDispatchSource = "group_content"
+
+	groupMessageDispatchClaimKey     = "mknoon_group_message_dispatch_source"
+	groupMessageDispatchIDKey        = "mknoon_group_message_dispatch_id"
+	groupMessageCollapseClaimKey     = "mknoon_group_message_collapse_id"
+	groupMessageDispatchClaimInbox   = "group_inbox_v1"
+	groupMessageDispatchClaimContent = "group_content_v1"
+
+	groupMessageProviderAttemptJournalSchema   = "mknoon.relay.group-message-provider-attempt.v1"
+	groupMessageProviderProvenanceComplete     = "complete"
+	groupMessageProviderProvenanceUnavailable  = "unavailable"
+	groupMessageProviderAttemptPrimary         = "primary"
+	groupMessageProviderAttemptStrictFallback  = "strict_fallback"
+	groupMessageProviderOutcomeAccepted        = "accepted"
+	groupMessageProviderOutcomePayloadTooLarge = "payload_too_large"
+	groupMessageProviderOutcomePermanent       = "permanent"
+	groupMessageProviderOutcomeRetryable       = "retryable"
+)
+
+func (source groupMessageDispatchSource) claim() string {
+	switch source {
+	case groupMessageDispatchSourceInbox:
+		return groupMessageDispatchClaimInbox
+	case groupMessageDispatchSourceContent:
+		return groupMessageDispatchClaimContent
+	default:
+		return ""
+	}
+}
+
+func groupMessageDispatchSourceFromClaim(claim string) (groupMessageDispatchSource, bool) {
+	switch claim {
+	case groupMessageDispatchClaimInbox:
+		return groupMessageDispatchSourceInbox, true
+	case groupMessageDispatchClaimContent:
+		return groupMessageDispatchSourceContent, true
+	default:
+		return "", false
+	}
+}
+
+func defaultGroupMessageDispatchIDGenerator() (string, error) {
+	value, err := uuid.NewRandom()
+	if err != nil {
+		return "", err
+	}
+	return value.String(), nil
+}
+
+func canonicalGroupMessageDispatchID(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || value != strings.ToLower(value) {
+		return false
+	}
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed.Version() == 4 && parsed.String() == value
+}
+
+func canonicalGroupMessageCollapseClaim(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) && len([]byte(value)) <= 64
+}
+
+func normalizedFirebaseProviderMessageID(value string) string {
+	if value == "" || value != strings.TrimSpace(value) {
+		return ""
+	}
+	segments := strings.Split(value, "/")
+	if len(segments) != 4 || segments[0] != "projects" || segments[1] == "" ||
+		segments[2] != "messages" || segments[3] == "" {
+		return ""
+	}
+	return segments[3]
+}
+
+func defaultGroupMessageProviderAttemptJournal(record groupMessageProviderAttemptJournalRecord) {
+	payload, err := json.Marshal(record)
+	if err != nil {
+		log.Printf("[GROUP_MESSAGE_PROVIDER_ATTEMPT] outcome=journal_encoding_failed")
+		return
+	}
+	log.Printf("[GROUP_MESSAGE_PROVIDER_ATTEMPT] %s", payload)
+}
+
+func (ps *PushService) groupMessageDispatchProjection(source groupMessageDispatchSource) groupMessageDispatchProjection {
+	projection := groupMessageDispatchProjection{Source: source}
+	generator := defaultGroupMessageDispatchIDGenerator
+	if ps != nil && ps.newGroupMessageDispatchID != nil {
+		generator = ps.newGroupMessageDispatchID
+	}
+	value, err := generator()
+	if err == nil && canonicalGroupMessageDispatchID(value) {
+		projection.ID = value
+	}
+	return projection
+}
+
+func groupMessageProviderAttemptBase(
+	message *messaging.Message,
+) (groupMessageProviderAttemptJournalRecord, bool) {
+	if message == nil || message.APNS == nil || message.APNS.Payload == nil {
+		return groupMessageProviderAttemptJournalRecord{}, false
+	}
+	claim, _ := message.APNS.Payload.CustomData[groupMessageDispatchClaimKey].(string)
+	source, ok := groupMessageDispatchSourceFromClaim(claim)
+	if !ok {
+		return groupMessageProviderAttemptJournalRecord{}, false
+	}
+	record := groupMessageProviderAttemptJournalRecord{
+		Schema:     groupMessageProviderAttemptJournalSchema,
+		Source:     string(source),
+		Provenance: groupMessageProviderProvenanceUnavailable,
+	}
+	dispatchID, _ := message.APNS.Payload.CustomData[groupMessageDispatchIDKey].(string)
+	claimedCollapse, _ := message.APNS.Payload.CustomData[groupMessageCollapseClaimKey].(string)
+	headerCollapse := message.APNS.Headers["apns-collapse-id"]
+	if canonicalGroupMessageDispatchID(dispatchID) &&
+		canonicalGroupMessageCollapseClaim(claimedCollapse) &&
+		headerCollapse == claimedCollapse {
+		record.Provenance = groupMessageProviderProvenanceComplete
+		record.DispatchCorrelationSha256 = sha256Hex(dispatchID)
+		record.ClaimedCollapseIdentifierSha256 = sha256Hex(claimedCollapse)
+	}
+	return record, true
+}
+
+func groupMessageProviderOutcome(err error) string {
+	if err == nil {
+		return groupMessageProviderOutcomeAccepted
+	}
+	if isPayloadTooLargeError(err) {
+		return groupMessageProviderOutcomePayloadTooLarge
+	}
+	if permanentPushErrorReason(err) != "" {
+		return groupMessageProviderOutcomePermanent
+	}
+	return groupMessageProviderOutcomeRetryable
+}
+
+func (ps *PushService) recordGroupMessageProviderAttempt(
+	message *messaging.Message,
+	providerResponseName string,
+	providerErr error,
+	providerAttempt int,
+	attemptKind string,
+) {
+	record, ok := groupMessageProviderAttemptBase(message)
+	if !ok {
+		return
+	}
+	record.ProviderAttempt = providerAttempt
+	record.AttemptKind = attemptKind
+	record.Outcome = groupMessageProviderOutcome(providerErr)
+	if providerErr == nil && providerResponseName != "" {
+		record.FirebaseResponseNameSha256 = sha256Hex(providerResponseName)
+		if providerID := normalizedFirebaseProviderMessageID(providerResponseName); providerID != "" {
+			record.ProviderMessageIDSha256 = sha256Hex(providerID)
+		}
+	}
+	journal := defaultGroupMessageProviderAttemptJournal
+	if ps != nil && ps.journalGroupMessageProviderAttempt != nil {
+		journal = ps.journalGroupMessageProviderAttempt
+	}
+	journal(record)
+}
+
+func recordGroupMessageDispatch(source groupMessageDispatchSource, result pushDeliveryResult) {
+	if source.claim() == "" {
+		return
+	}
+	terminal := "failed"
+	switch result {
+	case pushDeliveryAccepted:
+		terminal = "accepted"
+	case pushDeliverySuppressed:
+		terminal = "suppressed"
+	}
+	groupMessageDispatchCounter.WithLabelValues(string(source), terminal).Inc()
+}
 
 // The resolver gateway already returns errors for route selection/build
 // failures. These private sentinels let that same error channel carry the
@@ -114,8 +322,9 @@ const (
 // sendSelectedPushThroughGateway consumes them before its ordinary route-error
 // accounting, so the incumbent logs and metrics remain unchanged.
 var (
-	errPushDeliveryPermanent = errors.New("push delivery permanently rejected")
-	errPushDeliveryRetryable = errors.New("push delivery retryable")
+	errPushDeliveryPermanent  = errors.New("push delivery permanently rejected")
+	errPushDeliveryRetryable  = errors.New("push delivery retryable")
+	errPushDeliverySuppressed = errors.New("duplicate group-message provider dispatch suppressed")
 )
 
 func pushDeliveryResultError(result pushDeliveryResult) error {
@@ -124,6 +333,8 @@ func pushDeliveryResultError(result pushDeliveryResult) error {
 		return nil
 	case pushDeliveryPermanent:
 		return errPushDeliveryPermanent
+	case pushDeliverySuppressed:
+		return errPushDeliverySuppressed
 	default:
 		return errPushDeliveryRetryable
 	}
@@ -146,9 +357,14 @@ func newPushServiceWithTokenBackend(
 	tokenBackend PushTokenBackend,
 ) *PushService {
 	ps := &PushService{
-		tokenBackend: tokenBackend,
-		retryDelays:  defaultPushRetryDelays(),
-		now:          time.Now,
+		tokenBackend:                       tokenBackend,
+		retryDelays:                        defaultPushRetryDelays(),
+		now:                                time.Now,
+		newGroupMessageDispatchID:          defaultGroupMessageDispatchIDGenerator,
+		journalGroupMessageProviderAttempt: defaultGroupMessageProviderAttemptJournal,
+		groupMessageDispatchAdmission: newMemoryGroupMessageDispatchAdmissionBackend(
+			groupMessageDispatchAdmissionTTL,
+		),
 	}
 
 	opt := option.WithCredentialsFile(serviceAccountPath)
@@ -172,9 +388,14 @@ func newPushServiceWithTokenBackend(
 // NewPushServiceWithBackend creates a PushService with a custom token backend.
 func NewPushServiceWithBackend(tokenBackend PushTokenBackend) *PushService {
 	return &PushService{
-		tokenBackend: tokenBackend,
-		retryDelays:  defaultPushRetryDelays(),
-		now:          time.Now,
+		tokenBackend:                       tokenBackend,
+		retryDelays:                        defaultPushRetryDelays(),
+		now:                                time.Now,
+		newGroupMessageDispatchID:          defaultGroupMessageDispatchIDGenerator,
+		journalGroupMessageProviderAttempt: defaultGroupMessageProviderAttemptJournal,
+		groupMessageDispatchAdmission: newMemoryGroupMessageDispatchAdmissionBackend(
+			groupMessageDispatchAdmissionTTL,
+		),
 	}
 }
 
@@ -230,7 +451,12 @@ func (ps *PushService) sendPushRouteThroughGateway(
 	route pushRouteLease,
 	buildMessage resolvedPushMessageFactory,
 	allowStrictFallback bool,
+	admissionIdentities ...*groupMessageDispatchAdmissionIdentity,
 ) error {
+	var admissionIdentity *groupMessageDispatchAdmissionIdentity
+	if len(admissionIdentities) > 0 {
+		admissionIdentity = admissionIdentities[0]
+	}
 	if ps == nil || ps.tokenBackend == nil {
 		return errors.New("push route backend unavailable")
 	}
@@ -252,9 +478,52 @@ func (ps *PushService) sendPushRouteThroughGateway(
 	}
 	providerMessage := *draft
 	providerMessage.Token = target.Token
-	return pushDeliveryResultError(
-		ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback),
-	)
+
+	// Provider-unavailable is definitively pre-attempt and must not strand an
+	// admission claim. Preserve sendWithRetry's incumbent metrics/logging while
+	// keeping the exact key available for a later healthy logical adapter.
+	if ps.sender == nil && ps.client == nil {
+		return pushDeliveryResultError(
+			ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback),
+		)
+	}
+
+	var admissionLease *groupMessageDispatchAdmissionLease
+	if admissionIdentity != nil && strings.EqualFold(strings.TrimSpace(target.Platform), "ios") {
+		if ps.groupMessageDispatchAdmission == nil {
+			groupMessageDispatchAdmissionCounter.WithLabelValues("error").Inc()
+			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=backend_unavailable")
+			return errPushDeliverySuppressed
+		}
+		lease, acquired, acquireErr := ps.groupMessageDispatchAdmission.TryAcquire(
+			ctx,
+			*admissionIdentity,
+		)
+		if acquireErr != nil {
+			groupMessageDispatchAdmissionCounter.WithLabelValues("error").Inc()
+			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=claim_failed")
+			return errPushDeliverySuppressed
+		}
+		if !acquired {
+			groupMessageDispatchAdmissionCounter.WithLabelValues("suppressed").Inc()
+			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=duplicate_suppressed")
+			return errPushDeliverySuppressed
+		}
+		groupMessageDispatchAdmissionCounter.WithLabelValues("acquired").Inc()
+		admissionLease = &lease
+	}
+
+	result := ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback)
+	if admissionLease != nil && result == pushDeliveryPermanent {
+		if err := ps.groupMessageDispatchAdmission.Release(ctx, *admissionLease); err != nil {
+			groupMessageDispatchAdmissionCounter.WithLabelValues("release_failed").Inc()
+			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=release_failed")
+		} else {
+			groupMessageDispatchAdmissionCounter.WithLabelValues("released").Inc()
+			log.Printf("[GROUP_MESSAGE_DISPATCH_ADMISSION] outcome=released_definitive_rejection")
+		}
+	}
+	return pushDeliveryResultError(result)
 }
 
 func (ps *PushService) sendRichPushThroughGateway(
@@ -283,6 +552,34 @@ func (ps *PushService) sendRichPushThroughGateway(
 	)
 }
 
+func (ps *PushService) sendRichPushThroughGatewayWithAdmission(
+	ctx context.Context,
+	route pushRouteLease,
+	buildMessage pushMessageFactory,
+	admissionIdentity *groupMessageDispatchAdmissionIdentity,
+	projectMessage ...pushMessageProjector,
+) error {
+	return ps.sendPushRouteThroughGateway(
+		ctx,
+		route,
+		func(platform string) (*messaging.Message, error) {
+			var draft *messaging.Message
+			if buildMessage != nil {
+				draft = buildMessage()
+			}
+			if draft == nil {
+				return nil, nil
+			}
+			if len(projectMessage) > 0 && projectMessage[0] != nil {
+				return projectMessage[0](draft, platform), nil
+			}
+			return projectPushMessageForPlatform(draft, platform), nil
+		},
+		true,
+		admissionIdentity,
+	)
+}
+
 func classifySelectedPushRoute(route pushRouteLease, requiredCapability string) (opaque bool, eligible bool) {
 	if requiredCapability != "" && !route.hasCapability(requiredCapability) {
 		return false, false
@@ -302,6 +599,58 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 	initialRoute pushRouteLease,
 	requiredCapability string,
 	buildRichMessage pushMessageFactory,
+	projectRichMessage ...pushMessageProjector,
+) pushDeliveryResult {
+	return ps.sendSelectedPushThroughGatewayWithAdmission(
+		ctx,
+		peerID,
+		initialRoute,
+		requiredCapability,
+		buildRichMessage,
+		nil,
+		projectRichMessage...,
+	)
+}
+
+func (ps *PushService) sendSelectedGroupPushThroughGateway(
+	ctx context.Context,
+	peerID string,
+	groupID string,
+	messageID string,
+	initialRoute pushRouteLease,
+	requiredCapability string,
+	buildRichMessage pushMessageFactory,
+	projectRichMessage ...pushMessageProjector,
+) pushDeliveryResult {
+	identity, valid := newGroupMessageDispatchAdmissionIdentity(peerID, groupID, messageID)
+	if !valid {
+		return ps.sendSelectedPushThroughGateway(
+			ctx,
+			peerID,
+			initialRoute,
+			requiredCapability,
+			buildRichMessage,
+			projectRichMessage...,
+		)
+	}
+	return ps.sendSelectedPushThroughGatewayWithAdmission(
+		ctx,
+		peerID,
+		initialRoute,
+		requiredCapability,
+		buildRichMessage,
+		&identity,
+		projectRichMessage...,
+	)
+}
+
+func (ps *PushService) sendSelectedPushThroughGatewayWithAdmission(
+	ctx context.Context,
+	peerID string,
+	initialRoute pushRouteLease,
+	requiredCapability string,
+	buildRichMessage pushMessageFactory,
+	admissionIdentity *groupMessageDispatchAdmissionIdentity,
 	projectRichMessage ...pushMessageProjector,
 ) pushDeliveryResult {
 	route := copyPushRouteLease(initialRoute)
@@ -329,12 +678,13 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 
 		var err error
 		if selectedOpaque {
-			err = ps.mailboxDirty(ctx, route)
+			err = ps.mailboxDirtyWithAdmission(ctx, route, admissionIdentity)
 		} else {
-			err = ps.sendRichPushThroughGateway(
+			err = ps.sendRichPushThroughGatewayWithAdmission(
 				ctx,
 				route,
 				buildRichMessage,
+				admissionIdentity,
 				projectRichMessage...,
 			)
 		}
@@ -362,6 +712,9 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 		}
 		if errors.Is(err, errPushDeliveryPermanent) {
 			return pushDeliveryPermanent
+		}
+		if errors.Is(err, errPushDeliverySuppressed) {
+			return pushDeliverySuppressed
 		}
 		if errors.Is(err, errPushDeliveryRetryable) {
 			return pushDeliveryRetryable
@@ -398,6 +751,42 @@ func (ps *PushService) sendWakeOutcomeThroughGateway(
 	return ps.sendOpaqueWakeThroughGateway(ctx, recipientPeerID, *route, policy)
 }
 
+func (ps *PushService) sendGroupWakeOutcomeThroughGateway(
+	ctx context.Context,
+	recipientPeerID string,
+	policy wakeOutcomeRoutePolicy,
+	groupMessageDispatchAdmissionKey string,
+) pushDeliveryResult {
+	identity, validIdentity := groupMessageDispatchAdmissionIdentityFromStorageKey(
+		groupMessageDispatchAdmissionKey,
+	)
+	if !validIdentity {
+		return pushDeliveryRetryable
+	}
+	requiredCapability, validPolicy := wakeOutcomeRequiredCapability(policy)
+	if !validPolicy {
+		return pushDeliveryRetryable
+	}
+	route, err := ps.selectPushRoute(recipientPeerID, requiredCapability)
+	if err != nil || route == nil {
+		return pushDeliveryRetryable
+	}
+	opaque, eligible := classifySelectedPushRoute(*route, requiredCapability)
+	if !eligible || !opaque {
+		return pushDeliveryRetryable
+	}
+	result := ps.sendSelectedPushThroughGatewayWithAdmission(
+		ctx,
+		recipientPeerID,
+		*route,
+		requiredCapability,
+		nil,
+		&identity,
+	)
+	recordGroupMessageDispatch(groupMessageDispatchSourceInbox, result)
+	return result
+}
+
 // sendOpaqueWakeThroughGateway is the one additional Plan-370 caller of the
 // Plan-368 selected gateway. It is shared by due coordinator sends and
 // capacity fallbacks that retain their exact CAS-valid route.
@@ -423,6 +812,40 @@ func (ps *PushService) sendOpaqueWakeThroughGateway(
 		requiredCapability,
 		nil,
 	)
+}
+
+// sendGroupOpaqueWakeThroughGateway retains the exact group event identity
+// across the preflight path that already selected a fixed opaque wake. Without
+// this wrapper, the generic mailbox card would discard group/message identity
+// before the shared provider admission boundary.
+func (ps *PushService) sendGroupOpaqueWakeThroughGateway(
+	ctx context.Context,
+	recipientPeerID string,
+	groupID string,
+	messageID string,
+	route pushRouteLease,
+	policy wakeOutcomeRoutePolicy,
+) pushDeliveryResult {
+	requiredCapability, validPolicy := wakeOutcomeRequiredCapability(policy)
+	if !validPolicy {
+		return pushDeliveryRetryable
+	}
+	opaque, eligible := classifySelectedPushRoute(route, requiredCapability)
+	if !eligible || !opaque {
+		return pushDeliveryRetryable
+	}
+
+	result := ps.sendSelectedGroupPushThroughGateway(
+		ctx,
+		recipientPeerID,
+		groupID,
+		messageID,
+		route,
+		requiredCapability,
+		nil,
+	)
+	recordGroupMessageDispatch(groupMessageDispatchSourceInbox, result)
+	return result
 }
 
 func wakeOutcomeRequiredCapability(policy wakeOutcomeRoutePolicy) (string, bool) {
@@ -627,9 +1050,12 @@ func (ps *PushService) SendGroupNotification(
 		}
 	}
 
-	ps.sendSelectedPushThroughGateway(
+	dispatch := ps.groupMessageDispatchProjection(groupMessageDispatchSourceInbox)
+	result := ps.sendSelectedGroupPushThroughGateway(
 		ctx,
 		toPeerId,
+		groupId,
+		messageID,
 		*route,
 		"",
 		func() *messaging.Message {
@@ -642,25 +1068,29 @@ func (ps *PushService) SendGroupNotification(
 			)
 		},
 		func(message *messaging.Message, platform string) *messaging.Message {
-			return projectGroupPushMessageForPlatform(message, platform, messageID)
+			return projectGroupPushMessageForPlatform(
+				message,
+				platform,
+				messageID,
+				dispatch,
+			)
 		},
 	)
+	recordGroupMessageDispatch(groupMessageDispatchSourceInbox, result)
 }
 
 // send returns the provider error VERBATIM. Do not wrap it: messaging.Is* uses
 // a bare type assertion on *internal.FirebaseError and does not Unwrap, so a
 // fmt.Errorf("...: %w", err) here would silently disable the typed arm of
 // permanentPushErrorReason (plan 320).
-func (ps *PushService) send(ctx context.Context, msg *messaging.Message) error {
+func (ps *PushService) send(ctx context.Context, msg *messaging.Message) (string, error) {
 	if ps.sender != nil {
-		_, err := ps.sender(ctx, msg)
-		return err
+		return ps.sender(ctx, msg)
 	}
 	if ps.client == nil {
-		return nil
+		return "", nil
 	}
-	_, err := ps.client.Send(ctx, msg)
-	return err
+	return ps.client.Send(ctx, msg)
 }
 
 func (ps *PushService) sendWithRetry(
@@ -680,9 +1110,18 @@ func (ps *PushService) sendWithRetry(
 		return pushDeliveryRetryable
 	}
 	totalAttempts := len(ps.retryDelays) + 1
+	providerAttempt := 0
 
 	for attempt := 1; attempt <= totalAttempts; attempt++ {
-		err := ps.send(ctx, msg)
+		providerAttempt++
+		providerResponseName, err := ps.send(ctx, msg)
+		ps.recordGroupMessageProviderAttempt(
+			msg,
+			providerResponseName,
+			err,
+			providerAttempt,
+			groupMessageProviderAttemptPrimary,
+		)
 		if err == nil {
 			pushSentCounter.WithLabelValues("success").Inc()
 			log.Printf("[PUSH] outcome=success attempt=%d total_attempts=%d", attempt, totalAttempts)
@@ -719,7 +1158,15 @@ func (ps *PushService) sendWithRetry(
 				return pushDeliveryRetryable
 			}
 
-			fallbackErr := ps.send(ctx, strict)
+			providerAttempt++
+			fallbackProviderResponseName, fallbackErr := ps.send(ctx, strict)
+			ps.recordGroupMessageProviderAttempt(
+				strict,
+				fallbackProviderResponseName,
+				fallbackErr,
+				providerAttempt,
+				groupMessageProviderAttemptStrictFallback,
+			)
 			if fallbackErr == nil {
 				pushSentCounter.WithLabelValues("success").Inc()
 				pushSentCounter.WithLabelValues("payload_too_large_fallback").Inc()
@@ -1223,7 +1670,47 @@ func buildStrictMinimalFallbackPushMessage(msg *messaging.Message) *messaging.Me
 		msg.APNS.Payload.Aps.ThreadID == "" {
 		return nil
 	}
-	return buildOversizedFallbackPushMessage(msg.Token, data, "")
+	strict := buildOversizedFallbackPushMessage(msg.Token, data, "")
+	if data["type"] != "group_message" ||
+		strict == nil || strict.APNS == nil || strict.APNS.Payload == nil ||
+		msg.APNS == nil || msg.APNS.Payload == nil {
+		return strict
+	}
+
+	// The provider-size fallback is still the same iOS logical dispatch. Keep
+	// its independently derived collapse identity and closed adapter claim,
+	// while leaving the top-level FCM Data projection untouched.
+	claim, _ := msg.APNS.Payload.CustomData[groupMessageDispatchClaimKey].(string)
+	if claim != groupMessageDispatchClaimInbox && claim != groupMessageDispatchClaimContent {
+		return strict
+	}
+	apns := *strict.APNS
+	headers := make(map[string]string, len(strict.APNS.Headers)+1)
+	for key, value := range strict.APNS.Headers {
+		headers[key] = value
+	}
+	if collapseID := strings.TrimSpace(msg.APNS.Headers["apns-collapse-id"]); collapseID != "" {
+		headers["apns-collapse-id"] = collapseID
+	}
+	apns.Headers = headers
+	payload := *strict.APNS.Payload
+	customData := make(map[string]interface{}, len(strict.APNS.Payload.CustomData)+3)
+	for key, value := range strict.APNS.Payload.CustomData {
+		customData[key] = value
+	}
+	customData[groupMessageDispatchClaimKey] = claim
+	dispatchID, _ := msg.APNS.Payload.CustomData[groupMessageDispatchIDKey].(string)
+	claimedCollapse, _ := msg.APNS.Payload.CustomData[groupMessageCollapseClaimKey].(string)
+	if canonicalGroupMessageDispatchID(dispatchID) &&
+		canonicalGroupMessageCollapseClaim(claimedCollapse) &&
+		msg.APNS.Headers["apns-collapse-id"] == claimedCollapse {
+		customData[groupMessageDispatchIDKey] = dispatchID
+		customData[groupMessageCollapseClaimKey] = claimedCollapse
+	}
+	payload.CustomData = customData
+	apns.Payload = &payload
+	strict.APNS = &apns
+	return strict
 }
 
 func isPayloadTooLargeError(err error) bool {
@@ -1296,6 +1783,7 @@ func projectGroupPushMessageForPlatform(
 	message *messaging.Message,
 	platform string,
 	messageID string,
+	dispatch groupMessageDispatchProjection,
 ) *messaging.Message {
 	projected := projectPushMessageForPlatform(message, platform)
 	identity := boundedGroupMessageIdentity(messageID)
@@ -1313,24 +1801,42 @@ func projectGroupPushMessageForPlatform(
 	}
 	headers["apns-collapse-id"] = identity
 	apns.Headers = headers
+	if claim := dispatch.Source.claim(); claim != "" && apns.Payload != nil {
+		payload := *apns.Payload
+		customData := make(map[string]interface{}, len(apns.Payload.CustomData)+3)
+		for key, value := range apns.Payload.CustomData {
+			customData[key] = value
+		}
+		customData[groupMessageDispatchClaimKey] = claim
+		if canonicalGroupMessageDispatchID(dispatch.ID) && canonicalGroupMessageCollapseClaim(identity) {
+			customData[groupMessageDispatchIDKey] = dispatch.ID
+			customData[groupMessageCollapseClaimKey] = identity
+		}
+		payload.CustomData = customData
+		apns.Payload = &payload
+	}
 	projected.APNS = &apns
 	return projected
 }
 
 // projectStoredDirectPushMessageForPlatform adds a collapse identity only at
-// the stored-rich iOS group-invite boundary. The relay custody UUID is stable
-// across provider retries, while a separately stored row receives a new UUID.
-// Unknown platforms retain the incumbent fail-open dual-copy projection and
-// never inherit an iOS-only collapse header.
+// the stored-rich iOS group-invite and direct-message boundary. The relay
+// custody UUID is stable across provider retries, while a separately stored row
+// receives a new UUID. Unknown platforms retain the incumbent fail-open
+// dual-copy projection and never inherit an iOS-only collapse header.
 func projectStoredDirectPushMessageForPlatform(
 	message *messaging.Message,
 	platform string,
 	custodyID string,
 ) *messaging.Message {
 	projected := projectPushMessageForPlatform(message, platform)
+	messageType := ""
+	if message != nil {
+		messageType = message.Data["type"]
+	}
 	if projected == nil ||
 		strings.ToLower(strings.TrimSpace(platform)) != "ios" ||
-		message == nil || message.Data["type"] != "group_invite" ||
+		(messageType != "group_invite" && messageType != "new_message") ||
 		projected.APNS == nil {
 		return projected
 	}
@@ -2812,6 +3318,7 @@ func (s *GroupInboxStore) storeWithWakeOutcomes(
 	eventExpiresAtMs := storedAtMs + eventTTL.Milliseconds()
 	for routeAttempt := 0; routeAttempt < 2; routeAttempt++ {
 		admissions, dispatches := s.groupWakeOutcomeAdmissions(
+			groupID,
 			from,
 			message,
 			wakeRecipients,
@@ -2852,6 +3359,7 @@ func (s *GroupInboxStore) storeWithWakeOutcomes(
 }
 
 func (s *GroupInboxStore) groupWakeOutcomeAdmissions(
+	groupID string,
 	from string,
 	message string,
 	recipientPeerIDs []string,
@@ -2902,6 +3410,16 @@ func (s *GroupInboxStore) groupWakeOutcomeAdmissions(
 				storedAtMs,
 				eventExpiresAtMs,
 			)
+		}
+		if admitted && producer == wakeOutcomeProducerGroupMessage {
+			identity, validIdentity := newGroupMessageDispatchAdmissionIdentity(
+				recipientPeerID,
+				groupID,
+				extractMessageId(message),
+			)
+			if validIdentity {
+				admission.groupMessageDispatchAdmissionKey = identity.storageKey()
+			}
 		}
 		dispatch := groupWakeOutcomeDispatch{preflight: fallback}
 		if admitted {
@@ -3099,9 +3617,11 @@ func (s *GroupInboxStore) fanOutPush(
 				if suppressImmediateWake(dispatch) {
 					continue
 				}
-				go s.push.sendOpaqueWakeThroughGateway(
+				go s.push.sendGroupOpaqueWakeThroughGateway(
 					context.Background(),
 					peerID,
+					groupId,
+					messageID,
 					dispatch.admission.Route(),
 					dispatch.admission.policy,
 				)

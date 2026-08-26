@@ -17,13 +17,14 @@ readonly MAILBOX_FIXTURE_RELATIVE="test/shared/fixtures/ios_nse_mailbox_v1.json"
 readonly LEDGER_FIXTURE_RELATIVE="test/shared/fixtures/local_notification_ledger_v1.json"
 readonly MAILBOX_FIXTURE="$REPO_ROOT/$MAILBOX_FIXTURE_RELATIVE"
 readonly LEDGER_FIXTURE="$REPO_ROOT/$LEDGER_FIXTURE_RELATIVE"
-readonly FRAMEWORK_ROOT="$REPO_ROOT/ios/Runner/GoMknoon.xcframework"
+readonly FRAMEWORK_ROOT="$REPO_ROOT/ios/Runner/GoMknoonNSE.xcframework"
 readonly BINDING_STAMP="$REPO_ROOT/ios/Runner/GoMknoon.inputs.sha256"
 readonly BINDING_INPUT_HELPER="$REPO_ROOT/scripts/gomobile_binding_inputs.sh"
 readonly BINDING_VERIFY="$REPO_ROOT/scripts/verify_gomobile_bindings.sh"
-readonly DEVICE_HEADER="$FRAMEWORK_ROOT/ios-arm64/GoMknoon.framework/Headers/Bridge.objc.h"
-readonly SIMULATOR_HEADER="$FRAMEWORK_ROOT/ios-arm64_x86_64-simulator/GoMknoon.framework/Headers/Bridge.objc.h"
+readonly DEVICE_HEADER="$FRAMEWORK_ROOT/ios-arm64/GoMknoonNSE.framework/Headers/Bridge.objc.h"
+readonly SIMULATOR_HEADER="$FRAMEWORK_ROOT/ios-arm64_x86_64-simulator/GoMknoonNSE.framework/Headers/Bridge.objc.h"
 readonly TC37305="RunnerTests/IosNseMailboxWakeCoordinatorTests/testTC37305AuthenticatedCandidatesShareOneFinalEffectOwner"
+readonly TC39803_PYTHON="scripts.test.ios_receiver_bootstrap_test.IosReceiverBootstrapTest.test_group_observation_recovers_terminal_native_failure_after_final_termination_pull"
 readonly RUN_TAG="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 readonly -a FOCUSED_GO_TESTS=(
@@ -54,6 +55,10 @@ readonly -a XCODE_TESTS=(
   RunnerTests/NotificationServiceConfigurationTests/testNotificationServiceInfoPlistUsesUserNotificationsServicePoint
   RunnerTests/IosNotificationRecoveryTests/testProductionHandoffSeamClaimsBeforeHandlerAndCommitsAfter
   RunnerTests/IosNotificationRecoveryTests/testTC395ExactGroupInviteRetirementIsSurgicalAndIdempotent
+  RunnerTests/IosNotificationRecoveryTests/testTC398GroupInventoryFiltersBeforeBoundAndMapsClosedDiagnostics
+  RunnerTests/IosNotificationRecoveryTests/testTC398GroupObservationPassRequiresCanonicalRequestIdentifier
+  RunnerTests/IosNotificationRecoveryTests/testTC398GroupFullHorizonLatchesTransientDiagnosticUnion
+  RunnerTests/IosReceiverBootstrapHandoffTests/testTC398GroupObservationReceiptPersistsBoundedPerCardDiagnostics
   RunnerTests/IosAppVisibilitySnapshotTests/testTC37106AtomicSnapshotLifecycleAndPrivacyContract
   RunnerTests/IosAppVisibilitySnapshotTests/testTC37106DuplicateUIApplicationAndUISceneActiveDoesNotClearInterleavedRouteCAS
 )
@@ -179,7 +184,7 @@ assert_unique_exact_count() {
 
 assert_unique_exact_count 4 "${FOCUSED_GO_TESTS[@]}"
 assert_unique_exact_count 4 "${PRESERVATION_GO_TESTS[@]}"
-assert_unique_exact_count 17 "${XCODE_TESTS[@]}"
+assert_unique_exact_count 21 "${XCODE_TESTS[@]}"
 
 run_go_test() {
   (
@@ -248,6 +253,17 @@ run_logged "the exact four incumbent Go preservers" \
   "$GO_PRESERVATION_LOG" \
   run_go_test ./node ./bridge -run "$preservation_regex" -count=1 -v
 validate_go_passes "$GO_PRESERVATION_LOG" "${PRESERVATION_GO_TESTS[@]}"
+
+readonly TC39803_PYTHON_LOG="$RESULT_DIR/tc39803-python.log"
+run_logged "the exact TC-398-03 post-termination native-result pull" \
+  "$TC39803_PYTHON_LOG" \
+  python3 -m unittest "$TC39803_PYTHON"
+rg -Fxq 'Ran 1 test in' <(sed -E 's/^(Ran 1 test in).*/\1/' "$TC39803_PYTHON_LOG") ||
+  fail "TC-398-03 Python registration did not execute exactly one test"
+rg -Fxq 'OK' "$TC39803_PYTHON_LOG" ||
+  fail "TC-398-03 Python registration did not pass"
+! rg -q 'skipped=|FAILED|Traceback' "$TC39803_PYTHON_LOG" ||
+  fail "TC-398-03 Python registration skipped or failed"
 
 readonly FIXTURE_MEMBERSHIP_LOG="$RESULT_DIR/fixture-membership.log"
 : >"$FIXTURE_MEMBERSHIP_LOG"
@@ -614,13 +630,13 @@ verify_built_products() {
     fail "embedded NSE code image leaves BridgeNSEInboxRetrievePending undefined"
 
   matches="$(
-    rg -F ' -framework GoMknoon ' "$RUNNER_BUILD_LOG" |
+    rg -F ' -framework GoMknoonNSE ' "$RUNNER_BUILD_LOG" |
       rg '/NotificationService\.appex/NotificationService(\.debug\.dylib)?$' || true
   )"
   printf '%s\n' "$matches" >"$RESULT_DIR/embedded-nse-link-command.log"
   match_count="$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
   [[ "$match_count" -eq 1 ]] ||
-    fail "expected one GoMknoon framework link command for the embedded NSE, found $match_count"
+    fail "expected one GoMknoonNSE framework link command for the embedded NSE, found $match_count"
 
   matches="$(find "$derived_data" -type f -name 'ios_nse_mailbox_v1.json' \
     -path '*RunnerTests.xctest*' -print)"
@@ -797,7 +813,7 @@ else
   )
   final_test_command+=("${only_testing_args[@]}")
   final_test_command+=(CODE_SIGNING_ALLOWED=NO test)
-  run_logged "the exact 17-method non-parallel Plan 373 XCTest set on $simulator_id" \
+  run_logged "the exact 21-method non-parallel Plan 373/398 XCTest set on $simulator_id" \
     "$RUNNER_BUILD_LOG" \
     "${final_test_command[@]}"
 
@@ -813,12 +829,12 @@ else
     >"$RESULT_DIR/ios-xctest-summary.json"
   jq -e '
     .result == "Passed" and
-    .totalTestCount == 17 and
-    .passedTests == 17 and
+    .totalTestCount == 21 and
+    .passedTests == 21 and
     .failedTests == 0 and
     .skippedTests == 0
   ' "$RESULT_DIR/ios-xctest-summary.json" >/dev/null ||
-    fail "Plan 373 XCTest summary was not exactly 17 passes and zero skips"
+    fail "Plan 373/398 XCTest summary was not exactly 21 passes and zero skips"
   xcrun xcresulttool get test-results tests \
     --path "$xctest_result" --compact \
     >"$RESULT_DIR/ios-xctest-tests.json"
@@ -829,7 +845,7 @@ else
   assert_xcresult_method_set "$RESULT_DIR/ios-xctest-tests.json" Passed \
     "${expected_method_names[@]}"
   verify_built_products "$xctest_derived"
-  printf 'PASS: 17/17 on %s\n' "$simulator_id" >"$IOS_DISPOSITION"
+  printf 'PASS: 21/21 on %s\n' "$simulator_id" >"$IOS_DISPOSITION"
 fi
 
 binding_digest_after="$(gomobile_binding_input_digest "$REPO_ROOT" ios)"
@@ -840,7 +856,7 @@ framework_digest_after="$(framework_content_digest)"
 [[ "$binding_stamp_after" == "$binding_digest_after" ]] ||
   fail "Xcode left a stale gomobile binding stamp"
 [[ "$framework_digest_after" == "$framework_digest_before" ]] ||
-  fail "Xcode binding phase rebuilt or changed the GoMknoon artifact"
+  fail "Xcode binding phase rebuilt or changed the GoMknoonNSE artifact"
 {
   printf 'input-digest-after=%s\n' "$binding_digest_after"
   printf 'framework-content-digest-after=%s\n' "$framework_digest_after"
@@ -849,7 +865,7 @@ framework_digest_after="$(framework_content_digest)"
 
 [[ "$(wc -l <"$IOS_DISPOSITION" | tr -d '[:space:]')" -eq 1 ]] ||
   fail "iOS XCTest disposition must contain exactly one line"
-rg -x 'PASS: 17/17 on [0-9A-Fa-f-]{36}|N/A \(target unavailable by project policy\): no available iPhone simulator' \
+rg -x 'PASS: 21/21 on [0-9A-Fa-f-]{36}|N/A \(target unavailable by project policy\): no available iPhone simulator' \
   "$IOS_DISPOSITION" >/dev/null ||
   fail "iOS XCTest disposition is not the frozen PASS/N/A literal"
 [[ -s "$RUNNER_BUILD_LOG" ]] || fail "Runner simulator build log is empty"

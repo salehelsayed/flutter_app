@@ -111,9 +111,12 @@ func (ps *PushService) sendGroupContentNotificationForRoute(
 	metadata groupContentPushMetadata,
 	message string,
 ) {
-	ps.sendSelectedPushThroughGateway(
+	dispatch := ps.groupMessageDispatchProjection(groupMessageDispatchSourceContent)
+	result := ps.sendSelectedGroupPushThroughGateway(
 		ctx,
 		toPeerID,
+		metadata.GroupID,
+		metadata.MessageID,
 		route,
 		"",
 		func() *messaging.Message {
@@ -126,9 +129,15 @@ func (ps *PushService) sendGroupContentNotificationForRoute(
 			)
 		},
 		func(message *messaging.Message, platform string) *messaging.Message {
-			return projectGroupPushMessageForPlatform(message, platform, metadata.MessageID)
+			return projectGroupPushMessageForPlatform(
+				message,
+				platform,
+				metadata.MessageID,
+				dispatch,
+			)
 		},
 	)
+	recordGroupMessageDispatch(groupMessageDispatchSourceContent, result)
 }
 
 func loadGroupContentPushEnabledFromEnv() bool {

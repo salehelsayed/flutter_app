@@ -23,6 +23,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
     show
         AccountMigrationReceiverStartResult,
         AccountMigrationReceiverStartFailureCode;
+import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_profile.dart';
 import 'package:flutter_app/debug/debug_e2e_composition_root.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/database/migrations/107_direct_notification_durability.dart';
@@ -527,9 +528,16 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // instead of running serially on the pre-runApp critical path.
     final shareIntentProbe = shareIntentService.captureInitialIntent();
     final appDocDirProbe = getApplicationDocumentsDirectory();
-    await Future.wait<Object?>([shareIntentProbe, appDocDirProbe]);
+    final armedAppDocDirProbe = appDocDirProbe.then((appDocDir) async {
+      await DebugE2ECompositionRoot.armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured(
+        documentsPath: appDocDir.path,
+        stage: GroupReactionNotificationIosSetupBootstrapStage.shareLaunch,
+      );
+      return appDocDir;
+    });
+    await Future.wait<Object?>([shareIntentProbe, armedAppDocDirProbe]);
     final initialShareIntent = await shareIntentProbe;
-    final appDocDir = await appDocDirProbe;
+    final appDocDir = await armedAppDocDirProbe;
     final isShareLaunch = initialShareIntent != null;
     final debugE2EComposition = DebugE2ECompositionRoot.tryCreate(
       stateDirectory: appDocDir,
@@ -595,6 +603,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       details: {'seeded': true},
     );
     StartupTiming.instance.mark('documents_dir_ready');
+    await DebugE2ECompositionRoot.armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured(
+      documentsPath: appDocDir.path,
+      stage: GroupReactionNotificationIosSetupBootstrapStage.database,
+    );
 
     // Initialize database based on platform
     if (isDesktop) {
@@ -843,6 +855,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       });
     }
     StartupTiming.instance.mark('database_ready');
+    await DebugE2ECompositionRoot.armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured(
+      documentsPath: appDocDir.path,
+      stage: GroupReactionNotificationIosSetupBootstrapStage.identityStore,
+    );
 
     // 3. Run one-time secrets migration (DB → secure storage)
     //    Must run BEFORE migration 005 so CHECK constraints don't reject
@@ -864,6 +880,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     await canonicalRuntimeBindingCoordinator
         ?.reconcileCurrentAccountRecoveryReadiness();
     StartupTiming.instance.mark('identity_store_ready');
+    await DebugE2ECompositionRoot.armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured(
+      documentsPath: appDocDir.path,
+      stage: GroupReactionNotificationIosSetupBootstrapStage.autoSetup,
+    );
 
     final groupExitDiagnosticRepository = GroupExitDiagnosticRepositoryImpl(
       dbAppendOutcome: (rows) => dbAppendGroupExitDiagnosticOutcome(db, rows),
@@ -5862,7 +5882,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     opaqueWakePlatformConsumerReadiness = OpaqueWakePlatformConsumerReadiness(
       admissionEnabled: kWakeOutcomeCoordinatorAdmissionEnabled,
       readAndroidConsumer: androidOpaqueWakeReadiness?.isConsumerReady,
-      readIosConsumer: iosNseInboxTransportProjection == null
+      readIosConsumer:
+          !isIosNseOpaqueInboxConsumerCompiledIn() ||
+              iosNseInboxTransportProjection == null
           ? null
           : () async {
               if (kIsWeb || !Platform.isIOS) return false;

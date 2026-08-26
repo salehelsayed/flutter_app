@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>mknoon — 1:1 Calls (UI/UX preview)</title>
+<style>
+  :root{
+    --green:#1ED760; --teal:#81E6D9; --teal2:#4ECDC4; --gold:#FFF1C0; --coral:#FF6B6B;
+    --ink:#EAF2F1; --muted:#8FA3A0; --glass:rgba(20,30,34,0.55); --glass-border:rgba(255,255,255,0.10);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;min-height:100%;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:#0a0f12;color:var(--ink);display:flex;flex-direction:column;align-items:center;gap:16px;
+    padding:26px 14px 48px;}
+  h1{font-size:19px;font-weight:800;letter-spacing:-0.3px;margin:0;}
+  .sub{font-size:12.5px;color:var(--muted);max-width:560px;text-align:center;line-height:1.5;margin:0;}
+  .sub b{color:var(--ink);font-weight:600;}
+  .grid{display:flex;flex-wrap:wrap;gap:26px;justify-content:center;max-width:1180px;}
+  .cell{display:flex;flex-direction:column;gap:10px;align-items:center;}
+  .cap{width:300px;font-size:11.5px;line-height:1.5;color:var(--muted);text-align:left;}
+  .cap b{color:var(--ink);font-weight:700;display:block;margin-bottom:2px;font-size:12px;}
+  .device{position:relative;width:300px;height:640px;border-radius:36px;overflow:hidden;flex:none;
+    box-shadow:0 24px 60px rgba(0,0,0,.55),0 0 0 8px #16191c,0 0 0 9px #2a2f33;
+    background:radial-gradient(120% 90% at 30% 10%,#163b40 0%,#0c1417 42%,#070b0d 100%);}
+  .device::before{content:"";position:absolute;width:260px;height:260px;left:-70px;top:80px;border-radius:50%;
+    filter:blur(55px);opacity:.45;pointer-events:none;
+    background:radial-gradient(circle,rgba(30,215,96,.25),transparent 70%);}
+  .device::after{content:"";position:absolute;width:240px;height:240px;right:-70px;bottom:100px;border-radius:50%;
+    filter:blur(55px);opacity:.45;pointer-events:none;
+    background:radial-gradient(circle,rgba(78,205,196,.22),transparent 70%);}
+  .screen{position:absolute;inset:0;display:flex;flex-direction:column;z-index:2;}
+  .status{display:flex;justify-content:space-between;align-items:center;padding:14px 20px 4px;font-size:11px;
+    font-weight:700;color:var(--ink);}
+  .status .bars{display:flex;gap:2.5px;align-items:flex-end;opacity:.8;}
+  .status .bars i{display:block;width:3px;background:var(--ink);border-radius:1px;}
+  .ic{width:20px;height:20px;fill:currentColor;flex:none;}
+  .ic.sm{width:16px;height:16px;}
+  .ic.lg{width:26px;height:26px;}
+
+  /* top bar (conversation) */
+  .topbar{display:flex;align-items:center;gap:9px;padding:8px 12px 10px;border-bottom:1px solid rgba(255,255,255,.06);}
+  .avatar{border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;color:#06110d;
+    background:linear-gradient(135deg,var(--teal2),var(--green));flex:none;}
+  .av34{width:34px;height:34px;font-size:14px;}
+  .av96{width:96px;height:96px;font-size:38px;}
+  .who{min-width:0;flex:1;}
+  .who .nm{font-size:14.5px;font-weight:700;line-height:1.1;}
+  .who .st{font-size:10.5px;color:var(--green);font-weight:600;}
+  .iconbtn{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;
+    border:1px solid rgba(30,215,96,.45);background:rgba(30,215,96,.13);color:var(--green);}
+  .chev{color:var(--muted);font-size:22px;font-weight:600;line-height:1;padding-bottom:2px;}
+
+  /* chat area */
+  .chat{flex:1;display:flex;flex-direction:column;gap:8px;padding:12px 12px;overflow:hidden;}
+  .bub{max-width:78%;padding:8px 11px;border-radius:15px;font-size:12.5px;line-height:1.4;}
+  .bub.them{align-self:flex-start;background:var(--glass);border:1px solid var(--glass-border);border-bottom-left-radius:5px;}
+  .bub.me{align-self:flex-end;background:rgba(30,215,96,.16);border:1px solid rgba(30,215,96,.35);border-bottom-right-radius:5px;}
+  .bub .t{display:block;font-size:9px;color:var(--muted);margin-top:3px;text-align:right;}
+  .sysrow{align-self:center;display:flex;align-items:center;gap:7px;background:var(--glass);
+    border:1px solid var(--glass-border);border-radius:13px;padding:7px 11px;font-size:11px;color:var(--muted);}
+  .sysrow.missed{border-color:rgba(255,107,107,.4);color:#ffb3b3;}
+  .sysrow .cb{border:1px solid rgba(30,215,96,.5);background:rgba(30,215,96,.14);color:var(--green);
+    border-radius:10px;padding:3px 9px;font-size:10.5px;font-weight:700;}
+  .composer{display:flex;align-items:center;gap:8px;padding:10px 12px 22px;}
+  .composer .input{flex:1;background:rgba(255,255,255,.07);border:1px solid var(--glass-border);border-radius:18px;
+    padding:9px 13px;font-size:12.5px;color:var(--muted);}
+  .composer .send{width:36px;height:36px;border-radius:50%;background:rgba(30,215,96,.16);
+    border:1px solid rgba(30,215,96,.5);display:flex;align-items:center;justify-content:center;color:var(--green);}
+
+  /* call screens */
+  .callbody{flex:1;display:flex;flex-direction:column;align-items:center;padding:10px 20px;}
+  .e2e{display:inline-flex;align-items:center;gap:5px;background:var(--glass);border:1px solid var(--glass-border);
+    border-radius:11px;padding:5px 10px;font-size:10px;color:var(--muted);font-weight:600;}
+  .e2e .lock{color:var(--green);}
+  .callcenter{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;}
+  .ringwrap{position:relative;width:96px;height:96px;}
+  .ringwrap .pulse{position:absolute;inset:-14px;border-radius:50%;border:2px solid rgba(30,215,96,.45);
+    animation:pulse 1.6s ease-out infinite;}
+  .ringwrap .pulse.p2{animation-delay:.55s;}
+  @keyframes pulse{0%{transform:scale(.85);opacity:.9}100%{transform:scale(1.35);opacity:0}}
+  .callname{font-size:21px;font-weight:800;letter-spacing:-0.3px;}
+  .callstate{font-size:12.5px;color:var(--muted);font-weight:600;}
+  .callstate.live{color:var(--green);}
+  .qdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px;}
+  .ctrls{display:flex;gap:18px;align-items:center;justify-content:center;padding:0 0 34px;}
+  .cbtn{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:9.5px;color:var(--muted);font-weight:600;}
+  .cbtn .b{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    background:var(--glass);border:1px solid var(--glass-border);color:var(--ink);backdrop-filter:blur(8px);}
+  .cbtn .b.on{background:rgba(234,242,241,.92);color:#0a0f12;border-color:transparent;}
+  .cbtn .b.end{background:var(--coral);border-color:transparent;color:#2b0707;box-shadow:0 8px 22px rgba(255,107,107,.35);}
+  .cbtn .b.accept{background:var(--green);border-color:transparent;color:#06110d;box-shadow:0 8px 22px rgba(30,215,96,.4);}
+  .cbtn .b.big{width:62px;height:62px;}
+  .cbtn .b.end .ic{transform:rotate(135deg);}
+
+  /* video call */
+  .vremote{position:absolute;inset:0;background:
+    radial-gradient(90% 70% at 60% 30%,#1d5049 0%,#0e2226 55%,#08131a 100%);}
+  .vremote .face{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);font-size:150px;font-weight:800;
+    color:rgba(234,242,241,.08);}
+  .voverlay{position:absolute;left:0;right:0;top:0;padding:44px 16px 20px;z-index:3;
+    background:linear-gradient(rgba(7,11,13,.75),transparent);display:flex;align-items:center;gap:8px;}
+  .voverlay .nm{font-size:14.5px;font-weight:700;}
+  .voverlay .tm{margin-left:auto;font-size:11.5px;color:var(--muted);font-weight:700;}
+  .pip{position:absolute;right:12px;top:96px;width:84px;height:120px;border-radius:14px;z-index:4;
+    background:linear-gradient(150deg,#2a6157,#123039);border:1px solid rgba(255,255,255,.25);
+    box-shadow:0 10px 26px rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center;
+    font-size:9.5px;color:rgba(234,242,241,.85);font-weight:700;padding-bottom:6px;}
+  .vctrls{position:absolute;left:0;right:0;bottom:0;z-index:4;padding:16px 0 30px;
+    background:linear-gradient(transparent,rgba(7,11,13,.8));}
+
+  /* home / return bar */
+  .brandbar{display:flex;align-items:center;gap:8px;padding:8px 14px 8px;}
+  .brand{font-size:19px;font-weight:800;letter-spacing:-0.3px;}
+  .badge{margin-left:auto;border:1px solid rgba(30,215,96,.4);background:rgba(30,215,96,.13);
+    color:var(--green);font-size:9.5px;font-weight:700;padding:4px 8px;border-radius:10px;}
+  .returnbar{margin:2px 10px 6px;display:flex;align-items:center;gap:8px;border-radius:13px;padding:9px 12px;
+    background:rgba(30,215,96,.16);border:1px solid rgba(30,215,96,.55);font-size:12px;font-weight:700;color:#bff4cf;}
+  .returnbar .tm{margin-left:auto;font-weight:800;color:var(--green);}
+  .incbanner{margin:2px 10px 6px;display:flex;align-items:center;gap:9px;border-radius:15px;padding:10px 12px;
+    background:var(--glass);border:1px solid var(--glass-border);backdrop-filter:blur(10px);}
+  .incbanner .meta{flex:1;min-width:0;}
+  .incbanner .nm{font-size:12.5px;font-weight:700;}
+  .incbanner .pv{font-size:10px;color:var(--muted);}
+  .rbtn{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;}
+  .rbtn.acc{background:var(--green);color:#06110d;}
+  .rbtn.dec{background:var(--coral);color:#2b0707;}
+  .rbtn.dec .ic{transform:rotate(135deg);}
+  .chatlist{flex:1;padding:2px 4px;}
+  .crow{display:flex;align-items:center;gap:11px;padding:9px 12px;}
+  .crow .meta{flex:1;min-width:0;}
+  .crow .nm{font-size:13.5px;font-weight:700;}
+  .crow .pv{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .crow .tt{font-size:9.5px;color:var(--muted);align-self:flex-start;padding-top:3px;}
+  .navbar{height:56px;display:flex;align-items:center;justify-content:space-around;
+    border-top:1px solid rgba(255,255,255,.07);background:rgba(8,12,14,.6);font-size:10px;}
+  .navbar div{color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:2px;font-weight:600;}
+  .navbar div.active{color:var(--green);}
+
+  /* notes */
+  .notes{max-width:1180px;width:100%;display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-top:6px;}
+  .note{flex:1 1 340px;max-width:560px;background:var(--glass);border:1px solid var(--glass-border);
+    border-radius:16px;padding:14px 16px;}
+  .note h2{margin:0 0 8px;font-size:13px;font-weight:800;color:var(--ink);}
+  .note ul{margin:0;padding-left:16px;display:flex;flex-direction:column;gap:5px;}
+  .note li{font-size:11.5px;color:var(--muted);line-height:1.5;}
+  .note li b{color:var(--ink);font-weight:700;}
+  .foot{font-size:10.5px;color:var(--muted);text-align:center;max-width:640px;line-height:1.6;}
+</style>
+</head>
+<body>
+
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="ic-call" viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.15 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></symbol>
+  <symbol id="ic-video" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></symbol>
+  <symbol id="ic-videooff" viewBox="0 0 24 24"><path d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.8l8 8H17v-2.5l4 4v-9zM3.3 2.5L2 3.8 4.2 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.7 21l1.3-1.3L3.3 2.5z"/></symbol>
+  <symbol id="ic-mic" viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></symbol>
+  <symbol id="ic-micoff" viewBox="0 0 24 24"><path d="M15 11V5a3 3 0 0 0-6 0v.8l6 6V11zm4 0h-2a5 5 0 0 1-.4 1.94l1.5 1.5A6.9 6.9 0 0 0 19 11zM4.3 3L3 4.3l6 6V11a3 3 0 0 0 4.2 2.75l1.55 1.55A5 5 0 0 1 7 11H5a7 7 0 0 0 6 6.92V21h2v-3.08c.86-.12 1.66-.42 2.37-.85L19.7 21 21 19.7 4.3 3z"/></symbol>
+  <symbol id="ic-vol" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06A7 7 0 0 1 14 18.7v2.07A9 9 0 0 0 14 3.23z"/></symbol>
+  <symbol id="ic-flip" viewBox="0 0 24 24"><path d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></symbol>
+  <symbol id="ic-send" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></symbol>
+</svg>
+
+<h1>mknoon — 1:1 audio &amp; video calls</h1>
+<p class="sub">UI/UX preview. Media runs over <b>WebRTC</b> (end-to-end encrypted, phone-to-phone), signaling rides the existing
+encrypted mknoon message lane, and the mknoun.xyz box adds a <b>TURN</b> fallback. 1:1 only — no media server needed.</p>
+
+<div class="grid">
+
+  <!-- 1: entry point -->
+  <div class="cell">
+    <div class="device"><div class="screen">
+      <div class="status"><span>9:41</span><span class="bars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i></span></div>
+      <div class="topbar">
+        <span class="chev">‹</span>
+        <div class="avatar av34">N</div>
+        <div class="who"><div class="nm">Nour</div><div class="st">Online</div></div>
+        <div class="iconbtn"><svg class="ic"><use href="#ic-call"/></svg></div>
+        <div class="iconbtn"><svg class="ic"><use href="#ic-video"/></svg></div>
+      </div>
+      <div class="chat">
+        <div class="bub them">Are you free to talk?<span class="t">14:00</span></div>
+        <div class="sysrow missed"><svg class="ic sm"><use href="#ic-call"/></svg> Missed voice call · 14:02 <span class="cb">Call back</span></div>
+        <div class="bub me">Sorry, was driving. Calling you now.<span class="t">14:31</span></div>
+        <div class="sysrow"><svg class="ic sm"><use href="#ic-video"/></svg> Video call · 14:32 · 9 min</div>
+        <div class="bub them">That was easier than typing 😄<span class="t">14:42</span></div>
+      </div>
+      <div class="composer"><div class="input">Message…</div><div class="send"><svg class="ic sm"><use href="#ic-send"/></svg></div></div>
+    </div></div>
+    <div class="cap"><b>1 · Entry point</b> Voice and video buttons live in the 1:1 top bar. Every call leaves a system row in
+    the thread (missed / duration). Missed calls get a one-tap <i>Call back</i>. Group chats get no call buttons.</div>
+  </div>
+
+  <!-- 2: outgoing -->
+  <div class="cell">
+    <div class="device"><div class="screen">
+      <div class="status"><span>9:41</span><span class="bars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i></span></div>
+      <div class="callbody">
+        <span class="e2e"><span class="lock">🔒</span> End-to-end encrypted</span>
+        <div class="callcenter">
+          <div class="ringwrap"><div class="pulse"></div><div class="pulse p2"></div><div class="avatar av96">N</div></div>
+          <div class="callname">Nour</div>
+          <div class="callstate">Ringing…</div>
+        </div>
+        <div class="ctrls">
+          <div class="cbtn"><span class="b"><svg class="ic"><use href="#ic-vol"/></svg></span>Speaker</div>
+          <div class="cbtn"><span class="b end big"><svg class="ic lg"><use href="#ic-call"/></svg></span>&nbsp;</div>
+          <div class="cbtn"><span class="b"><svg class="ic"><use href="#ic-micoff"/></svg></span>Mute</div>
+        </div>
+      </div>
+    </div></div>
+    <div class="cap"><b>2 · Outgoing call</b> Status walks through <i>Calling → Ringing → Connecting</i>. Cancel at any time.
+    No answer after 45 s ends the attempt and writes a missed call on Nour's side.</div>
+  </div>
+
+  <!-- 3: incoming -->
+  <div class="cell">
+    <div class="device"><div class="screen">
+      <div class="status"><span>9:41</span><span class="bars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i></span></div>
+      <div class="callbody">
+        <span class="e2e"><span class="lock">🔒</span> mknoon voice call</span>
+        <div class="callcenter">
+          <div class="ringwrap"><div class="pulse"></div><div class="pulse p2"></div><div class="avatar av96">N</div></div>
+          <div class="callname">Nour</div>
+          <div class="callstate">Incoming call…</div>
+        </div>
+        <div class="ctrls" style="gap:56px">
+          <div class="cbtn"><span class="b end big"><svg class="ic lg"><use href="#ic-call"/></svg></span>Decline</div>
+          <div class="cbtn"><span class="b accept big"><svg class="ic lg"><use href="#ic-call"/></svg></span>Accept</div>
+        </div>
+      </div>
+    </div></div>
+    <div class="cap"><b>3 · Incoming call (app open)</b> Full-screen in-app ring. When the app is closed or killed, the
+    <i>OS-native</i> call UI shows instead — CallKit on iOS (works on the lock screen), full-screen call notification on
+    Android — with the same Accept / Decline.</div>
+  </div>
+
+  <!-- 4: active audio -->
+  <div class="cell">
+    <div class="device"><div class="screen">
+      <div class="status"><span>9:41</span><span class="bars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i></span></div>
+      <div class="callbody">
+        <span class="e2e"><span class="lock">🔒</span> End-to-end encrypted</span>
+        <div class="callcenter">
+          <div class="avatar av96">N</div>
+          <div class="callname">Nour</div>
+          <div class="callstate live"><span class="qdot"></span>03:26</div>
+        </div>
+        <div class="ctrls">
+          <div class="cbtn"><span class="b on"><svg class="ic"><use href="#ic-micoff"/></svg></span>Muted</div>
+          <div class="cbtn"><span class="b"><svg class="ic"><use href="#ic-vol"/></svg></span>Speaker</div>
+          <div class="cbtn"><span class="b"><svg class="ic"><use href="#ic-video"/></svg></span>Video</div>
+          <div class="cbtn"><span class="b end"><svg class="ic"><use href="#ic-call"/></svg></span>End</div>
+        </div>
+      </div>
+    </div></div>
+    <div class="cap"><b>4 · Voice call</b> Timer starts when media connects, not when accepted. The green dot is connection
+    quality. <i>Video</i> upgrades the call mid-way (the other side must accept the camera turning on) — can ship after v1.</div>
+  </div>
+
+  <!-- 5: active video -->
+  <div class="cell">
+    <div class="device">
+      <div class="vremote"><div class="face">N</div></div>
+      <div class="voverlay"><div class="nm">Nour</div><div class="tm">12:08</div></div>
+      <div class="pip">You</div>
+      <div class="vctrls">
+        <div class="ctrls" style="padding-bottom:6px">
+          <div class="cbtn"><span class="b"><svg class="ic"><use href="#ic-mic"/></svg></span>Mute</div>
+          <div class="cbtn"><span class="b"><svg class="ic"><use href="#ic-videooff"/></svg></span>Camera</div>
+          <div class="cbtn"><span class="b"><svg class="ic"><use href="#ic-flip"/></svg></span>Flip</div>
+          <div class="cbtn"><span class="b end"><svg class="ic"><use href="#ic-call"/></svg></span>End</div>
+        </div>
+      </div>
+    </div>
+    <div class="cap"><b>5 · Video call</b> Remote video fills the screen; your preview is a draggable picture-in-picture.
+    Tapping the screen hides the controls. Turning the camera off drops back to the voice-call layout.</div>
+  </div>
+
+  <!-- 6: while navigating -->
+  <div class="cell">
+    <div class="device"><div class="screen">
+      <div class="status"><span>9:41</span><span class="bars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i></span></div>
+      <div class="brandbar"><span class="brand">mknoon</span><span class="badge">E2E</span></div>
+      <div class="returnbar"><svg class="ic sm"><use href="#ic-call"/></svg> Return to call — Nour <span class="tm">05:12</span></div>
+      <div class="incbanner">
+        <div class="avatar av34">S</div>
+        <div class="meta"><div class="nm">Samir</div><div class="pv">Incoming voice call…</div></div>
+        <div class="rbtn dec"><svg class="ic sm"><use href="#ic-call"/></svg></div>
+        <div class="rbtn acc"><svg class="ic sm"><use href="#ic-call"/></svg></div>
+      </div>
+      <div class="chatlist">
+        <div class="crow"><div class="avatar av34">N</div><div class="meta"><div class="nm">Nour</div><div class="pv">Voice call in progress</div></div><div class="tt">now</div></div>
+        <div class="crow"><div class="avatar av34" style="background:linear-gradient(135deg,#FFF1C0,#FF6B6B)">S</div><div class="meta"><div class="nm">Samir</div><div class="pv">📷 Photo</div></div><div class="tt">12:40</div></div>
+        <div class="crow"><div class="avatar av34" style="background:linear-gradient(135deg,#81E6D9,#1ED760)">L</div><div class="meta"><div class="nm">Lina</div><div class="pv">See you tomorrow 👋</div></div><div class="tt">09:15</div></div>
+      </div>
+      <div class="navbar"><div>Orbit</div><div class="active">Chats</div><div>Feed</div><div>Settings</div></div>
+    </div></div>
+    <div class="cap"><b>6 · Around the app</b> Leaving the call screen keeps the call alive; the green bar returns to it.
+    A second incoming call shows a banner — accepting it would end the current call, so the banner warns first (v1: auto-busy).</div>
+  </div>
+
+</div>
+
+<div class="notes">
+  <div class="note">
+    <h2>Edge cases the UI must answer</h2>
+    <ul>
+      <li><b>No answer (45 s):</b> caller sees "No answer"; callee gets a missed-call row + a normal notification.</li>
+      <li><b>Callee already on a call:</b> automatic "Busy" — no ring on the callee's side (v1).</li>
+      <li><b>Declined:</b> caller sees "Call declined"; a call row is written on both sides.</li>
+      <li><b>Network drops mid-call:</b> "Reconnecting…" overlay up to 30 s, then the call ends with "Connection lost".</li>
+      <li><b>Permission missing:</b> mic (and camera for video) is requested <i>before</i> dialing; no permission → no call.</li>
+      <li><b>Stale invite:</b> an invite older than 45 s (delayed push, relay replay) never rings — it becomes a missed call.</li>
+    </ul>
+  </div>
+  <div class="note">
+    <h2>Privacy story (shown in Settings / first call)</h2>
+    <ul>
+      <li>Calls are <b>end-to-end encrypted</b> (WebRTC DTLS-SRTP). Keys are exchanged over the already-encrypted mknoon message lane.</li>
+      <li>Audio and video flow <b>directly between the two phones</b> whenever the network allows.</li>
+      <li>If a direct path is impossible, the mknoun relay forwards the <i>encrypted</i> stream — it cannot read or hear anything.</li>
+      <li>No call content is ever stored. Only the call rows (time, duration, missed) exist, on the two devices.</li>
+    </ul>
+  </div>
+</div>
+
+<p class="foot">Media: WebRTC (Opus audio, VP8/H.264 video) via flutter_webrtc · Signaling: existing encrypted 1:1 message lane
+(offer / answer / ICE / end) · Wake-up when killed: APNs VoIP push + CallKit on iOS, high-priority FCM data push +
+full-screen notification on Android · NAT fallback: coturn (STUN/TURN) on mknoun.xyz.</p>
+
+</body>
+</html>

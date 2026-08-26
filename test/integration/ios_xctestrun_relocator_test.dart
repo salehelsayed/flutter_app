@@ -67,6 +67,44 @@ void main() {
     expect(Directory(target['TestBundlePath']! as String).existsSync(), isTrue);
   });
 
+  test(
+    'pins Runner app dependencies to the explicit UI target application',
+    () {
+      final root = Directory.systemTemp.createTempSync('xctestrun-ui-target-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final cachedProducts = Directory('${root.path}/cache/TestProducts')
+        ..createSync(recursive: true);
+      final setupApplication = Directory('${root.path}/setup/Runner.app')
+        ..createSync(recursive: true);
+
+      final relocation = relocateIosXctestrun(
+        plist: <String, Object?>{
+          'RunnerUITests': <String, Object?>{
+            'TestBundlePath': '__TESTHOST__/PlugIns/RunnerUITests.xctest',
+            'UITargetAppPath': '__TESTROOT__/Release-iphoneos/Runner.app',
+            'DependentProductPaths': <String>[
+              '__TESTROOT__/Release-iphoneos/Runner.app',
+              '__TESTROOT__/Release-iphoneos/Runner.app/'
+                  'PlugIns/RunnerTests.xctest',
+              '__TESTROOT__/Release-iphoneos/RunnerUITests-Runner.app',
+            ],
+          },
+        },
+        cachedProducts: cachedProducts,
+        cachedApplication: setupApplication,
+        uiEnvironment: const <String, String>{},
+      );
+
+      final target = relocation.plist['RunnerUITests']! as Map;
+      expect(target['UITargetAppPath'], setupApplication.path);
+      expect(target['DependentProductPaths'], <String>[
+        setupApplication.path,
+        '${setupApplication.path}/PlugIns/RunnerTests.xctest',
+        '${cachedProducts.path}/Release-iphoneos/RunnerUITests-Runner.app',
+      ]);
+    },
+  );
+
   test('plans only test-without-building against explicit cached target', () {
     final arguments = iosTestWithoutBuildingArguments(
       xctestrun: File('/cache/RunnerUITests.patched.xctestrun'),

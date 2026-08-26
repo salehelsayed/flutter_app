@@ -981,6 +981,112 @@ void main() {
   );
 
   test(
+    'TC-398-08 exact-profile receipt arms before the share join and advances through bootstrap milestones',
+    () {
+      final production = File(_productionPath).readAsStringSync();
+      final productionClass = _productionClass(production);
+      final normal = _method(
+        productionClass,
+        '_prepareNormalApplication',
+      ).body.toSource();
+      final debugRoot = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
+
+      const armMethod =
+          'armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured';
+      const shareStage =
+          'GroupReactionNotificationIosSetupBootstrapStage.shareLaunch';
+      const databaseStage =
+          'GroupReactionNotificationIosSetupBootstrapStage.database';
+      const identityStoreStage =
+          'GroupReactionNotificationIosSetupBootstrapStage.identityStore';
+      const autoSetupStage =
+          'GroupReactionNotificationIosSetupBootstrapStage.autoSetup';
+
+      final documentsProbe = normal.indexOf(
+        'final appDocDirProbe = getApplicationDocumentsDirectory()',
+      );
+      final shareArm = normal.indexOf(shareStage);
+      final probeJoin = normal.indexOf('await Future.wait<Object?>(');
+      final shareReady = normal.indexOf(
+        "StartupTiming.instance.mark('share_launch_probe_complete')",
+      );
+      final documentsReady = normal.indexOf(
+        "StartupTiming.instance.mark('documents_dir_ready')",
+      );
+      final databaseArm = normal.indexOf(databaseStage);
+      final databaseReady = normal.indexOf(
+        "StartupTiming.instance.mark('database_ready')",
+      );
+      final identityStoreArm = normal.indexOf(identityStoreStage);
+      final identityStoreReady = normal.indexOf(
+        "StartupTiming.instance.mark('identity_store_ready')",
+      );
+      final autoSetupArm = normal.indexOf(autoSetupStage);
+      final autoSetup = normal.indexOf('runSimulatorAutoSetupIfConfigured(');
+
+      expect(documentsProbe, greaterThanOrEqualTo(0));
+      expect(
+        documentsProbe,
+        lessThan(shareArm),
+        reason: 'the documents path must exist before its durable receipt arm',
+      );
+      expect(
+        shareArm,
+        lessThan(probeJoin),
+        reason:
+            'a stalled share-intent probe must leave a current-attempt receipt',
+      );
+      expect(probeJoin, lessThan(shareReady));
+      expect(shareReady, lessThan(documentsReady));
+      expect(documentsReady, lessThan(databaseArm));
+      expect(databaseArm, lessThan(databaseReady));
+      expect(databaseReady, lessThan(identityStoreArm));
+      expect(identityStoreArm, lessThan(identityStoreReady));
+      expect(identityStoreReady, lessThan(autoSetupArm));
+      expect(autoSetupArm, lessThan(autoSetup));
+
+      for (final stage in const <String>[
+        shareStage,
+        databaseStage,
+        identityStoreStage,
+        autoSetupStage,
+      ]) {
+        expect(
+          stage.allMatches(normal),
+          hasLength(1),
+          reason: 'each Plan-398 pre-entry boundary has one production owner',
+        );
+      }
+      expect(
+        '$armMethod('.allMatches(normal),
+        hasLength(4),
+        reason: 'ordinary bootstrap must not gain a second receipt owner',
+      );
+
+      final armDeclaration = debugRoot.indexOf('$armMethod({');
+      final setupDeclaration = debugRoot.indexOf(
+        'static Future<void> runSimulatorAutoSetupIfConfigured(',
+      );
+      expect(armDeclaration, greaterThanOrEqualTo(0));
+      expect(setupDeclaration, greaterThan(armDeclaration));
+      final armBody = debugRoot.substring(armDeclaration, setupDeclaration);
+      for (final exactGate in const <String>[
+        'resolveGroupReactionNotificationIosSetupReadinessAttempt(',
+        'if (setupReadinessAttempt == null) return;',
+        'writeGroupReactionNotificationIosSetupReadinessReceipt(',
+      ]) {
+        expect(
+          armBody,
+          contains(exactGate),
+          reason: 'pre-entry writer is missing exact gate $exactGate',
+        );
+      }
+    },
+  );
+
+  test(
     'DTR-14 production bootstrap owns each reachable phase exactly once',
     () {
       final production = File(_productionPath).readAsStringSync();

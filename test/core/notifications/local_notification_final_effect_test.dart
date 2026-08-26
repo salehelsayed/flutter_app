@@ -214,6 +214,608 @@ void main() {
   );
 
   test(
+    'established iOS remote group presentation becomes a durable terminal without local publication',
+    () async {
+      const conversationKey = 'group:remote-presentation-adoption';
+      final fixture = await _Fixture.open(
+        Directory('${root.path}/remote-presentation-adoption'),
+        conversationKey,
+      );
+      final identity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.group,
+        value: conversationKey,
+      )!;
+      var canonicalReads = 0;
+      final context = _context(
+        label: 'remote-presentation-adoption',
+        identity: identity,
+        producer: LocalNotificationProducerKind.groupMessage,
+        presentationOwner: LocalNotificationPresentationOwner.iosNse,
+        remotePresentationEstablished: true,
+        readFinal: () async {
+          canonicalReads += 1;
+          return DurableLocalNotificationCanonicalDisposition.eligible;
+        },
+      );
+      await fixture.initialize(context.currentOpaqueBinding);
+      final visibilityLog = <String>[];
+      var nativeEffects = 0;
+      var retireEffects = 0;
+      const generation = 'generation-remote-presentation-adoption';
+      final metadata = ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: context.eventCorrelation,
+        generation: generation,
+      );
+
+      final result = await fixture.registry.runFinalEffect(
+        context: context,
+        appVisibility: _MutableVisibility(
+          evaluation: _foregroundEvaluation(maySuppress: true),
+          log: visibilityLog,
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: metadata,
+        retireCurrent: () async => retireEffects += 1,
+        publishNative: () async => nativeEffects += 1,
+      );
+
+      expect(
+        result.disposition,
+        DurableLocalNotificationEffectDisposition.osPosted,
+      );
+      expect(result.currentNativeEntryAttempted, isFalse);
+      expect(result.receipt, isNotNull);
+      expect(canonicalReads, 1);
+      expect(visibilityLog, isEmpty);
+      expect(nativeEffects, 0);
+      expect(retireEffects, 0);
+      expect(
+        await fixture.registry.lookupContentMetadata(
+          conversationKey: conversationKey,
+          notificationId: fixture.notificationId,
+        ),
+        isNull,
+        reason: 'remote APNs custody must not impersonate local card content',
+      );
+      final record = await fixture.record(
+        binding: context.currentOpaqueBinding,
+        correlation: context.eventCorrelation,
+      );
+      expect(
+        record.presentationOwner,
+        LocalNotificationPresentationOwner.iosNse,
+      );
+      expect(
+        record.presentationState,
+        LocalNotificationPresentationState.osPosted,
+      );
+      expect(record.effectPhase, LocalNotificationEffectPhase.effectTerminal);
+      expect(record.attemptKind, isNull);
+
+      final settled = await fixture.registry.settleSqlReadyEffect(
+        currentOpaqueBinding: context.currentOpaqueBinding,
+        eventCorrelation: context.eventCorrelation,
+        expectedRevision: result.receipt!.recordRevision,
+      );
+      expect(settled?.effectPhase, LocalNotificationEffectPhase.settled);
+
+      final replay = await fixture.registry.runFinalEffect(
+        context: context,
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: visibilityLog,
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: metadata,
+        retireCurrent: () async => fail('terminal replay must not retire'),
+        publishNative: () async => fail('terminal replay must not publish'),
+      );
+      expect(
+        replay.disposition,
+        DurableLocalNotificationEffectDisposition.osPosted,
+      );
+      expect(replay.currentNativeEntryAttempted, isFalse);
+    },
+  );
+
+  test(
+    'persisted remote-adoption attempt cannot recover as a local notification',
+    () async {
+      const conversationKey = 'group:remote-adoption-recovery';
+      final fixture = await _Fixture.open(
+        Directory('${root.path}/remote-adoption-recovery'),
+        conversationKey,
+      );
+      final identity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.group,
+        value: conversationKey,
+      )!;
+      final interruptedContext = _context(
+        label: 'remote-adoption-recovery',
+        identity: identity,
+        producer: LocalNotificationProducerKind.groupMessage,
+        presentationOwner: LocalNotificationPresentationOwner.iosNse,
+        remotePresentationEstablished: true,
+        readFinal: () async =>
+            DurableLocalNotificationCanonicalDisposition.retryableUnknown,
+      );
+      await fixture.initialize(interruptedContext.currentOpaqueBinding);
+      const generation = 'generation-remote-adoption-recovery';
+      final metadata = ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: interruptedContext.eventCorrelation,
+        generation: generation,
+      );
+
+      final interrupted = await fixture.registry.runFinalEffect(
+        context: interruptedContext,
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: <String>[],
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: metadata,
+        retireCurrent: () async => fail('adoption must not cancel locally'),
+        publishNative: () async => fail('adoption must not publish locally'),
+      );
+      expect(
+        interrupted.disposition,
+        DurableLocalNotificationEffectDisposition.retryable,
+      );
+      final publishing = await fixture.record(
+        binding: interruptedContext.currentOpaqueBinding,
+        correlation: interruptedContext.eventCorrelation,
+      );
+      expect(publishing.effectPhase, LocalNotificationEffectPhase.publishing);
+      expect(
+        publishing.attemptKind,
+        LocalNotificationAttemptKind.adoptExistingRemote,
+      );
+
+      final recoveredContext = _context(
+        label: 'remote-adoption-recovery',
+        identity: identity,
+        producer: LocalNotificationProducerKind.groupMessage,
+        readFinal: () async =>
+            DurableLocalNotificationCanonicalDisposition.eligible,
+      );
+      final recoveryVisibilityLog = <String>[];
+      var nativeEffects = 0;
+      final recovered = await fixture.registry.runFinalEffect(
+        context: recoveredContext,
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: recoveryVisibilityLog,
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: metadata,
+        retireCurrent: () async => fail('recovery must not cancel locally'),
+        publishNative: () async => nativeEffects += 1,
+        publishNativeSilently: () async => nativeEffects += 1,
+      );
+
+      expect(
+        recovered.disposition,
+        DurableLocalNotificationEffectDisposition.osPosted,
+      );
+      expect(recovered.currentNativeEntryAttempted, isFalse);
+      expect(nativeEffects, 0);
+      expect(recoveryVisibilityLog, isEmpty);
+    },
+  );
+
+  test(
+    'established remote proof preserves an incumbent local PUBLISHING attempt',
+    () async {
+      const conversationKey = 'group:remote-proof-local-publishing';
+      final fixture = await _Fixture.open(
+        Directory('${root.path}/remote-proof-local-publishing'),
+        conversationKey,
+      );
+      final identity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.group,
+        value: conversationKey,
+      )!;
+      final localContext = _context(
+        label: 'remote-proof-local-publishing',
+        identity: identity,
+        producer: LocalNotificationProducerKind.groupMessage,
+        readFinal: () async =>
+            DurableLocalNotificationCanonicalDisposition.eligible,
+      );
+      await fixture.initialize(localContext.currentOpaqueBinding);
+      final metadata = ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: localContext.eventCorrelation,
+        generation: 'generation-remote-proof-local-publishing',
+      );
+
+      final interrupted = await fixture.registry.runFinalEffect(
+        context: localContext,
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: <String>[],
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: metadata,
+        retireCurrent: () async {},
+        publishNative: () async => throw StateError('native outcome unknown'),
+      );
+      expect(
+        interrupted.disposition,
+        DurableLocalNotificationEffectDisposition.ambiguous,
+      );
+      expect(interrupted.currentNativeEntryAttempted, isTrue);
+      final incumbent = await fixture.record(
+        binding: localContext.currentOpaqueBinding,
+        correlation: localContext.eventCorrelation,
+      );
+      expect(incumbent.effectPhase, LocalNotificationEffectPhase.publishing);
+      expect(incumbent.attemptKind, LocalNotificationAttemptKind.postOrUpdate);
+      final incumbentToken = incumbent.effectToken;
+
+      final remoteProofContext = localContext.withEstablishedRemotePresentation(
+        presentationOwner: LocalNotificationPresentationOwner.iosNse,
+      );
+      var retireAttempts = 0;
+      var remotePublications = 0;
+      final failedRetire = await fixture.registry.runFinalEffect(
+        context: remoteProofContext,
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: <String>[],
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: metadata,
+        retireCurrent: () async {
+          retireAttempts += 1;
+          throw StateError('local stable-id retirement outcome unknown');
+        },
+        publishNative: () async => remotePublications += 1,
+        publishNativeSilently: () async => remotePublications += 1,
+      );
+
+      expect(
+        failedRetire.disposition,
+        DurableLocalNotificationEffectDisposition.ambiguous,
+        reason:
+            'unknown local-card retirement must retain reconciliation custody',
+      );
+      expect(failedRetire.currentNativeEntryAttempted, isTrue);
+      expect(failedRetire.receipt, isNull);
+      expect(retireAttempts, 1);
+      expect(remotePublications, 0);
+      final armedReconciliation = await fixture.record(
+        binding: localContext.currentOpaqueBinding,
+        correlation: localContext.eventCorrelation,
+      );
+      expect(
+        armedReconciliation.effectPhase,
+        LocalNotificationEffectPhase.publishing,
+      );
+      expect(
+        armedReconciliation.attemptKind,
+        isNot(LocalNotificationAttemptKind.postOrUpdate),
+        reason: 'remote reconciliation needs its own persisted retry intent',
+      );
+      expect(armedReconciliation.attemptKind, isNotNull);
+      expect(armedReconciliation.effectToken, incumbentToken);
+
+      final recovered = await fixture.registry.runFinalEffect(
+        context: remoteProofContext,
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: <String>[],
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: metadata,
+        retireCurrent: () async => retireAttempts += 1,
+        publishNative: () async => remotePublications += 1,
+        publishNativeSilently: () async => remotePublications += 1,
+      );
+
+      expect(
+        recovered.disposition,
+        DurableLocalNotificationEffectDisposition.osPosted,
+      );
+      expect(recovered.currentNativeEntryAttempted, isFalse);
+      expect(recovered.currentNativeEntryWasSilentRepair, isFalse);
+      expect(recovered.receipt, isNotNull);
+      expect(retireAttempts, 2);
+      expect(remotePublications, 0);
+      final terminal = await fixture.record(
+        binding: localContext.currentOpaqueBinding,
+        correlation: localContext.eventCorrelation,
+      );
+      expect(terminal.effectPhase, LocalNotificationEffectPhase.effectTerminal);
+      expect(
+        terminal.presentationState,
+        LocalNotificationPresentationState.osPosted,
+      );
+      expect(terminal.attemptKind, isNull);
+      expect(terminal.effectToken, isNull);
+    },
+  );
+
+  test(
+    'SQL remote proof preserves relay PUBLISHING without a silent local repair',
+    () async {
+      const conversationKey = 'group:remote-proof-relay-publishing';
+      final fixture = await _Fixture.open(
+        Directory('${root.path}/remote-proof-relay-publishing'),
+        conversationKey,
+      );
+      final identity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.group,
+        value: conversationKey,
+      )!;
+      final relayContext = _context(
+        label: 'remote-proof-relay-publishing',
+        identity: identity,
+        producer: LocalNotificationProducerKind.groupMessage,
+        sourceCustody: LocalNotificationSourceCustody.relayVerifiedUnacked,
+        presentationOwner: LocalNotificationPresentationOwner.iosNse,
+        readFinal: () async =>
+            DurableLocalNotificationCanonicalDisposition.eligible,
+      );
+      await fixture.initialize(relayContext.currentOpaqueBinding);
+      final metadata = ConversationNotificationContentMetadata(
+        kind: ConversationNotificationContentKind.message,
+        eventIdentity: relayContext.eventCorrelation,
+        generation: 'generation-remote-proof-relay-publishing',
+      );
+
+      final interrupted = await fixture.registry.runFinalEffect(
+        context: relayContext,
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: <String>[],
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: metadata,
+        retireCurrent: () async {},
+        publishNative: () async => throw StateError('relay outcome unknown'),
+      );
+      expect(
+        interrupted.disposition,
+        DurableLocalNotificationEffectDisposition.ambiguous,
+      );
+      final incumbent = await fixture.record(
+        binding: relayContext.currentOpaqueBinding,
+        correlation: relayContext.eventCorrelation,
+      );
+      expect(incumbent.effectPhase, LocalNotificationEffectPhase.publishing);
+      expect(incumbent.attemptKind, LocalNotificationAttemptKind.postOrUpdate);
+
+      final sqlRemoteProofContext = DurableLocalNotificationEffectContext(
+        currentOpaqueBinding: relayContext.currentOpaqueBinding,
+        eventCorrelation: relayContext.eventCorrelation,
+        conversationDigest: relayContext.conversationDigest,
+        producerKind: relayContext.producerKind,
+        sourceCustody: LocalNotificationSourceCustody.sqlReady,
+        presentationOwner: LocalNotificationPresentationOwner.iosNse,
+        remotePresentationEstablished: true,
+        readFinalCanonicalDisposition:
+            relayContext.readFinalCanonicalDisposition,
+      );
+      var retireAttempts = 0;
+      var ordinaryPublications = 0;
+      var silentRepairs = 0;
+      final proofResult = await fixture.registry.runFinalEffect(
+        context: sqlRemoteProofContext,
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: <String>[],
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: metadata,
+        retireCurrent: () async => retireAttempts += 1,
+        publishNative: () async => ordinaryPublications += 1,
+        publishNativeSilently: () async => silentRepairs += 1,
+        activeNotificationIds: () async => <Object?>[fixture.notificationId],
+      );
+
+      expect(
+        proofResult.disposition,
+        DurableLocalNotificationEffectDisposition.osPosted,
+      );
+      expect(proofResult.currentNativeEntryAttempted, isFalse);
+      expect(proofResult.currentNativeEntryWasSilentRepair, isFalse);
+      expect(proofResult.receipt, isNotNull);
+      expect(
+        retireAttempts,
+        1,
+        reason: 'the possibly-posted canonical local ID must be retired once',
+      );
+      expect(ordinaryPublications, 0);
+      expect(
+        silentRepairs,
+        0,
+        reason: 'exact remote proof forbids a local silent repair publication',
+      );
+      final preserved = await fixture.record(
+        binding: relayContext.currentOpaqueBinding,
+        correlation: relayContext.eventCorrelation,
+      );
+      expect(preserved.sourceCustody, LocalNotificationSourceCustody.sqlReady);
+      expect(
+        preserved.effectPhase,
+        LocalNotificationEffectPhase.effectTerminal,
+      );
+      expect(
+        preserved.presentationState,
+        LocalNotificationPresentationState.osPosted,
+      );
+      expect(preserved.attemptKind, isNull);
+      expect(preserved.effectToken, isNull);
+      expect(
+        preserved.presentationOwner,
+        LocalNotificationPresentationOwner.iosNse,
+      );
+    },
+  );
+
+  test(
+    'established remote proof respects a fresh foreign CLAIMED horizon',
+    () async {
+      var now = DateTime.utc(2026, 8, 16, 12);
+      const conversationKey = 'group:remote-proof-fresh-claimed';
+      final directory = Directory('${root.path}/remote-proof-fresh-claimed');
+      final fixture = await _Fixture.open(
+        directory,
+        conversationKey,
+        nowUtc: () => now,
+      );
+      final identity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.group,
+        value: conversationKey,
+      )!;
+      final localContext = _context(
+        label: 'remote-proof-fresh-claimed',
+        identity: identity,
+        producer: LocalNotificationProducerKind.groupMessage,
+        readFinal: () async =>
+            DurableLocalNotificationCanonicalDisposition.eligible,
+      );
+      await fixture.initialize(localContext.currentOpaqueBinding);
+      const generation = 'generation-remote-proof-fresh-claimed';
+      final claimed = LocalNotificationRecordV1(
+        eventCorrelation: localContext.eventCorrelation,
+        conversationDigest: localContext.conversationDigest,
+        producerKind: localContext.producerKind,
+        sourceCustody: localContext.sourceCustody,
+        readState: LocalNotificationReadState.unread,
+        presentationState: LocalNotificationPresentationState.notEvaluated,
+        presentationOwner: localContext.presentationOwner,
+        notificationId: fixture.notificationId,
+        contentGeneration: generation,
+        lastEvaluatedLifecycle: LocalNotificationEvaluatedLifecycle.unknown,
+        visibilityRevision: null,
+        lifecycleGeneration: null,
+        effectPhase: LocalNotificationEffectPhase.claimed,
+        attemptKind: LocalNotificationAttemptKind.postOrUpdate,
+        effectToken: 'c' * 64,
+        revision: 2,
+        createdAtUtc: now.toIso8601String(),
+        updatedAtUtc: now.toIso8601String(),
+        terminalAtUtc: null,
+        settledAtUtc: null,
+      );
+      expect(claimed.isValid, isTrue);
+      expect(
+        await LocalNotificationLedgerStore(directory: directory).mutate(
+          currentOpaqueBinding: localContext.currentOpaqueBinding,
+          mutation: (current) => current.copyWith(
+            storeRevision: current.storeRevision + 1,
+            records: <String, LocalNotificationRecordV1>{
+              ...current.records,
+              localContext.eventCorrelation: claimed,
+            },
+          ),
+        ),
+        isNotNull,
+      );
+      now = now.add(const Duration(seconds: 59));
+      var nativeEffects = 0;
+
+      final result = await fixture.registry.runFinalEffect(
+        context: localContext.withEstablishedRemotePresentation(
+          presentationOwner: LocalNotificationPresentationOwner.iosNse,
+        ),
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: <String>[],
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: localContext.eventCorrelation,
+          generation: generation,
+        ),
+        retireCurrent: () async => nativeEffects += 1,
+        publishNative: () async => nativeEffects += 1,
+        publishNativeSilently: () async => nativeEffects += 1,
+      );
+
+      expect(
+        result.disposition,
+        DurableLocalNotificationEffectDisposition.retryable,
+      );
+      expect(result.receipt, isNull);
+      expect(result.currentNativeEntryAttempted, isFalse);
+      expect(nativeEffects, 0);
+      final preserved = await fixture.record(
+        binding: localContext.currentOpaqueBinding,
+        correlation: localContext.eventCorrelation,
+      );
+      expect(preserved.effectPhase, LocalNotificationEffectPhase.claimed);
+      expect(preserved.attemptKind, LocalNotificationAttemptKind.postOrUpdate);
+      expect(preserved.effectToken, 'c' * 64);
+      expect(preserved.revision, 2);
+
+      now = now.add(const Duration(seconds: 1));
+      final agedResult = await fixture.registry.runFinalEffect(
+        context: localContext.withEstablishedRemotePresentation(
+          presentationOwner: LocalNotificationPresentationOwner.iosNse,
+        ),
+        appVisibility: _MutableVisibility(
+          evaluation: _backgroundEvaluation(),
+          log: <String>[],
+        ),
+        conversationIdentity: identity,
+        conversationKey: conversationKey,
+        notificationId: fixture.notificationId,
+        metadata: ConversationNotificationContentMetadata(
+          kind: ConversationNotificationContentKind.message,
+          eventIdentity: localContext.eventCorrelation,
+          generation: generation,
+        ),
+        retireCurrent: () async => nativeEffects += 1,
+        publishNative: () async => nativeEffects += 1,
+        publishNativeSilently: () async => nativeEffects += 1,
+      );
+
+      expect(
+        agedResult.disposition,
+        DurableLocalNotificationEffectDisposition.osPosted,
+      );
+      expect(agedResult.currentNativeEntryAttempted, isFalse);
+      expect(nativeEffects, 0);
+      final adopted = await fixture.record(
+        binding: localContext.currentOpaqueBinding,
+        correlation: localContext.eventCorrelation,
+      );
+      expect(adopted.effectPhase, LocalNotificationEffectPhase.effectTerminal);
+      expect(
+        adopted.presentationOwner,
+        LocalNotificationPresentationOwner.iosNse,
+        reason: 'an aged pre-publication claim transfers to exact NSE proof',
+      );
+    },
+  );
+
+  test(
     'claim contention before native entry preserves the current conversation card',
     () async {
       final directory = Directory('${root.path}/claim-contention');
@@ -509,12 +1111,16 @@ void main() {
       readFinalCanonicalDisposition: () async =>
           DurableLocalNotificationCanonicalDisposition.eligible,
     );
+    DateTime reopenedNowUtc() => DateTime.utc(2026, 8, 16, 12, 1);
     final reopenedRegistry = DurableConversationNotificationIdRegistry(
       directory: directory,
       localNotificationEffectCoordinator:
           DurableLocalNotificationEffectCoordinator(
-            ledgerStore: LocalNotificationLedgerStore(directory: directory),
-            nowUtc: () => DateTime.utc(2026, 8, 16, 12, 1),
+            ledgerStore: LocalNotificationLedgerStore(
+              directory: directory,
+              nowUtc: reopenedNowUtc,
+            ),
+            nowUtc: reopenedNowUtc,
             effectTokenFactory: () => 'e' * 64,
           ),
     );
@@ -1575,10 +2181,14 @@ final class _Fixture {
     String conversationKey, {
     DateTime Function()? nowUtc,
   }) async {
-    final store = LocalNotificationLedgerStore(directory: directory);
+    final effectiveNowUtc = nowUtc ?? () => DateTime.utc(2026, 8, 16, 12);
+    final store = LocalNotificationLedgerStore(
+      directory: directory,
+      nowUtc: effectiveNowUtc,
+    );
     final coordinator = DurableLocalNotificationEffectCoordinator(
       ledgerStore: store,
-      nowUtc: nowUtc ?? () => DateTime.utc(2026, 8, 16, 12),
+      nowUtc: effectiveNowUtc,
       effectTokenFactory: () => 'd' * 64,
     );
     final registry = DurableConversationNotificationIdRegistry(
@@ -1658,6 +2268,7 @@ DurableLocalNotificationEffectContext _context({
       LocalNotificationSourceCustody.sqlReady,
   LocalNotificationPresentationOwner presentationOwner =
       LocalNotificationPresentationOwner.mainApp,
+  bool remotePresentationEstablished = false,
 }) => DurableLocalNotificationEffectContext(
   currentOpaqueBinding: 'v1:${_digest('binding-$label')}',
   eventCorrelation: _digest('event-$label'),
@@ -1665,6 +2276,7 @@ DurableLocalNotificationEffectContext _context({
   producerKind: producer,
   sourceCustody: sourceCustody,
   presentationOwner: presentationOwner,
+  remotePresentationEstablished: remotePresentationEstablished,
   readFinalCanonicalDisposition: readFinal,
 );
 

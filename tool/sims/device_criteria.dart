@@ -823,6 +823,8 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'validatorIds',
     'testCase',
     'recoveryTestCase',
+    'directSourceTestCase',
+    'retryTestCase',
     'scenario',
     'status',
     'platform',
@@ -833,18 +835,27 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'recoveryZeroBadgeObservedAt',
     'devices',
     'checks',
+    'passDiagnosticRetained',
+    'cleanupOwners',
     'runId',
     'nonce',
     'recoveryRunId',
     'recoveryNonce',
+    'retryRunId',
+    'retryNonce',
     'preparedApplicationSha256',
     'providerRequestSha256',
     'payloadProducerSha256',
     'apnsPayloadSha256',
     'recoveryApnsPayloadSha256',
+    'retryApnsPayloadSha256',
+    'retryCollapseIdentitySha256',
+    'retryRequestIdentifierSha256',
+    'retryProviderMessageIdSha256',
     'childBuildCount',
     'manualActionCount',
     'recoveryCounts',
+    'retryCounts',
     'evidenceSha256',
     'buildProfile',
     'stagingEnvironment',
@@ -853,6 +864,7 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'candidateRelaySha256',
     'automationReceiptSha256',
     'recoveryAutomationReceiptSha256',
+    'retryAutomationReceiptSha256',
   };
   final artifactKeys = artifact.keys.toSet();
   if (artifactKeys.difference(expectedKeys).isNotEmpty ||
@@ -869,6 +881,8 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
       ]) ||
       artifact['testCase'] != 'TC-B12' ||
       artifact['recoveryTestCase'] != 'TC-333-08' ||
+      artifact['directSourceTestCase'] != 'TC-396-03' ||
+      artifact['retryTestCase'] != 'TC-396-04' ||
       artifact['buildProfile'] != 'ios.device.production' ||
       artifact['stagingEnvironment'] != 'staging') {
     return const DeviceCriteriaResult.fail(
@@ -881,12 +895,36 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
       'iOS notification proof requires zero child builds and manual actions',
     );
   }
+  if (artifact['passDiagnosticRetained'] != true) {
+    return const DeviceCriteriaResult.fail(
+      'iOS notification proof must retain its pass-path causal diagnostic',
+    );
+  }
+  final cleanupOwners = artifact['cleanupOwners'];
+  if (cleanupOwners is! Map ||
+      !_hasExactStringKeys(cleanupOwners, const <String>{
+        'recovery',
+        'retry',
+      }) ||
+      !_hasExpectedSuccessfulIosNotificationCleanupOwners(
+        cleanupOwners['recovery'],
+      ) ||
+      !_hasExpectedSuccessfulIosNotificationCleanupOwners(
+        cleanupOwners['retry'],
+      )) {
+    return const DeviceCriteriaResult.fail(
+      'iOS notification proof must expose exact state-aware recovery and retry '
+      'cleanup owner outcomes',
+    );
+  }
 
   for (final key in const <String>[
     'runId',
     'nonce',
     'recoveryRunId',
     'recoveryNonce',
+    'retryRunId',
+    'retryNonce',
   ]) {
     if (!_isSafeNotificationRunToken(artifact[key])) {
       return DeviceCriteriaResult.fail(
@@ -912,9 +950,13 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'payloadProducerSha256',
     'apnsPayloadSha256',
     'recoveryApnsPayloadSha256',
+    'retryApnsPayloadSha256',
+    'retryCollapseIdentitySha256',
+    'retryRequestIdentifierSha256',
     'candidateRelaySha256',
     'automationReceiptSha256',
     'recoveryAutomationReceiptSha256',
+    'retryAutomationReceiptSha256',
   ]) {
     if (!_isLowercaseSha256(artifact[key])) {
       return DeviceCriteriaResult.fail(
@@ -922,11 +964,35 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
       );
     }
   }
-  if (artifact['runId'] == artifact['recoveryRunId'] ||
-      artifact['nonce'] == artifact['recoveryNonce']) {
+  final runBindings = <Object?>{
+    artifact['runId'],
+    artifact['recoveryRunId'],
+    artifact['retryRunId'],
+  };
+  final nonceBindings = <Object?>{
+    artifact['nonce'],
+    artifact['recoveryNonce'],
+    artifact['retryNonce'],
+  };
+  if (runBindings.length != 3 || nonceBindings.length != 3) {
     return const DeviceCriteriaResult.fail(
-      'iOS notification fast-path and recovery legs must have distinct '
-      'run and nonce bindings',
+      'iOS notification fast-path, recovery, and retry legs must have '
+      'distinct run and nonce bindings',
+    );
+  }
+  if (artifact['retryCollapseIdentitySha256'] !=
+      artifact['retryRequestIdentifierSha256']) {
+    return const DeviceCriteriaResult.fail(
+      'iOS notification retry request identity must match its bounded collapse identity',
+    );
+  }
+  final retryProviderIds = artifact['retryProviderMessageIdSha256'];
+  if (retryProviderIds is! List ||
+      retryProviderIds.length != 2 ||
+      retryProviderIds.toSet().length != 2 ||
+      retryProviderIds.any((value) => !_isLowercaseSha256(value))) {
+    return const DeviceCriteriaResult.fail(
+      'iOS notification retry requires two distinct hashed provider IDs',
     );
   }
 
@@ -991,6 +1057,26 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'deliveredBefore': 1,
     'deliveredWithSentinel': 2,
     'deliveredAfter': 1,
+    'matchingRemoteCount': 1,
+    'matchingLocalCount': 0,
+    'matchingUsefulProviderCount': 1,
+    'matchingSanitizedProviderCount': 0,
+    'matchingFlutterLocalCount': 0,
+    'matchingUnknownCount': 0,
+    'matchingTotalCount': 1,
+    'stableSampleCount': 3,
+    'stableSampleIntervalMilliseconds': 500,
+    'settleDelayMilliseconds': 3000,
+    'observationDeadlineMilliseconds': 8000,
+    'backgroundHandlerCount': 1,
+    'recentRemoteSuppressionCount': 1,
+    'matchingNotificationShownCount': 0,
+    'nseEnvelopeStagedCount': 1,
+    'nseDecryptOkCount': 1,
+    'nseAuthorizedHandoffCount': 1,
+    'nseActiveHandoffCount': 1,
+    'nseTrustedPassiveHandoffCount': 0,
+    'nseSanitizedHandoffCount': 0,
   };
   final recoveryCounts = artifact['recoveryCounts'];
   if (recoveryCounts is! Map ||
@@ -1007,6 +1093,42 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
       )) {
     return const DeviceCriteriaResult.fail(
       'iOS notification recovery counts must prove exact A/C retirement',
+    );
+  }
+
+  const exactRetryCounts = <String, int>{
+    'providerAcceptedCount': 2,
+    'matchingUsefulProviderCount': 1,
+    'matchingSanitizedProviderCount': 0,
+    'matchingFlutterLocalCount': 0,
+    'matchingUnknownCount': 0,
+    'matchingTotalCount': 1,
+    'stableSampleCount': 3,
+    'nseEnvelopeStagedCount': 2,
+    'nseDecryptOkCount': 2,
+    'nseAuthorizedHandoffCount': 2,
+    'nseActiveHandoffCount': 1,
+    'nseTrustedPassiveHandoffCount': 1,
+    'nseSanitizedHandoffCount': 0,
+    'backgroundHandlerCount': 2,
+    'recentRemoteSuppressionCount': 2,
+    'matchingNotificationShownCount': 0,
+  };
+  final retryCounts = artifact['retryCounts'];
+  if (retryCounts is! Map ||
+      retryCounts.keys
+          .toSet()
+          .difference(exactRetryCounts.keys.toSet())
+          .isNotEmpty ||
+      exactRetryCounts.keys
+          .toSet()
+          .difference(retryCounts.keys.toSet())
+          .isNotEmpty ||
+      exactRetryCounts.entries.any(
+        (entry) => retryCounts[entry.key] != entry.value,
+      )) {
+    return const DeviceCriteriaResult.fail(
+      'iOS notification retry counts must prove the complete two-send window',
     );
   }
 
@@ -1043,6 +1165,21 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'recoveryRecipientLog',
     'recoveryUiAutomationLog',
     'recoveryStagedEnvelope',
+    'recoveryCausalDiagnostic',
+    'retryPreparedApplication',
+    'retryPayloadProducer',
+    'retryApnsPayload',
+    'retryFirstProviderReceipt',
+    'retrySecondProviderReceipt',
+    'retryProviderCleanupReceipt',
+    'retryFirstInventoryReceipt',
+    'retrySecondInventoryReceipt',
+    'retryRelayLog',
+    'retryNseLog',
+    'retryRecipientLog',
+    'retryUiAutomationLog',
+    'retryCausalDiagnostic',
+    'retryStagedEnvelope',
   };
   final evidence = artifact['evidenceSha256'];
   if (evidence is! Map ||
@@ -1069,7 +1206,11 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
       evidence['recoveryPayloadProducer'] !=
           artifact['payloadProducerSha256'] ||
       evidence['recoveryApnsPayload'] !=
-          artifact['recoveryApnsPayloadSha256']) {
+          artifact['recoveryApnsPayloadSha256'] ||
+      evidence['retryPreparedApplication'] !=
+          artifact['preparedApplicationSha256'] ||
+      evidence['retryPayloadProducer'] != artifact['payloadProducerSha256'] ||
+      evidence['retryApnsPayload'] != artifact['retryApnsPayloadSha256']) {
     return const DeviceCriteriaResult.fail(
       'iOS notification proof generated-evidence digest chain is broken',
     );
@@ -1130,6 +1271,51 @@ const Set<String> _notificationSecretKeys = <String>{
   'authorization',
   'password',
 };
+
+const Set<String> _iosNotificationCleanupOwnerKeys = <String>{
+  'ui',
+  'sender',
+  'providerCleanup',
+  'providerRecovery',
+  'directInstall',
+};
+const Set<String> _iosNotificationRequiredCleanupOwners = <String>{
+  'ui',
+  'sender',
+  'providerCleanup',
+};
+const Set<String> _iosNotificationCleanupStateKeys = <String>{
+  'required',
+  'attempted',
+  'completed',
+};
+
+bool _hasExactStringKeys(Map value, Set<String> expected) {
+  if (value.keys.any((key) => key is! String)) return false;
+  final actual = value.keys.cast<String>().toSet();
+  return actual.length == expected.length && actual.containsAll(expected);
+}
+
+bool _hasExpectedSuccessfulIosNotificationCleanupOwners(Object? value) {
+  if (value is! Map ||
+      !_hasExactStringKeys(value, _iosNotificationCleanupOwnerKeys)) {
+    return false;
+  }
+  for (final owner in _iosNotificationCleanupOwnerKeys) {
+    final state = value[owner];
+    if (state is! Map ||
+        !_hasExactStringKeys(state, _iosNotificationCleanupStateKeys)) {
+      return false;
+    }
+    final required = _iosNotificationRequiredCleanupOwners.contains(owner);
+    if (state['required'] != required ||
+        state['attempted'] != required ||
+        state['completed'] != required) {
+      return false;
+    }
+  }
+  return true;
+}
 
 bool _isLowercaseSha256(Object? value) =>
     value is String && RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
@@ -1232,6 +1418,12 @@ const Map<String, Set<String>> _notificationRequirements =
         'exactOwnedNotificationRetired',
         'unrelatedSentinelSurvived',
         'zeroBadgePublished',
+        'directSourceUsefulProviderOnly',
+        'backgroundContenderSuppressed',
+        'samePayloadRetrySingleUsefulCard',
+        'retryReceiptsDistinctAndBound',
+        'hostFailureDiagnosticRetentionContract',
+        'hostUnconditionalCleanupContract',
       },
     };
 

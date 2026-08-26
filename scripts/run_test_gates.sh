@@ -660,6 +660,9 @@ readonly GROUP_TESTS=(
   "test/features/groups/integration/group_reaction_notification_pipeline_test.dart"
   "test/features/orbit/presentation/screens/orbit_group_unread_notification_wired_test.dart"
   "test/integration/group_reaction_notification_device_criteria_test.dart"
+  # Shared plan-adapter boundary for physical-device capture invocation,
+  # stale-evidence purging, and authoritative artifact lookup.
+  "test/integration/physical_device_capture_harness_test.dart"
   # 386: the reaction catalog lane's evidence substrate. The proof-support
   # slice pins the marker-bound send selection, the monotonic device-flow
   # accumulator, and the relay counter-delta primitives; the muted criteria

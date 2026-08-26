@@ -169,6 +169,40 @@ void main() {
       );
     });
 
+    test(
+      'AppDelegate emits notification settings as public unified-log fields',
+      () async {
+        final appDelegate = await File(
+          'ios/Runner/AppDelegate.swift',
+        ).readAsString();
+        final functionStart = appDelegate.indexOf(
+          'private func logNotificationSettings(context: String)',
+        );
+        final functionEnd = appDelegate.indexOf(
+          'private func configureIosNotificationOpenBridgeFromRootViewController()',
+          functionStart,
+        );
+
+        expect(functionStart, isNonNegative);
+        expect(functionEnd, greaterThan(functionStart));
+        final functionSource = appDelegate.substring(
+          functionStart,
+          functionEnd,
+        );
+
+        expect(functionSource, contains('os_log('));
+        expect(
+          functionSource,
+          contains(
+            '[PUSH_DIAG] native_notification_settings '
+            'context=%{public}@ authorization=%{public}@ '
+            'alert=%{public}@ badge=%{public}@ sound=%{public}@',
+          ),
+        );
+        expect(functionSource, isNot(contains('NSLog(')));
+      },
+    );
+
     test('production bootstrap keeps foreground presentation quiet', () async {
       final productionSource = await File(
         'lib/app/bootstrap/production_application_bootstrap.dart',

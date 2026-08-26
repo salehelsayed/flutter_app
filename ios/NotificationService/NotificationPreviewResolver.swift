@@ -5,8 +5,8 @@ import os.log
 import Security
 import UserNotifications
 
-#if canImport(GoMknoon)
-import GoMknoon
+#if canImport(GoMknoonNSE)
+import GoMknoonNSE
 #endif
 
 #if MKNOON_SIMS_GROUP_MEDIA_269
@@ -177,6 +177,8 @@ func nsePublicProofPayload(
 ) -> String? {
   let publicDetails: [String: String]
   switch event {
+  case "PUSH_NSE_DID_RECEIVE":
+    publicDetails = [:]
   case "PUSH_NSE_ENVELOPE_STAGED":
     if let success = details["success"],
        success == "true" || success == "false" {
@@ -185,14 +187,52 @@ func nsePublicProofPayload(
       publicDetails = ["success": "unknown"]
     }
   case "PUSH_NSE_CONTENT_HANDOFF":
-    if let authorized = details["authorized"],
-       authorized == "true" || authorized == "false" {
-      publicDetails = ["authorized": authorized]
+    let authorized = details["authorized"]
+    let presentation = details["presentation"]
+    if let authorized,
+       authorized == "true" || authorized == "false",
+       let presentation,
+       ["active", "trusted_passive", "sanitized"].contains(presentation) {
+      publicDetails = [
+        "authorized": authorized,
+        "presentation": presentation,
+      ]
     } else {
-      publicDetails = ["authorized": "unknown"]
+      publicDetails = [
+        "authorized": "unknown",
+        "presentation": "unknown",
+      ]
     }
   case "PUSH_NSE_DECRYPT_OK", "PUSH_NSE_DECRYPT_FAIL", "PUSH_NSE_TIMEOUT":
-    publicDetails = [:]
+    if event == "PUSH_NSE_DECRYPT_FAIL",
+       details["kind"] == "group" {
+      let failureClass: String?
+      switch details["reason"] {
+      case "missing_group_decrypt_input":
+        failureClass = "missing_input"
+      case "missing_group_key":
+        failureClass = "missing_key"
+      case "group_decrypt_error":
+        failureClass = "crypto"
+      case "invalid_group_plaintext", "group_plaintext_parity_mismatch":
+        failureClass = "plaintext"
+      case "group_recipient_policy_rejected", "group_sender_not_authorized",
+        "group_preview_unavailable_route_rejected":
+        failureClass = "policy"
+      default:
+        failureClass = nil
+      }
+      if let failureClass {
+        publicDetails = [
+          "failureClass": failureClass,
+          "kind": "group",
+        ]
+      } else {
+        publicDetails = [:]
+      }
+    } else {
+      publicDetails = [:]
+    }
   default:
     return nil
   }
@@ -295,6 +335,89 @@ func applyNotificationPreviewResult(
       content.interruptionLevel = .active
     }
   }
+}
+
+/// Applies the already-authenticated ordinary preview for Apple's exact
+/// same-request replacement without replaying an alert.
+@discardableResult
+func applyTrustedPassiveOrdinaryRetryPreviewResult(
+  _ preview: NotificationPreviewResult?,
+  to content: UNMutableNotificationContent
+) -> Bool {
+  guard let preview,
+        preview.recoveryIdentity?.kind == .ordinary,
+        preview.recoveryIdentity?.eventId != nil,
+        preview.markAsShown,
+        !preview.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        !preview.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    sanitizeNotificationContentForUnresolvedExpiry(content)
+    return false
+  }
+  applyNotificationPreviewResult(preview, to: content)
+  content.sound = nil
+  if #available(iOS 15.0, *) {
+    content.interruptionLevel = .passive
+  }
+  return true
+}
+
+/// Retains a trusted ordinary preview for a second Apple request only after the
+/// recovery store has proven that request is the exact same logical event.
+/// This is defense-in-depth, not notification filtering: on iOS 15+ passive
+/// interruption avoids an active top banner, while iOS 13–14 can only be made
+/// silent because `interruptionLevel` is unavailable.
+@discardableResult
+func applyTrustedPassiveOrdinaryDifferentRequestDuplicatePreviewResult(
+  _ preview: NotificationPreviewResult?,
+  disposition: IosNotificationRecoveryHandoffDisposition,
+  to content: UNMutableNotificationContent
+) -> Bool {
+  guard disposition == .duplicate,
+        let preview,
+        preview.didDecrypt,
+        !preview.suppress,
+        preview.markAsShown,
+        let identity = preview.recoveryIdentity,
+        identity.kind == .ordinary,
+        isExactRecoveryIdentityComponent(identity.accountPeerId),
+        isExactRecoveryIdentityComponent(identity.conversationId),
+        isExactRecoveryIdentityComponent(identity.eventId),
+        preview.threadIdentifier == identity.conversationId,
+        isTrustedOrdinaryReason(preview.reason, lane: identity.lane),
+        hasBoundedVisibleText(preview.title, maxBytes: 1_024),
+        hasBoundedVisibleText(preview.body, maxBytes: 4_096) else {
+    sanitizeNotificationContentForUnresolvedExpiry(content)
+    return false
+  }
+  applyNotificationPreviewResult(preview, to: content)
+  content.sound = nil
+  if #available(iOS 15.0, *) {
+    content.interruptionLevel = .passive
+  }
+  return true
+}
+
+private func isExactRecoveryIdentityComponent(_ value: String?) -> Bool {
+  guard let value else { return false }
+  let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  return !normalized.isEmpty && normalized == value && value.utf8.count <= 512
+}
+
+private func isTrustedOrdinaryReason(
+  _ reason: String,
+  lane: IosNotificationRecoveryLane
+) -> Bool {
+  switch lane {
+  case .direct:
+    return reason == "chat"
+  case .group:
+    return reason == "group"
+  }
+}
+
+private func hasBoundedVisibleText(_ value: String, maxBytes: Int) -> Bool {
+  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+    value.utf8.count <= maxBytes
 }
 
 /// Applies only a resolver result explicitly authorized for handoff. Every
@@ -1237,8 +1360,12 @@ final class NotificationPreviewResolver {
         ?? trimmedString(extra?["senderPeerId"])
         ?? trimmedString(extra?["senderId"])
         ?? trimmedString(extra?["sender_id"])
-      guard decodedGroupId == groupId,
-            decodedSenderPeerId == senderPeerId,
+      // Go's production GroupMessagePayload intentionally keeps group and
+      // sender authority in the signed outer envelope. Older payloads may
+      // repeat those fields inside the ciphertext, so validate them when
+      // present without requiring a duplication the serializer never emits.
+      guard decodedGroupId == nil || decodedGroupId == groupId,
+            decodedSenderPeerId == nil || decodedSenderPeerId == senderPeerId,
             messageId == nil || decodedMessageId == messageId else {
         return suppressOrdinary(
           title: group.name,
@@ -2968,7 +3095,7 @@ final class BridgePushDecryptor: PushPayloadDecrypting {
     ciphertext: String,
     nonce: String
   ) throws -> String {
-    #if canImport(GoMknoon)
+    #if canImport(GoMknoonNSE)
     let params = try jsonString([
       "secretKey": secretKey,
       "kem": kem,
@@ -2986,7 +3113,7 @@ final class BridgePushDecryptor: PushPayloadDecrypting {
     ciphertext: String,
     nonce: String
   ) throws -> String {
-    #if canImport(GoMknoon)
+    #if canImport(GoMknoonNSE)
     let params = try jsonString([
       "groupKey": groupKey,
       "ciphertext": ciphertext,

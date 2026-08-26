@@ -134,19 +134,30 @@ final class _Relocator {
     const marker = '/Build/Products/';
     final markerIndex = value.indexOf(marker);
     if (markerIndex >= 0) {
-      productPathsPatched += 1;
       final suffix = value.substring(markerIndex + marker.length);
-      return '${products.path}${Platform.pathSeparator}$suffix';
+      return _patchProductPath(suffix);
     }
     if (value == '__TESTROOT__') {
       productPathsPatched += 1;
       return products.path;
     }
     if (value.startsWith('__TESTROOT__/')) {
-      productPathsPatched += 1;
-      return '${products.path}${Platform.pathSeparator}'
-          '${value.substring('__TESTROOT__/'.length)}';
+      return _patchProductPath(value.substring('__TESTROOT__/'.length));
     }
     return value;
+  }
+
+  String _patchProductPath(String suffix) {
+    productPathsPatched += 1;
+    final applicationName = application.uri.pathSegments
+        .where((segment) => segment.isNotEmpty)
+        .last;
+    final applicationRoot = RegExp(
+      '^[^/]+/${RegExp.escape(applicationName)}(?=/|\$)',
+    ).firstMatch(suffix);
+    if (applicationRoot != null) {
+      return '${application.path}${suffix.substring(applicationRoot.end)}';
+    }
+    return '${products.path}${Platform.pathSeparator}$suffix';
   }
 }

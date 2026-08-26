@@ -33,6 +33,7 @@ class FlutterNotificationService
         MessageNotificationDurablePostHandoffReconciliation,
         ConversationNotificationCancellation,
         ConversationNotificationGenerationCancellation,
+        ConversationNotificationReadSettlement,
         ConversationNotificationGenerationReplacement {
   final bool _requestApplePermissions;
   final ConversationNotificationIdRegistryResolver
@@ -632,6 +633,10 @@ class FlutterNotificationService
       notificationId: notificationId,
     );
   }
+
+  @override
+  Future<void> settleConversationRead(String conversationKey) =>
+      _notifyConversationCleared(conversationKey);
 
   @override
   Future<bool> cancelConversationNotificationGeneration(

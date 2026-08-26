@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -388,6 +390,292 @@ void main() {
             reason:
                 'reconciliation runs only after the out-of-lock SQL observer',
           );
+        }
+      },
+    );
+
+    test(
+      'iOS group remote adoption retains proof until durable SQL handoff succeeds',
+      () async {
+        final previousPlatform = debugDefaultTargetPlatformOverride;
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        addTearDown(
+          () => debugDefaultTargetPlatformOverride = previousPlatform,
+        );
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.group,
+          value: 'group:remote-adoption-handoff',
+        )!;
+        final log = <String>[];
+        final service = _DurableBoundaryNotificationService(log: log);
+        final context = DurableLocalNotificationEffectContext(
+          currentOpaqueBinding: 'v1:${'a' * 64}',
+          eventCorrelation: 'b' * 64,
+          conversationDigest: identity.digest,
+          producerKind: LocalNotificationProducerKind.groupMessage,
+          sourceCustody: LocalNotificationSourceCustody.sqlReady,
+          presentationOwner: LocalNotificationPresentationOwner.mainApp,
+          readFinalCanonicalDisposition: () async =>
+              DurableLocalNotificationCanonicalDisposition.eligible,
+          onEffectTerminal: (_) async => throw StateError('SQL unavailable'),
+          terminalObserverCompletesSqlHandoff: true,
+        );
+        var probes = 0;
+        var legacyConsumes = 0;
+        var exactProofConsumes = 0;
+
+        final result = await subject.maybeShowNotification(
+          notificationService: service,
+          appVisibility: _SequencedVisibility(<AppVisibilityEvaluation>[
+            _exactForegroundEvaluation(maySuppress: false, revision: 1),
+          ]),
+          contactPeerId: 'group:remote-adoption-handoff',
+          routePayload: 'group:remote-adoption-handoff|message:remote-message',
+          senderUsername: 'Group',
+          messageText: 'Alice: hello',
+          messageId: 'remote-message',
+          notificationEventIdentity: context.eventCorrelation,
+          notificationEventType: 'group_message',
+          durableEffectContext: context,
+          probeRecentRemoteNotificationAnnouncement:
+              ({required String payload, String? messageId}) async {
+                probes += 1;
+                return true;
+              },
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required String payload, String? messageId}) async {
+                legacyConsumes += 1;
+                return true;
+              },
+          consumeEstablishedRemotePresentationProof: () async {
+            exactProofConsumes += 1;
+            return true;
+          },
+          backgroundDuplicateGuardDelay: Duration.zero,
+        );
+
+        expect(result, NotificationPresentationResult.osPosted);
+        expect(service.nativeCalls, 0);
+        expect(probes, 1);
+        expect(
+          exactProofConsumes,
+          0,
+          reason: 'failed SQL handoff must leave exact remote proof retryable',
+        );
+        expect(legacyConsumes, 0);
+      },
+    );
+
+    test(
+      'iOS durable direct remote presentation skips native publication and clears proof after SQL handoff',
+      () async {
+        final previousPlatform = debugDefaultTargetPlatformOverride;
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        addTearDown(
+          () => debugDefaultTargetPlatformOverride = previousPlatform,
+        );
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.direct,
+          value: 'peer-remote-adoption-handoff',
+        )!;
+        final log = <String>[];
+        final service = _DurableBoundaryNotificationService(log: log);
+        final visibility = _SequencedVisibility(<AppVisibilityEvaluation>[
+          _exactForegroundEvaluation(maySuppress: false, revision: 1),
+          _exactForegroundEvaluation(maySuppress: false, revision: 2),
+        ]);
+        final context = DurableLocalNotificationEffectContext(
+          currentOpaqueBinding: 'v1:${'a' * 64}',
+          eventCorrelation: 'c' * 64,
+          conversationDigest: identity.digest,
+          producerKind: LocalNotificationProducerKind.directMessage,
+          sourceCustody: LocalNotificationSourceCustody.sqlReady,
+          presentationOwner: LocalNotificationPresentationOwner.mainApp,
+          readFinalCanonicalDisposition: () async =>
+              DurableLocalNotificationCanonicalDisposition.eligible,
+          onEffectTerminal: (_) async => log.add('sql_handoff'),
+          terminalObserverCompletesSqlHandoff: true,
+        );
+        var probes = 0;
+        var legacyConsumes = 0;
+        var exactProofConsumes = 0;
+
+        final result = await subject.maybeShowNotification(
+          notificationService: service,
+          appVisibility: visibility,
+          contactPeerId: 'peer-remote-adoption-handoff',
+          routePayload: 'peer-remote-adoption-handoff',
+          senderUsername: 'Alice',
+          messageText: 'hello',
+          messageId: 'remote-direct-message',
+          notificationEventIdentity: context.eventCorrelation,
+          durableEffectContext: context,
+          probeRecentRemoteNotificationAnnouncement:
+              ({required String payload, String? messageId}) async {
+                probes += 1;
+                log.add('probe');
+                expect(payload, 'peer-remote-adoption-handoff');
+                expect(messageId, 'remote-direct-message');
+                return true;
+              },
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required String payload, String? messageId}) async {
+                legacyConsumes += 1;
+                log.add('legacy_consume');
+                expect(payload, 'peer-remote-adoption-handoff');
+                expect(messageId, 'remote-direct-message');
+                return true;
+              },
+          consumeEstablishedRemotePresentationProof: () async {
+            exactProofConsumes += 1;
+            log.add('exact_consume');
+            return true;
+          },
+          backgroundDuplicateGuardDelay: Duration.zero,
+        );
+
+        expect(result, NotificationPresentationResult.osPosted);
+        expect(service.nativeCalls, 0);
+        expect(visibility.evaluations, 1);
+        expect(probes, 1);
+        expect(legacyConsumes, 0);
+        expect(exactProofConsumes, 1);
+        expect(log, <String>[
+          'probe',
+          'service_return',
+          'sql_handoff',
+          'reconcile',
+          'exact_consume',
+        ]);
+      },
+    );
+
+    test(
+      'iOS durable remote adoption is limited to an exact direct message effect',
+      () async {
+        final previousPlatform = debugDefaultTargetPlatformOverride;
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        addTearDown(
+          () => debugDefaultTargetPlatformOverride = previousPlatform,
+        );
+        final cases =
+            <
+              ({
+                String name,
+                String contactPeerId,
+                String eventType,
+                LocalNotificationProducerKind producerKind,
+                String? messageId,
+                bool proofFound,
+                int expectedProbes,
+              })
+            >[
+              (
+                name: 'reaction',
+                contactPeerId: 'peer-remote-adoption-scope',
+                eventType: 'message_reaction',
+                producerKind: LocalNotificationProducerKind.directReaction,
+                messageId: 'reaction-1',
+                proofFound: true,
+                expectedProbes: 0,
+              ),
+              (
+                name: 'wrong producer',
+                contactPeerId: 'peer-remote-adoption-scope',
+                eventType: 'new_message',
+                producerKind: LocalNotificationProducerKind.groupMessage,
+                messageId: 'message-1',
+                proofFound: true,
+                expectedProbes: 0,
+              ),
+              (
+                name: 'missing message id',
+                contactPeerId: 'peer-remote-adoption-scope',
+                eventType: 'new_message',
+                producerKind: LocalNotificationProducerKind.directMessage,
+                messageId: null,
+                proofFound: true,
+                expectedProbes: 0,
+              ),
+              (
+                name: 'exact proof miss',
+                contactPeerId: 'peer-remote-adoption-scope',
+                eventType: 'new_message',
+                producerKind: LocalNotificationProducerKind.directMessage,
+                messageId: 'message-2',
+                proofFound: false,
+                expectedProbes: 1,
+              ),
+              (
+                name: 'group reaction producer',
+                contactPeerId: 'group:remote-adoption-scope',
+                eventType: 'group_message',
+                producerKind: LocalNotificationProducerKind.groupReaction,
+                messageId: 'group-message-1',
+                proofFound: true,
+                expectedProbes: 0,
+              ),
+            ];
+
+        for (final testCase in cases) {
+          final identity = AppVisibilityConversationIdentity.tryParse(
+            lane: testCase.contactPeerId.startsWith('group:')
+                ? AppVisibilityConversationLane.group
+                : AppVisibilityConversationLane.direct,
+            value: testCase.contactPeerId,
+          )!;
+          final log = <String>[];
+          final service = _DurableBoundaryNotificationService(log: log);
+          final visibility = _SequencedVisibility(<AppVisibilityEvaluation>[
+            _exactForegroundEvaluation(maySuppress: false, revision: 1),
+            _exactForegroundEvaluation(maySuppress: false, revision: 2),
+          ]);
+          final context = DurableLocalNotificationEffectContext(
+            currentOpaqueBinding: 'v1:${'a' * 64}',
+            eventCorrelation: 'd' * 64,
+            conversationDigest: identity.digest,
+            producerKind: testCase.producerKind,
+            sourceCustody: LocalNotificationSourceCustody.sqlReady,
+            presentationOwner: LocalNotificationPresentationOwner.mainApp,
+            readFinalCanonicalDisposition: () async =>
+                DurableLocalNotificationCanonicalDisposition.eligible,
+            onEffectTerminal: (_) async {},
+            terminalObserverCompletesSqlHandoff: true,
+          );
+          var probes = 0;
+          var exactProofConsumes = 0;
+
+          final result = await subject.maybeShowNotification(
+            notificationService: service,
+            appVisibility: visibility,
+            contactPeerId: testCase.contactPeerId,
+            routePayload: testCase.contactPeerId,
+            senderUsername: 'Alice',
+            messageText: testCase.name,
+            messageId: testCase.messageId,
+            notificationEventIdentity: context.eventCorrelation,
+            notificationEventType: testCase.eventType,
+            durableEffectContext: context,
+            probeRecentRemoteNotificationAnnouncement:
+                ({required String payload, String? messageId}) async {
+                  probes += 1;
+                  return testCase.proofFound;
+                },
+            consumeEstablishedRemotePresentationProof: () async {
+              exactProofConsumes += 1;
+              return true;
+            },
+            backgroundDuplicateGuardDelay: Duration.zero,
+          );
+
+          expect(
+            result,
+            NotificationPresentationResult.osPosted,
+            reason: testCase.name,
+          );
+          expect(service.nativeCalls, 1, reason: testCase.name);
+          expect(probes, testCase.expectedProbes, reason: testCase.name);
+          expect(exactProofConsumes, 0, reason: testCase.name);
         }
       },
     );
@@ -2210,7 +2498,7 @@ final class _DurableBoundaryNotificationService extends FakeNotificationService
     required AppVisibilityConversationIdentity conversationIdentity,
     required PublishNativeMessageNotificationAtDurableBarrier publishNative,
   }) async {
-    if (terminalReplay) {
+    if (terminalReplay || durableEffectContext.remotePresentationEstablished) {
       log.add('service_return');
       return DurableLocalNotificationEffectResult(
         disposition: DurableLocalNotificationEffectDisposition.osPosted,

@@ -58,6 +58,34 @@ void main() {
   );
 
   test(
+    'read commit reconciles the canonical badge without local notification metadata',
+    () async {
+      final cancellation = _GenerationCancellation(null);
+      final events = <String>[];
+      final projector = DirectNotificationReadProjector(
+        coordinator: DirectNotificationPresentationCoordinator(),
+        cancellation: cancellation,
+        commitRead: (peerId, metadata) async {
+          expect(peerId, 'peer-badge');
+          expect(metadata, isNull);
+          events.add('commit');
+          return const DirectConversationReadCommit(
+            markedCount: 4,
+            notificationAcknowledged: true,
+          );
+        },
+        onReadCommitted: (peerId) async {
+          events.add('reconcile:$peerId');
+        },
+      );
+
+      expect(await projector.markConversationRead(' peer-badge '), 4);
+      expect(cancellation.cancelAttempts, isEmpty);
+      expect(events, const <String>['commit', 'reconcile:peer-badge']);
+    },
+  );
+
+  test(
     'production read journals canonical state and peer reconciliation atomically',
     () async {
       final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);

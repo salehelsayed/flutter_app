@@ -86,6 +86,117 @@ func TestProducePayloadUsesRealV2EncryptionAndOmitsHandoffSecrets(t *testing.T) 
 	}
 }
 
+func TestTC396ProductionShapedBackgroundPayload(t *testing.T) {
+	keys, err := mcrypto.MlKemKeygen()
+	if err != nil {
+		t.Fatalf("MlKemKeygen: %v", err)
+	}
+	const receiverPeer = "12D3KooWLTW8pKJrjG3FQqY8Qp8Fs7yWqjWq6sXg88hn6Qoq9p2A"
+	request := providerRequest{
+		Schema:              requestSchema,
+		ExpectedTitle:       "New private message",
+		ExpectedBody:        "Open Mknoon to read it",
+		ExpectedMessageText: "TC-396 encrypted private message",
+		ReceiverDeviceID:    "00008150-001C3C6A3684401C",
+		PeerDeviceID:        receiverPeer,
+	}
+	handoff := receiverHandoff{
+		Schema:                    handoffSchema,
+		CaptureNonce:              "tc396-capture-nonce",
+		ReceiverDeviceID:          request.ReceiverDeviceID,
+		PeerDeviceID:              receiverPeer,
+		BundleID:                  bundleID,
+		APNSEnvironment:           "development",
+		APNSDeviceToken:           strings.Repeat("cd", 32),
+		MLKemPublicKey:            keys.PublicKey,
+		NotificationAuthorization: "authorized",
+		NotificationAlertSetting:  "enabled",
+		NotificationBadgeSetting:  "enabled",
+		CapturedAt:                time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	encoded, err := producePayload(
+		request,
+		handoff,
+		"tc396-production-shaped-run",
+		"tc396-production-shaped-nonce",
+	)
+	if err != nil {
+		t.Fatalf("producePayload: %v", err)
+	}
+	if len(encoded) > 4096 {
+		t.Fatalf("production-shaped payload has %d bytes, want <= 4096", len(encoded))
+	}
+	gcmMessageIDOccurrences := strings.Count(string(encoded), `"gcm.message_id"`)
+	for label, secret := range map[string]string{
+		"message plaintext":       request.ExpectedMessageText,
+		"APNs device token":       handoff.APNSDeviceToken,
+		"receiver public key":     handoff.MLKemPublicKey,
+		"receiver capture nonce":  handoff.CaptureNonce,
+		"producer run identifier": "tc396-production-shaped-run",
+		"producer nonce":          "tc396-production-shaped-nonce",
+	} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("production-shaped payload exposed %s", label)
+		}
+	}
+
+	var shape map[string]any
+	if err := json.Unmarshal(encoded, &shape); err != nil {
+		t.Fatalf("decode APNs shape: %v", err)
+	}
+	aps, ok := shape["aps"].(map[string]any)
+	if !ok {
+		t.Fatalf("aps = %#v, want object", shape["aps"])
+	}
+	if got := aps["mutable-content"]; got != float64(1) {
+		t.Fatalf("aps.mutable-content = %#v, want 1", got)
+	}
+	if got := aps["content-available"]; got != float64(1) {
+		t.Errorf("aps.content-available = %#v, want 1", got)
+	}
+	alert, ok := aps["alert"].(map[string]any)
+	if !ok || alert["title"] != request.ExpectedTitle || alert["body"] != request.ExpectedBody {
+		t.Fatalf("aps.alert = %#v, want exact bounded provider alert", aps["alert"])
+	}
+	gcmMessageID, ok := shape["gcm.message_id"].(string)
+	if gcmMessageIDOccurrences != 1 || !ok || strings.TrimSpace(gcmMessageID) != gcmMessageID ||
+		len([]byte(gcmMessageID)) == 0 || len([]byte(gcmMessageID)) > 64 {
+		t.Errorf(
+			"gcm.message_id occurrences=%d value=%#v, want exactly one nonempty trimmed <=64-byte synthetic ID",
+			gcmMessageIDOccurrences,
+			shape["gcm.message_id"],
+		)
+	}
+
+	var payload apnsPayload
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("decode typed APNs payload: %v", err)
+	}
+	if payload.FixtureSchema != payloadSchema || payload.Type != "new_message" ||
+		payload.MessageID == "" || payload.SenderID == "" || payload.Kem == "" ||
+		payload.Ciphertext == "" || payload.Nonce == "" {
+		t.Fatalf("production-shaped fixture lost encrypted rich route: %#v", payload)
+	}
+	plaintext, err := mcrypto.DecryptMessage(
+		keys.SecretKey,
+		payload.Kem,
+		payload.Ciphertext,
+		payload.Nonce,
+	)
+	if err != nil {
+		t.Fatalf("DecryptMessage: %v", err)
+	}
+	var inner innerMessage
+	if err := json.Unmarshal([]byte(plaintext), &inner); err != nil {
+		t.Fatalf("decode inner chat message: %v", err)
+	}
+	if inner.ID != payload.MessageID || inner.SenderPeerID != payload.SenderID ||
+		inner.Text != request.ExpectedMessageText || inner.SenderUsername != request.ExpectedTitle {
+		t.Fatalf("production-shaped inner/outer parity mismatch: %#v", inner)
+	}
+}
+
 func TestProducePayloadRequiresExactly32DecodedAPNSTokenBytes(t *testing.T) {
 	keys, err := mcrypto.MlKemKeygen()
 	if err != nil {

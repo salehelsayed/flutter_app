@@ -46,12 +46,13 @@ type controlPlaneStores struct {
 	GroupInbox *GroupInboxStore
 	Push       *PushService
 
-	RendezvousBackend      RendezvousBackend
-	InboxBackend           InboxBackend
-	GroupInboxBackend      GroupInboxBackend
-	PushTokenBackend       PushTokenBackend
-	WakeOutcomeBackend     *redisWakeOutcomeStore
-	WakeOutcomeCoordinator *wakeOutcomeCoordinator
+	RendezvousBackend                    RendezvousBackend
+	InboxBackend                         InboxBackend
+	GroupInboxBackend                    GroupInboxBackend
+	PushTokenBackend                     PushTokenBackend
+	GroupMessageDispatchAdmissionBackend groupMessageDispatchAdmissionBackend
+	WakeOutcomeBackend                   *redisWakeOutcomeStore
+	WakeOutcomeCoordinator               *wakeOutcomeCoordinator
 
 	closeFn func() error
 }
@@ -94,6 +95,10 @@ func newControlPlaneStores(
 	case backendKindMemory:
 		pushBackend := newMemoryPushTokenStore()
 		push := newPushServiceWithTokenBackend(ctx, serviceAccountPath, pushBackend)
+		groupMessageDispatchAdmissionBackend := newMemoryGroupMessageDispatchAdmissionBackend(
+			groupMessageDispatchAdmissionTTL,
+		)
+		push.groupMessageDispatchAdmission = groupMessageDispatchAdmissionBackend
 		rzBackend := newMemoryRendezvousBackend()
 		inboxBackend := newMemoryInboxBackendWithLimits(limits.MaxInboxMessagesPerPeer)
 		groupInboxBackend := newMemoryGroupInboxBackend(
@@ -109,12 +114,13 @@ func newControlPlaneStores(
 				push,
 				limits.MaxInboxMessagesPerPeer,
 			),
-			GroupInbox:        groupInbox,
-			Push:              push,
-			RendezvousBackend: rzBackend,
-			InboxBackend:      inboxBackend,
-			GroupInboxBackend: groupInboxBackend,
-			PushTokenBackend:  pushBackend,
+			GroupInbox:                           groupInbox,
+			Push:                                 push,
+			RendezvousBackend:                    rzBackend,
+			InboxBackend:                         inboxBackend,
+			GroupInboxBackend:                    groupInboxBackend,
+			PushTokenBackend:                     pushBackend,
+			GroupMessageDispatchAdmissionBackend: groupMessageDispatchAdmissionBackend,
 		}
 		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
 		stores.Inbox.SetWakeOutcomeAdmissionEnabled(false)
@@ -136,6 +142,12 @@ func newControlPlaneStores(
 			return nil, fmt.Errorf("validate push token vault state: %w", err)
 		}
 		push := newPushServiceWithTokenBackend(ctx, serviceAccountPath, pushBackend)
+		groupMessageDispatchAdmissionBackend := newRedisGroupMessageDispatchAdmissionBackend(
+			client,
+			cfg.RedisPrefix,
+			groupMessageDispatchAdmissionTTL,
+		)
+		push.groupMessageDispatchAdmission = groupMessageDispatchAdmissionBackend
 		rzBackend := newRedisRendezvousBackend(client, cfg.RedisPrefix)
 		inboxBackend := newRedisInboxBackend(
 			client,
@@ -153,6 +165,12 @@ func newControlPlaneStores(
 		groupInboxBackend.wakeOutcomes = wakeOutcomeBackend
 		groupInbox := NewGroupInboxStoreWithBackend(groupInboxBackend)
 		groupInbox.SetPush(push)
+		wakeOutcomeCoordinator := newWakeOutcomeCoordinator(
+			wakeOutcomeBackend,
+			push.sendWakeOutcomeThroughGateway,
+			time.Now,
+		)
+		wakeOutcomeCoordinator.sendGroup = push.sendGroupWakeOutcomeThroughGateway
 
 		stores := &controlPlaneStores{
 			Rendezvous: NewRendezvousStoreWithBackend(rzBackend),
@@ -161,19 +179,16 @@ func newControlPlaneStores(
 				push,
 				limits.MaxInboxMessagesPerPeer,
 			),
-			GroupInbox:         groupInbox,
-			Push:               push,
-			RendezvousBackend:  rzBackend,
-			InboxBackend:       inboxBackend,
-			GroupInboxBackend:  groupInboxBackend,
-			PushTokenBackend:   pushBackend,
-			WakeOutcomeBackend: wakeOutcomeBackend,
-			WakeOutcomeCoordinator: newWakeOutcomeCoordinator(
-				wakeOutcomeBackend,
-				push.sendWakeOutcomeThroughGateway,
-				time.Now,
-			),
-			closeFn: client.Close,
+			GroupInbox:                           groupInbox,
+			Push:                                 push,
+			RendezvousBackend:                    rzBackend,
+			InboxBackend:                         inboxBackend,
+			GroupInboxBackend:                    groupInboxBackend,
+			PushTokenBackend:                     pushBackend,
+			GroupMessageDispatchAdmissionBackend: groupMessageDispatchAdmissionBackend,
+			WakeOutcomeBackend:                   wakeOutcomeBackend,
+			WakeOutcomeCoordinator:               wakeOutcomeCoordinator,
+			closeFn:                              client.Close,
 		}
 		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
 		stores.Inbox.SetWakeOutcomeAdmissionEnabled(true)

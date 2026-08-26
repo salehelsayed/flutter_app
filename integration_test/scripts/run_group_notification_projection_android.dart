@@ -10,6 +10,7 @@ import '../support/android_app_state_guard.dart';
 import '_android_app_package.dart';
 import 'group_notification_projection_android_criteria.dart';
 import 'group_reaction_notification_device_criteria.dart';
+import 'physical_device_capture_harness.dart';
 
 const String _captureDriver =
     'integration_test/scripts/capture_group_reaction_notification_device.dart';
@@ -223,48 +224,37 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
   )..createSync(recursive: true);
   try {
     await stateGuard.prepareFreshInstalls(preparedArtifact);
-    late final Process child;
-    try {
-      child = await Process.start(
-        Platform.resolvedExecutable,
-        <String>[
-          'run',
-          File(_captureDriver).absolute.path,
-          '--scenario',
-          groupNotificationProjectionScenarioId,
-          '--sender',
-          assignedEmulator,
-          '--recipient',
-          assignedPhysical,
-          '--artifact-dir',
-          captureDirectory.path,
-          '--staging-manifest',
-          staging.path,
-          '--relay-target',
-          relayTarget!,
-          '--relay-key',
-          File(relayKeyPath).absolute.path,
-          '--service-account',
-          File(credentialPath).absolute.path,
-          '--prebuilt-android-apk',
-          preparedArtifact.path,
-          '--no-child-builds',
-          '--android-state-prepared',
-        ],
-        environment: environment,
-        includeParentEnvironment: true,
-      );
-    } on ProcessException catch (error) {
+    final adapter = PhysicalDeviceCaptureAdapter(
+      captureDriver: File(_captureDriver),
+      scenarioId: groupNotificationProjectionScenarioId,
+      senderDeviceId: assignedEmulator,
+      recipientDeviceId: assignedPhysical,
+      artifactDirectory: captureDirectory,
+      additionalArguments: <String>[
+        '--staging-manifest',
+        staging.path,
+        '--relay-target',
+        relayTarget!,
+        '--relay-key',
+        File(relayKeyPath).absolute.path,
+        '--service-account',
+        File(credentialPath).absolute.path,
+        '--prebuilt-android-apk',
+        preparedArtifact.path,
+        '--no-child-builds',
+        '--android-state-prepared',
+      ],
+      environment: environment,
+    );
+    final capture = await runPhysicalDeviceCapture(adapter);
+    if (capture.launchError case final error?) {
       return _blocked(
         'missingDriver',
         'Could not launch the group notification projection capture: '
             '${error.message}',
       );
     }
-    final stdoutDone = child.stdout.listen(stderr.add).asFuture<void>();
-    final stderrDone = child.stderr.listen(stderr.add).asFuture<void>();
-    final childExit = await child.exitCode;
-    await Future.wait<void>(<Future<void>>[stdoutDone, stderrDone]);
+    final childExit = capture.exitCode!;
     if (childExit != 0) {
       return childExit == 78
           ? _blocked(
@@ -282,9 +272,9 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
             );
     }
 
-    final artifact = File(
-      '${captureDirectory.path}${Platform.pathSeparator}'
-      '$groupNotificationProjectionScenarioId.json',
+    final artifact = physicalDeviceCaptureArtifact(
+      captureDirectory,
+      groupNotificationProjectionScenarioId,
     );
     final validation = await validateGroupNotificationProjectionAndroidArtifact(
       artifactFile: artifact,

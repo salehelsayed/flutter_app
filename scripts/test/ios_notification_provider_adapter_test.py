@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -107,16 +108,19 @@ class _Fixture:
             "relayAddresses": ["/dns4/relay.example/tcp/4001"],
         }
         self.payload = {
+            "fixture_schema": "mknoon.sims.ios-payload-private-fixture.v1",
             "aps": {
                 "alert": {
                     "title": self.request["expectedTitle"],
                     "body": self.request["expectedBody"],
                 },
                 "mutable-content": 1,
+                "content-available": 1,
             },
             "type": "new_message",
             "sender_id": SENDER_PEER,
             "message_id": "message-1",
+            "gcm.message_id": "ios-sims-bg-" + "c" * 32,
             "kem": "opaque-kem",
             "ciphertext": "opaque-ciphertext",
             "nonce": "opaque-nonce",
@@ -150,6 +154,7 @@ class _Fixture:
         self.relay_mode = root / "relay-mode"
         self.curl_mode = root / "curl-mode"
         self.curl_observation = root / "curl-observation.json"
+        self.curl_count = root / "curl-count.txt"
         self.xcrun_actions = root / "xcrun-actions.jsonl"
         self.profile_path = root / "development.mobileprovision"
         self.security_actions = root / "security-actions.jsonl"
@@ -350,16 +355,27 @@ observation={
  'payloadSha256':hashlib.sha256(payload).hexdigest(),
  'payloadBytes':len(payload),
 }
+count_path=pathlib.Path('""" + str(self.curl_count) + """')
+count=int(count_path.read_text())+1 if count_path.exists() else 1
+count_path.write_text(str(count))
+observation['submissionCount']=count
 pathlib.Path('""" + str(self.curl_observation) + """').write_text(json.dumps(observation))
 mode=pathlib.Path('""" + str(self.curl_mode) + """').read_text().strip()
 status, reason = {
  'success':('200',None),
+ 'missing-unique':('200',None),
+ 'malformed-unique':('200',None),
  'bad-token':('400','BadDeviceToken'),
  'bad-payload':('400','PayloadEmpty'),
  'service':('503','ServiceUnavailable'),
 }[mode]
+unique_id='00000000-0000-4000-8000-'+str(count).zfill(12)
+unique_header=(
+ '' if mode == 'missing-unique'
+ else 'apns-unique-id: '+('not a safe id' if mode == 'malformed-unique' else unique_id)+'\\n'
+)
 pathlib.Path(value('dump-header')).write_text(
- 'HTTP/2 '+status+'\\napns-id: provider-id-1\\n\\n')
+ 'HTTP/2 '+status+'\\napns-id: provider-id-'+str(count)+'\\n'+unique_header+'\\n')
 pathlib.Path(value('output')).write_text(
  '' if reason is None else json.dumps({'reason':reason}))
 print(status, end='')
@@ -493,6 +509,91 @@ for option in ('--json-output','--log-output'):
 
 
 class IosNotificationProviderAdapterTest(unittest.TestCase):
+    def test_recovery_removes_private_snapshot_after_prior_owner_failure(
+        self,
+    ) -> None:
+        adapter = _load_adapter()
+        with tempfile.TemporaryDirectory(prefix="ios-provider-owner-cleanup-") as raw:
+            state_directory = Path(raw)
+            snapshot = Path(raw) / "payload.snapshot.json"
+            _write_private(snapshot, '{"private":"payload"}\n')
+            first_provenance = state_directory / "apns-unique-id-first.private.json"
+            retry_provenance = state_directory / "apns-unique-id-retry.private.json"
+            _write_private(first_provenance, '{"private":"first"}\n')
+            _write_private(retry_provenance, '{"private":"retry"}\n')
+            context = mock.Mock(
+                state_directory=state_directory,
+                payload_snapshot=snapshot,
+                initial_lifecycle_state="accepted",
+            )
+
+            with (
+                mock.patch.object(adapter, "_write_lifecycle"),
+                mock.patch.object(
+                    adapter,
+                    "_run_fixture_driver",
+                    side_effect=adapter.AdapterFailure("fixture rollback failed"),
+                ),
+                mock.patch.object(adapter, "_cleanup_sender_projection"),
+                mock.patch.object(adapter, "_remove_candidate_application"),
+            ):
+                failures = adapter._perform_recovery(context)
+
+            self.assertEqual(failures, ["relay fixture rollback"])
+            self.assertFalse(snapshot.exists())
+            self.assertFalse(first_provenance.exists())
+            self.assertFalse(retry_provenance.exists())
+
+            with (
+                mock.patch.object(adapter, "_write_lifecycle"),
+                mock.patch.object(
+                    adapter,
+                    "_run_fixture_driver",
+                    side_effect=adapter.AdapterFailure("fixture rollback failed"),
+                ),
+                mock.patch.object(adapter, "_cleanup_sender_projection"),
+                mock.patch.object(adapter, "_remove_candidate_application"),
+                mock.patch.object(
+                    adapter,
+                    "_remove_payload_snapshot",
+                    side_effect=adapter.AdapterFailure("snapshot removal failed"),
+                ),
+            ):
+                failures = adapter._perform_recovery(context)
+
+            self.assertEqual(
+                failures,
+                ["relay fixture rollback", "payload snapshot removal"],
+            )
+
+    def test_provenance_cleanup_attempts_both_paths_and_redacts_failures(
+        self,
+    ) -> None:
+        adapter = _load_adapter()
+        context = mock.Mock()
+        private_value = "private-apns-unique-id-must-not-escape"
+        first = mock.Mock()
+        first.unlink.side_effect = OSError(private_value)
+        first.exists.return_value = True
+        retry = mock.Mock()
+        retry.exists.return_value = True
+
+        with mock.patch.object(
+            adapter,
+            "_apns_unique_id_provenance_path",
+            side_effect=lambda _context, stage: {
+                "first": first,
+                "retry": retry,
+            }[stage],
+        ):
+            with self.assertRaises(adapter.AdapterFailure) as raised:
+                adapter._remove_apns_unique_id_provenance(context)
+
+        first.unlink.assert_called_once_with(missing_ok=True)
+        retry.unlink.assert_called_once_with(missing_ok=True)
+        self.assertIn("2 file(s)", str(raised.exception))
+        self.assertNotIn(private_value, str(raised.exception))
+
     def test_local_probe_emits_stable_full_development_manifest_without_live_calls(
         self,
     ) -> None:
@@ -560,16 +661,19 @@ class IosNotificationProviderAdapterTest(unittest.TestCase):
             adapter.decode_json_object_bytes(duplicate, "payload")
 
         payload = {
+            "fixture_schema": "mknoon.sims.ios-payload-private-fixture.v1",
             "aps": {
                 "alert": {
                     "title": request["expectedTitle"],
                     "body": request["expectedBody"],
                 },
                 "mutable-content": 1,
+                "content-available": 1,
             },
             "type": "new_message",
             "sender_id": SENDER_PEER,
             "message_id": "message-1",
+            "gcm.message_id": "ios-sims-bg-" + "c" * 32,
             "kem": "opaque-kem",
             "ciphertext": "opaque-ciphertext",
             "nonce": "opaque-nonce",
@@ -579,6 +683,19 @@ class IosNotificationProviderAdapterTest(unittest.TestCase):
             adapter.validate_apns_payload(payload, request, raw),
             r"^[0-9a-f]{64}$",
         )
+        for mutation in (
+            lambda value: value.pop("fixture_schema"),
+            lambda value: value.__setitem__("gcm.message_id", "arbitrary-id"),
+            lambda value: value.__setitem__("unexpected", "opaque"),
+            lambda value: value["aps"].__setitem__("unexpected", "opaque"),
+            lambda value: value["aps"].__setitem__("mutable-content", 1.0),
+            lambda value: value["aps"].__setitem__("content-available", 1.0),
+        ):
+            malformed = json.loads(json.dumps(payload))
+            mutation(malformed)
+            malformed_raw = json.dumps(malformed, separators=(",", ":")).encode()
+            with self.assertRaises(adapter.AdapterBlocked):
+                adapter.validate_apns_payload(malformed, request, malformed_raw)
         payload["aps"]["thread-id"] = "prefix PRIVATE message TEXT suffix"
         raw = json.dumps(payload, separators=(",", ":")).encode()
         with self.assertRaises(adapter.AdapterBlocked):
@@ -652,8 +769,53 @@ time.sleep(30)
             receipt = json.loads(setup_output.read_text())
             payload_sha = hashlib.sha256(fixture.payload_path.read_bytes()).hexdigest()
             handoff_sha = hashlib.sha256(fixture.handoff_path.read_bytes()).hexdigest()
+            first_apns_id = "provider-id-1"
+            first_unique_id = "00000000-0000-4000-8000-000000000001"
             self.assertEqual(receipt["apnsPayloadSha256"], payload_sha)
             self.assertEqual(receipt["receiverHandoffSha256"], handoff_sha)
+            self.assertEqual(
+                receipt["providerMessageIdSha256"],
+                hashlib.sha256(first_apns_id.encode()).hexdigest(),
+            )
+            first_provenance = next(
+                fixture.capture.glob(
+                    ".ios-provider-state-*/apns-unique-id-first.private.json"
+                )
+            )
+            private_delivery = json.loads(first_provenance.read_text())
+            self.assertEqual(
+                set(private_delivery),
+                {
+                    "schema",
+                    "submissionStage",
+                    "runId",
+                    "nonce",
+                    "receiverDeviceIdSha256",
+                    "apnsPayloadSha256",
+                    "receiverHandoffSha256",
+                    "apnsIdSha256",
+                    "apnsUniqueId",
+                    "apnsUniqueIdSha256",
+                    "providerMessageIdSha256",
+                    "createdAt",
+                },
+            )
+            self.assertEqual(private_delivery["submissionStage"], "first")
+            self.assertEqual(private_delivery["apnsUniqueId"], first_unique_id)
+            self.assertEqual(
+                private_delivery["apnsIdSha256"],
+                hashlib.sha256(first_apns_id.encode()).hexdigest(),
+            )
+            self.assertEqual(
+                private_delivery["apnsUniqueIdSha256"],
+                hashlib.sha256(first_unique_id.encode()).hexdigest(),
+            )
+            self.assertEqual(
+                private_delivery["providerMessageIdSha256"],
+                receipt["providerMessageIdSha256"],
+            )
+            self.assertEqual(stat.S_IMODE(first_provenance.stat().st_mode), 0o600)
+            self.assertNotIn(first_unique_id, setup_output.read_text())
 
             observation = json.loads(fixture.curl_observation.read_text())
             self.assertEqual(
@@ -682,6 +844,7 @@ time.sleep(30)
             cleanup = fixture.run("cleanup", cleanup_output, setup_output)
             self.assertEqual(cleanup.returncode, 0, cleanup.stderr)
             self.assertEqual(json.loads(cleanup_output.read_text())["status"], "cleaned")
+            self.assertFalse(first_provenance.exists())
 
             first_recovery = fixture.capture / "provider_recovery_1.json"
             second_recovery = fixture.capture / "provider_recovery_2.json"
@@ -712,6 +875,132 @@ time.sleep(30)
             self.assertNotIn(fixture.handoff["mlKemPublicKey"], persisted)
             self.assertNotIn("opaque-ciphertext", persisted)
             self.assertNotIn("private message text", persisted)
+
+    def test_first_and_second_send_receipts_bind_identical_private_retry(self) -> None:
+        adapter = _load_adapter()
+        with tempfile.TemporaryDirectory(prefix="ios-provider-retry-") as raw:
+            fixture = _Fixture(Path(raw), adapter)
+            first_path = fixture.capture / "provider_first.json"
+            first_result = fixture.run("setup", first_path)
+            self.assertEqual(first_result.returncode, 0, first_result.stderr)
+            first = json.loads(first_path.read_text())
+            first_apns_id = "provider-id-1"
+            first_unique_id = "00000000-0000-4000-8000-000000000001"
+            first_provenance = next(
+                fixture.capture.glob(
+                    ".ios-provider-state-*/apns-unique-id-first.private.json"
+                )
+            )
+            self.assertEqual(
+                json.loads(first_provenance.read_text())["apnsUniqueId"],
+                first_unique_id,
+            )
+            snapshot = next(
+                fixture.capture.glob(".ios-provider-state-*/payload.snapshot.json")
+            )
+            payload_before = snapshot.read_bytes()
+
+            second_path = fixture.capture / "provider_retry.json"
+            second_result = fixture.run("retry", second_path, first_path)
+            self.assertEqual(second_result.returncode, 0, second_result.stderr)
+            second = json.loads(second_path.read_text())
+            second_apns_id = "provider-id-2"
+            second_unique_id = "00000000-0000-4000-8000-000000000002"
+            retry_provenance = next(
+                fixture.capture.glob(
+                    ".ios-provider-state-*/apns-unique-id-retry.private.json"
+                )
+            )
+            self.assertEqual(
+                json.loads(retry_provenance.read_text())["apnsUniqueId"],
+                second_unique_id,
+            )
+            self.assertEqual(
+                second["schema"],
+                "mknoon.sims.ios-payload-fast-path-provider-retry-receipt.v1",
+            )
+            self.assertEqual(second["providerAcceptedCount"], 2)
+            self.assertTrue(second["payloadBytesIdentical"])
+            self.assertTrue(second["collapseIdentityReused"])
+            self.assertTrue(second["providerIdsDistinct"])
+            self.assertEqual(
+                second["firstProviderMessageIdSha256"],
+                first["providerMessageIdSha256"],
+            )
+            self.assertEqual(
+                second["firstProviderMessageIdSha256"],
+                hashlib.sha256(first_apns_id.encode()).hexdigest(),
+            )
+            self.assertEqual(
+                second["secondProviderMessageIdSha256"],
+                hashlib.sha256(second_apns_id.encode()).hexdigest(),
+            )
+            self.assertNotEqual(
+                second["firstProviderMessageIdSha256"],
+                second["secondProviderMessageIdSha256"],
+            )
+            self.assertEqual(
+                second["collapseIdentitySha256"],
+                first["collapseIdentitySha256"],
+            )
+            self.assertEqual(
+                second["firstProviderReceiptSha256"],
+                hashlib.sha256(first_path.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(snapshot.read_bytes(), payload_before)
+            observation = json.loads(fixture.curl_observation.read_text())
+            self.assertEqual(observation["submissionCount"], 2)
+            collapse_headers = [
+                value
+                for value in observation["headers"]
+                if value.startswith("apns-collapse-id: ")
+            ]
+            self.assertEqual(len(collapse_headers), 1)
+            collapse_value = collapse_headers[0].split(": ", 1)[1]
+            self.assertLessEqual(len(collapse_value.encode()), 64)
+            self.assertEqual(
+                hashlib.sha256(collapse_value.encode()).hexdigest(),
+                second["collapseIdentitySha256"],
+            )
+
+            cleanup = fixture.run(
+                "cleanup",
+                fixture.capture / "cleanup.json",
+                first_path,
+            )
+            self.assertEqual(cleanup.returncode, 0, cleanup.stderr)
+            self.assertFalse(first_provenance.exists())
+            self.assertFalse(retry_provenance.exists())
+
+    def test_development_apns_unique_id_is_required_and_safe(self) -> None:
+        adapter = _load_adapter()
+        self.assertEqual(
+            adapter._secret_bearing_field(
+                {"APNS.Unique-ID": "private-apns-unique-id"}
+            ),
+            "$.APNS.Unique-ID",
+        )
+        for mode in ("missing-unique", "malformed-unique"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(
+                prefix="ios-provider-unique-id-"
+            ) as raw:
+                fixture = _Fixture(Path(raw), adapter)
+                fixture.curl_mode.write_text(mode)
+                result = fixture.run("setup", fixture.capture / "provider.json")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("APNs response omitted", result.stderr)
+                self.assertEqual(
+                    fixture.relay_actions.read_text().splitlines(),
+                    ["setup", "rollback"],
+                )
+                self.assertEqual(
+                    list(
+                        fixture.capture.glob(
+                            ".ios-provider-state-*/apns-unique-id-*.private.json"
+                        )
+                    ),
+                    [],
+                )
 
     def test_apns_and_fixture_timeout_failures_roll_back(self) -> None:
         adapter = _load_adapter()

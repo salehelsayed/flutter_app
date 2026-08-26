@@ -11,6 +11,7 @@ Usage: scripts/verify_gomobile_bindings.sh [all|ios|macos|android]
 Checks that the native platform wrappers only call methods exported by the
 generated gomobile artifacts:
 - ios/Runner/GoBridge.swift against ios/Runner/GoMknoon.xcframework
+- ios/NotificationService/*.swift against ios/Runner/GoMknoonNSE.xcframework
 - macos/Runner/MainFlutterWindow.swift against macos/Runner/GoMknoon.xcframework
 - android/app/src/main/kotlin/.../GoBridge.kt against android/app/libs/GoMknoon.aar
 EOF
@@ -18,6 +19,14 @@ EOF
 
 extract_swift_bridge_calls() {
   awk '!/^[[:space:]]*\/\//' "$repo_root/ios/Runner/GoBridge.swift" \
+    | perl -ne 'while (/(Bridge[A-Za-z0-9_]+)\s*\(/g) { print "$1\n" }' \
+    | sort -u
+}
+
+extract_nse_bridge_calls() {
+  awk '!/^[[:space:]]*\/\//' \
+    "$repo_root/ios/NotificationService/NotificationPreviewResolver.swift" \
+    "$repo_root/ios/NotificationService/NseMailboxWakeCoordinator.swift" \
     | perl -ne 'while (/(Bridge[A-Za-z0-9_]+)\s*\(/g) { print "$1\n" }' \
     | sort -u
 }
@@ -54,6 +63,8 @@ extract_android_aar_exports() {
 
 check_ios() {
   local header="$repo_root/ios/Runner/GoMknoon.xcframework/ios-arm64_x86_64-simulator/GoMknoon.framework/Headers/Bridge.objc.h"
+  local nse_header="$repo_root/ios/Runner/GoMknoonNSE.xcframework/ios-arm64_x86_64-simulator/GoMknoonNSE.framework/Headers/Bridge.objc.h"
+  local nse_device_binary="$repo_root/ios/Runner/GoMknoonNSE.xcframework/ios-arm64/GoMknoonNSE.framework/GoMknoonNSE"
   if [[ ! -f "$header" ]]; then
     echo "iOS binding check failed: missing header $header" >&2
     return 1
@@ -69,6 +80,32 @@ check_ios() {
   if [[ -n "$missing" ]]; then
     echo "iOS binding check failed: GoBridge.swift references missing GoMknoon exports:" >&2
     echo "$missing" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$nse_header" || ! -f "$nse_device_binary" ]]; then
+    echo "iOS NSE binding check failed: missing GoMknoonNSE artifact" >&2
+    return 1
+  fi
+  missing="$(
+    comm -23 \
+      <(extract_nse_bridge_calls) \
+      <(extract_ios_header_exports "$nse_header")
+  )"
+  if [[ -n "$missing" ]]; then
+    echo "iOS NSE binding check failed: notification service references missing exports:" >&2
+    echo "$missing" >&2
+    return 1
+  fi
+
+  # Apple constrains the entire notification extension to 24 MB. Reserve most
+  # of that for Swift/system runtime by keeping the generated Go device archive
+  # below 8 MiB. The bounded bridge is ~3.2 MiB; the app bridge is ~68 MiB.
+  local nse_max_device_bytes=$((8 * 1024 * 1024))
+  local nse_device_bytes
+  nse_device_bytes="$(stat -f '%z' "$nse_device_binary")"
+  if (( nse_device_bytes > nse_max_device_bytes )); then
+    echo "iOS NSE binding check failed: Go archive is ${nse_device_bytes} bytes (max ${nse_max_device_bytes})" >&2
     return 1
   fi
 }

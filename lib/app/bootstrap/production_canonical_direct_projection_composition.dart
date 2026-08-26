@@ -178,12 +178,15 @@ buildProductionCanonicalDirectProjectionComposition(
   ProductionCanonicalDirectProjectionDependencies dependencies,
 ) {
   final coordinator = DirectNotificationPresentationCoordinator();
+  final notificationService = dependencies.notificationService;
   final generationCancellation =
-      dependencies.notificationService
-          as ConversationNotificationGenerationCancellation;
+      notificationService as ConversationNotificationGenerationCancellation;
   final generationReplacement =
-      dependencies.notificationService
-          as ConversationNotificationGenerationReplacement;
+      notificationService as ConversationNotificationGenerationReplacement;
+  final ConversationNotificationReadSettlement? readSettlement =
+      notificationService is ConversationNotificationReadSettlement
+      ? notificationService as ConversationNotificationReadSettlement
+      : null;
   final readProjector = DirectNotificationReadProjector(
     coordinator: coordinator,
     cancellation: generationCancellation,
@@ -193,6 +196,7 @@ buildProductionCanonicalDirectProjectionComposition(
           peerId: peerId,
           metadata: metadata,
         ),
+    onReadCommitted: readSettlement?.settleConversationRead,
   );
   final durableMessageMaterializations =
       <
@@ -337,9 +341,11 @@ buildProductionCanonicalDirectProjectionComposition(
     required NotificationPresentationResult presentation,
     required DirectNotificationDurableEffectAttempt? durableAttempt,
     required int sqlReadyRevision,
+    ConsumeDirectRemotePresentationProof? consumeRemotePresentationProof,
   }) {
     final authority = durableAttempt?.completedAuthority?.withSqlReadyRevision(
       sqlReadyRevision,
+      consumeRemotePresentationProof: consumeRemotePresentationProof,
     );
     if (durableAttempt != null &&
         presentation.isTerminal &&
@@ -1007,8 +1013,24 @@ buildProductionCanonicalDirectProjectionComposition(
       }
       return handoff;
     },
-    afterDurableSettlement: (_, authority) =>
-        notifyDirectDurablePostHandoff(authority.receipt),
+    afterDurableSettlement: (_, authority) async {
+      final consumeRemoteProof = authority.consumeRemotePresentationProof;
+      if (consumeRemoteProof != null) {
+        try {
+          await consumeRemoteProof();
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'NOTIFICATION_REMOTE_PRESENTATION_PROOF_CLEANUP_FAILED',
+            details: <String, Object?>{
+              'type': 'new_message',
+              'errorType': error.runtimeType.toString(),
+            },
+          );
+        }
+      }
+      await notifyDirectDurablePostHandoff(authority.receipt);
+    },
     enqueueReconciliation: (peerId) =>
         dbEnqueueDirectNotificationReconciliationOutbox(
           dependencies.database,
@@ -1092,6 +1114,8 @@ buildProductionCanonicalDirectProjectionComposition(
               message.hiddenAt != null ||
               message.privateMediaState.isTerminal;
           if (ineligible && durableAttempt == null) return null;
+          final attemptRemoteGate = recentRemoteNotificationGate;
+          ConsumeDirectRemotePresentationProof? consumeRemotePresentationProof;
           final presentation = await maybeShowNotification(
             notificationService: dependencies.notificationService,
             appVisibility: dependencies.appVisibility,
@@ -1121,24 +1145,39 @@ buildProductionCanonicalDirectProjectionComposition(
                   pendingNotificationOverlay:
                       dependencies.pendingNotificationOverlay,
                 ),
+            probeRecentRemoteNotificationAnnouncement:
+                ({required payload, String? messageId}) async {
+                  if (messageId == null) return false;
+                  final established = await attemptRemoteGate
+                      .hasRecentExactAnnouncement(
+                        payload: payload,
+                        messageId: messageId,
+                      );
+                  if (established) {
+                    consumeRemotePresentationProof = () =>
+                        attemptRemoteGate.consumeIfRecentExactAnnouncement(
+                          payload: payload,
+                          messageId: messageId,
+                        );
+                  }
+                  return established;
+                },
             consumeRecentRemoteNotificationAnnouncement:
                 ({required payload, String? messageId}) =>
-                    recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+                    attemptRemoteGate.consumeIfRecentAnnouncement(
                       payload: payload,
                       messageId: messageId,
                     ),
             markRecentRemoteNotificationAnnouncement:
-                ({required payload, String? messageId}) =>
-                    recentRemoteNotificationGate.markAnnouncement(
-                      payload: payload,
-                      messageId: messageId,
-                    ),
+                ({required payload, String? messageId}) => attemptRemoteGate
+                    .markAnnouncement(payload: payload, messageId: messageId),
             durableEffectContext: durableAttempt?.context,
           );
           return finishDirectNotificationProjection(
             presentation: presentation,
             durableAttempt: durableAttempt,
             sqlReadyRevision: terminalEntry.revision,
+            consumeRemotePresentationProof: consumeRemotePresentationProof,
           );
         case DirectNotificationDisplayOutboxKind.reaction:
           final target = await dependencies.messageRepository.getMessage(

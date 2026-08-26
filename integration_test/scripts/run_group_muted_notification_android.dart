@@ -10,6 +10,7 @@ import '../support/android_app_state_guard.dart';
 import '_android_app_package.dart';
 import 'group_muted_notification_android_criteria.dart';
 import 'group_reaction_notification_device_criteria.dart';
+import 'physical_device_capture_harness.dart';
 
 const String _captureDriver =
     'integration_test/scripts/capture_group_reaction_notification_device.dart';
@@ -290,40 +291,32 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
       // Fresh directory per run makes stale artifacts structurally impossible,
       // but both ids share it, so a prior id's failure artifact is purged
       // explicitly rather than being read as this id's verdict.
-      _purgeScenarioArtifacts(captureDirectory, scenarioId);
+      purgePhysicalDeviceCaptureArtifacts(captureDirectory, scenarioId);
 
-      late final Process child;
-      try {
-        child = await Process.start(
-          Platform.resolvedExecutable,
-          <String>[
-            'run',
-            File(_captureDriver).absolute.path,
-            '--scenario',
-            scenarioId,
-            '--sender',
-            assignedEmulator,
-            '--recipient',
-            assignedPhysical,
-            '--artifact-dir',
-            captureDirectory.path,
-            '--staging-manifest',
-            staging.path,
-            '--relay-target',
-            relayTarget!,
-            '--relay-key',
-            File(relayKeyPath).absolute.path,
-            '--service-account',
-            File(credentialPath).absolute.path,
-            '--prebuilt-android-apk',
-            preparedArtifact.path,
-            '--no-child-builds',
-            '--android-state-prepared',
-          ],
-          environment: environment,
-          includeParentEnvironment: true,
-        );
-      } on ProcessException catch (error) {
+      final adapter = PhysicalDeviceCaptureAdapter(
+        captureDriver: File(_captureDriver),
+        scenarioId: scenarioId,
+        senderDeviceId: assignedEmulator,
+        recipientDeviceId: assignedPhysical,
+        artifactDirectory: captureDirectory,
+        additionalArguments: <String>[
+          '--staging-manifest',
+          staging.path,
+          '--relay-target',
+          relayTarget!,
+          '--relay-key',
+          File(relayKeyPath).absolute.path,
+          '--service-account',
+          File(credentialPath).absolute.path,
+          '--prebuilt-android-apk',
+          preparedArtifact.path,
+          '--no-child-builds',
+          '--android-state-prepared',
+        ],
+        environment: environment,
+      );
+      final capture = await runPhysicalDeviceCapture(adapter);
+      if (capture.launchError case final error?) {
         return _blocked(
           'missingDriver',
           'Could not launch the muted-group capture for $scenarioId: '
@@ -332,10 +325,7 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
       }
       // Both child streams go to STDERR: the sims executor fails the harness
       // when more than one SIMS_RESULT_JSON marker appears anywhere on stdout.
-      final stdoutDone = child.stdout.listen(stderr.add).asFuture<void>();
-      final stderrDone = child.stderr.listen(stderr.add).asFuture<void>();
-      final childExit = await child.exitCode;
-      await Future.wait<void>(<Future<void>>[stdoutDone, stderrDone]);
+      final childExit = capture.exitCode!;
       if (childExit != 0) {
         return childExit == 78
             ? _blocked(
@@ -354,8 +344,9 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
               );
       }
 
-      final artifact = File(
-        '${captureDirectory.path}${Platform.pathSeparator}$scenarioId.json',
+      final artifact = physicalDeviceCaptureArtifact(
+        captureDirectory,
+        scenarioId,
       );
       final validation = await _validateScenarioArtifact(
         scenarioId: scenarioId,
@@ -429,24 +420,6 @@ Future<_AdapterResult> _run(Map<String, String> environment) async {
     return _passed(evidence);
   } finally {
     await stateGuard.restoreAll();
-  }
-}
-
-/// Removes both artifact names a prior capture of [scenarioId] can leave.
-///
-/// The capture driver publishes `<id>.json` on success and
-/// `<id>_capture_failure.json` on a typed failure; reading a stale one as this
-/// run's verdict is the failure mode this guards.
-void _purgeScenarioArtifacts(Directory directory, String scenarioId) {
-  for (final name in <String>[
-    '$scenarioId.json',
-    '${scenarioId}_capture_failure.json',
-  ]) {
-    final file = File('${directory.path}${Platform.pathSeparator}$name');
-    if (FileSystemEntity.typeSync(file.path, followLinks: false) ==
-        FileSystemEntityType.file) {
-      file.deleteSync();
-    }
   }
 }
 

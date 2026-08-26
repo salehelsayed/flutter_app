@@ -161,6 +161,16 @@ abstract interface class ConversationNotificationGenerationCancellation {
   );
 }
 
+/// Optional capability for settling native badge state after a canonical read.
+///
+/// A conversation can have unread state contributed by a remote APNs delivery
+/// even when this process has no local notification-generation metadata. Read
+/// projectors use this boundary after committing the database transaction so
+/// native state is reconciled from the canonical unread total.
+abstract interface class ConversationNotificationReadSettlement {
+  Future<void> settleConversationRead(String conversationKey);
+}
+
 /// Privacy-bounded content needed to rebuild one managed conversation card.
 ///
 /// Reconciliation deliberately bypasses event-tone claims: it refreshes an

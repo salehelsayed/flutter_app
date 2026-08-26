@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:background_push_crypto/background_push_crypto.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -197,7 +198,7 @@ void main() {
   );
 
   test(
-    'combined iOS group journey observes message then reaction without mutation',
+    'combined iOS group journey returns the canonical collapse-request hash only',
     () async {
       await database.insert('groups', <String, Object?>{
         'id': 'raw-plan397-group-id',
@@ -248,6 +249,21 @@ void main() {
       expect(messageResult['phase'], 'message');
       expect(messageObservation['phase'], 'message');
       expect(messageObservation['reactionIdSha256'], isNull);
+      final boundedCollapseIdentifier =
+          'group-message:${sha256.convert(utf8.encode('raw-plan397-message-id')).toString().substring(0, 48)}';
+      expect(
+        messageObservation['expectedCollapseIdentifierSha256'],
+        sha256.convert(utf8.encode(boundedCollapseIdentifier)).toString(),
+        reason: 'TC-398-06 expected collapse',
+      );
+      expect(
+        messageObservation.containsKey('expectedCollapseIdentifier'),
+        isFalse,
+      );
+      expect(
+        jsonEncode(messageObservation),
+        isNot(contains(boundedCollapseIdentifier)),
+      );
       expect(
         messageObservation['groupIdSha256'],
         matches(RegExp(r'^[0-9a-f]{64}$')),

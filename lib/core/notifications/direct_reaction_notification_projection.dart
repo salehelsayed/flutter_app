@@ -213,7 +213,12 @@ class DirectReactionNotificationProjection {
     }
     final replacement = <String, Map<String, Object?>>{};
     for (final contact in contacts) {
-      replacement[contact.peerId] = <String, Object?>{
+      final exactSimsDigest = _exactSimsFixtureDigest(contact);
+      if (exactSimsDigest != null &&
+          _simsCleanupTombstones[contact.peerId] == exactSimsDigest) {
+        continue;
+      }
+      final value = <String, Object?>{
         'username': contact.username.trim(),
         'blocked': contact.isBlocked,
         'archived': contact.isArchived,
@@ -221,6 +226,14 @@ class DirectReactionNotificationProjection {
           authorizedTransportsByContact[contact.peerId] ?? const <String>[],
         ),
       };
+      final simsDigest = _simsFixtureDigestForBackfill(
+        contact,
+        current.contacts[contact.peerId],
+      );
+      if (simsDigest != null) {
+        value[_simsFixtureDigestKey] = simsDigest;
+      }
+      replacement[contact.peerId] = value;
     }
     await _writeContacts(current.accountPeerId!, replacement);
     final readBack = await _readContactsDocument();

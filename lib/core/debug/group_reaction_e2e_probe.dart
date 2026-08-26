@@ -179,6 +179,14 @@ Future<String?> _hydrateStoredGroupKey(
 String _sha256Text(String value) =>
     sha256.convert(utf8.encode(value)).toString();
 
+String? _expectedGroupMessageCollapseIdentifierSha256(String? messageId) {
+  final canonicalMessageId = messageId?.trim() ?? '';
+  if (canonicalMessageId.isEmpty) return null;
+  final messageDigest = _sha256Text(canonicalMessageId);
+  final boundedIdentity = 'group-message:${messageDigest.substring(0, 48)}';
+  return _sha256Text(boundedIdentity);
+}
+
 Never _reject(String detail) =>
     throw StateError('Plan 257 group-reaction probe rejected: $detail');
 
@@ -314,6 +322,16 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
         };
       })
       .toList(growable: false);
+  final runOwnedMessageRows = combinedIosJourney && request.phase == 'message'
+      ? messages
+            .where((row) => row['text'] == request.firstMarker)
+            .toList(growable: false)
+      : const <Map<String, Object?>>[];
+  final expectedCollapseIdentifierSha256 = runOwnedMessageRows.length == 1
+      ? _expectedGroupMessageCollapseIdentifierSha256(
+          runOwnedMessageRows.single['id'] as String?,
+        )
+      : null;
 
   final canonicalBadgeState = await _observeCanonicalBadgeState(
     database,
@@ -353,6 +371,8 @@ Future<Map<String, Object?>> observeGroupReactionE2EState({
       'reactionIdSha256': matchingAddRows.length == 1
           ? _sha256Text(matchingAddRows.single['reaction_id'] as String)
           : null,
+    if (combinedIosJourney && request.phase == 'message')
+      'expectedCollapseIdentifierSha256': expectedCollapseIdentifierSha256,
     'canonicalBadgeState': canonicalBadgeState,
   };
 }
@@ -385,9 +405,7 @@ Future<Map<String, Object?>> _observeCanonicalBadgeState(
   }
 
   final groupIdentities = badgeState.identities
-      .where(
-        (identity) => identity.lane == CanonicalNotificationLane.group,
-      )
+      .where((identity) => identity.lane == CanonicalNotificationLane.group)
       .toList(growable: false);
   final observedGroupIdentities = groupId == null
       ? const <CanonicalNotificationIdentity>[]
@@ -403,9 +421,9 @@ Future<Map<String, Object?>> _observeCanonicalBadgeState(
     'observedGroupIdentityCount': observedGroupIdentities.length,
     'groupConversationIdSha256':
         (groupIdentities
-              .map((identity) => _sha256Text(identity.conversationId))
-              .toSet()
-              .toList(growable: false)
+            .map((identity) => _sha256Text(identity.conversationId))
+            .toSet()
+            .toList(growable: false)
           ..sort()),
   };
 }

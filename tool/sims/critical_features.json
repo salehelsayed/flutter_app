@@ -713,7 +713,7 @@
       "id": "notifications.ios_payload_fast_path",
       "owner": "notifications",
       "proofBoundary": "ios.apns-nse.notification-tap-and-exact-recovery",
-      "assertions": ["ios.apns_delivered", "ios.nse_app_group_staged", "ios.airplane_tap_visible", "ios.recovery_unique_badge_nil", "ios.absolute_badge_converged", "ios.exact_retirement_unrelated_survives"],
+      "assertions": ["ios.apns_delivered", "ios.nse_app_group_staged", "ios.airplane_tap_visible", "ios.recovery_unique_badge_nil", "ios.absolute_badge_converged", "ios.exact_retirement_unrelated_survives", "ios.direct_source_useful_provider_only", "ios.background_contender_suppressed", "ios.same_payload_retry_single_useful_card", "ios.retry_receipts_distinct_and_bound", "ios.host_failure_diagnostic_retention_contract", "ios.host_unconditional_cleanup_contract"],
       "lane": "reliability",
       "modes": ["major", "full"],
       "families": ["notifications", "1to1"],

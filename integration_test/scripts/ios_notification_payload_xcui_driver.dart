@@ -15,11 +15,112 @@ const String _receiverHandoffSchema =
     'mknoon.sims.ios-provider-receiver-handoff.v2';
 const String _providerRecoveryReceiptSchema =
     'mknoon.sims.ios-payload-fast-path-provider-recovery-receipt.v1';
+final RegExp _sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
 const int _apnsDeliveryWindowSeconds = 120;
 const int _nseTerminalMarkerGraceSeconds = 35;
 const Duration _nseObservationWindow = Duration(
   seconds: _apnsDeliveryWindowSeconds + _nseTerminalMarkerGraceSeconds,
 );
+const Set<String> _privateIosApnsPayloadKeys = <String>{
+  'fixture_schema',
+  'aps',
+  'type',
+  'sender_id',
+  'message_id',
+  'gcm.message_id',
+  'kem',
+  'ciphertext',
+  'nonce',
+};
+const Set<String> _privateIosApsKeys = <String>{
+  'alert',
+  'mutable-content',
+  'content-available',
+};
+const Set<String> _privateIosAlertKeys = <String>{'title', 'body'};
+final RegExp _privateIosPeerPattern = RegExp(
+  r'^(?:12D3KooW[1-9A-HJ-NP-Za-km-z]{44}|Qm[1-9A-HJ-NP-Za-km-z]{44})$',
+);
+final RegExp _privateIosGcmMessageIdPattern = RegExp(
+  r'^ios-sims-bg-[0-9a-f]{32}$',
+);
+
+bool _hasExactStringKeys(Map<dynamic, dynamic> value, Set<String> expected) {
+  final keys = value.keys;
+  if (keys.any((key) => key is! String)) return false;
+  final actual = keys.cast<String>().toSet();
+  return actual.difference(expected).isEmpty &&
+      expected.difference(actual).isEmpty;
+}
+
+bool _isExactIntegerOne(Object? value) => value is int && value == 1;
+
+bool isExactPrivateIosApnsPayload(
+  Map<String, Object?> payload, {
+  required String expectedTitle,
+  required String expectedBody,
+}) {
+  if (!_hasExactStringKeys(payload, _privateIosApnsPayloadKeys) ||
+      payload['fixture_schema'] !=
+          'mknoon.sims.ios-payload-private-fixture.v1' ||
+      payload['type'] != 'new_message') {
+    return false;
+  }
+  final sender = payload['sender_id'];
+  final gcmMessageId = payload['gcm.message_id'];
+  if (sender is! String ||
+      !_privateIosPeerPattern.hasMatch(sender) ||
+      gcmMessageId is! String ||
+      !_privateIosGcmMessageIdPattern.hasMatch(gcmMessageId)) {
+    return false;
+  }
+  for (final key in const <String>[
+    'message_id',
+    'kem',
+    'ciphertext',
+    'nonce',
+  ]) {
+    final value = payload[key];
+    if (value is! String || value.isEmpty) return false;
+  }
+  final aps = payload['aps'];
+  if (aps is! Map<dynamic, dynamic> ||
+      !_hasExactStringKeys(aps, _privateIosApsKeys) ||
+      !_isExactIntegerOne(aps['mutable-content']) ||
+      !_isExactIntegerOne(aps['content-available'])) {
+    return false;
+  }
+  final alert = aps['alert'];
+  return alert is Map<dynamic, dynamic> &&
+      _hasExactStringKeys(alert, _privateIosAlertKeys) &&
+      alert['title'] == expectedTitle &&
+      alert['body'] == expectedBody;
+}
+
+Future<List<Object>> attemptAllCleanupOwners(
+  Iterable<FutureOr<void> Function()> cleanupOwners,
+) async {
+  final failures = <Object>[];
+  for (final cleanupOwner in cleanupOwners) {
+    try {
+      await cleanupOwner();
+    } on Object catch (error) {
+      failures.add(error);
+    }
+  }
+  return failures;
+}
+
+bool shouldAttemptProviderRecoveryAfterCleanup({
+  required bool providerCleanupComplete,
+  required bool providerRecoveryComplete,
+  required bool receiverHandoffExists,
+  required bool apnsPayloadExists,
+}) =>
+    !providerCleanupComplete &&
+    !providerRecoveryComplete &&
+    receiverHandoffExists &&
+    apnsPayloadExists;
 
 bool devicectlResultAppsAreEmpty(String source) {
   final decoded = jsonDecode(source);
@@ -37,6 +138,28 @@ bool devicectlResultAppsAreEmpty(String source) {
   return apps.isEmpty;
 }
 
+Future<List<Object>> attemptDiagnosticCleanupAndPrivateDeletion({
+  required void Function() attemptDiagnosticRetention,
+  required Iterable<FutureOr<void> Function()> cleanupOwners,
+  required Iterable<FutureOr<void> Function()> privateDeletionOwners,
+}) async {
+  final failures = <Object>[];
+  try {
+    attemptDiagnosticRetention();
+  } on Object catch (error) {
+    failures.add(error);
+  }
+  failures.addAll(await attemptAllCleanupOwners(cleanupOwners));
+  for (final privateDeletionOwner in privateDeletionOwners) {
+    try {
+      await privateDeletionOwner();
+    } on Object catch (error) {
+      failures.add(error);
+    }
+  }
+  return failures;
+}
+
 Future<void> main(List<String> args) async {
   if (args.contains('--help')) {
     stdout.writeln(
@@ -46,7 +169,7 @@ Future<void> main(List<String> args) async {
       '--provider-driver <executable> --provider-request <json> '
       '--staging-manifest <json> --relay-target <target> '
       '--relay-key <file> --run-id <id> --nonce <nonce> '
-      '--phase fast-path|recovery --output <receipt.json> '
+      '--phase fast-path|recovery|retry --output <receipt.json> '
       '--capture-directory <directory>',
     );
     return;
@@ -153,9 +276,15 @@ final class _IosPayloadDriver {
   late final File _rawSyslog;
   late final File _providerReceiptFile;
   late final File _providerCleanupReceiptFile;
+  late final File _providerRetryReceiptFile;
   late final File _providerRecoveryReceiptFile;
-  late final File _receiverHandoffFile;
+  late final File _payloadReceiverHandoffFile;
+  late final File _deliveryReceiverHandoffFile;
   late final String _receiverHandoffNonce;
+  late final String _payloadReceiverPeerIdSha256;
+  late final String _payloadReceiverMlKemPublicKeySha256;
+  late final String _payloadReceiverNotificationAuthorization;
+  late final DateTime _payloadReceiverCapturedAt;
   late final File _apnsPayloadFile;
   late final String _apnsPayloadSha256;
   late final String _payloadProducerSha256;
@@ -163,14 +292,23 @@ final class _IosPayloadDriver {
   late final File _senderSeedReceiptFile;
   late final File _senderCleanupReceiptFile;
   late final File _notificationRecoveryReceiptFile;
+  late final File _notificationRetryFirstReceiptFile;
 
   Process? _syslogProcess;
   int? _syslogExitCode;
+  bool _uiCleanupAttempted = false;
   bool _uiCleanupComplete = false;
   bool _providerSetupComplete = false;
+  bool _providerCleanupAttempted = false;
   bool _providerCleanupComplete = false;
   bool _senderProjectionSeeded = false;
+  bool _senderProjectionCleanupAttempted = false;
   bool _senderProjectionCleaned = false;
+  bool _providerRecoveryAttempted = false;
+  bool _providerRecoveryComplete = false;
+  bool _directInstallCleanupAttempted = false;
+  bool _directInstallCleanupComplete = false;
+  bool _applicationInstalled = false;
   int _assertionsAttempted = 0;
   final List<File> _uiLogs = <File>[];
   final List<File> _sensitiveIntermediates = <File>[];
@@ -179,6 +317,9 @@ final class _IosPayloadDriver {
   Future<_DriverResult> run() async {
     if (options.phase == 'recovery') {
       return _runRecoveryPhase();
+    }
+    if (options.phase == 'retry') {
+      return _runRetryPhase();
     }
     await _preflight();
     _prepareCaptureFiles();
@@ -200,7 +341,10 @@ final class _IosPayloadDriver {
           _assertionsAttempted,
         );
       }
-      await _captureReceiverHandoff();
+      await _captureReceiverHandoff(
+        output: _payloadReceiverHandoffFile,
+        deliveryBinding: false,
+      );
       await _produceApnsPayload();
       await _runSenderProjection(action: 'seed-sender');
       final postSeedPrepare = await _runXcui(
@@ -214,6 +358,11 @@ final class _IosPayloadDriver {
           _assertionsAttempted,
         );
       }
+      await _captureReceiverHandoff(
+        output: _deliveryReceiverHandoffFile,
+        deliveryBinding: true,
+      );
+      await _backgroundFinalRegisteredReceiver('final-registered-background');
       final nseObservationBoundary = _captureSyslogObservationBoundary();
       final providerReceipt = await _runProviderSetup();
       _assertionsAttempted += 1;
@@ -227,6 +376,7 @@ final class _IosPayloadDriver {
       );
       _assertionsAttempted += 1;
 
+      _uiCleanupAttempted = true;
       final tap = await _runXcui(
         'testPayloadFastPathNotificationTap',
         'payload-tap',
@@ -468,58 +618,25 @@ final class _IosPayloadDriver {
       options.output.writeAsStringSync('${jsonEncode(receipt)}\n', flush: true);
       return _DriverResult.passed(_assertionsAttempted);
     } finally {
-      if (!_uiCleanupComplete) {
-        try {
-          await _runUiCleanup();
-        } on Object {
-          // The primary typed verdict is retained. A PASS path cannot reach
-          // this branch because cleanup is checked before receipt creation.
-        }
-      }
-      if (_providerSetupComplete && !_providerCleanupComplete) {
-        if (_senderProjectionSeeded && !_senderProjectionCleaned) {
-          try {
-            await _runSenderProjection(action: 'cleanup-sender');
-          } on Object {
-            // Provider recovery also owns an idempotent cleanup attempt before
-            // candidate-app removal.
-          }
-        }
-        try {
-          await _runProviderCleanup();
-        } on Object {
-          // Same rule as above: cleanup failure prevents PASS but never hides
-          // the earlier causal failure.
-        }
-      }
-      if (_senderProjectionSeeded && !_senderProjectionCleaned) {
-        try {
-          await _runSenderProjection(action: 'cleanup-sender');
-        } on Object {
-          // A typed primary failure is retained; provider rollback has the
-          // same cleanup seam before it removes the candidate app.
-        }
-      }
-      await _stopSyslog();
-      if (_rawSyslog.existsSync()) {
-        // Raw device logs are never durable proof; only the filtered,
-        // secret-scanned extracts survive a successful run.
-        _rawSyslog.deleteSync();
-      }
-      if (_receiverHandoffFile.existsSync()) {
-        _receiverHandoffFile.deleteSync();
-      }
-      for (final privateFile in <File>[
-        _apnsPayloadFile,
-        _senderSeedReceiptFile,
-        _senderCleanupReceiptFile,
-        ..._sensitiveIntermediates,
-      ]) {
-        if (privateFile.existsSync()) privateFile.deleteSync();
-      }
-      for (final resultBundle in _uiResultBundles) {
-        if (resultBundle.existsSync()) resultBundle.deleteSync(recursive: true);
-      }
+      final diagnostic = File(
+        '${options.captureDirectory.path}/direct-notification-diagnostic.redacted.json',
+      );
+      final finalizationFailures =
+          await attemptDiagnosticCleanupAndPrivateDeletion(
+            attemptDiagnosticRetention: () {
+              if (!options.output.existsSync() || !diagnostic.existsSync()) {
+                _writeCausalDiagnostic(
+                  status: options.output.existsSync() ? 'passed' : 'failed',
+                );
+              }
+            },
+            cleanupOwners: <FutureOr<void> Function()>[
+              _cleanupAllAcquiredState,
+              () => _stopSyslog(),
+            ],
+            privateDeletionOwners: _privateDeletionOwners(),
+          );
+      _throwFinalizationFailures(finalizationFailures);
     }
   }
 
@@ -544,6 +661,9 @@ final class _IosPayloadDriver {
     _providerCleanupReceiptFile = File(
       '${options.captureDirectory.path}/provider_cleanup_receipt.json',
     );
+    _providerRetryReceiptFile = File(
+      '${options.captureDirectory.path}/provider_retry_receipt.json',
+    );
     _providerRecoveryReceiptFile = File(
       '${options.captureDirectory.path}/provider_recovery_receipt.json',
     );
@@ -556,8 +676,12 @@ final class _IosPayloadDriver {
         )
         .toString();
     _receiverHandoffNonce = 'ios-handoff-${handoffBinding.substring(0, 32)}';
-    _receiverHandoffFile = File(
-      '${options.captureDirectory.path}/.ios-provider-handoff-'
+    _payloadReceiverHandoffFile = File(
+      '${options.captureDirectory.path}/.ios-provider-payload-handoff-'
+      '${handoffBinding.substring(0, 24)}.json',
+    );
+    _deliveryReceiverHandoffFile = File(
+      '${options.captureDirectory.path}/.ios-provider-delivery-handoff-'
       '${handoffBinding.substring(0, 24)}.json',
     );
     _apnsPayloadFile = File(
@@ -572,6 +696,9 @@ final class _IosPayloadDriver {
     );
     _notificationRecoveryReceiptFile = File(
       '${options.captureDirectory.path}/notification_recovery_receipt.json',
+    );
+    _notificationRetryFirstReceiptFile = File(
+      '${options.captureDirectory.path}/notification_retry_first_receipt.json',
     );
   }
 
@@ -594,7 +721,10 @@ final class _IosPayloadDriver {
           _assertionsAttempted,
         );
       }
-      await _captureReceiverHandoff();
+      await _captureReceiverHandoff(
+        output: _payloadReceiverHandoffFile,
+        deliveryBinding: false,
+      );
       await _produceApnsPayload();
       await _runSenderProjection(action: 'seed-sender');
       final postSeedPrepare = await _runXcui(
@@ -607,6 +737,14 @@ final class _IosPayloadDriver {
           _assertionsAttempted,
         );
       }
+
+      await _captureReceiverHandoff(
+        output: _deliveryReceiverHandoffFile,
+        deliveryBinding: true,
+      );
+      await _backgroundFinalRegisteredReceiver(
+        'recovery-final-registered-background',
+      );
 
       final nseBoundary = _captureSyslogObservationBoundary();
       final providerReceipt = await _runProviderSetup();
@@ -659,6 +797,7 @@ final class _IosPayloadDriver {
         recoveryReceipt['completedAt'],
         'notification recovery receipt completedAt',
       );
+      _uiCleanupAttempted = true;
       final verified = await _runXcui(
         'testVerifyPayloadNotificationRecoveryRetirement',
         'recovery-verify',
@@ -701,6 +840,31 @@ final class _IosPayloadDriver {
 
       await _stopSyslog(requireLiveCapture: true);
       final rawWindow = _rawSyslog.readAsStringSync();
+      final completeWindowCounts = _directWindowCounts(rawWindow, nseBoundary);
+      final causalDiagnostic = _writeCausalDiagnostic(
+        status: 'passed',
+        counts: completeWindowCounts,
+      );
+      if (completeWindowCounts.nseEnvelopeStaged != 1 ||
+          completeWindowCounts.nseDecryptOk != 1 ||
+          completeWindowCounts.nseAuthorizedHandoff != 1 ||
+          completeWindowCounts.nseActiveHandoff != 1 ||
+          completeWindowCounts.nseTrustedPassiveHandoff != 0 ||
+          completeWindowCounts.nseSanitizedHandoff != 0 ||
+          completeWindowCounts.backgroundHandler != 1 ||
+          completeWindowCounts.recentRemoteSuppression != 1 ||
+          completeWindowCounts.matchingNotificationShown != 0) {
+        _writeCausalDiagnostic(
+          status: 'failed_effect_or_nse_counts',
+          counts: completeWindowCounts,
+        );
+        throw _DriverFailure(
+          'The complete direct-notification window did not prove one active '
+          'NSE sequence, one background handler, one recent-remote '
+          'suppression, and zero matching local shows.',
+          _assertionsAttempted,
+        );
+      }
       await _runSenderProjection(action: 'cleanup-sender');
       final providerCleanup = await _runProviderCleanup();
       await _verifyCandidateApplicationRemoved();
@@ -739,6 +903,8 @@ final class _IosPayloadDriver {
         'apnsPayloadSha256': _apnsPayloadSha256,
         'childBuildCount': 0,
         'manualActionCount': 0,
+        'passDiagnosticRetained': causalDiagnostic.existsSync(),
+        'cleanupOwners': _cleanupOwnerEvidence(),
         'checks': <String, Object?>{
           'notificationPermissionAutomated': true,
           'badgePermissionEnabled': true,
@@ -762,6 +928,20 @@ final class _IosPayloadDriver {
               providerCleanup['appTestStateCleared'] == true &&
               providerCleanup['notificationStateCleared'] == true &&
               providerCleanup['relayFixtureCleared'] == true,
+          'sourceInventoryStable': recoveryReceipt['stableSampleCount'] == 3,
+          'directSourceUsefulProviderOnly':
+              recoveryReceipt['matchingUsefulProviderCount'] == 1 &&
+              recoveryReceipt['matchingSanitizedProviderCount'] == 0 &&
+              recoveryReceipt['matchingFlutterLocalCount'] == 0 &&
+              recoveryReceipt['matchingUnknownCount'] == 0,
+          'backgroundHandlerReached':
+              completeWindowCounts.backgroundHandler == 1,
+          'backgroundContenderSuppressed':
+              completeWindowCounts.recentRemoteSuppression == 1,
+          'noMatchingLocalShow':
+              completeWindowCounts.matchingNotificationShown == 0,
+          'completeWindowNseBound':
+              completeWindowCounts.nseAuthorizedHandoff == 1,
         },
         'counts': <String, Object?>{
           'badgeBefore': recoveryReceipt['badgeBefore'],
@@ -769,7 +949,37 @@ final class _IosPayloadDriver {
           'deliveredBefore': recoveryReceipt['deliveredBefore'],
           'deliveredWithSentinel': recoveryReceipt['deliveredWithSentinel'],
           'deliveredAfter': recoveryReceipt['deliveredAfter'],
+          'matchingRemoteCount': recoveryReceipt['matchingRemoteCount'],
+          'matchingLocalCount': recoveryReceipt['matchingLocalCount'],
+          'matchingUsefulProviderCount':
+              recoveryReceipt['matchingUsefulProviderCount'],
+          'matchingSanitizedProviderCount':
+              recoveryReceipt['matchingSanitizedProviderCount'],
+          'matchingFlutterLocalCount':
+              recoveryReceipt['matchingFlutterLocalCount'],
+          'matchingUnknownCount': recoveryReceipt['matchingUnknownCount'],
+          'matchingTotalCount': recoveryReceipt['matchingTotalCount'],
+          'stableSampleCount': recoveryReceipt['stableSampleCount'],
+          'stableSampleIntervalMilliseconds':
+              recoveryReceipt['stableSampleIntervalMilliseconds'],
+          'settleDelayMilliseconds': recoveryReceipt['settleDelayMilliseconds'],
+          'observationDeadlineMilliseconds':
+              recoveryReceipt['observationDeadlineMilliseconds'],
+          'backgroundHandlerCount': completeWindowCounts.backgroundHandler,
+          'recentRemoteSuppressionCount':
+              completeWindowCounts.recentRemoteSuppression,
+          'matchingNotificationShownCount':
+              completeWindowCounts.matchingNotificationShown,
+          'nseEnvelopeStagedCount': completeWindowCounts.nseEnvelopeStaged,
+          'nseDecryptOkCount': completeWindowCounts.nseDecryptOk,
+          'nseAuthorizedHandoffCount':
+              completeWindowCounts.nseAuthorizedHandoff,
+          'nseActiveHandoffCount': completeWindowCounts.nseActiveHandoff,
+          'nseTrustedPassiveHandoffCount':
+              completeWindowCounts.nseTrustedPassiveHandoff,
+          'nseSanitizedHandoffCount': completeWindowCounts.nseSanitizedHandoff,
         },
+        'requestIdentifierSha256': recoveryReceipt['requestIdentifierSha256'],
         'timestamps': <String, Object?>{
           'providerAcceptedAt': providerAcceptedAt.toIso8601String(),
           'nseObservedAt': nseObservedAt.toIso8601String(),
@@ -793,6 +1003,7 @@ final class _IosPayloadDriver {
           'recipientLog': _sha256File(evidence.recipientLog),
           'uiAutomationLog': _sha256File(evidence.uiLog),
           'stagedEnvelope': providerReceipt['stagedEnvelopeSha256']! as String,
+          'causalDiagnostic': _sha256File(causalDiagnostic),
         },
       };
       final validation = validateIosNotificationRecoveryAutomationReceipt(
@@ -815,42 +1026,353 @@ final class _IosPayloadDriver {
       options.output.writeAsStringSync('${jsonEncode(receipt)}\n', flush: true);
       return _DriverResult.passed(_assertionsAttempted);
     } finally {
-      if (_providerSetupComplete && !_providerCleanupComplete) {
-        if (_senderProjectionSeeded && !_senderProjectionCleaned) {
-          try {
-            await _runSenderProjection(action: 'cleanup-sender');
-          } on Object {
-            // Provider rollback repeats the same bounded cleanup.
-          }
-        }
-        try {
-          await _runProviderCleanup();
-        } on Object {
-          // The primary typed failure remains authoritative.
-        }
+      final diagnostic = File(
+        '${options.captureDirectory.path}/direct-notification-diagnostic.redacted.json',
+      );
+      final finalizationFailures =
+          await attemptDiagnosticCleanupAndPrivateDeletion(
+            attemptDiagnosticRetention: () {
+              if (!options.output.existsSync() || !diagnostic.existsSync()) {
+                _writeCausalDiagnostic(
+                  status: options.output.existsSync() ? 'passed' : 'failed',
+                );
+              }
+            },
+            cleanupOwners: <FutureOr<void> Function()>[
+              _cleanupAllAcquiredState,
+              () => _stopSyslog(),
+            ],
+            privateDeletionOwners: _privateDeletionOwners(),
+          );
+      _throwFinalizationFailures(finalizationFailures);
+    }
+  }
+
+  Future<_DriverResult> _runRetryPhase() async {
+    await _preflight();
+    _prepareCaptureFiles();
+    try {
+      await _verifyAndPatchCentralProducts();
+      await _installExactApplication();
+      await _startSyslog();
+      final prepare = await _runXcui(
+        'testPreparePayloadFastPathNotificationTap',
+        'retry-prepare',
+      );
+      _assertionsAttempted += 1;
+      if (!_hasMarker(prepare, 'READY')) {
+        throw _DriverFailure(
+          'The retry phase did not reach automated notification readiness.',
+          _assertionsAttempted,
+        );
       }
-      await _stopSyslog();
-      for (final privateFile in <File>[
-        _rawSyslog,
-        _receiverHandoffFile,
-        _apnsPayloadFile,
-        _senderSeedReceiptFile,
-        _senderCleanupReceiptFile,
-        ..._sensitiveIntermediates,
-      ]) {
-        if (privateFile.existsSync()) privateFile.deleteSync();
+      await _captureReceiverHandoff(
+        output: _payloadReceiverHandoffFile,
+        deliveryBinding: false,
+      );
+      await _produceApnsPayload();
+      await _runSenderProjection(action: 'seed-sender');
+      final postSeedPrepare = await _runXcui(
+        'testPreparePayloadFastPathNotificationTap',
+        'retry-post-seed-prepare',
+      );
+      if (!_hasMarker(postSeedPrepare, 'READY')) {
+        throw _DriverFailure(
+          'The retry receiver was not returned to background readiness.',
+          _assertionsAttempted,
+        );
       }
-      for (final resultBundle in _uiResultBundles) {
-        if (resultBundle.existsSync()) resultBundle.deleteSync(recursive: true);
+
+      await _captureReceiverHandoff(
+        output: _deliveryReceiverHandoffFile,
+        deliveryBinding: true,
+      );
+      await _backgroundFinalRegisteredReceiver(
+        'retry-final-registered-background',
+      );
+
+      final completeWindowBoundary = _captureSyslogObservationBoundary();
+      final firstProviderReceipt = await _runProviderSetup();
+      _assertionsAttempted += 1;
+      final firstAcceptedAt = _utc(
+        firstProviderReceipt['acceptedAt'],
+        'first provider receipt acceptedAt',
+      );
+      final firstNseObservedAt = await _waitForNseSignals(
+        firstAcceptedAt,
+        completeWindowBoundary,
+        requiredPresentation: 'active',
+      );
+      _assertionsAttempted += 1;
+      final firstObserved = await _runXcui(
+        'testObservePayloadNotificationRecovery',
+        'retry-first-observe',
+      );
+      final firstCardObservedAt = _markerTimestamp(
+        firstObserved,
+        'RECOVERY_CARD_READY',
+      );
+      if (firstCardObservedAt == null ||
+          !_hasExactLogicalMarker(
+            firstObserved,
+            'RECOVERY_CARD_READY',
+            at: firstCardObservedAt,
+            fields: const <String, String>{'unique': 'true'},
+          )) {
+        throw _DriverFailure(
+          'The first accepted request did not fence on one stable useful card.',
+          _assertionsAttempted,
+        );
       }
+      final firstInventory = await _runNotificationRecoveryProof(
+        action: 'observe-direct',
+        proofStage: 'retry_first',
+      );
+      _notificationRecoveryReceiptFile.copySync(
+        _notificationRetryFirstReceiptFile.path,
+      );
+      _makeOwnerOnly(_notificationRetryFirstReceiptFile);
+      final firstRequestHashes =
+          (firstInventory['requestIdentifierSha256']! as List).cast<String>();
+      final collapseIdentitySha256 =
+          firstProviderReceipt['collapseIdentitySha256']! as String;
+      if (firstRequestHashes.single != collapseIdentitySha256) {
+        throw _DriverFailure(
+          'The first delivered request identifier is not bound to the collapse identity.',
+          _assertionsAttempted,
+        );
+      }
+
+      final secondNseBoundary = _captureSyslogObservationBoundary();
+      final retryReceipt = await _runProviderRetry(firstProviderReceipt);
+      _assertionsAttempted += 1;
+      final secondAcceptedAt = _utc(
+        retryReceipt['secondAcceptedAt'],
+        'second provider receipt acceptedAt',
+      );
+      final secondNseObservedAt = await _waitForNseSignals(
+        secondAcceptedAt,
+        secondNseBoundary,
+        requiredPresentation: 'trusted_passive',
+      );
+      _assertionsAttempted += 1;
+      final secondObserved = await _runXcui(
+        'testObservePayloadNotificationRecovery',
+        'retry-second-observe',
+      );
+      final secondCardObservedAt = _markerTimestamp(
+        secondObserved,
+        'RECOVERY_CARD_READY',
+      );
+      if (secondCardObservedAt == null ||
+          !_hasExactLogicalMarker(
+            secondObserved,
+            'RECOVERY_CARD_READY',
+            at: secondCardObservedAt,
+            fields: const <String, String>{'unique': 'true'},
+          )) {
+        throw _DriverFailure(
+          'The second accepted request did not settle at one useful card.',
+          _assertionsAttempted,
+        );
+      }
+      final secondInventory = await _runNotificationRecoveryProof(
+        action: 'observe-direct',
+        proofStage: 'retry_second',
+      );
+      final secondRequestHashes =
+          (secondInventory['requestIdentifierSha256']! as List).cast<String>();
+      if (secondRequestHashes.single != collapseIdentitySha256 ||
+          secondRequestHashes.single != firstRequestHashes.single) {
+        throw _DriverFailure(
+          'The final delivered request identity diverged from the bounded retry collapse identity.',
+          _assertionsAttempted,
+        );
+      }
+
+      await _stopSyslog(requireLiveCapture: true);
+      final rawWindow = _rawSyslog.readAsStringSync();
+      final counts = _directWindowCounts(rawWindow, completeWindowBoundary);
+      final diagnostic = _writeCausalDiagnostic(
+        status: 'passed',
+        counts: counts,
+      );
+      if (counts.nseEnvelopeStaged != 2 ||
+          counts.nseDecryptOk != 2 ||
+          counts.nseAuthorizedHandoff != 2 ||
+          counts.nseActiveHandoff != 1 ||
+          counts.nseTrustedPassiveHandoff != 1 ||
+          counts.nseSanitizedHandoff != 0 ||
+          counts.backgroundHandler != 2 ||
+          counts.recentRemoteSuppression != 2 ||
+          counts.matchingNotificationShown != 0) {
+        _writeCausalDiagnostic(status: 'failed_retry_counts', counts: counts);
+        throw _DriverFailure(
+          'The retry window did not prove active then trusted-passive NSE '
+          'handoffs, two background callbacks, two recent-remote '
+          'suppressions, and zero local shows.',
+          _assertionsAttempted,
+        );
+      }
+
+      await _runUiCleanup();
+      if (!_uiCleanupComplete) {
+        throw _DriverFailure(
+          'The retry cleanup selector did not restore network state and '
+          'terminate the candidate application.',
+          _assertionsAttempted,
+        );
+      }
+      await _runSenderProjection(action: 'cleanup-sender');
+      final providerCleanup = await _runProviderCleanup();
+      await _verifyCandidateApplicationRemoved();
+      _assertionsAttempted += 1;
+      final evidence = _writeRecoveryRedactedEvidence(rawWindow);
+      final relayLog = _receiptMember(
+        _providerReceiptFile,
+        firstProviderReceipt['relayLogPath'],
+        'retry relay log',
+      );
+      final receipt = <String, Object?>{
+        'schema': iosNotificationRetryAutomationReceiptSchema,
+        'scenario': iosNotificationPayloadScenario,
+        'phase': 'retry',
+        'status': 'passed',
+        'platform': 'ios',
+        'receiverPhysical': true,
+        'runId': options.runId,
+        'nonce': options.nonce,
+        'receiverDeviceId': options.receiverDeviceId,
+        'peerDeviceId': options.peerDeviceId,
+        'preparedApplicationSha256': _applicationSha256,
+        'providerRequestSha256': _requestSha256,
+        'payloadProducerSha256': _payloadProducerSha256,
+        'apnsPayloadSha256': _apnsPayloadSha256,
+        'collapseIdentitySha256': collapseIdentitySha256,
+        'requestIdentifierSha256': secondRequestHashes.single,
+        'childBuildCount': 0,
+        'manualActionCount': 0,
+        'passDiagnosticRetained': diagnostic.existsSync(),
+        'cleanupOwners': _cleanupOwnerEvidence(),
+        'checks': <String, Object?>{
+          'firstDeliveryFenced': true,
+          'secondTrustedPassiveHandoff': true,
+          'providerAcceptancesDistinct': retryReceipt['providerIdsDistinct'],
+          'payloadBytesIdentical': retryReceipt['payloadBytesIdentical'],
+          'collapseIdentityReused': retryReceipt['collapseIdentityReused'],
+          'finalRequestIdentifierMatchesCollapse': true,
+          'samePayloadRetrySingleUsefulCard': true,
+          'noSanitizedProviderCard':
+              secondInventory['matchingSanitizedProviderCount'] == 0,
+          'noFlutterLocalCard':
+              secondInventory['matchingFlutterLocalCount'] == 0,
+          'noUnknownCard': secondInventory['matchingUnknownCount'] == 0,
+          'noMatchingLocalShow': counts.matchingNotificationShown == 0,
+          'completeWindowNseBound': true,
+          'providerCleanupAutomated': _providerCleanupComplete,
+          'testStateCleared':
+              providerCleanup['appTestStateCleared'] == true &&
+              providerCleanup['notificationStateCleared'] == true &&
+              providerCleanup['relayFixtureCleared'] == true,
+        },
+        'counts': <String, Object?>{
+          'providerAcceptedCount': retryReceipt['providerAcceptedCount'],
+          'matchingUsefulProviderCount':
+              secondInventory['matchingUsefulProviderCount'],
+          'matchingSanitizedProviderCount':
+              secondInventory['matchingSanitizedProviderCount'],
+          'matchingFlutterLocalCount':
+              secondInventory['matchingFlutterLocalCount'],
+          'matchingUnknownCount': secondInventory['matchingUnknownCount'],
+          'matchingTotalCount': secondInventory['matchingTotalCount'],
+          'stableSampleCount': secondInventory['stableSampleCount'],
+          ...counts.toJson(),
+        },
+        'timestamps': <String, Object?>{
+          'firstAcceptedAt': firstAcceptedAt.toIso8601String(),
+          'firstNseObservedAt': firstNseObservedAt.toIso8601String(),
+          'firstCardObservedAt': firstCardObservedAt.toIso8601String(),
+          'secondAcceptedAt': secondAcceptedAt.toIso8601String(),
+          'secondNseObservedAt': secondNseObservedAt.toIso8601String(),
+          'secondCardObservedAt': secondCardObservedAt.toIso8601String(),
+        },
+        'providerMessageIdSha256': <String>[
+          retryReceipt['firstProviderMessageIdSha256']! as String,
+          retryReceipt['secondProviderMessageIdSha256']! as String,
+        ],
+        'evidenceSha256': <String, Object?>{
+          'preparedApplication': _applicationSha256,
+          'payloadProducer': _payloadProducerSha256,
+          'apnsPayload': _apnsPayloadSha256,
+          'firstProviderReceipt': _sha256File(_providerReceiptFile),
+          'secondProviderReceipt': _sha256File(_providerRetryReceiptFile),
+          'providerCleanupReceipt': _sha256File(_providerCleanupReceiptFile),
+          'firstInventoryReceipt': _sha256File(
+            _notificationRetryFirstReceiptFile,
+          ),
+          'secondInventoryReceipt': _sha256File(
+            _notificationRecoveryReceiptFile,
+          ),
+          'relayLog': _sha256File(relayLog),
+          'nseLog': _sha256File(evidence.nseLog),
+          'recipientLog': _sha256File(evidence.recipientLog),
+          'uiAutomationLog': _sha256File(evidence.uiLog),
+          'causalDiagnostic': _sha256File(diagnostic),
+          'stagedEnvelope':
+              firstProviderReceipt['stagedEnvelopeSha256']! as String,
+        },
+      };
+      final validation = validateIosNotificationRetryAutomationReceipt(
+        receipt,
+        runId: options.runId,
+        nonce: options.nonce,
+        receiverDeviceId: options.receiverDeviceId,
+        peerDeviceId: options.peerDeviceId,
+        preparedApplicationSha256: _applicationSha256,
+        providerRequestSha256: _requestSha256,
+        payloadProducerSha256: _payloadProducerSha256,
+        apnsPayloadSha256: _apnsPayloadSha256,
+      );
+      if (!validation.ok) {
+        throw _DriverFailure(
+          'The retry automation receipt failed closed: ${validation.detail}',
+          _assertionsAttempted,
+        );
+      }
+      options.output.writeAsStringSync('${jsonEncode(receipt)}\n', flush: true);
+      return _DriverResult.passed(_assertionsAttempted);
+    } finally {
+      final diagnostic = File(
+        '${options.captureDirectory.path}/direct-notification-diagnostic.redacted.json',
+      );
+      final finalizationFailures =
+          await attemptDiagnosticCleanupAndPrivateDeletion(
+            attemptDiagnosticRetention: () {
+              if (!options.output.existsSync() || !diagnostic.existsSync()) {
+                _writeCausalDiagnostic(
+                  status: options.output.existsSync() ? 'passed' : 'failed',
+                );
+              }
+            },
+            cleanupOwners: <FutureOr<void> Function()>[
+              _cleanupAllAcquiredState,
+              () => _stopSyslog(),
+            ],
+            privateDeletionOwners: _privateDeletionOwners(),
+          );
+      _throwFinalizationFailures(finalizationFailures);
     }
   }
 
   Future<void> _preflight() async {
-    if (!const <String>{'fast-path', 'recovery'}.contains(options.phase)) {
+    if (!const <String>{
+      'fast-path',
+      'recovery',
+      'retry',
+    }.contains(options.phase)) {
       throw const _DriverBlocked(
         'environment',
-        '--phase must be exactly fast-path or recovery.',
+        '--phase must be exactly fast-path, recovery, or retry.',
       );
     }
     for (final command in const <String>[
@@ -986,18 +1508,25 @@ final class _IosPayloadDriver {
     Platform.script.resolve('ios_receiver_bootstrap.py'),
   ).absolute;
 
-  Future<void> _captureReceiverHandoff() async {
-    if (_receiverHandoffFile.existsSync()) _receiverHandoffFile.deleteSync();
+  Future<void> _captureReceiverHandoff({
+    required File output,
+    required bool deliveryBinding,
+  }) async {
+    if (output.existsSync()) output.deleteSync();
     final result = await _runCommand(
       _receiverBootstrapDriver().path,
-      const <String>[],
+      <String>[
+        '--action',
+        deliveryBinding ? 'capture-receiver-final' : 'capture-receiver',
+        '--timeout-seconds',
+        '150',
+      ],
       environment: <String, String>{
         'SIMS_CHILD_BUILDS_FORBIDDEN': '1',
         'SIMS_MANUAL_ACTIONS_FORBIDDEN': '1',
         'SIMS_IOS_PHYSICAL_DEVICE_ID': options.receiverDeviceId,
         'SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE': _receiverHandoffNonce,
-        'SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH':
-            _receiverHandoffFile.path,
+        'SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH': output.path,
       },
       timeout: const Duration(minutes: 3),
     );
@@ -1007,20 +1536,20 @@ final class _IosPayloadDriver {
         'The installed app could not publish a protected APNs receiver handoff.',
       );
     }
-    if (result.exitCode != 0 || !_regularFile(_receiverHandoffFile)) {
+    if (result.exitCode != 0 || !_regularFile(output)) {
       throw _DriverFailure(
         'The private receiver bootstrap did not produce a protected handoff.',
         _assertionsAttempted,
       );
     }
-    final metadata = _receiverHandoffFile.statSync();
+    final metadata = output.statSync();
     if ((metadata.mode & 0x3f) != 0) {
       throw _DriverFailure(
         'The private receiver handoff has group or world permissions.',
         _assertionsAttempted,
       );
     }
-    final handoff = _readJson(_receiverHandoffFile, 'receiver handoff');
+    final handoff = _readJson(output, 'receiver handoff');
     const exactKeys = <String>{
       'schema',
       'captureNonce',
@@ -1057,6 +1586,59 @@ final class _IosPayloadDriver {
         _assertionsAttempted,
       );
     }
+    final peerId = handoff['peerDeviceId'];
+    final mlKemPublicKey = handoff['mlKemPublicKey'];
+    final authorization = handoff['notificationAuthorization'];
+    final capturedAt = _utc(
+      handoff['capturedAt'],
+      'receiver handoff capturedAt',
+    );
+    if (peerId is! String ||
+        peerId.isEmpty ||
+        mlKemPublicKey is! String ||
+        mlKemPublicKey.isEmpty ||
+        authorization is! String) {
+      throw _DriverFailure(
+        'The private receiver handoff omitted bounded registration material.',
+        _assertionsAttempted,
+      );
+    }
+    final peerIdSha256 = sha256.convert(utf8.encode(peerId)).toString();
+    final mlKemPublicKeySha256 = sha256
+        .convert(utf8.encode(mlKemPublicKey))
+        .toString();
+    if (!deliveryBinding) {
+      _payloadReceiverPeerIdSha256 = peerIdSha256;
+      _payloadReceiverMlKemPublicKeySha256 = mlKemPublicKeySha256;
+      _payloadReceiverNotificationAuthorization = authorization;
+      _payloadReceiverCapturedAt = capturedAt;
+      return;
+    }
+    if (peerIdSha256 != _payloadReceiverPeerIdSha256 ||
+        mlKemPublicKeySha256 != _payloadReceiverMlKemPublicKeySha256 ||
+        authorization != _payloadReceiverNotificationAuthorization ||
+        !capturedAt.isAfter(_payloadReceiverCapturedAt)) {
+      throw _DriverFailure(
+        'The final delivery handoff is not a later launch bound to the same '
+        'receiver identity, key, and notification settings.',
+        _assertionsAttempted,
+      );
+    }
+  }
+
+  Future<void> _backgroundFinalRegisteredReceiver(String label) async {
+    final output = await _runXcui(
+      'testBackgroundRegisteredPayloadFastPathNotificationTap',
+      label,
+    );
+    _assertionsAttempted += 1;
+    if (!_hasMarker(output, 'FINAL_READY') ||
+        !output.contains('registration_bound=true')) {
+      throw _DriverFailure(
+        'The final registered receiver was not backgrounded without relaunch.',
+        _assertionsAttempted,
+      );
+    }
   }
 
   Future<void> _produceApnsPayload() async {
@@ -1067,7 +1649,7 @@ final class _IosPayloadDriver {
         '--provider-request',
         options.providerRequest.path,
         '--receiver-handoff',
-        _receiverHandoffFile.path,
+        _payloadReceiverHandoffFile.path,
         '--run-id',
         options.runId,
         '--nonce',
@@ -1101,69 +1683,29 @@ final class _IosPayloadDriver {
       );
     }
     final bytes = _apnsPayloadFile.readAsBytesSync();
+    _apnsPayloadSha256 = sha256.convert(bytes).toString();
     final payloadText = utf8.decode(bytes, allowMalformed: false);
     final payload = _readCapturedJson(
       _apnsPayloadFile,
       'generated APNs payload',
       _assertionsAttempted,
     );
-    final aps = payload['aps'];
-    final alert = aps is Map ? aps['alert'] : null;
-    const payloadKeys = <String>{
-      'fixture_schema',
-      'aps',
-      'type',
-      'sender_id',
-      'message_id',
-      'kem',
-      'ciphertext',
-      'nonce',
-    };
     final sender = payload['sender_id'];
-    final encryptedFieldsValid =
-        <String>['message_id', 'kem', 'ciphertext', 'nonce'].every(
-          (key) =>
-              payload[key] is String && (payload[key]! as String).isNotEmpty,
-        );
-    final peerPattern = RegExp(
-      r'^(?:12D3KooW[1-9A-HJ-NP-Za-km-z]{44}|Qm[1-9A-HJ-NP-Za-km-z]{44})$',
-    );
-    if (payload.keys.toSet().difference(payloadKeys).isNotEmpty ||
-        payloadKeys.difference(payload.keys.toSet()).isNotEmpty ||
-        payload['fixture_schema'] !=
-            'mknoon.sims.ios-payload-private-fixture.v1' ||
-        payload['type'] != 'new_message' ||
-        sender is! String ||
-        !peerPattern.hasMatch(sender) ||
-        aps is! Map ||
-        aps.keys.toSet().difference(const <String>{
-          'alert',
-          'mutable-content',
-        }).isNotEmpty ||
-        const <String>{
-          'alert',
-          'mutable-content',
-        }.difference(aps.keys.toSet()).isNotEmpty ||
-        aps['mutable-content'] != 1 ||
-        alert is! Map ||
-        alert.keys.toSet().difference(const <String>{
-          'title',
-          'body',
-        }).isNotEmpty ||
-        const <String>{
-          'title',
-          'body',
-        }.difference(alert.keys.toSet()).isNotEmpty ||
-        alert['title'] != _request['expectedTitle'] ||
-        alert['body'] != _request['expectedBody'] ||
-        !encryptedFieldsValid ||
+    if (!isExactPrivateIosApnsPayload(
+          payload,
+          expectedTitle: _request['expectedTitle']! as String,
+          expectedBody: _request['expectedBody']! as String,
+        ) ||
         payloadText.contains(_request['expectedMessageText']! as String)) {
       throw _DriverFailure(
         'The generated APNs payload failed its encrypted exact-route contract.',
         _assertionsAttempted,
       );
     }
-    final handoff = _readJson(_receiverHandoffFile, 'receiver handoff');
+    final handoff = _readJson(
+      _payloadReceiverHandoffFile,
+      'payload receiver handoff',
+    );
     for (final key in const <String>['apnsDeviceToken', 'mlKemPublicKey']) {
       final secret = handoff[key];
       if (secret is String &&
@@ -1175,12 +1717,14 @@ final class _IosPayloadDriver {
         );
       }
     }
-    _apnsPayloadSha256 = sha256.convert(bytes).toString();
-    _senderPeerIdSha256 = sha256.convert(utf8.encode(sender)).toString();
+    _senderPeerIdSha256 = sha256
+        .convert(utf8.encode(sender! as String))
+        .toString();
   }
 
   Future<void> _runSenderProjection({required String action}) async {
     final cleanup = action == 'cleanup-sender';
+    if (cleanup) _senderProjectionCleanupAttempted = true;
     if (action != 'seed-sender' && !cleanup) {
       throw _DriverFailure(
         'Unsupported private sender projection action.',
@@ -1404,6 +1948,7 @@ final class _IosPayloadDriver {
         'devicectl did not confirm the installed production bundle.',
       );
     }
+    _applicationInstalled = true;
   }
 
   Future<void> _startSyslog() async {
@@ -1572,7 +2117,7 @@ final class _IosPayloadDriver {
       receiverDeviceId: options.receiverDeviceId,
       requestSha256: _requestSha256,
       apnsPayloadSha256: _apnsPayloadSha256,
-      receiverHandoffSha256: _sha256File(_receiverHandoffFile),
+      receiverHandoffSha256: _sha256File(_deliveryReceiverHandoffFile),
     );
     if (!validation.ok) {
       await _runProviderRecovery();
@@ -1586,6 +2131,7 @@ final class _IosPayloadDriver {
   }
 
   Future<Map<String, Object?>> _runProviderCleanup() async {
+    _providerCleanupAttempted = true;
     if (!_providerSetupComplete) {
       throw _DriverFailure(
         'Provider cleanup was requested before setup completed.',
@@ -1620,7 +2166,7 @@ final class _IosPayloadDriver {
       receiverDeviceId: options.receiverDeviceId,
       providerReceiptSha256: _sha256File(_providerReceiptFile),
       apnsPayloadSha256: _apnsPayloadSha256,
-      receiverHandoffSha256: _sha256File(_receiverHandoffFile),
+      receiverHandoffSha256: _sha256File(_deliveryReceiverHandoffFile),
     );
     if (!validation.ok) {
       await _runProviderRecovery();
@@ -1633,7 +2179,58 @@ final class _IosPayloadDriver {
     return receipt;
   }
 
+  Future<Map<String, Object?>> _runProviderRetry(
+    Map<String, Object?> firstReceipt,
+  ) async {
+    if (!_providerSetupComplete) {
+      throw _DriverFailure(
+        'Provider retry was requested before the first acceptance completed.',
+        _assertionsAttempted,
+      );
+    }
+    if (_providerRetryReceiptFile.existsSync()) {
+      _providerRetryReceiptFile.deleteSync();
+    }
+    final result = await _runProvider(
+      action: 'retry',
+      output: _providerRetryReceiptFile,
+      setupReceipt: _providerReceiptFile,
+    );
+    if (result.exitCode != 0 || !_regularFile(_providerRetryReceiptFile)) {
+      throw _DriverFailure(
+        'The private provider adapter did not publish the bounded second-send receipt.',
+        _assertionsAttempted,
+      );
+    }
+    final receipt = _readCapturedJson(
+      _providerRetryReceiptFile,
+      'provider retry receipt',
+      _assertionsAttempted,
+    );
+    final validation = validateIosNotificationProviderRetryReceipt(
+      receipt,
+      runId: options.runId,
+      nonce: options.nonce,
+      receiverDeviceId: options.receiverDeviceId,
+      requestSha256: _requestSha256,
+      apnsPayloadSha256: _apnsPayloadSha256,
+      receiverHandoffSha256: _sha256File(_deliveryReceiverHandoffFile),
+      collapseIdentitySha256: firstReceipt['collapseIdentitySha256']! as String,
+      firstProviderReceiptSha256: _sha256File(_providerReceiptFile),
+      firstProviderMessageIdSha256:
+          firstReceipt['providerMessageIdSha256']! as String,
+    );
+    if (!validation.ok) {
+      throw _DriverFailure(
+        'The provider retry receipt failed closed: ${validation.detail}',
+        _assertionsAttempted,
+      );
+    }
+    return receipt;
+  }
+
   Future<void> _runProviderRecovery() async {
+    _providerRecoveryAttempted = true;
     if (_providerRecoveryReceiptFile.existsSync()) {
       _providerRecoveryReceiptFile.deleteSync();
     }
@@ -1664,7 +2261,7 @@ final class _IosPayloadDriver {
           .toString(),
       'requestSha256': _requestSha256,
       'apnsPayloadSha256': _apnsPayloadSha256,
-      'receiverHandoffSha256': _sha256File(_receiverHandoffFile),
+      'receiverHandoffSha256': _sha256File(_deliveryReceiverHandoffFile),
       'childBuildCount': 0,
       'manualActionCount': 0,
     };
@@ -1679,6 +2276,7 @@ final class _IosPayloadDriver {
         _assertionsAttempted,
       );
     }
+    _providerRecoveryComplete = true;
   }
 
   Future<_CommandResult> _runProvider({
@@ -1686,7 +2284,7 @@ final class _IosPayloadDriver {
     required File output,
     File? setupReceipt,
   }) {
-    final timeout = action == 'setup'
+    final timeout = action == 'setup' || action == 'retry'
         ? const Duration(minutes: 6)
         : action == 'cleanup'
         ? const Duration(minutes: 4)
@@ -1729,7 +2327,7 @@ final class _IosPayloadDriver {
         'SIMS_PREBUILT_APPLICATION_BINARY': options.application.path,
         'SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE': _receiverHandoffNonce,
         'SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH':
-            _receiverHandoffFile.path,
+            _deliveryReceiverHandoffFile.path,
         'SIMS_IOS_NOTIFICATION_APNS_PAYLOAD_PATH': _apnsPayloadFile.path,
         'SIMS_IOS_NOTIFICATION_PAYLOAD_PRODUCER': options.payloadProducer.path,
         'SIMS_IOS_NOTIFICATION_RECEIVER_BOOTSTRAP_DRIVER':
@@ -1743,15 +2341,18 @@ final class _IosPayloadDriver {
 
   Future<DateTime> _waitForNseSignals(
     DateTime providerAcceptedAt,
-    _SyslogObservationBoundary boundary,
-  ) async {
+    _SyslogObservationBoundary boundary, {
+    String requiredPresentation = 'active',
+  }) async {
     final deadline = providerAcceptedAt.add(_nseObservationWindow);
     var readOffset = boundary.byteOffset;
     var observedBytes = 0;
     var pendingLine = '';
     var discardInitialPartialLine = !boundary.beginsAtLineBoundary;
     var discardedBoundaryFragments = 0;
+    var didReceiveMarkers = 0;
     var stagedMarkers = 0;
+    var stagedRejectedMarkers = 0;
     var decryptOkMarkers = 0;
     var decryptFailMarkers = 0;
     var timeoutMarkers = 0;
@@ -1763,42 +2364,56 @@ final class _IosPayloadDriver {
     var orderedRejectedMarkers = 0;
 
     void observeLine(String line) {
+      if (line.contains('PUSH_NSE_DID_RECEIVE')) {
+        didReceiveMarkers += 1;
+        if (orderedProgress == 0) orderedProgress = 1;
+      }
       if (line.contains('PUSH_NSE_ENVELOPE_STAGED') &&
           line.contains(r'"success":"true"')) {
         stagedMarkers += 1;
-        orderedProgress = 1;
+        if (orderedProgress == 1) orderedProgress = 2;
+      }
+      if (line.contains('PUSH_NSE_ENVELOPE_STAGED') &&
+          line.contains(r'"success":"false"')) {
+        stagedRejectedMarkers += 1;
+        orderedRejectedMarkers += 1;
       }
       if (line.contains('PUSH_NSE_DECRYPT_OK')) {
         decryptOkMarkers += 1;
-        if (orderedProgress == 1) orderedProgress = 2;
+        if (orderedProgress == 2) orderedProgress = 3;
       }
       if (line.contains('PUSH_NSE_DECRYPT_FAIL')) {
         decryptFailMarkers += 1;
-        if (orderedProgress > 0 && orderedProgress < 3) {
+        if (orderedProgress > 0 && orderedProgress < 4) {
           orderedFailureMarkers += 1;
         }
       }
       if (line.contains('PUSH_NSE_TIMEOUT')) {
         timeoutMarkers += 1;
-        if (orderedProgress > 0 && orderedProgress < 3) {
+        if (orderedProgress > 0 && orderedProgress < 4) {
           orderedFailureMarkers += 1;
         }
       }
       if (line.contains('PUSH_NSE_CONTENT_HANDOFF')) {
         if (line.contains(r'"authorized":"true"')) {
           contentHandoffOkMarkers += 1;
-          if (orderedProgress == 2) {
-            orderedProgress = 3;
+          if (line.contains('"presentation":"$requiredPresentation"') &&
+              orderedProgress == 3) {
+            orderedProgress = 4;
             orderedReadySequences += 1;
+          } else if (!line.contains('"presentation":"$requiredPresentation"')) {
+            orderedRejectedMarkers += 1;
           }
         } else {
           contentHandoffRejectedMarkers += 1;
-          if (orderedProgress > 0 && orderedProgress < 3) {
+          if (orderedProgress > 0 && orderedProgress < 4) {
             orderedRejectedMarkers += 1;
           }
         }
       }
     }
+
+    bool hasStageRejection() => stagedRejectedMarkers > 0;
 
     bool hasOrderedFailure() =>
         orderedFailureMarkers > 0 || orderedRejectedMarkers > 0;
@@ -1812,7 +2427,9 @@ final class _IosPayloadDriver {
         observationStartOffset: boundary.byteOffset,
         observedBytes: observedBytes,
         syslogExitCode: syslogExitCode,
+        didReceiveMarkers: didReceiveMarkers,
         stagedMarkers: stagedMarkers,
+        stagedRejectedMarkers: stagedRejectedMarkers,
         decryptOkMarkers: decryptOkMarkers,
         decryptFailMarkers: decryptFailMarkers,
         timeoutMarkers: timeoutMarkers,
@@ -1868,8 +2485,22 @@ final class _IosPayloadDriver {
           }
           for (final line in lines) {
             observeLine(line);
-            if (hasOrderedFailure() || orderedReadySequences > 0) break;
+            if (hasStageRejection() ||
+                hasOrderedFailure() ||
+                orderedReadySequences > 0) {
+              break;
+            }
           }
+        }
+        if (hasStageRejection()) {
+          writeDiagnostic(
+            status: 'nse-envelope-stage-rejected',
+            syslogExitCode: _syslogExitCode,
+          );
+          throw _DriverFailure(
+            'The real Notification Service Extension rejected envelope staging.',
+            _assertionsAttempted,
+          );
         }
         if (hasOrderedFailure()) {
           writeDiagnostic(
@@ -1897,6 +2528,16 @@ final class _IosPayloadDriver {
     }
     final syslogExitCode = _syslogExitCode;
     if (syslogExitCode != null) failForExitedSyslog(syslogExitCode);
+    if (hasStageRejection()) {
+      writeDiagnostic(
+        status: 'nse-envelope-stage-rejected',
+        syslogExitCode: null,
+      );
+      throw _DriverFailure(
+        'The real Notification Service Extension rejected envelope staging.',
+        _assertionsAttempted,
+      );
+    }
     if (hasOrderedFailure()) {
       writeDiagnostic(status: 'nse-failure-marker', syslogExitCode: null);
       throw _DriverFailure(
@@ -1911,8 +2552,9 @@ final class _IosPayloadDriver {
     }
     writeDiagnostic(status: 'timed-out', syslogExitCode: null);
     throw _DriverFailure(
-      'Timed out waiting for real NSE envelope-staged, decrypt-success, and '
-      'authorized content-handoff markers after APNs provider acceptance.',
+      'Timed out waiting for real NSE did-receive, envelope-staged, '
+      'decrypt-success, and authorized content-handoff markers after APNs '
+      'provider acceptance.',
       _assertionsAttempted,
     );
   }
@@ -1922,7 +2564,9 @@ final class _IosPayloadDriver {
     required int observationStartOffset,
     required int observedBytes,
     required int? syslogExitCode,
+    required int didReceiveMarkers,
     required int stagedMarkers,
+    required int stagedRejectedMarkers,
     required int decryptOkMarkers,
     required int decryptFailMarkers,
     required int timeoutMarkers,
@@ -1939,13 +2583,13 @@ final class _IosPayloadDriver {
     );
     final encoded =
         '${jsonEncode(<String, Object?>{
-          'schema': 'mknoon.sims.ios-nse-observation-diagnostic.v1',
+          'schema': 'mknoon.sims.ios-nse-observation-diagnostic.v2',
           'status': status,
           'observationWindowSeconds': _nseObservationWindow.inSeconds,
           'observationStartOffset': observationStartOffset,
           'observedBytes': observedBytes,
           'syslogExitCode': syslogExitCode,
-          'markerCounts': <String, int>{'envelopeStaged': stagedMarkers, 'decryptOk': decryptOkMarkers, 'decryptFail': decryptFailMarkers, 'timeout': timeoutMarkers, 'contentHandoffOk': contentHandoffOkMarkers, 'contentHandoffRejected': contentHandoffRejectedMarkers, 'orderedProgress': orderedProgress, 'orderedReadySequences': orderedReadySequences, 'orderedFailure': orderedFailureMarkers, 'orderedRejected': orderedRejectedMarkers, 'discardedBoundaryFragments': discardedBoundaryFragments},
+          'markerCounts': <String, int>{'didReceive': didReceiveMarkers, 'envelopeStaged': stagedMarkers, 'envelopeStagedRejected': stagedRejectedMarkers, 'decryptOk': decryptOkMarkers, 'decryptFail': decryptFailMarkers, 'timeout': timeoutMarkers, 'contentHandoffOk': contentHandoffOkMarkers, 'contentHandoffRejected': contentHandoffRejectedMarkers, 'orderedProgress': orderedProgress, 'orderedReadySequences': orderedReadySequences, 'orderedFailure': orderedFailureMarkers, 'orderedRejected': orderedRejectedMarkers, 'discardedBoundaryFragments': discardedBoundaryFragments},
         })}\n';
     _rejectSecretBearingText(encoded, 'NSE observation diagnostic');
     diagnostic.writeAsStringSync(encoded, flush: true);
@@ -1953,6 +2597,7 @@ final class _IosPayloadDriver {
   }
 
   Future<String> _runUiCleanup() async {
+    _uiCleanupAttempted = true;
     final output = await _runXcui(
       'testRestorePayloadFastPathNetwork',
       'cleanup-${_uiLogs.length}',
@@ -1964,20 +2609,165 @@ final class _IosPayloadDriver {
     return output;
   }
 
-  Future<Map<String, Object?>> _runNotificationRecoveryProof() async {
+  Future<void> _cleanupAllAcquiredState() async {
+    final cleanupFailures =
+        await attemptAllCleanupOwners(<FutureOr<void> Function()>[
+          () async {
+            if (_applicationInstalled && !_uiCleanupComplete) {
+              await _runUiCleanup();
+            }
+          },
+          () async {
+            if (_senderProjectionSeeded && !_senderProjectionCleaned) {
+              await _runSenderProjection(action: 'cleanup-sender');
+            }
+          },
+          () async {
+            if (!_providerCleanupComplete) {
+              if (_providerSetupComplete) {
+                await _runProviderCleanup();
+              }
+            }
+          },
+          () async {
+            if (shouldAttemptProviderRecoveryAfterCleanup(
+              providerCleanupComplete: _providerCleanupComplete,
+              providerRecoveryComplete: _providerRecoveryComplete,
+              receiverHandoffExists: _deliveryReceiverHandoffFile.existsSync(),
+              apnsPayloadExists: _apnsPayloadFile.existsSync(),
+            )) {
+              await _runProviderRecovery();
+            }
+          },
+          () async {
+            if (_applicationInstalled) {
+              await _removeCandidateApplicationDirectly();
+            }
+          },
+        ]);
+    if (cleanupFailures.isNotEmpty) {
+      throw _DriverFailure(
+        'Cleanup retained ${cleanupFailures.length} bounded owner failure(s) '
+        'after every acquired-state owner was attempted.',
+        _assertionsAttempted,
+      );
+    }
+  }
+
+  Map<String, Object?> _cleanupOwnerEvidence() => <String, Object?>{
+    'ui': <String, bool>{
+      'required': true,
+      'attempted': _uiCleanupAttempted,
+      'completed': _uiCleanupComplete,
+    },
+    'sender': <String, bool>{
+      'required': true,
+      'attempted': _senderProjectionCleanupAttempted,
+      'completed': _senderProjectionCleaned,
+    },
+    'providerCleanup': <String, bool>{
+      'required': true,
+      'attempted': _providerCleanupAttempted,
+      'completed': _providerCleanupComplete,
+    },
+    'providerRecovery': <String, bool>{
+      'required': false,
+      'attempted': _providerRecoveryAttempted,
+      'completed': _providerRecoveryComplete,
+    },
+    'directInstall': <String, bool>{
+      'required': false,
+      'attempted': _directInstallCleanupAttempted,
+      'completed': _directInstallCleanupComplete,
+    },
+  };
+
+  Iterable<FutureOr<void> Function()> _privateDeletionOwners() sync* {
+    for (final privateFile in <File>[
+      _rawSyslog,
+      _payloadReceiverHandoffFile,
+      _deliveryReceiverHandoffFile,
+      _apnsPayloadFile,
+      _senderSeedReceiptFile,
+      _senderCleanupReceiptFile,
+      ..._sensitiveIntermediates,
+    ]) {
+      yield () {
+        if (privateFile.existsSync()) privateFile.deleteSync();
+      };
+    }
+    for (final resultBundle in _uiResultBundles) {
+      yield () {
+        if (resultBundle.existsSync()) {
+          resultBundle.deleteSync(recursive: true);
+        }
+      };
+    }
+  }
+
+  void _throwFinalizationFailures(List<Object> failures) {
+    if (failures.isEmpty) return;
+    throw _DriverFailure(
+      'Phase finalization retained ${failures.length} bounded diagnostic, '
+      'cleanup, or private-deletion failure(s) after all owners were attempted.',
+      _assertionsAttempted,
+    );
+  }
+
+  Future<void> _removeCandidateApplicationDirectly() async {
+    _directInstallCleanupAttempted = true;
+    final resultJson = File(
+      '${options.captureDirectory.path}/devicectl-uninstall-final.json',
+    );
+    final commandLog = File(
+      '${options.captureDirectory.path}/devicectl-uninstall-final.log',
+    );
+    final result = await _runCommand('xcrun', <String>[
+      'devicectl',
+      'device',
+      'uninstall',
+      'app',
+      '--device',
+      options.receiverDeviceId,
+      _bundleId,
+      '--json-output',
+      resultJson.path,
+      '--log-output',
+      commandLog.path,
+      '--quiet',
+    ], timeout: const Duration(minutes: 1));
+    final combined = '${result.stdout}\n${result.stderr}'.toLowerCase();
+    final absent =
+        combined.contains('not installed') ||
+        combined.contains('application not found') ||
+        combined.contains('no matching application');
+    if (result.exitCode != 0 && !absent) {
+      throw _DriverFailure(
+        'Final state-aware candidate-app removal failed.',
+        _assertionsAttempted,
+      );
+    }
+    _applicationInstalled = false;
+    _directInstallCleanupComplete = true;
+  }
+
+  Future<Map<String, Object?>> _runNotificationRecoveryProof({
+    String action = 'prove-recovery',
+    String proofStage = 'single_submission',
+  }) async {
     if (_notificationRecoveryReceiptFile.existsSync()) {
       _notificationRecoveryReceiptFile.deleteSync();
     }
     final result = await _runCommand(
       _receiverBootstrapDriver().path,
-      const <String>['--action', 'prove-recovery'],
+      <String>['--action', action, '--proof-stage', proofStage],
       environment: <String, String>{
         'SIMS_CHILD_BUILDS_FORBIDDEN': '1',
         'SIMS_MANUAL_ACTIONS_FORBIDDEN': '1',
         'SIMS_IOS_PHYSICAL_DEVICE_ID': options.receiverDeviceId,
         'SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE': _receiverHandoffNonce,
         'SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH':
-            _receiverHandoffFile.path,
+            _deliveryReceiverHandoffFile.path,
         'SIMS_IOS_NOTIFICATION_APNS_PAYLOAD_PATH': _apnsPayloadFile.path,
         'SIMS_IOS_NOTIFICATION_RECOVERY_RECEIPT_PATH':
             _notificationRecoveryReceiptFile.path,
@@ -1999,6 +2789,7 @@ final class _IosPayloadDriver {
     const exactKeys = <String>{
       'schema',
       'action',
+      'proofStage',
       'status',
       'containsSecrets',
       'bundleId',
@@ -2013,14 +2804,27 @@ final class _IosPayloadDriver {
       'deliveredNotificationBadgeWasNil',
       'sentinelSurvived',
       'removedExactOwnedNotification',
+      'matchingRemoteCount',
+      'matchingLocalCount',
+      'matchingUsefulProviderCount',
+      'matchingSanitizedProviderCount',
+      'matchingFlutterLocalCount',
+      'matchingUnknownCount',
+      'matchingTotalCount',
+      'stableSampleCount',
+      'stableSampleIntervalMilliseconds',
+      'settleDelayMilliseconds',
+      'observationDeadlineMilliseconds',
+      'requestIdentifierSha256',
       'childBuildCount',
       'manualActionCount',
       'resultCode',
       'completedAt',
     };
     final expected = <String, Object?>{
-      'schema': 'mknoon.sims.ios-notification-recovery-host-receipt.v1',
-      'action': 'prove-recovery',
+      'schema': 'mknoon.sims.ios-notification-recovery-host-receipt.v2',
+      'action': action,
+      'proofStage': proofStage,
       'status': 'PASS',
       'containsSecrets': false,
       'bundleId': _bundleId,
@@ -2031,20 +2835,37 @@ final class _IosPayloadDriver {
           .convert(utf8.encode(options.receiverDeviceId))
           .toString(),
       'apnsPayloadSha256': _apnsPayloadSha256,
-      'badgeBefore': 1,
-      'badgeAfter': 0,
+      if (action == 'prove-recovery') 'badgeBefore': 1,
+      if (action == 'prove-recovery') 'badgeAfter': 0,
       'deliveredBefore': 1,
-      'deliveredWithSentinel': 2,
+      'deliveredWithSentinel': action == 'prove-recovery' ? 2 : 1,
       'deliveredAfter': 1,
       'deliveredNotificationBadgeWasNil': true,
-      'sentinelSurvived': true,
-      'removedExactOwnedNotification': true,
+      'sentinelSurvived': action == 'prove-recovery',
+      'removedExactOwnedNotification': action == 'prove-recovery',
+      'matchingRemoteCount': 1,
+      'matchingLocalCount': 0,
+      'matchingUsefulProviderCount': 1,
+      'matchingSanitizedProviderCount': 0,
+      'matchingFlutterLocalCount': 0,
+      'matchingUnknownCount': 0,
+      'matchingTotalCount': 1,
+      'stableSampleCount': 3,
+      'stableSampleIntervalMilliseconds': 500,
+      'settleDelayMilliseconds': 3000,
+      'observationDeadlineMilliseconds': 8000,
       'childBuildCount': 0,
       'manualActionCount': 0,
       'resultCode': 'ok',
     };
-    if (receipt.keys.toSet() != exactKeys ||
+    if (receipt.keys.toSet().difference(exactKeys).isNotEmpty ||
+        exactKeys.difference(receipt.keys.toSet()).isNotEmpty ||
         expected.entries.any((entry) => receipt[entry.key] != entry.value) ||
+        receipt['requestIdentifierSha256'] is! List ||
+        (receipt['requestIdentifierSha256']! as List).length != 1 ||
+        !_sha256Pattern.hasMatch(
+          '${(receipt['requestIdentifierSha256']! as List).single}',
+        ) ||
         findIosNotificationSecretBearingField(receipt) != null ||
         _utcTimestampOrNull(receipt['completedAt']) == null) {
       throw _DriverFailure(
@@ -2075,6 +2896,7 @@ final class _IosPayloadDriver {
         _assertionsAttempted,
       );
     }
+    _applicationInstalled = false;
   }
 
   Future<File> _installedApplicationsJson(String label) async {
@@ -2197,6 +3019,90 @@ final class _IosPayloadDriver {
     return _RedactedEvidence(nseLog, recipientLog, uiLog);
   }
 
+  _DirectWindowCounts _directWindowCounts(
+    String rawWindow,
+    _SyslogObservationBoundary boundary,
+  ) {
+    final window = boundary.byteOffset >= rawWindow.length
+        ? ''
+        : rawWindow.substring(boundary.byteOffset);
+    final lines = const LineSplitter().convert(window);
+    int count(bool Function(String line) predicate) =>
+        lines.where(predicate).length;
+    return _DirectWindowCounts(
+      nseEnvelopeStaged: count(
+        (line) =>
+            line.contains('PUSH_NSE_ENVELOPE_STAGED') &&
+            line.contains(r'"success":"true"'),
+      ),
+      nseDecryptOk: count((line) => line.contains('PUSH_NSE_DECRYPT_OK')),
+      nseAuthorizedHandoff: count(
+        (line) =>
+            line.contains('PUSH_NSE_CONTENT_HANDOFF') &&
+            line.contains(r'"authorized":"true"'),
+      ),
+      nseActiveHandoff: count(
+        (line) =>
+            line.contains('PUSH_NSE_CONTENT_HANDOFF') &&
+            line.contains(r'"presentation":"active"'),
+      ),
+      nseTrustedPassiveHandoff: count(
+        (line) =>
+            line.contains('PUSH_NSE_CONTENT_HANDOFF') &&
+            line.contains(r'"presentation":"trusted_passive"'),
+      ),
+      nseSanitizedHandoff: count(
+        (line) =>
+            line.contains('PUSH_NSE_CONTENT_HANDOFF') &&
+            line.contains(r'"presentation":"sanitized"'),
+      ),
+      backgroundHandler: count(
+        (line) => line.contains(r'"event":"PUSH_BACKGROUND_MESSAGE_RECEIVED"'),
+      ),
+      recentRemoteSuppression: count(
+        (line) =>
+            line.contains(r'"event":"NOTIFICATION_SUPPRESSED"') &&
+            line.contains(r'"reason":"recent_remote_push"'),
+      ),
+      matchingNotificationShown: count(
+        (line) => line.contains(r'"event":"NOTIFICATION_SHOWN"'),
+      ),
+    );
+  }
+
+  File _writeCausalDiagnostic({
+    required String status,
+    _DirectWindowCounts? counts,
+  }) {
+    final diagnostic = File(
+      '${options.captureDirectory.path}/direct-notification-diagnostic.redacted.json',
+    );
+    final value = <String, Object?>{
+      'schema': 'mknoon.sims.ios-direct-notification-diagnostic.v1',
+      'status': status,
+      'phase': options.phase,
+      'containsSecrets': false,
+      'runIdSha256': sha256.convert(utf8.encode(options.runId)).toString(),
+      'nonceSha256': sha256.convert(utf8.encode(options.nonce)).toString(),
+      'receiverDeviceIdSha256': sha256
+          .convert(utf8.encode(options.receiverDeviceId))
+          .toString(),
+      'assertionsAttempted': _assertionsAttempted,
+      'providerSetupComplete': _providerSetupComplete,
+      'providerCleanupComplete': _providerCleanupComplete,
+      'senderProjectionSeeded': _senderProjectionSeeded,
+      'senderProjectionCleaned': _senderProjectionCleaned,
+      'uiCleanupComplete': _uiCleanupComplete,
+      if (counts != null) 'completeWindowCounts': counts.toJson(),
+      'recordedAt': DateTime.now().toUtc().toIso8601String(),
+    };
+    final encoded = '${jsonEncode(value)}\n';
+    _rejectSecretBearingText(encoded, 'direct notification diagnostic');
+    diagnostic.writeAsStringSync(encoded, flush: true);
+    _makeOwnerOnly(diagnostic);
+    return diagnostic;
+  }
+
   String _redactUiText(String value) {
     var redacted = value;
     for (final key in const <String>[
@@ -2221,6 +3127,42 @@ final class _SyslogObservationBoundary {
 
   final int byteOffset;
   final bool beginsAtLineBoundary;
+}
+
+final class _DirectWindowCounts {
+  const _DirectWindowCounts({
+    required this.nseEnvelopeStaged,
+    required this.nseDecryptOk,
+    required this.nseAuthorizedHandoff,
+    required this.nseActiveHandoff,
+    required this.nseTrustedPassiveHandoff,
+    required this.nseSanitizedHandoff,
+    required this.backgroundHandler,
+    required this.recentRemoteSuppression,
+    required this.matchingNotificationShown,
+  });
+
+  final int nseEnvelopeStaged;
+  final int nseDecryptOk;
+  final int nseAuthorizedHandoff;
+  final int nseActiveHandoff;
+  final int nseTrustedPassiveHandoff;
+  final int nseSanitizedHandoff;
+  final int backgroundHandler;
+  final int recentRemoteSuppression;
+  final int matchingNotificationShown;
+
+  Map<String, int> toJson() => <String, int>{
+    'nseEnvelopeStagedCount': nseEnvelopeStaged,
+    'nseDecryptOkCount': nseDecryptOk,
+    'nseAuthorizedHandoffCount': nseAuthorizedHandoff,
+    'nseActiveHandoffCount': nseActiveHandoff,
+    'nseTrustedPassiveHandoffCount': nseTrustedPassiveHandoff,
+    'nseSanitizedHandoffCount': nseSanitizedHandoff,
+    'backgroundHandlerCount': backgroundHandler,
+    'recentRemoteSuppressionCount': recentRemoteSuppression,
+    'matchingNotificationShownCount': matchingNotificationShown,
+  };
 }
 
 final class _CommandResult {

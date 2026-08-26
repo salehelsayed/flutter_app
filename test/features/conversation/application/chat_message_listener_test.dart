@@ -2193,6 +2193,76 @@ void main() {
     );
 
     test(
+      'listener without an explicit gate observes a deferred ambient gate replacement',
+      () async {
+        const senderPeerId = 'sender-notif-ambient-replacement';
+        const messageId = 'msg-notif-ambient-replacement';
+        contactRepo.seedContact(_makeContact(senderPeerId, username: 'Bob'));
+
+        final listener = ChatMessageListener(
+          chatMessageStream: chatStreamController.stream,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          notificationService: notificationService,
+          appVisibility: TrackerBackedAppVisibility(
+            tracker: tracker,
+            lifecycle: () => AppLifecycleState.paused,
+          ),
+          backgroundNotificationDuplicateGuardDelay: Duration.zero,
+          downloadProfilePictureFn: _noopDownloadProfilePicture,
+        );
+        addTearDown(listener.dispose);
+
+        final originalAmbientGate = recentRemoteNotificationGate;
+        final directory = await Directory.systemTemp.createTemp(
+          'chat-listener-ambient-gate-replacement-',
+        );
+        final replacementGate = RecentRemoteNotificationGate(
+          filePath: '${directory.path}/recent-remote.json',
+        );
+        addTearDown(() async {
+          debugSetRecentRemoteNotificationGate(originalAmbientGate);
+          await replacementGate.clear();
+          if (await directory.exists()) {
+            await directory.delete(recursive: true);
+          }
+        });
+
+        debugSetRecentRemoteNotificationGate(replacementGate);
+        await replacementGate.markAnnouncement(
+          payload: senderPeerId,
+          messageId: messageId,
+        );
+        expect(
+          await replacementGate.hasRecentAnnouncement(
+            payload: senderPeerId,
+            messageId: messageId,
+          ),
+          isTrue,
+        );
+
+        final outcome = await listener.processIncomingMessage(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: messageId,
+            text: 'Already announced remotely',
+            senderUsername: 'Bob',
+          ),
+        );
+
+        expect(outcome.state, ChatMessageProcessState.stored);
+        expect(notificationService.shown, isEmpty);
+        expect(
+          await replacementGate.hasRecentAnnouncement(
+            payload: senderPeerId,
+            messageId: messageId,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
       'recovery replay persists the message without showing a local notification',
       () async {
         final senderPeerId = 'sender-notif-replay';

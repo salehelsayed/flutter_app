@@ -216,6 +216,34 @@ class RecentRemoteNotificationGate {
     }
   }
 
+  /// Reads exact NSE proof without deleting it. Durable notification owners
+  /// use this before entering their ledger state machine and consume the
+  /// marker only after the effect receipt and SQL custody handoff succeed.
+  Future<bool> _hasRecentSidecarMarker(String payload, String messageId) async {
+    return await _recentSidecarTimestamp(payload, messageId) != null;
+  }
+
+  Future<int?> _recentSidecarTimestamp(String payload, String messageId) async {
+    final dirPath = await _resolveSidecarDir();
+    if (dirPath == null) {
+      return null;
+    }
+    await _pruneStaleSidecarsOnce(dirPath);
+    try {
+      final file = File('$dirPath/${sidecarMarkerName(payload, messageId)}');
+      if (!await file.exists()) {
+        return null;
+      }
+      final modifiedAtMs = (await file.lastModified()).millisecondsSinceEpoch;
+      final ageMs = _now().millisecondsSinceEpoch - modifiedAtMs;
+      if (ageMs <= messageTtl.inMilliseconds) {
+        return modifiedAtMs;
+      }
+      await file.delete();
+    } catch (_) {}
+    return null;
+  }
+
   /// iOS foreground arrivals are never presented (the FCM plugin completes
   /// willPresent with no presentation options), but the out-of-process NSE has
   /// already dropped its "shown" sidecar for the push. Discard that marker —
@@ -296,6 +324,145 @@ class RecentRemoteNotificationGate {
 
   Future<bool> consumeIfRecentPayload(String payload) async {
     return consumeIfRecentAnnouncement(payload: payload);
+  }
+
+  Future<bool> hasRecentPayload(String payload) async {
+    return hasRecentAnnouncement(payload: payload);
+  }
+
+  /// Non-destructively checks for an exact recent announcement.
+  ///
+  /// Unlike [consumeIfRecentAnnouncement], this preserves both the Dart-map
+  /// entry and the NSE sidecar. Callers that are about to durably adopt an
+  /// already-presented remote effect must keep that proof retryable until
+  /// their ledger and SQL handoff are terminal.
+  Future<bool> hasRecentAnnouncement({
+    required String payload,
+    String? messageId,
+  }) async {
+    final normalizedPayload = _normalizePayload(payload);
+    if (normalizedPayload == null) {
+      return false;
+    }
+
+    final entries = await _loadEntries();
+    final normalizedMessageId = _normalizePayload(messageId);
+    if (normalizedMessageId != null &&
+        (entries.containsKey(
+              _messageKey(normalizedPayload, normalizedMessageId),
+            ) ||
+            entries.containsKey(_payloadKey(normalizedPayload)))) {
+      return true;
+    }
+    if (normalizedMessageId == null) {
+      return entries.containsKey(_payloadKey(normalizedPayload));
+    }
+    return _hasRecentSidecarMarker(normalizedPayload, normalizedMessageId);
+  }
+
+  /// Non-destructively checks proof for exactly one message identity.
+  ///
+  /// This intentionally does not fall back to the legacy payload marker. A
+  /// conversation-level marker cannot prove that a particular message was
+  /// already presented, and must therefore never authorize durable adoption
+  /// of a different message in the same chat.
+  Future<bool> hasRecentExactAnnouncement({
+    required String payload,
+    required String messageId,
+  }) async {
+    final normalizedPayload = _normalizePayload(payload);
+    final normalizedMessageId = _normalizePayload(messageId);
+    if (normalizedPayload == null || normalizedMessageId == null) {
+      return false;
+    }
+
+    final entries = await _loadEntries();
+    if (entries.containsKey(
+      _messageKey(normalizedPayload, normalizedMessageId),
+    )) {
+      return true;
+    }
+    return _hasRecentSidecarMarker(normalizedPayload, normalizedMessageId);
+  }
+
+  /// Consumes proof for exactly one message identity.
+  ///
+  /// Both the exact Dart-map key and its exact NSE sidecar are removed so the
+  /// operation remains one-shot when both processes recorded the same remote
+  /// presentation. Legacy payload-only proof is never read or modified.
+  Future<bool> consumeIfRecentExactAnnouncement({
+    required String payload,
+    required String messageId,
+  }) async {
+    final normalizedPayload = _normalizePayload(payload);
+    final normalizedMessageId = _normalizePayload(messageId);
+    if (normalizedPayload == null || normalizedMessageId == null) {
+      return false;
+    }
+
+    final entries = await _loadEntries();
+    final timestamp = entries.remove(
+      _messageKey(normalizedPayload, normalizedMessageId),
+    );
+    await _writeEntries(entries);
+    final consumedSidecar = await _consumeSidecarMarker(
+      normalizedPayload,
+      normalizedMessageId,
+    );
+    return timestamp != null || consumedSidecar;
+  }
+
+  /// Copies one exact remote-presentation proof to a caller-proven canonical
+  /// identity without deleting the source marker.
+  ///
+  /// This deliberately has no payload-only or same-conversation fallback: the
+  /// caller must supply both sides of an alias mapping it has already proved.
+  /// A failed target write is allowed to escape so durable owners retain their
+  /// not-ready custody and can retry while the exact source proof still exists.
+  Future<bool> promoteExactAnnouncementAlias({
+    required String sourcePayload,
+    required String sourceMessageId,
+    required String targetPayload,
+    required String targetMessageId,
+  }) async {
+    final normalizedSourcePayload = _normalizePayload(sourcePayload);
+    final normalizedSourceMessageId = _normalizePayload(sourceMessageId);
+    final normalizedTargetPayload = _normalizePayload(targetPayload);
+    final normalizedTargetMessageId = _normalizePayload(targetMessageId);
+    if (normalizedSourcePayload == null ||
+        normalizedSourceMessageId == null ||
+        normalizedTargetPayload == null ||
+        normalizedTargetMessageId == null) {
+      return false;
+    }
+
+    final entries = await _loadEntries();
+    final sourceKey = _messageKey(
+      normalizedSourcePayload,
+      normalizedSourceMessageId,
+    );
+    final targetKey = _messageKey(
+      normalizedTargetPayload,
+      normalizedTargetMessageId,
+    );
+    final sourceTimestamp =
+        entries[sourceKey] ??
+        await _recentSidecarTimestamp(
+          normalizedSourcePayload,
+          normalizedSourceMessageId,
+        );
+    if (sourceTimestamp == null) {
+      return false;
+    }
+    if (sourceKey == targetKey || entries.containsKey(targetKey)) {
+      return true;
+    }
+
+    await _writeEntriesAtomicallyOrThrow(<String, int>{
+      ...entries,
+      targetKey: sourceTimestamp,
+    });
+    return true;
   }
 
   Future<bool> consumeIfRecentAnnouncement({
@@ -391,17 +558,41 @@ class RecentRemoteNotificationGate {
 
   Future<void> _writeEntries(Map<String, int> entries) async {
     try {
-      final file = File(await _resolveFilePath());
-      if (entries.isEmpty) {
-        if (await file.exists()) {
-          await file.delete();
-        }
-        return;
-      }
-
-      await file.parent.create(recursive: true);
-      await file.writeAsString(jsonEncode(entries), flush: true);
+      await _writeEntriesOrThrow(entries);
     } catch (_) {}
+  }
+
+  Future<void> _writeEntriesOrThrow(Map<String, int> entries) async {
+    final file = File(await _resolveFilePath());
+    if (entries.isEmpty) {
+      if (await file.exists()) {
+        await file.delete();
+      }
+      return;
+    }
+
+    await file.parent.create(recursive: true);
+    await file.writeAsString(jsonEncode(entries), flush: true);
+  }
+
+  Future<void> _writeEntriesAtomicallyOrThrow(Map<String, int> entries) async {
+    final file = File(await _resolveFilePath());
+    await file.parent.create(recursive: true);
+    final temporary = File(
+      '${file.path}.alias-promotion-$pid-'
+      '${DateTime.now().microsecondsSinceEpoch}.tmp',
+    );
+    try {
+      await temporary.writeAsString(jsonEncode(entries), flush: true);
+      await temporary.rename(file.path);
+    } catch (_) {
+      try {
+        if (await temporary.exists()) {
+          await temporary.delete();
+        }
+      } catch (_) {}
+      rethrow;
+    }
   }
 
   static String? _normalizePayload(String? payload) {

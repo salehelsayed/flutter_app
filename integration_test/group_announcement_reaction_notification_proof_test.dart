@@ -43,6 +43,10 @@ void main() {
   test('ios_announcement_reaction_recipient', () async {
     await _validateScenario('ios_announcement_reaction_recipient');
   });
+
+  test(iosChatGroupMessageAndReactionScenarioId, () async {
+    await _validateScenario(iosChatGroupMessageAndReactionScenarioId);
+  });
 }
 
 Future<void> _validateScenario(String scenario) async {

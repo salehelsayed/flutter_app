@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -1496,6 +1497,19 @@ def session_digest(value: str | None) -> str:
     return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
+def _privacy_identity(value: Any) -> str | None:
+    if value is None:
+        return None
+    candidate = str(value).strip().lower()
+    if not candidate:
+        return None
+    if candidate == "root":
+        return candidate
+    if re.fullmatch(r"[0-9a-f]{16,64}", candidate):
+        return candidate
+    return hashlib.sha256(candidate.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
 def _append_jsonl(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = (_canonical_json(value) + "\n").encode("utf-8")
@@ -1515,6 +1529,14 @@ def log_query(
     duration_ms: float,
     refreshed: bool,
     refresh_ms: float,
+    session_sha256: str | None = None,
+    thread_sha256: str | None = None,
+    agent_sha256: str | None = None,
+    trigger: str = "cli",
+    opportunity_sha256: str | None = None,
+    raw_read_intent_sha256: str | None = None,
+    policy_version: int | None = None,
+    mode: str | None = None,
 ) -> None:
     if os.environ.get("CODEX_MEMORY_TELEMETRY", "1").strip().lower() in {
         "0", "false", "no", "off"
@@ -1526,8 +1548,24 @@ def log_query(
         "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
         "operation": "query",
         "question_sha256": hashlib.sha256(question.encode("utf-8")).hexdigest()[:16],
-        "codex_session_sha256": session_digest(os.environ.get("CODEX_SESSION_ID")),
-        "codex_thread_sha256": session_digest(os.environ.get("CODEX_THREAD_ID")),
+        "codex_session_sha256": (
+            _privacy_identity(session_sha256)
+            if session_sha256 is not None
+            else session_digest(os.environ.get("CODEX_SESSION_ID"))
+        )
+        or "unknown",
+        "codex_thread_sha256": (
+            _privacy_identity(thread_sha256)
+            if thread_sha256 is not None
+            else session_digest(os.environ.get("CODEX_THREAD_ID"))
+        )
+        or "unknown",
+        "trigger": (
+            str(trigger).strip().lower()
+            if str(trigger).strip().lower()
+            in {"cli", "pre_tool_use", "repeat_guard", "secondary_preflight"}
+            else "unknown"
+        ),
         "budget": budget,
         "tokens": result.tokens,
         "hit": result.hit,
@@ -1545,6 +1583,34 @@ def log_query(
         "refresh_ms": round(refresh_ms, 2),
         "graph_fingerprint": str(manifest.get("fingerprint", ""))[:16],
     }
+    if agent_sha256:
+        record["agent_sha256"] = _privacy_identity(agent_sha256) or "unknown"
+    if opportunity_sha256:
+        candidate = str(opportunity_sha256).strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{16,64}", candidate):
+            candidate = hashlib.sha256(
+                candidate.encode("utf-8", errors="replace")
+            ).hexdigest()[:16]
+        record["opportunity_sha256"] = candidate
+    if raw_read_intent_sha256:
+        candidate = str(raw_read_intent_sha256).strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{16,64}", candidate):
+            candidate = hashlib.sha256(
+                candidate.encode("utf-8", errors="replace")
+            ).hexdigest()[:16]
+        record["raw_read_intent_sha256"] = candidate
+    if policy_version is not None:
+        try:
+            record["policy_version"] = int(policy_version)
+        except (TypeError, ValueError, OverflowError):
+            record["policy_version"] = "unknown"
+    if mode is not None:
+        normalized_mode = str(mode).strip().lower()
+        record["mode"] = (
+            normalized_mode
+            if normalized_mode in {"off", "shadow", "inject", "enforce"}
+            else "unknown"
+        )
     _append_jsonl(runtime.telemetry_path, record)
 
 
@@ -1572,26 +1638,1559 @@ def _p95(values: list[float]) -> float:
     return float(ordered[index])
 
 
+_OPPORTUNITY_EVENTS = {
+    "retrieval_opportunity",
+    "retrieval-opportunity",
+}
+_FOLLOWUP_EVENTS = {
+    "retrieval_followup",
+    "retrieval_follow_up",
+    "retrieval-opportunity-followup",
+}
+_OPPORTUNITY_KINDS = {
+    "broad_sweep",
+    "primary_read",
+    "secondary_read",
+    "repeat_read",
+}
+_RECALL_OUTCOMES = {
+    "focused_hit",
+    "broad_hit",
+    "miss",
+    "error",
+    "provenance_mismatch",
+    "disabled",
+    "cached_hit",
+    "not_attempted",
+}
+_OPPORTUNITY_ACTIONS = {"allow", "inject", "deny", "fail_open", "exempt"}
+_OPPORTUNITY_MODES = {"off", "shadow", "inject", "enforce"}
+_FOLLOWUP_OUTCOMES = {
+    "targeted_window",
+    "targeted_search",
+    "whole_read",
+    "primary_bypass",
+    "changed",
+    "timeout",
+    "abandoned",
+}
+_COSTED_FOLLOWUP_OUTCOMES = {
+    "targeted_window",
+    "targeted_search",
+    "whole_read",
+    "primary_bypass",
+}
+
+_ROLLOVER_EVENTS = {
+    "checkpoint_saved",
+    "checkpoint_advisory_reset_requested",
+    "precompact_allowed",
+    "precompact_recovery_allowed",
+    "precompact_blocked",
+    "postcompact_observed",
+    "session_resumed",
+    "session_recovery_advisory",
+    "terminal_after_not_ready_blocked",
+    "terminal_after_not_ready",
+    "user_rescue_after_terminal",
+    "checkpoint_completed",
+    "checkpoint_stale",
+    "subagent_skipped",
+}
+_ROLLOVER_REASON_CODES = {
+    "checkpoint_missing",
+    "checkpoint_schema_mismatch",
+    "checkpoint_age_exceeded",
+    "checkpoint_already_consumed",
+    "checkpoint_completed",
+    "saved_at_missing",
+    "plan_status_missing",
+    "plan_missing",
+    "plan_changed",
+    "plan_outside_repo",
+    "plan_too_large",
+    "plan_extraction_failed",
+    "plan_read_failed",
+    "changed_path_outside_repo",
+    "phase_missing",
+    "next_action_missing",
+    "test_and_gate_anchors_missing",
+    "graph_status_missing",
+    "graph_query_missing",
+    "graph_evidence_missing",
+    "outstanding_work_missing",
+    "outstanding_work_running",
+    "repo_fingerprint_unavailable",
+    "repo_head_changed",
+    "task_scope_changed",
+    "worktree_changed",
+    "changed_path_limit_exceeded",
+    "prepared_checkpoint_missing",
+    "prepared_checkpoint_stale",
+    "prepared_generation_mismatch",
+    "subagent_rollover_unsupported",
+    "rollover_intent_missing",
+    "rollover_intent_stale",
+    "rollover_intent_mismatch",
+    "advisory_reset_requested",
+}
+
+_ROLLOVER_REPO_SCOPE_ALIASES = {
+    "legacy_worktree_v1": "legacy_worktree_v1",
+    "legacy_worktree": "legacy_worktree_v1",
+    "whole_worktree_v1": "legacy_worktree_v1",
+    "whole_worktree": "legacy_worktree_v1",
+    "worktree_v1": "legacy_worktree_v1",
+    "task_paths_v1": "task_paths_v1",
+    "task_paths": "task_paths_v1",
+    "task_scope_v1": "task_paths_v1",
+    "task_scope": "task_paths_v1",
+}
+
+
+def _first_metric_value(row: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in row and row[name] is not None:
+            return row[name]
+    return None
+
+
+def _metric_bool(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _metric_int(value: Any) -> int:
+    try:
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            return 0
+        return max(0, int(numeric))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _opportunity_digest(value: Any) -> str | None:
+    if value is None:
+        return None
+    candidate = str(value).strip().lower()
+    if not candidate:
+        return None
+    if re.fullmatch(r"[0-9a-f]{16,64}", candidate):
+        return candidate
+    return hashlib.sha256(candidate.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def _raw_read_intent_digest(
+    row: dict[str, Any], *, fallback: str | None
+) -> str | None:
+    """Return the v3 semantic identity, falling back for policy-v2 ledgers."""
+    try:
+        policy_version = int(row.get("policy_version", 0))
+    except (TypeError, ValueError, OverflowError):
+        policy_version = 0
+    if policy_version >= 3:
+        digest = _opportunity_digest(
+            _first_metric_value(
+                row,
+                "raw_read_intent_sha256",
+                "raw_intent_sha256",
+                "read_intent_sha256",
+            )
+        )
+        if digest:
+            return digest
+    return fallback
+
+
+def _metric_category(value: Any, allowed: set[str] | None = None) -> str:
+    candidate = str(value or "").strip().lower().replace("-", "_")
+    if allowed is not None:
+        return candidate if candidate in allowed else "unknown"
+    # Hook-provided exclusion reasons are enums, but keep corrupt/untrusted values
+    # from turning stats output into a prompt, command, or path disclosure.
+    if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", candidate):
+        return candidate
+    return "unknown"
+
+
+def _rollover_scope(row: dict[str, Any]) -> str:
+    candidate = str(row.get("agent_scope") or "").strip().lower()
+    return candidate if candidate in {"root", "subagent"} else "unknown"
+
+
+def _rollover_event(row: dict[str, Any]) -> str:
+    return _metric_category(row.get("event"), _ROLLOVER_EVENTS)
+
+
+def _rollover_repo_scope(row: dict[str, Any]) -> str:
+    """Normalize fixed producer aliases without ever rendering raw values."""
+    raw = _first_metric_value(
+        row,
+        "repo_scope",
+        "repository_scope_mode",
+        "repository_scope",
+        "validation_scope",
+    )
+    if raw is None:
+        # Events written before scoped validation used the whole-worktree
+        # fingerprint. Treating them as legacy preserves historical adoption
+        # counts without trusting a missing field as task-scoped validation.
+        return "legacy_worktree_v1"
+    candidate = str(raw).strip().lower().replace("-", "_")
+    return _ROLLOVER_REPO_SCOPE_ALIASES.get(candidate, "unknown")
+
+
+def _rollover_task_path_count(row: dict[str, Any]) -> int:
+    return _metric_int(
+        _first_metric_value(
+            row,
+            "task_path_count",
+            "task_scope_path_count",
+            "scoped_path_count",
+            "changed_path_count",
+        )
+    )
+
+
+def _rollover_task_scope_complete(row: dict[str, Any]) -> bool:
+    value = _first_metric_value(
+        row,
+        "task_scope_complete",
+        "repository_scope_complete",
+        "scope_complete",
+    )
+    return value is True
+
+
+def _rollover_reason_counts(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    seen: set[tuple[str, str, str, str]] = set()
+    for index, row in enumerate(rows):
+        raw = row.get("reason_codes")
+        if raw is None:
+            continue
+        if not isinstance(raw, list):
+            reasons = ["unknown"]
+        else:
+            reasons = [
+                _metric_category(value, _ROLLOVER_REASON_CODES) for value in raw
+            ]
+        prefix = (
+            _rollover_checkpoint_identity(row, index),
+            str(row.get("timestamp") or row.get("ts") or "unknown"),
+            _metric_category(row.get("trigger")),
+        )
+        for reason in reasons:
+            identity = (*prefix, reason)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            counts[reason] += 1
+    return dict(sorted(counts.items()))
+
+
+def _rollover_checkpoint_identity(row: dict[str, Any], index: int) -> str:
+    session = str(row.get("codex_session_sha256") or "unknown")
+    thread = str(row.get("codex_thread_sha256") or "unknown")
+    generation = row.get("generation")
+    if (
+        re.fullmatch(r"[0-9a-f]{16,64}", session)
+        and re.fullmatch(r"[0-9a-f]{16,64}", thread)
+        and isinstance(generation, int)
+        and not isinstance(generation, bool)
+        and generation >= 0
+    ):
+        return "generation:{}:{}:{}".format(session, thread, generation)
+    checkpoint = str(row.get("checkpoint_sha256") or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{16,64}", checkpoint):
+        return "checkpoint:" + checkpoint
+    # The identity remains internal to aggregation and is never rendered. A row
+    # without a producer identity must not be merged with another malformed row.
+    return "row:{}".format(index)
+
+
+_ROLLOVER_LIVENESS_TRANSITIONS = {
+    "precompact_allowed",
+    "precompact_recovery_allowed",
+    "postcompact_observed",
+    "session_resumed",
+    "session_recovery_advisory",
+}
+
+
+def _rollover_thread_identity(row: dict[str, Any], index: int) -> str:
+    """Return a privacy-safe lane for retry correlation, never a raw ID."""
+    session = str(row.get("codex_session_sha256") or "").strip().lower()
+    thread = str(row.get("codex_thread_sha256") or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{16,64}", thread):
+        if re.fullmatch(r"[0-9a-f]{16,64}", session):
+            return "session:{}:thread:{}".format(session, thread)
+        return "thread:{}".format(thread)
+    # Malformed legacy rows may still correlate within one checkpoint, but must
+    # never merge unrelated generations merely because their thread is absent.
+    return "checkpoint:{}".format(_rollover_checkpoint_identity(row, index))
+
+
+def _rollover_liveness_episode(row: dict[str, Any]) -> str | None:
+    candidate = str(row.get("not_ready_episode_sha256") or "").strip().lower()
+    return candidate if re.fullmatch(r"[0-9a-f]{16,64}", candidate) else None
+
+
+def _rollover_liveness_metrics(
+    recognized: list[tuple[int, dict[str, Any], str]],
+) -> dict[str, int]:
+    """Correlate NOT_READY retries across generations in one hashed thread.
+
+    Checkpoint/artifact accounting remains generation-scoped. Liveness instead
+    follows an ordered thread episode until PreCompact or recovery actually
+    starts. A READY retry or advisory arm is evidence of remediation, not a
+    transition, so either one remains pending and cannot conceal a terminal.
+    """
+    by_thread: dict[str, list[tuple[int, dict[str, Any], str]]] = {}
+    for index, row, event in recognized:
+        by_thread.setdefault(_rollover_thread_identity(row, index), []).append(
+            (index, row, event)
+        )
+
+    not_ready_ids: set[str] = set()
+    unresolved_ids: set[str] = set()
+    repaired_ids: set[str] = set()
+    advisory_ids: set[str] = set()
+    terminal_episode_ids: set[str] = set()
+    blocked_episode_ids: set[str] = set()
+    rescued_episode_ids: set[str] = set()
+
+    for thread_identity, rows in by_thread.items():
+        active: dict[str, Any] | None = None
+        last_failed_episode: tuple[str, str | None] | None = None
+        episode_number = 0
+        for index, row, event in sorted(rows, key=lambda value: value[0]):
+            checkpoint_identity = _rollover_checkpoint_identity(row, index)
+            producer_episode = _rollover_liveness_episode(row)
+            if event == "checkpoint_saved" and row.get("ready") is False:
+                not_ready_ids.add(checkpoint_identity)
+                if (
+                    active is not None
+                    and producer_episode is not None
+                    and active.get("producer_episode") is not None
+                    and active["producer_episode"] != producer_episode
+                ):
+                    unresolved_ids.update(active["attempt_ids"])
+                    active = None
+                if active is None:
+                    episode_number += 1
+                    active = {
+                        "id": "{}:episode:{}".format(
+                            thread_identity, episode_number
+                        ),
+                        "attempt_ids": set(),
+                        "producer_episode": producer_episode,
+                    }
+                elif active.get("producer_episode") is None:
+                    active["producer_episode"] = producer_episode
+                active["attempt_ids"].add(checkpoint_identity)
+                continue
+
+            if event == "user_rescue_after_terminal":
+                if last_failed_episode is not None and (
+                    producer_episode is None
+                    or last_failed_episode[1] is None
+                    or producer_episode == last_failed_episode[1]
+                ):
+                    rescued_episode_ids.add(last_failed_episode[0])
+                continue
+            if active is None:
+                continue
+            if (
+                producer_episode is not None
+                and active.get("producer_episode") is not None
+                and active["producer_episode"] != producer_episode
+            ):
+                continue
+            if active.get("producer_episode") is None:
+                active["producer_episode"] = producer_episode
+
+            attempt_ids = active["attempt_ids"]
+            if event == "checkpoint_saved" and row.get("ready") is True:
+                repaired_ids.update(attempt_ids)
+            elif event == "checkpoint_advisory_reset_requested":
+                advisory_ids.update(attempt_ids)
+            elif event == "terminal_after_not_ready_blocked":
+                blocked_episode_ids.add(active["id"])
+            elif event == "terminal_after_not_ready":
+                terminal_episode_ids.add(active["id"])
+                last_failed_episode = (
+                    active["id"],
+                    active.get("producer_episode"),
+                )
+                active = None
+            elif event in _ROLLOVER_LIVENESS_TRANSITIONS:
+                active = None
+
+        if active is not None:
+            unresolved_ids.update(active["attempt_ids"])
+
+    return {
+        "not_ready_lifecycles": len(not_ready_ids),
+        "unresolved_not_ready": len(unresolved_ids),
+        "not_ready_repairs_before_terminal": len(repaired_ids),
+        "not_ready_advisories_before_terminal": len(advisory_ids),
+        "terminal_after_not_ready_blocked": len(blocked_episode_ids),
+        "terminal_after_not_ready": len(terminal_episode_ids),
+        "user_rescue_after_terminal": len(rescued_episode_ids),
+    }
+
+
+def _rollover_lane_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    recognized: list[tuple[int, dict[str, Any], str]] = []
+    unknown_events = 0
+    for index, row in enumerate(rows):
+        event = _rollover_event(row)
+        if event == "unknown":
+            unknown_events += 1
+            continue
+        recognized.append((index, row, event))
+
+    event_counts = Counter(event for _index, _row, event in recognized)
+    save_ids: set[str] = set()
+    ready_ids: set[str] = set()
+    not_ready_ids: set[str] = set()
+    checkpoint_repo_scopes: dict[str, set[str]] = {}
+    checkpoint_task_path_counts: dict[str, int] = {}
+    checkpoint_task_scope_complete: dict[str, set[bool]] = {}
+    checkpoint_measurements: dict[str, tuple[int, int]] = {}
+    resumed_contexts: set[str] = set()
+    recovery_contexts: set[str] = set()
+    validation_failure_observations: set[tuple[str, str, str]] = set()
+    interruption_observations: set[tuple[str, str, str]] = set()
+    terminal_failure_observations: set[tuple[str, str, str]] = set()
+    readiness_observations = 0
+    for index, row, event in recognized:
+        identity = _rollover_checkpoint_identity(row, index)
+        if event == "checkpoint_saved":
+            save_ids.add(identity)
+            checkpoint_repo_scopes.setdefault(identity, set()).add(
+                _rollover_repo_scope(row)
+            )
+            checkpoint_task_path_counts[identity] = max(
+                checkpoint_task_path_counts.get(identity, 0),
+                _rollover_task_path_count(row),
+            )
+            checkpoint_task_scope_complete.setdefault(identity, set()).add(
+                _rollover_task_scope_complete(row)
+            )
+            if isinstance(row.get("ready"), bool):
+                readiness_observations += 1
+                (ready_ids if row["ready"] else not_ready_ids).add(identity)
+        if event == "session_resumed":
+            resumed_contexts.add(identity)
+        if event == "session_recovery_advisory":
+            recovery_contexts.add(identity)
+        observation = (
+            identity,
+            str(row.get("timestamp") or row.get("ts") or "unknown"),
+            _metric_category(row.get("trigger")),
+        )
+        if event == "checkpoint_stale":
+            validation_failure_observations.add(observation)
+        if event == "precompact_blocked":
+            interruption_observations.add(observation)
+        if event == "terminal_after_not_ready":
+            terminal_failure_observations.add(observation)
+        byte_count = row.get("checkpoint_bytes")
+        token_count = row.get("checkpoint_tokens_estimate")
+        safe_bytes = (
+            int(byte_count)
+            if isinstance(byte_count, int)
+            and not isinstance(byte_count, bool)
+            and byte_count >= 0
+            else 0
+        )
+        safe_tokens = (
+            int(token_count)
+            if isinstance(token_count, int)
+            and not isinstance(token_count, bool)
+            and token_count >= 0
+            else 0
+        )
+        prior_bytes, prior_tokens = checkpoint_measurements.get(identity, (0, 0))
+        checkpoint_measurements[identity] = (
+            max(prior_bytes, safe_bytes),
+            max(prior_tokens, safe_tokens),
+        )
+
+    liveness = _rollover_liveness_metrics(recognized)
+
+    saved_measurements = [
+        checkpoint_measurements.get(identity, (0, 0)) for identity in save_ids
+    ]
+    normalized_repo_scopes = {
+        identity: next(iter(scopes)) if len(scopes) == 1 else "unknown"
+        for identity, scopes in checkpoint_repo_scopes.items()
+    }
+    repo_scope_counts = Counter(normalized_repo_scopes.values())
+    complete_task_scope_ids = {
+        identity
+        for identity, values in checkpoint_task_scope_complete.items()
+        if values == {True}
+    }
+    ready_task_scope_ids = {
+        identity
+        for identity in ready_ids
+        if normalized_repo_scopes.get(identity) == "task_paths_v1"
+        and identity in complete_task_scope_ids
+    }
+    ready_legacy_scope_ids = {
+        identity
+        for identity in ready_ids
+        if normalized_repo_scopes.get(identity) == "legacy_worktree_v1"
+    }
+    ready_unknown_scope_ids = ready_ids - ready_task_scope_ids - ready_legacy_scope_ids
+    attempted_task_scope_counts = [
+        checkpoint_task_path_counts.get(identity, 0)
+        for identity, scope in normalized_repo_scopes.items()
+        if scope == "task_paths_v1"
+    ]
+    ready_task_scope_counts = [
+        checkpoint_task_path_counts.get(identity, 0)
+        for identity in ready_task_scope_ids
+    ]
+    task_scoped_resumes = sum(
+        1
+        for identity in resumed_contexts
+        if identity in ready_task_scope_ids
+    )
+    return {
+        "events": len(recognized),
+        "unknown_events": unknown_events,
+        "event_counts": dict(sorted(event_counts.items())),
+        "checkpoint_save_events": event_counts["checkpoint_saved"],
+        "checkpoints_saved": len(save_ids),
+        "readiness_observations": readiness_observations,
+        "checkpoints_ready": len(ready_ids),
+        "checkpoints_not_ready": len(not_ready_ids),
+        "checkpoint_bytes": sum(value[0] for value in saved_measurements),
+        "checkpoint_tokens_estimate": sum(value[1] for value in saved_measurements),
+        "checkpoint_repo_scopes": dict(sorted(repo_scope_counts.items())),
+        "task_scoped_checkpoints": repo_scope_counts["task_paths_v1"],
+        "legacy_worktree_checkpoints": repo_scope_counts["legacy_worktree_v1"],
+        "unknown_repo_scope_checkpoints": repo_scope_counts["unknown"],
+        "ready_task_scoped_checkpoints": len(ready_task_scope_ids),
+        "ready_legacy_worktree_checkpoints": len(ready_legacy_scope_ids),
+        "ready_unknown_repo_scope_checkpoints": len(ready_unknown_scope_ids),
+        "task_scope_complete_attempts": len(
+            {
+                identity
+                for identity, scope in normalized_repo_scopes.items()
+                if scope == "task_paths_v1" and identity in complete_task_scope_ids
+            }
+        ),
+        "attempted_task_path_count_total": sum(attempted_task_scope_counts),
+        "attempted_task_path_count_max": max(
+            attempted_task_scope_counts, default=0
+        ),
+        "task_path_count_total": sum(ready_task_scope_counts),
+        "task_path_count_max": max(ready_task_scope_counts, default=0),
+        "task_scoped_resumes": task_scoped_resumes,
+        "precompact_allowed": event_counts["precompact_allowed"],
+        "checkpoint_advisory_reset_requested": event_counts[
+            "checkpoint_advisory_reset_requested"
+        ],
+        "precompact_recovery_allowed": event_counts[
+            "precompact_recovery_allowed"
+        ],
+        "precompact_blocked": event_counts["precompact_blocked"],
+        "postcompact_observed": event_counts["postcompact_observed"],
+        "session_resumed": event_counts["session_resumed"],
+        "session_recovery_advisory": event_counts[
+            "session_recovery_advisory"
+        ],
+        **liveness,
+        "checkpoint_completed": event_counts["checkpoint_completed"],
+        "checkpoint_stale": event_counts["checkpoint_stale"],
+        "subagent_skipped": event_counts["subagent_skipped"],
+        "checkpoint_validation_failures": len(validation_failure_observations),
+        # A validation miss that safely enters advisory recovery is not a failed
+        # conversation. Only an actual blocked transition is an interruption.
+        "interruptions": len(
+            interruption_observations | terminal_failure_observations
+        ),
+        "failures": len(interruption_observations | terminal_failure_observations),
+        # Each identity here is an observed resumed generation. The producer hook
+        # cannot see the CLI's initial context-window identity, so this is not a
+        # total context-window count.
+        "resumed_contexts_observed": len(resumed_contexts),
+        "recovery_contexts_observed": len(recovery_contexts),
+        "reason_codes": _rollover_reason_counts(
+            row for _index, row, _event in recognized
+        ),
+    }
+
+
+def _rollover_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_scope = {
+        scope: _rollover_lane_metrics(
+            [row for row in rows if _rollover_scope(row) == scope]
+        )
+        for scope in ("root", "subagent", "unknown")
+    }
+    combined = _rollover_lane_metrics(rows)
+    return {
+        "rollover_event_count": combined["events"],
+        "rollover_unknown_events": combined["unknown_events"],
+        "rollover_event_counts": combined["event_counts"],
+        "rollover_checkpoint_save_events": combined["checkpoint_save_events"],
+        "rollover_checkpoints_saved": combined["checkpoints_saved"],
+        "rollover_readiness_observations": combined["readiness_observations"],
+        "rollover_checkpoints_ready": combined["checkpoints_ready"],
+        "rollover_checkpoints_not_ready": combined["checkpoints_not_ready"],
+        "rollover_checkpoint_bytes": combined["checkpoint_bytes"],
+        "rollover_checkpoint_bytes_basis": "private_checkpoint_file",
+        "rollover_checkpoint_tokens_estimate": combined[
+            "checkpoint_tokens_estimate"
+        ],
+        "rollover_checkpoint_tokens_estimate_basis": "model_visible_capsule",
+        "rollover_checkpoint_repo_scopes": combined["checkpoint_repo_scopes"],
+        "rollover_task_scoped_checkpoints": combined["task_scoped_checkpoints"],
+        "rollover_legacy_worktree_checkpoints": combined[
+            "legacy_worktree_checkpoints"
+        ],
+        "rollover_unknown_repo_scope_checkpoints": combined[
+            "unknown_repo_scope_checkpoints"
+        ],
+        "rollover_ready_task_scoped_checkpoints": combined[
+            "ready_task_scoped_checkpoints"
+        ],
+        "rollover_ready_legacy_worktree_checkpoints": combined[
+            "ready_legacy_worktree_checkpoints"
+        ],
+        "rollover_ready_unknown_repo_scope_checkpoints": combined[
+            "ready_unknown_repo_scope_checkpoints"
+        ],
+        "rollover_task_scope_complete_attempts": combined[
+            "task_scope_complete_attempts"
+        ],
+        "rollover_task_scope_attempt_rate": round(
+            combined["task_scoped_checkpoints"]
+            / float(max(1, combined["checkpoints_saved"])),
+            3,
+        ),
+        "rollover_task_scope_adoption": round(
+            combined["ready_task_scoped_checkpoints"]
+            / float(max(1, combined["checkpoints_ready"])),
+            3,
+        ),
+        "rollover_attempted_task_path_count_total": combined[
+            "attempted_task_path_count_total"
+        ],
+        "rollover_attempted_task_path_count_max": combined[
+            "attempted_task_path_count_max"
+        ],
+        "rollover_task_path_count_total": combined["task_path_count_total"],
+        "rollover_task_path_count_max": combined["task_path_count_max"],
+        "rollover_task_scoped_resumes": combined["task_scoped_resumes"],
+        "rollover_checkpoint_advisory_reset_requested": combined[
+            "checkpoint_advisory_reset_requested"
+        ],
+        "rollover_precompact_allowed": combined["precompact_allowed"],
+        "rollover_precompact_recovery_allowed": combined[
+            "precompact_recovery_allowed"
+        ],
+        "rollover_precompact_blocked": combined["precompact_blocked"],
+        "rollover_postcompact_observed": combined["postcompact_observed"],
+        "rollover_session_resumed": combined["session_resumed"],
+        "rollover_session_recovery_advisory": combined[
+            "session_recovery_advisory"
+        ],
+        "rollover_not_ready_lifecycles": combined["not_ready_lifecycles"],
+        "rollover_unresolved_not_ready": combined["unresolved_not_ready"],
+        "rollover_not_ready_repairs_before_terminal": combined[
+            "not_ready_repairs_before_terminal"
+        ],
+        "rollover_not_ready_advisories_before_terminal": combined[
+            "not_ready_advisories_before_terminal"
+        ],
+        "rollover_terminal_after_not_ready_blocked": combined[
+            "terminal_after_not_ready_blocked"
+        ],
+        "rollover_terminal_after_not_ready": combined[
+            "terminal_after_not_ready"
+        ],
+        "rollover_user_rescue_after_terminal": combined[
+            "user_rescue_after_terminal"
+        ],
+        "rollover_checkpoint_completed": combined["checkpoint_completed"],
+        "rollover_checkpoint_stale": combined["checkpoint_stale"],
+        "rollover_subagent_skipped": combined["subagent_skipped"],
+        "rollover_checkpoint_validation_failures": combined[
+            "checkpoint_validation_failures"
+        ],
+        "rollover_interruptions": combined["interruptions"],
+        "rollover_failures": combined["failures"],
+        "rollover_resumed_contexts_observed": combined[
+            "resumed_contexts_observed"
+        ],
+        "rollover_recovery_contexts_observed": combined[
+            "recovery_contexts_observed"
+        ],
+        "rollover_context_window_count": "not_available_here",
+        "rollover_context_window_count_source": "task_run",
+        "rollover_reason_codes": combined["reason_codes"],
+        "rollover_by_scope": by_scope,
+        "rollover_task_tokens_before_first": "not_available_here",
+        "rollover_task_tokens_after": "not_available_here",
+        "rollover_task_token_source": "task_run",
+        "rollover_observed_context_tokens_dropped": "not_available_here",
+        "rollover_observed_context_drop_is_savings": False,
+        "rollover_causal_savings": "task_run_matched_runs_only",
+    }
+
+
+def _retrieval_opportunity_metrics(
+    usage: list[dict[str, Any]], events: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Summarize v2 retrieval opportunities without projecting them onto v1 rows.
+
+    Policy-v3 separates action observations from semantic raw-read intents.
+    Adoption is deduped by opportunity digest; costs, follow-ups, and avoided-read
+    credit are deduped by raw intent. Policy-v2 rows fall back to one shared digest.
+    """
+    queries_by_intent: dict[str, list[dict[str, Any]]] = {}
+    queries_by_action: dict[str, list[dict[str, Any]]] = {}
+    for row in usage:
+        action_digest = _opportunity_digest(
+            _first_metric_value(row, "opportunity_sha256", "opportunity_hash")
+        )
+        intent_digest = _raw_read_intent_digest(row, fallback=action_digest)
+        if intent_digest:
+            queries_by_intent.setdefault(intent_digest, []).append(row)
+        if action_digest:
+            queries_by_action.setdefault(action_digest, []).append(row)
+
+    opportunities: dict[str, dict[str, Any]] = {}
+    followup_records: list[tuple[str | None, str | None, str, int]] = []
+    event_count = 0
+    cached_retry_events = 0
+    missing_sequence = 0
+    for row in events:
+        event_name = str(row.get("event") or row.get("type") or "").strip().lower()
+        if event_name in _OPPORTUNITY_EVENTS:
+            event_count += 1
+            digest = _opportunity_digest(
+                _first_metric_value(row, "opportunity_sha256", "opportunity_hash")
+            )
+            if digest is None:
+                # V2 requires the digest. Count malformed rows honestly, but never
+                # invent a join identity that might merge unrelated private intents.
+                missing_sequence += 1
+                digest = "__missing_opportunity_{}".format(missing_sequence)
+            raw_intent = _raw_read_intent_digest(row, fallback=digest) or digest
+            state = opportunities.setdefault(
+                digest,
+                {
+                    "raw_read_intent_sha256": raw_intent,
+                    "kind": "unknown",
+                    "eligibility": [],
+                    "exclusions": set(),
+                    "mode": "unknown",
+                    "policy_version": "unknown",
+                    "attempted": False,
+                    "outcomes": set(),
+                    "actions": set(),
+                    "grounded": False,
+                    "blocked": False,
+                    "grounded_block": False,
+                    "agent_scopes": set(),
+                    "recall_tokens": 0,
+                    "delivered_context_tokens": 0,
+                    "estimated_raw_tokens": 0,
+                    "avoided_tokens": 0,
+                },
+            )
+            state["raw_read_intent_sha256"] = raw_intent
+            kind_value = _first_metric_value(row, "kind", "opportunity_kind")
+            if kind_value is not None:
+                state["kind"] = _metric_category(kind_value, _OPPORTUNITY_KINDS)
+            if "eligible" in row or "retrieval_eligible" in row:
+                state["eligibility"].append(
+                    _metric_bool(
+                        _first_metric_value(row, "eligible", "retrieval_eligible")
+                    )
+                )
+            exclusion = _first_metric_value(
+                row, "exclusion", "exclusion_reason", "ineligible_reason"
+            )
+            if exclusion is not None:
+                state["exclusions"].add(_metric_category(exclusion))
+            mode_value = _first_metric_value(row, "mode", "retrieval_mode")
+            if mode_value is not None:
+                state["mode"] = _metric_category(mode_value, _OPPORTUNITY_MODES)
+            policy_value = _first_metric_value(row, "policy_version", "policy")
+            if policy_value is not None:
+                try:
+                    state["policy_version"] = str(int(policy_value))
+                except (TypeError, ValueError):
+                    state["policy_version"] = "unknown"
+            state["attempted"] = bool(state["attempted"]) or _metric_bool(
+                _first_metric_value(row, "recall_attempted", "attempted")
+            )
+            outcome_value = _first_metric_value(
+                row, "recall_outcome", "retrieval_outcome"
+            )
+            if outcome_value is not None:
+                outcome = _metric_category(outcome_value, _RECALL_OUTCOMES)
+                state["outcomes"].add(outcome)
+                if outcome == "cached_hit":
+                    cached_retry_events += 1
+                    # Serving a cached retrieval is adoption even though it does
+                    # not execute a new query or add recall-token overhead.
+                    state["attempted"] = True
+            action_value = _first_metric_value(row, "action", "retrieval_action")
+            action = "unknown"
+            if action_value is not None:
+                action = _metric_category(action_value, _OPPORTUNITY_ACTIONS)
+                state["actions"].add(action)
+            blocked = (
+                _metric_bool(row.get("blocked"))
+                or _metric_bool(row.get("grounded_block"))
+                or action == "deny"
+            )
+            grounded = _metric_bool(
+                _first_metric_value(row, "grounded", "auto_grounded")
+            )
+            state["blocked"] = bool(state["blocked"]) or blocked
+            state["grounded"] = bool(state["grounded"]) or grounded
+            state["grounded_block"] = bool(state["grounded_block"]) or (
+                blocked and grounded
+            ) or _metric_bool(row.get("grounded_block"))
+            agent = str(row.get("agent_sha256") or "").strip()
+            if agent == "root":
+                state["agent_scopes"].add("root")
+            elif agent:
+                state["agent_scopes"].add("subagent")
+            state["recall_tokens"] = max(
+                int(state["recall_tokens"]),
+                _metric_int(
+                    _first_metric_value(row, "recall_tokens", "retrieval_tokens")
+                ),
+            )
+            delivered_value = _first_metric_value(
+                row,
+                "delivered_context_tokens",
+                "context_tokens_delivered",
+                "delivered_tokens",
+            )
+            if delivered_value is not None:
+                delivered_tokens = _metric_int(delivered_value)
+            else:
+                try:
+                    policy_version = int(row.get("policy_version", 0))
+                except (TypeError, ValueError, OverflowError):
+                    policy_version = 0
+                delivered_tokens = (
+                    _metric_int(
+                        _first_metric_value(
+                            row, "recall_tokens", "retrieval_tokens"
+                        )
+                    )
+                    if policy_version < 4 and action in {"inject", "deny"}
+                    else 0
+                )
+            state["delivered_context_tokens"] = max(
+                int(state["delivered_context_tokens"]), delivered_tokens
+            )
+            state["estimated_raw_tokens"] = max(
+                int(state["estimated_raw_tokens"]),
+                _metric_int(
+                    _first_metric_value(
+                        row, "estimated_raw_tokens", "estimated_tokens", "raw_tokens"
+                    )
+                ),
+            )
+            if blocked:
+                state["avoided_tokens"] = max(
+                    int(state["avoided_tokens"]),
+                    _metric_int(
+                        _first_metric_value(
+                            row, "estimated_avoided_tokens", "avoided_tokens"
+                        )
+                    ),
+                )
+        elif event_name in _FOLLOWUP_EVENTS:
+            action_digest = _opportunity_digest(
+                _first_metric_value(row, "opportunity_sha256", "opportunity_hash")
+            )
+            raw_intent = _raw_read_intent_digest(row, fallback=None)
+            if not action_digest and not raw_intent:
+                continue
+            outcome = _metric_category(
+                _first_metric_value(row, "outcome", "followup_outcome"),
+                _FOLLOWUP_OUTCOMES,
+            )
+            followup_tokens = _metric_int(
+                _first_metric_value(
+                    row, "estimated_raw_tokens", "estimated_tokens", "raw_tokens"
+                )
+            )
+            if outcome not in _COSTED_FOLLOWUP_OUTCOMES:
+                followup_tokens = 0
+            followup_records.append(
+                (action_digest, raw_intent, outcome, followup_tokens)
+            )
+
+    action_to_intent = {
+        digest: str(state["raw_read_intent_sha256"])
+        for digest, state in opportunities.items()
+    }
+    followups: dict[str, list[tuple[str, int]]] = {}
+    for action_digest, raw_intent, outcome, tokens in followup_records:
+        intent_digest = raw_intent or (
+            action_to_intent.get(action_digest or "") if action_digest else None
+        ) or action_digest
+        if intent_digest:
+            followups.setdefault(intent_digest, []).append((outcome, tokens))
+
+    intents: dict[str, dict[str, Any]] = {}
+    for action_digest, state in opportunities.items():
+        intent_digest = str(state["raw_read_intent_sha256"])
+        intent = intents.setdefault(
+            intent_digest,
+            {
+                "actions": set(),
+                "blocked": False,
+                "event_recall_tokens": 0,
+                "delivered_context_tokens": 0,
+                "estimated_raw_tokens": 0,
+                "avoided_tokens": 0,
+            },
+        )
+        intent["actions"].add(action_digest)
+        intent["blocked"] = bool(intent["blocked"]) or bool(state["blocked"])
+        intent["event_recall_tokens"] = max(
+            int(intent["event_recall_tokens"]), int(state["recall_tokens"])
+        )
+        intent["delivered_context_tokens"] += int(
+            state["delivered_context_tokens"]
+        )
+        intent["estimated_raw_tokens"] = max(
+            int(intent["estimated_raw_tokens"]),
+            int(state["estimated_raw_tokens"]),
+        )
+        if state["blocked"]:
+            intent["avoided_tokens"] = max(
+                int(intent["avoided_tokens"]), int(state["avoided_tokens"])
+            )
+
+    kinds: Counter[str] = Counter()
+    eligible_kinds: Counter[str] = Counter()
+    exclusions: Counter[str] = Counter()
+    constraints: Counter[str] = Counter()
+    modes: Counter[str] = Counter()
+    policies: Counter[str] = Counter()
+    actions: Counter[str] = Counter()
+    recall_outcomes: Counter[str] = Counter()
+    followup_outcomes: Counter[str] = Counter()
+    agent_splits: dict[str, dict[str, int]] = {
+        scope: {
+            "total": 0,
+            "eligible": 0,
+            "attempted": 0,
+            "injected": 0,
+            "blocked": 0,
+        }
+        for scope in ("root", "subagent", "mixed", "unknown")
+    }
+    eligible_count = 0
+    excluded_count = 0
+    attempted_count = 0
+    eligible_attempted_count = 0
+    injections = 0
+    exemptions = 0
+    primary_exemption_keys: set[str] = set()
+    grounded_blocks = 0
+    joined_queries = len(set(queries_by_intent) & set(intents))
+    orphan_query_tokens = sum(
+        _metric_int(query.get("tokens"))
+        for digest, query_rows in queries_by_intent.items()
+        if digest not in intents
+        for query in query_rows
+    )
+    recall_overhead = orphan_query_tokens
+    blocked_recall_overhead = 0
+    production_query_rows = sum(len(rows) for rows in queries_by_intent.values())
+    total_delivered_context = 0
+    blocked_delivered_context = 0
+    estimated_raw_tokens = 0
+    total_followup_tokens = 0
+    followup_cost_tokens = 0
+    gross_avoided = 0
+    direct_net_avoided = 0
+    for digest, state in opportunities.items():
+        query_rows = queries_by_action.get(digest, [])
+        if query_rows:
+            state["attempted"] = True
+            if not state["agent_scopes"]:
+                for query in query_rows:
+                    agent = str(query.get("agent_sha256") or "").strip()
+                    if agent == "root":
+                        state["agent_scopes"].add("root")
+                    elif agent:
+                        state["agent_scopes"].add("subagent")
+            if not state["outcomes"]:
+                for query in query_rows:
+                    if not bool(query.get("hit")):
+                        state["outcomes"].add("miss")
+                    elif query.get("confidence") == "broad":
+                        state["outcomes"].add("broad_hit")
+                    else:
+                        state["outcomes"].add("focused_hit")
+
+        kind = str(state["kind"])
+        kinds[kind] += 1
+        eligibility = state["eligibility"]
+        eligible = any(eligibility)
+        for reason in state["exclusions"]:
+            constraints[str(reason)] += 1
+        if eligible:
+            eligible_count += 1
+            eligible_kinds[kind] += 1
+        else:
+            excluded_count += 1
+            reasons = state["exclusions"] or {"unknown"}
+            for reason in reasons:
+                exclusions[str(reason)] += 1
+        modes[str(state["mode"])] += 1
+        policies[str(state["policy_version"])] += 1
+        for outcome in state["outcomes"] or {"not_attempted"}:
+            recall_outcomes[str(outcome)] += 1
+        attempted = bool(state["attempted"])
+        if attempted:
+            attempted_count += 1
+            if eligible:
+                eligible_attempted_count += 1
+        action_labels = state["actions"] or {"unknown"}
+        for action_label in action_labels:
+            actions[str(action_label)] += 1
+        injected = "inject" in action_labels
+        if injected:
+            injections += 1
+        exempt = "exempt" in action_labels
+        if exempt:
+            exemptions += 1
+        is_primary_exemption = (
+            kind == "primary_read" and exempt
+        ) or any(
+            reason.startswith("primary_")
+            or reason in {"primary", "direct_named_read", "named_document"}
+            for reason in state["exclusions"]
+        )
+        if is_primary_exemption:
+            primary_exemption_keys.add(str(state["raw_read_intent_sha256"]))
+        blocked = bool(state["blocked"])
+        if state["grounded_block"]:
+            grounded_blocks += 1
+
+        scopes = state["agent_scopes"]
+        if scopes == {"root"}:
+            scope = "root"
+        elif scopes == {"subagent"}:
+            scope = "subagent"
+        elif scopes:
+            scope = "mixed"
+        else:
+            scope = "unknown"
+        split = agent_splits[scope]
+        split["total"] += 1
+        split["eligible"] += int(eligible)
+        split["attempted"] += int(attempted)
+        split["injected"] += int(injected)
+        split["blocked"] += int(blocked)
+
+    blocked_intents = 0
+    followup_opportunities = 0
+    for intent_digest, intent in intents.items():
+        query_rows = queries_by_intent.get(intent_digest, [])
+        # Every linked query row is executed recall work. Cached decisions have no
+        # query row; event tokens are only the fallback for incomplete old ledgers.
+        query_tokens = sum(_metric_int(query.get("tokens")) for query in query_rows)
+        recall_tokens = max(int(intent["event_recall_tokens"]), query_tokens)
+        recall_overhead += recall_tokens
+        estimated_raw_tokens += int(intent["estimated_raw_tokens"])
+        delivered_context = int(intent["delivered_context_tokens"])
+        total_delivered_context += delivered_context
+
+        intent_followup_rows = followups.get(intent_digest, [])
+        intent_followups = {
+            outcome for outcome, _tokens in intent_followup_rows
+        }
+        intent_followup_tokens = sum(
+            tokens for _outcome, tokens in intent_followup_rows
+        )
+        if intent_followup_rows:
+            followup_opportunities += 1
+        total_followup_tokens += intent_followup_tokens
+        for outcome in intent_followups:
+            followup_outcomes[outcome] += 1
+        if "primary_bypass" in intent_followups:
+            primary_exemption_keys.add(intent_digest)
+
+        if not intent["blocked"]:
+            continue
+        blocked_intents += 1
+        avoided = int(intent["avoided_tokens"])
+        gross_avoided += avoided
+        blocked_recall_overhead += recall_tokens
+        blocked_delivered_context += delivered_context
+        blocked_followup_cost = intent_followup_tokens
+        if intent_followups & {"whole_read", "primary_bypass"}:
+            # A later full/bypass read consumes the originally avoided input.
+            # When older follow-up rows lack a token estimate, erase the gross
+            # credit rather than preserving savings that were not realized.
+            blocked_followup_cost = max(blocked_followup_cost, avoided)
+        followup_cost_tokens += blocked_followup_cost
+        direct_net_avoided += (
+            avoided - delivered_context - blocked_followup_cost
+        )
+
+    total = len(opportunities)
+    return {
+        "retrieval_opportunities": total,
+        "retrieval_opportunity_events": event_count,
+        "retrieval_duplicate_opportunity_events": max(0, event_count - total),
+        "retrieval_unidentified_opportunities": missing_sequence,
+        "retrieval_eligible_opportunities": eligible_count,
+        "retrieval_excluded_opportunities": excluded_count,
+        "retrieval_opportunities_by_kind": dict(sorted(kinds.items())),
+        "retrieval_eligible_by_kind": dict(sorted(eligible_kinds.items())),
+        "retrieval_exclusions_by_reason": dict(sorted(exclusions.items())),
+        "retrieval_constraints_by_reason": dict(sorted(constraints.items())),
+        "retrieval_modes": dict(sorted(modes.items())),
+        "retrieval_policy_versions": dict(sorted(policies.items())),
+        "retrieval_actions": dict(sorted(actions.items())),
+        "retrieval_raw_read_intents": len(intents),
+        "retrieval_attempted_opportunities": attempted_count,
+        "retrieval_eligible_attempted_opportunities": eligible_attempted_count,
+        "retrieval_attempt_coverage": round(
+            eligible_attempted_count / float(max(1, eligible_count)), 3
+        ),
+        "retrieval_query_joins": joined_queries,
+        "retrieval_orphaned_query_opportunities": len(
+            set(queries_by_intent) - set(intents)
+        ),
+        "retrieval_orphaned_query_intents": len(
+            set(queries_by_intent) - set(intents)
+        ),
+        "retrieval_recall_outcomes": dict(sorted(recall_outcomes.items())),
+        "retrieval_focused_hits": recall_outcomes["focused_hit"],
+        "retrieval_broad_hits": recall_outcomes["broad_hit"],
+        "retrieval_misses": recall_outcomes["miss"],
+        "retrieval_errors": recall_outcomes["error"],
+        "retrieval_provenance_mismatches": recall_outcomes[
+            "provenance_mismatch"
+        ],
+        "retrieval_cached_hits": recall_outcomes["cached_hit"],
+        "retrieval_cached_retry_events": cached_retry_events,
+        "retrieval_injections": injections,
+        "retrieval_exemptions": exemptions,
+        "retrieval_grounded_blocks": grounded_blocks,
+        "retrieval_primary_exemptions": len(primary_exemption_keys),
+        "retrieval_followup_opportunities": followup_opportunities,
+        "retrieval_targeted_fallback_outcomes": dict(
+            sorted(followup_outcomes.items())
+        ),
+        "retrieval_targeted_fallbacks": (
+            followup_outcomes["targeted_window"]
+            + followup_outcomes["targeted_search"]
+        ),
+        "retrieval_agent_splits": agent_splits,
+        "retrieval_unique_blocked_intents": blocked_intents,
+        "retrieval_estimated_raw_tokens": estimated_raw_tokens,
+        "retrieval_orphaned_query_tokens": orphan_query_tokens,
+        "retrieval_production_query_rows": production_query_rows,
+        "retrieval_query_output_tokens": recall_overhead,
+        "retrieval_recall_overhead_tokens": recall_overhead,
+        "retrieval_blocked_query_output_tokens": blocked_recall_overhead,
+        "retrieval_blocked_recall_overhead_tokens": blocked_recall_overhead,
+        "retrieval_total_delivered_context_tokens": total_delivered_context,
+        "retrieval_blocked_delivered_context_tokens": blocked_delivered_context,
+        "retrieval_total_followup_tokens": total_followup_tokens,
+        "retrieval_followup_cost_tokens": followup_cost_tokens,
+        "retrieval_gross_avoided_tokens": gross_avoided,
+        "retrieval_direct_net_avoided_tokens": direct_net_avoided,
+    }
+
+
+def _line_ranges(value: Any, total_lines: int) -> list[tuple[int, int]]:
+    """Return a bounded, merged line-range list from privacy-safe telemetry."""
+    if not isinstance(value, list) or total_lines <= 0:
+        return []
+    bounded: list[tuple[int, int]] = []
+    for item in value:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        start = _metric_int(item[0])
+        end = _metric_int(item[1])
+        if start <= 0 or end < start or start > total_lines:
+            continue
+        bounded.append((start, min(end, total_lines)))
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(bounded):
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _range_line_count(ranges: Iterable[tuple[int, int]]) -> int:
+    return sum(end - start + 1 for start, end in ranges)
+
+
+def _session_hook_coverage(
+    runtime: Runtime,
+    session_sha256: str,
+    keys: set[tuple[str, str]],
+) -> tuple[
+    dict[tuple[str, str], list[tuple[int, int]]],
+    set[tuple[str, str, str]],
+    set[tuple[str, str]],
+    dict[tuple[str, str, str], list[tuple[int, int]]],
+]:
+    """Load current exact ranges for legacy events that predate range telemetry.
+
+    State is used only for document/version identities already anchored by a
+    confirmed event in the selected ledger. This prevents unrelated or stale
+    hook state from inventing coverage in a stats window.
+    """
+    ranges_by_key: dict[tuple[str, str], list[tuple[int, int]]] = {}
+    exact_agents: set[tuple[str, str, str]] = set()
+    authoritative: set[tuple[str, str]] = set()
+    agent_ranges: dict[tuple[str, str, str], list[tuple[int, int]]] = {}
+    if session_sha256 == "all" or not keys:
+        return ranges_by_key, exact_agents, authoritative, agent_ranges
+    state_dir = runtime.state_dir / "hook-state"
+    try:
+        paths = tuple(
+            path
+            for path in state_dir.glob("*.json")
+            if path.name.startswith(session_sha256 + "-")
+        )
+    except OSError:
+        return ranges_by_key, exact_agents, authoritative, agent_ranges
+    states: list[dict[str, Any]] = []
+    for path in paths:
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(state, dict) or state.get("session_sha256") != session_sha256:
+            continue
+        states.append(state)
+    shared_state = next(
+        (
+            state
+            for state in states
+            if not state.get("agent_sha256")
+            and isinstance(state.get("primary"), dict)
+        ),
+        None,
+    )
+    shared_epoch = (
+        str(shared_state.get("task_epoch_sha256") or "")
+        if shared_state is not None
+        else ""
+    )
+    for state in states:
+        agent = str(state.get("agent_sha256") or "")
+        documents = state.get("documents")
+        same_epoch = (
+            not shared_epoch
+            or str(state.get("task_epoch_sha256") or "") == shared_epoch
+        )
+        if isinstance(documents, dict) and agent and same_epoch:
+            for document_sha256, entry in documents.items():
+                if not isinstance(entry, dict):
+                    continue
+                version_sha256 = str(entry.get("version_sha256") or "")
+                key = (str(document_sha256), version_sha256)
+                if key not in keys:
+                    continue
+                total_lines = max(1, _metric_int(entry.get("total_lines")))
+                ranges = _line_ranges(entry.get("ranges"), total_lines)
+                ranges_by_key[key] = _line_ranges(
+                    [*ranges_by_key.get(key, []), *ranges], total_lines
+                )
+                agent_key = (key[0], key[1], agent)
+                agent_ranges[agent_key] = ranges
+                exact_agents.add(agent_key)
+        primary = state.get("primary") if state is shared_state else None
+        if isinstance(primary, dict):
+            key = (
+                str(primary.get("document_sha256") or ""),
+                str(primary.get("version_sha256") or ""),
+            )
+            if key in keys:
+                total_lines = max(1, _metric_int(primary.get("total_lines")))
+                ranges = _line_ranges(primary.get("ranges"), total_lines)
+                ranges_by_key[key] = _line_ranges(
+                    [*ranges_by_key.get(key, []), *ranges], total_lines
+                )
+                # The shared primary is maintained as the cross-agent union.
+                authoritative.add(key)
+    return ranges_by_key, exact_agents, authoritative, agent_ranges
+
+
+def _document_coverage_metrics(
+    runtime: Runtime,
+    doc_reads: list[dict[str, Any]],
+    *,
+    session_sha256: str,
+) -> dict[str, Any]:
+    """Compute one version-aware, cross-agent first-pass union per document."""
+    buckets: dict[tuple[str, str], dict[str, Any]] = {}
+    latest_seen: dict[str, tuple[int, tuple[str, str], int]] = {}
+    latest_epoch = (
+        ""
+        if session_sha256 == "all"
+        else next(
+            (
+                str(row.get("task_epoch_sha256"))
+                for row in reversed(doc_reads)
+                if str(row.get("task_epoch_sha256") or "")
+            ),
+            "",
+        )
+    )
+    for ordinal, row in enumerate(doc_reads):
+        row_epoch = str(row.get("task_epoch_sha256") or "")
+        if latest_epoch and row_epoch != latest_epoch:
+            continue
+        details = row.get("coverage")
+        if not isinstance(details, list):
+            continue
+        agent = str(row.get("agent_sha256") or "root")
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            document_sha256 = str(detail.get("document_sha256") or "")
+            if not document_sha256:
+                continue
+            version_sha256 = str(detail.get("version_sha256") or "unknown")
+            key = (document_sha256, version_sha256)
+            total_lines = max(1, _metric_int(detail.get("total_lines")))
+            latest_seen[document_sha256] = (ordinal, key, total_lines)
+            if not _metric_bool(detail.get("confirmed", True)):
+                continue
+            bucket = buckets.setdefault(
+                key,
+                {
+                    "total_lines": total_lines,
+                    "ranges": [],
+                    "max_covered_lines": 0,
+                    "max_covered_by_agent": {},
+                    "expected_agents": set(),
+                    "exact_agents": set(),
+                    "agent_ranges": {},
+                },
+            )
+            bucket["total_lines"] = max(int(bucket["total_lines"]), total_lines)
+            bucket["max_covered_lines"] = max(
+                int(bucket["max_covered_lines"]),
+                min(total_lines, _metric_int(detail.get("covered_lines"))),
+            )
+            bucket["max_covered_by_agent"][agent] = max(
+                int(bucket["max_covered_by_agent"].get(agent, 0)),
+                min(total_lines, _metric_int(detail.get("covered_lines"))),
+            )
+            bucket["expected_agents"].add(agent)
+            if isinstance(detail.get("ranges"), list):
+                exact_ranges = _line_ranges(
+                    detail["ranges"], int(bucket["total_lines"])
+                )
+                bucket["ranges"] = _line_ranges(
+                    [*bucket["ranges"], *detail["ranges"]],
+                    int(bucket["total_lines"]),
+                )
+                bucket["agent_ranges"][agent] = _line_ranges(
+                    [
+                        *bucket["agent_ranges"].get(agent, []),
+                        *exact_ranges,
+                    ],
+                    int(bucket["total_lines"]),
+                )
+                # The scalar is a useful corruption check because producer rows
+                # contain the agent's full cumulative range snapshot.
+                if _range_line_count(exact_ranges) == min(
+                    int(bucket["total_lines"]),
+                    _metric_int(detail.get("covered_lines")),
+                ):
+                    bucket["exact_agents"].add(agent)
+
+    confirmed_keys = set(buckets)
+    (
+        state_ranges,
+        state_agents,
+        authoritative,
+        state_agent_ranges,
+    ) = _session_hook_coverage(runtime, session_sha256, confirmed_keys)
+    used_state = False
+    for key, ranges in state_ranges.items():
+        bucket = buckets[key]
+        prior = [] if key in authoritative else bucket["ranges"]
+        bucket["ranges"] = _line_ranges(
+            [*prior, *ranges], int(bucket["total_lines"])
+        )
+        used_state = True
+    for document_sha256, version_sha256, agent in state_agents:
+        bucket = buckets.get((document_sha256, version_sha256))
+        if bucket is not None:
+            state_ranges_for_agent = state_agent_ranges.get(
+                (document_sha256, version_sha256, agent), []
+            )
+            if _range_line_count(state_ranges_for_agent) >= int(
+                bucket["max_covered_by_agent"].get(agent, 0)
+            ):
+                bucket["exact_agents"].add(agent)
+    for (document_sha256, version_sha256, agent), ranges in state_agent_ranges.items():
+        bucket = buckets.get((document_sha256, version_sha256))
+        if bucket is not None:
+            bucket["agent_ranges"][agent] = ranges
+
+    covered_lines = 0
+    total_lines = 0
+    completed = 0
+    exact = True
+    used_legacy_fallback = False
+    overlap_lines = 0
+    overlapping_documents = 0
+    multi_agent_documents = 0
+    overlap_exact = True
+    documents = set(latest_seen)
+    for document_sha256 in documents:
+        _ordinal, key, latest_total = latest_seen[document_sha256]
+        bucket = buckets.get(key)
+        if bucket is None:
+            # Preserve the historical meaning of unique_documents: an attempted
+            # but unconfirmed version is visible with zero credited coverage.
+            # A real version change intentionally stops carrying the old
+            # version's union forward.
+            total_lines += latest_total
+            continue
+        document_total = int(bucket["total_lines"])
+        range_lines = min(document_total, _range_line_count(bucket["ranges"]))
+        bucket_exact = key in authoritative or bucket["expected_agents"].issubset(
+            bucket["exact_agents"]
+        )
+        if bucket_exact:
+            document_covered = range_lines
+        else:
+            # `covered_lines` is cumulative per agent. Its maximum is a safe
+            # lower bound; summing it across agents would overstate overlap.
+            document_covered = max(range_lines, int(bucket["max_covered_lines"]))
+            exact = False
+            used_legacy_fallback = True
+        covered_lines += min(document_total, document_covered)
+        total_lines += document_total
+        completed += int(document_covered >= document_total)
+        exact_agent_coverage = bucket["expected_agents"].issubset(
+            bucket["exact_agents"]
+        )
+        per_agent_union = _line_ranges(
+            [
+                value
+                for ranges in bucket["agent_ranges"].values()
+                for value in ranges
+            ],
+            document_total,
+        )
+        complete_agent_attribution = (
+            _range_line_count(per_agent_union) == range_lines
+        )
+        if exact_agent_coverage and complete_agent_attribution:
+            per_agent_lines = [
+                _range_line_count(ranges)
+                for ranges in bucket["agent_ranges"].values()
+                if ranges
+            ]
+            multi_agent_documents += int(len(per_agent_lines) > 1)
+            document_overlap = max(0, sum(per_agent_lines) - range_lines)
+            overlap_lines += document_overlap
+            overlapping_documents += int(document_overlap > 0)
+        else:
+            overlap_exact = False
+
+    if used_legacy_fallback:
+        source = "legacy_conservative"
+    elif used_state:
+        source = "hook_state"
+    elif documents:
+        source = "event_ranges"
+    else:
+        source = "none"
+    return {
+        "unique_documents": len(documents),
+        "first_pass_covered_lines": covered_lines,
+        "first_pass_total_lines": total_lines,
+        "first_pass_coverage": round(
+            covered_lines / float(max(1, total_lines)), 3
+        ),
+        "completed_first_pass_documents": completed,
+        "first_pass_coverage_exact": exact,
+        "first_pass_coverage_source": source,
+        "cross_agent_document_overlap_lines": overlap_lines,
+        "cross_agent_overlapping_documents": overlapping_documents,
+        "cross_agent_multi_agent_documents": multi_agent_documents,
+        "cross_agent_overlap_exact": overlap_exact,
+    }
+
+
 def stats(runtime: Runtime, *, selector: str = "current", days: int = 30) -> dict[str, Any]:
     usage = _read_jsonl(runtime.telemetry_path)
     events = _read_jsonl(runtime.hook_events_path)
+    rollover_events = _read_jsonl(
+        runtime.state_dir / "context-rollover-events.jsonl"
+    )
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=max(1, days))
 
-    def recent(row: dict[str, Any]) -> bool:
+    def timestamp(row: dict[str, Any]) -> dt.datetime | None:
         try:
-            timestamp = dt.datetime.fromisoformat(str(row.get("ts", "")))
-            if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=dt.timezone.utc)
-            return timestamp >= cutoff
-        except ValueError:
-            return False
+            value = dt.datetime.fromisoformat(
+                str(row.get("ts") or row.get("timestamp") or "").replace(
+                    "Z", "+00:00"
+                )
+            )
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=dt.timezone.utc)
+            return value.astimezone(dt.timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    def recent(row: dict[str, Any]) -> bool:
+        value = timestamp(row)
+        return bool(value is not None and value >= cutoff)
 
     usage = [row for row in usage if recent(row)]
     events = [row for row in events if recent(row)]
+    rollover_events = [row for row in rollover_events if recent(row)]
     if selector == "current":
         selected_digest = session_digest(os.environ.get("CODEX_SESSION_ID"))
     elif selector == "latest":
-        selected_digest = str(usage[-1].get("codex_session_sha256")) if usage else "unknown"
+        candidates = [
+            row
+            for row in (*usage, *events, *rollover_events)
+            if re.fullmatch(
+                r"[0-9a-f]{16,64}",
+                str(row.get("codex_session_sha256") or "").strip().lower(),
+            )
+        ]
+        latest = max(candidates, key=lambda row: timestamp(row) or cutoff, default=None)
+        selected_digest = (
+            str(latest.get("codex_session_sha256")).strip().lower()
+            if latest
+            else "unknown"
+        )
     elif selector == "all":
         selected_digest = "all"
     else:
@@ -1599,15 +3198,70 @@ def stats(runtime: Runtime, *, selector: str = "current", days: int = 30) -> dic
     if selected_digest != "all":
         usage = [row for row in usage if row.get("codex_session_sha256") == selected_digest]
         events = [row for row in events if row.get("codex_session_sha256") == selected_digest]
+        rollover_events = [
+            row
+            for row in rollover_events
+            if row.get("codex_session_sha256") == selected_digest
+        ]
     hits = sum(bool(row.get("hit")) for row in usage)
     broad = sum(row.get("confidence") == "broad" for row in usage)
     doc_browses = [row for row in events if row.get("event") == "document_browse"]
     doc_reads = [row for row in events if row.get("event") == "document_read"]
+    repeat_guard = [row for row in events if row.get("event") == "repeat_guard"]
+    legacy_hook_events = [
+        row
+        for row in events
+        if str(row.get("event") or row.get("type") or "").strip().lower()
+        not in (_OPPORTUNITY_EVENTS | _FOLLOWUP_EVENTS)
+    ]
     grounded_browses = sum(bool(row.get("grounded")) for row in doc_browses)
+    auto_grounded_browses = sum(
+        bool(row.get("auto_grounded")) for row in doc_browses
+    )
+    reminder_kinds = Counter(
+        str(row.get("reminder"))
+        for row in doc_browses
+        if row.get("reminder")
+    )
+    document_coverage = _document_coverage_metrics(
+        runtime, doc_reads, session_sha256=selected_digest
+    )
+    guided_primary_reads = [
+        row
+        for row in events
+        if str(row.get("event") or "").strip().lower().replace("-", "_")
+        == "retrieval_opportunity"
+        and str(row.get("kind") or "").strip().lower().replace("-", "_")
+        == "primary_read"
+        and _metric_bool(row.get("guided"))
+    ]
+    guidance_reasons = Counter(
+        _metric_category(row.get("guidance_reason"))
+        for row in guided_primary_reads
+    )
+    guidance_actions = Counter(
+        _metric_category(row.get("guidance_action"))
+        for row in guided_primary_reads
+    )
+    latest_guidance = guided_primary_reads[-1] if guided_primary_reads else {}
+    repeat_outcomes = Counter(str(row.get("outcome") or "unknown") for row in repeat_guard)
+    opportunity_metrics = _retrieval_opportunity_metrics(usage, events)
+    rollover_metrics = _rollover_metrics(rollover_events)
     return {
         "session": selected_digest,
         "window_days": days,
         "queries": len(usage),
+        "automatic_queries": sum(
+            row.get("trigger")
+            in {"pre_tool_use", "repeat_guard", "secondary_preflight"}
+            for row in usage
+        ),
+        "secondary_preflight_queries": sum(
+            row.get("trigger") == "secondary_preflight" for row in usage
+        ),
+        "repeat_guard_automatic_queries": sum(
+            row.get("trigger") == "repeat_guard" for row in usage
+        ),
         "hits": hits,
         "misses": len(usage) - hits,
         "broad_results": broad,
@@ -1623,27 +3277,230 @@ def stats(runtime: Runtime, *, selector: str = "current", days: int = 30) -> dic
         "auto_refreshes": sum(bool(row.get("auto_refreshed")) for row in usage),
         "broad_document_browses": len(doc_browses),
         "grounded_document_browses": grounded_browses,
+        "auto_grounded_document_browses": auto_grounded_browses,
         "ungrounded_document_browses": len(doc_browses) - grounded_browses,
         "reminders": sum(bool(row.get("reminder")) for row in doc_browses),
+        "initial_reminders": reminder_kinds["initial"],
+        "repeated_ungrounded_reminders": reminder_kinds["ungrounded"],
+        "ceiling_reminders": reminder_kinds["ceiling"],
+        "hook_agents": len(
+            {
+                str(row.get("agent_sha256") or "root")
+                for row in events
+            }
+        ),
+        "multi_command_document_cells": sum(
+            int(row.get("batch_size_hint", 0)) > 1 for row in doc_browses
+        ),
+        "hook_tool_identity_events": sum(
+            bool(
+                row.get("tool_use_sha256")
+                or row.get("tool_input_sha256")
+                or row.get("command_sha256s")
+            )
+            for row in legacy_hook_events
+        ),
+        "hook_event_count": len(legacy_hook_events),
         "document_read_calls": len(doc_reads),
         "documents_read": sum(int(row.get("documents", 0)) for row in doc_reads),
         "whole_documents_read": sum(int(row.get("whole_documents", 0)) for row in doc_reads),
         "estimated_document_read_tokens": sum(
             int(row.get("estimated_tokens", 0)) for row in doc_reads
         ),
+        "estimated_confirmed_document_tokens": sum(
+            int(detail.get("estimated_tokens", 0))
+            for row in doc_reads
+            for detail in (
+                row.get("coverage") if isinstance(row.get("coverage"), list) else []
+            )
+            if isinstance(detail, dict)
+            and _metric_bool(detail.get("confirmed", True))
+        ),
+        "estimated_unconfirmed_document_tokens": sum(
+            int(detail.get("estimated_tokens", 0))
+            for row in doc_reads
+            for detail in (
+                row.get("coverage") if isinstance(row.get("coverage"), list) else []
+            )
+            if isinstance(detail, dict)
+            and not _metric_bool(detail.get("confirmed", True))
+        ),
+        **document_coverage,
+        "primary_guidance_events": len(guided_primary_reads),
+        "primary_guidance_reasons": dict(sorted(guidance_reasons.items())),
+        "primary_guidance_actions": dict(sorted(guidance_actions.items())),
+        "primary_guidance_output_safety_blocks": sum(
+            _metric_bool(row.get("output_safety_blocked"))
+            for row in guided_primary_reads
+        ),
+        "primary_guidance_context_tokens": sum(
+            _metric_int(row.get("guidance_context_tokens"))
+            for row in guided_primary_reads
+        ),
+        "primary_guidance_shared_covered_lines": _metric_int(
+            latest_guidance.get("shared_covered_lines")
+        ),
+        "primary_guidance_missing_lines": _metric_int(
+            latest_guidance.get("missing_lines")
+        ),
+        "primary_guidance_suggested_ranges": sum(
+            _metric_int(row.get("suggested_range_count"))
+            for row in guided_primary_reads
+        ),
+        "unconfirmed_document_ranges": sum(
+            not _metric_bool(detail.get("confirmed", True))
+            for row in doc_reads
+            for detail in (
+                row.get("coverage") if isinstance(row.get("coverage"), list) else []
+            )
+            if isinstance(detail, dict)
+        ),
+        "targeted_document_revisits": sum(
+            int(row.get("targeted_revisits", 0)) for row in doc_reads
+        ),
+        "redundant_broad_attempts": sum(
+            bool(row.get("redundant_broad_attempt")) for row in repeat_guard
+        ),
+        "repeat_guard_grounded_blocks": sum(
+            bool(row.get("grounded_block")) for row in repeat_guard
+        ),
+        "repeat_guard_fail_opens": sum(
+            str(row.get("outcome", "")).startswith("fail_open_")
+            for row in repeat_guard
+        ),
+        "repeat_guard_bypasses": repeat_outcomes["bypass"],
+        "repeat_guard_opt_outs": repeat_outcomes["opt_out"],
+        "repeat_guard_cached_blocks": repeat_outcomes["blocked_cached"],
+        "estimated_avoided_document_tokens": sum(
+            int(row.get("estimated_avoided_tokens", 0)) for row in repeat_guard
+        ),
+        **opportunity_metrics,
+        **rollover_metrics,
     }
 
 
 def _render_stats(value: dict[str, Any]) -> str:
     return (
-        "Codex memory usage ({session}, {window_days}d): {queries} queries · "
+        "Codex memory usage ({session}, {window_days}d): {queries} queries "
+        "({automatic_queries} automatic) · "
         "{hits} hit · {broad_results} broad · {average_tokens} avg tokens · "
         "{average_coverage} avg coverage · {p95_duration_ms} ms p95\n"
         "Document sweeps: {broad_document_browses} broad · "
-        "{grounded_document_browses} grounded · {ungrounded_document_browses} "
-        "ungrounded · {reminders} reminders · {auto_refreshes} auto-refreshes\n"
-        "Document reads: {document_read_calls} calls · {documents_read} documents · "
-        "{whole_documents_read} whole · ~{estimated_document_read_tokens} input tokens"
+        "{grounded_document_browses} grounded "
+        "({auto_grounded_document_browses} automatic) · "
+        "{ungrounded_document_browses} "
+        "ungrounded · {reminders} reminders "
+        "({initial_reminders} initial/{repeated_ungrounded_reminders} repeated/"
+        "{ceiling_reminders} ceiling) · {auto_refreshes} auto-refreshes\n"
+        "Hook scope: {hook_agents} agents · {multi_command_document_cells} "
+        "multi-command cells · identity coverage "
+        "{hook_tool_identity_events}/{hook_event_count}\n"
+        "Document reads: {document_read_calls} calls · {unique_documents} unique/"
+        "{documents_read} observed · {whole_documents_read} whole · "
+        "~{estimated_document_read_tokens} requested tokens "
+        "({estimated_confirmed_document_tokens} confirmed/"
+        "{estimated_unconfirmed_document_tokens} unconfirmed)\n"
+        "First pass: {first_pass_covered_lines}/{first_pass_total_lines} lines "
+        "({first_pass_coverage}, {first_pass_coverage_source}, "
+        "exact={first_pass_coverage_exact}) · "
+        "{completed_first_pass_documents} complete · "
+        "{unconfirmed_document_ranges} unconfirmed ranges · "
+        "{targeted_document_revisits} targeted revisits\n"
+        "Cross-agent document coverage: {cross_agent_document_overlap_lines} "
+        "overlap lines · {cross_agent_overlapping_documents} overlapping/"
+        "{cross_agent_multi_agent_documents} multi-agent documents · "
+        "exact={cross_agent_overlap_exact}\n"
+        "Primary range guidance: {primary_guidance_events} events/"
+        "{primary_guidance_output_safety_blocks} output-safety blocks · "
+        "actions {primary_guidance_actions} · reasons {primary_guidance_reasons} · "
+        "latest shared {primary_guidance_shared_covered_lines} lines/"
+        "{primary_guidance_missing_lines} missing · "
+        "{primary_guidance_suggested_ranges} suggested ranges · "
+        "~{primary_guidance_context_tokens} context tokens\n"
+        "Repeat guard: {redundant_broad_attempts} broad attempts · "
+        "{repeat_guard_grounded_blocks} grounded blocks "
+        "({repeat_guard_cached_blocks} cached) · {repeat_guard_fail_opens} fail-open · "
+        "{repeat_guard_bypasses} bypass/{repeat_guard_opt_outs} opt-out · "
+        "~{estimated_avoided_document_tokens} avoided tokens · "
+        "{repeat_guard_automatic_queries} automatic exact queries\n"
+        "Retrieval opportunities: {retrieval_opportunities} action IDs/"
+        "{retrieval_raw_read_intents} raw intents/"
+        "{retrieval_opportunity_events} events · "
+        "{retrieval_eligible_opportunities} eligible/"
+        "{retrieval_excluded_opportunities} excluded · "
+        "{retrieval_attempted_opportunities} attempted "
+        "({retrieval_attempt_coverage} eligible coverage) · "
+        "{secondary_preflight_queries} secondary preflights · policy versions "
+        "{retrieval_policy_versions}\n"
+        "Retrieval outcomes: {retrieval_focused_hits} focused/"
+        "{retrieval_broad_hits} broad/{retrieval_misses} miss/"
+        "{retrieval_errors} error · {retrieval_injections} injects · "
+        "{retrieval_grounded_blocks} grounded blocks · "
+        "{retrieval_targeted_fallbacks} targeted fallbacks\n"
+        "Retrieval production: {retrieval_production_query_rows} query rows · "
+        "~{retrieval_query_output_tokens} output tokens "
+        "(~{retrieval_blocked_query_output_tokens} blocked-intent/"
+        "~{retrieval_orphaned_query_tokens} orphaned)\n"
+        "Model context cost: ~{retrieval_total_delivered_context_tokens} "
+        "delivered tokens (~{retrieval_blocked_delivered_context_tokens} "
+        "blocked-intent) · ~{retrieval_total_followup_tokens} observed "
+        "follow-up tokens\n"
+        "Direct retrieval savings: {retrieval_unique_blocked_intents} unique "
+        "blocked intents · ~{retrieval_gross_avoided_tokens} gross - "
+        "~{retrieval_blocked_delivered_context_tokens} delivered context - "
+        "~{retrieval_followup_cost_tokens} follow-up cost = ~"
+        "{retrieval_direct_net_avoided_tokens} net avoided tokens\n"
+        "Context rollover: {rollover_event_count} events · "
+        "{rollover_checkpoints_saved} checkpoints/"
+        "{rollover_checkpoints_ready} ready/"
+        "{rollover_checkpoints_not_ready} not ready · PreCompact "
+        "{rollover_precompact_allowed} allowed/"
+        "{rollover_precompact_recovery_allowed} recovery/"
+        "{rollover_precompact_blocked} blocked · PostCompact "
+        "{rollover_postcompact_observed} observed\n"
+        "Rollover continuation: {rollover_session_resumed} validated resumed/"
+        "{rollover_session_recovery_advisory} advisory recovery · "
+        "{rollover_checkpoint_completed} completed · "
+        "{rollover_checkpoint_validation_failures} validation misses/"
+        "{rollover_interruptions} interruptions · reasons {rollover_reason_codes} · "
+        "{rollover_resumed_contexts_observed} validated/"
+        "{rollover_recovery_contexts_observed} advisory contexts observed\n"
+        "Rollover liveness: {rollover_not_ready_lifecycles} NOT_READY lifecycles/"
+        "{rollover_unresolved_not_ready} unresolved · "
+        "{rollover_not_ready_repairs_before_terminal} repaired before terminal/"
+        "{rollover_not_ready_advisories_before_terminal} advisory before terminal · "
+        "{rollover_checkpoint_advisory_reset_requested} advisory resets/"
+        "{rollover_terminal_after_not_ready_blocked} blocked terminals · "
+        "{rollover_terminal_after_not_ready} terminal failures/"
+        "{rollover_user_rescue_after_terminal} later user rescues\n"
+        "Rollover scopes: root {rollover_by_scope[root][events]} events/"
+        "{rollover_by_scope[root][session_resumed]} resumed/"
+        "{rollover_by_scope[root][failures]} interrupted · subagent "
+        "{rollover_by_scope[subagent][events]} events/"
+        "{rollover_by_scope[subagent][session_resumed]} resumed/"
+        "{rollover_by_scope[subagent][failures]} interrupted · "
+        "{rollover_subagent_skipped} skipped\n"
+        "Rollover repository validation: "
+        "{rollover_ready_task_scoped_checkpoints} ready task-scoped/"
+        "{rollover_ready_legacy_worktree_checkpoints} ready whole-worktree/"
+        "{rollover_ready_unknown_repo_scope_checkpoints} ready unknown "
+        "({rollover_task_scope_adoption} operational adoption) · attempted "
+        "{rollover_task_scoped_checkpoints} task-scoped/"
+        "{rollover_legacy_worktree_checkpoints} whole-worktree/"
+        "{rollover_unknown_repo_scope_checkpoints} unknown "
+        "({rollover_task_scope_attempt_rate} attempt rate; "
+        "{rollover_task_scope_complete_attempts} completeness assertions) · "
+        "{rollover_task_path_count_total} ready scoped-path slots/"
+        "{rollover_task_path_count_max} max per ready checkpoint · "
+        "{rollover_task_scoped_resumes} validated scoped resumes · modes "
+        "{rollover_checkpoint_repo_scopes}\n"
+        "Rollover checkpoint footprint: {rollover_checkpoint_bytes} private bytes · ~"
+        "{rollover_checkpoint_tokens_estimate} model-visible capsule tokens\n"
+        "Rollover token accounting: before {rollover_task_tokens_before_first}/"
+        "after {rollover_task_tokens_after} here (source: "
+        "{rollover_task_token_source}) · observed context dropped "
+        "{rollover_observed_context_tokens_dropped} (not savings) · causal "
+        "savings {rollover_causal_savings}"
     ).format(**value)
 
 

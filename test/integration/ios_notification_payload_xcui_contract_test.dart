@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +15,265 @@ String _between(String source, String start, String end) {
 }
 
 void main() {
+  test('physical driver accepts only the exact producer activation shape', () {
+    final payload = <String, Object?>{
+      'fixture_schema': 'mknoon.sims.ios-payload-private-fixture.v1',
+      'aps': <String, Object?>{
+        'alert': <String, Object?>{'title': 'Title', 'body': 'Body'},
+        'mutable-content': 1,
+        'content-available': 1,
+      },
+      'type': 'new_message',
+      'sender_id': '12D3KooW${List<String>.filled(44, 'b').join()}',
+      'message_id': 'message-1',
+      'gcm.message_id': 'ios-sims-bg-${List<String>.filled(32, 'c').join()}',
+      'kem': 'opaque-kem',
+      'ciphertext': 'opaque-ciphertext',
+      'nonce': 'opaque-nonce',
+    };
+
+    bool accepts(Map<String, Object?> value) =>
+        ios_payload_driver.isExactPrivateIosApnsPayload(
+          value,
+          expectedTitle: 'Title',
+          expectedBody: 'Body',
+        );
+
+    expect(accepts(payload), isTrue);
+    for (final mutation in <void Function(Map<String, dynamic>)>[
+      (value) => value.remove('gcm.message_id'),
+      (value) => value['gcm.message_id'] = 'arbitrary-id',
+      (value) => value['unexpected'] = 'opaque',
+      (value) =>
+          (value['aps']! as Map<String, dynamic>).remove('content-available'),
+      (value) =>
+          (value['aps']! as Map<String, dynamic>)['content-available'] = 1.0,
+      (value) =>
+          (value['aps']! as Map<String, dynamic>)['mutable-content'] = 1.0,
+      (value) =>
+          (value['aps']! as Map<String, dynamic>)['unexpected'] = 'opaque',
+    ]) {
+      final malformed = jsonDecode(jsonEncode(payload)) as Map<String, dynamic>;
+      mutation(malformed);
+      expect(accepts(malformed), isFalse);
+    }
+  });
+
+  test('payload digest is bound before validation-triggered recovery', () {
+    final source = File(
+      'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+    ).readAsStringSync();
+    final producer = _between(
+      source,
+      'Future<void> _produceApnsPayload() async {',
+      'Future<void> _runSenderProjection({required String action}) async {',
+    );
+    final digest = producer.indexOf(
+      '_apnsPayloadSha256 = sha256.convert(bytes).toString();',
+    );
+    final validation = producer.indexOf('isExactPrivateIosApnsPayload(');
+    expect(digest, greaterThanOrEqualTo(0));
+    expect(validation, greaterThan(digest));
+  });
+
+  test('cleanup owner failures are collected after every owner runs', () async {
+    final events = <String>[];
+    final failures = await ios_payload_driver
+        .attemptAllCleanupOwners(<Future<void> Function()>[
+          () async {
+            events.add('ui');
+            throw const FileSystemException('fixture UI cleanup failure');
+          },
+          () async => events.add('sender'),
+          () async {
+            events.add('provider-or-recovery');
+            throw const FileSystemException('fixture provider cleanup failure');
+          },
+          () async => events.add('candidate-app'),
+        ]);
+
+    expect(events, <String>[
+      'ui',
+      'sender',
+      'provider-or-recovery',
+      'candidate-app',
+    ]);
+    expect(failures, hasLength(2));
+    expect(failures, everyElement(isA<FileSystemException>()));
+  });
+
+  test('provider recovery remains eligible after provider cleanup fails', () {
+    expect(
+      ios_payload_driver.shouldAttemptProviderRecoveryAfterCleanup(
+        providerCleanupComplete: false,
+        providerRecoveryComplete: false,
+        receiverHandoffExists: true,
+        apnsPayloadExists: true,
+      ),
+      isTrue,
+    );
+    for (final blocked
+        in <({bool cleanup, bool recovery, bool handoff, bool payload})>[
+          (cleanup: true, recovery: false, handoff: true, payload: true),
+          (cleanup: false, recovery: true, handoff: true, payload: true),
+          (cleanup: false, recovery: false, handoff: false, payload: true),
+          (cleanup: false, recovery: false, handoff: true, payload: false),
+        ]) {
+      expect(
+        ios_payload_driver.shouldAttemptProviderRecoveryAfterCleanup(
+          providerCleanupComplete: blocked.cleanup,
+          providerRecoveryComplete: blocked.recovery,
+          receiverHandoffExists: blocked.handoff,
+          apnsPayloadExists: blocked.payload,
+        ),
+        isFalse,
+      );
+    }
+  });
+
+  test(
+    'diagnostic I/O failure is aggregated after unconditional cleanup runs',
+    () async {
+      final events = <String>[];
+      final failures = await ios_payload_driver
+          .attemptDiagnosticCleanupAndPrivateDeletion(
+            attemptDiagnosticRetention: () {
+              events.add('diagnostic');
+              throw const FileSystemException('fixture diagnostic failure');
+            },
+            cleanupOwners: <Future<void> Function()>[
+              () async => events.add('ui'),
+              () async => events.add('sender'),
+              () async => events.add('provider-or-recovery'),
+              () async => events.add('candidate-app'),
+            ],
+            privateDeletionOwners: <void Function()>[
+              () {
+                events.add('payload-snapshot');
+                throw const FileSystemException('fixture deletion failure');
+              },
+              () => events.add('receiver-handoff'),
+              () => events.add('raw-syslog'),
+            ],
+          );
+
+      expect(events, <String>[
+        'diagnostic',
+        'ui',
+        'sender',
+        'provider-or-recovery',
+        'candidate-app',
+        'payload-snapshot',
+        'receiver-handoff',
+        'raw-syslog',
+      ]);
+      expect(failures, hasLength(2));
+      expect(failures, everyElement(isA<FileSystemException>()));
+    },
+  );
+
+  test('fast recovery and retry finalizers clean after diagnostic failure', () {
+    final source = File(
+      'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+    ).readAsStringSync();
+    final fast = _between(
+      source,
+      'Future<_DriverResult> run() async {',
+      'void _prepareCaptureFiles()',
+    );
+    final recovery = _between(
+      source,
+      'Future<_DriverResult> _runRecoveryPhase() async {',
+      'Future<_DriverResult> _runRetryPhase() async {',
+    );
+    final retry = _between(
+      source,
+      'Future<_DriverResult> _runRetryPhase() async {',
+      'Future<void> _preflight() async {',
+    );
+
+    for (final phase in <String>[fast, recovery, retry]) {
+      final finalizer = phase.substring(phase.lastIndexOf('} finally {'));
+      expect(
+        finalizer,
+        contains('attemptDiagnosticCleanupAndPrivateDeletion('),
+      );
+      expect(finalizer, contains('attemptDiagnosticRetention: ()'));
+      expect(finalizer, contains('_cleanupAllAcquiredState,'));
+      expect(
+        finalizer,
+        contains('privateDeletionOwners: _privateDeletionOwners()'),
+      );
+      expect(
+        finalizer.indexOf('_writeCausalDiagnostic('),
+        lessThan(finalizer.indexOf('_cleanupAllAcquiredState,')),
+      );
+      expect(
+        finalizer.indexOf('_cleanupAllAcquiredState,'),
+        lessThan(
+          finalizer.indexOf('privateDeletionOwners: _privateDeletionOwners()'),
+        ),
+      );
+      expect(
+        finalizer.indexOf('privateDeletionOwners: _privateDeletionOwners()'),
+        lessThan(finalizer.indexOf('_throwFinalizationFailures(')),
+      );
+    }
+
+    final cleanup = _between(
+      source,
+      'Future<void> _cleanupAllAcquiredState() async {',
+      'Future<void> _removeCandidateApplicationDirectly() async {',
+    );
+    expect(cleanup, contains('attemptAllCleanupOwners('));
+    expect(cleanup, contains('cleanupFailures.length'));
+    expect(cleanup, contains('shouldAttemptProviderRecoveryAfterCleanup('));
+    expect(cleanup, contains('await _runUiCleanup()'));
+    expect(cleanup, contains("action: 'cleanup-sender'"));
+    expect(cleanup, contains('await _runProviderCleanup()'));
+    expect(cleanup, contains('await _runProviderRecovery()'));
+    expect(cleanup, contains('await _removeCandidateApplicationDirectly()'));
+    final ownerEvidence = _between(
+      source,
+      'Map<String, Object?> _cleanupOwnerEvidence()',
+      'Iterable<FutureOr<void> Function()> _privateDeletionOwners()',
+    );
+    for (final owner in const <String>[
+      'ui',
+      'sender',
+      'providerCleanup',
+      'providerRecovery',
+      'directInstall',
+    ]) {
+      expect(ownerEvidence, contains("'$owner':"));
+    }
+    for (final attempted in const <String>[
+      '_uiCleanupAttempted',
+      '_senderProjectionCleanupAttempted',
+      '_providerCleanupAttempted',
+      '_providerRecoveryAttempted',
+      '_directInstallCleanupAttempted',
+    ]) {
+      expect(ownerEvidence, contains("'attempted': $attempted"));
+    }
+    final privateDeletion = _between(
+      source,
+      'Iterable<FutureOr<void> Function()> _privateDeletionOwners()',
+      'void _throwFinalizationFailures(',
+    );
+    expect(privateDeletion, contains('_rawSyslog,'));
+    expect(privateDeletion, contains('_payloadReceiverHandoffFile,'));
+    expect(privateDeletion, contains('_deliveryReceiverHandoffFile,'));
+    expect(privateDeletion, contains('_apnsPayloadFile,'));
+    expect(privateDeletion, contains('_senderSeedReceiptFile,'));
+    expect(privateDeletion, contains('_senderCleanupReceiptFile,'));
+    expect(privateDeletion, contains('..._sensitiveIntermediates'));
+    expect(privateDeletion, contains('_uiResultBundles'));
+    expect(RegExp("'passDiagnosticRetained':").allMatches(source).length, 2);
+    expect(source, isNot(contains("'failureDiagnosticRetained'")));
+    expect(source, isNot(contains("'cleanupUnconditional'")));
+  });
+
   test('driver is prebuilt-only and slices logs before inline reconnect', () {
     final source = File(
       'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
@@ -43,7 +303,7 @@ void main() {
       source,
       contains("handoff['notificationAlertSetting'] != 'enabled'"),
     );
-    expect(source, contains('_receiverHandoffFile.deleteSync()'));
+    expect(source, contains('if (output.existsSync()) output.deleteSync()'));
     expect(source, contains('const Duration(seconds: 20)'));
     expect(source, contains('SIMS_IOS_NOTIFICATION_PAYLOAD_PRODUCER'));
     expect(source, contains("'--receiver-handoff'"));
@@ -67,11 +327,11 @@ void main() {
     final payloadValidation = _between(
       source,
       'final bytes = _apnsPayloadFile.readAsBytesSync();',
-      "final handoff = _readJson(_receiverHandoffFile, 'receiver handoff');",
+      'final handoff = _readJson(\n      _payloadReceiverHandoffFile,',
     );
     expect(
       payloadValidation,
-      contains("alert['body'] != _request['expectedBody']"),
+      contains("expectedBody: _request['expectedBody']! as String"),
       reason: 'the outgoing APNs fallback body stays request-bound',
     );
     expect(
@@ -175,10 +435,14 @@ void main() {
     final fallback = _between(
       source,
       '} finally {',
-      'if (_providerSetupComplete && !_providerCleanupComplete)',
+      'void _prepareCaptureFiles()',
     );
-    expect(fallback, contains('if (!_uiCleanupComplete)'));
-    expect(fallback, contains('await _runUiCleanup()'));
+    expect(fallback, contains('_writeCausalDiagnostic('));
+    expect(fallback, contains('_cleanupAllAcquiredState,'));
+    expect(
+      fallback,
+      contains('privateDeletionOwners: _privateDeletionOwners()'),
+    );
   });
 
   test('NSE observation spans APNs expiry and fails closed on log loss', () {
@@ -224,6 +488,13 @@ void main() {
     expect(observation, contains('openSync(mode: FileMode.read)'));
     expect(observation, contains('readOffset += bytes.length'));
     expect(observation, contains("status: 'timed-out'"));
+    expect(observation, contains("line.contains('PUSH_NSE_DID_RECEIVE')"));
+    expect(observation, contains('var didReceiveMarkers = 0;'));
+    expect(observation, contains('didReceiveMarkers += 1;'));
+    expect(observation, contains('var stagedRejectedMarkers = 0;'));
+    expect(observation, contains("line.contains(r'\"success\":\"false\"')"));
+    expect(observation, contains('stagedRejectedMarkers += 1;'));
+    expect(observation, contains("status: 'nse-envelope-stage-rejected'"));
     expect(observation, contains('PUSH_NSE_CONTENT_HANDOFF'));
     expect(observation, contains(r'"authorized":"true"'));
     expect(observation, contains("status: 'ready-for-card-check'"));
@@ -257,7 +528,11 @@ void main() {
       observation,
       contains('if (orderedProgress == 1) orderedProgress = 2;'),
     );
-    expect(observation, contains('if (orderedProgress == 2)'));
+    expect(
+      observation,
+      contains('if (orderedProgress == 2) orderedProgress = 3;'),
+    );
+    expect(observation, contains('orderedProgress == 3'));
     expect(observation, contains('orderedReadySequences += 1;'));
     expect(observation, contains('orderedRejectedMarkers > 0'));
     expect(observation, contains('if (orderedReadySequences > 0)'));
@@ -272,7 +547,11 @@ void main() {
       ),
       reason: 'unordered marker counts must never satisfy the APNs proof',
     );
-    expect(source, contains('mknoon.sims.ios-nse-observation-diagnostic.v1'));
+    expect(source, contains('mknoon.sims.ios-nse-observation-diagnostic.v2'));
+    expect(
+      source,
+      isNot(contains('mknoon.sims.ios-nse-observation-diagnostic.v1')),
+    );
     expect(
       source,
       contains("'observationStartOffset': observationStartOffset"),
@@ -282,6 +561,8 @@ void main() {
       source,
       contains("'discardedBoundaryFragments': discardedBoundaryFragments"),
     );
+    expect(source, contains("'didReceive': didReceiveMarkers"));
+    expect(source, contains("'envelopeStagedRejected': stagedRejectedMarkers"));
     expect(source, contains('_makeOwnerOnly(diagnostic)'));
     expect(
       source,
@@ -295,6 +576,140 @@ void main() {
     expect(stop, contains('final preStopExitCode = _syslogExitCode'));
     expect(stop, contains('final terminationRequested = process.kill('));
     expect(stop, contains('preStopExitCode != null || !terminationRequested'));
+  });
+
+  test(
+    'provider send binds the final registered launch without relaunching',
+    () {
+      final source = File(
+        'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+      ).readAsStringSync();
+      final bootstrap = File(
+        'integration_test/scripts/ios_receiver_bootstrap.py',
+      ).readAsStringSync();
+      final uiTests = File(
+        'ios/RunnerUITests/NotificationTapUITests.swift',
+      ).readAsStringSync();
+      final phases = <String>[
+        _between(
+          source,
+          'Future<_DriverResult> run() async {',
+          'void _prepareCaptureFiles()',
+        ),
+        _between(
+          source,
+          'Future<_DriverResult> _runRecoveryPhase() async {',
+          'Future<_DriverResult> _runRetryPhase() async {',
+        ),
+        _between(
+          source,
+          'Future<_DriverResult> _runRetryPhase() async {',
+          'Future<void> _preflight() async {',
+        ),
+      ];
+
+      for (final phase in phases) {
+        final payloadHandoff = phase.indexOf('deliveryBinding: false');
+        final payload = phase.indexOf('await _produceApnsPayload();');
+        final sender = phase.indexOf("action: 'seed-sender'");
+        final finalHandoff = phase.indexOf('deliveryBinding: true');
+        final finalBackground = phase.indexOf(
+          'await _backgroundFinalRegisteredReceiver(',
+        );
+        final provider = phase.indexOf('await _runProviderSetup();');
+        expect(payloadHandoff, greaterThanOrEqualTo(0));
+        expect(payload, greaterThan(payloadHandoff));
+        expect(sender, greaterThan(payload));
+        expect(finalHandoff, greaterThan(sender));
+        expect(finalBackground, greaterThan(finalHandoff));
+        expect(provider, greaterThan(finalBackground));
+      }
+
+      expect(source, contains('_payloadReceiverHandoffFile'));
+      expect(source, contains('_deliveryReceiverHandoffFile'));
+      expect(source, contains('_payloadReceiverMlKemPublicKeySha256'));
+      expect(
+        source,
+        contains('!capturedAt.isAfter(_payloadReceiverCapturedAt)'),
+      );
+      expect(source, contains('_payloadReceiverHandoffFile,'));
+      expect(source, contains('_deliveryReceiverHandoffFile,'));
+
+      final captureHandoff = _between(
+        source,
+        'Future<void> _captureReceiverHandoff({',
+        'Future<void> _produceApnsPayload() async {',
+      );
+      expect(
+        captureHandoff,
+        contains(
+          "deliveryBinding ? 'capture-receiver-final' : 'capture-receiver'",
+        ),
+        reason:
+            'only the final delivery binding may preserve the successful '
+            'capture launch',
+      );
+      expect(bootstrap, contains('"capture-receiver-final",'));
+      expect(bootstrap, contains('options.action == "capture-receiver-final"'));
+      final bootstrapCapture = _between(
+        bootstrap,
+        'def _capture(',
+        '\ndef _required(',
+      );
+      expect(
+        bootstrapCapture,
+        contains(
+          'successful_handoff = primary is None and handoff is not None',
+        ),
+      );
+      expect(
+        bootstrapCapture,
+        contains('if not (preserve_successful_launch and successful_handoff):'),
+      );
+      expect(
+        bootstrapCapture.indexOf(
+          'if not (preserve_successful_launch and successful_handoff):',
+        ),
+        lessThan(bootstrapCapture.indexOf('control.launch("cleanup")')),
+        reason: 'capture failure must retain the existing cleanup launch',
+      );
+
+      final backgroundOnly = _between(
+        uiTests,
+        'func testBackgroundRegisteredPayloadFastPathNotificationTap()',
+        'func testPayloadFastPathNotificationTap()',
+      );
+      expect(backgroundOnly, contains('.runningForeground'));
+      expect(backgroundOnly, contains('XCUIDevice.shared.press(.home)'));
+      expect(backgroundOnly, contains('registration_bound'));
+      expect(backgroundOnly, isNot(contains('app.terminate()')));
+      expect(backgroundOnly, isNot(contains('app.launch()')));
+    },
+  );
+
+  test('receiver handoff poll leaves a bounded app-readiness cushion', () {
+    final source = File(
+      'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+    ).readAsStringSync();
+    final captureHandoff = _between(
+      source,
+      'Future<void> _captureReceiverHandoff({',
+      'Future<void> _produceApnsPayload() async {',
+    );
+
+    expect(captureHandoff, contains("'--timeout-seconds',"));
+    expect(captureHandoff, contains("'150',"));
+    expect(captureHandoff, contains('const Duration(minutes: 3)'));
+    expect(
+      RegExp(r'await _runCommand\(').allMatches(captureHandoff),
+      hasLength(1),
+      reason: 'one handoff invocation must launch exactly one child command',
+    );
+    expect(
+      captureHandoff,
+      isNot(contains('while (')),
+      reason: 'the timing repair must not add a relaunch retry loop',
+    );
   });
 
   test(
@@ -318,6 +733,7 @@ void main() {
 
       expect(campaign, contains("phase: 'fast-path'"));
       expect(campaign, contains("phase: 'recovery'"));
+      expect(campaign, contains("phase: 'retry'"));
       expect(campaign, contains("'--phase',\n      phase"));
       expect(
         campaign,
@@ -333,7 +749,8 @@ void main() {
       );
       expect(driver, contains("'deliveredNotificationBadgeWasNil': true"));
       expect(driver, contains("'providerPayloadBadgeAbsent': true"));
-      expect(driver, contains("aps.keys.toSet().difference(const <String>{"));
+      expect(driver, contains('_hasExactStringKeys(aps, _privateIosApsKeys)'));
+      expect(driver, contains("'content-available',"));
       expect(bootstrap, contains('"deliveredNotificationBadgeWasNil"'));
       expect(
         appDelegate,
@@ -352,6 +769,105 @@ void main() {
       expect(uiTests, contains('waitForApplicationBadge(1'));
       expect(uiTests, contains('waitForApplicationBadge(0'));
       expect(uiTests, contains('Mknoon recovery sentinel'));
+    },
+  );
+
+  test(
+    'TC-396 retry is fenced, sampled after settle, and counted end to end',
+    () {
+      final source = File(
+        'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+      ).readAsStringSync();
+      final bootstrap = File(
+        'integration_test/scripts/ios_receiver_bootstrap.py',
+      ).readAsStringSync();
+      final inventory = File(
+        'ios/Runner/IosNotificationRecoveryCoordinator.swift',
+      ).readAsStringSync();
+      final retry = _between(
+        source,
+        'Future<_DriverResult> _runRetryPhase() async {',
+        'Future<void> _preflight() async {',
+      );
+
+      final firstProvider = retry.indexOf(
+        'final firstProviderReceipt = await _runProviderSetup();',
+      );
+      final firstHandoff = retry.indexOf("requiredPresentation: 'active'");
+      final firstCard = retry.indexOf("'retry-first-observe'");
+      final firstInventory = retry.indexOf("proofStage: 'retry_first'");
+      final privateRetry = retry.indexOf(
+        'final retryReceipt = await _runProviderRetry(firstProviderReceipt);',
+      );
+      final secondHandoff = retry.indexOf(
+        "requiredPresentation: 'trusted_passive'",
+      );
+      final secondCard = retry.indexOf("'retry-second-observe'");
+      final secondInventory = retry.indexOf("proofStage: 'retry_second'");
+      final completeCounts = retry.indexOf(
+        'final counts = _directWindowCounts(rawWindow, completeWindowBoundary);',
+      );
+      expect(firstProvider, greaterThanOrEqualTo(0));
+      expect(firstHandoff, greaterThan(firstProvider));
+      expect(firstCard, greaterThan(firstHandoff));
+      expect(firstInventory, greaterThan(firstCard));
+      expect(
+        privateRetry,
+        greaterThan(firstInventory),
+        reason:
+            'the first-send one-card fence must authorize the private retry',
+      );
+      expect(secondHandoff, greaterThan(privateRetry));
+      expect(secondCard, greaterThan(secondHandoff));
+      expect(secondInventory, greaterThan(secondCard));
+      expect(completeCounts, greaterThan(secondInventory));
+      expect(
+        retry.indexOf(
+          'final completeWindowBoundary = _captureSyslogObservationBoundary();',
+        ),
+        lessThan(firstProvider),
+      );
+
+      expect(bootstrap, contains('time.sleep(3.0)'));
+      expect(inventory, contains('static let stableSampleTarget = 3'));
+      expect(
+        inventory,
+        contains('static let stableSampleIntervalMilliseconds = 500'),
+      );
+      expect(inventory, contains('static let settleDelayMilliseconds = 3_000'));
+      expect(
+        inventory,
+        contains('static let observationDeadlineMilliseconds = 8_000'),
+      );
+      expect(retry, contains('counts.nseEnvelopeStaged != 2'));
+      expect(retry, contains('counts.nseAuthorizedHandoff != 2'));
+      expect(retry, contains('counts.nseActiveHandoff != 1'));
+      expect(retry, contains('counts.nseTrustedPassiveHandoff != 1'));
+      expect(retry, contains('counts.backgroundHandler != 2'));
+      expect(retry, contains('counts.recentRemoteSuppression != 2'));
+      expect(retry, contains('counts.matchingNotificationShown != 0'));
+
+      final finalizer = retry.substring(retry.lastIndexOf('} finally {'));
+      expect(
+        finalizer.indexOf('_writeCausalDiagnostic('),
+        lessThan(finalizer.indexOf('_cleanupAllAcquiredState,')),
+      );
+      expect(
+        finalizer.indexOf('_cleanupAllAcquiredState,'),
+        lessThan(
+          finalizer.indexOf('privateDeletionOwners: _privateDeletionOwners()'),
+        ),
+      );
+      final cleanup = _between(
+        source,
+        'Future<void> _cleanupAllAcquiredState() async {',
+        'Future<void> _removeCandidateApplicationDirectly() async {',
+      );
+      expect(cleanup, contains('if (_applicationInstalled'));
+      expect(cleanup, contains('if (_senderProjectionSeeded'));
+      expect(cleanup, contains('if (!_providerCleanupComplete)'));
+      expect(cleanup, contains('await _runProviderRecovery()'));
+      expect(cleanup, contains('await _removeCandidateApplicationDirectly()'));
     },
   );
 
@@ -492,10 +1008,17 @@ void main() {
       final resolver = File(
         'ios/NotificationService/NotificationPreviewResolver.swift',
       ).readAsStringSync();
+      expect(nse, contains('PUSH_NSE_DID_RECEIVE'));
       expect(nse, contains('PUSH_NSE_ENVELOPE_STAGED'));
       expect(nse, contains('PUSH_NSE_CONTENT_HANDOFF'));
       expect(nse, contains('"authorized": didApplyPreview ? "true" : "false"'));
       expect(nse, contains('"success": envelopeStaged ? "true" : "false"'));
+      expect(
+        nse.indexOf('PUSH_NSE_DID_RECEIVE'),
+        lessThan(nse.indexOf('NseMailboxWakeClassifier.isExactFixedWake')),
+        reason:
+            'NSE entry must be public before any classifier or store access',
+      );
       // Plan 373's fixed-wake branch hands the claimed handler to its own
       // final-effect/generic owners earlier in the file; the rich completion
       // this proof gates is the apply-path handler call after the marker.
@@ -519,6 +1042,7 @@ void main() {
         ),
       );
       expect(resolver, contains('case "PUSH_NSE_ENVELOPE_STAGED":'));
+      expect(resolver, contains('case "PUSH_NSE_DID_RECEIVE":'));
       expect(resolver, contains('case "PUSH_NSE_CONTENT_HANDOFF":'));
       expect(
         resolver,

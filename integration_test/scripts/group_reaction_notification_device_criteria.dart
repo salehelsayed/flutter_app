@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,6 +15,8 @@ const String groupReactionNotificationVerdictSchema =
     'mknoon.plan257.orchestrator-verdict.v1';
 const String groupReactionNotificationStagingSchema =
     'mknoon.plan257.staging-prerequisites.v1';
+const String plan398ExistingStateTraceManifestSchema =
+    'mknoon.plan398.existing-state-trace-manifest.v1';
 const String groupReactionBackgroundConnectedScenarioId =
     'android_group_reaction_recipient_background_connected';
 const String iosChatGroupMessageAndReactionScenarioId =
@@ -21,6 +24,48 @@ const String iosChatGroupMessageAndReactionScenarioId =
 const String iosChatGroupMessageAndReactionArtifactSchema =
     'mknoon.plan397.ios-chat-group-notification-proof.v1';
 const int iosChatGroupMessageAndReactionArtifactVersion = 1;
+const String plan398IosGroupMessageDiagnosticArtifactSchema =
+    'mknoon.plan398.ios-group-message-diagnostic.v2';
+const int plan398IosGroupMessageDiagnosticArtifactVersion = 2;
+const String plan398ExistingStateTraceArtifactSchema =
+    'mknoon.plan398.ios-group-message-existing-state-trace.v1';
+const String plan398ExistingStateLiveDiagnosticArtifactSchema =
+    'mknoon.plan398.ios-group-message-existing-state-live-diagnostic.v1';
+const int plan398ExistingStateTraceArtifactVersion = 1;
+const String plan398ExistingStateTraceArtifactFileName =
+    'plan398_existing_state_trace.json';
+const String plan398ExistingStateTraceClaimFileName =
+    'plan398_existing_state_trace_claim.json';
+const String plan398ExistingStateTraceFailureFileName =
+    'plan398_existing_state_trace_failure.json';
+const String plan398ExistingStateTraceCommandJournalFileName =
+    'plan398_existing_state_trace_command_journal.json';
+const String plan398ReviewedFinalTraceAuthorization =
+    'plan398-reviewed-final-same-container-manual-trace-v1';
+const String plan398ExistingStateTraceAttempt = 'attempt-03';
+const String plan398ExistingStateTraceIosStdoutFileName =
+    'plan398_existing_state_trace_ios_stdout.bin';
+const String plan398ExistingStateTraceIosStderrFileName =
+    'plan398_existing_state_trace_ios_stderr.bin';
+const String plan398ExistingStateTraceTerminalReceiptFileName =
+    'plan398_existing_state_trace_terminal_receipt.json';
+const String plan398ExistingStateTraceTerminalReceiptSchema =
+    'mknoon.plan398.existing-state-trace-terminal-receipt.v1';
+const String plan398ExistingStateLiveDiagnosticTerminalReceiptSchema =
+    'mknoon.plan398.existing-state-live-diagnostic-terminal-receipt.v1';
+const String plan398LegacyFinalAttemptAuthorityMode = 'legacy_final_attempt';
+const String plan398LiveDiagnosticAuthorityMode = 'live_diagnostic';
+const int plan398ExistingStateTraceIosStdoutLimitBytes = 64 * 1024 * 1024;
+const int plan398ExistingStateTraceIosStderrLimitBytes = 4 * 1024 * 1024;
+const int plan398ExistingStateTraceJournalLimitBytes = 4 * 1024 * 1024;
+const int plan398ExistingStateTracePixelLogLimitBytes = 64 * 1024 * 1024;
+const int plan398ExistingStateTraceArtifactLimitBytes = 1024 * 1024;
+const String relayGroupMessageDispatchCounter =
+    'relay_group_message_dispatch_total';
+const String plan398IosGroupObservationHostReceiptSchema =
+    'mknoon.sims.ios-group-notification-observation-host-receipt.v3';
+const String plan398IosGroupObservationDiagnosticSchema =
+    'mknoon.sims.ios-group-notification-diagnostics.v2';
 const String groupStrictNotificationScenarioId =
     'android_strict_group_notification_closure';
 const int groupReactionBackgroundConnectedHomeToReactDelayMs = 3000;
@@ -30,6 +75,1706 @@ const String groupReactionBackgroundConnectedObservationPrefix =
 const Set<String> _processAliveReactionScenarioIds = <String>{
   groupReactionBackgroundConnectedScenarioId,
 };
+
+String plan398PixelLogFileName(String deviceId) =>
+    'device_logcat_${deviceId.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '_')}.log';
+
+final class Plan398TraceLogOverflow implements Exception {
+  const Plan398TraceLogOverflow(this.channel, this.limitBytes);
+
+  final String channel;
+  final int limitBytes;
+
+  @override
+  String toString() =>
+      'Plan398TraceLogOverflow($channel exceeded $limitBytes bytes)';
+}
+
+enum Plan398IosLoggerLivenessFailure {
+  notStarted,
+  notConnected,
+  disconnected,
+  exited,
+}
+
+/// Pure fail-closed classification for the long-lived Plan 398 iOS logger.
+///
+/// `idevicesyslog` can emit a standalone `[disconnected]` line before its
+/// process-exit future is observed. Both signals invalidate every subsequent
+/// claim/readiness/send boundary after the initial connection.
+Plan398IosLoggerLivenessFailure? classifyPlan398IosLoggerLiveness({
+  required bool loggerStarted,
+  required bool loggerConnected,
+  required int? observedExitCode,
+  required String stdoutLog,
+  required String stderrLog,
+}) {
+  if (!loggerStarted) return Plan398IosLoggerLivenessFailure.notStarted;
+  if (!loggerConnected) return Plan398IosLoggerLivenessFailure.notConnected;
+  if (_plan398ContainsIosLoggerDisconnect(stdoutLog) ||
+      _plan398ContainsIosLoggerDisconnect(stderrLog)) {
+    return Plan398IosLoggerLivenessFailure.disconnected;
+  }
+  if (observedExitCode != null) {
+    return Plan398IosLoggerLivenessFailure.exited;
+  }
+  return null;
+}
+
+bool _plan398ContainsIosLoggerDisconnect(String log) => const LineSplitter()
+    .convert(log)
+    .any((line) => line.trim() == '[disconnected]');
+
+/// Incremental, bounded recognition of idevicesyslog's standalone terminal
+/// sentinel. It retains at most one short raw line and performs no I/O.
+final class Plan398IosLoggerDisconnectObserver {
+  static const int _maximumCandidateLineBytes = 256;
+  static const String _sentinel = '[disconnected]';
+
+  final List<int> _candidateLine = <int>[];
+  bool _candidateOverflowed = false;
+  bool _completedSentinelObserved = false;
+
+  bool get observed => _completedSentinelObserved || _pendingLineIsSentinel;
+
+  void addRawChunk(List<int> chunk) {
+    if (_completedSentinelObserved) return;
+    for (final byte in chunk) {
+      if (byte == 0x0a) {
+        if (_pendingLineIsSentinel) {
+          _completedSentinelObserved = true;
+          return;
+        }
+        _candidateLine.clear();
+        _candidateOverflowed = false;
+        continue;
+      }
+      if (_candidateLine.length < _maximumCandidateLineBytes) {
+        _candidateLine.add(byte);
+      } else {
+        _candidateOverflowed = true;
+      }
+    }
+  }
+
+  bool get _pendingLineIsSentinel =>
+      !_candidateOverflowed &&
+      String.fromCharCodes(_candidateLine).trim() == _sentinel;
+}
+
+enum Plan398ManualSendWaitDisposition {
+  acknowledged,
+  inputClosed,
+  timedOut,
+  loggerFailed,
+}
+
+final class Plan398ManualSendWaitResult {
+  const Plan398ManualSendWaitResult({
+    required this.disposition,
+    this.acknowledgement,
+    this.livenessFailure,
+  });
+
+  final Plan398ManualSendWaitDisposition disposition;
+  final String? acknowledgement;
+  final Plan398IosLoggerLivenessFailure? livenessFailure;
+}
+
+/// Races one manual-send acknowledgement against bounded logger-liveness
+/// polling, then rechecks liveness once more before accepting the input.
+Future<Plan398ManualSendWaitResult> waitForPlan398ManualSendAcknowledgement({
+  required Stream<String> acknowledgements,
+  required Plan398IosLoggerLivenessFailure? Function() readLivenessFailure,
+  required Duration timeout,
+  required Duration pollInterval,
+}) async {
+  if (timeout.inMicroseconds <= 0 || pollInterval.inMicroseconds <= 0) {
+    throw ArgumentError('Plan 398 manual-send wait durations must be positive');
+  }
+
+  Plan398ManualSendWaitResult loggerFailure(
+    Plan398IosLoggerLivenessFailure failure,
+  ) => Plan398ManualSendWaitResult(
+    disposition: Plan398ManualSendWaitDisposition.loggerFailed,
+    livenessFailure: failure,
+  );
+
+  final initialFailure = readLivenessFailure();
+  if (initialFailure != null) return loggerFailure(initialFailure);
+
+  final input = Completer<Plan398ManualSendWaitResult>();
+  final liveness = Completer<Plan398ManualSendWaitResult>();
+  final subscription = acknowledgements.listen(
+    (line) {
+      if (!input.isCompleted) {
+        input.complete(
+          Plan398ManualSendWaitResult(
+            disposition: Plan398ManualSendWaitDisposition.acknowledged,
+            acknowledgement: line,
+          ),
+        );
+      }
+    },
+    onError: (Object error, StackTrace stackTrace) {
+      if (!input.isCompleted) input.completeError(error, stackTrace);
+    },
+    onDone: () {
+      if (!input.isCompleted) {
+        input.complete(
+          const Plan398ManualSendWaitResult(
+            disposition: Plan398ManualSendWaitDisposition.inputClosed,
+          ),
+        );
+      }
+    },
+    cancelOnError: true,
+  );
+  final timer = Timer.periodic(pollInterval, (_) {
+    if (liveness.isCompleted) return;
+    final failure = readLivenessFailure();
+    if (failure != null) liveness.complete(loggerFailure(failure));
+  });
+
+  try {
+    var result = await Future.any<Plan398ManualSendWaitResult>(
+      <Future<Plan398ManualSendWaitResult>>[
+        input.future,
+        liveness.future,
+        Future<Plan398ManualSendWaitResult>.delayed(
+          timeout,
+          () => const Plan398ManualSendWaitResult(
+            disposition: Plan398ManualSendWaitDisposition.timedOut,
+          ),
+        ),
+      ],
+    );
+    if (result.disposition == Plan398ManualSendWaitDisposition.acknowledged) {
+      await Future<void>.delayed(Duration.zero);
+      final finalFailure = readLivenessFailure();
+      if (finalFailure != null) result = loggerFailure(finalFailure);
+    }
+    return result;
+  } finally {
+    timer.cancel();
+    await subscription.cancel();
+  }
+}
+
+final class Plan398TraceLogFileReference {
+  const Plan398TraceLogFileReference({
+    required this.file,
+    required this.lengthBytes,
+    required this.sha256,
+  });
+
+  final File file;
+  final int lengthBytes;
+  final String sha256;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'fileName': file.uri.pathSegments.last,
+    'lengthBytes': lengthBytes,
+    'sha256': sha256,
+    'mode': '0600',
+  };
+}
+
+final class Plan398TraceLogCommit {
+  const Plan398TraceLogCommit({required this.stdout, required this.stderr});
+
+  final Plan398TraceLogFileReference stdout;
+  final Plan398TraceLogFileReference stderr;
+}
+
+/// Byte-exact, bounded persistence for the one authorized Plan 398 trace.
+///
+/// Each stream chunk is written and awaited before it reaches the separate
+/// chunked UTF-8 decoder. Decoding is deliberately `allowMalformed`: raw bytes
+/// are the authority, while the in-memory strings continue feeding the strict
+/// existing parsers without making a malformed byte a persistence failure.
+final class Plan398TraceRawLogCapture {
+  Plan398TraceRawLogCapture({
+    required this.outputDirectory,
+    this.stdoutLimitBytes = plan398ExistingStateTraceIosStdoutLimitBytes,
+    this.stderrLimitBytes = plan398ExistingStateTraceIosStderrLimitBytes,
+  }) {
+    if (stdoutLimitBytes <= 0 || stderrLimitBytes <= 0) {
+      throw ArgumentError('Plan 398 raw-log limits must be positive');
+    }
+  }
+
+  final Directory outputDirectory;
+  final int stdoutLimitBytes;
+  final int stderrLimitBytes;
+
+  _Plan398TraceRawLogChannel? _stdout;
+  _Plan398TraceRawLogChannel? _stderr;
+  bool _finished = false;
+
+  bool get prepared => _stdout != null && _stderr != null && !_finished;
+
+  Future<void> prepare() async {
+    if (_stdout != null || _stderr != null || _finished) {
+      throw StateError('Plan 398 raw-log capture cannot be prepared twice');
+    }
+    await outputDirectory.create(recursive: true);
+    try {
+      _stdout = await _Plan398TraceRawLogChannel.create(
+        stableFile: File(
+          '${outputDirectory.path}${Platform.pathSeparator}'
+          '$plan398ExistingStateTraceIosStdoutFileName',
+        ),
+        channel: 'stdout',
+        limitBytes: stdoutLimitBytes,
+      );
+      _stderr = await _Plan398TraceRawLogChannel.create(
+        stableFile: File(
+          '${outputDirectory.path}${Platform.pathSeparator}'
+          '$plan398ExistingStateTraceIosStderrFileName',
+        ),
+        channel: 'stderr',
+        limitBytes: stderrLimitBytes,
+      );
+    } on Object {
+      await disposeTemps();
+      rethrow;
+    }
+  }
+
+  Future<void> consumeStdout(
+    Stream<List<int>> source,
+    StringBuffer decoded, {
+    void Function()? onFirstRawChunk,
+    void Function(List<int>)? onRawChunk,
+  }) => _consume(
+    source,
+    decoded,
+    channel: _stdout,
+    onFirstRawChunk: onFirstRawChunk,
+    onRawChunk: onRawChunk,
+  );
+
+  Future<void> consumeStderr(
+    Stream<List<int>> source,
+    StringBuffer decoded, {
+    void Function()? onFirstRawChunk,
+    void Function(List<int>)? onRawChunk,
+  }) => _consume(
+    source,
+    decoded,
+    channel: _stderr,
+    onFirstRawChunk: onFirstRawChunk,
+    onRawChunk: onRawChunk,
+  );
+
+  Future<void> _consume(
+    Stream<List<int>> source,
+    StringBuffer decoded, {
+    required _Plan398TraceRawLogChannel? channel,
+    required void Function()? onFirstRawChunk,
+    required void Function(List<int>)? onRawChunk,
+  }) async {
+    if (channel == null || _finished) {
+      throw StateError('Plan 398 raw-log capture is not prepared');
+    }
+    final decoder = const Utf8Decoder(
+      allowMalformed: true,
+    ).startChunkedConversion(StringConversionSink.fromStringSink(decoded));
+    var observedRawChunk = false;
+    try {
+      await for (final chunk in source) {
+        if (chunk.isEmpty) continue;
+        await channel.write(chunk);
+        onRawChunk?.call(chunk);
+        if (!observedRawChunk) {
+          observedRawChunk = true;
+          onFirstRawChunk?.call();
+        }
+        decoder.add(chunk);
+      }
+    } finally {
+      decoder.close();
+    }
+  }
+
+  Future<Plan398TraceLogCommit> closeAndCommit() async {
+    final stdout = _stdout;
+    final stderr = _stderr;
+    if (stdout == null || stderr == null || _finished) {
+      throw StateError('Plan 398 raw-log capture is not open');
+    }
+    _finished = true;
+    Plan398TraceLogCommit? committed;
+    Object? operationError;
+    StackTrace? operationStackTrace;
+    try {
+      await stdout.close();
+      await stderr.close();
+      final stdoutReference = await stdout.publishNoReplace();
+      final stderrReference = await stderr.publishNoReplace();
+      committed = Plan398TraceLogCommit(
+        stdout: stdoutReference,
+        stderr: stderrReference,
+      );
+    } on Object catch (error, stackTrace) {
+      operationError = error;
+      operationStackTrace = stackTrace;
+    }
+    Object? cleanupError;
+    StackTrace? cleanupStackTrace;
+    try {
+      await stdout.disposeTemp();
+    } on Object catch (error, stackTrace) {
+      cleanupError ??= error;
+      cleanupStackTrace ??= stackTrace;
+    }
+    try {
+      await stderr.disposeTemp();
+    } on Object catch (error, stackTrace) {
+      cleanupError ??= error;
+      cleanupStackTrace ??= stackTrace;
+    }
+    if (operationError != null) {
+      Error.throwWithStackTrace(operationError, operationStackTrace!);
+    }
+    if (cleanupError != null) {
+      Error.throwWithStackTrace(cleanupError, cleanupStackTrace!);
+    }
+    return committed!;
+  }
+
+  Future<void> disposeTemps() async {
+    _finished = true;
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    for (final channel in <_Plan398TraceRawLogChannel?>[_stdout, _stderr]) {
+      if (channel == null) continue;
+      try {
+        await channel.disposeTemp();
+      } on Object catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStackTrace!);
+    }
+  }
+}
+
+final class _Plan398TraceRawLogChannel {
+  _Plan398TraceRawLogChannel._({
+    required this.stableFile,
+    required this.temporaryFile,
+    required this.channel,
+    required this.limitBytes,
+    required RandomAccessFile handle,
+  }) : _handle = handle;
+
+  final File stableFile;
+  final File temporaryFile;
+  final String channel;
+  final int limitBytes;
+  RandomAccessFile? _handle;
+  int _lengthBytes = 0;
+
+  static Future<_Plan398TraceRawLogChannel> create({
+    required File stableFile,
+    required String channel,
+    required int limitBytes,
+  }) async {
+    final temporaryFile = File(
+      '${stableFile.path}.$pid.'
+      '${DateTime.now().toUtc().microsecondsSinceEpoch}.private-temp',
+    );
+    await temporaryFile.create(exclusive: true);
+    RandomAccessFile? handle;
+    try {
+      final chmod = await Process.run('chmod', <String>[
+        '600',
+        temporaryFile.path,
+      ]);
+      final entityType = await FileSystemEntity.type(
+        temporaryFile.path,
+        followLinks: false,
+      );
+      final stat = await temporaryFile.stat();
+      if (chmod.exitCode != 0 ||
+          entityType != FileSystemEntityType.file ||
+          (stat.mode & 0x1ff) != 0x180 ||
+          stat.size != 0) {
+        throw const FileSystemException(
+          'private empty Plan 398 raw-log temp rejected',
+        );
+      }
+      handle = await temporaryFile.open(mode: FileMode.append);
+      return _Plan398TraceRawLogChannel._(
+        stableFile: stableFile,
+        temporaryFile: temporaryFile,
+        channel: channel,
+        limitBytes: limitBytes,
+        handle: handle,
+      );
+    } on Object {
+      try {
+        await handle?.close();
+      } finally {
+        if (await temporaryFile.exists()) await temporaryFile.delete();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> write(List<int> bytes) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw StateError('Plan 398 $channel raw-log handle is closed');
+    }
+    if (_lengthBytes + bytes.length > limitBytes) {
+      throw Plan398TraceLogOverflow(channel, limitBytes);
+    }
+    await handle.writeFrom(bytes);
+    _lengthBytes += bytes.length;
+  }
+
+  Future<void> close() async {
+    final handle = _handle;
+    if (handle == null) return;
+    _handle = null;
+    try {
+      await handle.flush();
+    } finally {
+      await handle.close();
+    }
+  }
+
+  Future<Plan398TraceLogFileReference> publishNoReplace() async {
+    if (_handle != null) {
+      throw StateError('Plan 398 $channel raw log must close before publish');
+    }
+    final temporaryBytes = await temporaryFile.readAsBytes();
+    final expectedSha256 = sha256.convert(temporaryBytes).toString();
+    if (temporaryBytes.length != _lengthBytes) {
+      throw const FileSystemException(
+        'Plan 398 raw-log temp length changed before publish',
+      );
+    }
+    final publish = await Process.run('ln', <String>[
+      temporaryFile.path,
+      stableFile.path,
+    ]);
+    if (publish.exitCode != 0) {
+      throw FileSystemException(
+        'Plan 398 raw-log no-replace publication rejected',
+        stableFile.path,
+      );
+    }
+    final reference = Plan398TraceLogFileReference(
+      file: stableFile,
+      lengthBytes: _lengthBytes,
+      sha256: expectedSha256,
+    );
+    await _verifyPlan398TraceLogReference(reference);
+    await fsyncPlan398Directory(stableFile.parent);
+    return reference;
+  }
+
+  Future<void> disposeTemp() async {
+    Object? closeError;
+    StackTrace? closeStackTrace;
+    try {
+      await close();
+    } on Object catch (error, stackTrace) {
+      closeError = error;
+      closeStackTrace = stackTrace;
+    }
+    if (await temporaryFile.exists()) await temporaryFile.delete();
+    if (closeError != null) {
+      Error.throwWithStackTrace(closeError, closeStackTrace!);
+    }
+  }
+}
+
+Future<void> _verifyPlan398TraceLogReference(
+  Plan398TraceLogFileReference reference,
+) async {
+  final type = await FileSystemEntity.type(
+    reference.file.path,
+    followLinks: false,
+  );
+  final stat = await reference.file.stat();
+  if (type != FileSystemEntityType.file ||
+      (stat.mode & 0x1ff) != 0x180 ||
+      stat.size != reference.lengthBytes ||
+      sha256.convert(await reference.file.readAsBytes()).toString() !=
+          reference.sha256) {
+    throw FileSystemException(
+      'Plan 398 raw-log publication verification failed',
+      reference.file.path,
+    );
+  }
+}
+
+Future<GroupReactionNotificationArtifactValidation>
+validatePlan398ExistingStateTraceOutputPreflight(
+  Directory outputDirectory,
+) async {
+  final failures = <String>[];
+  for (final fileName in const <String>[
+    plan398ExistingStateTraceArtifactFileName,
+    plan398ExistingStateTraceClaimFileName,
+    'plan398_existing_state_trace_verdict.json',
+    plan398ExistingStateTraceIosStdoutFileName,
+    plan398ExistingStateTraceIosStderrFileName,
+    plan398ExistingStateTraceTerminalReceiptFileName,
+  ]) {
+    final path = '${outputDirectory.path}${Platform.pathSeparator}$fileName';
+    if (await FileSystemEntity.type(path, followLinks: false) !=
+        FileSystemEntityType.notFound) {
+      failures.add('stale Plan 398 output exists: $fileName');
+    }
+  }
+  if (await outputDirectory.exists()) {
+    await for (final entity in outputDirectory.list(followLinks: false)) {
+      final name = entity.uri.pathSegments.last;
+      final type = await FileSystemEntity.type(entity.path, followLinks: false);
+      if (type == FileSystemEntityType.link) {
+        failures.add('stale Plan 398 symlink exists: $name');
+      }
+      if (name.contains('private-temp')) {
+        failures.add('stale Plan 398 private-temp residue exists: $name');
+      }
+    }
+  }
+  return GroupReactionNotificationArtifactValidation(failures);
+}
+
+int? plan398RunnerProcessIdFromDevicectlLaunchJson(Object? value) {
+  final candidates = <int>[];
+  void visit(Object? node) {
+    if (node is Map) {
+      for (final entry in node.entries) {
+        if (<String>{'processIdentifier', 'processID'}.contains(entry.key) &&
+            entry.value is int &&
+            (entry.value! as int) > 0) {
+          candidates.add(entry.value! as int);
+        }
+        visit(entry.value);
+      }
+    } else if (node is List) {
+      for (final child in node) {
+        visit(child);
+      }
+    }
+  }
+
+  visit(value);
+  final unique = candidates.toSet();
+  return unique.length == 1 ? unique.single : null;
+}
+
+const Set<String> _plan398TraceTerminalStatuses = <String>{
+  'success',
+  'typed_failure',
+  'unexpected_failure',
+  'manual_timeout',
+  'logger_forced_kill',
+  'decoder_error',
+  'cleanup_error',
+  'pre_logger_failure',
+};
+
+Future<File> writePlan398ExistingStateTraceTerminalReceipt({
+  required Directory outputDirectory,
+  required String scenario,
+  String authorityMode = plan398LegacyFinalAttemptAuthorityMode,
+  String? attempt,
+  String? authorization,
+  String? finalRunnerProductReceiptSha256,
+  String? finalRunnerInstallTerminalSha256,
+  String? attempt02ReceiptSha256,
+  required String terminalStatus,
+  required int captureExitCode,
+  required String stage,
+  required String detailCode,
+  required bool traceAttemptClaimed,
+  required bool loggerStarted,
+  required bool loggerConnected,
+  required int? loggerProcessId,
+  required int? runnerProcessId,
+  required String stopDisposition,
+  required int loggerExitCode,
+  required bool loggerForcedTimeout,
+  Plan398TraceLogCommit? logs,
+  required Plan398TraceLogFileReference commandJournal,
+  required Plan398TraceLogFileReference? pixelLog,
+}) async {
+  final legacyAuthority =
+      authorityMode == plan398LegacyFinalAttemptAuthorityMode;
+  final liveDiagnostic = authorityMode == plan398LiveDiagnosticAuthorityMode;
+  final canOmitPixelLog =
+      terminalStatus == 'pre_logger_failure' &&
+      !loggerStarted &&
+      !loggerConnected &&
+      loggerProcessId == null &&
+      runnerProcessId == null &&
+      stopDisposition == 'not_started' &&
+      loggerExitCode == -1 &&
+      !loggerForcedTimeout &&
+      logs == null;
+  if ((!legacyAuthority && !liveDiagnostic) ||
+      legacyAuthority &&
+          (attempt != plan398ExistingStateTraceAttempt ||
+              authorization != plan398ReviewedFinalTraceAuthorization ||
+              !_isSha256(finalRunnerProductReceiptSha256) ||
+              !_isSha256(finalRunnerInstallTerminalSha256) ||
+              !_isSha256(attempt02ReceiptSha256)) ||
+      liveDiagnostic &&
+          <Object?>[
+            attempt,
+            authorization,
+            finalRunnerProductReceiptSha256,
+            finalRunnerInstallTerminalSha256,
+            attempt02ReceiptSha256,
+          ].any((value) => value != null) ||
+      !_plan398TraceTerminalStatuses.contains(terminalStatus) ||
+      !RegExp(r'^[A-Za-z0-9_.:-]{1,160}$').hasMatch(stage) ||
+      !RegExp(r'^[A-Za-z0-9_.:-]{1,200}$').hasMatch(detailCode) ||
+      !<String>{
+        'graceful',
+        'already_exited',
+        'forced_kill',
+        'not_started',
+      }.contains(stopDisposition) ||
+      loggerConnected && !loggerStarted ||
+      loggerStarted && (loggerProcessId == null || loggerProcessId <= 0) ||
+      !loggerStarted && loggerProcessId != null ||
+      runnerProcessId != null && runnerProcessId <= 0 ||
+      terminalStatus == 'success' && captureExitCode != 0 ||
+      terminalStatus != 'success' && captureExitCode == 0 ||
+      loggerStarted && logs == null ||
+      !loggerStarted &&
+          (loggerExitCode != -1 || loggerForcedTimeout || logs != null) ||
+      pixelLog == null && !canOmitPixelLog) {
+    throw const FormatException('invalid Plan 398 terminal receipt shape');
+  }
+  if (terminalStatus == 'success' &&
+      (!loggerStarted ||
+          !loggerConnected ||
+          runnerProcessId == null ||
+          logs == null ||
+          logs.stdout.lengthBytes <= 0 ||
+          stopDisposition != 'graceful')) {
+    throw const FormatException('invalid successful Plan 398 terminal receipt');
+  }
+  if (terminalStatus == 'logger_forced_kill' &&
+      (stopDisposition != 'forced_kill' || !loggerForcedTimeout)) {
+    throw const FormatException('forced-kill receipt lacks forced stop');
+  }
+  if (terminalStatus == 'pre_logger_failure' &&
+      (loggerStarted ||
+          loggerConnected ||
+          loggerProcessId != null ||
+          runnerProcessId != null ||
+          stopDisposition != 'not_started' ||
+          logs != null ||
+          loggerExitCode != -1 ||
+          loggerForcedTimeout)) {
+    throw const FormatException('invalid pre-logger terminal receipt');
+  }
+  if (logs != null) {
+    if (logs.stdout.file.uri.pathSegments.last !=
+            plan398ExistingStateTraceIosStdoutFileName ||
+        logs.stderr.file.uri.pathSegments.last !=
+            plan398ExistingStateTraceIosStderrFileName) {
+      throw const FormatException('Plan 398 log filenames are not canonical');
+    }
+    await _verifyPlan398TraceLogReference(logs.stdout);
+    await _verifyPlan398TraceLogReference(logs.stderr);
+  }
+  if (commandJournal.file.uri.pathSegments.last !=
+          plan398ExistingStateTraceCommandJournalFileName ||
+      commandJournal.lengthBytes <= 0 ||
+      commandJournal.lengthBytes > plan398ExistingStateTraceJournalLimitBytes ||
+      pixelLog != null &&
+          (pixelLog.file.uri.pathSegments.last !=
+                  plan398PixelLogFileName('21071FDF600CSC') ||
+              pixelLog.lengthBytes <= 0 ||
+              pixelLog.lengthBytes >
+                  plan398ExistingStateTracePixelLogLimitBytes)) {
+    throw const FormatException(
+      'Plan 398 terminal journal or Pixel log reference is invalid',
+    );
+  }
+  await _verifyPlan398TraceLogReference(commandJournal);
+  if (pixelLog != null) {
+    await _verifyPlan398TraceLogReference(pixelLog);
+  }
+  await outputDirectory.create(recursive: true);
+  final receipt = File(
+    '${outputDirectory.path}${Platform.pathSeparator}'
+    '$plan398ExistingStateTraceTerminalReceiptFileName',
+  );
+  final encoded = utf8.encode(
+    jsonEncode(<String, Object?>{
+      'schema': legacyAuthority
+          ? plan398ExistingStateTraceTerminalReceiptSchema
+          : plan398ExistingStateLiveDiagnosticTerminalReceiptSchema,
+      'version': 1,
+      'scenario': scenario,
+      if (legacyAuthority) ...<String, Object?>{
+        'attempt': attempt,
+        'authorization': authorization,
+        'finalRunnerProductReceiptSha256': finalRunnerProductReceiptSha256,
+        'finalRunnerInstallTerminalSha256': finalRunnerInstallTerminalSha256,
+        'attempt02ReceiptSha256': attempt02ReceiptSha256,
+      } else
+        'authorityMode': plan398LiveDiagnosticAuthorityMode,
+      'terminalStatus': terminalStatus,
+      'captureExitCode': captureExitCode,
+      'stage': stage,
+      'detailCode': detailCode,
+      'traceAttemptClaimed': traceAttemptClaimed,
+      'loggerExitCode': loggerExitCode,
+      'loggerForcedTimeout': loggerForcedTimeout,
+      'logger': <String, Object?>{
+        'started': loggerStarted,
+        'connected': loggerConnected,
+        'processId': loggerProcessId,
+        'runnerProcessId': runnerProcessId,
+        'stopDisposition': stopDisposition,
+      },
+      'logs': logs == null
+          ? null
+          : <String, Object?>{
+              'stdout': logs.stdout.toJson(),
+              'stderr': logs.stderr.toJson(),
+            },
+      'commandJournal': commandJournal.toJson(),
+      'pixelLog': pixelLog?.toJson(),
+      'committedAt': DateTime.now().toUtc().toIso8601String(),
+    }),
+  );
+  await writePlan398PrivateNoReplaceEvidence(
+    stableFile: receipt,
+    bytes: encoded,
+    maximumLengthBytes: 16384,
+  );
+  return receipt;
+}
+
+Future<Plan398TraceLogFileReference> writePlan398PrivateNoReplaceEvidence({
+  required File stableFile,
+  required List<int> bytes,
+  required int maximumLengthBytes,
+}) async {
+  if (maximumLengthBytes <= 0 || bytes.length > maximumLengthBytes) {
+    throw const FileSystemException(
+      'Plan 398 private evidence exceeds its byte bound',
+    );
+  }
+  await stableFile.parent.create(recursive: true);
+  final temporary = File(
+    '${stableFile.path}.$pid.'
+    '${DateTime.now().toUtc().microsecondsSinceEpoch}.private-temp',
+  );
+  RandomAccessFile? handle;
+  try {
+    await temporary.create(exclusive: true);
+    final chmod = await Process.run('chmod', <String>['600', temporary.path]);
+    final type = await FileSystemEntity.type(
+      temporary.path,
+      followLinks: false,
+    );
+    final before = await temporary.stat();
+    if (chmod.exitCode != 0 ||
+        type != FileSystemEntityType.file ||
+        (before.mode & 0x1ff) != 0x180 ||
+        before.size != 0) {
+      throw const FileSystemException(
+        'private empty Plan 398 receipt temp rejected',
+      );
+    }
+    handle = await temporary.open(mode: FileMode.append);
+    await handle.writeFrom(bytes);
+    await handle.flush();
+    await handle.close();
+    handle = null;
+    final publish = await Process.run('ln', <String>[
+      temporary.path,
+      stableFile.path,
+    ]);
+    if (publish.exitCode != 0) {
+      throw FileSystemException(
+        'Plan 398 private evidence no-replace publication rejected',
+        stableFile.path,
+      );
+    }
+    final stableType = await FileSystemEntity.type(
+      stableFile.path,
+      followLinks: false,
+    );
+    final stat = await stableFile.stat();
+    final digest = sha256.convert(bytes).toString();
+    if (stableType != FileSystemEntityType.file ||
+        (stat.mode & 0x1ff) != 0x180 ||
+        stat.size != bytes.length ||
+        sha256.convert(await stableFile.readAsBytes()).toString() != digest) {
+      throw FileSystemException(
+        'Plan 398 private evidence publication verification failed',
+        stableFile.path,
+      );
+    }
+    await fsyncPlan398Directory(stableFile.parent);
+    return Plan398TraceLogFileReference(
+      file: stableFile,
+      lengthBytes: bytes.length,
+      sha256: digest,
+    );
+  } finally {
+    try {
+      await handle?.close();
+    } finally {
+      if (await temporary.exists()) {
+        await temporary.delete();
+        await fsyncPlan398Directory(stableFile.parent);
+      }
+    }
+  }
+}
+
+Future<void> fsyncPlan398Directory(Directory directory) async {
+  final type = await FileSystemEntity.type(directory.path, followLinks: false);
+  if (type != FileSystemEntityType.directory) {
+    throw FileSystemException(
+      'Plan 398 fsync target is not a no-follow directory',
+      directory.path,
+    );
+  }
+  const script =
+      'import os,sys\n'
+      'fd=os.open(sys.argv[1],os.O_RDONLY|getattr(os,"O_DIRECTORY",0))\n'
+      'try: os.fsync(fd)\n'
+      'finally: os.close(fd)';
+  final result = await Process.run('python3', <String>[
+    '-c',
+    script,
+    directory.absolute.path,
+  ]);
+  if (result.exitCode != 0) {
+    throw FileSystemException(
+      'Plan 398 directory fsync failed',
+      directory.path,
+    );
+  }
+}
+
+Future<GroupReactionNotificationArtifactValidation>
+validatePlan398ExistingStateTraceTerminalReceipt({
+  required File receiptFile,
+  required String expectedScenario,
+  String expectedAuthorityMode = plan398LegacyFinalAttemptAuthorityMode,
+  String? expectedAuthorization,
+  String? expectedFinalRunnerProductReceiptSha256,
+  String? expectedFinalRunnerInstallTerminalSha256,
+  String? expectedAttempt02ReceiptSha256,
+  required String expectedPixelLogFileName,
+  required bool requireSuccessfulTrace,
+}) async {
+  final failures = <String>[];
+  final legacyAuthority =
+      expectedAuthorityMode == plan398LegacyFinalAttemptAuthorityMode;
+  final liveDiagnostic =
+      expectedAuthorityMode == plan398LiveDiagnosticAuthorityMode;
+  if ((!legacyAuthority && !liveDiagnostic) ||
+      legacyAuthority &&
+          (expectedAuthorization != plan398ReviewedFinalTraceAuthorization ||
+              !_isSha256(expectedFinalRunnerProductReceiptSha256) ||
+              !_isSha256(expectedFinalRunnerInstallTerminalSha256) ||
+              !_isSha256(expectedAttempt02ReceiptSha256)) ||
+      liveDiagnostic &&
+          <Object?>[
+            expectedAuthorization,
+            expectedFinalRunnerProductReceiptSha256,
+            expectedFinalRunnerInstallTerminalSha256,
+            expectedAttempt02ReceiptSha256,
+          ].any((value) => value != null) ||
+      expectedPixelLogFileName != plan398PixelLogFileName('21071FDF600CSC')) {
+    failures.add(r'$ terminal receipt expected authority is invalid');
+  }
+  if (receiptFile.uri.pathSegments.last !=
+      plan398ExistingStateTraceTerminalReceiptFileName) {
+    failures.add(r'$ terminal receipt filename is not canonical');
+  }
+  try {
+    final type = await FileSystemEntity.type(
+      receiptFile.path,
+      followLinks: false,
+    );
+    final stat = await receiptFile.stat();
+    if (type != FileSystemEntityType.file ||
+        (stat.mode & 0x1ff) != 0x180 ||
+        stat.size <= 0 ||
+        stat.size > 16384) {
+      failures.add(r'$ terminal receipt must be bounded private mode 0600');
+      return GroupReactionNotificationArtifactValidation(failures);
+    }
+    final raw = await receiptFile.readAsString();
+    final root = _asStringMap(jsonDecode(raw), r'$', failures);
+    if (root == null) {
+      return GroupReactionNotificationArtifactValidation(failures);
+    }
+    _expectExactKeys(
+      root,
+      <String>{
+        'schema',
+        'version',
+        'scenario',
+        if (legacyAuthority) ...<String>{
+          'attempt',
+          'authorization',
+          'finalRunnerProductReceiptSha256',
+          'finalRunnerInstallTerminalSha256',
+          'attempt02ReceiptSha256',
+        } else
+          'authorityMode',
+        'terminalStatus',
+        'captureExitCode',
+        'stage',
+        'detailCode',
+        'traceAttemptClaimed',
+        'loggerExitCode',
+        'loggerForcedTimeout',
+        'logger',
+        'logs',
+        'commandJournal',
+        'pixelLog',
+        'committedAt',
+      },
+      r'$',
+      failures,
+    );
+    _expectValue(
+      root,
+      'schema',
+      legacyAuthority
+          ? plan398ExistingStateTraceTerminalReceiptSchema
+          : plan398ExistingStateLiveDiagnosticTerminalReceiptSchema,
+      r'$',
+      failures,
+    );
+    _expectValue(root, 'version', 1, r'$', failures);
+    _expectValue(root, 'scenario', expectedScenario, r'$', failures);
+    if (legacyAuthority) {
+      _expectValue(
+        root,
+        'attempt',
+        plan398ExistingStateTraceAttempt,
+        r'$',
+        failures,
+      );
+      _expectValue(
+        root,
+        'authorization',
+        expectedAuthorization,
+        r'$',
+        failures,
+      );
+      _expectValue(
+        root,
+        'finalRunnerProductReceiptSha256',
+        expectedFinalRunnerProductReceiptSha256,
+        r'$',
+        failures,
+      );
+      _expectValue(
+        root,
+        'finalRunnerInstallTerminalSha256',
+        expectedFinalRunnerInstallTerminalSha256,
+        r'$',
+        failures,
+      );
+      _expectValue(
+        root,
+        'attempt02ReceiptSha256',
+        expectedAttempt02ReceiptSha256,
+        r'$',
+        failures,
+      );
+      for (final digest in <Object?>[
+        root['finalRunnerProductReceiptSha256'],
+        root['finalRunnerInstallTerminalSha256'],
+        root['attempt02ReceiptSha256'],
+      ]) {
+        if (!_isSha256(digest)) {
+          failures.add(r'$ terminal authority SHA-256 is invalid');
+        }
+      }
+    } else {
+      _expectValue(
+        root,
+        'authorityMode',
+        plan398LiveDiagnosticAuthorityMode,
+        r'$',
+        failures,
+      );
+    }
+    final status = root['terminalStatus'];
+    if (status is! String || !_plan398TraceTerminalStatuses.contains(status)) {
+      failures.add(r'$.terminalStatus is not closed');
+    }
+    if (requireSuccessfulTrace && status != 'success') {
+      failures.add(r'$.terminalStatus must equal success');
+    }
+    final captureExitCode = root['captureExitCode'];
+    final loggerExitCode = root['loggerExitCode'];
+    final loggerForcedTimeout = root['loggerForcedTimeout'];
+    if (root['stage'] is! String || root['detailCode'] is! String) {
+      failures.add(r'$.stage and $.detailCode must be strings');
+    }
+    if (root['traceAttemptClaimed'] is! bool ||
+        captureExitCode is! int ||
+        loggerExitCode is! int ||
+        loggerForcedTimeout is! bool ||
+        root['committedAt'] is! String ||
+        DateTime.tryParse('${root['committedAt']}') == null) {
+      failures.add(r'$ terminal receipt scalar fields are invalid');
+    }
+    final logger = _mapField(root, 'logger', r'$', failures);
+    bool loggerStarted = false;
+    bool loggerConnected = false;
+    int? runnerProcessId;
+    String? stopDisposition;
+    int? stdoutLengthBytes;
+    if (logger != null) {
+      _expectExactKeys(
+        logger,
+        const <String>{
+          'started',
+          'connected',
+          'processId',
+          'runnerProcessId',
+          'stopDisposition',
+        },
+        r'$.logger',
+        failures,
+      );
+      loggerStarted = logger['started'] == true;
+      loggerConnected = logger['connected'] == true;
+      runnerProcessId = logger['runnerProcessId'] as int?;
+      stopDisposition = logger['stopDisposition'] as String?;
+      if (logger['started'] is! bool ||
+          logger['connected'] is! bool ||
+          loggerConnected && !loggerStarted ||
+          loggerStarted &&
+              (logger['processId'] is! int ||
+                  (logger['processId']! as int) <= 0) ||
+          !loggerStarted && logger['processId'] != null ||
+          runnerProcessId != null && runnerProcessId <= 0 ||
+          !<String>{
+            'graceful',
+            'already_exited',
+            'forced_kill',
+            'not_started',
+          }.contains(stopDisposition)) {
+        failures.add(r'$.logger state is inconsistent');
+      }
+    }
+    final logsValue = root['logs'];
+    if (logsValue != null) {
+      final logs = _asStringMap(logsValue, r'$.logs', failures);
+      if (logs != null) {
+        _expectExactKeys(
+          logs,
+          const <String>{'stdout', 'stderr'},
+          r'$.logs',
+          failures,
+        );
+        await _validatePlan398TerminalLogReference(
+          value: logs['stdout'],
+          receiptDirectory: receiptFile.parent,
+          expectedFileName: plan398ExistingStateTraceIosStdoutFileName,
+          maximumLengthBytes: plan398ExistingStateTraceIosStdoutLimitBytes,
+          path: r'$.logs.stdout',
+          failures: failures,
+        );
+        await _validatePlan398TerminalLogReference(
+          value: logs['stderr'],
+          receiptDirectory: receiptFile.parent,
+          expectedFileName: plan398ExistingStateTraceIosStderrFileName,
+          maximumLengthBytes: plan398ExistingStateTraceIosStderrLimitBytes,
+          path: r'$.logs.stderr',
+          failures: failures,
+        );
+        final stdout = _asStringMap(logs['stdout'], r'$.logs.stdout', failures);
+        stdoutLengthBytes = stdout?['lengthBytes'] as int?;
+      }
+    }
+    if (status == 'success' &&
+        (captureExitCode != 0 ||
+            !loggerStarted ||
+            !loggerConnected ||
+            runnerProcessId == null ||
+            logsValue == null ||
+            stdoutLengthBytes == null ||
+            stdoutLengthBytes <= 0 ||
+            stopDisposition != 'graceful')) {
+      failures.add(r'$ successful terminal receipt is incomplete');
+    }
+    if (status != 'success' && captureExitCode == 0) {
+      failures.add(r'$ failed terminal receipt has zero capture exit');
+    }
+    if (loggerStarted && logsValue == null) {
+      failures.add(r'$ logger-started terminal receipt omitted raw logs');
+    }
+    if (status == 'success' && runnerProcessId != null) {
+      try {
+        final stdoutBytes = await File(
+          '${receiptFile.parent.path}${Platform.pathSeparator}'
+          '$plan398ExistingStateTraceIosStdoutFileName',
+        ).readAsBytes();
+        final stdout = utf8.decode(stdoutBytes, allowMalformed: true);
+        if (!plan398ExistingStateNotificationAuthorizationReady(
+          stdout,
+          expectedRunnerProcessId: runnerProcessId,
+        )) {
+          failures.add(
+            r'$ successful terminal receipt lacks its exact public '
+            'Runner settings record',
+          );
+        }
+      } on Object {
+        failures.add(r'$ successful terminal receipt stdout is unreadable');
+      }
+    }
+    if (status == 'logger_forced_kill' &&
+        (stopDisposition != 'forced_kill' || loggerForcedTimeout != true)) {
+      failures.add(r'$ forced-kill terminal receipt is inconsistent');
+    }
+    final pixelLogValue = root['pixelLog'];
+    if (status == 'pre_logger_failure' &&
+        (loggerStarted ||
+            loggerConnected ||
+            runnerProcessId != null ||
+            stopDisposition != 'not_started' ||
+            loggerExitCode != -1 ||
+            loggerForcedTimeout != false ||
+            logsValue != null)) {
+      failures.add(r'$ pre-logger terminal receipt retained logger state');
+    }
+    if (status != 'pre_logger_failure' && pixelLogValue == null) {
+      failures.add(r'$ non-pre-logger terminal receipt omitted Pixel log');
+    }
+    await _validatePlan398TerminalLogReference(
+      value: root['commandJournal'],
+      receiptDirectory: receiptFile.parent,
+      expectedFileName: plan398ExistingStateTraceCommandJournalFileName,
+      maximumLengthBytes: plan398ExistingStateTraceJournalLimitBytes,
+      path: r'$.commandJournal',
+      failures: failures,
+    );
+    if (pixelLogValue != null) {
+      await _validatePlan398TerminalLogReference(
+        value: pixelLogValue,
+        receiptDirectory: receiptFile.parent,
+        expectedFileName: expectedPixelLogFileName,
+        maximumLengthBytes: plan398ExistingStateTracePixelLogLimitBytes,
+        path: r'$.pixelLog',
+        failures: failures,
+      );
+    }
+    for (final entry in <MapEntry<String, Object?>>[
+      MapEntry<String, Object?>('commandJournal', root['commandJournal']),
+      if (pixelLogValue != null)
+        MapEntry<String, Object?>('pixelLog', pixelLogValue),
+    ]) {
+      final reference = _asStringMap(entry.value, '\$.${entry.key}', failures);
+      if (reference?['lengthBytes'] is! int ||
+          (reference!['lengthBytes']! as int) <= 0) {
+        failures.add('\$.${entry.key} must bind non-empty bytes');
+      }
+    }
+  } on Object {
+    failures.add(r'$ terminal receipt is unreadable or invalid');
+  }
+  return GroupReactionNotificationArtifactValidation(failures);
+}
+
+Future<void> _validatePlan398TerminalLogReference({
+  required Object? value,
+  required Directory receiptDirectory,
+  required String expectedFileName,
+  required int maximumLengthBytes,
+  required String path,
+  required List<String> failures,
+}) async {
+  final reference = _asStringMap(value, path, failures);
+  if (reference == null) return;
+  _expectExactKeys(
+    reference,
+    const <String>{'fileName', 'lengthBytes', 'sha256', 'mode'},
+    path,
+    failures,
+  );
+  _expectValue(reference, 'fileName', expectedFileName, path, failures);
+  _expectValue(reference, 'mode', '0600', path, failures);
+  final length = reference['lengthBytes'];
+  final digest = reference['sha256'];
+  if (length is! int ||
+      length < 0 ||
+      length > maximumLengthBytes ||
+      !_isSha256(digest)) {
+    failures.add('$path length or SHA-256 is invalid');
+    return;
+  }
+  final file = File(
+    '${receiptDirectory.path}${Platform.pathSeparator}$expectedFileName',
+  );
+  try {
+    final type = await FileSystemEntity.type(file.path, followLinks: false);
+    final stat = await file.stat();
+    final bytes = await file.readAsBytes();
+    if (type != FileSystemEntityType.file ||
+        (stat.mode & 0x1ff) != 0x180 ||
+        stat.size != length ||
+        sha256.convert(bytes).toString() != digest) {
+      failures.add('$path is not bound to durable private bytes');
+    }
+  } on Object {
+    failures.add('$path durable bytes are missing or unreadable');
+  }
+}
+
+enum Plan398NativeObservationDisposition {
+  behaviorPass,
+  captureEvidence,
+  environmentEvidence,
+}
+
+Plan398NativeObservationDisposition classifyPlan398NativeObservationReceipt({
+  required int subprocessExitCode,
+  required Object? receipt,
+  required String phase,
+  required String captureNonceSha256,
+  required String receiverDeviceIdSha256,
+  required String expectedGroupIdSha256,
+  required String expectedEventIdSha256,
+  required String expectedTargetMessageIdSha256,
+  required String expectedCollapseIdentifierSha256,
+}) {
+  if (subprocessExitCode < 0 || receipt is! Map) {
+    return Plan398NativeObservationDisposition.environmentEvidence;
+  }
+  Map<String, Object?> value;
+  try {
+    value = Map<String, Object?>.from(receipt);
+  } on Object {
+    return Plan398NativeObservationDisposition.environmentEvidence;
+  }
+  final status = value['status'];
+  if ((status == 'PASS' && subprocessExitCode != 0) ||
+      (status == 'FAIL' && subprocessExitCode <= 0)) {
+    return Plan398NativeObservationDisposition.environmentEvidence;
+  }
+  final valid = _isValidPlan398NativeObservationReceipt(
+    value,
+    phase: phase,
+    captureNonceSha256: captureNonceSha256,
+    receiverDeviceIdSha256: receiverDeviceIdSha256,
+    expectedGroupIdSha256: expectedGroupIdSha256,
+    expectedEventIdSha256: expectedEventIdSha256,
+    expectedTargetMessageIdSha256: expectedTargetMessageIdSha256,
+    expectedCollapseIdentifierSha256: expectedCollapseIdentifierSha256,
+  );
+  if (!valid) {
+    return Plan398NativeObservationDisposition.environmentEvidence;
+  }
+  return value['status'] == 'FAIL'
+      ? Plan398NativeObservationDisposition.captureEvidence
+      : Plan398NativeObservationDisposition.behaviorPass;
+}
+
+bool _isValidPlan398NativeObservationReceipt(
+  Map<String, Object?> value, {
+  required String phase,
+  required String captureNonceSha256,
+  required String receiverDeviceIdSha256,
+  required String expectedGroupIdSha256,
+  required String expectedEventIdSha256,
+  required String expectedTargetMessageIdSha256,
+  required String expectedCollapseIdentifierSha256,
+}) {
+  const exactKeys = <String>{
+    'schema',
+    'action',
+    'phase',
+    'status',
+    'containsSecrets',
+    'bundleId',
+    'captureNonceSha256',
+    'receiverDeviceIdSha256',
+    'expectedGroupIdSha256',
+    'expectedEventIdSha256',
+    'expectedTargetMessageIdSha256',
+    'expectedCollapseIdentifierSha256',
+    'matchingRemoteCount',
+    'matchingLocalCount',
+    'matchingUsefulProviderCount',
+    'matchingSanitizedProviderCount',
+    'matchingFlutterLocalCount',
+    'matchingUnknownCount',
+    'matchingTotalCount',
+    'stableSampleCount',
+    'stableSampleIntervalMilliseconds',
+    'observationDeadlineMilliseconds',
+    'sampledThroughDeadline',
+    'badSourceSeen',
+    'duplicateSeen',
+    'requestIdentifierSha256',
+    'diagnosticSchema',
+    'diagnosticRecords',
+    'diagnosticRecordCount',
+    'diagnosticOverflow',
+    'diagnosticConflict',
+    'diagnosticComplete',
+    'childBuildCount',
+    'manualActionCount',
+    'runnerTerminated',
+    'preTapCleanupLaunchCount',
+    'resultCode',
+    'completedAt',
+  };
+  const integerKeys = <String>{
+    'matchingRemoteCount',
+    'matchingLocalCount',
+    'matchingUsefulProviderCount',
+    'matchingSanitizedProviderCount',
+    'matchingFlutterLocalCount',
+    'matchingUnknownCount',
+    'matchingTotalCount',
+    'stableSampleCount',
+    'stableSampleIntervalMilliseconds',
+    'observationDeadlineMilliseconds',
+    'diagnosticRecordCount',
+    'childBuildCount',
+    'manualActionCount',
+    'preTapCleanupLaunchCount',
+  };
+  const booleanKeys = <String>{
+    'sampledThroughDeadline',
+    'badSourceSeen',
+    'duplicateSeen',
+    'diagnosticOverflow',
+    'diagnosticConflict',
+    'diagnosticComplete',
+    'runnerTerminated',
+  };
+  final expectedBindings = <String, String>{
+    'captureNonceSha256': captureNonceSha256,
+    'receiverDeviceIdSha256': receiverDeviceIdSha256,
+    'expectedGroupIdSha256': expectedGroupIdSha256,
+    'expectedEventIdSha256': expectedEventIdSha256,
+    'expectedTargetMessageIdSha256': expectedTargetMessageIdSha256,
+    'expectedCollapseIdentifierSha256': expectedCollapseIdentifierSha256,
+  };
+  if (value.keys.toSet().difference(exactKeys).isNotEmpty ||
+      exactKeys.difference(value.keys.toSet()).isNotEmpty ||
+      value['schema'] != plan398IosGroupObservationHostReceiptSchema ||
+      value['action'] != 'observe-group' ||
+      value['phase'] != phase ||
+      !const <String>{'message', 'reaction'}.contains(phase) ||
+      !const <String>{'PASS', 'FAIL'}.contains(value['status']) ||
+      value['containsSecrets'] != false ||
+      value['bundleId'] != 'com.mknoon.app' ||
+      integerKeys.any(
+        (key) => value[key] is! int || (value[key]! as int).isNegative,
+      ) ||
+      booleanKeys.any((key) => value[key] is! bool) ||
+      expectedBindings.entries.any(
+        (entry) => !_isSha256(entry.value) || value[entry.key] != entry.value,
+      ) ||
+      value['diagnosticSchema'] != plan398IosGroupObservationDiagnosticSchema ||
+      value['runnerTerminated'] != true ||
+      value['preTapCleanupLaunchCount'] != 0 ||
+      value['resultCode'] is! String ||
+      value['completedAt'] is! String ||
+      DateTime.tryParse(value['completedAt']! as String) == null) {
+    return false;
+  }
+
+  final identifiers = value['requestIdentifierSha256'];
+  if (identifiers is! List ||
+      identifiers.length > 8 ||
+      identifiers.length != value['matchingTotalCount'] ||
+      identifiers.any((identifier) => !_isSha256(identifier)) ||
+      identifiers.toSet().length != identifiers.length) {
+    return false;
+  }
+  final identifierHashes = identifiers.cast<String>();
+  final sortedIdentifiers = identifierHashes.toList()..sort();
+  if (!_sameStringList(identifierHashes, sortedIdentifiers)) return false;
+  final identifierHashSet = identifierHashes.toSet();
+
+  final rawRecords = value['diagnosticRecords'];
+  if (rawRecords is! List || rawRecords.length > 8) return false;
+  final records = <Map<String, Object?>>[];
+  for (final rawRecord in rawRecords) {
+    if (rawRecord is! Map) return false;
+    Map<String, Object?> record;
+    try {
+      record = Map<String, Object?>.from(rawRecord);
+    } on Object {
+      return false;
+    }
+    if (!_isValidPlan398DiagnosticRecord(
+      record,
+      expectedCollapseIdentifierSha256: expectedCollapseIdentifierSha256,
+    )) {
+      return false;
+    }
+    records.add(record);
+  }
+  final recordHashes = records
+      .map((record) => record['requestIdentifierSha256']! as String)
+      .toList(growable: false);
+  final sortedRecordHashes = recordHashes.toList()..sort();
+  if (!_sameStringList(recordHashes, sortedRecordHashes) ||
+      recordHashes.toSet().length != recordHashes.length ||
+      identifierHashSet.difference(recordHashes.toSet()).isNotEmpty ||
+      value['diagnosticRecordCount'] != records.length) {
+    return false;
+  }
+  final inventoryRecords = records
+      .where(
+        (record) => identifierHashSet.contains(
+          record['requestIdentifierSha256']! as String,
+        ),
+      )
+      .toList(growable: false);
+  final computedComplete =
+      value['sampledThroughDeadline'] == true &&
+      value['diagnosticOverflow'] == false &&
+      value['diagnosticConflict'] == false &&
+      records.isNotEmpty;
+  if (value['diagnosticComplete'] != computedComplete) return false;
+
+  final remote = value['matchingRemoteCount']! as int;
+  final local = value['matchingLocalCount']! as int;
+  final useful = value['matchingUsefulProviderCount']! as int;
+  final sanitized = value['matchingSanitizedProviderCount']! as int;
+  final flutterLocal = value['matchingFlutterLocalCount']! as int;
+  final unknown = value['matchingUnknownCount']! as int;
+  final total = value['matchingTotalCount']! as int;
+  if (remote + local != total ||
+      useful + sanitized + flutterLocal + unknown != total ||
+      inventoryRecords.length != total) {
+    return false;
+  }
+  if (inventoryRecords
+              .where((record) => record['triggerOrigin'] == 'remote')
+              .length !=
+          remote ||
+      inventoryRecords
+              .where((record) => record['triggerOrigin'] == 'local')
+              .length !=
+          local ||
+      inventoryRecords
+              .where((record) => record['sourceClass'] == 'usefulProviderRich')
+              .length !=
+          useful ||
+      inventoryRecords
+              .where(
+                (record) => record['sourceClass'] == 'sanitizedProviderRich',
+              )
+              .length !=
+          sanitized ||
+      inventoryRecords
+              .where((record) => record['sourceClass'] == 'flutterLocal')
+              .length !=
+          flutterLocal ||
+      inventoryRecords
+              .where((record) => record['sourceClass'] == 'unknown')
+              .length !=
+          unknown) {
+    return false;
+  }
+
+  final exactRecord = records.length == 1 ? records.single : null;
+  final exactUsefulSource =
+      value['sampledThroughDeadline'] == true &&
+      value['diagnosticComplete'] == true &&
+      value['stableSampleCount'] == 3 &&
+      value['badSourceSeen'] == false &&
+      value['duplicateSeen'] == false &&
+      value['diagnosticOverflow'] == false &&
+      value['diagnosticConflict'] == false &&
+      remote == 1 &&
+      local == 0 &&
+      useful == 1 &&
+      sanitized == 0 &&
+      flutterLocal == 0 &&
+      unknown == 0 &&
+      total == 1 &&
+      identifierHashes.length == 1 &&
+      identifierHashes.single == expectedCollapseIdentifierSha256 &&
+      exactRecord != null &&
+      exactRecord['requestIdentifierSha256'] ==
+          expectedCollapseIdentifierSha256 &&
+      exactRecord['expectedCollapseIdentifierMatch'] == true &&
+      exactRecord['triggerOrigin'] == 'remote' &&
+      exactRecord['sourceClass'] == 'usefulProviderRich' &&
+      exactRecord['reason'] == 'exactUseful';
+  if (exactUsefulSource) {
+    if (value['status'] != 'PASS' || value['resultCode'] != 'ok') return false;
+  } else {
+    if (value['status'] != 'FAIL') return false;
+    final String expectedFailureResultCode;
+    if (value['sampledThroughDeadline'] != true ||
+        value['stableSampleCount'] != 3) {
+      expectedFailureResultCode = 'source_inventory_unstable';
+    } else if (value['badSourceSeen'] == true) {
+      expectedFailureResultCode = 'bad_source_seen';
+    } else if (value['duplicateSeen'] == true) {
+      expectedFailureResultCode = 'duplicate_seen';
+    } else {
+      expectedFailureResultCode = 'source_inventory_mismatch';
+    }
+    if (value['resultCode'] != expectedFailureResultCode) return false;
+  }
+
+  if (value['status'] == 'PASS') {
+    if (value['resultCode'] != 'ok' ||
+        remote != 1 ||
+        local != 0 ||
+        useful != 1 ||
+        sanitized != 0 ||
+        flutterLocal != 0 ||
+        unknown != 0 ||
+        total != 1 ||
+        value['stableSampleCount'] != 3 ||
+        value['stableSampleIntervalMilliseconds'] != 500 ||
+        value['observationDeadlineMilliseconds'] != 8000 ||
+        value['sampledThroughDeadline'] != true ||
+        value['badSourceSeen'] != false ||
+        value['duplicateSeen'] != false ||
+        value['diagnosticComplete'] != true ||
+        records.length != 1 ||
+        records.single['triggerOrigin'] != 'remote' ||
+        records.single['sourceClass'] != 'usefulProviderRich' ||
+        records.single['reason'] != 'exactUseful' ||
+        records.single['expectedCollapseIdentifierMatch'] != true ||
+        value['childBuildCount'] != 0 ||
+        value['manualActionCount'] != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _isValidPlan398DiagnosticRecord(
+  Map<String, Object?> record, {
+  required String expectedCollapseIdentifierSha256,
+}) {
+  const keys = <String>{
+    'requestIdentifierSha256',
+    'dispatchCorrelationSha256',
+    'claimedCollapseIdentifierSha256',
+    'providerMessageIdSha256',
+    'triggerOrigin',
+    'sourceClass',
+    'reason',
+    'expectedCollapseIdentifierMatch',
+    'dispatchClaim',
+  };
+  if (record.keys.toSet().difference(keys).isNotEmpty ||
+      keys.difference(record.keys.toSet()).isNotEmpty ||
+      !_isSha256(record['requestIdentifierSha256']) ||
+      !_isNullableSha256(record['dispatchCorrelationSha256']) ||
+      !_isNullableSha256(record['claimedCollapseIdentifierSha256']) ||
+      !_isNullableSha256(record['providerMessageIdSha256']) ||
+      record['expectedCollapseIdentifierMatch'] is! bool ||
+      record['expectedCollapseIdentifierMatch'] !=
+          (record['requestIdentifierSha256'] ==
+              expectedCollapseIdentifierSha256) ||
+      !const <String>{
+        'groupInbox',
+        'groupContent',
+        'absent',
+        'invalid',
+      }.contains(record['dispatchClaim'])) {
+    return false;
+  }
+  final triple = (
+    record['triggerOrigin'],
+    record['sourceClass'],
+    record['reason'],
+  );
+  return const <(Object?, Object?, Object?)>{
+    ('remote', 'usefulProviderRich', 'exactUseful'),
+    ('remote', 'sanitizedProviderRich', 'exactSanitized'),
+    ('local', 'flutterLocal', 'exactFlutterLocal'),
+    ('remote', 'unknown', 'missingOrInvalidType'),
+    ('remote', 'unknown', 'groupHashMismatch'),
+    ('remote', 'unknown', 'partialContent'),
+    ('remote', 'unknown', 'unclassifiedRemote'),
+    ('local', 'unknown', 'groupHashMismatch'),
+    ('local', 'unknown', 'unclassifiedLocal'),
+  }.contains(triple);
+}
+
+bool _sameStringList(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+/// Returns whether one complete AppDelegate settings record proves that iOS
+/// notifications are authorized and both alert and badge presentation remain
+/// enabled.
+///
+/// Installed builds can render imported UserNotifications enums either as
+/// normalized case names or as Swift raw-value descriptions. Values are bound
+/// within one exact diagnostic line so unrelated or partial syslog records can
+/// never be combined into a readiness claim.
+bool plan398ExistingStateNotificationAuthorizationReady(
+  String systemLogWindow, {
+  int? expectedRunnerProcessId,
+}) {
+  const marker = '[PUSH_DIAG] native_notification_settings ';
+  final normalizedReadyPattern = RegExp(
+    r'^context=\S+ '
+    r'authorization=(authorized|provisional|ephemeral) '
+    r'alert=enabled badge=enabled '
+    r'sound=(enabled|disabled|not_supported)$',
+  );
+  final rawReadyPattern = RegExp(
+    r'^context=\S+ '
+    r'authorization=UNAuthorizationStatus\(rawValue: [234]\) '
+    r'alert=UNNotificationSetting\(rawValue: 2\) '
+    r'badge=UNNotificationSetting\(rawValue: 2\) '
+    r'sound=UNNotificationSetting\(rawValue: [012]\)$',
+  );
+
+  for (final line in const LineSplitter().convert(systemLogWindow)) {
+    final markerIndex = line.indexOf(marker);
+    if (markerIndex < 0 || markerIndex != line.lastIndexOf(marker)) continue;
+    if (expectedRunnerProcessId != null) {
+      final runnerPid = RegExp(
+        'Runner\\[$expectedRunnerProcessId\\]',
+      ).allMatches(line.substring(0, markerIndex));
+      if (runnerPid.length != 1) continue;
+    }
+    final record = line.substring(markerIndex + marker.length).trimRight();
+    if (normalizedReadyPattern.hasMatch(record) ||
+        rawReadyPattern.hasMatch(record)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 bool groupReactionNotificationKeepsRecipientProcessAlive(String scenarioId) =>
     _processAliveReactionScenarioIds.contains(scenarioId);
@@ -219,6 +1964,89 @@ validateGroupReactionNotificationStagingManifest(
         failures,
       );
     }
+  }
+  return GroupReactionNotificationStagingValidation(failures);
+}
+
+/// Validates the private, non-mutating authority used by the installed-state
+/// trace. Unlike the general Plan-257 manifest, this branch cannot authorize
+/// app-data reset and does not pretend that unused XCTest selectors are part
+/// of a build-free observation.
+GroupReactionNotificationStagingValidation
+validatePlan398ExistingStateTraceManifest(Map<String, Object?> value) {
+  final failures = <String>[];
+  _expectExactKeys(
+    value,
+    const <String>{
+      'schema',
+      'version',
+      'environment',
+      'relayActive',
+      'providerConfigured',
+      'providerProbeSucceeded',
+      'productionDeploymentPerformed',
+      'allowAppDataReset',
+      'candidateRelayRevision',
+      'candidateRelaySha256',
+      'provider',
+      'relayAddresses',
+      'iosCapture',
+    },
+    r'$',
+    failures,
+  );
+  for (final entry in const <String, Object?>{
+    'schema': plan398ExistingStateTraceManifestSchema,
+    'version': 1,
+    'environment': 'staging',
+    'relayActive': true,
+    'providerConfigured': true,
+    'providerProbeSucceeded': true,
+    'productionDeploymentPerformed': false,
+    'allowAppDataReset': false,
+    'provider': 'apns',
+  }.entries) {
+    _expectValue(value, entry.key, entry.value, r'$', failures);
+  }
+  _requiredString(value, 'candidateRelayRevision', r'$', failures);
+  if (!_isSha256(value['candidateRelaySha256'])) {
+    failures.add(r'$.candidateRelaySha256 must be a lowercase SHA-256 digest');
+  }
+  final relayAddresses = value['relayAddresses'];
+  if (relayAddresses is! List || relayAddresses.isEmpty) {
+    failures.add(r'$.relayAddresses must be a non-empty list');
+  } else {
+    for (final address in relayAddresses) {
+      if (address is! String ||
+          address.trim().isEmpty ||
+          address.contains(RegExp(r'[\r\n]'))) {
+        failures.add(r'$.relayAddresses must contain safe non-empty strings');
+        break;
+      }
+    }
+  }
+  final iosCapture = _mapField(value, 'iosCapture', r'$', failures);
+  if (iosCapture != null) {
+    _expectExactKeys(
+      iosCapture,
+      const <String>{'bundleId', 'systemLogExecutable'},
+      r'$.iosCapture',
+      failures,
+    );
+    _expectValue(
+      iosCapture,
+      'bundleId',
+      'com.mknoon.app',
+      r'$.iosCapture',
+      failures,
+    );
+    _expectValue(
+      iosCapture,
+      'systemLogExecutable',
+      'idevicesyslog',
+      r'$.iosCapture',
+      failures,
+    );
   }
   return GroupReactionNotificationStagingValidation(failures);
 }
@@ -593,6 +2421,16 @@ bool groupReactionIosDeviceIsOnline(String xctraceOutput, String deviceId) {
     caseSensitive: false,
   );
   return online.any(boundary.hasMatch);
+}
+
+bool groupReactionIosUsbDeviceIsPresent(String ideviceOutput, String deviceId) {
+  if (!RegExp(r'^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}$').hasMatch(deviceId)) {
+    return false;
+  }
+  return const LineSplitter()
+      .convert(ideviceOutput)
+      .map((line) => line.trim())
+      .any((line) => line.toLowerCase() == deviceId.toLowerCase());
 }
 
 bool groupReactionIosRelayRegistrationSucceeded(String recipientLog) =>
@@ -1462,11 +3300,454 @@ class GroupReactionNotificationArtifactValidation {
 }
 
 Future<GroupReactionNotificationArtifactValidation>
+validatePlan398ExistingStateTraceArtifact({
+  required File artifactFile,
+  required File traceAttemptMarker,
+  required String expectedSenderDeviceId,
+  required String expectedRecipientDeviceId,
+}) async {
+  final failures = <String>[];
+  if (artifactFile.path.split(Platform.pathSeparator).last !=
+      plan398ExistingStateTraceArtifactFileName) {
+    failures.add(
+      r'$ artifact filename must be plan398_existing_state_trace.json',
+    );
+  }
+  if (!await artifactFile.exists()) {
+    failures.add('missing artifact file ${artifactFile.path}');
+    return GroupReactionNotificationArtifactValidation(failures);
+  }
+
+  late final String raw;
+  try {
+    raw = await artifactFile.readAsString();
+  } on Object {
+    failures.add(r'$ artifact could not be read');
+    return GroupReactionNotificationArtifactValidation(failures);
+  }
+  _scanForbidden(raw, r'$', failures);
+  _scanPlan398ExistingStateTraceForbidden(raw, failures);
+
+  Object? decoded;
+  try {
+    decoded = jsonDecode(raw);
+  } on Object {
+    failures.add(r'$ is not valid JSON');
+    return GroupReactionNotificationArtifactValidation(failures);
+  }
+  final root = _asStringMap(decoded, r'$', failures);
+  if (root != null) {
+    await _validatePlan398ExistingStateTraceRoot(
+      root: root,
+      traceAttemptMarker: traceAttemptMarker,
+      expectedSenderDeviceId: expectedSenderDeviceId,
+      expectedRecipientDeviceId: expectedRecipientDeviceId,
+      failures: failures,
+    );
+  }
+  return GroupReactionNotificationArtifactValidation(failures);
+}
+
+Future<void> _validatePlan398ExistingStateTraceRoot({
+  required Map<String, Object?> root,
+  required File traceAttemptMarker,
+  required String expectedSenderDeviceId,
+  required String expectedRecipientDeviceId,
+  required List<String> failures,
+}) async {
+  final liveDiagnostic =
+      root['schema'] == plan398ExistingStateLiveDiagnosticArtifactSchema;
+  _expectExactKeys(
+    root,
+    <String>{
+      'schema',
+      'version',
+      if (liveDiagnostic) 'authorityMode',
+      'status',
+      'closurePassed',
+      'disposition',
+      'traceAttemptClaimed',
+      'traceAttemptClaimSha256',
+      'topology',
+      'installedState',
+      'window',
+      'execution',
+      'redaction',
+    },
+    r'$',
+    failures,
+  );
+  for (final entry in const <String, Object?>{
+    'version': plan398ExistingStateTraceArtifactVersion,
+    'status': 'trace_complete',
+    'closurePassed': false,
+    'traceAttemptClaimed': true,
+  }.entries) {
+    _expectValue(root, entry.key, entry.value, r'$', failures);
+  }
+  _expectValue(
+    root,
+    'schema',
+    liveDiagnostic
+        ? plan398ExistingStateLiveDiagnosticArtifactSchema
+        : plan398ExistingStateTraceArtifactSchema,
+    r'$',
+    failures,
+  );
+  if (liveDiagnostic) {
+    _expectValue(
+      root,
+      'authorityMode',
+      plan398LiveDiagnosticAuthorityMode,
+      r'$',
+      failures,
+    );
+  }
+  if (root['version'] is! int) {
+    failures.add(r'$.version must be an integer');
+  }
+  if (root['disposition'] is! String) {
+    failures.add(r'$.disposition must be a closed diagnostic outcome');
+  }
+  if (!_isSha256(root['traceAttemptClaimSha256'])) {
+    failures.add(r'$.traceAttemptClaimSha256 must be SHA-256');
+  }
+  await _validatePlan398ExistingStateTraceClaim(
+    traceAttemptMarker: traceAttemptMarker,
+    expectedSha256: root['traceAttemptClaimSha256'],
+    failures: failures,
+  );
+
+  final senderDeviceHash = _plan398ExpectedDeviceHash(
+    expectedSenderDeviceId,
+    r'$.topology.sender',
+    failures,
+  );
+  final recipientDeviceHash = _plan398ExpectedDeviceHash(
+    expectedRecipientDeviceId,
+    r'$.topology.recipient',
+    failures,
+  );
+  final topology = _mapField(root, 'topology', r'$', failures);
+  if (topology != null) {
+    _expectExactKeys(
+      topology,
+      const <String>{'groupType', 'sender', 'recipient'},
+      r'$.topology',
+      failures,
+    );
+    _expectValue(topology, 'groupType', 'chat', r'$.topology', failures);
+    for (final entry in <(String, String, String)>[
+      ('sender', 'android', senderDeviceHash),
+      ('recipient', 'ios', recipientDeviceHash),
+    ]) {
+      final party = _mapField(topology, entry.$1, r'$.topology', failures);
+      if (party == null) continue;
+      final path = '\$.topology.${entry.$1}';
+      _expectExactKeys(
+        party,
+        const <String>{
+          'platform',
+          'deviceKind',
+          'deviceIdSha256',
+          'liveDiscovered',
+        },
+        path,
+        failures,
+      );
+      _expectValue(party, 'platform', entry.$2, path, failures);
+      _expectValue(party, 'deviceKind', 'physical', path, failures);
+      _expectValue(party, 'liveDiscovered', true, path, failures);
+      if (!_isSha256(party['deviceIdSha256']) ||
+          party['deviceIdSha256'] != entry.$3) {
+        failures.add('$path.deviceIdSha256 is not live-target bound');
+      }
+    }
+  }
+
+  final installedState = _mapField(root, 'installedState', r'$', failures);
+  if (installedState != null) {
+    _expectExactKeys(
+      installedState,
+      const <String>{
+        'schema',
+        'groupType',
+        'matchingChatGroupCount',
+        'groupIdSha256',
+        'groupKeySha256',
+        'targetMessageIdSha256',
+        'senderIdentityReceiptSha256',
+        'recipientIdentityReceiptSha256',
+        'notificationAuthorizationReady',
+        'relayPushTokenReady',
+        'rawIdentifiersPersisted',
+        'rawKeyMaterialPersisted',
+        'rawIdentityReceiptsPersisted',
+        'rawPushTokensPersisted',
+      },
+      r'$.installedState',
+      failures,
+    );
+    for (final entry in const <String, Object?>{
+      'schema': 'mknoon.plan398.existing-state-installed-state.v1',
+      'groupType': 'chat',
+      'matchingChatGroupCount': 1,
+      'notificationAuthorizationReady': true,
+      'relayPushTokenReady': true,
+      'rawIdentifiersPersisted': false,
+      'rawKeyMaterialPersisted': false,
+      'rawIdentityReceiptsPersisted': false,
+      'rawPushTokensPersisted': false,
+    }.entries) {
+      _expectValue(
+        installedState,
+        entry.key,
+        entry.value,
+        r'$.installedState',
+        failures,
+      );
+    }
+    if (installedState['matchingChatGroupCount'] is! int) {
+      failures.add(
+        r'$.installedState.matchingChatGroupCount must be an integer',
+      );
+    }
+    for (final key in const <String>[
+      'groupIdSha256',
+      'groupKeySha256',
+      'targetMessageIdSha256',
+      'senderIdentityReceiptSha256',
+      'recipientIdentityReceiptSha256',
+    ]) {
+      if (!_isSha256(installedState[key])) {
+        failures.add('\$.installedState.$key must be SHA-256');
+      }
+    }
+  }
+
+  final window = _mapField(root, 'window', r'$', failures);
+  if (window != null) {
+    _validatePlan398DiagnosticWindow(
+      window: window,
+      recipientDeviceId: expectedRecipientDeviceId,
+      expectedDisposition: root['disposition'],
+      failures: failures,
+    );
+    final android = _mapField(
+      window,
+      'androidObservation',
+      r'$.window',
+      failures,
+    );
+    if (installedState != null && android != null) {
+      if (installedState['groupIdSha256'] != android['groupIdSha256']) {
+        failures.add(
+          r'$.installedState.groupIdSha256 is not message-window bound',
+        );
+      }
+      if (installedState['targetMessageIdSha256'] !=
+          android['targetMessageIdSha256']) {
+        failures.add(
+          r'$.installedState.targetMessageIdSha256 is not message-window bound',
+        );
+      }
+    }
+  }
+
+  final execution = _mapField(root, 'execution', r'$', failures);
+  if (execution != null) {
+    final manualMessageSend = execution['automation'] == 'manual_message_send';
+    if (liveDiagnostic && !manualMessageSend) {
+      failures.add(
+        r'$.execution.automation must equal manual_message_send for a live diagnostic',
+      );
+    }
+    final countKeys = <String>[
+      'messageSendTapCount',
+      if (manualMessageSend) 'manualMessageSendCount',
+      'reactionTapCount',
+      'notificationTapCount',
+      'buildCount',
+      'installCount',
+      'uninstallCount',
+      'appDataClearCount',
+      'groupCreateCount',
+    ];
+    _expectExactKeys(
+      execution,
+      <String>{'automation', ...countKeys},
+      r'$.execution',
+      failures,
+    );
+    for (final key in countKeys) {
+      if (execution[key] is! int) {
+        failures.add('\$.execution.$key must be an integer');
+      }
+    }
+    final expected = <String, Object?>{
+      'automation': manualMessageSend
+          ? 'manual_message_send'
+          : 'fully_automated',
+      'messageSendTapCount': manualMessageSend ? 0 : 1,
+      if (manualMessageSend) 'manualMessageSendCount': 1,
+      'reactionTapCount': 0,
+      'notificationTapCount': 0,
+      'buildCount': 0,
+      'installCount': 0,
+      'uninstallCount': 0,
+      'appDataClearCount': 0,
+      'groupCreateCount': 0,
+    };
+    for (final entry in expected.entries) {
+      _expectValue(execution, entry.key, entry.value, r'$.execution', failures);
+    }
+  }
+
+  final redaction = _mapField(root, 'redaction', r'$', failures);
+  if (redaction != null) {
+    _expectExactKeys(
+      redaction,
+      const <String>{
+        'rawGroupOrTargetIdsPersisted',
+        'rawGroupKeysPersisted',
+        'rawIdentityReceiptsPersisted',
+        'rawPushTokensPersisted',
+        'rawPayloadPersisted',
+      },
+      r'$.redaction',
+      failures,
+    );
+    for (final key in redaction.keys) {
+      _expectValue(redaction, key, false, r'$.redaction', failures);
+    }
+  }
+}
+
+Future<void> _validatePlan398ExistingStateTraceClaim({
+  required File traceAttemptMarker,
+  required Object? expectedSha256,
+  required List<String> failures,
+}) async {
+  const path = r'$.traceAttemptClaimSha256';
+  if (traceAttemptMarker.path.split(Platform.pathSeparator).last !=
+      plan398ExistingStateTraceClaimFileName) {
+    failures.add(
+      '$path evidence filename must be '
+      'plan398_existing_state_trace_claim.json',
+    );
+  }
+  try {
+    final entityType = await FileSystemEntity.type(
+      traceAttemptMarker.path,
+      followLinks: false,
+    );
+    if (entityType != FileSystemEntityType.file) {
+      failures.add('$path requires a regular durable trace-claim file');
+      return;
+    }
+    final stat = await traceAttemptMarker.stat();
+    if ((stat.mode & 0x1ff) != 0x180) {
+      failures.add('$path evidence must have private mode 0600');
+      return;
+    }
+    final bytes = await traceAttemptMarker.readAsBytes();
+    if (bytes.isEmpty || bytes.length > 4096) {
+      failures.add('$path evidence must be a bounded non-empty claim');
+      return;
+    }
+    final encoded = utf8.decode(bytes);
+    final decoded = jsonDecode(encoded);
+    final claim = _asStringMap(decoded, '$path.authority', failures);
+    if (claim == null) return;
+    _expectExactKeys(
+      claim,
+      const <String>{
+        'schema',
+        'ownerRunId',
+        'singleOwnerDeclared',
+        'claimValue',
+      },
+      '$path.authority',
+      failures,
+    );
+    for (final key in claim.keys) {
+      final encodedKey = RegExp.escape(jsonEncode(key));
+      if (RegExp('$encodedKey\\s*:').allMatches(encoded).length != 1) {
+        failures.add('$path.authority contains an ambiguous $key member');
+      }
+    }
+    _expectValue(
+      claim,
+      'schema',
+      'mknoon.plan398.existing-state-trace-claim.v1',
+      '$path.authority',
+      failures,
+    );
+    _expectValue(
+      claim,
+      'ownerRunId',
+      'existing-state-trace',
+      '$path.authority',
+      failures,
+    );
+    _expectValue(
+      claim,
+      'singleOwnerDeclared',
+      true,
+      '$path.authority',
+      failures,
+    );
+    final claimValue = claim['claimValue'];
+    if (claimValue is! String ||
+        !RegExp(r'^[A-Za-z0-9._:-]{16,160}$').hasMatch(claimValue)) {
+      failures.add('$path.authority.claimValue is not canonical');
+    }
+    if (sha256.convert(bytes).toString() != expectedSha256) {
+      failures.add('$path is not bound to the durable trace claim');
+    }
+  } on Object {
+    failures.add('$path evidence is unreadable or invalid JSON');
+  }
+}
+
+String _plan398ExpectedDeviceHash(
+  String value,
+  String path,
+  List<String> failures,
+) {
+  if (value.trim().isEmpty || value != value.trim()) {
+    failures.add('$path expected device id is invalid');
+  }
+  return sha256.convert(utf8.encode(value)).toString();
+}
+
+void _scanPlan398ExistingStateTraceForbidden(
+  String raw,
+  List<String> failures,
+) {
+  for (final field in const <String>[
+    '"groupId":',
+    '"groupKey":',
+    '"targetMessageId":',
+    '"senderIdentityReceipt":',
+    '"recipientIdentityReceipt":',
+    '"pushToken":',
+    '"deviceId":',
+  ]) {
+    if (raw.contains(field)) {
+      failures.add(r'$ contains forbidden raw existing-state field ' + field);
+    }
+  }
+}
+
+Future<GroupReactionNotificationArtifactValidation>
 validateGroupReactionNotificationArtifact({
   required String scenario,
   required File artifactFile,
   String? expectedSenderDeviceId,
   String? expectedRecipientDeviceId,
+  File? plan398DeploymentReceipt,
+  File? plan398DiagnosticAttemptMarker,
 }) async {
   final failures = <String>[];
   final requirement = groupReactionNotificationScenario(scenario);
@@ -1501,14 +3782,32 @@ validateGroupReactionNotificationArtifact({
   }
 
   if (scenario == iosChatGroupMessageAndReactionScenarioId) {
-    await _validateIosChatGroupMessageAndReactionArtifact(
-      root: root,
-      artifactFile: artifactFile,
-      requirement: requirement,
-      expectedSenderDeviceId: expectedSenderDeviceId,
-      expectedRecipientDeviceId: expectedRecipientDeviceId,
-      failures: failures,
-    );
+    if (root['schema'] == plan398IosGroupMessageDiagnosticArtifactSchema) {
+      await _validatePlan398IosGroupMessageDiagnosticArtifact(
+        root: root,
+        requirement: requirement,
+        expectedSenderDeviceId: expectedSenderDeviceId,
+        expectedRecipientDeviceId: expectedRecipientDeviceId,
+        deploymentReceipt: plan398DeploymentReceipt,
+        diagnosticAttemptMarker: plan398DiagnosticAttemptMarker,
+        failures: failures,
+      );
+    } else if ('${root['schema']}'.startsWith(
+      'mknoon.plan398.ios-group-message-diagnostic.',
+    )) {
+      failures.add(
+        r'$.schema is not the current Plan 398 diagnostic artifact schema',
+      );
+    } else {
+      await _validateIosChatGroupMessageAndReactionArtifact(
+        root: root,
+        artifactFile: artifactFile,
+        requirement: requirement,
+        expectedSenderDeviceId: expectedSenderDeviceId,
+        expectedRecipientDeviceId: expectedRecipientDeviceId,
+        failures: failures,
+      );
+    }
     return GroupReactionNotificationArtifactValidation(failures);
   }
 
@@ -1714,6 +4013,56 @@ Future<File> writeGroupReactionNotificationVerdict({
     flush: true,
   );
   return file;
+}
+
+Future<File> writePlan398ExistingStateTraceFailure({
+  required Directory outputDirectory,
+  required String scenario,
+  required String status,
+  required String stage,
+  required String detail,
+  required bool traceAttemptClaimed,
+  String stackType = 'not_started',
+  Iterable<String> completedStages = const <String>[],
+}) async {
+  await outputDirectory.create(recursive: true);
+  final file = File(
+    '${outputDirectory.path}${Platform.pathSeparator}'
+    '$plan398ExistingStateTraceFailureFileName',
+  );
+  if (await file.exists()) return file;
+  final temporary = File(
+    '${file.path}.$pid.'
+    '${DateTime.now().toUtc().microsecondsSinceEpoch}.private-temp',
+  );
+  final encoded = jsonEncode(<String, Object?>{
+    'schema': 'mknoon.plan257.capture-failure.v1',
+    'scenario': scenario,
+    'status': status,
+    'stage': stage,
+    'detail': detail,
+    'traceAttemptClaimed': traceAttemptClaimed,
+    'recordedAt': DateTime.now().toUtc().toIso8601String(),
+    'stackType': stackType,
+    'completedStages': <String>{...completedStages}.toList(growable: false),
+  });
+  try {
+    await temporary.writeAsString(encoded, flush: true);
+    final chmod = await Process.run('chmod', <String>['600', temporary.path]);
+    if (chmod.exitCode != 0) {
+      throw const FileSystemException('private trace failure mode rejected');
+    }
+    final publish = await Process.run('ln', <String>[
+      temporary.path,
+      file.path,
+    ]);
+    if (publish.exitCode != 0 && !await file.exists()) {
+      throw const FileSystemException('trace failure publication rejected');
+    }
+    return file;
+  } finally {
+    if (await temporary.exists()) await temporary.delete();
+  }
 }
 
 String? _validateParty(
@@ -2579,6 +4928,705 @@ const String _plan257SqlProbe =
     'group_reaction_notification_sqlcipher_probe_test.dart';
 const String _plan257DuplicateRedrivePrefix =
     'MKNOON_257_DUPLICATE_REDRIVE_OBSERVATION ';
+
+Future<void> _validatePlan398IosGroupMessageDiagnosticArtifact({
+  required Map<String, Object?> root,
+  required GroupReactionNotificationScenario requirement,
+  required String? expectedSenderDeviceId,
+  required String? expectedRecipientDeviceId,
+  required File? deploymentReceipt,
+  required File? diagnosticAttemptMarker,
+  required List<String> failures,
+}) async {
+  const rootPath = r'$';
+  _expectExactKeys(
+    root,
+    const <String>{
+      'schema',
+      'version',
+      'scenario',
+      'testCase',
+      'status',
+      'generatedBy',
+      'diagnosticOnlyMessageWindow',
+      'closurePassed',
+      'disposition',
+      'stagingDeploymentReceiptSha256',
+      'singleOwnerDeclared',
+      'diagnosticAttemptClaimed',
+      'diagnosticAttemptClaimSha256',
+      'topology',
+      'buildInputs',
+      'window',
+      'execution',
+      'redaction',
+    },
+    rootPath,
+    failures,
+  );
+  for (final entry in <String, Object?>{
+    'schema': plan398IosGroupMessageDiagnosticArtifactSchema,
+    'version': plan398IosGroupMessageDiagnosticArtifactVersion,
+    'scenario': requirement.id,
+    'testCase': requirement.testCase,
+    'status': 'diagnostic_complete',
+    'generatedBy': 'automated_capture_pipeline',
+    'diagnosticOnlyMessageWindow': true,
+    'closurePassed': false,
+    'singleOwnerDeclared': true,
+    'diagnosticAttemptClaimed': true,
+  }.entries) {
+    _expectValue(root, entry.key, entry.value, rootPath, failures);
+  }
+  const dispositions = <String>{
+    'repo_owned_duplicate_dispatch',
+    'candidate_single_unattributed_duplicate',
+    'claim_absent_or_noncandidate',
+    'local_contender',
+    'clean_nonreproduction',
+  };
+  if (!dispositions.contains(root['disposition'])) {
+    failures.add(r'$.disposition is not a closed complete diagnostic outcome');
+  }
+  for (final key in const <String>[
+    'stagingDeploymentReceiptSha256',
+    'diagnosticAttemptClaimSha256',
+  ]) {
+    if (!_isSha256(root[key])) failures.add('\$.$key must be SHA-256');
+  }
+
+  Future<(Map<String, Object?>, String)?> readAuthority(
+    File? explicit,
+    String environmentKey,
+    String path,
+  ) async {
+    final configured =
+        explicit ??
+        ((Platform.environment[environmentKey]?.trim().isNotEmpty ?? false)
+            ? File(Platform.environment[environmentKey]!).absolute
+            : null);
+    if (configured == null || !await configured.exists()) {
+      failures.add('$path requires exported $environmentKey evidence');
+      return null;
+    }
+    try {
+      final stat = await configured.stat();
+      if ((stat.mode & 0x3f) != 0) {
+        failures.add('$path evidence must be private mode 0600');
+        return null;
+      }
+      final bytes = await configured.readAsBytes();
+      final decoded = jsonDecode(utf8.decode(bytes));
+      final map = _asStringMap(decoded, path, failures);
+      if (map == null) return null;
+      return (map, sha256.convert(bytes).toString());
+    } on Object {
+      failures.add('$path evidence is unreadable or invalid JSON');
+      return null;
+    }
+  }
+
+  final deployment = await readAuthority(
+    deploymentReceipt,
+    'PLAN398_DEPLOYMENT_RECEIPT',
+    r'$.stagingDeploymentReceiptSha256',
+  );
+  if (deployment != null) {
+    if (deployment.$1['schema'] !=
+            'mknoon.plan398.staging-deployment-receipt.v1' ||
+        deployment.$1['ownerRunId'] != 'diagnostic' ||
+        deployment.$1['singleOwnerDeclared'] != true ||
+        deployment.$2 != root['stagingDeploymentReceiptSha256']) {
+      failures.add(
+        r'$.stagingDeploymentReceiptSha256 is not bound to closed single-owner authority',
+      );
+    }
+  }
+  final marker = await readAuthority(
+    diagnosticAttemptMarker,
+    'PLAN398_DIAGNOSTIC_ATTEMPT_MARKER',
+    r'$.diagnosticAttemptClaimSha256',
+  );
+  if (marker != null) {
+    final claimValue = marker.$1['claimValue'];
+    if (marker.$1['schema'] != 'mknoon.plan398.diagnostic-attempt-claim.v1' ||
+        marker.$1['ownerRunId'] != 'diagnostic' ||
+        claimValue is! String ||
+        !RegExp(r'^[A-Za-z0-9._:-]{16,160}$').hasMatch(claimValue) ||
+        marker.$2 != root['diagnosticAttemptClaimSha256']) {
+      failures.add(
+        r'$.diagnosticAttemptClaimSha256 is not bound to the durable diagnostic claim',
+      );
+    }
+  }
+
+  final topology = _mapField(root, 'topology', rootPath, failures);
+  String? recipientDeviceId;
+  if (topology != null) {
+    _expectExactKeys(
+      topology,
+      const <String>{'groupType', 'sender', 'recipient'},
+      r'$.topology',
+      failures,
+    );
+    _expectValue(topology, 'groupType', 'chat', r'$.topology', failures);
+    for (final entry in <(String, String, String, String?)>[
+      ('sender', 'android', 'physical', expectedSenderDeviceId),
+      ('recipient', 'ios', 'physical', expectedRecipientDeviceId),
+    ]) {
+      final party = _mapField(topology, entry.$1, r'$.topology', failures);
+      if (party == null) continue;
+      _expectExactKeys(
+        party,
+        const <String>{'platform', 'deviceKind', 'deviceId', 'liveDiscovered'},
+        '\$.topology.${entry.$1}',
+        failures,
+      );
+      _expectValue(
+        party,
+        'platform',
+        entry.$2,
+        '\$.topology.${entry.$1}',
+        failures,
+      );
+      _expectValue(
+        party,
+        'deviceKind',
+        entry.$3,
+        '\$.topology.${entry.$1}',
+        failures,
+      );
+      _expectValue(
+        party,
+        'liveDiscovered',
+        true,
+        '\$.topology.${entry.$1}',
+        failures,
+      );
+      final deviceId = _requiredString(
+        party,
+        'deviceId',
+        '\$.topology.${entry.$1}',
+        failures,
+      );
+      if (entry.$4 != null && deviceId != entry.$4) {
+        failures.add(
+          '\$.topology.${entry.$1}.deviceId is not live-target bound',
+        );
+      }
+      if (entry.$1 == 'recipient') recipientDeviceId = deviceId;
+    }
+  }
+
+  final buildInputs = _mapField(root, 'buildInputs', rootPath, failures);
+  if (buildInputs != null) {
+    _expectExactKeys(
+      buildInputs,
+      const <String>{
+        'androidProfileId',
+        'androidInputDigest',
+        'androidArtifactDigest',
+        'iosProfileId',
+        'iosInputDigest',
+        'iosArtifactDigest',
+        'setupProfileId',
+        'setupApplicationSha256',
+        'setupPreparationCompileCommands',
+        'captureChildBuildCount',
+        'centralApplicationSha256',
+        'gradedWindowChildBuildCount',
+      },
+      r'$.buildInputs',
+      failures,
+    );
+    _expectValue(
+      buildInputs,
+      'androidProfileId',
+      'android.production_fcm',
+      r'$.buildInputs',
+      failures,
+    );
+    _expectValue(
+      buildInputs,
+      'iosProfileId',
+      'ios.device.production',
+      r'$.buildInputs',
+      failures,
+    );
+    _expectValue(
+      buildInputs,
+      'setupProfileId',
+      'ios.device.group_reaction_notification_397',
+      r'$.buildInputs',
+      failures,
+    );
+    _expectValue(
+      buildInputs,
+      'setupPreparationCompileCommands',
+      1,
+      r'$.buildInputs',
+      failures,
+    );
+    _expectValue(
+      buildInputs,
+      'captureChildBuildCount',
+      0,
+      r'$.buildInputs',
+      failures,
+    );
+    _expectValue(
+      buildInputs,
+      'gradedWindowChildBuildCount',
+      0,
+      r'$.buildInputs',
+      failures,
+    );
+    for (final key in const <String>[
+      'androidInputDigest',
+      'androidArtifactDigest',
+      'iosInputDigest',
+      'iosArtifactDigest',
+      'setupApplicationSha256',
+      'centralApplicationSha256',
+    ]) {
+      if (!_isSha256(buildInputs[key])) {
+        failures.add('\$.buildInputs.$key must be SHA-256');
+      }
+    }
+  }
+
+  final window = _mapField(root, 'window', rootPath, failures);
+  if (window != null) {
+    _validatePlan398DiagnosticWindow(
+      window: window,
+      recipientDeviceId: recipientDeviceId,
+      expectedDisposition: root['disposition'],
+      failures: failures,
+    );
+  }
+
+  final execution = _mapField(root, 'execution', rootPath, failures);
+  if (execution != null) {
+    _expectExactKeys(
+      execution,
+      const <String>{
+        'automation',
+        'manualTaps',
+        'childBuildsDuringGradedWindows',
+        'messageSendCount',
+        'reactionAddCount',
+        'reactionRemoveCount',
+        'reactionReAddCount',
+        'notificationTapCount',
+      },
+      r'$.execution',
+      failures,
+    );
+    for (final entry in const <String, Object?>{
+      'automation': 'fully_automated',
+      'manualTaps': 0,
+      'childBuildsDuringGradedWindows': 0,
+      'messageSendCount': 1,
+      'reactionAddCount': 0,
+      'reactionRemoveCount': 0,
+      'reactionReAddCount': 0,
+      'notificationTapCount': 0,
+    }.entries) {
+      _expectValue(execution, entry.key, entry.value, r'$.execution', failures);
+    }
+  }
+  final redaction = _mapField(root, 'redaction', rootPath, failures);
+  if (redaction != null) {
+    _expectExactKeys(
+      redaction,
+      const <String>{
+        'pushTokensPersisted',
+        'secretKeysPersisted',
+        'ciphertextPersisted',
+        'plaintextPayloadPersisted',
+        'rawPeerIdsPersisted',
+        'rawGroupOrMessageIdsPersisted',
+      },
+      r'$.redaction',
+      failures,
+    );
+    for (final key in redaction.keys) {
+      _expectValue(redaction, key, false, r'$.redaction', failures);
+    }
+  }
+}
+
+void _validatePlan398DiagnosticWindow({
+  required Map<String, Object?> window,
+  required String? recipientDeviceId,
+  required Object? expectedDisposition,
+  required List<String> failures,
+}) {
+  const path = r'$.window';
+  _expectExactKeys(
+    window,
+    const <String>{
+      'phase',
+      'ordinal',
+      'payloadKind',
+      'windowIdSha256',
+      'observerRunIdSha256',
+      'observerNonceSha256',
+      'androidObservation',
+      'provider',
+      'nse',
+      'nativeInventory',
+      'diagnostics',
+      'relayJournalSha256',
+      'relayJournalLineCount',
+      'openedAt',
+      'closedAt',
+    },
+    path,
+    failures,
+  );
+  for (final entry in const <String, Object?>{
+    'phase': 'message',
+    'ordinal': 1,
+    'payloadKind': 'group_message',
+  }.entries) {
+    _expectValue(window, entry.key, entry.value, path, failures);
+  }
+  for (final key in const <String>[
+    'windowIdSha256',
+    'observerRunIdSha256',
+    'observerNonceSha256',
+    'relayJournalSha256',
+  ]) {
+    if (!_isSha256(window[key])) failures.add('$path.$key must be SHA-256');
+  }
+  if (window['relayJournalLineCount'] is! int ||
+      (window['relayJournalLineCount']! as int) < 1) {
+    failures.add('$path.relayJournalLineCount must be positive');
+  }
+  final opened = DateTime.tryParse('${window['openedAt']}');
+  final closed = DateTime.tryParse('${window['closedAt']}');
+  if (opened == null || closed == null || closed.isBefore(opened)) {
+    failures.add('$path must contain an ordered observation interval');
+  }
+
+  final android = _mapField(window, 'androidObservation', path, failures);
+  final provider = _mapField(window, 'provider', path, failures);
+  final nse = _mapField(window, 'nse', path, failures);
+  final native = _mapField(window, 'nativeInventory', path, failures);
+  final diagnostics = _mapField(window, 'diagnostics', path, failures);
+  if (android == null || provider == null || native == null) return;
+
+  _expectExactKeys(
+    android,
+    const <String>{
+      'schema',
+      'phase',
+      'groupIdSha256',
+      'messageIdSha256',
+      'targetMessageIdSha256',
+      'eventIdSha256',
+      'expectedCollapseIdentifierSha256',
+      'reactionIdSha256',
+      'reactionTargetIdSha256',
+      'firstIncoming',
+      'targetIncoming',
+      'targetRead',
+      'reactionRows',
+      'reactionEmojiSha256',
+      'rawIdentifiersPersisted',
+    },
+    '$path.androidObservation',
+    failures,
+  );
+  for (final entry in const <String, Object?>{
+    'schema': 'mknoon.plan257.sqlcipher-observation.v1',
+    'phase': 'message',
+    'reactionIdSha256': null,
+    'reactionTargetIdSha256': null,
+    'firstIncoming': false,
+    'targetIncoming': true,
+    'targetRead': true,
+    'reactionRows': 0,
+    'reactionEmojiSha256': null,
+    'rawIdentifiersPersisted': false,
+  }.entries) {
+    _expectValue(
+      android,
+      entry.key,
+      entry.value,
+      '$path.androidObservation',
+      failures,
+    );
+  }
+  for (final key in const <String>[
+    'groupIdSha256',
+    'messageIdSha256',
+    'targetMessageIdSha256',
+    'eventIdSha256',
+    'expectedCollapseIdentifierSha256',
+  ]) {
+    if (!_isSha256(android[key])) {
+      failures.add('$path.androidObservation.$key must be SHA-256');
+    }
+  }
+  if (android['eventIdSha256'] != android['messageIdSha256']) {
+    failures.add('$path.androidObservation event must bind the message row');
+  }
+
+  final receiptValid = _isValidPlan398NativeObservationReceipt(
+    native,
+    phase: 'message',
+    captureNonceSha256: '${window['observerNonceSha256']}',
+    receiverDeviceIdSha256: recipientDeviceId == null
+        ? ''
+        : sha256.convert(utf8.encode(recipientDeviceId)).toString(),
+    expectedGroupIdSha256: '${android['groupIdSha256']}',
+    expectedEventIdSha256: '${android['eventIdSha256']}',
+    expectedTargetMessageIdSha256: '${android['targetMessageIdSha256']}',
+    expectedCollapseIdentifierSha256:
+        '${android['expectedCollapseIdentifierSha256']}',
+  );
+  if (!receiptValid || native['diagnosticComplete'] != true) {
+    failures.add(
+      '$path.nativeInventory is not a complete exact-bound Plan 398 receipt',
+    );
+  }
+
+  _expectExactKeys(
+    provider,
+    const <String>{
+      'metricFamily',
+      'relayGroupMessageDispatchSource',
+      'groupInboxAcceptedDelta',
+      'groupInboxFailedDelta',
+      'groupContentAcceptedDelta',
+      'groupContentFailedDelta',
+      'providerSingleFirstAttempt',
+      'acceptedDispatchCorrelationSha256',
+      'acceptedProviderMessageIdSha256',
+      'baselineSha256',
+      'finalSha256',
+      'deletedOrUnattributedEvidence',
+    },
+    '$path.provider',
+    failures,
+  );
+  _expectValue(
+    provider,
+    'metricFamily',
+    relayGroupMessageDispatchCounter,
+    '$path.provider',
+    failures,
+  );
+  if (!const <String>{
+        'groupInbox',
+        'groupContent',
+      }.contains(provider['relayGroupMessageDispatchSource']) ||
+      provider['providerSingleFirstAttempt'] is! bool ||
+      provider['deletedOrUnattributedEvidence'] != false) {
+    failures.add('$path.provider has open or unattributed evidence');
+  }
+  final acceptedDispatchCorrelation =
+      provider['acceptedDispatchCorrelationSha256'];
+  if (!_isSha256(acceptedDispatchCorrelation)) {
+    failures.add(
+      '$path.provider.acceptedDispatchCorrelationSha256 must be SHA-256',
+    );
+  }
+  if (!_isNullableSha256(provider['acceptedProviderMessageIdSha256'])) {
+    failures.add(
+      '$path.provider.acceptedProviderMessageIdSha256 must be null or SHA-256',
+    );
+  }
+  if (_isSha256(acceptedDispatchCorrelation)) {
+    final rawRecords = native['diagnosticRecords'];
+    final acceptedDispatchSeen =
+        rawRecords is List &&
+        rawRecords.whereType<Map>().any(
+          (record) =>
+              record['dispatchCorrelationSha256'] ==
+              acceptedDispatchCorrelation,
+        );
+    if (!acceptedDispatchSeen) {
+      failures.add(
+        '$path.provider.acceptedDispatchCorrelationSha256 does not match '
+        'any delivered card',
+      );
+    }
+  }
+  for (final key in const <String>[
+    'groupInboxAcceptedDelta',
+    'groupInboxFailedDelta',
+    'groupContentAcceptedDelta',
+    'groupContentFailedDelta',
+  ]) {
+    if (provider[key] is! int || (provider[key]! as int).isNegative) {
+      failures.add('$path.provider.$key must be a nonnegative integer');
+    }
+  }
+  for (final key in const <String>['baselineSha256', 'finalSha256']) {
+    if (!_isSha256(provider[key])) {
+      failures.add('$path.provider.$key must be SHA-256');
+    }
+  }
+  if (provider['baselineSha256'] == provider['finalSha256']) {
+    failures.add('$path.provider must bind distinct metric scrapes');
+  }
+
+  if (nse != null) {
+    _expectExactKeys(
+      nse,
+      const <String>{
+        'payloadKind',
+        'decryptOkCount',
+        'didReceiveCount',
+        'decryptFailureCount',
+        'timeoutCount',
+        'runOwnedLocalPublicationCount',
+        'contenderDisposition',
+        'contenderSuppressionCount',
+        'windowSha256',
+        'rawPayloadPersisted',
+      },
+      '$path.nse',
+      failures,
+    );
+    for (final entry in const <String, Object?>{
+      'payloadKind': 'group_message',
+      'decryptOkCount': 1,
+      'didReceiveCount': 1,
+      'decryptFailureCount': 0,
+      'timeoutCount': 0,
+      'runOwnedLocalPublicationCount': 0,
+      'rawPayloadPersisted': false,
+    }.entries) {
+      _expectValue(nse, entry.key, entry.value, '$path.nse', failures);
+    }
+    if (!_isSha256(nse['windowSha256'])) {
+      failures.add('$path.nse.windowSha256 must be SHA-256');
+    }
+  }
+  if (diagnostics != null) {
+    _expectExactKeys(
+      diagnostics,
+      const <String>{
+        'runOwnedLocalPublicationCount',
+        'contenderDisposition',
+        'contenderSuppressionCount',
+        'rawIdentifiersPersisted',
+        'rawPayloadPersisted',
+      },
+      '$path.diagnostics',
+      failures,
+    );
+    if (diagnostics['rawIdentifiersPersisted'] != false ||
+        diagnostics['rawPayloadPersisted'] != false ||
+        diagnostics['runOwnedLocalPublicationCount'] !=
+            nse?['runOwnedLocalPublicationCount'] ||
+        diagnostics['contenderDisposition'] != nse?['contenderDisposition'] ||
+        diagnostics['contenderSuppressionCount'] !=
+            nse?['contenderSuppressionCount']) {
+      failures.add('$path.diagnostics is not redacted and NSE-bound');
+    }
+  }
+
+  final computed = plan398DiagnosticDisposition(native, provider);
+  if (computed == 'incomplete_evidence' || computed != expectedDisposition) {
+    failures.add(
+      '$path does not select its declared unique diagnostic disposition',
+    );
+  }
+}
+
+String plan398DiagnosticDisposition(
+  Map<String, Object?> native,
+  Map<String, Object?> provider,
+) {
+  if (native['diagnosticComplete'] != true ||
+      provider['deletedOrUnattributedEvidence'] != false) {
+    return 'incomplete_evidence';
+  }
+  final rawRecords = native['diagnosticRecords'];
+  if (rawRecords is! List ||
+      rawRecords.any((record) => record is! Map<String, Object?>)) {
+    return 'incomplete_evidence';
+  }
+  final records = rawRecords.cast<Map<String, Object?>>();
+  int integer(String key) => provider[key] is int ? provider[key]! as int : -1;
+  final inboxAccepted = integer('groupInboxAcceptedDelta');
+  final inboxFailed = integer('groupInboxFailedDelta');
+  final contentAccepted = integer('groupContentAcceptedDelta');
+  final contentFailed = integer('groupContentFailedDelta');
+  final source = provider['relayGroupMessageDispatchSource'];
+  final expectedClaim = switch (source) {
+    'groupInbox' => 'groupInbox',
+    'groupContent' => 'groupContent',
+    _ => null,
+  };
+  final accepted = inboxAccepted + contentAccepted;
+  final sourceBound =
+      expectedClaim != null &&
+      ((source == 'groupInbox' &&
+              inboxAccepted == accepted &&
+              contentAccepted == 0 &&
+              contentFailed == 0) ||
+          (source == 'groupContent' &&
+              contentAccepted == accepted &&
+              inboxAccepted == 0 &&
+              inboxFailed == 0));
+  if (!sourceBound ||
+      accepted < 1 ||
+      accepted > 2 ||
+      inboxFailed != 0 ||
+      contentFailed != 0) {
+    return 'incomplete_evidence';
+  }
+  final remote = records
+      .where((record) => record['triggerOrigin'] == 'remote')
+      .length;
+  final local = records
+      .where((record) => record['triggerOrigin'] == 'local')
+      .length;
+  final canonical = records
+      .where((record) => record['expectedCollapseIdentifierMatch'] == true)
+      .length;
+  final allCandidate = records.every(
+    (record) => record['dispatchClaim'] == expectedClaim,
+  );
+  final noncanonical = records
+      .where((record) => record['expectedCollapseIdentifierMatch'] == false)
+      .toList(growable: false);
+  final singleAttempt = provider['providerSingleFirstAttempt'] == true;
+
+  if (records.length == 2 && remote == 2 && local == 0 && canonical == 1) {
+    if (accepted == 2 && allCandidate && !singleAttempt) {
+      return 'repo_owned_duplicate_dispatch';
+    }
+    if (accepted == 1 && singleAttempt && allCandidate) {
+      return 'candidate_single_unattributed_duplicate';
+    }
+    if (accepted == 1 &&
+        singleAttempt &&
+        noncanonical.length == 1 &&
+        noncanonical.single['dispatchClaim'] != expectedClaim) {
+      return 'claim_absent_or_noncandidate';
+    }
+  }
+  if (records.length == 2 && remote == 1 && local == 1 && accepted == 1) {
+    return 'local_contender';
+  }
+  if (records.length == 1 &&
+      remote == 1 &&
+      local == 0 &&
+      canonical == 1 &&
+      accepted == 1 &&
+      singleAttempt &&
+      allCandidate) {
+    return 'clean_nonreproduction';
+  }
+  return 'incomplete_evidence';
+}
 
 Future<void> _validateIosChatGroupMessageAndReactionArtifact({
   required Map<String, Object?> root,
@@ -3733,6 +6781,8 @@ Map<String, Object?>? _decodeObject(
 bool _isSha256(Object? value) =>
     value is String && RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
 
+bool _isNullableSha256(Object? value) => value == null || _isSha256(value);
+
 void _validateAuthoritativeEvidence({
   required GroupReactionNotificationScenario requirement,
   required Map<String, Object?>? measurements,
@@ -4714,6 +7764,13 @@ void _scanForbidden(String raw, String path, List<String> failures) {
     '"plaintext":',
     '"senderPeerId":',
     '"recipientPeerId":',
+    '"mknoon_group_message_dispatch_id":',
+    '"mknoon_group_message_collapse_id":',
+    '"gcm.message_id":',
+    '"dispatchCorrelation":',
+    '"claimedCollapseIdentifier":',
+    '"providerMessageId":',
+    '"requestIdentifier":',
   ]) {
     if (raw.contains(field)) {
       failures.add('$path contains forbidden sensitive field $field');

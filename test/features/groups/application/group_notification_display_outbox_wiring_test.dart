@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -77,6 +79,7 @@ final class _MemoryNotificationDisplayOutbox
   Future<void> Function(GroupNotificationDisplayOutboxEntry entry)? onStage;
   Future<void> Function(GroupNotificationDisplayOutboxEntry entry)? onComplete;
   bool rejectRetryCas = false;
+  int reconcileFailuresRemaining = 0;
 
   void seedReady(GroupNotificationDisplayOutboxEntry entry) {
     entries[entry.eventId] = entry.copyWith(
@@ -309,6 +312,10 @@ final class _MemoryNotificationDisplayOutbox
     required GroupMessage canonicalMessage,
   }) async {
     operations.add('reconcile:$aliasEventId:${canonicalMessage.id}');
+    if (reconcileFailuresRemaining > 0) {
+      reconcileFailuresRemaining--;
+      throw StateError('injected alias reconcile failure');
+    }
     final canonical = entries[canonicalMessage.id];
     final alias = entries[aliasEventId];
     if (canonical == null && alias == null) return false;
@@ -489,6 +496,16 @@ final class _FaultingNotificationService extends FakeNotificationService
     required AppVisibilityConversationIdentity conversationIdentity,
     required PublishNativeMessageNotificationAtDurableBarrier publishNative,
   }) async {
+    if (durableEffectContext.remotePresentationEstablished) {
+      return DurableLocalNotificationEffectResult(
+        disposition: DurableLocalNotificationEffectDisposition.osPosted,
+        receipt: DurableLocalNotificationEffectReceipt(
+          eventCorrelation: durableEffectContext.eventCorrelation,
+          recordRevision: 1,
+          presentationState: LocalNotificationPresentationState.osPosted,
+        ),
+      );
+    }
     if (failuresRemaining > 0) {
       // This fixture models a known failure before native entry; exact
       // post-entry ambiguity/recovery is owned by TC-372-05.
@@ -747,6 +764,8 @@ Future<_Fixture> _buildFixture({
   bool completedOutcomeProducerEnabled = false,
   GroupNotificationEventAcknowledgedResolver?
   isGroupNotificationEventAcknowledged,
+  RecentRemoteNotificationGate? remoteNotificationGate,
+  bool useAmbientRemoteNotificationGate = false,
 }) async {
   final groups = InMemoryGroupRepository();
   final messages = messageRepo ?? InMemoryGroupMessageRepository();
@@ -796,7 +815,9 @@ Future<_Fixture> _buildFixture({
     appVisibility: FixedAppVisibility(isForegroundActive: true),
     groupConversationTracker: ActiveConversationTracker(),
     getAppLifecycleState: () => AppLifecycleState.resumed,
-    remoteNotificationGate: _NoopRecentRemoteNotificationGate(),
+    remoteNotificationGate: useAmbientRemoteNotificationGate
+        ? null
+        : remoteNotificationGate ?? _NoopRecentRemoteNotificationGate(),
     notificationDisplayOutbox: displayOutbox,
     completedOutcomeProducerEnabled: completedOutcomeProducerEnabled,
     isGroupNotificationEventAcknowledged: isGroupNotificationEventAcknowledged,
@@ -1837,6 +1858,156 @@ void main() {
   );
 
   test(
+    'iOS remote-announced ordinary group replay retires durable display custody without local publication',
+    () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previousPlatform);
+
+      const messageId = 'ios-remote-announced-group-tap-replay';
+      final routePayload = 'group:$_groupId|message:$messageId';
+      final gateDirectory = await Directory.systemTemp.createTemp(
+        'group-display-ios-remote-announcement-',
+      );
+      addTearDown(() async {
+        if (await gateDirectory.exists()) {
+          await gateDirectory.delete(recursive: true);
+        }
+      });
+      final remoteGate = RecentRemoteNotificationGate(
+        filePath: '${gateDirectory.path}/recent-remote.json',
+      );
+      await remoteGate.markAnnouncement(
+        payload: routePayload,
+        messageId: messageId,
+      );
+      final fixture = await _buildFixture(remoteNotificationGate: remoteGate);
+      addTearDown(fixture.listener.dispose);
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'messageId': messageId,
+        'text': 'Opened from the remote group notification',
+        'timestamp': '2026-08-14T10:04:00.000Z',
+      });
+
+      expect(await fixture.messageRepo.getMessage(messageId), isNotNull);
+      expect(
+        fixture.outbox.operations,
+        containsAllInOrder([
+          'stage:$messageId:not_ready',
+          'promote:$messageId:1',
+          'bind:$messageId:2',
+          'complete:$messageId:2',
+        ]),
+      );
+      expect(
+        fixture.outbox.entries[messageId],
+        isNull,
+        reason:
+            'the consumed remote announcement must terminally settle SQL custody',
+      );
+      expect(
+        fixture.notifications.showAttempts,
+        0,
+        reason: 'tap replay must not enter the local notification plugin',
+      );
+      expect(fixture.notifications.shown, isEmpty);
+      expect(
+        await remoteGate.consumeIfRecentAnnouncement(
+          payload: routePayload,
+          messageId: messageId,
+        ),
+        isFalse,
+        reason: 'the tap replay must consume the exact one-shot marker',
+      );
+
+      await fixture.listener.retryPendingNotificationDisplays();
+
+      expect(fixture.outbox.entries[messageId], isNull);
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.notifications.shown, isEmpty);
+    },
+  );
+
+  test(
+    'iOS deferred remote gate wiring is observed by an already-constructed group listener',
+    () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previousPlatform);
+
+      final initialDirectory = await Directory.systemTemp.createTemp(
+        'group-display-ios-initial-ambient-gate-',
+      );
+      final configuredDirectory = await Directory.systemTemp.createTemp(
+        'group-display-ios-configured-ambient-gate-',
+      );
+      addTearDown(() async {
+        if (await initialDirectory.exists()) {
+          await initialDirectory.delete(recursive: true);
+        }
+        if (await configuredDirectory.exists()) {
+          await configuredDirectory.delete(recursive: true);
+        }
+      });
+      addTearDown(debugResetRecentRemoteNotificationGate);
+
+      final initialGate = RecentRemoteNotificationGate(
+        filePath: '${initialDirectory.path}/recent-remote.json',
+      );
+      final configuredGate = RecentRemoteNotificationGate(
+        filePath: '${configuredDirectory.path}/recent-remote.json',
+      );
+      debugSetRecentRemoteNotificationGate(initialGate);
+      final fixture = await _buildFixture(
+        useAmbientRemoteNotificationGate: true,
+      );
+      addTearDown(fixture.listener.dispose);
+
+      debugSetRecentRemoteNotificationGate(configuredGate);
+      const messageId = 'ios-configured-ambient-gate-message';
+      const routePayload = 'group:$_groupId|message:$messageId';
+      await configuredGate.markAnnouncement(
+        payload: routePayload,
+        messageId: messageId,
+      );
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'messageId': messageId,
+        'text': 'Opened after deferred iOS gate configuration',
+        'timestamp': '2026-08-14T10:04:30.000Z',
+      });
+
+      expect(await fixture.messageRepo.getMessage(messageId), isNotNull);
+      expect(fixture.outbox.entries[messageId], isNull);
+      expect(
+        fixture.notifications.showAttempts,
+        0,
+        reason:
+            'the listener must consult the currently configured iOS gate, '
+            'not the ambient instance captured during construction',
+      );
+      expect(fixture.notifications.shown, isEmpty);
+      expect(
+        await configuredGate.consumeIfRecentAnnouncement(
+          payload: routePayload,
+          messageId: messageId,
+        ),
+        isFalse,
+        reason: 'the exact remote proof must be consumed by the projection',
+      );
+    },
+  );
+
+  test(
     'ordinary replay pending reaction retains display custody and notification',
     () async {
       final pendingReactions = InMemoryGroupPendingReactionRepository();
@@ -2127,6 +2298,299 @@ void main() {
       );
       expect(fixture.notifications.shown, hasLength(1));
       expect(fixture.outbox.entries, isEmpty);
+    },
+  );
+
+  test(
+    'iOS exact remote alias proof follows a proven logical duplicate to canonical display',
+    () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previousPlatform);
+
+      final gateDirectory = await Directory.systemTemp.createTemp(
+        'group-display-ios-remote-alias-',
+      );
+      addTearDown(() async {
+        if (await gateDirectory.exists()) {
+          await gateDirectory.delete(recursive: true);
+        }
+      });
+      final remoteGate = RecentRemoteNotificationGate(
+        filePath: '${gateDirectory.path}/recent-remote.json',
+      );
+      final fixture = await _buildFixture(remoteNotificationGate: remoteGate);
+      addTearDown(fixture.listener.dispose);
+      final timestamp = DateTime.utc(2026, 8, 3, 10, 3, 58);
+      final canonical = GroupMessage(
+        id: 'canonical-c',
+        groupId: _groupId,
+        senderPeerId: _senderPeerId,
+        senderUsername: 'Sender',
+        text: 'One logical message under two transport identities',
+        timestamp: timestamp,
+        logicalDeliveryId: 'logical-a-c',
+        isIncoming: true,
+        createdAt: timestamp,
+      );
+      await fixture.messageRepo.saveMessage(canonical);
+      fixture.outbox.entries[canonical.id] = _readyMessageEntry(
+        canonical,
+      ).copyWith(readiness: GroupNotificationDisplayOutboxReadiness.notReady);
+      const aliasId = 'alias-a';
+      const aliasPayload = 'group:$_groupId|message:$aliasId';
+      const canonicalPayload = 'group:$_groupId|message:canonical-c';
+      await remoteGate.markAnnouncement(
+        payload: aliasPayload,
+        messageId: aliasId,
+      );
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': canonical.text,
+        'timestamp': timestamp.toIso8601String(),
+        'messageId': aliasId,
+        'logicalDeliveryId': canonical.logicalDeliveryId,
+      }, rethrowOnError: true);
+
+      expect(fixture.outbox.entries[aliasId], isNull);
+      expect(fixture.outbox.entries[canonical.id], isNull);
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.notifications.shown, isEmpty);
+      expect(
+        await remoteGate.hasRecentAnnouncement(
+          payload: canonicalPayload,
+          messageId: canonical.id,
+        ),
+        isFalse,
+        reason: 'terminal canonical SQL/effect handoff consumes its proof once',
+      );
+      expect(
+        await remoteGate.hasRecentAnnouncement(
+          payload: aliasPayload,
+          messageId: aliasId,
+        ),
+        isTrue,
+        reason: 'promotion itself is non-destructive at the proven alias',
+      );
+      expect(
+        await remoteGate.hasRecentAnnouncement(
+          payload: 'group:$_groupId|message:newer-b',
+          messageId: 'newer-b',
+        ),
+        isFalse,
+      );
+      expect(
+        await remoteGate.hasRecentAnnouncement(
+          payload: 'group:other-group|message:canonical-c',
+          messageId: canonical.id,
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'iOS exact remote alias proof remains retryable when canonical gate persistence fails',
+    () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previousPlatform);
+
+      final container = await Directory.systemTemp.createTemp(
+        'group-display-ios-remote-alias-write-retry-',
+      );
+      addTearDown(() async {
+        if (await container.exists()) {
+          await container.delete(recursive: true);
+        }
+      });
+      final sidecarDirectory = Directory('${container.path}/RecentRemoteShown');
+      await sidecarDirectory.create(recursive: true);
+      final blockedGatePath = '${container.path}/blocked-gate-path';
+      await Directory(blockedGatePath).create();
+      final remoteGate = RecentRemoteNotificationGate(
+        filePath: blockedGatePath,
+        appGroupSidecarDirProvider: () async => container,
+        onLoadError: (_, _) {},
+      );
+      final fixture = await _buildFixture(remoteNotificationGate: remoteGate);
+      addTearDown(fixture.listener.dispose);
+      final timestamp = DateTime.utc(2026, 8, 3, 10, 3, 57);
+      final canonical = GroupMessage(
+        id: 'canonical-write-retry-c',
+        groupId: _groupId,
+        senderPeerId: _senderPeerId,
+        senderUsername: 'Sender',
+        text: 'Retry the exact gate write',
+        timestamp: timestamp,
+        logicalDeliveryId: 'logical-write-retry-a-c',
+        isIncoming: true,
+        createdAt: timestamp,
+      );
+      await fixture.messageRepo.saveMessage(canonical);
+      fixture.outbox.entries[canonical.id] = _readyMessageEntry(
+        canonical,
+      ).copyWith(readiness: GroupNotificationDisplayOutboxReadiness.notReady);
+      const aliasId = 'alias-write-retry-a';
+      const aliasPayload = 'group:$_groupId|message:$aliasId';
+      final sourceMarker = File(
+        '${sidecarDirectory.path}/'
+        '${remoteGate.sidecarMarkerName(aliasPayload, aliasId)}',
+      );
+      await sourceMarker.writeAsString('');
+      final envelope = <String, dynamic>{
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': canonical.text,
+        'timestamp': timestamp.toIso8601String(),
+        'messageId': aliasId,
+        'logicalDeliveryId': canonical.logicalDeliveryId,
+      };
+
+      await expectLater(
+        fixture.listener.handleReplayEnvelope(envelope, rethrowOnError: true),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(sourceMarker.existsSync(), isTrue);
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.notifications.shown, isEmpty);
+
+      await Directory(blockedGatePath).delete();
+      await fixture.listener.handleReplayEnvelope(
+        envelope,
+        rethrowOnError: true,
+      );
+
+      expect(sourceMarker.existsSync(), isTrue);
+      expect(fixture.outbox.entries[aliasId], isNull);
+      expect(fixture.outbox.entries[canonical.id], isNull);
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.notifications.shown, isEmpty);
+    },
+  );
+
+  test(
+    'iOS exact remote alias proof survives SQL alias reconcile failure and retry',
+    () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previousPlatform);
+
+      final gateDirectory = await Directory.systemTemp.createTemp(
+        'group-display-ios-remote-alias-retry-',
+      );
+      addTearDown(() async {
+        if (await gateDirectory.exists()) {
+          await gateDirectory.delete(recursive: true);
+        }
+      });
+      final remoteGate = RecentRemoteNotificationGate(
+        filePath: '${gateDirectory.path}/recent-remote.json',
+      );
+      final outbox = _MemoryNotificationDisplayOutbox()
+        ..reconcileFailuresRemaining = 1;
+      final fixture = await _buildFixture(
+        outbox: outbox,
+        remoteNotificationGate: remoteGate,
+      );
+      addTearDown(fixture.listener.dispose);
+      final timestamp = DateTime.utc(2026, 8, 3, 10, 3, 59);
+      final canonical = GroupMessage(
+        id: 'canonical-retry-c',
+        groupId: _groupId,
+        senderPeerId: _senderPeerId,
+        senderUsername: 'Sender',
+        text: 'Retry the proven alias handoff',
+        timestamp: timestamp,
+        logicalDeliveryId: 'logical-retry-a-c',
+        isIncoming: true,
+        createdAt: timestamp,
+      );
+      await fixture.messageRepo.saveMessage(canonical);
+      fixture.outbox.entries[canonical.id] = _readyMessageEntry(
+        canonical,
+      ).copyWith(readiness: GroupNotificationDisplayOutboxReadiness.notReady);
+      const aliasId = 'alias-retry-a';
+      const aliasPayload = 'group:$_groupId|message:$aliasId';
+      const canonicalPayload = 'group:$_groupId|message:canonical-retry-c';
+      await remoteGate.markAnnouncement(
+        payload: aliasPayload,
+        messageId: aliasId,
+      );
+      final envelope = <String, dynamic>{
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': canonical.text,
+        'timestamp': timestamp.toIso8601String(),
+        'messageId': aliasId,
+        'logicalDeliveryId': canonical.logicalDeliveryId,
+      };
+
+      await expectLater(
+        fixture.listener.handleReplayEnvelope(envelope, rethrowOnError: true),
+        throwsA(isA<StateError>()),
+      );
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.notifications.shown, isEmpty);
+      expect(
+        await remoteGate.hasRecentAnnouncement(
+          payload: canonicalPayload,
+          messageId: canonical.id,
+        ),
+        isTrue,
+        reason: 'canonical proof must survive a failed SQL alias handoff',
+      );
+      expect(
+        await remoteGate.hasRecentAnnouncement(
+          payload: aliasPayload,
+          messageId: aliasId,
+        ),
+        isTrue,
+      );
+
+      await fixture.listener.handleReplayEnvelope(
+        envelope,
+        rethrowOnError: true,
+      );
+
+      expect(fixture.outbox.entries[aliasId], isNull);
+      expect(fixture.outbox.entries[canonical.id], isNull);
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.notifications.shown, isEmpty);
+      expect(
+        fixture.outbox.operations
+            .where(
+              (operation) => operation == 'reconcile:$aliasId:${canonical.id}',
+            )
+            .length,
+        2,
+      );
+      expect(
+        await remoteGate.hasRecentAnnouncement(
+          payload: canonicalPayload,
+          messageId: canonical.id,
+        ),
+        isFalse,
+      );
+      await fixture.listener.retryPendingNotificationDisplays();
+      expect(fixture.notifications.showAttempts, 0);
+      expect(
+        fixture.outbox.operations
+            .where(
+              (operation) => operation.startsWith('complete:${canonical.id}:'),
+            )
+            .length,
+        1,
+        reason: 'terminal SQL/effect completion must remain one-shot',
+      );
     },
   );
 

@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/debug/auto_setup_config.dart';
@@ -396,6 +398,23 @@ final class DebugE2ECompositionRoot {
       _groupMediaReliabilityE2EController.holdsAutomaticRecovery ||
       _groupMediaIosBackgroundE2EController.holdsAutomaticRecovery;
 
+  static const MethodChannel _iosSetupReadinessEntryChannel = MethodChannel(
+    'mknoon/plan398_ios_setup_entry',
+  );
+
+  static Future<bool>
+  acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured() =>
+      acknowledgeGroupReactionNotificationIosDartMainEntry(
+        isIos: !kIsWeb && Platform.isIOS,
+        e2eTestMode: const bool.fromEnvironment('E2E_TEST_MODE'),
+        installedProfileId: const String.fromEnvironment(
+          'SIMS_BUILD_PROFILE_ID',
+        ),
+        launchEnvironment: Platform.environment,
+        acknowledgeNative: (arguments) => _iosSetupReadinessEntryChannel
+            .invokeMethod<Object?>('acknowledgeDartMain', arguments),
+      );
+
   DebugE2EGroupMediaDownloadHooks bindGroupMediaDownloadHooks({
     required Future<MediaAttachment?> Function(String) loadCurrentAttachment,
   }) {
@@ -406,12 +425,116 @@ final class DebugE2ECompositionRoot {
     );
   }
 
+  static Future<void>
+  armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured({
+    required String documentsPath,
+    required GroupReactionNotificationIosSetupBootstrapStage stage,
+  }) async {
+    const e2eTestMode = bool.fromEnvironment('E2E_TEST_MODE');
+    const installedProfileId = String.fromEnvironment('SIMS_BUILD_PROFILE_ID');
+    final setupReadinessAttempt =
+        resolveGroupReactionNotificationIosSetupReadinessAttempt(
+          isIos: Platform.isIOS,
+          e2eTestMode: e2eTestMode,
+          installedProfileId: installedProfileId,
+          launchEnvironment: Platform.environment,
+        );
+    if (setupReadinessAttempt == null) return;
+    final launchAttemptSha256 = sha256
+        .convert(utf8.encode(setupReadinessAttempt))
+        .toString();
+    await writeGroupReactionNotificationIosSetupReadinessReceipt(
+      documentsPath: documentsPath,
+      receipt: buildGroupReactionNotificationIosSetupBootstrapReadinessReceipt(
+        launchAttemptSha256: launchAttemptSha256,
+        stage: stage,
+      ),
+    );
+  }
+
   static Future<void> runSimulatorAutoSetupIfConfigured({
     required String documentsPath,
     required IdentityRepositoryImpl identityRepository,
     required Bridge bridge,
   }) async {
-    final autoSetupUsername = await resolveAutoSetupUsername(documentsPath);
+    const e2eTestMode = bool.fromEnvironment('E2E_TEST_MODE');
+    const installedProfileId = String.fromEnvironment('SIMS_BUILD_PROFILE_ID');
+    final setupReadinessAttempt =
+        resolveGroupReactionNotificationIosSetupReadinessAttempt(
+          isIos: Platform.isIOS,
+          e2eTestMode: e2eTestMode,
+          installedProfileId: installedProfileId,
+          launchEnvironment: Platform.environment,
+        );
+    final launchUsername = resolveGroupReactionNotificationIosAutoSetupUsername(
+      isIos: Platform.isIOS,
+      e2eTestMode: e2eTestMode,
+      installedProfileId: installedProfileId,
+      launchEnvironment: Platform.environment,
+    );
+    if (setupReadinessAttempt != null) {
+      final launchAttemptSha256 = sha256
+          .convert(utf8.encode(setupReadinessAttempt))
+          .toString();
+      await runGroupReactionNotificationIosSetupReadiness<IdentityModel>(
+        launchAttemptSha256: launchAttemptSha256,
+        resolveUsername: () async =>
+            launchUsername ?? await resolveAutoSetupUsername(documentsPath),
+        loadIdentity: identityRepository.loadIdentity,
+        generateIdentity: () async =>
+            await generateNewIdentity(
+              callGenerate: () => callIdentityGenerate(bridge),
+              callMlKemKeygen: () => callMlKemKeygen(bridge),
+              repo: identityRepository,
+            ) ==
+            GenerateIdentityResult.success,
+        persistUsername: (identity, username) async {
+          await identityRepository.saveIdentity(
+            IdentityModel(
+              peerId: identity.peerId,
+              publicKey: identity.publicKey,
+              privateKey: identity.privateKey,
+              mnemonic12: identity.mnemonic12,
+              mlKemPublicKey: identity.mlKemPublicKey,
+              mlKemSecretKey: identity.mlKemSecretKey,
+              username: username,
+              avatarBlob: identity.avatarBlob,
+              avatarVersion: identity.avatarVersion,
+              createdAt: identity.createdAt,
+              updatedAt: identity.updatedAt,
+            ),
+          );
+          final reloaded = await identityRepository.loadIdentity();
+          return reloaded?.username == username;
+        },
+        buildSignedQrPayload: (identity) async {
+          final (result, payload) = await buildQRPayload(
+            repo: identityRepository,
+            callSign: (data, key) => callSignPayload(
+              bridge: bridge,
+              dataToSign: data,
+              privateKey: key,
+            ),
+            cachedIdentity: identity,
+          );
+          return result == BuildQRPayloadResult.success ? payload : null;
+        },
+        exportIdentity: (identity, signedQrPayload) =>
+            exportIdentityForIntroE2E(
+              signedQrPayloadJson: signedQrPayload,
+              mlKemPublicKey: identity.mlKemPublicKey,
+              documentsPath: documentsPath,
+            ),
+        writeReceipt: (receipt) =>
+            writeGroupReactionNotificationIosSetupReadinessReceipt(
+              documentsPath: documentsPath,
+              receipt: receipt,
+            ),
+      );
+      return;
+    }
+    final autoSetupUsername =
+        launchUsername ?? await resolveAutoSetupUsername(documentsPath);
     if (autoSetupUsername == null) return;
 
     final existing = await identityRepository.loadIdentity();

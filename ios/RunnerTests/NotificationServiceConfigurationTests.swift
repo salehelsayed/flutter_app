@@ -1,6 +1,18 @@
 import XCTest
 
 final class NotificationServiceConfigurationTests: XCTestCase {
+  func testIosLocalNotificationFinalEffectRunnerImportIsDebugOnly() throws {
+    try assertRunnerTestImportIsDebugOnly(
+      in: "NotificationService/IosLocalNotificationFinalEffect.swift"
+    )
+  }
+
+  func testNseInboxCandidateAdapterRunnerImportIsDebugOnly() throws {
+    try assertRunnerTestImportIsDebugOnly(
+      in: "NotificationService/NseInboxCandidateAdapter.swift"
+    )
+  }
+
   func testRunnerAndNotificationServiceEntitlementsShareAppGroupAndKeychainGroup() throws {
     let root = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
@@ -48,5 +60,34 @@ final class NotificationServiceConfigurationTests: XCTestCase {
       format: nil
     )
     return try XCTUnwrap(object as? [String: Any])
+  }
+
+  private func assertRunnerTestImportIsDebugOnly(
+    in relativePath: String,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) throws {
+    let root = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    let source = try String(
+      contentsOf: root.appendingPathComponent(relativePath),
+      encoding: .utf8
+    )
+    let expected = "#if DEBUG && canImport(Runner)\n  @testable import Runner\n#endif"
+
+    XCTAssertEqual(
+      source.components(separatedBy: "@testable import Runner").count - 1,
+      1,
+      "\(relativePath) must contain exactly one Runner test import",
+      file: file,
+      line: line
+    )
+    XCTAssertTrue(
+      source.contains(expected),
+      "\(relativePath) must make the Runner test import unreachable outside DEBUG",
+      file: file,
+      line: line
+    )
   }
 }

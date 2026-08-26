@@ -17,6 +17,9 @@ typedef CommitDirectConversationRead =
       ConversationNotificationContentMetadata? metadata,
     );
 
+typedef DirectConversationReadCommitSettlement =
+    Future<void> Function(String peerId);
+
 /// Captures the exact current direct-card generation before the atomic SQL
 /// read commit, then cancels that same generation after commit.
 final class DirectNotificationReadProjector {
@@ -24,13 +27,16 @@ final class DirectNotificationReadProjector {
     required DirectNotificationPresentationCoordinator coordinator,
     required ConversationNotificationGenerationCancellation cancellation,
     required CommitDirectConversationRead commitRead,
+    DirectConversationReadCommitSettlement? onReadCommitted,
   }) : _coordinator = coordinator,
        _cancellation = cancellation,
-       _commitRead = commitRead;
+       _commitRead = commitRead,
+       _onReadCommitted = onReadCommitted;
 
   final DirectNotificationPresentationCoordinator _coordinator;
   final ConversationNotificationGenerationCancellation _cancellation;
   final CommitDirectConversationRead _commitRead;
+  final DirectConversationReadCommitSettlement? _onReadCommitted;
 
   Future<int> markConversationRead(String rawPeerId) {
     final peerId = rawPeerId.trim();
@@ -44,13 +50,20 @@ final class DirectNotificationReadProjector {
           .lookupConversationNotificationContentMetadata(peerId);
       final commit = await _commitRead(peerId, metadata);
       final generation = metadata?.generation?.trim();
-      if (commit.notificationAcknowledged &&
-          generation != null &&
-          generation.isNotEmpty) {
-        await _cancellation.cancelConversationNotificationGeneration(
-          peerId,
-          generation,
-        );
+      try {
+        if (commit.notificationAcknowledged &&
+            generation != null &&
+            generation.isNotEmpty) {
+          await _cancellation.cancelConversationNotificationGeneration(
+            peerId,
+            generation,
+          );
+        }
+      } finally {
+        // APNs/NSE notifications do not necessarily have Flutter-local
+        // generation metadata. The committed SQLite unread state must still
+        // become the absolute iOS badge state before this read route returns.
+        await _onReadCommitted?.call(peerId);
       }
       return commit.markedCount;
     });

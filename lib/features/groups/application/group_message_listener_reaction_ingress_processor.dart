@@ -12,7 +12,7 @@ final class _GroupReactionIngressProcessor {
     required NotificationToneTracker? notificationToneTracker,
     required GroupNotificationPresentationCoordinator?
     notificationPresentationCoordinator,
-    required RecentRemoteNotificationGate remoteNotificationGate,
+    required RecentRemoteNotificationGate? injectedRemoteNotificationGate,
     required bool Function() isStoppingOrDisposed,
     required Future<String?> Function() resolveSelfPeerId,
     required Future<DurableNotificationToneLease?> Function()
@@ -38,7 +38,7 @@ final class _GroupReactionIngressProcessor {
        _notificationToneTracker = notificationToneTracker,
        _notificationPresentationCoordinator =
            notificationPresentationCoordinator,
-       _remoteNotificationGate = remoteNotificationGate,
+       _injectedRemoteNotificationGate = injectedRemoteNotificationGate,
        _isStoppingOrDisposed = isStoppingOrDisposed,
        _resolveSelfPeerId = resolveSelfPeerId,
        _resolveDurableNotificationCoordinator =
@@ -61,7 +61,9 @@ final class _GroupReactionIngressProcessor {
   final NotificationToneTracker? _notificationToneTracker;
   final GroupNotificationPresentationCoordinator?
   _notificationPresentationCoordinator;
-  final RecentRemoteNotificationGate _remoteNotificationGate;
+  final RecentRemoteNotificationGate? _injectedRemoteNotificationGate;
+  RecentRemoteNotificationGate get _remoteNotificationGate =>
+      _injectedRemoteNotificationGate ?? recentRemoteNotificationGate;
   final bool Function() _isStoppingOrDisposed;
   final Future<String?> Function() _resolveSelfPeerId;
   final Future<DurableNotificationToneLease?> Function()

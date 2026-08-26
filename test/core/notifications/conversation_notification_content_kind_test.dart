@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -97,6 +100,57 @@ void main() {
         ),
         isNull,
       );
+    },
+  );
+
+  test(
+    'TC-396 shared direct local envelope vector matches Swift source classifier',
+    () {
+      final fixture =
+          jsonDecode(
+                File(
+                  'test/shared/fixtures/ios_direct_notification_source_v1.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, dynamic>;
+      expect(fixture['version'], 1);
+      final expectedPeerId = fixture['expectedPeerId'] as String;
+      final expectedMessageId = fixture['expectedMessageId'] as String;
+      final vectors = fixture['vectors'] as List<dynamic>;
+
+      bool matchesExpectedLocalEnvelope(Map<String, dynamic> vector) {
+        if (vector['origin'] != 'local') return false;
+        final userInfo = vector['userInfo'] as Map<String, dynamic>;
+        final notificationId = userInfo['NotificationId'];
+        if (notificationId is! int ||
+            notificationId < 0 ||
+            notificationId > 0x7fffffff ||
+            userInfo.containsKey('type') ||
+            userInfo.containsKey('sender_id') ||
+            userInfo.containsKey('message_id')) {
+          return false;
+        }
+        final payload = userInfo['payload'];
+        if (payload == expectedPeerId) return true;
+        final envelope = decodeConversationNotificationPayload(
+          payload is String ? payload : null,
+        );
+        return envelope?.routePayload == expectedPeerId &&
+            envelope?.conversationKey == expectedPeerId &&
+            envelope?.metadata.kind ==
+                ConversationNotificationContentKind.message &&
+            envelope?.metadata.eventIdentity == expectedMessageId;
+      }
+
+      for (final rawVector in vectors) {
+        final vector = rawVector as Map<String, dynamic>;
+        final expectsLocal = vector['expectedSource'] == 'flutter_local';
+        expect(
+          matchesExpectedLocalEnvelope(vector),
+          expectsLocal,
+          reason: vector['name'] as String,
+        );
+      }
     },
   );
 }

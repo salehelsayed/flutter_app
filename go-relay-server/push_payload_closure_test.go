@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"firebase.google.com/go/v4/messaging"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const (
@@ -288,6 +289,12 @@ func TestRelayNotificationClosure_ProviderTooLargeGetsOneStrictFallback(t *testi
 			return "fallback-message-id", nil
 		}
 
+		acceptedBefore := testutil.ToFloat64(
+			groupMessageDispatchCounter.WithLabelValues("group_inbox", "accepted"),
+		)
+		failedBefore := testutil.ToFloat64(
+			groupMessageDispatchCounter.WithLabelValues("group_inbox", "failed"),
+		)
 		push.SendGroupNotification(
 			context.Background(),
 			"recipient",
@@ -300,7 +307,9 @@ func TestRelayNotificationClosure_ProviderTooLargeGetsOneStrictFallback(t *testi
 		if got := recorder.SendCallCount(); got != 2 {
 			t.Fatalf("announcement provider send calls = %d, want original + one strict fallback", got)
 		}
-		strict := recorder.Messages()[1]
+		messages := recorder.Messages()
+		original := messages[0]
+		strict := messages[1]
 		if strict.Data["type"] != "group_message" ||
 			strict.Data["groupId"] != closureAnnouncementGroupID ||
 			strict.Data["sender_transport_peer_id"] != "12D3KooWAuthenticatedAnnouncementTransport" ||
@@ -310,8 +319,123 @@ func TestRelayNotificationClosure_ProviderTooLargeGetsOneStrictFallback(t *testi
 		if _, ok := strict.Data["sender_id"]; ok {
 			t.Fatalf("strict announcement route mislabeled transport: %#v", strict.Data)
 		}
+		originalCollapse, originalCollapseOK := tc395APNSCollapseID(original)
+		strictCollapse, strictCollapseOK := tc395APNSCollapseID(strict)
+		if !originalCollapseOK || !strictCollapseOK || strictCollapse != originalCollapse {
+			t.Fatalf("strict fallback collapse = %q/%v, original %q/%v", strictCollapse, strictCollapseOK, originalCollapse, originalCollapseOK)
+		}
+		assertAPNSCustomString(t, original, groupMessageDispatchClaimKey, groupMessageDispatchClaimInbox)
+		assertAPNSCustomString(t, strict, groupMessageDispatchClaimKey, groupMessageDispatchClaimInbox)
+		if _, leaked := strict.Data[groupMessageDispatchClaimKey]; leaked {
+			t.Fatalf("strict fallback leaked claim into top-level data: %#v", strict.Data)
+		}
 		assertAPNSCustomString(t, strict, "sender_transport_peer_id", "12D3KooWAuthenticatedAnnouncementTransport")
 		assertProviderPayloadWithinBudget(t, strict)
+		if delta := testutil.ToFloat64(
+			groupMessageDispatchCounter.WithLabelValues("group_inbox", "accepted"),
+		) - acceptedBefore; delta != 1 {
+			t.Fatalf("ordinary fallback accepted dispatch delta = %v, want 1", delta)
+		}
+		if delta := testutil.ToFloat64(
+			groupMessageDispatchCounter.WithLabelValues("group_inbox", "failed"),
+		) - failedBefore; delta != 0 {
+			t.Fatalf("ordinary fallback failed dispatch delta = %v, want 0", delta)
+		}
+	})
+
+	t.Run("strict group fallback preserves content source and collapse", func(t *testing.T) {
+		tokens := newMemoryPushTokenStore()
+		tokens.RegisterToken("recipient", "recipient-token", "ios")
+		push := NewPushServiceWithBackend(tokens)
+		push.retryDelays = []time.Duration{0, 0, 0}
+		recorder := newRecordingPushSender()
+		push.sender = recorder.Send
+		recorder.onSend = func(_ context.Context, _ *messaging.Message) (string, error) {
+			if recorder.SendCallCount() == 1 {
+				return "", fmt.Errorf("messaging/invalid-argument: Message is too large. The maximum is 4K (4096 bytes)")
+			}
+			return "fallback-message-id", nil
+		}
+		route, err := push.selectPushRoute("recipient", "")
+		if err != nil || route == nil {
+			t.Fatalf("select strict route = %#v, %v", route, err)
+		}
+		acceptedBefore := testutil.ToFloat64(
+			groupMessageDispatchCounter.WithLabelValues("group_content", "accepted"),
+		)
+		failedBefore := testutil.ToFloat64(
+			groupMessageDispatchCounter.WithLabelValues("group_content", "failed"),
+		)
+		push.sendGroupContentNotificationForRoute(
+			context.Background(),
+			"recipient",
+			*route,
+			groupContentPushMetadata{
+				GroupID:               closureDiscussionGroupID,
+				SenderTransportPeerID: "12D3KooWStrictTransport",
+				MessageID:             "strict-provider-size",
+				PayloadType:           groupContentPayloadTypeMessage,
+			},
+			`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","groupId":"77777777-7777-4777-8777-777777777777","messageId":"strict-provider-size","senderTransportPeerId":"12D3KooWStrictTransport","keyEpoch":7,"ciphertext":"gc","nonce":"gn"}`,
+		)
+		if got := recorder.SendCallCount(); got != 2 {
+			t.Fatalf("strict provider send calls = %d, want original + one fallback", got)
+		}
+		messages := recorder.Messages()
+		originalCollapse, originalOK := tc395APNSCollapseID(messages[0])
+		strictCollapse, strictOK := tc395APNSCollapseID(messages[1])
+		if !originalOK || !strictOK || originalCollapse != strictCollapse {
+			t.Fatalf("strict content fallback collapse = %q/%v, original %q/%v", strictCollapse, strictOK, originalCollapse, originalOK)
+		}
+		for _, message := range messages {
+			assertAPNSCustomString(t, message, groupMessageDispatchClaimKey, groupMessageDispatchClaimContent)
+			if _, leaked := message.Data[groupMessageDispatchClaimKey]; leaked {
+				t.Fatalf("strict content claim leaked into top-level data: %#v", message.Data)
+			}
+		}
+		if delta := testutil.ToFloat64(
+			groupMessageDispatchCounter.WithLabelValues("group_content", "accepted"),
+		) - acceptedBefore; delta != 1 {
+			t.Fatalf("strict fallback accepted dispatch delta = %v, want 1", delta)
+		}
+		if delta := testutil.ToFloat64(
+			groupMessageDispatchCounter.WithLabelValues("group_content", "failed"),
+		) - failedBefore; delta != 0 {
+			t.Fatalf("strict fallback failed dispatch delta = %v, want 0", delta)
+		}
+		assertProviderPayloadWithinBudget(t, messages[1])
+	})
+
+	t.Run("Android group fallback remains claim and APNS free", func(t *testing.T) {
+		tokens := newMemoryPushTokenStore()
+		tokens.RegisterToken("recipient", "recipient-token", "android")
+		push := NewPushServiceWithBackend(tokens)
+		push.retryDelays = []time.Duration{0, 0, 0}
+		recorder := newRecordingPushSender()
+		push.sender = recorder.Send
+		recorder.onSend = func(_ context.Context, _ *messaging.Message) (string, error) {
+			if recorder.SendCallCount() == 1 {
+				return "", fmt.Errorf("messaging/invalid-argument: Message is too large. The maximum is 4K (4096 bytes)")
+			}
+			return "fallback-message-id", nil
+		}
+		push.SendGroupNotification(
+			context.Background(),
+			"recipient",
+			closureDiscussionGroupID,
+			"12D3KooWAndroidTransport",
+			"android-provider-size",
+			ordinaryGroupCiphertextEnvelope(16),
+		)
+		if got := recorder.SendCallCount(); got != 2 {
+			t.Fatalf("Android provider send calls = %d, want original + one fallback", got)
+		}
+		for _, message := range recorder.Messages() {
+			_, hasCollapse := tc395APNSCollapseID(message)
+			if sentRoutingHas(message, groupMessageDispatchClaimKey) || hasCollapse {
+				t.Fatalf("Android fallback leaked Plan 398 projection: %#v", message)
+			}
+		}
 	})
 }
 

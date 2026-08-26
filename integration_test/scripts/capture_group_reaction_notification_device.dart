@@ -9,7 +9,11 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_profile.dart';
 
 import '../support/android_notification_payload_campaign.dart'
-    show relayJournalContainsAndroidProviderSend;
+    show
+        bindRelayAcceptedGroupMessageProviderAttempt,
+        parseRelayAcceptedGroupMessageProviderAttempt,
+        relayJournalContainsAndroidProviderSend,
+        relayJournalProvesSingleFirstAttemptProviderAcceptance;
 import '../support/ios_xctestrun_relocator.dart';
 import '_android_app_package.dart';
 import 'group_muted_notification_android_criteria.dart';
@@ -51,6 +55,10 @@ const _iosAnnouncementFixtureAuthorSelector =
 const _iosChatTapSelector = 'testChatGroupNotificationTap';
 const _iosChatFixtureCreateSelector = 'testCreateChatGroupNotificationFixture';
 const _iosChatFixtureAuthorSelector = 'testAuthorChatGroupReactionTarget';
+const _iosLocalNetworkPermissionProofSelector =
+    'testAutomateLocalNetworkPermission';
+const _iosLocalNetworkCampaignSelector =
+    'testSettleLocalNetworkPermissionForCampaign';
 const _iosSharedNotificationPrepareSelector = 'testPrepareWarmNotificationTap';
 const Set<String> _iosKnownSelectors = <String>{
   _iosAnnouncementTapSelector,
@@ -59,9 +67,15 @@ const Set<String> _iosKnownSelectors = <String>{
   _iosChatTapSelector,
   _iosChatFixtureCreateSelector,
   _iosChatFixtureAuthorSelector,
+  _iosLocalNetworkPermissionProofSelector,
+  _iosLocalNetworkCampaignSelector,
   _iosSharedNotificationPrepareSelector,
 };
 const _iosSystemLogExecutable = 'idevicesyslog';
+const _plan398ExistingStateTraceArtifactFileName =
+    'plan398_existing_state_trace.json';
+const _plan398ExistingStateTraceClaimFileName =
+    'plan398_existing_state_trace_claim.json';
 
 /// Stable Android semantics identifier for Orbit's create-group FAB.
 ///
@@ -355,22 +369,142 @@ Future<void> main(List<String> args) async {
       artifactPath == null) {
     _usage();
   }
+  final diagnosticOnlyMessageWindow = args.contains(
+    '--diagnostic-only-message-window',
+  );
+  final traceOnlyExistingState = args.contains('--trace-only-existing-state');
+  final manualSendExistingState = args.contains('--manual-send-existing-state');
+  final liveDiagnostic = args.contains('--live-diagnostic');
+  if (manualSendExistingState && !traceOnlyExistingState) {
+    stderr.writeln(
+      'CONFIGURATION BLOCKED: manual existing-state send requires the '
+      'existing-state trace mode.',
+    );
+    exit(64);
+  }
+  if (diagnosticOnlyMessageWindow && traceOnlyExistingState) {
+    stderr.writeln(
+      'CONFIGURATION BLOCKED: diagnostic-only and existing-state trace modes '
+      'are mutually exclusive.',
+    );
+    exit(64);
+  }
+  if (liveDiagnostic &&
+      (!traceOnlyExistingState ||
+          !manualSendExistingState ||
+          !args.contains('--no-child-builds'))) {
+    stderr.writeln(
+      'CONFIGURATION BLOCKED: live diagnostic requires existing-state trace, '
+      'manual send, and --no-child-builds.',
+    );
+    exit(64);
+  }
+  if (diagnosticOnlyMessageWindow &&
+      (scenario.id != iosChatGroupMessageAndReactionScenarioId ||
+          !args.contains('--no-child-builds'))) {
+    stderr.writeln(
+      'CONFIGURATION BLOCKED: diagnostic-only message mode requires the '
+      'existing iOS chat-group scenario and --no-child-builds.',
+    );
+    exit(64);
+  }
+  if (traceOnlyExistingState &&
+      (scenario.id != iosChatGroupMessageAndReactionScenarioId ||
+          !args.contains('--no-child-builds'))) {
+    stderr.writeln(
+      'CONFIGURATION BLOCKED: existing-state trace mode requires the '
+      'existing iOS chat-group scenario and --no-child-builds.',
+    );
+    exit(64);
+  }
+  final existingGroupName = traceOnlyExistingState
+      ? _requiredValue(args, '--group-name')
+      : '';
+  final existingTargetMarker = traceOnlyExistingState
+      ? _requiredValue(args, '--existing-target-marker')
+      : '';
+  if (traceOnlyExistingState &&
+      (!_isPlan398ExistingStateToken(existingGroupName, maximumLength: 120) ||
+          !_isPlan398ExistingStateToken(
+            existingTargetMarker,
+            maximumLength: 120,
+          ))) {
+    stderr.writeln(
+      'CONFIGURATION BLOCKED: existing group and target marker must be '
+      'bounded installed-probe tokens.',
+    );
+    exit(64);
+  }
+  final finalTraceAuthorization = _valueFor(
+    args,
+    '--plan398-final-attempt-authorization-id',
+  );
+  final finalRunnerProductReceiptSha256 = _valueFor(
+    args,
+    '--plan398-final-runner-product-receipt-sha256',
+  );
+  final finalRunnerInstallTerminalSha256 = _valueFor(
+    args,
+    '--plan398-final-runner-install-terminal-sha256',
+  );
+  final attempt02ReceiptSha256 = _valueFor(
+    args,
+    '--plan398-attempt-02-receipt-sha256',
+  );
+  final finalAuthorityValues = <String?>[
+    finalTraceAuthorization,
+    finalRunnerProductReceiptSha256,
+    finalRunnerInstallTerminalSha256,
+    attempt02ReceiptSha256,
+  ];
+  final sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
+  if (liveDiagnostic && finalAuthorityValues.any((value) => value != null)) {
+    stderr.writeln(
+      'CONFIGURATION BLOCKED: live diagnostic does not accept legacy '
+      'final-attempt authority receipts.',
+    );
+    exit(64);
+  }
+  if (manualSendExistingState &&
+      !liveDiagnostic &&
+      (finalTraceAuthorization != plan398ReviewedFinalTraceAuthorization ||
+          !sha256Pattern.hasMatch(finalRunnerProductReceiptSha256 ?? '') ||
+          !sha256Pattern.hasMatch(finalRunnerInstallTerminalSha256 ?? '') ||
+          !sha256Pattern.hasMatch(attempt02ReceiptSha256 ?? ''))) {
+    stderr.writeln(
+      'CONFIGURATION BLOCKED: final existing-state trace authority is '
+      'missing or invalid.',
+    );
+    exit(64);
+  }
 
   final artifactDirectory = Directory(artifactPath).absolute;
   final stagingPath =
       _valueFor(args, '--staging-manifest') ??
       Platform.environment['MKNOON_257_STAGING_MANIFEST'];
   if (stagingPath == null || stagingPath.trim().isEmpty) {
-    await writeGroupReactionNotificationVerdict(
-      outputDirectory: artifactDirectory,
-      scenario: scenario.id,
-      ok: false,
-      stage: 'configuration',
-      status: 'configuration_blocked',
-      detail:
-          'staging_manifest_required: pass a redacted Plan 257 staging '
-          'manifest; relay/provider readiness is never inferred',
-    );
+    const detail =
+        'staging_manifest_required: pass a redacted Plan 257 staging '
+        'manifest; relay/provider readiness is never inferred';
+    if (traceOnlyExistingState) {
+      await writePlan398ExistingStateTraceFailure(
+        outputDirectory: artifactDirectory,
+        scenario: scenario.id,
+        status: 'configuration_blocked',
+        stage: 'configuration',
+        detail: detail,
+        traceAttemptClaimed: false,
+      );
+    } else {
+      await writeGroupReactionNotificationVerdict(
+        outputDirectory: artifactDirectory,
+        scenario: scenario.id,
+        ok: false,
+        stage: 'configuration',
+        status: 'configuration_blocked',
+        detail: detail,
+      );
+    }
     stderr.writeln(
       'CONFIGURATION BLOCKED [${scenario.testCase}/${scenario.id}]: '
       'staging_manifest_required.',
@@ -391,6 +525,14 @@ Future<void> main(List<String> args) async {
   final prebuiltIosBuildReportPath = _valueFor(
     args,
     '--prebuilt-ios-build-report',
+  );
+  final prebuiltIosSetupApplicationPath = _valueFor(
+    args,
+    '--prebuilt-ios-setup-app',
+  );
+  final prebuiltIosSetupApplicationSha256 = _valueFor(
+    args,
+    '--prebuilt-ios-setup-app-sha256',
   );
   final capture = _Plan257Capture(
     scenario: scenario,
@@ -430,7 +572,27 @@ Future<void> main(List<String> args) async {
             prebuiltIosBuildReportPath.trim().isEmpty
         ? null
         : File(prebuiltIosBuildReportPath).absolute,
+    prebuiltIosSetupApplication:
+        prebuiltIosSetupApplicationPath == null ||
+            prebuiltIosSetupApplicationPath.trim().isEmpty
+        ? null
+        : Directory(prebuiltIosSetupApplicationPath).absolute,
+    prebuiltIosSetupApplicationSha256:
+        prebuiltIosSetupApplicationSha256 == null ||
+            prebuiltIosSetupApplicationSha256.trim().isEmpty
+        ? null
+        : prebuiltIosSetupApplicationSha256.trim(),
     noChildBuilds: args.contains('--no-child-builds'),
+    diagnosticOnlyMessageWindow: diagnosticOnlyMessageWindow,
+    traceOnlyExistingState: traceOnlyExistingState,
+    manualSendExistingState: manualSendExistingState,
+    liveDiagnostic: liveDiagnostic,
+    existingGroupName: existingGroupName,
+    existingTargetMarker: existingTargetMarker,
+    finalTraceAuthorization: finalTraceAuthorization,
+    finalRunnerProductReceiptSha256: finalRunnerProductReceiptSha256,
+    finalRunnerInstallTerminalSha256: finalRunnerInstallTerminalSha256,
+    attempt02ReceiptSha256: attempt02ReceiptSha256,
     statePreparedByParent: args.contains('--android-state-prepared'),
     verbose: args.contains('--verbose'),
     keepBuildArtifacts: args.contains('--keep-build-artifacts'),
@@ -456,7 +618,7 @@ Future<void> main(List<String> args) async {
       'unexpected_${error.runtimeType}: capture stopped without a proof '
       'artifact',
     );
-    await capture.writeFailure(failure, stackTrace);
+    await capture.writeFailure(failure, stackTrace, unexpected: true);
     stderr.writeln(
       'CAPTURE_FAILED [${scenario.testCase}/${scenario.id}/${capture.stage}]: '
       '${failure.message}',
@@ -548,7 +710,19 @@ class _Plan257Capture {
     required this.prebuiltAndroidBuildReport,
     required this.prebuiltIosBundle,
     required this.prebuiltIosBuildReport,
+    required this.prebuiltIosSetupApplication,
+    required this.prebuiltIosSetupApplicationSha256,
     required this.noChildBuilds,
+    required this.diagnosticOnlyMessageWindow,
+    required this.traceOnlyExistingState,
+    required this.manualSendExistingState,
+    required this.liveDiagnostic,
+    required this.existingGroupName,
+    required this.existingTargetMarker,
+    required this.finalTraceAuthorization,
+    required this.finalRunnerProductReceiptSha256,
+    required this.finalRunnerInstallTerminalSha256,
+    required this.attempt02ReceiptSha256,
     required this.statePreparedByParent,
     required this.verbose,
     required this.keepBuildArtifacts,
@@ -576,7 +750,19 @@ class _Plan257Capture {
   final File? prebuiltAndroidBuildReport;
   final Directory? prebuiltIosBundle;
   final File? prebuiltIosBuildReport;
+  final Directory? prebuiltIosSetupApplication;
+  final String? prebuiltIosSetupApplicationSha256;
   final bool noChildBuilds;
+  final bool diagnosticOnlyMessageWindow;
+  final bool traceOnlyExistingState;
+  final bool manualSendExistingState;
+  final bool liveDiagnostic;
+  final String existingGroupName;
+  final String existingTargetMarker;
+  final String? finalTraceAuthorization;
+  final String? finalRunnerProductReceiptSha256;
+  final String? finalRunnerInstallTerminalSha256;
+  final String? attempt02ReceiptSha256;
   final bool statePreparedByParent;
   final bool verbose;
   final bool keepBuildArtifacts;
@@ -688,6 +874,7 @@ class _Plan257Capture {
   GroupReactionCentralBuildValidation? _plan397AndroidBuild;
   GroupReactionCentralBuildValidation? _plan397IosBuild;
   GroupReactionIosBundleValidation? _plan397IosBundle;
+  Directory? _plan397PreparedSetupApplication;
   File? _plan397PatchedXctestrun;
   Directory? _plan397XctestrunDirectory;
   final List<File> _plan397EphemeralFiles = <File>[];
@@ -703,11 +890,47 @@ class _Plan257Capture {
   final StringBuffer _iosSystemLogStderr = StringBuffer();
   Future<void>? _iosSystemLogStdoutDone;
   Future<void>? _iosSystemLogStderrDone;
+  Plan398TraceRawLogCapture? _plan398TraceRawLogs;
+  Plan398TraceLogCommit? _plan398TraceRawLogCommit;
+  Object? _plan398TraceOverflowError;
+  Object? _plan398TraceDecoderError;
+  Object? _plan398TraceCleanupError;
+  int? _plan398IosLoggerProcessId;
+  int? _plan398RunnerProcessId;
+  bool _plan398IosLoggerConnected = false;
+  String _plan398IosLoggerStopDisposition = 'not_started';
+  int _plan398IosLoggerExitCode = -1;
+  int? _plan398IosLoggerObservedExitCode;
+  final Plan398IosLoggerDisconnectObserver
+  _plan398IosLoggerStdoutDisconnectObserver =
+      Plan398IosLoggerDisconnectObserver();
+  final Plan398IosLoggerDisconnectObserver
+  _plan398IosLoggerStderrDisconnectObserver =
+      Plan398IosLoggerDisconnectObserver();
+  bool _plan398LoggerForcedTimeout = false;
+  Plan398TraceLogFileReference? _plan398CommandJournalReference;
+  Plan398TraceLogFileReference? _plan398PixelLogReference;
+  bool _plan398TraceTransactionStarted = false;
+  bool _plan398TerminalReceiptCommitted = false;
   bool _preferIosAfcFileChannel = false;
+  File? _plan398DeploymentReceipt;
+  File? _plan398DiagnosticAttemptMarker;
+  String _plan398DeploymentReceiptSha256 = '';
+  String _plan398DiagnosticAttemptClaimSha256 = '';
+  String _plan398SetupReadinessReceiptSha256 = '';
+  String _plan398SetupIdentityExportSha256 = '';
+  String _plan398ExistingStateTraceClaimSha256 = '';
+  bool _plan398ExistingStateProbeFilesOwned = false;
   final List<Map<String, Object?>> _commandJournal = <Map<String, Object?>>[];
   final Random _random = Random.secure();
   late final String _runtimeRunId = _runtimeToken('run');
   late final String _runtimeNonce = _runtimeToken('nonce');
+  late final String _plan398SetupReadinessAttempt = _runtimeToken(
+    'setup-readiness',
+  );
+  late final String _plan398SetupReadinessAttemptSha256 = sha256
+      .convert(utf8.encode(_plan398SetupReadinessAttempt))
+      .toString();
   late final GroupFixtureTransientCleanup _transientCleanup =
       GroupFixtureTransientCleanup(<Future<void> Function()>[
         _deleteTransientFixtureFiles,
@@ -746,12 +969,41 @@ class _Plan257Capture {
 
   File get _commandJournalFile => File(
     '${artifactDirectory.path}${Platform.pathSeparator}'
-    'automation_command_journal.json',
+    '${traceOnlyExistingState ? 'plan398_existing_state_trace_command_journal.json' : 'automation_command_journal.json'}',
+  );
+
+  File get _plan398ExistingStateTraceArtifact => File(
+    '${artifactDirectory.path}${Platform.pathSeparator}'
+    '$_plan398ExistingStateTraceArtifactFileName',
+  );
+
+  File get _plan398ExistingStateTraceClaim => File(
+    '${artifactDirectory.path}${Platform.pathSeparator}'
+    '$_plan398ExistingStateTraceClaimFileName',
+  );
+
+  File get _plan398FinalRunnerProductReceipt => File(
+    '${artifactDirectory.path}${Platform.pathSeparator}'
+    'final-runner-update${Platform.pathSeparator}build-terminal-receipt.json',
+  );
+
+  File get _plan398FinalRunnerInstallTerminal => File(
+    '${artifactDirectory.path}${Platform.pathSeparator}'
+    'final-runner-update${Platform.pathSeparator}install-terminal-receipt.json',
+  );
+
+  File get _plan398Attempt02Receipt => File(
+    '${artifactDirectory.path}${Platform.pathSeparator}'
+    'preclaim-attempts${Platform.pathSeparator}attempt-02'
+    '${Platform.pathSeparator}receipt.json',
   );
 
   bool get _isPlan330 => scenario.id == groupNotificationProjectionScenarioId;
   bool get _isPlan397 =>
       scenario.id == iosChatGroupMessageAndReactionScenarioId;
+
+  bool get _isPlan398EvidenceOnlyMessageWindow =>
+      diagnosticOnlyMessageWindow || traceOnlyExistingState;
 
   /// Which lifecycle/observation/validator this scenario id selects.
   ///
@@ -784,7 +1036,814 @@ class _Plan257Capture {
           GroupReactionCaptureLifecycleStage.reactionRecipient &&
       !groupReactionNotificationKeepsRecipientProcessAlive(scenario.id);
 
-  Future<void> cleanupTransientState() => _transientCleanup.run();
+  Future<void> cleanupTransientState() async {
+    if (!traceOnlyExistingState) {
+      await _transientCleanup.run();
+      return;
+    }
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    Future<void> retainCleanupError(Future<void> Function() action) async {
+      try {
+        await action();
+      } on Object catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    if (_plan398ExistingStateProbeFilesOwned) {
+      await retainCleanupError(() async {
+        await _deleteTransientFixtureFiles();
+        _plan398ExistingStateProbeFilesOwned = false;
+      });
+    }
+    await retainCleanupError(_stopIosSystemLog);
+    await retainCleanupError(_stopDeviceLogStreams);
+    if (firstError != null) {
+      _plan398TraceCleanupError ??= firstError;
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
+  }
+
+  Future<void> _runPlan398ExistingStateTrace() async {
+    final artifact = _plan398ExistingStateTraceArtifact;
+    final claim = _plan398ExistingStateTraceClaim;
+    if (await artifact.exists() || await claim.exists()) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_existing_state_trace_artifact_or_claim_already_exists',
+      );
+    }
+    final outputPreflight =
+        await validatePlan398ExistingStateTraceOutputPreflight(
+          artifactDirectory,
+        );
+    if (!outputPreflight.ok) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_existing_state_trace_stale_output_rejected',
+      );
+    }
+    if (!liveDiagnostic) {
+      await _validatePlan398FinalTraceAuthorities();
+    }
+    _plan398TraceTransactionStarted = true;
+
+    stage = 'device_inventory';
+    await _verifyLiveDeviceTopology();
+    stage = 'relay_configuration';
+    _relay = await _verifyRelay();
+    stage = 'provider_configuration';
+    await _verifyApnsConfiguration();
+
+    stage = 'plan398_existing_state_preflight';
+    final installedState = await _runPlan398ExistingStatePreflight();
+
+    stage = 'plan398_existing_state_message_window';
+    await _capturePlan397IosWindow(
+      phase: 'message',
+      payloadKind: 'group_message',
+      expectedBody: '',
+      tapConfig: artifact,
+      tapNotification: false,
+      performAction: () async {
+        await _claimPlan398ExistingStateTrace();
+        if (manualSendExistingState) {
+          await _awaitPlan398ManualExistingStateSend();
+        } else {
+          await _openGroup(senderId);
+          await _requirePlan398IosLoggerLive('automated_send');
+          await _sendGroupTextOneTap(senderId, _firstMarker);
+        }
+      },
+    );
+
+    // The terminal receipt is immutable and no-replace, so trace-owned cleanup
+    // and every authoritative output/validation step must finish before a
+    // successful receipt is committed. The outer `finally` remains as an
+    // idempotent safety net for failures before this point.
+    await cleanupTransientState();
+
+    stage = 'plan398_existing_state_trace_artifact';
+    await _writePlan398ExistingStateTraceArtifact(installedState);
+    final validation = await validatePlan398ExistingStateTraceArtifact(
+      artifactFile: artifact,
+      traceAttemptMarker: claim,
+      expectedSenderDeviceId: senderId,
+      expectedRecipientDeviceId: recipientId,
+    );
+    if (!validation.ok) {
+      throw _CaptureFailure.capture(
+        stage,
+        'captured_plan398_existing_state_trace_rejected: '
+        '${validation.detail}',
+      );
+    }
+    final verdict = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'plan398_existing_state_trace_verdict.json',
+    );
+    await verdict.writeAsString(
+      jsonEncode(<String, Object?>{
+        'schema': 'mknoon.plan398.existing-state-trace-verdict.v1',
+        'status': 'trace_complete',
+        'closurePassed': false,
+        'artifactSha256': sha256
+            .convert(await artifact.readAsBytes())
+            .toString(),
+      }),
+      flush: true,
+    );
+    await _finalizePlan398ExistingStateTraceTerminal(
+      requestedStatus: 'success',
+      detailCode: 'trace_window_complete',
+      captureExitCode: 0,
+    );
+    stdout.writeln(
+      'TRACE_COMPLETE: ${scenario.id} captured at ${artifact.path}.',
+    );
+  }
+
+  Future<Map<String, Object?>> _readPlan398FinalAuthority({
+    required File file,
+    required String expectedSha256,
+    required String expectedSchema,
+  }) async {
+    try {
+      final type = await FileSystemEntity.type(file.path, followLinks: false);
+      final metadata = await file.stat();
+      if (type != FileSystemEntityType.file ||
+          (metadata.mode & 0x1ff) != 0x180 ||
+          metadata.size <= 0 ||
+          metadata.size > 1024 * 1024) {
+        throw const FormatException('authority file shape rejected');
+      }
+      final bytes = await file.readAsBytes();
+      if (sha256.convert(bytes).toString() != expectedSha256) {
+        throw const FormatException('authority file hash rejected');
+      }
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map) {
+        throw const FormatException('authority file JSON rejected');
+      }
+      final value = Map<String, Object?>.from(decoded);
+      if (value['schema'] != expectedSchema) {
+        throw const FormatException('authority file schema rejected');
+      }
+      return value;
+    } on Object catch (error) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_final_trace_authority_rejected_'
+            '${file.uri.pathSegments.last}_${error.runtimeType}',
+      );
+    }
+  }
+
+  Future<void> _validatePlan398FinalTraceAuthorities() async {
+    final digest = RegExp(r'^[0-9a-f]{64}$');
+    final build = await _readPlan398FinalAuthority(
+      file: _plan398FinalRunnerProductReceipt,
+      expectedSha256: finalRunnerProductReceiptSha256!,
+      expectedSchema: 'mknoon.plan398.final-runner-build-terminal-receipt.v1',
+    );
+    final productValue = build['product'];
+    final evidenceValue = build['evidence'];
+    if (productValue is! Map || evidenceValue is! Map) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_final_runner_product_receipt_shape_invalid',
+      );
+    }
+    final product = Map<String, Object?>.from(productValue);
+    final team = product['signedTeamIdentifier'];
+    final sourceBefore = build['suiteSourceDigestBefore'];
+    final sourceAfter = build['suiteSourceDigestAfter'];
+    final certificateDigests = product['developerCertificateSha256'];
+    final productDigestKeys = <String>[
+      'entitySha256',
+      'applicationSha256',
+      'runnerExecutableSha256',
+      'infoPlistSha256',
+      'canonicalSignedEntitlementsSha256',
+      'embeddedMobileProvisionSha256',
+    ];
+    if (build['status'] != 'succeeded' ||
+        build['authorizationId'] != finalTraceAuthorization ||
+        build['recipient'] != '00008030-001A6D2801BB802E' ||
+        build['bundleIdentifier'] != 'com.mknoon.app' ||
+        build['configuration'] != 'Release' ||
+        !digest.hasMatch('${build['claimSha256']}') ||
+        build['buildName'] is! String ||
+        build['buildNumber'] is! String ||
+        !digest.hasMatch('$sourceBefore') ||
+        sourceBefore != sourceAfter ||
+        product['relativePath'] != 'build/ios/iphoneos/Runner.app' ||
+        product['bundleIdentifier'] != 'com.mknoon.app' ||
+        product['executableName'] != 'Runner' ||
+        product['bundleShortVersion'] is! String ||
+        product['bundleVersion'] is! String ||
+        product['signedIdentifier'] != 'com.mknoon.app' ||
+        team is! String ||
+        team.isEmpty ||
+        product['profileTeamIdentifier'] != team ||
+        product['profileApplicationIdentifier'] != '$team.com.mknoon.app' ||
+        product['profileExpirationUtc'] is! String ||
+        DateTime.tryParse('${product['profileExpirationUtc']}') == null ||
+        product['configuration'] != 'Release' ||
+        productDigestKeys.any((key) => !digest.hasMatch('${product[key]}')) ||
+        certificateDigests is! List ||
+        certificateDigests.isEmpty ||
+        certificateDigests.any((value) => !digest.hasMatch('$value'))) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_final_runner_product_receipt_binding_invalid',
+      );
+    }
+
+    final install = await _readPlan398FinalAuthority(
+      file: _plan398FinalRunnerInstallTerminal,
+      expectedSha256: finalRunnerInstallTerminalSha256!,
+      expectedSchema: 'mknoon.plan398.final-runner-install-terminal-receipt.v1',
+    );
+    final preInventoryValue = install['preInventory'];
+    final postInventoryValue = install['postInventory'];
+    final preIdentityValue = install['preIdentitySha256'];
+    final postIdentityValue = install['postIdentitySha256'];
+    if (preInventoryValue is! Map ||
+        postInventoryValue is! Map ||
+        preIdentityValue is! Map ||
+        postIdentityValue is! Map) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_final_runner_install_receipt_shape_invalid',
+      );
+    }
+    final preInventory = Map<String, Object?>.from(preInventoryValue);
+    final postInventory = Map<String, Object?>.from(postInventoryValue);
+    final preIdentity = Map<String, Object?>.from(preIdentityValue);
+    final postIdentity = Map<String, Object?>.from(postIdentityValue);
+    final container = preInventory['appDataContainer'];
+    if (install['status'] != 'succeeded' ||
+        install['authorizationId'] != finalTraceAuthorization ||
+        install['recipient'] != '00008030-001A6D2801BB802E' ||
+        install['bundleIdentifier'] != 'com.mknoon.app' ||
+        !digest.hasMatch('${install['claimSha256']}') ||
+        install['buildReceiptSha256'] != finalRunnerProductReceiptSha256 ||
+        container is! String ||
+        container.isEmpty ||
+        postInventory['appDataContainer'] != container ||
+        postInventory['bundleIdentifier'] != product['bundleIdentifier'] ||
+        postInventory['executableName'] != product['executableName'] ||
+        postInventory['bundleShortVersion'] != product['bundleShortVersion'] ||
+        postInventory['bundleVersion'] != product['bundleVersion'] ||
+        preIdentity.keys
+            .toSet()
+            .difference(postIdentity.keys.toSet())
+            .isNotEmpty ||
+        postIdentity.keys
+            .toSet()
+            .difference(preIdentity.keys.toSet())
+            .isNotEmpty ||
+        preIdentity['Documents/identity.db'] is! String ||
+        preIdentity.entries.any(
+          (entry) =>
+              postIdentity[entry.key] != entry.value ||
+              !digest.hasMatch('${entry.value}'),
+        )) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_final_runner_install_receipt_binding_invalid',
+      );
+    }
+
+    final attempt02 = await _readPlan398FinalAuthority(
+      file: _plan398Attempt02Receipt,
+      expectedSha256: attempt02ReceiptSha256!,
+      expectedSchema: 'mknoon.plan398.final-manual-preclaim-attempt-archive.v2',
+    );
+    if (attempt02['attempt'] != 'attempt-02' ||
+        attempt02['authorizationId'] != finalTraceAuthorization ||
+        attempt02['priorAttempt'] != 'attempt-01' ||
+        !digest.hasMatch('${attempt02['priorAttemptReceiptSha256']}') ||
+        !digest.hasMatch('${attempt02['priorAttemptEntitySha256']}')) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_attempt_02_receipt_binding_invalid',
+      );
+    }
+  }
+
+  Future<Map<String, Object?>> _runPlan398ExistingStatePreflight() async {
+    _groupName = existingGroupName;
+    _targetMarker = existingTargetMarker;
+    _secondMarker = '';
+    _firstMarker = 'TC398Trace${DateTime.now().toUtc().microsecondsSinceEpoch}';
+
+    await _startDeviceLogStream(senderId);
+    await _startAndroid(senderId);
+    if (!manualSendExistingState) await _openGroup(senderId);
+
+    final beforeSend = await _runInstalledGroupReactionProbe(
+      deviceId: senderId,
+      action: _runtimeObserveAction,
+      phase: 'message',
+    );
+    final installed = _validatePlan398ExistingStatePreflightObservation(
+      beforeSend,
+    );
+
+    await _startIosSystemLog();
+    _iosRegistrationLogCursor = _iosSystemLogStdout.length;
+    final recipientIdentityReceiptSha256 = await _sha256IosAppFile(
+      'identity.db',
+    );
+    await _launchIosCandidate();
+    await _waitForRelayTokenRegistration(DateTime.now().toUtc());
+    await _waitForPlan398ExistingStateNotificationAuthorization();
+
+    return <String, Object?>{
+      'schema': 'mknoon.plan398.existing-state-installed-state.v1',
+      'groupType': 'chat',
+      'matchingChatGroupCount': 1,
+      'groupIdSha256': installed['groupIdSha256'],
+      'groupKeySha256': installed['groupKeySha256'],
+      'targetMessageIdSha256': installed['targetMessageIdSha256'],
+      'senderIdentityReceiptSha256': sha256
+          .convert(utf8.encode(jsonEncode(beforeSend)))
+          .toString(),
+      'recipientIdentityReceiptSha256': recipientIdentityReceiptSha256,
+      'notificationAuthorizationReady': true,
+      'relayPushTokenReady': true,
+      'rawIdentifiersPersisted': false,
+      'rawKeyMaterialPersisted': false,
+      'rawIdentityReceiptsPersisted': false,
+      'rawPushTokensPersisted': false,
+    };
+  }
+
+  Map<String, Object?> _validatePlan398ExistingStatePreflightObservation(
+    Map<String, dynamic> observed,
+  ) {
+    final digest = RegExp(r'^[0-9a-f]{64}$');
+    final markers = (observed['markers'] as List<dynamic>? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((value) => Map<String, dynamic>.from(value))
+        .toList(growable: false);
+    final targetRows = markers
+        .where((marker) => marker['marker'] == 'target')
+        .toList(growable: false);
+    final groupIdSha256 = observed['groupIdSha256'];
+    final groupKeySha256 = observed['latestGroupKeySha256'];
+    final groupKeyEpoch = observed['latestGroupKeyEpoch'];
+    final targetMessageIdSha256 = targetRows.singleOrNull?['idSha256'];
+    if (observed['schema'] != 'mknoon.plan257.sqlcipher-observation.v1' ||
+        observed['scenario'] != scenario.id ||
+        observed['phase'] != 'message' ||
+        observed['groupName'] != _groupName ||
+        observed['groupRows'] != 1 ||
+        observed['groupType'] != 'chat' ||
+        observed['localRole'] is! String ||
+        (observed['localRole'] as String).trim().isEmpty ||
+        groupIdSha256 is! String ||
+        !digest.hasMatch(groupIdSha256) ||
+        groupKeySha256 is! String ||
+        !digest.hasMatch(groupKeySha256) ||
+        groupKeyEpoch is! int ||
+        groupKeyEpoch < 0 ||
+        markers.length != 1 ||
+        targetRows.length != 1 ||
+        targetMessageIdSha256 is! String ||
+        !digest.hasMatch(targetMessageIdSha256) ||
+        targetRows.single['incoming'] != true ||
+        targetRows.single['read'] != true ||
+        observed['reactionRows'] != 0 ||
+        observed['expectedCollapseIdentifierSha256'] != null) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'plan398_existing_state_group_or_target_preflight_failed',
+      );
+    }
+    return <String, Object?>{
+      'groupIdSha256': groupIdSha256,
+      'groupKeySha256': groupKeySha256,
+      'targetMessageIdSha256': targetMessageIdSha256,
+    };
+  }
+
+  Future<void> _waitForPlan398ExistingStateNotificationAuthorization() async {
+    await _waitFor(
+      'existing iOS notification authorization',
+      const Duration(minutes: 1),
+      () async {
+        final complete = _iosSystemLogStdout.toString();
+        final cursor = _iosRegistrationLogCursor.clamp(0, complete.length);
+        return plan398ExistingStateNotificationAuthorizationReady(
+          complete.substring(cursor),
+          expectedRunnerProcessId: _plan398RunnerProcessId,
+        );
+      },
+    );
+  }
+
+  Future<void> _claimPlan398ExistingStateTrace() async {
+    await _requirePlan398IosLoggerLive('trace_claim');
+    final claim = _plan398ExistingStateTraceClaim;
+    final claimValue = _runtimeToken('existing-state-trace-claim');
+    try {
+      final reference = await writePlan398PrivateNoReplaceEvidence(
+        stableFile: claim,
+        bytes: utf8.encode(
+          jsonEncode(<String, Object?>{
+            'schema': 'mknoon.plan398.existing-state-trace-claim.v1',
+            'ownerRunId': 'existing-state-trace',
+            'singleOwnerDeclared': true,
+            'claimValue': claimValue,
+          }),
+        ),
+        maximumLengthBytes: 4096,
+      );
+      _plan398ExistingStateTraceClaimSha256 = reference.sha256;
+    } on Object {
+      throw _CaptureFailure.configuration(
+        stage,
+        'plan398_existing_state_trace_claim_failed_closed',
+      );
+    }
+  }
+
+  Future<void> _awaitPlan398ManualExistingStateSend() async {
+    await _requirePlan398IosLoggerLive('manual_send_ready');
+    stdout.writeln(
+      'PLAN398_MANUAL_SEND_READY group=$existingGroupName marker=$_firstMarker',
+    );
+    stdout.writeln(
+      'Send that exact marker once from the Pixel, then type SENT and press '
+      'Return.',
+    );
+    Plan398ManualSendWaitResult waitResult;
+    try {
+      waitResult = await waitForPlan398ManualSendAcknowledgement(
+        acknowledgements: stdin
+            .transform(utf8.decoder)
+            .transform(const LineSplitter()),
+        readLivenessFailure: _currentPlan398IosLoggerLivenessFailure,
+        timeout: const Duration(minutes: 5),
+        pollInterval: const Duration(milliseconds: 100),
+      );
+    } on Object {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_manual_send_acknowledgement_missing',
+      );
+    }
+    if (waitResult.disposition ==
+        Plan398ManualSendWaitDisposition.loggerFailed) {
+      final failure = waitResult.livenessFailure!;
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_ios_system_log_'
+        '${_plan398IosLoggerLivenessFailureCode(failure)}_'
+        'during_manual_send_wait',
+      );
+    }
+    if (waitResult.disposition !=
+        Plan398ManualSendWaitDisposition.acknowledged) {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_manual_send_acknowledgement_missing',
+      );
+    }
+    final acknowledgement = waitResult.acknowledgement!;
+    if (acknowledgement.trim() != 'SENT') {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_manual_send_acknowledgement_rejected',
+      );
+    }
+  }
+
+  Future<void> _finalizePlan398ExistingStateTraceTerminal({
+    required String requestedStatus,
+    required String detailCode,
+    required int captureExitCode,
+  }) async {
+    if (_plan398TerminalReceiptCommitted) return;
+    await _stopIosSystemLog();
+
+    var terminalStatus = requestedStatus;
+    var terminalDetail = detailCode;
+    if (_plan398TraceCleanupError != null) {
+      terminalStatus = 'cleanup_error';
+      terminalDetail = 'raw_log_cleanup_error';
+    }
+    if (_plan398TraceDecoderError != null) {
+      terminalStatus = 'decoder_error';
+      terminalDetail = 'raw_log_decoder_error';
+    }
+    if (_plan398TraceOverflowError != null) {
+      terminalStatus = 'typed_failure';
+      terminalDetail = 'raw_log_overflow';
+    }
+    if (_plan398IosLoggerStopDisposition == 'forced_kill') {
+      terminalStatus = 'logger_forced_kill';
+      terminalDetail = 'ios_logger_forced_kill';
+    }
+    if (_plan398IosLoggerStopDisposition == 'already_exited') {
+      terminalStatus = 'cleanup_error';
+      terminalDetail = 'ios_logger_exited_before_bounded_stop';
+    }
+    if (_plan398IosLoggerProcessId == null &&
+        _plan398TraceRawLogs == null &&
+        terminalStatus != 'success') {
+      terminalStatus = 'pre_logger_failure';
+      terminalDetail = 'pre_logger_$detailCode';
+    }
+    terminalDetail = _plan398TerminalCode(terminalDetail);
+
+    await _flushCommandJournal();
+    _plan398CommandJournalReference = await _finalizePlan398PrivateReference(
+      file: _commandJournalFile,
+      expectedFileName: plan398ExistingStateTraceCommandJournalFileName,
+      maximumLengthBytes: plan398ExistingStateTraceJournalLimitBytes,
+    );
+    final loggerStarted = _plan398IosLoggerProcessId != null;
+    final canOmitPixelLog =
+        terminalStatus == 'pre_logger_failure' &&
+        !loggerStarted &&
+        !_plan398IosLoggerConnected &&
+        _plan398RunnerProcessId == null &&
+        _plan398TraceRawLogs == null &&
+        _plan398TraceRawLogCommit == null &&
+        _plan398IosLoggerStopDisposition == 'not_started' &&
+        _plan398IosLoggerExitCode == -1 &&
+        !_plan398LoggerForcedTimeout;
+    final pixelFile = _deviceLogFiles[senderId];
+    if (pixelFile == null && !canOmitPixelLog) {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_final_pixel_log_was_never_started',
+      );
+    }
+    if (pixelFile != null) {
+      _plan398PixelLogReference = await _finalizePlan398PrivateReference(
+        file: pixelFile,
+        expectedFileName: plan398PixelLogFileName('21071FDF600CSC'),
+        maximumLengthBytes: plan398ExistingStateTracePixelLogLimitBytes,
+      );
+    }
+    if (loggerStarted && _plan398TraceRawLogCommit == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_logger_started_without_committed_raw_logs',
+      );
+    }
+    final effectiveCaptureExitCode = terminalStatus == 'success'
+        ? captureExitCode
+        : captureExitCode == 0
+        ? 1
+        : captureExitCode;
+
+    await writePlan398ExistingStateTraceTerminalReceipt(
+      outputDirectory: artifactDirectory,
+      scenario: scenario.id,
+      authorityMode: liveDiagnostic
+          ? plan398LiveDiagnosticAuthorityMode
+          : plan398LegacyFinalAttemptAuthorityMode,
+      attempt: liveDiagnostic ? null : plan398ExistingStateTraceAttempt,
+      authorization: liveDiagnostic ? null : finalTraceAuthorization,
+      finalRunnerProductReceiptSha256: liveDiagnostic
+          ? null
+          : finalRunnerProductReceiptSha256,
+      finalRunnerInstallTerminalSha256: liveDiagnostic
+          ? null
+          : finalRunnerInstallTerminalSha256,
+      attempt02ReceiptSha256: liveDiagnostic ? null : attempt02ReceiptSha256,
+      terminalStatus: terminalStatus,
+      captureExitCode: effectiveCaptureExitCode,
+      stage: _plan398TerminalCode(stage),
+      detailCode: terminalDetail,
+      traceAttemptClaimed: _plan398ExistingStateTraceClaimSha256.isNotEmpty,
+      loggerStarted: loggerStarted,
+      loggerConnected: _plan398IosLoggerConnected,
+      loggerProcessId: _plan398IosLoggerProcessId,
+      runnerProcessId: _plan398RunnerProcessId,
+      stopDisposition: _plan398IosLoggerStopDisposition,
+      loggerExitCode: _plan398IosLoggerExitCode,
+      loggerForcedTimeout: _plan398LoggerForcedTimeout,
+      logs: _plan398TraceRawLogCommit,
+      commandJournal: _plan398CommandJournalReference!,
+      pixelLog: _plan398PixelLogReference,
+    );
+    _plan398TerminalReceiptCommitted = true;
+
+    if (requestedStatus == 'success' && terminalStatus != 'success') {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_existing_state_trace_terminal_$terminalStatus',
+      );
+    }
+  }
+
+  String _plan398TerminalCode(String value) {
+    final normalized = value
+        .replaceAll(RegExp(r'[^A-Za-z0-9_.:-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+    if (normalized.isEmpty) return 'unspecified';
+    return normalized.length <= 160 ? normalized : normalized.substring(0, 160);
+  }
+
+  Future<void> _writePlan398ExistingStateTraceArtifact(
+    Map<String, Object?> installedState,
+  ) async {
+    if (_plan397Windows.length != 1 ||
+        _plan397Windows.single['phase'] != 'message' ||
+        _plan398ExistingStateTraceClaimSha256.isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_existing_state_trace_window_or_claim_incomplete',
+      );
+    }
+    final window = <String, Object?>{
+      for (final entry in _plan397Windows.single.entries)
+        if (entry.key != 'relayJournalRedacted') entry.key: entry.value,
+    };
+    if (window.containsKey('tap')) {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_existing_state_trace_must_not_retain_a_tap',
+      );
+    }
+    final native = Map<String, Object?>.from(window['nativeInventory']! as Map);
+    final provider = Map<String, Object?>.from(window['provider']! as Map);
+    final disposition = plan398DiagnosticDisposition(native, provider);
+    if (disposition == 'incomplete_evidence') {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_existing_state_trace_incomplete_evidence',
+      );
+    }
+    final encoded = jsonEncode(<String, Object?>{
+      'schema': liveDiagnostic
+          ? plan398ExistingStateLiveDiagnosticArtifactSchema
+          : plan398ExistingStateTraceArtifactSchema,
+      'version': plan398ExistingStateTraceArtifactVersion,
+      if (liveDiagnostic) 'authorityMode': plan398LiveDiagnosticAuthorityMode,
+      'status': 'trace_complete',
+      'closurePassed': false,
+      'disposition': disposition,
+      'traceAttemptClaimed': true,
+      'traceAttemptClaimSha256': _plan398ExistingStateTraceClaimSha256,
+      'topology': <String, Object?>{
+        'groupType': 'chat',
+        'sender': <String, Object?>{
+          'platform': 'android',
+          'deviceKind': 'physical',
+          'deviceIdSha256': sha256.convert(utf8.encode(senderId)).toString(),
+          'liveDiscovered': true,
+        },
+        'recipient': <String, Object?>{
+          'platform': 'ios',
+          'deviceKind': 'physical',
+          'deviceIdSha256': sha256.convert(utf8.encode(recipientId)).toString(),
+          'liveDiscovered': true,
+        },
+      },
+      'installedState': installedState,
+      'window': window,
+      'execution': <String, Object?>{
+        if (manualSendExistingState) ...<String, Object?>{
+          'automation': 'manual_message_send',
+          'messageSendTapCount': 0,
+          'manualMessageSendCount': 1,
+        } else ...<String, Object?>{
+          'automation': 'fully_automated',
+          'messageSendTapCount': 1,
+        },
+        'reactionTapCount': 0,
+        'notificationTapCount': 0,
+        'buildCount': 0,
+        'installCount': 0,
+        'uninstallCount': 0,
+        'appDataClearCount': 0,
+        'groupCreateCount': 0,
+      },
+      'redaction': const <String, Object?>{
+        'rawGroupOrTargetIdsPersisted': false,
+        'rawGroupKeysPersisted': false,
+        'rawIdentityReceiptsPersisted': false,
+        'rawPushTokensPersisted': false,
+        'rawPayloadPersisted': false,
+      },
+    });
+    for (final raw in <String>[_groupName, _targetMarker, _firstMarker]) {
+      if (raw.isNotEmpty && encoded.contains(raw)) {
+        throw _CaptureFailure.capture(
+          stage,
+          'plan398_existing_state_trace_raw_value_persistence_rejected',
+        );
+      }
+    }
+    final output = _plan398ExistingStateTraceArtifact;
+    try {
+      await writePlan398PrivateNoReplaceEvidence(
+        stableFile: output,
+        bytes: utf8.encode(encoded),
+        maximumLengthBytes: plan398ExistingStateTraceArtifactLimitBytes,
+      );
+    } on Object {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_existing_state_trace_artifact_already_exists',
+      );
+    }
+  }
+
+  Future<void> _preparePlan398DiagnosticAuthority() async {
+    final deploymentPath =
+        Platform.environment['PLAN398_DEPLOYMENT_RECEIPT']?.trim() ?? '';
+    final markerPath =
+        Platform.environment['PLAN398_DIAGNOSTIC_ATTEMPT_MARKER']?.trim() ?? '';
+    if (deploymentPath.isEmpty || markerPath.isEmpty) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_diagnostic_authority_exports_missing',
+      );
+    }
+    final deployment = File(deploymentPath).absolute;
+    final marker = File(markerPath).absolute;
+    if (!await deployment.exists() || await marker.exists()) {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_deployment_receipt_missing_or_attempt_already_claimed',
+      );
+    }
+    try {
+      final stat = await deployment.stat();
+      final decoded = Map<String, Object?>.from(
+        jsonDecode(await deployment.readAsString()) as Map,
+      );
+      if ((stat.mode & 0x3f) != 0 ||
+          decoded['schema'] != 'mknoon.plan398.staging-deployment-receipt.v1' ||
+          decoded['ownerRunId'] != 'diagnostic' ||
+          decoded['singleOwnerDeclared'] != true) {
+        throw const FormatException('closed deployment authority required');
+      }
+    } on Object {
+      throw _CaptureFailure.configuration(
+        'configuration',
+        'plan398_deployment_receipt_invalid',
+      );
+    }
+    await marker.parent.create(recursive: true);
+    _plan398DeploymentReceipt = deployment;
+    _plan398DiagnosticAttemptMarker = marker;
+    _plan398DeploymentReceiptSha256 = sha256
+        .convert(await deployment.readAsBytes())
+        .toString();
+  }
+
+  Future<void> _claimPlan398DiagnosticSend() async {
+    if (!diagnosticOnlyMessageWindow ||
+        _plan398DeploymentReceipt == null ||
+        _plan398DiagnosticAttemptMarker == null) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'plan398_diagnostic_claim_out_of_sequence',
+      );
+    }
+    await _runStreaming('python3', const <String>[
+      'integration_test/scripts/ios_group_message_diagnostic_staging.py',
+      'claim-send',
+    ], environmentFailure: true);
+    final marker = _plan398DiagnosticAttemptMarker!;
+    try {
+      final stat = await marker.stat();
+      final decoded = Map<String, Object?>.from(
+        jsonDecode(await marker.readAsString()) as Map,
+      );
+      final claimValue = decoded['claimValue'];
+      if ((stat.mode & 0x3f) != 0 ||
+          decoded['schema'] != 'mknoon.plan398.diagnostic-attempt-claim.v1' ||
+          decoded['ownerRunId'] != 'diagnostic' ||
+          claimValue is! String ||
+          !RegExp(r'^[A-Za-z0-9._:-]{16,160}$').hasMatch(claimValue)) {
+        throw const FormatException('durable claim rejected');
+      }
+      _plan398DiagnosticAttemptClaimSha256 = sha256
+          .convert(await marker.readAsBytes())
+          .toString();
+    } on _CaptureFailure {
+      rethrow;
+    } on Object {
+      throw _CaptureFailure.environment(
+        stage,
+        'plan398_diagnostic_attempt_claim_invalid',
+      );
+    }
+  }
 
   Future<void> _deletePlan397XctestrunDirectory() async {
     final directory = _plan397XctestrunDirectory;
@@ -808,7 +1867,7 @@ class _Plan257Capture {
     final staleArtifact = File(
       '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
     );
-    if (await staleArtifact.exists()) {
+    if (!traceOnlyExistingState && await staleArtifact.exists()) {
       await staleArtifact.delete();
     }
     stage = 'configuration';
@@ -817,6 +1876,15 @@ class _Plan257Capture {
         .cast<String>()
         .map((value) => value.trim())
         .toList(growable: false);
+
+    if (traceOnlyExistingState) {
+      await _runPlan398ExistingStateTrace();
+      return;
+    }
+
+    if (diagnosticOnlyMessageWindow) {
+      await _preparePlan398DiagnosticAuthority();
+    }
 
     if (_isPlan397) {
       stage = 'prepared_artifact';
@@ -1098,9 +2166,42 @@ class _Plan257Capture {
 
   Future<void> writeFailure(
     _CaptureFailure failure,
-    StackTrace stackTrace,
-  ) async {
+    StackTrace stackTrace, {
+    bool unexpected = false,
+  }) async {
     await artifactDirectory.create(recursive: true);
+    if (traceOnlyExistingState) {
+      final terminalStatus =
+          failure.message.contains(
+            'plan398_manual_send_acknowledgement_missing',
+          )
+          ? 'manual_timeout'
+          : unexpected
+          ? 'unexpected_failure'
+          : 'typed_failure';
+      if (_plan398TraceTransactionStarted) {
+        await _finalizePlan398ExistingStateTraceTerminal(
+          requestedStatus: terminalStatus,
+          detailCode: _plan398TerminalCode(failure.message),
+          captureExitCode: failure.exitCode,
+        );
+      } else {
+        await _flushCommandJournal();
+      }
+      await writePlan398ExistingStateTraceFailure(
+        outputDirectory: artifactDirectory,
+        scenario: scenario.id,
+        status: failure.status,
+        stage: failure.stage,
+        detail: failure.message,
+        traceAttemptClaimed: _plan398ExistingStateTraceClaimSha256.isNotEmpty,
+        stackType: stackTrace.runtimeType.toString(),
+        completedStages: _commandJournal
+            .map((record) => record['stage'])
+            .whereType<String>(),
+      );
+      return;
+    }
     await _flushCommandJournal();
     await writeGroupReactionNotificationVerdict(
       outputDirectory: artifactDirectory,
@@ -1155,10 +2256,12 @@ class _Plan257Capture {
       );
     }
     final manifest = Map<String, Object?>.from(decoded);
-    final validation = validateGroupReactionNotificationStagingManifest(
-      manifest,
-      scenario: scenario,
-    );
+    final validation = traceOnlyExistingState
+        ? validatePlan398ExistingStateTraceManifest(manifest)
+        : validateGroupReactionNotificationStagingManifest(
+            manifest,
+            scenario: scenario,
+          );
     if (!validation.ok) {
       throw _CaptureFailure.configuration(
         stage,
@@ -1254,15 +2357,13 @@ class _Plan257Capture {
         '--timeout',
         '60',
       ], environmentFailure: true);
-      final ios = await _run('xcrun', const <String>[
-        'xctrace',
-        'list',
-        'devices',
+      final usb = await _run('idevice_id', const <String>[
+        '-l',
       ], environmentFailure: true);
-      if (!groupReactionIosDeviceIsOnline(ios.stdout, recipientId)) {
+      if (!groupReactionIosUsbDeviceIsPresent(usb.stdout, recipientId)) {
         throw _CaptureFailure.environment(
           stage,
-          'recipient_not_live_physical_ios_target',
+          'recipient_not_live_usb_ios_target',
         );
       }
     }
@@ -1299,6 +2400,31 @@ class _Plan257Capture {
         'chat_group_central_artifact_contract_rejected: '
         'android=${android.detail}; ios=${ios.detail}; bundle=${bundle.detail}',
       );
+    }
+    if (noChildBuilds) {
+      final setupApplication = prebuiltIosSetupApplication;
+      final expectedSetupSha256 = prebuiltIosSetupApplicationSha256;
+      if (setupApplication == null ||
+          expectedSetupSha256 == null ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedSetupSha256) ||
+          FileSystemEntity.typeSync(
+                setupApplication.path,
+                followLinks: false,
+              ) !=
+              FileSystemEntityType.directory) {
+        throw _CaptureFailure.configuration(
+          stage,
+          'chat_group_no_child_build_requires_prebuilt_ios_setup_app',
+        );
+      }
+      final actualSetupSha256 = await _sha256Directory(setupApplication);
+      if (actualSetupSha256 != expectedSetupSha256) {
+        throw _CaptureFailure.configuration(
+          stage,
+          'chat_group_prebuilt_ios_setup_app_sha256_mismatch',
+        );
+      }
+      _plan397PreparedSetupApplication = setupApplication;
     }
     _plan397AndroidBuild = android;
     _plan397IosBuild = ios;
@@ -1716,11 +2842,15 @@ class _Plan257Capture {
     await _launchAndroid(senderId);
     await _collectAndroidIdentity(sender);
 
-    // Exactly one child build is allowed, and it exists only to establish the
-    // fixture through the shipping UI with E2E file controls. The graded app
-    // and the UI-test products both come from the central Sims bundle.
-    stage = 'plan397_ios_setup_build';
-    final setupApplication = await _buildIosCandidate(e2eMode: true);
+    // Plan 397 permits one setup child build for its legacy full campaign.
+    // Plan 398's no-child mode instead consumes the coordinator-prepared,
+    // receipt-bound copy of that exact signed setup product.
+    stage = noChildBuilds
+        ? 'plan398_ios_setup_prebuilt'
+        : 'plan397_ios_setup_build';
+    final setupApplication = noChildBuilds
+        ? _plan397PreparedSetupApplication!
+        : await _buildIosCandidate(e2eMode: true);
     _plan397SetupAppSha256 = await _sha256Directory(setupApplication);
 
     stage = 'plan397_ios_initial_install';
@@ -1728,16 +2858,6 @@ class _Plan257Capture {
     await _installIosCandidate(setupApplication, mode: 'setup');
 
     stage = 'plan397_fixture_staging';
-    await _stageIosAppFile(
-      'auto_setup.json',
-      jsonEncode(<String, Object?>{'username': recipient.username}),
-    );
-    await _launchIosCandidate();
-    await _collectIosIdentity(recipient);
-    await _prepopulateContact(sender, recipient);
-    await _prepopulateIosContact(recipient, sender);
-    final setupPeerId = recipient.peerId;
-
     final stamp = DateTime.now().toUtc().microsecondsSinceEpoch;
     _groupName = 'TC397Chat$stamp';
     _firstMarker = 'TC397Msg$stamp';
@@ -1747,6 +2867,7 @@ class _Plan257Capture {
 
     final uiSource = await File(_iosTapTest).readAsString();
     for (final selector in <String>[
+      _iosLocalNetworkCampaignSelector,
       _iosFixtureCreateSelector,
       _iosFixtureAuthorSelector,
       _iosNotificationPrepareSelector,
@@ -1766,6 +2887,15 @@ class _Plan257Capture {
       tapConfig: setupTapConfig,
       label: 'setup',
     );
+    _iosXcuitestOutput += await _runIosUiSelector(
+      _iosLocalNetworkCampaignSelector,
+      setupTapConfig,
+    );
+    await _collectIosIdentity(recipient);
+    await _prepopulateContact(sender, recipient);
+    await _prepopulateIosContact(recipient, sender);
+    final setupPeerId = recipient.peerId;
+
     _iosXcuitestOutput += await _runIosUiSelector(
       _iosFixtureCreateSelector,
       setupTapConfig,
@@ -1828,11 +2958,27 @@ class _Plan257Capture {
       payloadKind: 'group_message',
       expectedBody: messageBody,
       tapConfig: messageTapConfig,
+      tapNotification: !diagnosticOnlyMessageWindow,
       performAction: () async {
         await _openGroup(senderId);
+        if (diagnosticOnlyMessageWindow) {
+          await _claimPlan398DiagnosticSend();
+        }
         await _sendGroupText(senderId, _firstMarker);
       },
     );
+
+    if (diagnosticOnlyMessageWindow) {
+      stage = 'plan398_diagnostic_artifact_capture';
+      await _deletePlan397EphemeralMaterialization();
+      _senderLogcat = await _accumulatedSenderFlowLines();
+      _relayJournal = _plan397Windows
+          .map((window) => window['relayJournalRedacted'] ?? '')
+          .join('\n');
+      await _writePlan398DiagnosticArtifact();
+      await _validatePlan398DiagnosticArtifact();
+      return;
+    }
 
     final reactionBody =
         '${sender.username} reacted $_reactionEmoji to your message';
@@ -1930,6 +3076,7 @@ class _Plan257Capture {
     required String expectedBody,
     required File tapConfig,
     required Future<void> Function() performAction,
+    bool tapNotification = true,
   }) async {
     if (!<String>{'message', 'reaction'}.contains(phase) ||
         _plan397Windows.any((window) => window['phase'] == phase)) {
@@ -1943,7 +3090,9 @@ class _Plan257Capture {
     final baseline = await _scrapeRelayMetrics();
     await performAction();
 
-    final metricFamily = phase == 'message'
+    final metricFamily = _isPlan398EvidenceOnlyMessageWindow
+        ? relayGroupMessageDispatchCounter
+        : phase == 'message'
         ? relayPushSentCounter
         : relayGroupReactionWakeCounter;
     final provider = await _waitForPlan397ProviderWindow(
@@ -1963,11 +3112,21 @@ class _Plan257Capture {
     final groupDigest = binding['groupIdSha256']! as String;
     final eventDigest = binding['eventIdSha256']! as String;
     final targetDigest = binding['targetMessageIdSha256']! as String;
+    final expectedCollapseIdentifierSha256 =
+        binding['expectedCollapseIdentifierSha256'] as String?;
+    if (phase == 'message' && expectedCollapseIdentifierSha256 == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'chat_group_message_expected_collapse_hash_missing',
+      );
+    }
     final nativeReceipt = await _observePlan397IosNotification(
       phase: phase,
       groupDigest: groupDigest,
       eventDigest: eventDigest,
       targetDigest: targetDigest,
+      expectedCollapseIdentifierSha256:
+          expectedCollapseIdentifierSha256 ?? '0' * 64,
     );
     final nse = await _waitForPlan397NseWindow(
       phase: phase,
@@ -1975,19 +3134,40 @@ class _Plan257Capture {
       cursor: syslogCursor,
     );
 
-    final tapOutput = await _runIosUiSelector(_iosTapSelector, tapConfig);
-    _iosXcuitestOutput += tapOutput;
-    final tap = _validatePlan397TapOutput(
-      phase: phase,
-      output: tapOutput,
-      expectedBody: expectedBody,
-    );
+    Map<String, Object?>? tap;
+    if (tapNotification) {
+      final tapOutput = await _runIosUiSelector(_iosTapSelector, tapConfig);
+      _iosXcuitestOutput += tapOutput;
+      tap = _validatePlan397TapOutput(
+        phase: phase,
+        output: tapOutput,
+        expectedBody: expectedBody,
+      );
+    }
     // The native request/result fence may be released only after the host has
     // pulled the receipt and the exact card has been tapped. This cleanup is a
     // separate, explicitly later launch.
     await _cleanupPlan397IosObservation(phase);
 
     final relayJournal = await _relayJournalSince(openedAt);
+    if (_isPlan398EvidenceOnlyMessageWindow) {
+      final acceptedProviderAttempt =
+          parseRelayAcceptedGroupMessageProviderAttempt(relayJournal);
+      final acceptedProviderHashes =
+          bindRelayAcceptedGroupMessageProviderAttempt(
+            attempt: acceptedProviderAttempt,
+            relayGroupMessageDispatchSource:
+                provider['relayGroupMessageDispatchSource'],
+            expectedCollapseIdentifierSha256:
+                expectedCollapseIdentifierSha256 ?? '',
+          );
+      provider['providerSingleFirstAttempt'] =
+          relayJournalProvesSingleFirstAttemptProviderAcceptance(relayJournal);
+      provider['acceptedDispatchCorrelationSha256'] =
+          acceptedProviderHashes?.dispatchCorrelationSha256;
+      provider['acceptedProviderMessageIdSha256'] =
+          acceptedProviderHashes?.providerMessageIdSha256;
+    }
     _plan397Windows.add(<String, Object?>{
       'phase': phase,
       'ordinal': phase == 'message' ? 1 : 2,
@@ -2007,7 +3187,7 @@ class _Plan257Capture {
       'provider': provider,
       'nse': nse,
       'nativeInventory': nativeReceipt,
-      'tap': tap,
+      'tap': ?tap,
       'diagnostics': <String, Object?>{
         'runOwnedLocalPublicationCount': nse['runOwnedLocalPublicationCount'],
         'contenderDisposition': nse['contenderDisposition'],
@@ -2049,6 +3229,60 @@ class _Plan257Capture {
             stage,
             'chat_group_${phase}_relay_metric_window_unusable',
           );
+        }
+        if (_isPlan398EvidenceOnlyMessageWindow && phase == 'message') {
+          int? terminalDelta(String source, String result) {
+            final value = metrics.delta(
+              relayCounterSeries(
+                relayGroupMessageDispatchCounter,
+                <String, String>{'source': source, 'result': result},
+              ),
+            );
+            if (value == null || value != value.roundToDouble()) return null;
+            return value.toInt();
+          }
+
+          final inboxAccepted = terminalDelta('group_inbox', 'accepted');
+          final inboxFailed = terminalDelta('group_inbox', 'failed');
+          final contentAccepted = terminalDelta('group_content', 'accepted');
+          final contentFailed = terminalDelta('group_content', 'failed');
+          if (<int?>[
+            inboxAccepted,
+            inboxFailed,
+            contentAccepted,
+            contentFailed,
+          ].any((value) => value == null || value < 0)) {
+            throw _CaptureFailure.environment(
+              stage,
+              'plan398_group_dispatch_metric_series_missing',
+            );
+          }
+          final inboxTotal = inboxAccepted! + inboxFailed!;
+          final contentTotal = contentAccepted! + contentFailed!;
+          final terminalTotal = inboxTotal + contentTotal;
+          if (terminalTotal == 0) return null;
+          if (terminalTotal > 2) {
+            throw _CaptureFailure.capture(
+              stage,
+              'plan398_group_dispatch_window_ambiguous: total=$terminalTotal',
+            );
+          }
+          final source = inboxTotal > 0 && contentTotal == 0
+              ? 'groupInbox'
+              : contentTotal > 0 && inboxTotal == 0
+              ? 'groupContent'
+              : 'ambiguous';
+          return <String, Object?>{
+            'metricFamily': relayGroupMessageDispatchCounter,
+            'relayGroupMessageDispatchSource': source,
+            'groupInboxAcceptedDelta': inboxAccepted,
+            'groupInboxFailedDelta': inboxFailed,
+            'groupContentAcceptedDelta': contentAccepted,
+            'groupContentFailedDelta': contentFailed,
+            'baselineSha256': sha256.convert(utf8.encode(baseline)).toString(),
+            'finalSha256': sha256.convert(utf8.encode(finalScrape)).toString(),
+            'deletedOrUnattributedEvidence': false,
+          };
         }
         final messagePhase = phase == 'message';
         final attempted = messagePhase
@@ -2114,10 +3348,14 @@ class _Plan257Capture {
     final targetDigest = target?['idSha256'];
     final reactionDigest = observed['reactionIdSha256'];
     final reactionTargetDigest = observed['reactionTargetIdSha256'];
+    final expectedCollapseIdentifierSha256 =
+        observed['expectedCollapseIdentifierSha256'];
     final messageShape =
         phase == 'message' &&
         reactionDigest == null &&
         reactionTargetDigest == null &&
+        expectedCollapseIdentifierSha256 is String &&
+        digest.hasMatch(expectedCollapseIdentifierSha256) &&
         observed['reactionRows'] == 0;
     final reactionShape =
         phase == 'reaction' &&
@@ -2157,6 +3395,8 @@ class _Plan257Capture {
       'messageIdSha256': firstDigest,
       'targetMessageIdSha256': targetDigest,
       'eventIdSha256': phase == 'message' ? firstDigest : reactionDigest,
+      if (phase == 'message')
+        'expectedCollapseIdentifierSha256': expectedCollapseIdentifierSha256,
       'reactionIdSha256': phase == 'reaction' ? reactionDigest : null,
       'reactionTargetIdSha256': phase == 'reaction'
           ? reactionTargetDigest
@@ -2177,45 +3417,84 @@ class _Plan257Capture {
     required String groupDigest,
     required String eventDigest,
     required String targetDigest,
+    required String expectedCollapseIdentifierSha256,
   }) async {
     final receipt = File(
       '${artifactDirectory.path}${Platform.pathSeparator}'
       'plan397_${phase}_native_inventory_receipt.json',
     );
     final nonce = '$_runtimeNonce-$phase';
-    await _runStreaming('python3', <String>[
-      'integration_test/scripts/ios_receiver_bootstrap.py',
-      '--action',
-      'observe-group',
-      '--receiver',
-      recipientId,
-      '--nonce',
-      nonce,
-      '--group-observation-receipt',
-      receipt.path,
-      '--phase',
-      phase,
-      '--expected-group-id-sha256',
-      groupDigest,
-      '--expected-event-id-sha256',
-      eventDigest,
-      '--expected-target-message-id-sha256',
-      targetDigest,
-      '--timeout-seconds',
-      '120',
-    ], environmentFailure: true);
+    final process = await _runStreaming(
+      'python3',
+      <String>[
+        'integration_test/scripts/ios_receiver_bootstrap.py',
+        '--action',
+        'observe-group',
+        '--receiver',
+        recipientId,
+        '--nonce',
+        nonce,
+        '--group-observation-receipt',
+        receipt.path,
+        '--phase',
+        phase,
+        '--expected-group-id-sha256',
+        groupDigest,
+        '--expected-event-id-sha256',
+        eventDigest,
+        '--expected-target-message-id-sha256',
+        targetDigest,
+        '--expected-collapse-identifier-sha256',
+        expectedCollapseIdentifierSha256,
+        '--timeout-seconds',
+        '120',
+      ],
+      allowFail: true,
+      environmentFailure: true,
+    );
     if (!receipt.existsSync()) {
-      throw _CaptureFailure.capture(
+      throw _CaptureFailure.environment(
         stage,
         'chat_group_${phase}_native_inventory_receipt_missing',
       );
     }
     try {
-      return Map<String, Object?>.from(
+      final decoded = Map<String, Object?>.from(
         jsonDecode(await receipt.readAsString()) as Map,
       );
+      final disposition = classifyPlan398NativeObservationReceipt(
+        subprocessExitCode: process.exitCode,
+        receipt: decoded,
+        phase: phase,
+        captureNonceSha256: sha256.convert(utf8.encode(nonce)).toString(),
+        receiverDeviceIdSha256: sha256
+            .convert(utf8.encode(recipientId))
+            .toString(),
+        expectedGroupIdSha256: groupDigest,
+        expectedEventIdSha256: eventDigest,
+        expectedTargetMessageIdSha256: targetDigest,
+        expectedCollapseIdentifierSha256: expectedCollapseIdentifierSha256,
+      );
+      switch (disposition) {
+        case Plan398NativeObservationDisposition.behaviorPass:
+          return decoded;
+        case Plan398NativeObservationDisposition.captureEvidence:
+          if (_isPlan398EvidenceOnlyMessageWindow) return decoded;
+          throw _CaptureFailure.capture(
+            stage,
+            'chat_group_${phase}_native_inventory_failed: '
+            '${decoded['resultCode']}',
+          );
+        case Plan398NativeObservationDisposition.environmentEvidence:
+          throw _CaptureFailure.environment(
+            stage,
+            'chat_group_${phase}_native_inventory_receipt_invalid',
+          );
+      }
+    } on _CaptureFailure {
+      rethrow;
     } on Object {
-      throw _CaptureFailure.capture(
+      throw _CaptureFailure.environment(
         stage,
         'chat_group_${phase}_native_inventory_receipt_invalid',
       );
@@ -2293,7 +3572,9 @@ class _Plan257Capture {
           return normalized.contains('RECENT_REMOTE') &&
               (normalized.contains('SUPPRESS') || normalized.contains('SKIP'));
         }).length;
-        if (localPublications > 0 || contenderSuppressions > 1) {
+        if (localPublications > 1 ||
+            (!_isPlan398EvidenceOnlyMessageWindow && localPublications > 0) ||
+            contenderSuppressions > 1) {
           throw _CaptureFailure.capture(
             stage,
             'chat_group_${phase}_local_contender_diagnostics_rejected: '
@@ -2359,6 +3640,148 @@ class _Plan257Capture {
           )
           .toString(),
     };
+  }
+
+  Future<void> _writePlan398DiagnosticArtifact() async {
+    if (_plan397Windows.length != 1 ||
+        _plan397Windows.single['phase'] != 'message' ||
+        _plan398DeploymentReceiptSha256.isEmpty ||
+        _plan398DiagnosticAttemptClaimSha256.isEmpty ||
+        _plan398SetupReadinessReceiptSha256.isEmpty ||
+        _plan398SetupIdentityExportSha256.isEmpty ||
+        !_plan397SetupContainerPreserved) {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_diagnostic_message_window_or_authority_incomplete',
+      );
+    }
+    final retainedWindow = <String, Object?>{
+      for (final entry in _plan397Windows.single.entries)
+        if (entry.key != 'relayJournalRedacted') entry.key: entry.value,
+    };
+    if (retainedWindow.containsKey('tap')) {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_diagnostic_mode_must_not_retain_a_tap',
+      );
+    }
+    final native = Map<String, Object?>.from(
+      retainedWindow['nativeInventory']! as Map,
+    );
+    final provider = Map<String, Object?>.from(
+      retainedWindow['provider']! as Map,
+    );
+    final disposition = plan398DiagnosticDisposition(native, provider);
+    if (disposition == 'incomplete_evidence') {
+      throw _CaptureFailure.capture(
+        stage,
+        'plan398_diagnostic_incomplete_evidence',
+      );
+    }
+    final androidBuild = _plan397AndroidBuild!.redactedProvenance;
+    final iosBuild = _plan397IosBuild!.redactedProvenance;
+    final artifact = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    await artifact.writeAsString(
+      jsonEncode(<String, Object?>{
+        'schema': plan398IosGroupMessageDiagnosticArtifactSchema,
+        'version': plan398IosGroupMessageDiagnosticArtifactVersion,
+        'scenario': scenario.id,
+        'testCase': scenario.testCase,
+        'status': 'diagnostic_complete',
+        'generatedBy': 'automated_capture_pipeline',
+        'diagnosticOnlyMessageWindow': true,
+        'closurePassed': false,
+        'disposition': disposition,
+        'stagingDeploymentReceiptSha256': _plan398DeploymentReceiptSha256,
+        'singleOwnerDeclared': true,
+        'diagnosticAttemptClaimed': true,
+        'diagnosticAttemptClaimSha256': _plan398DiagnosticAttemptClaimSha256,
+        'topology': <String, Object?>{
+          'groupType': 'chat',
+          'sender': <String, Object?>{
+            'platform': 'android',
+            'deviceKind': scenario.senderDeviceKind,
+            'deviceId': senderId,
+            'liveDiscovered': true,
+          },
+          'recipient': <String, Object?>{
+            'platform': 'ios',
+            'deviceKind': 'physical',
+            'deviceId': recipientId,
+            'liveDiscovered': true,
+          },
+        },
+        'buildInputs': <String, Object?>{
+          'androidProfileId': androidBuild['profileId'],
+          'androidInputDigest': androidBuild['inputDigest'],
+          'androidArtifactDigest': androidBuild['artifactDigest'],
+          'iosProfileId': iosBuild['profileId'],
+          'iosInputDigest': iosBuild['inputDigest'],
+          'iosArtifactDigest': iosBuild['artifactDigest'],
+          'setupProfileId': groupReactionNotificationIosSetupBuildProfile,
+          'setupApplicationSha256': _plan397SetupAppSha256,
+          'setupPreparationCompileCommands': 1,
+          'captureChildBuildCount': 0,
+          'centralApplicationSha256': _plan397CentralAppSha256,
+          'gradedWindowChildBuildCount': 0,
+        },
+        'window': retainedWindow,
+        'execution': const <String, Object?>{
+          'automation': 'fully_automated',
+          'manualTaps': 0,
+          'childBuildsDuringGradedWindows': 0,
+          'messageSendCount': 1,
+          'reactionAddCount': 0,
+          'reactionRemoveCount': 0,
+          'reactionReAddCount': 0,
+          'notificationTapCount': 0,
+        },
+        'redaction': const <String, Object?>{
+          'pushTokensPersisted': false,
+          'secretKeysPersisted': false,
+          'ciphertextPersisted': false,
+          'plaintextPayloadPersisted': false,
+          'rawPeerIdsPersisted': false,
+          'rawGroupOrMessageIdsPersisted': false,
+        },
+      }),
+      flush: true,
+    );
+  }
+
+  Future<void> _validatePlan398DiagnosticArtifact() async {
+    final artifact = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    final validation = await validateGroupReactionNotificationArtifact(
+      scenario: scenario.id,
+      artifactFile: artifact,
+      expectedSenderDeviceId: senderId,
+      expectedRecipientDeviceId: recipientId,
+      plan398DeploymentReceipt: _plan398DeploymentReceipt,
+      plan398DiagnosticAttemptMarker: _plan398DiagnosticAttemptMarker,
+    );
+    if (!validation.ok) {
+      throw _CaptureFailure.capture(
+        stage,
+        'captured_plan398_diagnostic_evidence_rejected: ${validation.detail}',
+      );
+    }
+    await writeGroupReactionNotificationVerdict(
+      outputDirectory: artifactDirectory,
+      scenario: scenario.id,
+      ok: true,
+      stage: 'diagnostic_capture',
+      status: 'diagnostic_complete',
+      detail:
+          'one message window captured with per-card provenance; '
+          'closurePassed=false',
+    );
+    stdout.writeln(
+      'DIAGNOSTIC_COMPLETE: ${scenario.id} captured at ${artifact.path}.',
+    );
   }
 
   Future<void> _writePlan397IosArtifact() async {
@@ -2476,6 +3899,12 @@ class _Plan257Capture {
   }
 
   Future<Directory> _buildIosCandidate({required bool e2eMode}) async {
+    if (noChildBuilds) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'child_iOS_build_forbidden_by_no_child_builds',
+      );
+    }
     await _runStreaming('flutter', <String>[
       'build',
       'ios',
@@ -2568,18 +3997,85 @@ class _Plan257Capture {
 
   Future<void> _launchIosCandidate() async {
     await _mountIosDeveloperDiskImageForCoreDevice();
-    await _run('xcrun', <String>[
-      'devicectl',
-      'device',
-      'process',
-      'launch',
-      '--device',
-      recipientId,
-      '--terminate-existing',
-      _iosCapture['bundleId']! as String,
-      '--timeout',
-      '60',
-    ], environmentFailure: true);
+    if (!traceOnlyExistingState) {
+      await _run('xcrun', <String>[
+        'devicectl',
+        'device',
+        'process',
+        'launch',
+        '--device',
+        recipientId,
+        '--terminate-existing',
+        _iosCapture['bundleId']! as String,
+        '--timeout',
+        '60',
+      ], environmentFailure: true);
+      return;
+    }
+    if (_plan398IosLoggerProcessId == null ||
+        !_plan398IosLoggerConnected ||
+        _plan398TraceRawLogs == null) {
+      throw _CaptureFailure.environment(
+        stage,
+        'plan398_runner_launch_before_ios_logger_connected',
+      );
+    }
+    final launchJson = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'plan398_runner_launch.$pid.'
+      '${DateTime.now().toUtc().microsecondsSinceEpoch}.private-temp',
+    );
+    try {
+      await launchJson.create(exclusive: true);
+      final chmod = await Process.run('chmod', <String>[
+        '600',
+        launchJson.path,
+      ]);
+      final before = await launchJson.stat();
+      if (chmod.exitCode != 0 ||
+          (before.mode & 0x1ff) != 0x180 ||
+          before.size != 0) {
+        throw _CaptureFailure.environment(
+          stage,
+          'plan398_runner_launch_private_output_rejected',
+        );
+      }
+      await _run('xcrun', <String>[
+        'devicectl',
+        'device',
+        'process',
+        'launch',
+        '--device',
+        recipientId,
+        '--terminate-existing',
+        '--json-output',
+        launchJson.path,
+        _iosCapture['bundleId']! as String,
+        '--timeout',
+        '60',
+      ], environmentFailure: true);
+      final after = await launchJson.stat();
+      if ((after.mode & 0x1ff) != 0x180 ||
+          after.size <= 0 ||
+          after.size > 1024 * 1024) {
+        throw _CaptureFailure.capture(
+          stage,
+          'plan398_runner_launch_json_invalid_size_or_mode',
+        );
+      }
+      final runnerPid = plan398RunnerProcessIdFromDevicectlLaunchJson(
+        jsonDecode(await launchJson.readAsString()),
+      );
+      if (runnerPid == null) {
+        throw _CaptureFailure.capture(
+          stage,
+          'plan398_runner_launch_pid_not_uniquely_bound',
+        );
+      }
+      _plan398RunnerProcessId = runnerPid;
+    } finally {
+      if (await launchJson.exists()) await launchJson.delete();
+    }
   }
 
   Future<void> _stageIosAppFile(String name, String contents) async {
@@ -2663,6 +4159,69 @@ class _Plan257Capture {
       return null;
     } finally {
       if (directory.existsSync()) await directory.delete(recursive: true);
+    }
+  }
+
+  Future<String> _sha256IosAppFile(String name) async {
+    final directory = await Directory.systemTemp.createTemp(
+      'plan398_ios_installed_state_',
+    );
+    try {
+      final direct = File('${directory.path}${Platform.pathSeparator}$name');
+      var copied = false;
+      if (!_preferIosAfcFileChannel) {
+        await _mountIosDeveloperDiskImageForCoreDevice();
+        final output = await _run('xcrun', <String>[
+          'devicectl',
+          'device',
+          'copy',
+          'from',
+          '--device',
+          recipientId,
+          '--source',
+          'Documents/$name',
+          '--destination',
+          directory.path,
+          '--domain-type',
+          'appDataContainer',
+          '--domain-identifier',
+          _iosCapture['bundleId']! as String,
+          '--timeout',
+          '15',
+        ], allowFail: true);
+        copied = output.exitCode == 0;
+        _preferIosAfcFileChannel = !copied;
+      }
+      if (!copied) {
+        copied = await _copyIosAppFileFromContainerWithAfc(name, direct);
+      }
+      if (!copied) {
+        throw _CaptureFailure.configuration(
+          stage,
+          'plan398_existing_state_ios_identity_db_missing',
+        );
+      }
+      File? pulled;
+      if (await direct.exists()) {
+        pulled = direct;
+      } else {
+        for (final file
+            in directory.listSync(recursive: true).whereType<File>()) {
+          if (file.uri.pathSegments.last == name) {
+            pulled = file;
+            break;
+          }
+        }
+      }
+      if (pulled == null || await pulled.length() == 0) {
+        throw _CaptureFailure.configuration(
+          stage,
+          'plan398_existing_state_ios_identity_db_empty',
+        );
+      }
+      return sha256.convert(await pulled.readAsBytes()).toString();
+    } finally {
+      if (await directory.exists()) await directory.delete(recursive: true);
     }
   }
 
@@ -2834,12 +4393,84 @@ class _Plan257Capture {
     return int.tryParse(matches.last.group(1)!);
   }
 
+  Future<(String, Map<String, Object?>)> _waitForPlan398SetupReadiness() async {
+    final deadline = DateTime.now().add(const Duration(minutes: 3));
+    while (DateTime.now().isBefore(deadline)) {
+      final raw = await _readIosAppFile(
+        groupReactionNotificationIosSetupReadinessFileName,
+      );
+      if (raw != null) {
+        Map<String, Object?>? receipt;
+        try {
+          receipt = Map<String, Object?>.from(jsonDecode(raw) as Map);
+        } on Object {
+          // A stale or interrupted prior-launch file has no current attempt
+          // binding. Keep waiting for this launch's atomic replacement.
+        }
+        if (receipt != null &&
+            receipt['launchAttemptSha256'] ==
+                _plan398SetupReadinessAttemptSha256) {
+          final disposition =
+              classifyGroupReactionNotificationIosSetupReadinessReceipt(
+                receipt,
+                expectedLaunchAttemptSha256:
+                    _plan398SetupReadinessAttemptSha256,
+              );
+          if (disposition ==
+              GroupReactionNotificationIosSetupReadinessDisposition.ready) {
+            return (raw, receipt);
+          }
+          if (disposition ==
+              GroupReactionNotificationIosSetupReadinessDisposition.invalid) {
+            throw _CaptureFailure.capture(
+              stage,
+              'plan398_ios_setup_readiness_receipt_invalid',
+            );
+          }
+          throw _CaptureFailure.capture(
+            stage,
+            'plan398_ios_setup_readiness_${disposition.name}',
+          );
+        }
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    throw _CaptureFailure.capture(
+      stage,
+      'plan398_ios_setup_readiness_native_entry_failure',
+    );
+  }
+
   Future<void> _collectIosIdentity(_Party party) async {
+    (String, Map<String, Object?>)? setupReadiness;
+    if (_isPlan397) {
+      setupReadiness = await _waitForPlan398SetupReadiness();
+    }
     final raw = await _waitForValue<String>(
       'physical iOS identity export for ${party.role}',
       const Duration(minutes: 3),
       () => _readIosAppFile('intro_e2e_identity.json'),
     );
+    if (setupReadiness case (final receiptRaw, final receipt)) {
+      final identityExportSha256 = sha256.convert(utf8.encode(raw)).toString();
+      final disposition =
+          classifyGroupReactionNotificationIosSetupReadinessReceipt(
+            receipt,
+            expectedLaunchAttemptSha256: _plan398SetupReadinessAttemptSha256,
+            expectedIdentityExportSha256: identityExportSha256,
+          );
+      if (disposition !=
+          GroupReactionNotificationIosSetupReadinessDisposition.ready) {
+        throw _CaptureFailure.capture(
+          stage,
+          'plan398_ios_setup_readiness_identity_binding_invalid',
+        );
+      }
+      _plan398SetupReadinessReceiptSha256 = sha256
+          .convert(utf8.encode(receiptRaw))
+          .toString();
+      _plan398SetupIdentityExportSha256 = identityExportSha256;
+    }
     try {
       final exported = Map<String, dynamic>.from(jsonDecode(raw) as Map);
       party.qrPayload = exported['qrPayload'] as String;
@@ -2991,6 +4622,10 @@ class _Plan257Capture {
       uiTargetBundleIdentifier: _iosCapture['bundleId']! as String,
       uiEnvironment: <String, String>{
         'MKNOON_APNS_TAP_APP_BUNDLE_ID': _iosCapture['bundleId']! as String,
+        'MKNOON_397_AUTO_SETUP_USERNAME': recipient.username,
+        'MKNOON_398_SETUP_READINESS_ATTEMPT': _plan398SetupReadinessAttempt,
+        'MKNOON_398_SETUP_ENTRY_PROFILE_ID':
+            groupReactionNotificationIosSetupBuildProfile,
         'MKNOON_APNS_TAP_CONFIG_FILE': tapConfig.path,
         'MKNOON_APNS_TAP_EXPECTED_TITLE': _groupName,
         'MKNOON_257_EXPECTED_GROUP_NAME': _groupName,
@@ -3047,6 +4682,10 @@ class _Plan257Capture {
     final environment = <String, String>{
       if (_isPlan397) 'SIMS_CHILD_BUILDS_FORBIDDEN': '1',
       'MKNOON_APNS_TAP_APP_BUNDLE_ID': _iosCapture['bundleId']! as String,
+      'MKNOON_397_AUTO_SETUP_USERNAME': recipient.username,
+      'MKNOON_398_SETUP_READINESS_ATTEMPT': _plan398SetupReadinessAttempt,
+      'MKNOON_398_SETUP_ENTRY_PROFILE_ID':
+          groupReactionNotificationIosSetupBuildProfile,
       'MKNOON_APNS_TAP_CONFIG_FILE': tapConfig.path,
       'MKNOON_APNS_TAP_EXPECTED_TITLE': _groupName,
       'MKNOON_257_EXPECTED_GROUP_NAME': _groupName,
@@ -3062,6 +4701,8 @@ class _Plan257Capture {
         'MKNOON_APNS_TAP_EXPECTED_BODY': value,
     };
     final setupSelector =
+        selector == _iosLocalNetworkPermissionProofSelector ||
+        selector == _iosLocalNetworkCampaignSelector ||
         selector == _iosFixtureCreateSelector ||
         selector == _iosFixtureAuthorSelector;
     final permitsAutomationWarmRetry =
@@ -3153,6 +4794,86 @@ class _Plan257Capture {
 
   Future<void> _startIosSystemLog() async {
     if (_iosSystemLogProcess != null) return;
+    if (traceOnlyExistingState) {
+      final rawLogs = Plan398TraceRawLogCapture(
+        outputDirectory: artifactDirectory,
+      );
+      await rawLogs.prepare();
+      final connected = Completer<void>();
+      try {
+        final process = await Process.start(_iosSystemLogExecutable, <String>[
+          '--udid',
+          recipientId,
+          '--no-colors',
+        ]);
+        _iosSystemLogProcess = process;
+        _plan398TraceRawLogs = rawLogs;
+        _plan398IosLoggerProcessId = process.pid;
+        _plan398IosLoggerStopDisposition = 'graceful';
+        unawaited(
+          process.exitCode.then<void>((exitCode) {
+            _plan398IosLoggerObservedExitCode ??= exitCode;
+            if (!connected.isCompleted) {
+              connected.completeError(
+                StateError(
+                  'idevicesyslog exited $exitCode before initial connection',
+                ),
+              );
+            }
+          }),
+        );
+
+        void markConnected() {
+          _plan398IosLoggerConnected = true;
+          if (!connected.isCompleted) connected.complete();
+        }
+
+        Future<void> retainPumpError(Future<void> pump) async {
+          try {
+            await pump;
+          } on Object catch (error, stackTrace) {
+            if (error is Plan398TraceLogOverflow) {
+              _plan398TraceOverflowError ??= error;
+            } else if (error is FileSystemException) {
+              _plan398TraceCleanupError ??= error;
+            } else {
+              _plan398TraceDecoderError ??= error;
+            }
+            if (!connected.isCompleted) {
+              connected.completeError(error, stackTrace);
+            }
+          }
+        }
+
+        _iosSystemLogStdoutDone = retainPumpError(
+          rawLogs.consumeStdout(
+            process.stdout,
+            _iosSystemLogStdout,
+            onFirstRawChunk: markConnected,
+            onRawChunk: _plan398IosLoggerStdoutDisconnectObserver.addRawChunk,
+          ),
+        );
+        _iosSystemLogStderrDone = retainPumpError(
+          rawLogs.consumeStderr(
+            process.stderr,
+            _iosSystemLogStderr,
+            onRawChunk: _plan398IosLoggerStderrDisconnectObserver.addRawChunk,
+          ),
+        );
+        await connected.future.timeout(const Duration(seconds: 15));
+      } on Object catch (error) {
+        if (_iosSystemLogProcess == null) {
+          _plan398TraceRawLogs = null;
+          await rawLogs.disposeTemps();
+        }
+        if (error is _CaptureFailure) rethrow;
+        throw _CaptureFailure.environment(
+          stage,
+          'plan398_ios_system_log_start_or_connect_failed_${error.runtimeType}',
+        );
+      }
+      return;
+    }
     _iosSystemLogProcess = await Process.start(
       _iosSystemLogExecutable,
       <String>['--udid', recipientId, '--no-colors'],
@@ -3165,29 +4886,124 @@ class _Plan257Capture {
         .forEach(_iosSystemLogStderr.write);
   }
 
+  Future<void> _requirePlan398IosLoggerLive(String boundary) async {
+    if (!traceOnlyExistingState) return;
+    // Let completed stream and process-exit futures publish their state before
+    // authorizing an irreversible claim/readiness/send boundary.
+    await Future<void>.delayed(Duration.zero);
+    final failure = _currentPlan398IosLoggerLivenessFailure();
+    if (failure == null) return;
+    throw _CaptureFailure.capture(
+      stage,
+      'plan398_ios_system_log_'
+      '${_plan398IosLoggerLivenessFailureCode(failure)}_before_$boundary',
+    );
+  }
+
+  Plan398IosLoggerLivenessFailure? _currentPlan398IosLoggerLivenessFailure() =>
+      classifyPlan398IosLoggerLiveness(
+        loggerStarted: _plan398IosLoggerProcessId != null,
+        loggerConnected: _plan398IosLoggerConnected,
+        observedExitCode: _plan398IosLoggerObservedExitCode,
+        stdoutLog: _plan398IosLoggerStdoutDisconnectObserver.observed
+            ? '[disconnected]'
+            : '',
+        stderrLog: _plan398IosLoggerStderrDisconnectObserver.observed
+            ? '[disconnected]'
+            : '',
+      );
+
+  String _plan398IosLoggerLivenessFailureCode(
+    Plan398IosLoggerLivenessFailure failure,
+  ) => switch (failure) {
+    Plan398IosLoggerLivenessFailure.notStarted => 'not_started',
+    Plan398IosLoggerLivenessFailure.notConnected => 'not_connected',
+    Plan398IosLoggerLivenessFailure.disconnected => 'disconnected',
+    Plan398IosLoggerLivenessFailure.exited => 'exited',
+  };
+
   Future<void> _stopIosSystemLog() async {
     final process = _iosSystemLogProcess;
-    if (process == null) return;
-    process.kill();
-    final exitCode = await process.exitCode.timeout(
-      const Duration(seconds: 10),
-      onTimeout: () {
-        process.kill(ProcessSignal.sigkill);
-        return -1;
-      },
-    );
-    await Future.wait(<Future<void>>[
-      ?_iosSystemLogStdoutDone,
-      ?_iosSystemLogStderrDone,
-    ]);
-    _iosSystemLog =
-        '${_iosSystemLogStdout.toString()}\n${_iosSystemLogStderr.toString()}';
-    _recordCommandAtStage('ios_system_log', _iosSystemLogExecutable, <String>[
-      '--udid',
-      recipientId,
-      '--no-colors',
-    ], exitCode);
-    _iosSystemLogProcess = null;
+    if (!traceOnlyExistingState) {
+      if (process == null) return;
+      process.kill();
+      final exitCode = await process.exitCode.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          process.kill(ProcessSignal.sigkill);
+          return -1;
+        },
+      );
+      await Future.wait(<Future<void>>[
+        ?_iosSystemLogStdoutDone,
+        ?_iosSystemLogStderrDone,
+      ]);
+      _iosSystemLog =
+          '${_iosSystemLogStdout.toString()}\n${_iosSystemLogStderr.toString()}';
+      _recordCommandAtStage('ios_system_log', _iosSystemLogExecutable, <String>[
+        '--udid',
+        recipientId,
+        '--no-colors',
+      ], exitCode);
+      _iosSystemLogProcess = null;
+      return;
+    }
+
+    var exitCode = -1;
+    if (process != null) {
+      _iosSystemLogProcess = null;
+      final killRequested = process.kill();
+      if (!killRequested) {
+        _plan398IosLoggerStopDisposition = 'already_exited';
+      }
+      try {
+        exitCode = await process.exitCode.timeout(
+          const Duration(seconds: 10),
+          onTimeout: () async {
+            _plan398IosLoggerStopDisposition = 'forced_kill';
+            _plan398LoggerForcedTimeout = true;
+            process.kill(ProcessSignal.sigkill);
+            return process.exitCode.timeout(
+              const Duration(seconds: 5),
+              onTimeout: () => -1,
+            );
+          },
+        );
+      } on Object catch (error) {
+        _plan398TraceCleanupError ??= error;
+      }
+      try {
+        await Future.wait(<Future<void>>[
+          ?_iosSystemLogStdoutDone,
+          ?_iosSystemLogStderrDone,
+        ]).timeout(const Duration(seconds: 10));
+      } on Object catch (error) {
+        _plan398TraceCleanupError ??= error;
+      }
+      _iosSystemLog =
+          '${_iosSystemLogStdout.toString()}\n${_iosSystemLogStderr.toString()}';
+      _recordCommandAtStage('ios_system_log', _iosSystemLogExecutable, <String>[
+        '--udid',
+        recipientId,
+        '--no-colors',
+      ], exitCode);
+    }
+    if (process != null) {
+      _plan398IosLoggerExitCode = exitCode;
+    }
+    final rawLogs = _plan398TraceRawLogs;
+    if (rawLogs != null && _plan398TraceRawLogCommit == null) {
+      try {
+        _plan398TraceRawLogCommit = await rawLogs.closeAndCommit();
+      } on Object catch (error) {
+        _plan398TraceCleanupError ??= error;
+        try {
+          await rawLogs.disposeTemps();
+        } on Object catch (cleanupError) {
+          _plan398TraceCleanupError ??= cleanupError;
+        }
+      }
+    }
   }
 
   Future<void> _runIosReactionLifecycle(File tapConfig) async {
@@ -6352,7 +8168,17 @@ class _Plan257Capture {
     );
   }
 
-  Future<void> _sendGroupText(String deviceId, String marker) async {
+  Future<void> _sendGroupText(
+    String deviceId,
+    String marker, {
+    int maximumRecoveryPendingOutcomes = 8,
+  }) async {
+    if (maximumRecoveryPendingOutcomes <= 0) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'group_send_recovery_attempt_bound_invalid',
+      );
+    }
     final markerEntry = await enterGroupComposeMarkerOnce(
       marker: marker,
       readUiDump: () => _uiDump(deviceId),
@@ -6382,7 +8208,6 @@ class _Plan257Capture {
     // so a generic `marker is visible` wait would falsely report a commit.
     // Every re-tap below is therefore gated by a newly observed, explicit
     // recovery-pending terminal outcome; an ambiguous timeout is never retried.
-    const maxRecoveryPendingOutcomes = 8;
     var recoveryPendingOutcomes = 0;
     while (true) {
       final typedEditor = await _waitForValue<(int, int, int, int)>(
@@ -6458,17 +8283,21 @@ class _Plan257Capture {
       }
 
       recoveryPendingOutcomes += 1;
-      if (recoveryPendingOutcomes >= maxRecoveryPendingOutcomes) {
+      if (recoveryPendingOutcomes >= maximumRecoveryPendingOutcomes) {
         throw _CaptureFailure.capture(
           stage,
           'group_send_recovery_remained_pending_after_'
-          '${maxRecoveryPendingOutcomes}_bounded_attempts_on_$deviceId',
+          '${maximumRecoveryPendingOutcomes}_bounded_attempts_on_$deviceId',
         );
       }
       await Future<void>.delayed(
         Duration(seconds: min(recoveryPendingOutcomes, 4)),
       );
     }
+  }
+
+  Future<void> _sendGroupTextOneTap(String deviceId, String marker) async {
+    await _sendGroupText(deviceId, marker, maximumRecoveryPendingOutcomes: 1);
   }
 
   /// Writes this send's identity into the device's own log.
@@ -6953,6 +8782,7 @@ class _Plan257Capture {
           (line) =>
               line.startsWith(relayGroupReactionWakeCounter) ||
               line.startsWith(_relayGroupContentWakeCounter) ||
+              line.startsWith(relayGroupMessageDispatchCounter) ||
               line.startsWith(relayPushSentCounter) ||
               line.startsWith(relayMetricsLivenessSentinel),
         )
@@ -7446,8 +9276,26 @@ class _Plan257Capture {
       'secondMarker': _secondMarker,
       'targetMarker': _targetMarker,
     };
-    await _deleteAppFile(deviceId, 'intro_e2e_result.json');
-    await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+    if (traceOnlyExistingState) {
+      final existingConfig = await _readAppFile(
+        deviceId,
+        'intro_e2e_config.json',
+      );
+      final existingResult = await _readAppFile(
+        deviceId,
+        'intro_e2e_result.json',
+      );
+      if (existingConfig != null || existingResult != null) {
+        throw _CaptureFailure.configuration(
+          stage,
+          'plan398_existing_state_probe_files_already_present',
+        );
+      }
+      _plan398ExistingStateProbeFilesOwned = true;
+    } else {
+      await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+      await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+    }
     await _writeAppFile(deviceId, 'intro_e2e_config.json', jsonEncode(request));
     // Starting an already installed candidate is build-free and gives the
     // production E2E poller a deterministic foreground opportunity. It does
@@ -7491,6 +9339,9 @@ class _Plan257Capture {
     } finally {
       await _deleteAppFile(deviceId, 'intro_e2e_config.json');
       await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+      if (traceOnlyExistingState) {
+        _plan398ExistingStateProbeFilesOwned = false;
+      }
     }
   }
 
@@ -8541,7 +10392,35 @@ class _Plan257Capture {
       '${artifactDirectory.path}${Platform.pathSeparator}'
       'device_logcat_${_deviceLogSlug(deviceId)}.log',
     );
-    if (await file.exists()) await file.delete();
+    if (traceOnlyExistingState) {
+      await file.parent.create(recursive: true);
+      final type = await FileSystemEntity.type(file.path, followLinks: false);
+      if (type == FileSystemEntityType.notFound) {
+        await file.create(exclusive: true);
+      } else if (type != FileSystemEntityType.file) {
+        throw _CaptureFailure.configuration(
+          stage,
+          'plan398_device_log_no_follow_shape_rejected_on_$deviceId',
+        );
+      }
+      final chmod = await Process.run('chmod', <String>['600', file.path]);
+      final metadata = await file.stat();
+      if (chmod.exitCode != 0 || (metadata.mode & 0x1ff) != 0x180) {
+        throw _CaptureFailure.configuration(
+          stage,
+          'plan398_device_log_private_mode_rejected_on_$deviceId',
+        );
+      }
+      final handle = await file.open(mode: FileMode.write);
+      try {
+        await handle.flush();
+      } finally {
+        await handle.close();
+      }
+      await fsyncPlan398Directory(file.parent);
+    } else if (await file.exists()) {
+      await file.delete();
+    }
     // `adb` writes the file itself through a shell redirect, so Dart never owns
     // the byte stream. Piping `process.stdout` into an `IOSink` is the obvious
     // implementation and is WRONG under load: `IOSink.flush` sets `_isBound`,
@@ -8595,7 +10474,25 @@ class _Plan257Capture {
   Future<void> _stopDeviceLogStreams() async {
     for (final deviceId in _deviceLogProcesses.keys.toList(growable: false)) {
       final process = _deviceLogProcesses.remove(deviceId);
-      process?.kill();
+      if (process != null) {
+        process.kill();
+        await process.exitCode.timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            process.kill(ProcessSignal.sigkill);
+            return -1;
+          },
+        );
+      }
+      final file = _deviceLogFiles[deviceId];
+      if (file != null && await file.exists()) {
+        final handle = await file.open(mode: FileMode.append);
+        try {
+          await handle.flush();
+        } finally {
+          await handle.close();
+        }
+      }
     }
   }
 
@@ -8783,7 +10680,77 @@ class _Plan257Capture {
       'commands': _commandJournal,
     });
     _rejectSensitivePersistence(encoded, 'command journal');
-    await _commandJournalFile.writeAsString(encoded, flush: true);
+    await _commandJournalFile.parent.create(recursive: true);
+    final existingType = await FileSystemEntity.type(
+      _commandJournalFile.path,
+      followLinks: false,
+    );
+    if (existingType == FileSystemEntityType.notFound) {
+      await _commandJournalFile.create(exclusive: true);
+    } else if (existingType != FileSystemEntityType.file) {
+      throw const FileSystemException(
+        'command journal no-follow file shape rejected',
+      );
+    }
+    final chmod = await Process.run('chmod', <String>[
+      '600',
+      _commandJournalFile.path,
+    ]);
+    final metadata = await _commandJournalFile.stat();
+    if (chmod.exitCode != 0 || (metadata.mode & 0x1ff) != 0x180) {
+      throw const FileSystemException('command journal private mode rejected');
+    }
+    final handle = await _commandJournalFile.open(mode: FileMode.write);
+    try {
+      await handle.writeFrom(utf8.encode(encoded));
+      await handle.flush();
+    } finally {
+      await handle.close();
+    }
+    await fsyncPlan398Directory(_commandJournalFile.parent);
+  }
+
+  Future<Plan398TraceLogFileReference> _finalizePlan398PrivateReference({
+    required File file,
+    required String expectedFileName,
+    required int maximumLengthBytes,
+  }) async {
+    if (file.uri.pathSegments.last != expectedFileName) {
+      throw const FileSystemException(
+        'Plan 398 final evidence filename rejected',
+      );
+    }
+    final type = await FileSystemEntity.type(file.path, followLinks: false);
+    if (type != FileSystemEntityType.file) {
+      throw FileSystemException(
+        'Plan 398 final evidence is missing or symlinked',
+        file.path,
+      );
+    }
+    final chmod = await Process.run('chmod', <String>['600', file.path]);
+    final handle = await file.open(mode: FileMode.append);
+    try {
+      await handle.flush();
+    } finally {
+      await handle.close();
+    }
+    final metadata = await file.stat();
+    if (chmod.exitCode != 0 ||
+        (metadata.mode & 0x1ff) != 0x180 ||
+        metadata.size <= 0 ||
+        metadata.size > maximumLengthBytes) {
+      throw FileSystemException(
+        'Plan 398 final evidence mode or bound rejected',
+        file.path,
+      );
+    }
+    final bytes = await file.readAsBytes();
+    await fsyncPlan398Directory(file.parent);
+    return Plan398TraceLogFileReference(
+      file: file,
+      lengthBytes: bytes.length,
+      sha256: sha256.convert(bytes).toString(),
+    );
   }
 
   Future<void> _waitFor(
@@ -8863,6 +10830,17 @@ class _Plan257Capture {
     ]) {
       if (peer.isNotEmpty) redacted = redacted.replaceAll(peer, '[peer]');
     }
+    if (traceOnlyExistingState) {
+      for (final transient in <String>[
+        existingGroupName,
+        existingTargetMarker,
+        _firstMarker,
+      ]) {
+        if (transient.isNotEmpty) {
+          redacted = redacted.replaceAll(transient, '[trace-value]');
+        }
+      }
+    }
     redacted = redacted.replaceAll(RegExp(r'12D3Koo[A-Za-z0-9]+'), '[peer]');
     return redacted;
   }
@@ -8915,6 +10893,14 @@ String? _valueFor(List<String> args, String name) {
   return null;
 }
 
+String _requiredValue(List<String> args, String name) =>
+    _valueFor(args, name) ?? _usage('Missing required $name.');
+
+bool _isPlan398ExistingStateToken(String value, {required int maximumLength}) =>
+    value.isNotEmpty &&
+    value.length <= maximumLength &&
+    RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(value);
+
 Never _usage([String? error]) {
   if (error != null) stderr.writeln(error);
   stderr.writeln(
@@ -8924,6 +10910,8 @@ Never _usage([String? error]) {
     '--recipient <explicit-id> --artifact-dir <dir> '
     '--staging-manifest <redacted-json> [--relay-target <ssh-target>] '
     '[--relay-key <file>] [--service-account <file>] '
+    '[--trace-only-existing-state [--manual-send-existing-state] '
+    '--group-name <name> --existing-target-marker <marker>] '
     '[--prebuilt-android-apk <central-apk> --no-child-builds] [--verbose] '
     '[--keep-build-artifacts]',
   );

@@ -33,6 +33,7 @@ mkdir -p \
   "$tmp_dir/go-mknoon/bridge" \
   "$tmp_dir/android/app/libs" \
   "$tmp_dir/ios/Runner/GoMknoon.xcframework/ios-arm64_x86_64-simulator/GoMknoon.framework/Headers" \
+  "$tmp_dir/ios/Runner/GoMknoonNSE.xcframework/ios-arm64_x86_64-simulator/GoMknoonNSE.framework/Headers" \
   "$tmp_dir/bin"
 
 cp scripts/ensure_go_android_bindings.sh "$tmp_dir/scripts/"
@@ -62,6 +63,11 @@ printf '%s\n' \
   '    mkdir -p "$headers"' \
   '    printf "rebuilt ios\n" >"$framework/Info.plist"' \
   '    printf "header\n" >"$headers/Bridge.objc.h"' \
+  '    nse_framework="$TEST_ROOT/ios/Runner/GoMknoonNSE.xcframework"' \
+  '    nse_headers="$nse_framework/ios-arm64_x86_64-simulator/GoMknoonNSE.framework/Headers"' \
+  '    mkdir -p "$nse_headers"' \
+  '    printf "rebuilt ios nse\n" >"$nse_framework/Info.plist"' \
+  '    printf "nse header\n" >"$nse_headers/Bridge.objc.h"' \
   '    ;;' \
   '  *) exit 64 ;;' \
   'esac' \
@@ -106,6 +112,8 @@ go_mod="$tmp_dir/go-mknoon/go.mod"
 aar="$tmp_dir/android/app/libs/GoMknoon.aar"
 framework="$tmp_dir/ios/Runner/GoMknoon.xcframework"
 header="$framework/ios-arm64_x86_64-simulator/GoMknoon.framework/Headers/Bridge.objc.h"
+nse_framework="$tmp_dir/ios/Runner/GoMknoonNSE.xcframework"
+nse_header="$nse_framework/ios-arm64_x86_64-simulator/GoMknoonNSE.framework/Headers/Bridge.objc.h"
 printf 'package bridge\n' >"$production"
 printf 'package bridge\n' >"$test_source"
 printf 'module example.test/app\n' >"$go_mod"
@@ -114,6 +122,8 @@ printf 'android:\n\t@true\n' >"$tmp_dir/go-mknoon/Makefile"
 printf 'original android\n' >"$aar"
 printf 'original ios\n' >"$framework/Info.plist"
 printf 'header\n' >"$header"
+printf 'original ios nse\n' >"$nse_framework/Info.plist"
+printf 'nse header\n' >"$nse_header"
 ndk="$tmp_dir/android-sdk/ndk/28.2.13676358"
 mkdir -p "$ndk"
 printf 'Pkg.Revision = 28.2.13676358\n' >"$ndk/source.properties"
@@ -156,7 +166,9 @@ run_ios
 # Content changes invalidate even when their mtimes remain older than artifacts.
 printf 'module example.test/changed\n' >"$go_mod"
 touch -t 202001010000 "$go_mod"
-touch -t 203001010000 "$aar" "$framework/Info.plist" "$header"
+touch -t 203001010000 \
+  "$aar" "$framework/Info.plist" "$header" \
+  "$nse_framework/Info.plist" "$nse_header"
 run_android
 run_ios
 [ "$(grep -c '^android$' "$build_log")" -eq 1 ] ||

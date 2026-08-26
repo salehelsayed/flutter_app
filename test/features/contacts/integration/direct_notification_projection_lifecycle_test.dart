@@ -297,6 +297,114 @@ void main() {
       );
     },
   );
+
+  test(
+    'authority backfill preserves and cannot resurrect a SIMS fixture',
+    () async {
+      final store = _MemorySecureKeyStore();
+      final projection = DirectReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(accountPeerId: 'peer-local');
+      final exactDigest = 'a' * 64;
+      final unrelatedDigest = 'b' * 64;
+      expect(
+        await projection.insertSimsFixtureContactIfAbsent(
+          peerId: 'peer-sims',
+          username: 'Encrypted fixture title',
+          fixtureDigest: exactDigest,
+        ),
+        isTrue,
+      );
+
+      final storedDocument =
+          jsonDecode(store.values[sharedDirectReactionContactsKey]!)
+              as Map<String, dynamic>;
+      final storedContacts = storedDocument['contacts'] as Map<String, dynamic>;
+      storedContacts.addAll(<String, Object?>{
+        'peer-unrelated': <String, Object?>{
+          'username': 'Ordinary contact',
+          'blocked': false,
+          'archived': false,
+          'authorizedTransportPeerIds': <String>[],
+          'simsFixtureDigest': unrelatedDigest,
+        },
+        'peer-non-string': <String, Object?>{
+          'username': 'Non-string marker',
+          'blocked': false,
+          'archived': false,
+          'authorizedTransportPeerIds': <String>[],
+          'simsFixtureDigest': <String>[exactDigest],
+        },
+        'peer-malformed': <String, Object?>{
+          'username': 'Malformed marker',
+          'blocked': false,
+          'archived': false,
+          'authorizedTransportPeerIds': <String>[],
+          'simsFixtureDigest': 'not-a-sha256',
+        },
+      });
+      store.values[sharedDirectReactionContactsKey] = jsonEncode(
+        storedDocument,
+      );
+
+      final staleBackfill = <ContactModel>[
+        ContactModel(
+          peerId: 'peer-sims',
+          publicKey: 'mknoon-sims-projection-only',
+          rendezvous: '/mknoon/sims/projection-only',
+          username: 'Encrypted fixture title',
+          signature: 'mknoon-sims-ios:$exactDigest',
+          scannedAt: '1970-01-01T00:00:00.000Z',
+        ),
+        _contactForPeer('peer-unrelated', 'Ordinary contact'),
+        _contactForPeer('peer-non-string', 'Non-string marker'),
+        _contactForPeer('peer-malformed', 'Malformed marker'),
+      ];
+      await projection.replaceContactsWithTransportAuthority(
+        contacts: staleBackfill,
+        authorizedTransportsByContact: const <String, Iterable<String>>{},
+      );
+
+      final afterBackfill = await projection.readContacts();
+      final preservedDigest = afterBackfill['peer-sims']?['simsFixtureDigest'];
+      for (final peerId in <String>[
+        'peer-unrelated',
+        'peer-non-string',
+        'peer-malformed',
+      ]) {
+        expect(
+          afterBackfill[peerId],
+          isNot(contains('simsFixtureDigest')),
+          reason: '$peerId must not inherit an untrusted fixture marker',
+        );
+      }
+
+      final cleanupSucceeded = await projection.removeSimsFixtureContactIfExact(
+        peerId: 'peer-sims',
+        username: 'Encrypted fixture title',
+        fixtureDigest: exactDigest,
+      );
+      await projection.replaceContactsWithTransportAuthority(
+        contacts: staleBackfill,
+        authorizedTransportsByContact: const <String, Iterable<String>>{},
+      );
+
+      expect(
+        preservedDigest,
+        exactDigest,
+        reason: 'authority replacement must preserve the exact fixture marker',
+      );
+      expect(
+        cleanupSucceeded,
+        isTrue,
+        reason: 'preserved fixture generation must remain exactly removable',
+      );
+      expect(
+        await projection.readContacts(),
+        isNot(contains('peer-sims')),
+        reason: 'a stale authority backfill must honor the cleanup tombstone',
+      );
+    },
+  );
 }
 
 ContactModel _contact({required String username}) => ContactModel(
@@ -305,6 +413,15 @@ ContactModel _contact({required String username}) => ContactModel(
   rendezvous: '/dns4/relay.example/tcp/443',
   username: username,
   signature: 'signature',
+  scannedAt: '2026-07-12T09:00:00.000Z',
+);
+
+ContactModel _contactForPeer(String peerId, String username) => ContactModel(
+  peerId: peerId,
+  publicKey: 'public-key-$peerId',
+  rendezvous: '/dns4/relay.example/tcp/443',
+  username: username,
+  signature: 'signature-$peerId',
   scannedAt: '2026-07-12T09:00:00.000Z',
 );
 

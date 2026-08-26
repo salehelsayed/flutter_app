@@ -118,6 +118,7 @@ Future<void> main() async {
         changed.projections[seed.senderPeerId]?['username'] == 'Real contact',
     'cleanup removed concurrently changed state',
   );
+
 }
 
 IosSenderProjectionRequest? _request({

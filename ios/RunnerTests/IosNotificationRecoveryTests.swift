@@ -6,6 +6,73 @@ import XCTest
 @testable import Runner
 
 final class IosNotificationRecoveryTests: XCTestCase {
+  func testTC396DeliveredInventoryClassifiesExactSources() throws {
+    let fixture = try loadTC396DirectSourceFixture()
+    XCTAssertEqual(fixture["version"] as? Int, 1)
+    let expectedPeerId = try XCTUnwrap(fixture["expectedPeerId"] as? String)
+    let expectedMessageId = try XCTUnwrap(
+      fixture["expectedMessageId"] as? String
+    )
+    let vectors = try XCTUnwrap(
+      fixture["vectors"] as? [[String: Any]]
+    )
+
+    for vector in vectors {
+      let name = try XCTUnwrap(vector["name"] as? String)
+      let origin = try XCTUnwrap(
+        IosDirectNotificationTriggerOrigin(
+          rawValue: try XCTUnwrap(vector["origin"] as? String)
+        )
+      )
+      let visibleContent = try XCTUnwrap(
+        vector["visibleContent"] as? String
+      )
+      let title: String
+      let body: String
+      switch visibleContent {
+      case "useful":
+        title = "Trusted sender"
+        body = "Trusted message"
+      case "sanitized":
+        title = ""
+        body = ""
+      case "partial":
+        title = "Trusted sender"
+        body = ""
+      default:
+        return XCTFail("unsupported visible-content vector: \(name)")
+      }
+      let source = IosDirectNotificationSourceClassifier.classify(
+        triggerOrigin: origin,
+        userInfo: try XCTUnwrap(
+          vector["userInfo"] as? [AnyHashable: Any]
+        ),
+        title: title,
+        body: body,
+        expectedPeerId: expectedPeerId,
+        expectedMessageId: expectedMessageId
+      )
+      XCTAssertEqual(
+        source.rawValue,
+        vector["expectedSource"] as? String,
+        name
+      )
+    }
+
+    let localTrigger = UNTimeIntervalNotificationTrigger(
+      timeInterval: 1,
+      repeats: false
+    )
+    XCTAssertEqual(
+      IosDirectNotificationSourceClassifier.triggerOrigin(for: localTrigger),
+      .local
+    )
+    XCTAssertEqual(
+      IosDirectNotificationSourceClassifier.triggerOrigin(for: nil),
+      .local
+    )
+  }
+
   func testTC397GroupDeliveredInventoryClassifiesExactSources() throws {
     func hash(_ value: String) -> String {
       SHA256.hash(data: Data(value.utf8))
@@ -160,7 +227,7 @@ final class IosNotificationRecoveryTests: XCTestCase {
     let providerOnly = inventory(remote: 1, local: 0)
     let transientSibling = inventory(remote: 1, local: 1)
     var samples = [providerOnly, providerOnly, providerOnly, transientSibling]
-      + Array(repeating: providerOnly, count: 12)
+      + Array(repeating: providerOnly, count: 13)
     let now = Date(timeIntervalSince1970: 1_900_000_000)
     var current = now
     var scheduled: [(TimeInterval, () -> Void)] = []
@@ -198,6 +265,547 @@ final class IosNotificationRecoveryTests: XCTestCase {
     XCTAssertTrue(outcomes[0].badSourceSeen)
     XCTAssertTrue(outcomes[0].duplicateSeen)
     XCTAssertEqual(outcomes[0].inventory, providerOnly)
+  }
+
+  func testTC398GroupInventoryFiltersBeforeBoundAndMapsClosedDiagnostics() {
+    func hash(_ value: String) -> String {
+      SHA256.hash(data: Data(value.utf8))
+        .map { String(format: "%02x", $0) }.joined()
+    }
+    let expected = IosGroupNotificationExpectedHashes(
+      phase: .message,
+      groupIdSha256: hash("group-398"),
+      eventIdSha256: hash("message-398"),
+      targetMessageIdSha256: hash("target-398"),
+      expectedCollapseIdentifierSha256: hash("collapse-398")
+    )
+    let dispatchCorrelation = "01234567-89ab-4cde-8fab-0123456789ab"
+    let claimedCollapseIdentifier = "collapse-398"
+    let providerMessageId = "0:1900000398%aabbccdd"
+    let unrelated = (0..<8).map { index in
+      IosGroupDeliveredNotificationProjection(
+        requestIdentifier: "unrelated-\(index)",
+        triggerOrigin: .remote,
+        userInfo: [
+          "type": "group_message",
+          "groupId": "group-398",
+          "message_id": "other-\(index)",
+        ],
+        title: "Other",
+        body: "Other"
+      )
+    }
+    let exact = IosGroupDeliveredNotificationProjection(
+      requestIdentifier: "collapse-398",
+      triggerOrigin: .remote,
+      userInfo: [
+        "type": "group_message",
+        "groupId": "group-398",
+        "message_id": "message-398",
+        "mknoon_group_message_dispatch_source": "group_inbox_v1",
+        "mknoon_group_message_dispatch_id": dispatchCorrelation,
+        "mknoon_group_message_collapse_id": claimedCollapseIdentifier,
+        "gcm.message_id": providerMessageId,
+      ],
+      title: "Plan 398",
+      body: "Exact message"
+    )
+
+    func remote(
+      _ identifier: String,
+      _ userInfo: [AnyHashable: Any],
+      title: String = "Plan 398",
+      body: String = "Exact message"
+    ) -> IosGroupDeliveredNotificationProjection {
+      IosGroupDeliveredNotificationProjection(
+        requestIdentifier: identifier,
+        triggerOrigin: .remote,
+        userInfo: userInfo,
+        title: title,
+        body: body
+      )
+    }
+    let missingType = remote("missing-type", [
+      "groupId": "group-398",
+      "message_id": "message-398",
+    ])
+    let wrongGroup = remote("wrong-group", [
+      "type": "group_message",
+      "groupId": "wrong-group",
+      "message_id": "message-398",
+    ])
+    let partial = remote(
+      "partial",
+      [
+        "type": "group_message",
+        "groupId": "group-398",
+        "message_id": "message-398",
+      ],
+      title: "Plan 398",
+      body: ""
+    )
+    let sanitized = remote(
+      "sanitized",
+      [
+        "type": "group_message",
+        "groupId": "group-398",
+        "message_id": "message-398",
+        "mknoon_group_message_dispatch_source": "unexpected",
+        "mknoon_group_message_dispatch_id":
+          "01234567-89AB-4CDE-8FAB-0123456789AB",
+        "mknoon_group_message_collapse_id": " collapse-398",
+        "gcm.message_id": String(repeating: "g", count: 161),
+      ],
+      title: "",
+      body: ""
+    )
+    let localEnvelopeData = try! JSONSerialization.data(withJSONObject: [
+      "v": 1,
+      "route": "group:group-398",
+      "conversation": "group:group-398",
+      "content": [
+        "v": 1,
+        "kind": "message",
+        "event": "message-398",
+        "generation": "generation-398",
+      ],
+    ])
+    let localPayload = "mknoon-conversation-card-v1:"
+      + localEnvelopeData.base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+    let local = IosGroupDeliveredNotificationProjection(
+      requestIdentifier: "local",
+      triggerOrigin: .local,
+      userInfo: ["NotificationId": 398, "payload": localPayload],
+      title: "Local",
+      body: "Local"
+    )
+
+    let inventory = IosGroupNotificationInventory.project(
+      unrelated + [exact, missingType, wrongGroup, partial, sanitized, local],
+      expected: expected
+    )
+
+    XCTAssertEqual(
+      inventory.matchingTotalCount,
+      6,
+      "TC-398-01 inventory binding"
+    )
+    XCTAssertEqual(inventory.matchingRemoteCount, 5)
+    XCTAssertEqual(inventory.matchingLocalCount, 1)
+    XCTAssertEqual(inventory.matchingUsefulProviderCount, 1)
+    XCTAssertEqual(inventory.matchingSanitizedProviderCount, 1)
+    XCTAssertEqual(inventory.matchingFlutterLocalCount, 1)
+    XCTAssertEqual(inventory.matchingUnknownCount, 3)
+    XCTAssertEqual(
+      Set(inventory.diagnosticRecords.map(\.reason)),
+      Set([
+        .exactUseful,
+        .exactSanitized,
+        .exactFlutterLocal,
+        .missingOrInvalidType,
+        .groupHashMismatch,
+        .partialContent,
+      ])
+    )
+    let canonical = inventory.diagnosticRecords.first {
+      $0.requestIdentifierSha256 == hash("collapse-398")
+    }
+    XCTAssertEqual(canonical?.triggerOrigin, .remote)
+    XCTAssertEqual(canonical?.sourceClass, .usefulProviderRich)
+    XCTAssertEqual(canonical?.reason, .exactUseful)
+    XCTAssertEqual(canonical?.dispatchClaim, .groupInbox)
+    XCTAssertEqual(canonical?.expectedCollapseIdentifierMatch, true)
+    XCTAssertEqual(
+      canonical?.dispatchCorrelationSha256,
+      hash(dispatchCorrelation)
+    )
+    XCTAssertEqual(
+      canonical?.claimedCollapseIdentifierSha256,
+      hash(claimedCollapseIdentifier)
+    )
+    XCTAssertEqual(canonical?.providerMessageIdSha256, hash(providerMessageId))
+    let canonicalJson = try! JSONSerialization.data(
+      withJSONObject: canonical!.jsonObject,
+      options: [.sortedKeys]
+    )
+    let canonicalText = String(data: canonicalJson, encoding: .utf8)!
+    XCTAssertFalse(canonicalText.contains(dispatchCorrelation))
+    XCTAssertFalse(canonicalText.contains(claimedCollapseIdentifier))
+    XCTAssertFalse(canonicalText.contains(providerMessageId))
+    let sanitizedRecord = inventory.diagnosticRecords.first {
+      $0.reason == .exactSanitized
+    }
+    XCTAssertEqual(
+      sanitizedRecord?.dispatchClaim,
+      .invalid
+    )
+    XCTAssertNil(sanitizedRecord?.dispatchCorrelationSha256)
+    XCTAssertNil(sanitizedRecord?.claimedCollapseIdentifierSha256)
+    XCTAssertNil(sanitizedRecord?.providerMessageIdSha256)
+
+    let collapseBoundary = String(repeating: "c", count: 64)
+    let providerBoundary = String(repeating: "p", count: 160)
+    let boundary = IosGroupNotificationSourceClassifier.provenanceHashes(
+      userInfo: [
+        "mknoon_group_message_dispatch_id": dispatchCorrelation,
+        "mknoon_group_message_collapse_id": collapseBoundary,
+        "gcm.message_id": providerBoundary,
+      ]
+    )
+    XCTAssertEqual(boundary.dispatchCorrelationSha256, hash(dispatchCorrelation))
+    XCTAssertEqual(
+      boundary.claimedCollapseIdentifierSha256,
+      hash(collapseBoundary)
+    )
+    XCTAssertEqual(boundary.providerMessageIdSha256, hash(providerBoundary))
+    let rejected = IosGroupNotificationSourceClassifier.provenanceHashes(
+      userInfo: [
+        "mknoon_group_message_dispatch_id":
+          "01234567-89AB-4CDE-8FAB-0123456789AB",
+        "mknoon_group_message_collapse_id": " collapse-398",
+        "gcm.message_id": String(repeating: "g", count: 161),
+      ]
+    )
+    XCTAssertNil(rejected.dispatchCorrelationSha256)
+    XCTAssertNil(rejected.claimedCollapseIdentifierSha256)
+    XCTAssertNil(rejected.providerMessageIdSha256)
+    XCTAssertEqual(
+      inventory.requestIdentifierSha256,
+      inventory.requestIdentifierSha256.sorted()
+    )
+
+    let nineExact = (0..<9).map { index in
+      remote("exact-\(index)", [
+        "type": "group_message",
+        "groupId": "group-398",
+        "message_id": "message-398",
+      ])
+    }
+    let overflow = IosGroupNotificationInventory.project(
+      nineExact,
+      expected: expected
+    )
+    XCTAssertEqual(overflow.diagnosticRecords.count, 8)
+    XCTAssertTrue(overflow.diagnosticOverflow)
+    XCTAssertEqual(overflow.matchingTotalCount, 8)
+
+    let conflict = IosGroupNotificationInventory.project(
+      [
+        remote("same-hash", [
+          "type": "group_message",
+          "groupId": "group-398",
+          "message_id": "message-398",
+          "mknoon_group_message_dispatch_id":
+            "00000000-0000-4000-8000-000000000001",
+        ]),
+        remote("same-hash", [
+          "type": "group_message",
+          "groupId": "group-398",
+          "message_id": "message-398",
+          "mknoon_group_message_dispatch_id":
+            "00000000-0000-4000-8000-000000000002",
+        ]),
+      ],
+      expected: expected
+    )
+    XCTAssertEqual(conflict.diagnosticRecords.count, 1)
+    XCTAssertTrue(conflict.diagnosticConflict)
+  }
+
+  func testTC398GroupObservationPassRequiresCanonicalRequestIdentifier() {
+    let expectedHash = String(repeating: "a", count: 64)
+
+    func outcome(
+      requestHash: String,
+      expectedCollapseIdentifierMatch: Bool
+    ) -> Runner.IosGroupNotificationFullHorizonOutcome {
+      let record = Runner.IosGroupNotificationDiagnosticRecord(
+        requestIdentifierSha256: requestHash,
+        triggerOrigin: .remote,
+        sourceClass: .usefulProviderRich,
+        reason: .exactUseful,
+        expectedCollapseIdentifierMatch: expectedCollapseIdentifierMatch,
+        dispatchClaim: .groupInbox
+      )
+      let inventory = Runner.IosGroupNotificationInventory(
+        matchingRemoteCount: 1,
+        matchingLocalCount: 0,
+        matchingUsefulProviderCount: 1,
+        matchingSanitizedProviderCount: 0,
+        matchingFlutterLocalCount: 0,
+        matchingUnknownCount: 0,
+        requestIdentifierSha256: [requestHash],
+        diagnosticRecords: [record]
+      )
+      return Runner.IosGroupNotificationFullHorizonOutcome(
+        inventory: inventory,
+        stableSampleCount:
+          Runner.IosGroupNotificationInventory.stableSampleTarget,
+        sampledThroughDeadline: true,
+        badSourceSeen: false,
+        duplicateSeen: false,
+        diagnosticRecords: [record],
+        diagnosticOverflow: false,
+        diagnosticConflict: false,
+        diagnosticComplete: true,
+        resultCode: .complete
+      )
+    }
+
+    XCTAssertTrue(
+      outcome(
+        requestHash: expectedHash,
+        expectedCollapseIdentifierMatch: true
+      ).isExactUsefulSource(
+        expectedCollapseIdentifierSha256: expectedHash
+      )
+    )
+    XCTAssertFalse(
+      outcome(
+        requestHash: String(repeating: "b", count: 64),
+        expectedCollapseIdentifierMatch: false
+      ).isExactUsefulSource(
+        expectedCollapseIdentifierSha256: expectedHash
+      ),
+      "a noncanonical request identifier must not publish PASS/ok"
+    )
+  }
+
+  func testTC398GroupFullHorizonLatchesTransientDiagnosticUnion() {
+    func record(
+      _ scalar: Character,
+      source: Runner.IosDirectNotificationSource
+    )
+      -> Runner.IosGroupNotificationDiagnosticRecord
+    {
+      let reason: Runner.IosGroupNotificationDiagnosticReason =
+        source == .unknown
+        ? .unclassifiedRemote
+        : .exactUseful
+      return Runner.IosGroupNotificationDiagnosticRecord(
+        requestIdentifierSha256: String(repeating: String(scalar), count: 64),
+        triggerOrigin: .remote,
+        sourceClass: source,
+        reason: reason,
+        expectedCollapseIdentifierMatch: scalar == "a",
+        dispatchClaim: .groupInbox
+      )
+    }
+    func inventory(_ records: [Runner.IosGroupNotificationDiagnosticRecord])
+      -> Runner.IosGroupNotificationInventory
+    {
+      Runner.IosGroupNotificationInventory(
+        matchingRemoteCount: records.count,
+        matchingLocalCount: 0,
+        matchingUsefulProviderCount:
+          records.filter { $0.sourceClass == .usefulProviderRich }.count,
+        matchingSanitizedProviderCount: 0,
+        matchingFlutterLocalCount: 0,
+        matchingUnknownCount:
+          records.filter { $0.sourceClass == .unknown }.count,
+        requestIdentifierSha256:
+          records.map(\.requestIdentifierSha256).sorted(),
+        diagnosticRecords: records.sorted {
+          $0.requestIdentifierSha256 < $1.requestIdentifierSha256
+        }
+      )
+    }
+    let canonical = record("a", source: .usefulProviderRich)
+    let transient = record("b", source: .unknown)
+    var samples = [
+      inventory([canonical, transient]),
+      inventory([canonical]),
+      inventory([canonical]),
+    ]
+    let now = Date(timeIntervalSince1970: 1_900_000_398)
+    var current = now
+    var scheduled: [(TimeInterval, () -> Void)] = []
+    var fetchCount = 0
+    var outcomes: [Runner.IosGroupNotificationFullHorizonOutcome] = []
+    let sampler = Runner.IosGroupNotificationFullHorizonSampler(
+      now: { current },
+      scheduleAfter: { delay, action in scheduled.append((delay, action)) },
+      fetchInventory: { callback in
+        fetchCount += 1
+        callback(samples.removeFirst())
+      }
+    )
+
+    sampler.start(
+      deadline: now.addingTimeInterval(8),
+      completion: { outcomes.append($0) }
+    )
+    let intervalIndex = try! XCTUnwrap(
+      scheduled.firstIndex(where: { $0.0 == 0.5 })
+    )
+    current = now.addingTimeInterval(0.5)
+    scheduled.remove(at: intervalIndex).1()
+    let deadlineIndex = try! XCTUnwrap(
+      scheduled.firstIndex(where: { $0.0 == 8 })
+    )
+    current = now.addingTimeInterval(8)
+    scheduled.remove(at: deadlineIndex).1()
+
+    XCTAssertEqual(fetchCount, 3, "TC-398-01 deadline horizon")
+    XCTAssertEqual(outcomes.count, 1)
+    XCTAssertTrue(outcomes[0].sampledThroughDeadline)
+    XCTAssertEqual(outcomes[0].inventory, inventory([canonical]))
+    XCTAssertEqual(
+      outcomes[0].diagnosticRecords.map(\.requestIdentifierSha256),
+      [canonical, transient].map(\.requestIdentifierSha256).sorted()
+    )
+    XCTAssertTrue(outcomes[0].badSourceSeen)
+    XCTAssertTrue(outcomes[0].duplicateSeen)
+    XCTAssertTrue(outcomes[0].diagnosticComplete)
+
+    var timeoutScheduled: [(TimeInterval, () -> Void)] = []
+    var timeoutFetchCount = 0
+    var timeoutOutcomes: [Runner.IosGroupNotificationFullHorizonOutcome] = []
+    let timeoutSampler = Runner.IosGroupNotificationFullHorizonSampler(
+      now: { now },
+      scheduleAfter: { delay, action in
+        timeoutScheduled.append((delay, action))
+      },
+      fetchInventory: { callback in
+        timeoutFetchCount += 1
+        if timeoutFetchCount == 1 { callback(inventory([canonical])) }
+      }
+    )
+    timeoutSampler.start(
+      deadline: now.addingTimeInterval(8),
+      completion: { timeoutOutcomes.append($0) }
+    )
+    let timeoutDeadline = try! XCTUnwrap(
+      timeoutScheduled.firstIndex(where: { $0.0 == 8 })
+    )
+    timeoutScheduled.remove(at: timeoutDeadline).1()
+    let watchdog = try! XCTUnwrap(
+      timeoutScheduled.lastIndex(where: { $0.0 == 0.5 })
+    )
+    timeoutScheduled.remove(at: watchdog).1()
+    XCTAssertEqual(timeoutOutcomes.count, 1)
+    XCTAssertFalse(timeoutOutcomes[0].sampledThroughDeadline)
+    XCTAssertFalse(timeoutOutcomes[0].diagnosticComplete)
+    XCTAssertEqual(timeoutOutcomes[0].resultCode, .unstableAtDeadline)
+  }
+
+  func testTC396SameRequestDuplicateIsDistinctFromDifferentRequestDuplicate()
+    throws
+  {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = IosNotificationRecoveryStore(directory: directory)
+    let orchestrator = IosNotificationRecoveryHandoffOrchestrator(store: store)
+    let identity = ordinaryIdentity(eventId: "message-42")
+
+    func handoff(_ requestIdentifier: String)
+      -> IosNotificationRecoveryHandoffDisposition
+    {
+      orchestrator.handoff(
+        requestIdentifier: requestIdentifier,
+        identity: identity,
+        content: UNMutableNotificationContent(),
+        prepareContent: { _ in },
+        contentHandler: { _ in }
+      )
+    }
+
+    XCTAssertEqual(handoff("collapse-42"), .unique)
+    XCTAssertEqual(handoff("collapse-42"), .sameRequestDuplicate)
+    XCTAssertEqual(handoff("different-request"), .duplicate)
+    XCTAssertEqual(store.desiredBadgeSnapshot()?.count, 1)
+
+    let identityFreeDirectory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: identityFreeDirectory) }
+    let identityFreeStore = IosNotificationRecoveryStore(
+      directory: identityFreeDirectory
+    )
+    XCTAssertEqual(identityFreeStore.claimPrepared(
+      requestIdentifier: "identity-free",
+      identity: ordinaryIdentity(eventId: nil)
+    ), .unique)
+    XCTAssertEqual(identityFreeStore.claimPrepared(
+      requestIdentifier: "identity-free",
+      identity: ordinaryIdentity(eventId: nil)
+    ), .duplicate)
+  }
+
+  func testTC398DifferentRequestOrdinaryDuplicateRequiresExactGroupEventIdentity()
+    throws
+  {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = IosNotificationRecoveryStore(directory: directory)
+    let exact = IosNotificationRecoveryIdentity(
+      accountPeerId: "account-self",
+      lane: .group,
+      conversationId: "group-team",
+      eventId: "message-398",
+      kind: .ordinary
+    )
+
+    XCTAssertEqual(store.claimPrepared(
+      requestIdentifier: "canonical-request",
+      identity: exact
+    ), .unique)
+    XCTAssertEqual(store.claimPrepared(
+      requestIdentifier: "different-request-same-event",
+      identity: exact
+    ), .duplicate)
+    XCTAssertEqual(store.desiredBadgeSnapshot()?.count, 1)
+    XCTAssertEqual(store.claimPrepared(
+      requestIdentifier: "different-event",
+      identity: IosNotificationRecoveryIdentity(
+        accountPeerId: "account-self",
+        lane: .group,
+        conversationId: "group-team",
+        eventId: "message-399",
+        kind: .ordinary
+      )
+    ), .unique)
+    XCTAssertEqual(store.claimPrepared(
+      requestIdentifier: "different-group",
+      identity: IosNotificationRecoveryIdentity(
+        accountPeerId: "account-self",
+        lane: .group,
+        conversationId: "group-other",
+        eventId: "message-398",
+        kind: .ordinary
+      )
+    ), .unique)
+    XCTAssertEqual(store.claimPrepared(
+      requestIdentifier: "different-lane",
+      identity: IosNotificationRecoveryIdentity(
+        accountPeerId: "account-self",
+        lane: .direct,
+        conversationId: "group-team",
+        eventId: "message-398",
+        kind: .ordinary
+      )
+    ), .unique)
+    XCTAssertEqual(store.claimPrepared(
+      requestIdentifier: "different-account",
+      identity: IosNotificationRecoveryIdentity(
+        accountPeerId: "account-other",
+        lane: .group,
+        conversationId: "group-team",
+        eventId: "message-398",
+        kind: .ordinary
+      )
+    ), .accountMismatch)
+    XCTAssertEqual(store.claimPrepared(
+      requestIdentifier: "identity-free",
+      identity: IosNotificationRecoveryIdentity(
+        accountPeerId: "account-self",
+        lane: .group,
+        conversationId: "group-team",
+        eventId: nil,
+        kind: .ordinary
+      )
+    ), .unique)
   }
 
   func testAtomicClaimsReopenAndCountOnePendingEventAcrossDuplicates() throws {
@@ -1216,6 +1824,22 @@ final class IosNotificationRecoveryTests: XCTestCase {
       withIntermediateDirectories: true
     )
     return directory
+  }
+
+  private func loadTC396DirectSourceFixture() throws -> [String: Any] {
+    let iosRoot = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    let appRoot = iosRoot.deletingLastPathComponent()
+    let url = appRoot
+      .appendingPathComponent("test")
+      .appendingPathComponent("shared")
+      .appendingPathComponent("fixtures")
+      .appendingPathComponent("ios_direct_notification_source_v1.json")
+    let data = try Data(contentsOf: url)
+    return try XCTUnwrap(
+      JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
   }
 }
 

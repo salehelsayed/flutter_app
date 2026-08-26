@@ -1,0 +1,498 @@
+{
+  "_about": "Hand-written. The only judgement in the C4 level-2 drawing. Everything else (file counts, test counts, link counts) is computed from the graph and the repo by C4/build_c4.py. Edit this, then re-run the builder.",
+  "title": "Inside the mknoon app — the first layer",
+  "subtitle": "The big picture drew the app as one box. This opens that box. Every number on this page is counted from the codebase, not typed by hand.",
+  "boundary": {
+    "x": 60,
+    "y": 175,
+    "w": 1120,
+    "h": 560,
+    "label": "Inside the mknoon app — one phone"
+  },
+  "canvas": {
+    "w": 1240,
+    "h": 960
+  },
+  "_claim_order": "A file that matches several components goes to the first one listed here.",
+  "claim_order": [
+    "notebook",
+    "safe",
+    "alert_helper",
+    "engine",
+    "screens"
+  ],
+  "components": [
+    {
+      "id": "you",
+      "kind": "person",
+      "name": "You",
+      "type": "",
+      "blurb": [
+        "Tapping the screen."
+      ],
+      "layout": {
+        "x": 525,
+        "y": 80,
+        "w": 190,
+        "h": 62,
+        "head": {
+          "cx": 620,
+          "cy": 54,
+          "r": 24
+        }
+      },
+      "files": [],
+      "tests": [],
+      "desc": "Sets up an account with a 12-word phrase, adds people by scanning a code, then chats one to one or in groups."
+    },
+    {
+      "id": "screens",
+      "kind": "app",
+      "name": "The screens",
+      "type": "everything you see and tap",
+      "blurb": [
+        "Every screen and button: chats, groups, the feed,",
+        "your circle of contacts, the QR code, settings.",
+        "Also holds the rules — what counts as unread,",
+        "when to retry a send, what a banner should say."
+      ],
+      "layout": {
+        "x": 430,
+        "y": 210,
+        "w": 380,
+        "h": 160
+      },
+      "files": [
+        "lib/"
+      ],
+      "tests": [
+        "test/",
+        "integration_test/"
+      ],
+      "desc": "Draws every screen and decides what happens when you tap. Holds the everyday rules too: what counts as unread, when to retry a message that failed, what a banner should say."
+    },
+    {
+      "id": "engine",
+      "kind": "app",
+      "name": "The engine",
+      "type": "the heavy lifting, built into the app",
+      "blurb": [
+        "Makes your keys from the 12 words. Locks a message",
+        "so only your friend can open it, and unlocks theirs.",
+        "Keeps the line to other phones open, finds them",
+        "again when the network changes, and hands",
+        "finished messages up to the screens."
+      ],
+      "layout": {
+        "x": 430,
+        "y": 450,
+        "w": 380,
+        "h": 170
+      },
+      "files": [
+        "go-mknoon/"
+      ],
+      "tests": [
+        "go-mknoon/"
+      ],
+      "desc": "All the maths and all the networking. Turns your 12 words into keys, locks a message so only your friend can open it, unlocks the ones that arrive, and keeps the line to other phones open as you move between Wi-Fi and mobile data."
+    },
+    {
+      "id": "notebook",
+      "kind": "app",
+      "name": "The locked notebook",
+      "type": "a file on your phone",
+      "blurb": [
+        "Every chat, contact, group, photo,",
+        "voice note and reaction. Locked, so",
+        "nobody can read it by pulling the",
+        "file off the phone."
+      ],
+      "layout": {
+        "x": 880,
+        "y": 210,
+        "w": 270,
+        "h": 160
+      },
+      "files": [
+        "lib/core/database/"
+      ],
+      "tests": [
+        "test/core/database/"
+      ],
+      "desc": "Where everything is kept: chats, contacts, groups, photos, voice notes, reactions. The whole file is locked, so pulling it off the phone gets you nothing readable."
+    },
+    {
+      "id": "safe",
+      "kind": "phone",
+      "name": "The safe",
+      "type": "built into the phone",
+      "blurb": [
+        "The few real secrets: your 12",
+        "words, your private keys, and",
+        "the key that opens the locked",
+        "notebook. The phone guards it",
+        "and opens it only for you."
+      ],
+      "layout": {
+        "x": 880,
+        "y": 450,
+        "w": 270,
+        "h": 170
+      },
+      "files": [
+        "lib/core/secure_storage/"
+      ],
+      "tests": [
+        "test/core/secure_storage/"
+      ],
+      "desc": "Holds only the few real secrets — your 12 words, your private keys, and the key that opens the locked notebook. The phone guards it and hands it over only when you have unlocked the device."
+    },
+    {
+      "id": "alert_helper",
+      "kind": "sidecar",
+      "name": "The alert helper",
+      "type": "a small separate program",
+      "blurb": [
+        "Wakes up when an alert arrives,",
+        "even when the app is closed.",
+        "Fetches the message that was",
+        "waiting and rewrites the banner,",
+        "so you see the real text instead",
+        "of just \"New message\"."
+      ],
+      "layout": {
+        "x": 90,
+        "y": 330,
+        "w": 280,
+        "h": 190
+      },
+      "files": [
+        "ios/NotificationService/",
+        "go-mknoon/internal/nsepush/",
+        "go-mknoon/bridge/nse_inbox.go",
+        "android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessagingService.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessagingReceiver.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorker.kt",
+        "android/app/src/main/kotlin/com/mknoon/app/DroppedPushRecoveryBridge.kt"
+      ],
+      "tests": [
+        "ios/RunnerTests/",
+        "android/app/src/test/",
+        "test/core/notifications/"
+      ],
+      "desc": "Runs on its own when an alert arrives, even if the app is fully closed. Fetches the message that was waiting and rewrites the banner, so you see the real text rather than “New message”. There is one on iPhone and one on Android."
+    },
+    {
+      "id": "outside",
+      "kind": "external",
+      "name": "The outside world",
+      "type": "not part of this drawing",
+      "blurb": [
+        "Your friend's phone, the helper server and the alert services.",
+        "They are all drawn in the big picture."
+      ],
+      "layout": {
+        "x": 330,
+        "y": 800,
+        "w": 620,
+        "h": 120
+      },
+      "files": [],
+      "tests": [],
+      "desc": "Your friend's phone, the helper server and the alert services. Drawn in the big picture, not here."
+    }
+  ],
+  "connections": [
+    {
+      "id": "you-screens",
+      "from": "you",
+      "to": "screens",
+      "arrow": "one",
+      "kind": "ui",
+      "wire": "Taps on the glass",
+      "path": "M620,142 L620,207",
+      "label": {
+        "x": 640,
+        "y": 172,
+        "anchor": "start"
+      },
+      "plain": [
+        "Taps, types, reads"
+      ],
+      "verdict": "solid",
+      "note": "Widget tests drive the real widgets.",
+      "sides": [
+        {
+          "of": "screens",
+          "tests": [
+            "test/features/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "screens-notebook",
+      "from": "screens",
+      "to": "notebook",
+      "arrow": "both",
+      "kind": "import",
+      "wire": "Dart calls, in the same program",
+      "path": "M813,265 L877,265",
+      "label": {
+        "x": 845,
+        "y": 224,
+        "anchor": "middle"
+      },
+      "plain": [
+        "Saves and",
+        "reads chats"
+      ],
+      "verdict": "solid",
+      "note": "The tests open a real locked database.",
+      "sides": [
+        {
+          "of": "screens",
+          "tests": [
+            "test/core/database/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "screens-engine",
+      "from": "screens",
+      "to": "engine",
+      "arrow": "both",
+      "kind": "channel",
+      "wire": "com.mknoon/go_bridge",
+      "path": "M620,373 L620,447",
+      "label": {
+        "x": 605,
+        "y": 388,
+        "anchor": "end"
+      },
+      "plain": [
+        "Asks the engine to make keys, lock a",
+        "message and send it — and the engine",
+        "calls back when something arrives"
+      ],
+      "verdict": "one_sided",
+      "note": "Each side answers to a stand-in it wrote itself. Nothing checks the two agree.",
+      "anchors": {
+        "screens": "lib/core/bridge/",
+        "engine": "go-mknoon/bridge/"
+      },
+      "sides": [
+        {
+          "of": "screens",
+          "tests": [
+            "test/core/bridge/"
+          ]
+        },
+        {
+          "of": "engine",
+          "tests": [
+            "go-mknoon/bridge/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "screens-safe",
+      "from": "screens",
+      "to": "safe",
+      "arrow": "one",
+      "kind": "import",
+      "wire": "Dart calls, then a platform plugin",
+      "path": "M813,330 H845 V535 H874",
+      "label": {
+        "x": 852,
+        "y": 400,
+        "anchor": "start"
+      },
+      "plain": [
+        "Reads the keys"
+      ],
+      "verdict": "one_sided",
+      "note": "The phone's own safe is faked in the tests.",
+      "sides": [
+        {
+          "of": "screens",
+          "tests": [
+            "test/core/secure_storage/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "engine-outside",
+      "from": "engine",
+      "to": "outside",
+      "arrow": "both",
+      "kind": "network",
+      "wire": "libp2p over QUIC or WebSocket",
+      "path": "M620,620 L620,797",
+      "label": {
+        "x": 640,
+        "y": 672,
+        "anchor": "start"
+      },
+      "plain": [
+        "Talks to your friend's phone, and to the",
+        "helper server when it cannot reach them",
+        "directly"
+      ],
+      "verdict": "solid",
+      "note": "The Go tests start real network nodes and send real traffic.",
+      "sides": [
+        {
+          "of": "engine",
+          "tests": [
+            "go-mknoon/node/",
+            "go-mknoon/integration/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "helper-outside",
+      "from": "alert_helper",
+      "to": "outside",
+      "arrow": "one",
+      "kind": "network",
+      "dashed": true,
+      "wire": "Reads the waiting mailbox",
+      "path": "M230,520 V860 H327",
+      "label": {
+        "x": 245,
+        "y": 596,
+        "anchor": "start"
+      },
+      "plain": [
+        "Picks up the message",
+        "that was waiting"
+      ],
+      "verdict": "solid",
+      "note": "The iPhone tests read the same shared fixture files the server tests read.",
+      "sides": [
+        {
+          "of": "alert_helper",
+          "tests": [
+            "ios/RunnerTests/",
+            "go-mknoon/bridge/nse_inbox_test.go"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "helper-you",
+      "from": "alert_helper",
+      "to": "you",
+      "arrow": "one",
+      "kind": "notify",
+      "dashed": true,
+      "wire": "A banner on the lock screen",
+      "path": "M230,330 V120 H522",
+      "label": {
+        "x": 376,
+        "y": 90,
+        "anchor": "middle"
+      },
+      "plain": [
+        "Shows you the banner"
+      ],
+      "verdict": "solid",
+      "note": "A real alert goes in, the finished banner comes out.",
+      "sides": [
+        {
+          "of": "alert_helper",
+          "tests": [
+            "android/app/src/test/",
+            "test/core/notifications/"
+          ]
+        }
+      ]
+    }
+  ],
+  "shared_fixtures": {
+    "dir": "test_fixtures/",
+    "note": "The one place several languages read the SAME file, so no side can drift alone.",
+    "readers": [
+      "test/security/forbidden_field_classifier_test.dart",
+      "go-relay-server/forbidden_field_classifier_test.go",
+      "ios/RunnerTests/NotificationPreviewResolverTests.swift",
+      "test/features/conversation/domain/models/reaction_payload_test.dart",
+      "go-relay-server/reaction_push_test.go"
+    ]
+  },
+  "story": {
+    "title": "What happens when a message arrives",
+    "steps": [
+      "Your friend's phone sends it. If your app is open, it lands straight away — the engine takes it and passes it to the screens.",
+      "If your phone was off or the app was closed, the helper server keeps it and asks the alert service to tap your phone.",
+      "The alert helper wakes up, fetches the waiting message, and puts the real text into the banner you see.",
+      "When you open the app, the screens ask the engine for anything still outstanding.",
+      "The engine takes the keys out of the safe and unlocks the message.",
+      "The screens write it into the locked notebook and show it in the chat."
+    ]
+  },
+  "notes": {
+    "title": "Worth knowing",
+    "items": [
+      [
+        "Only the engine talks to the outside.",
+        "The screens never touch the network on their own. They ask the engine, and the engine answers."
+      ],
+      [
+        "The safe is small on purpose.",
+        "It holds a handful of secrets, not your data. Everything else goes in the locked notebook, and the key to that notebook lives in the safe."
+      ],
+      [
+        "The alert helper is a different program.",
+        "It has its own small copy of the engine, because the app may not be running at all when an alert lands."
+      ],
+      [
+        "The busiest wire has the thinnest safety net.",
+        "Everything the app does passes between the screens and the engine, yet that is the one connection where no test holds both ends at once, unless it runs on a real phone."
+      ],
+      [
+        "",
+        "There is also a small share-sheet helper on iPhone, for sending a photo from another app into mknoon. It is a side door, left out to keep the drawing simple."
+      ]
+    ]
+  },
+  "proper_names": {
+    "title": "The proper names",
+    "rows": [
+      [
+        "The screens",
+        "The Flutter / Dart layer in <code>lib/</code> — features, repositories, services"
+      ],
+      [
+        "The engine",
+        "Go library built with gomobile (<code>go-mknoon/</code>): libp2p node, BIP39, Ed25519, ML-KEM-768 + AES-256-GCM"
+      ],
+      [
+        "How the two talk",
+        "MethodChannel and EventChannel on <code>com.mknoon/go_bridge</code>, through <code>GoBridge.swift</code> / <code>GoBridge.kt</code>"
+      ],
+      [
+        "The locked notebook",
+        "SQLCipher database (<code>sqflite_sqlcipher</code>), 256-bit AES at rest"
+      ],
+      [
+        "The safe",
+        "iOS Keychain / Android EncryptedSharedPreferences, via <code>flutter_secure_storage</code>"
+      ],
+      [
+        "The alert helper",
+        "iOS: the <code>NotificationService</code> extension with its own Go framework. Android: <code>MknoonFirebaseMessagingService</code>"
+      ],
+      [
+        "This drawing",
+        "C4 model, Level 2 — Container diagram, scoped to the app"
+      ]
+    ]
+  }
+}

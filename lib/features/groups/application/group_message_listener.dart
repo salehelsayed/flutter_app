@@ -224,7 +224,9 @@ class GroupMessageListener {
   late final GroupNotificationReadProjector? _notificationReadProjector;
   final Future<DurableNotificationToneLease> Function()
   _durableNotificationCoordinatorResolver;
-  final RecentRemoteNotificationGate _remoteNotificationGate;
+  final RecentRemoteNotificationGate? _injectedRemoteNotificationGate;
+  RecentRemoteNotificationGate get _remoteNotificationGate =>
+      _injectedRemoteNotificationGate ?? recentRemoteNotificationGate;
   final ReactionRepository? _reactionRepo;
   final AppendGroupEventLogEntry? _appendGroupEventLogEntry;
   final Stream<Map<String, dynamic>>? _groupDiagnosticEvents;
@@ -377,8 +379,7 @@ class GroupMessageListener {
        _durableNotificationCoordinatorResolver =
            durableNotificationCoordinatorResolver ??
            DurableNotificationToneLease.openMobileDefault,
-       _remoteNotificationGate =
-           remoteNotificationGate ?? recentRemoteNotificationGate,
+       _injectedRemoteNotificationGate = remoteNotificationGate,
        _reactionRepo = reactionRepo,
        _appendGroupEventLogEntry = appendGroupEventLogEntry,
        _groupDiagnosticEvents = groupDiagnosticEvents,
@@ -416,6 +417,10 @@ class GroupMessageListener {
         notificationService is ConversationNotificationCancellation
         ? notificationService as ConversationNotificationCancellation
         : null;
+    final ConversationNotificationReadSettlement? readSettlement =
+        notificationService is ConversationNotificationReadSettlement
+        ? notificationService as ConversationNotificationReadSettlement
+        : null;
     _notificationReadProjector =
         _notificationPresentationCoordinator != null && readSource != null
         ? GroupNotificationReadProjector(
@@ -446,6 +451,7 @@ class GroupMessageListener {
                     );
                   },
             cancellation: cancellation,
+            readSettlement: readSettlement,
           )
         : null;
     final generationCancellation =
@@ -582,8 +588,7 @@ class GroupMessageListener {
       appVisibility: appVisibility,
       notificationToneTracker: notificationToneTracker,
       notificationPresentationCoordinator: _notificationPresentationCoordinator,
-      remoteNotificationGate:
-          remoteNotificationGate ?? recentRemoteNotificationGate,
+      injectedRemoteNotificationGate: remoteNotificationGate,
       isStoppingOrDisposed: () => _isStopping || _isDisposed,
       resolveSelfPeerId: _resolveSelfPeerId,
       resolveDurableNotificationCoordinator:
@@ -1429,15 +1434,17 @@ class GroupMessageListener {
         sqlHandoffCompleted = true;
       },
     );
+    final remoteNotificationGate = _remoteNotificationGate;
+    final remoteAnnouncementPayload = NotificationRouteTarget.group(
+      entry.groupId,
+      messageId: message.id,
+    ).toPayload();
     final result = await maybeShowNotification(
       notificationService: service,
       appVisibility: visibility,
       forceSilent: isIosMailboxAlertSilentReplayContext,
       contactPeerId: 'group:${entry.groupId}',
-      routePayload: NotificationRouteTarget.group(
-        entry.groupId,
-        messageId: message.id,
-      ).toPayload(),
+      routePayload: remoteAnnouncementPayload,
       senderUsername: isPrivate ? 'Mknoon' : (group?.name ?? 'Mknoon'),
       messageText: isPrivate
           ? localizedGroupPrivateMediaNotificationBody()
@@ -1451,14 +1458,26 @@ class GroupMessageListener {
       loadConversationNotificationSnapshot: () =>
           _loadGroupConversationNotificationSnapshot(entry.groupId),
       notificationEventType: 'group_message',
+      probeRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) => messageId == null
+          ? Future<bool>.value(false)
+          : remoteNotificationGate.hasRecentExactAnnouncement(
+              payload: payload,
+              messageId: messageId,
+            ),
       consumeRecentRemoteNotificationAnnouncement:
           ({required payload, String? messageId}) =>
-              _remoteNotificationGate.consumeIfRecentAnnouncement(
+              remoteNotificationGate.consumeIfRecentAnnouncement(
                 payload: payload,
                 messageId: messageId,
               ),
+      consumeEstablishedRemotePresentationProof: () =>
+          remoteNotificationGate.consumeIfRecentExactAnnouncement(
+            payload: remoteAnnouncementPayload,
+            messageId: message.id,
+          ),
       markRecentRemoteNotificationAnnouncement:
-          ({required payload, String? messageId}) => _remoteNotificationGate
+          ({required payload, String? messageId}) => remoteNotificationGate
               .markAnnouncement(payload: payload, messageId: messageId),
       backgroundDuplicateGuardDelay: Duration.zero,
       durableEffectContext: durableContext,
@@ -3213,6 +3232,20 @@ class GroupMessageListener {
           final aliasEventId = wireMessageId?.isNotEmpty == true
               ? wireMessageId!
               : canonicalMessage.id;
+          if (aliasEventId != canonicalMessage.id) {
+            await _remoteNotificationGate.promoteExactAnnouncementAlias(
+              sourcePayload: NotificationRouteTarget.group(
+                canonicalMessage.groupId,
+                messageId: aliasEventId,
+              ).toPayload(),
+              sourceMessageId: aliasEventId,
+              targetPayload: NotificationRouteTarget.group(
+                canonicalMessage.groupId,
+                messageId: canonicalMessage.id,
+              ).toPayload(),
+              targetMessageId: canonicalMessage.id,
+            );
+          }
           await displayOutbox.reconcileMessageAliasReady(
             aliasEventId: aliasEventId,
             canonicalMessage: canonicalMessage,

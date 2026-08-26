@@ -338,23 +338,101 @@ class CodexMemoryReminderTest(unittest.TestCase):
             "cwd": str(root),
         }
 
+    def functions_payload(
+        self,
+        command: str,
+        *,
+        tool_id: str,
+        root: Path,
+        max_output_tokens: int | None = None,
+    ) -> dict[str, object]:
+        pragma = (
+            '// @exec: {"max_output_tokens": %d}\n' % max_output_tokens
+            if max_output_tokens is not None
+            else ""
+        )
+        encoded = json.dumps(command)
+        return {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "functions.exec",
+            "tool_input": (
+                pragma
+                + 'const r = await tools.exec_command({"cmd": '
+                + encoded
+                + "}); text(r.output);"
+            ),
+            "tool_use_id": tool_id,
+            "session_id": "hook-session",
+            "cwd": str(root),
+        }
+
+    def confirm_payload(
+        self,
+        payload: dict[str, object],
+        *,
+        runtime: memory.Runtime,
+        state_dir: Path,
+        response: object | None = None,
+    ) -> None:
+        batch = reminder._document_reads(
+            payload, reminder._commands(payload), runtime
+        )
+        pieces: list[str] = []
+        for read in batch.reads:
+            lines = read.path.read_text(encoding="utf-8").splitlines()
+            for start, end in read.ranges:
+                pieces.extend(lines[start - 1 : end])
+        output = "\n".join(pieces) + ("\n" if pieces else "")
+        post = dict(payload)
+        post["hook_event_name"] = "PostToolUse"
+        post["tool_response"] = (
+            {"exit_code": 0, "output": output}
+            if response is None
+            else response
+        )
+        self.assertIsNone(
+            reminder.process_hook(post, runtime=runtime, state_dir=state_dir)
+        )
+
     def test_ungrounded_broad_search_reminds_but_named_read_does_not(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             runtime = fixture(root)
             state = root / "hook-state"
+            direct_payload = self.payload(
+                "sed -n '1,999p' plans/901-alpha-state-guard-tdd-plan.md",
+                tool_id="1",
+                root=root,
+            )
             direct = reminder.process_hook(
-                self.payload("sed -n '1,999p' plans/901-alpha-state-guard-tdd-plan.md", tool_id="1", root=root),
+                direct_payload,
                 runtime=runtime,
                 state_dir=state,
+                auto_recall=False,
             )
+            self.confirm_payload(direct_payload, runtime=runtime, state_dir=state)
             broad = reminder.process_hook(
                 self.payload("rg -n 'status' plans -g '*.md'", tool_id="2", root=root),
                 runtime=runtime,
                 state_dir=state,
+                auto_recall=False,
+            )
+            repeated = reminder.process_hook(
+                self.payload("rg -n 'owner' plans -g '*.md'", tool_id="3", root=root),
+                runtime=runtime,
+                state_dir=state,
+                auto_recall=False,
             )
             self.assertIsNone(direct)
             self.assertIn("Codex-memory advisory", broad["hookSpecificOutput"]["additionalContext"])
+            self.assertIn(
+                'memory.py query "status plans"',
+                broad["hookSpecificOutput"]["additionalContext"],
+            )
+            self.assertIn(
+                "advisory repeated",
+                repeated["hookSpecificOutput"]["additionalContext"],
+            )
             reads = [
                 row for row in memory._read_jsonl(runtime.hook_events_path)
                 if row.get("event") == "document_read"
@@ -362,6 +440,21 @@ class CodexMemoryReminderTest(unittest.TestCase):
             self.assertEqual(len(reads), 1)
             self.assertEqual(reads[0]["whole_documents"], 1)
             self.assertGreater(reads[0]["estimated_tokens"], 0)
+            browses = [
+                row for row in memory._read_jsonl(runtime.hook_events_path)
+                if row.get("event") == "document_browse"
+            ]
+            self.assertEqual(
+                [row["reminder"] for row in browses], ["initial", "ungrounded"]
+            )
+            self.assertTrue(all(row.get("tool_use_sha256") for row in browses))
+            adoption = memory.stats(
+                runtime, selector=memory.session_digest("hook-session")
+            )
+            self.assertEqual(adoption["initial_reminders"], 1)
+            self.assertEqual(adoption["repeated_ungrounded_reminders"], 1)
+            self.assertEqual(adoption["hook_agents"], 1)
+            self.assertEqual(adoption["hook_tool_identity_events"], 3)
 
     def test_query_then_broad_search_is_recorded_as_grounded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -389,6 +482,53 @@ class CodexMemoryReminderTest(unittest.TestCase):
             self.assertEqual(len(browse), 1)
             self.assertTrue(browse[0]["grounded"])
 
+    def test_broad_search_is_automatically_grounded_and_measured(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = fixture(root)
+            result = reminder.process_hook(
+                self.payload(
+                    "rg -n 'status' plans -g '*.md'",
+                    tool_id="automatic",
+                    root=root,
+                ),
+                runtime=runtime,
+                state_dir=root / "hook-state",
+            )
+            context = result["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Codex-memory automatic grounding", context)
+            self.assertIn("execution-ready", context)
+
+            events = memory._read_jsonl(runtime.hook_events_path)
+            automatic_contexts = [
+                row
+                for row in events
+                if row.get("event") == "context" and row.get("automatic")
+            ]
+            browses = [
+                row for row in events if row.get("event") == "document_browse"
+            ]
+            self.assertEqual(len(automatic_contexts), 1)
+            self.assertEqual(len(browses), 1)
+            self.assertTrue(browses[0]["grounded"])
+            self.assertTrue(browses[0]["auto_grounded"])
+            self.assertTrue(browses[0]["tool_input_sha256"])
+
+            usage = memory._read_jsonl(runtime.telemetry_path)
+            self.assertEqual(len(usage), 1)
+            self.assertEqual(usage[0]["trigger"], "pre_tool_use")
+            self.assertEqual(
+                usage[0]["codex_session_sha256"],
+                memory.session_digest("hook-session"),
+            )
+            adoption = memory.stats(
+                runtime, selector=memory.session_digest("hook-session")
+            )
+            self.assertEqual(adoption["queries"], 1)
+            self.assertEqual(adoption["automatic_queries"], 1)
+            self.assertEqual(adoption["auto_grounded_document_browses"], 1)
+            self.assertEqual(adoption["ungrounded_document_browses"], 0)
+
     def test_duplicate_tool_event_is_deduplicated(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -397,8 +537,12 @@ class CodexMemoryReminderTest(unittest.TestCase):
             payload = self.payload(
                 "rg -n 'status' Test-Flight-Improv -g '*.md'", tool_id="same", root=root
             )
-            reminder.process_hook(payload, runtime=runtime, state_dir=state)
-            reminder.process_hook(payload, runtime=runtime, state_dir=state)
+            reminder.process_hook(
+                payload, runtime=runtime, state_dir=state, auto_recall=False
+            )
+            reminder.process_hook(
+                payload, runtime=runtime, state_dir=state, auto_recall=False
+            )
             events = memory._read_jsonl(runtime.hook_events_path)
             self.assertEqual(sum(row.get("event") == "document_browse" for row in events), 1)
 
@@ -421,12 +565,354 @@ class CodexMemoryReminderTest(unittest.TestCase):
                 payload,
                 runtime=runtime,
                 state_dir=root / "hook-state",
+                auto_recall=False,
             )
             self.assertIsNotNone(result)
             self.assertIn(
                 "broad plan/spec/document search",
                 result["hookSpecificOutput"]["additionalContext"],
             )
+
+    def test_complete_first_pass_then_repeat_is_grounded_and_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = fixture(root)
+            state = root / "hook-state"
+            path = "plans/901-alpha-state-guard-tdd-plan.md"
+
+            first_payload = self.payload("cat " + path, tool_id="first", root=root)
+            first = reminder.process_hook(
+                first_payload,
+                runtime=runtime,
+                state_dir=state,
+            )
+            self.confirm_payload(first_payload, runtime=runtime, state_dir=state)
+            blocked = reminder.process_hook(
+                self.payload("cat " + path, tool_id="repeat", root=root),
+                runtime=runtime,
+                state_dir=state,
+            )
+            blocked_retry = reminder.process_hook(
+                self.payload("cat " + path, tool_id="repeat", root=root),
+                runtime=runtime,
+                state_dir=state,
+            )
+            targeted_payload = self.payload(
+                "sed -n '2,3p' " + path,
+                tool_id="targeted",
+                root=root,
+            )
+            targeted = reminder.process_hook(
+                targeted_payload,
+                runtime=runtime,
+                state_dir=state,
+            )
+            self.confirm_payload(targeted_payload, runtime=runtime, state_dir=state)
+            targeted_search = reminder.process_hook(
+                self.payload(
+                    "rg -n 'owner' " + path,
+                    tool_id="targeted-search",
+                    root=root,
+                ),
+                runtime=runtime,
+                state_dir=state,
+            )
+            bypassed = reminder.process_hook(
+                self.payload(
+                    "CODEX_MEMORY_REPEAT_GUARD_BYPASS=1 cat " + path,
+                    tool_id="bypass",
+                    root=root,
+                ),
+                runtime=runtime,
+                state_dir=state,
+            )
+
+            self.assertIsNone(first)
+            self.assertEqual(
+                blocked["hookSpecificOutput"]["permissionDecision"], "deny"
+            )
+            self.assertIn(
+                path,
+                blocked["hookSpecificOutput"]["permissionDecisionReason"],
+            )
+            self.assertEqual(
+                blocked_retry["hookSpecificOutput"]["permissionDecision"], "deny"
+            )
+            self.assertIsNone(targeted)
+            self.assertIsNone(targeted_search)
+            self.assertIsNone(bypassed)
+
+            adoption = memory.stats(
+                runtime, selector=memory.session_digest("hook-session")
+            )
+            self.assertEqual(adoption["unique_documents"], 1)
+            self.assertEqual(adoption["completed_first_pass_documents"], 1)
+            self.assertEqual(adoption["first_pass_coverage"], 1.0)
+            self.assertEqual(adoption["targeted_document_revisits"], 1)
+            self.assertEqual(adoption["redundant_broad_attempts"], 3)
+            self.assertEqual(adoption["repeat_guard_grounded_blocks"], 2)
+            self.assertEqual(adoption["repeat_guard_cached_blocks"], 1)
+            self.assertEqual(adoption["repeat_guard_bypasses"], 1)
+            self.assertEqual(adoption["repeat_guard_automatic_queries"], 1)
+            self.assertGreater(adoption["estimated_avoided_document_tokens"], 0)
+            self.assertNotIn(
+                path, runtime.hook_events_path.read_text(encoding="utf-8")
+            )
+            self.assertNotIn(
+                path, runtime.telemetry_path.read_text(encoding="utf-8")
+            )
+
+    def test_denied_exact_retry_with_same_tool_id_precedes_recent_dedupe(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = fixture(root)
+            state_dir = root / "hook-state"
+            relative = "plans/901-alpha-state-guard-tdd-plan.md"
+            first_payload = self.payload(
+                "cat " + relative, tool_id="first", root=root
+            )
+            reminder.process_hook(
+                first_payload,
+                runtime=runtime,
+                state_dir=state_dir,
+            )
+            self.confirm_payload(first_payload, runtime=runtime, state_dir=state_dir)
+            denied_payload = self.payload(
+                "cat " + relative, tool_id="same-denied-id", root=root
+            )
+            first_denial = reminder.process_hook(
+                denied_payload,
+                runtime=runtime,
+                state_dir=state_dir,
+            )
+            self.assertEqual(
+                first_denial["hookSpecificOutput"]["permissionDecision"], "deny"
+            )
+
+            session = memory.session_digest("hook-session")
+            state_path = state_dir / (session + "-root.json")
+            state = reminder._read_state(state_path, session, "root")
+            state["recent_tool_use_hashes"] = [
+                *state.get("recent_tool_use_hashes", []),
+                reminder._digest("same-denied-id"),
+            ]
+            reminder._write_state(state_path, state)
+
+            exact_retry = reminder.process_hook(
+                denied_payload,
+                runtime=runtime,
+                state_dir=state_dir,
+            )
+            self.assertEqual(
+                exact_retry["hookSpecificOutput"]["permissionDecision"], "deny"
+            )
+            adoption = memory.stats(
+                runtime, selector=memory.session_digest("hook-session")
+            )
+            self.assertEqual(adoption["repeat_guard_automatic_queries"], 1)
+            self.assertEqual(adoption["repeat_guard_grounded_blocks"], 2)
+            self.assertEqual(adoption["repeat_guard_cached_blocks"], 1)
+
+    def test_oversized_primary_is_output_blocked_without_precredit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = fixture(root)
+            path = root / "plans" / "901-alpha-state-guard-tdd-plan.md"
+            lines = ["# 901 - Alpha state guard", "Status: execution-ready"]
+            lines.extend("line {:04d} ".format(index) + "x" * 100 for index in range(1, 801))
+            write(path, "\n".join(lines) + "\n")
+            state = root / "hook-state"
+            relative = "plans/901-alpha-state-guard-tdd-plan.md"
+
+            oversized_payload = self.functions_payload(
+                "sed -n '1,760p' " + relative,
+                tool_id="oversized",
+                root=root,
+            )
+            oversized = reminder.process_hook(
+                oversized_payload,
+                runtime=runtime,
+                state_dir=state,
+            )
+            self.confirm_payload(oversized_payload, runtime=runtime, state_dir=state)
+            required_payload = self.functions_payload(
+                "sed -n '1,250p' " + relative,
+                tool_id="required",
+                root=root,
+            )
+            required_reread = reminder.process_hook(
+                required_payload,
+                runtime=runtime,
+                state_dir=state,
+            )
+            self.confirm_payload(required_payload, runtime=runtime, state_dir=state)
+
+            self.assertEqual(
+                oversized["hookSpecificOutput"]["permissionDecision"], "deny"
+            )
+            self.assertIn(
+                "primary output-safety gate",
+                oversized["hookSpecificOutput"]["permissionDecisionReason"],
+            )
+            self.assertIsNone(required_reread)
+            adoption = memory.stats(
+                runtime, selector=memory.session_digest("hook-session")
+            )
+            self.assertEqual(adoption["repeat_guard_grounded_blocks"], 0)
+            self.assertEqual(adoption["unconfirmed_document_ranges"], 0)
+            self.assertEqual(adoption["primary_guidance_events"], 1)
+            self.assertEqual(
+                adoption["primary_guidance_output_safety_blocks"], 1
+            )
+            self.assertEqual(adoption["first_pass_covered_lines"], 250)
+            self.assertLess(adoption["first_pass_coverage"], 1.0)
+
+    def test_sequential_ranges_complete_first_pass_before_guarding_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = fixture(root)
+            relative = "plans/901-alpha-state-guard-tdd-plan.md"
+            lines = ["# 901 - Alpha state guard", "Status: execution-ready"]
+            lines.extend(
+                "decision {:04d} keeps cumulative coverage deterministic".format(index)
+                for index in range(1, 361)
+            )
+            write(root / relative, "\n".join(lines) + "\n")
+            state = root / "hook-state"
+
+            for index, line_range in enumerate(("1,120", "121,240", "241,999")):
+                command = "sed -n '{}p' {}".format(line_range, relative)
+                if index == 0:
+                    command = "CODEX_MEMORY_PRIMARY_READ=1 " + command
+                chunk_payload = self.payload(
+                    command,
+                    tool_id="chunk-{}".format(index),
+                    root=root,
+                )
+                result = reminder.process_hook(
+                    chunk_payload,
+                    runtime=runtime,
+                    state_dir=state,
+                )
+                self.assertIsNone(result)
+                self.confirm_payload(chunk_payload, runtime=runtime, state_dir=state)
+            blocked = reminder.process_hook(
+                self.payload(
+                    "sed -n '1,200p' " + relative,
+                    tool_id="overlap",
+                    root=root,
+                ),
+                runtime=runtime,
+                state_dir=state,
+            )
+
+            self.assertEqual(
+                blocked["hookSpecificOutput"]["permissionDecision"], "deny"
+            )
+            adoption = memory.stats(
+                runtime, selector=memory.session_digest("hook-session")
+            )
+            self.assertEqual(adoption["document_read_calls"], 3)
+            self.assertEqual(adoption["first_pass_coverage"], 1.0)
+            self.assertEqual(adoption["repeat_guard_grounded_blocks"], 1)
+
+    def test_mixed_repeat_and_changed_document_both_fail_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = fixture(root)
+            state = root / "hook-state"
+            relative = "plans/901-alpha-state-guard-tdd-plan.md"
+            first_payload = self.payload(
+                "cat " + relative, tool_id="first", root=root
+            )
+            reminder.process_hook(
+                first_payload,
+                runtime=runtime,
+                state_dir=state,
+            )
+            self.confirm_payload(first_payload, runtime=runtime, state_dir=state)
+            mixed = reminder.process_hook(
+                self.payload(
+                    "cat " + relative + " && echo done",
+                    tool_id="mixed",
+                    root=root,
+                ),
+                runtime=runtime,
+                state_dir=state,
+            )
+            write(root / relative, PLAN_901 + "\nNew changed decision.\n")
+            changed = reminder.process_hook(
+                self.payload("cat " + relative, tool_id="changed", root=root),
+                runtime=runtime,
+                state_dir=state,
+            )
+
+            self.assertIsNone(mixed)
+            self.assertIsNone(changed)
+            adoption = memory.stats(
+                runtime, selector=memory.session_digest("hook-session")
+            )
+            self.assertEqual(adoption["repeat_guard_grounded_blocks"], 0)
+            self.assertEqual(adoption["repeat_guard_fail_opens"], 2)
+            self.assertEqual(adoption["repeat_guard_automatic_queries"], 0)
+
+    def test_repeat_recall_miss_error_and_permanent_opt_out_fail_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = fixture(root)
+            state = root / "hook-state"
+            relative = "plans/901-alpha-state-guard-tdd-plan.md"
+            first_payload = self.payload(
+                "cat " + relative, tool_id="first", root=root
+            )
+            reminder.process_hook(
+                first_payload,
+                runtime=runtime,
+                state_dir=state,
+            )
+            self.confirm_payload(first_payload, runtime=runtime, state_dir=state)
+            with mock.patch.object(
+                reminder, "_repeat_guard_recall", return_value=(None, "miss")
+            ):
+                missed = reminder.process_hook(
+                    self.payload("cat " + relative, tool_id="miss", root=root),
+                    runtime=runtime,
+                    state_dir=state,
+                )
+            with mock.patch.object(
+                reminder, "_repeat_guard_recall", side_effect=RuntimeError("boom")
+            ):
+                errored = reminder.process_hook(
+                    self.payload(
+                        "sed -n '1,999p' " + relative,
+                        tool_id="error",
+                        root=root,
+                    ),
+                    runtime=runtime,
+                    state_dir=state,
+                )
+            with mock.patch.dict(
+                os.environ, {"CODEX_MEMORY_REPEAT_GUARD": "0"}, clear=False
+            ):
+                opted_out = reminder.process_hook(
+                    self.payload(
+                        "head -n 999 " + relative,
+                        tool_id="opt-out",
+                        root=root,
+                    ),
+                    runtime=runtime,
+                    state_dir=state,
+                )
+
+            self.assertIsNone(missed)
+            self.assertIsNone(errored)
+            self.assertIsNone(opted_out)
+            adoption = memory.stats(
+                runtime, selector=memory.session_digest("hook-session")
+            )
+            self.assertEqual(adoption["repeat_guard_fail_opens"], 2)
+            self.assertEqual(adoption["repeat_guard_opt_outs"], 1)
+            self.assertEqual(adoption["repeat_guard_grounded_blocks"], 0)
 
 
 if __name__ == "__main__":

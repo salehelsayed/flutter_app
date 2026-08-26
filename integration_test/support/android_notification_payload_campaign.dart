@@ -268,6 +268,172 @@ final RegExp _androidProviderAcceptedPattern = RegExp(
 bool relayJournalContainsAndroidProviderSend(String journal) =>
     _androidProviderAcceptedPattern.hasMatch(journal);
 
+const String _groupMessageProviderAttemptMarker =
+    '[GROUP_MESSAGE_PROVIDER_ATTEMPT]';
+const Set<String> _groupMessageProviderAttemptRequiredKeys = <String>{
+  'schema',
+  'source',
+  'provenance',
+  'dispatchCorrelationSha256',
+  'claimedCollapseIdentifierSha256',
+  'providerAttempt',
+  'attemptKind',
+  'outcome',
+  'firebaseResponseNameSha256',
+};
+const Set<String> _groupMessageProviderAttemptAllowedKeys = <String>{
+  ..._groupMessageProviderAttemptRequiredKeys,
+  'providerMessageIdSha256',
+};
+final RegExp _lowercaseSha256Pattern = RegExp(r'^[0-9a-f]{64}$');
+
+typedef RelayAcceptedGroupMessageProviderAttempt = ({
+  String source,
+  String dispatchCorrelationSha256,
+  String claimedCollapseIdentifierSha256,
+  String? providerMessageIdSha256,
+});
+
+typedef RelayAcceptedGroupMessageProviderHashes = ({
+  String dispatchCorrelationSha256,
+  String? providerMessageIdSha256,
+});
+
+/// Extracts the one closed, accepted relay provider-attempt record in a
+/// diagnostic journal window.
+///
+/// The parser exposes source and claimed-collapse hashes only for the caller's
+/// transient in-memory provenance join. The full Firebase-response hash is
+/// validated but never returned, and artifact-v2 persists neither transient
+/// join field: it carries only the dispatch correlation and the optional
+/// normalized provider-message hash.
+RelayAcceptedGroupMessageProviderAttempt?
+parseRelayAcceptedGroupMessageProviderAttempt(String journal) {
+  final markerLines = journal
+      .split('\n')
+      .where((line) => line.contains(_groupMessageProviderAttemptMarker))
+      .toList(growable: false);
+  if (markerLines.length != 1) return null;
+
+  final line = markerLines.single;
+  final markerIndex = line.indexOf(_groupMessageProviderAttemptMarker);
+  final suffixStart = markerIndex + _groupMessageProviderAttemptMarker.length;
+  if (markerIndex < 0 ||
+      line.indexOf(_groupMessageProviderAttemptMarker, suffixStart) >= 0 ||
+      suffixStart >= line.length ||
+      line[suffixStart] != ' ') {
+    return null;
+  }
+  final encoded = line.substring(suffixStart + 1);
+  if (encoded.isEmpty || encoded != encoded.trim()) return null;
+
+  final Map<String, Object?> record;
+  try {
+    final decoded = jsonDecode(encoded);
+    if (decoded is! Map) return null;
+    record = Map<String, Object?>.from(decoded);
+  } on Object {
+    return null;
+  }
+
+  final keys = record.keys.toSet();
+  if (!keys.containsAll(_groupMessageProviderAttemptRequiredKeys) ||
+      !_groupMessageProviderAttemptAllowedKeys.containsAll(keys)) {
+    return null;
+  }
+  // `jsonDecode` otherwise resolves duplicate object members last-one-wins.
+  // Count every decoded member token so duplicated/ambiguous records stay
+  // closed without requiring a particular JSON key order.
+  for (final key in keys) {
+    final encodedKey = RegExp.escape(jsonEncode(key));
+    if (RegExp('$encodedKey\\s*:').allMatches(encoded).length != 1) {
+      return null;
+    }
+  }
+
+  final source = record['source'];
+  final dispatchCorrelation = record['dispatchCorrelationSha256'];
+  final claimedCollapse = record['claimedCollapseIdentifierSha256'];
+  final firebaseResponse = record['firebaseResponseNameSha256'];
+  final providerMessage = record['providerMessageIdSha256'];
+  if (record['schema'] != 'mknoon.relay.group-message-provider-attempt.v1' ||
+      !const <String>{'group_inbox', 'group_content'}.contains(source) ||
+      record['provenance'] != 'complete' ||
+      record['providerAttempt'] != 1 ||
+      record['attemptKind'] != 'primary' ||
+      record['outcome'] != 'accepted' ||
+      dispatchCorrelation is! String ||
+      !_lowercaseSha256Pattern.hasMatch(dispatchCorrelation) ||
+      claimedCollapse is! String ||
+      !_lowercaseSha256Pattern.hasMatch(claimedCollapse) ||
+      firebaseResponse is! String ||
+      !_lowercaseSha256Pattern.hasMatch(firebaseResponse) ||
+      (record.containsKey('providerMessageIdSha256') &&
+          (providerMessage is! String ||
+              !_lowercaseSha256Pattern.hasMatch(providerMessage)))) {
+    return null;
+  }
+
+  return (
+    source: source as String,
+    dispatchCorrelationSha256: dispatchCorrelation,
+    claimedCollapseIdentifierSha256: claimedCollapse,
+    providerMessageIdSha256: providerMessage as String?,
+  );
+}
+
+/// Joins one accepted journal row to this run's closed metric and card
+/// provenance before its two artifact-v2 hashes may be retained.
+///
+/// [source] and [claimedCollapseIdentifierSha256] remain transient. A source
+/// mismatch, an unclosed metric source, or a collapse hash belonging to a
+/// different delivered card rejects both artifact hashes.
+RelayAcceptedGroupMessageProviderHashes?
+bindRelayAcceptedGroupMessageProviderAttempt({
+  required RelayAcceptedGroupMessageProviderAttempt? attempt,
+  required Object? relayGroupMessageDispatchSource,
+  required String expectedCollapseIdentifierSha256,
+}) {
+  const journalSourceForMetricSource = <String, String>{
+    'groupInbox': 'group_inbox',
+    'groupContent': 'group_content',
+  };
+  if (attempt == null ||
+      !_lowercaseSha256Pattern.hasMatch(expectedCollapseIdentifierSha256) ||
+      journalSourceForMetricSource[relayGroupMessageDispatchSource] !=
+          attempt.source ||
+      attempt.claimedCollapseIdentifierSha256 !=
+          expectedCollapseIdentifierSha256) {
+    return null;
+  }
+  return (
+    dispatchCorrelationSha256: attempt.dispatchCorrelationSha256,
+    providerMessageIdSha256: attempt.providerMessageIdSha256,
+  );
+}
+
+final RegExp _androidProviderFirstAttemptAcceptedPattern = RegExp(
+  r'\[PUSH\]\s+outcome=success\s+attempt=1\s+total_attempts=\d+\b',
+);
+
+/// Proves one provider acceptance occurred on the first ordinary attempt.
+///
+/// This predicate must run over the raw, single-owner journal window before
+/// that window is reduced to hashes. A retry, strict-size fallback, or second
+/// accepted line makes attribution ambiguous and therefore fails closed.
+bool relayJournalProvesSingleFirstAttemptProviderAcceptance(String journal) {
+  final accepted = _androidProviderAcceptedPattern.allMatches(journal).toList();
+  if (accepted.length != 1 ||
+      !_androidProviderFirstAttemptAcceptedPattern.hasMatch(
+        accepted.single.group(0)!,
+      )) {
+    return false;
+  }
+  return !RegExp(
+    r'\[PUSH\]\s+outcome=(?:retrying|success\s+fallback=strict)\b',
+  ).hasMatch(journal);
+}
+
 bool notificationWindowContainsRelayDrain(String logcat) =>
     logcat.contains('P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS');
 

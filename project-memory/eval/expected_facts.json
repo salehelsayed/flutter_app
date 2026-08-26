@@ -240,8 +240,8 @@
       "category": "D. Proof & evidence requirements",
       "query": "which host-all failures are pre-existing baggage rather than regressions",
       "required": [
-        "9 long-standing",
-        "concurrency-4-only"
+        "pre-existing reds",
+        "13 test/performance"
       ],
       "v1_scope": false,
       "v2_scope": true

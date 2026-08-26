@@ -32,6 +32,211 @@ enum IosDirectNotificationSource: String, Equatable, Sendable {
   case unknown
 }
 
+enum IosDirectNotificationSourceClassifier {
+  private static let envelopePrefix = "mknoon-conversation-card-v1:"
+  private static let maxIdentityBytes = 512
+  private static let maxEnvelopeBytes = 6_144
+  private static let maxDecodedEnvelopeBytes = 4_096
+
+  static func triggerOrigin(
+    for trigger: UNNotificationTrigger?
+  ) -> IosDirectNotificationTriggerOrigin {
+    trigger is UNPushNotificationTrigger ? .remote : .local
+  }
+
+  static func classify(
+    trigger: UNNotificationTrigger?,
+    userInfo: [AnyHashable: Any],
+    title: String,
+    body: String,
+    expectedPeerId: String,
+    expectedMessageId: String
+  ) -> IosDirectNotificationSource {
+    classify(
+      triggerOrigin: triggerOrigin(for: trigger),
+      userInfo: userInfo,
+      title: title,
+      body: body,
+      expectedPeerId: expectedPeerId,
+      expectedMessageId: expectedMessageId
+    )
+  }
+
+  /// Origin-taking overload is intentionally internal and exists so the fixed
+  /// Swift/Dart vectors can mutation-test Apple's trigger decision without
+  /// manufacturing the unavailable `UNPushNotificationTrigger` initializer.
+  static func classify(
+    triggerOrigin: IosDirectNotificationTriggerOrigin,
+    userInfo: [AnyHashable: Any],
+    title: String,
+    body: String,
+    expectedPeerId: String,
+    expectedMessageId: String
+  ) -> IosDirectNotificationSource {
+    guard let peerId = boundedTrimmedString(
+      expectedPeerId,
+      maxBytes: maxIdentityBytes
+    ),
+      let messageId = boundedTrimmedString(
+        expectedMessageId,
+        maxBytes: maxIdentityBytes
+      ) else {
+      return .unknown
+    }
+
+    let hasLocalNotificationId = userInfo.keys.contains("NotificationId")
+    let hasLocalPayload = userInfo.keys.contains("payload")
+    let hasProviderShape = ["type", "sender_id", "message_id"].contains {
+      userInfo.keys.contains(AnyHashable($0))
+    }
+
+    switch triggerOrigin {
+    case .remote:
+      guard !hasLocalNotificationId,
+            !hasLocalPayload,
+            exactBoundedString(userInfo["type"], maxBytes: 64) == "new_message",
+            exactBoundedString(
+              userInfo["sender_id"],
+              maxBytes: maxIdentityBytes
+            ) == peerId,
+            exactBoundedString(
+              userInfo["message_id"],
+              maxBytes: maxIdentityBytes
+            ) == messageId else {
+        return .unknown
+      }
+      let hasTitle = boundedTrimmedString(title, maxBytes: 1_024) != nil
+      let hasBody = boundedTrimmedString(body, maxBytes: 4_096) != nil
+      if hasTitle && hasBody { return .usefulProviderRich }
+      if !hasTitle && !hasBody { return .sanitizedProviderRich }
+      return .unknown
+
+    case .local:
+      guard !hasProviderShape,
+            hasLocalNotificationId,
+            isValidFlutterNotificationId(userInfo["NotificationId"]),
+            let payload = exactBoundedString(
+              userInfo["payload"],
+              maxBytes: maxEnvelopeBytes
+            ) else {
+        return .unknown
+      }
+      if payload == peerId { return .flutterLocal }
+      return matchesTypedLocalEnvelope(
+        payload,
+        expectedPeerId: peerId,
+        expectedMessageId: messageId
+      ) ? .flutterLocal : .unknown
+    }
+  }
+
+  private static func matchesTypedLocalEnvelope(
+    _ payload: String,
+    expectedPeerId: String,
+    expectedMessageId: String
+  ) -> Bool {
+    guard payload.hasPrefix(envelopePrefix) else { return false }
+    let encoded = String(payload.dropFirst(envelopePrefix.count))
+    guard !encoded.isEmpty,
+          encoded.utf8.count <= maxEnvelopeBytes - envelopePrefix.utf8.count,
+          encoded.unicodeScalars.allSatisfy({ scalar in
+            switch scalar.value {
+            case 45, 48...57, 65...90, 95, 97...122:
+              return true
+            default:
+              return false
+            }
+          }) else {
+      return false
+    }
+    var base64 = encoded
+      .replacingOccurrences(of: "-", with: "+")
+      .replacingOccurrences(of: "_", with: "/")
+    switch base64.count % 4 {
+    case 0:
+      break
+    case 2:
+      base64 += "=="
+    case 3:
+      base64 += "="
+    default:
+      return false
+    }
+    guard let data = Data(base64Encoded: base64),
+          !data.isEmpty,
+          data.count <= maxDecodedEnvelopeBytes,
+          let object = try? JSONSerialization.jsonObject(with: data),
+          let envelope = object as? [String: Any],
+          isExactVersionOne(envelope["v"]),
+          exactBoundedString(
+            envelope["route"],
+            maxBytes: maxIdentityBytes
+          ) == expectedPeerId,
+          exactBoundedString(
+            envelope["conversation"],
+            maxBytes: maxIdentityBytes
+          ) == expectedPeerId,
+          let content = envelope["content"] as? [String: Any],
+          isExactVersionOne(content["v"]),
+          exactBoundedString(content["kind"], maxBytes: 32) == "message",
+          exactBoundedString(
+            content["event"],
+            maxBytes: maxIdentityBytes
+          ) == expectedMessageId,
+          boundedTrimmedString(
+            content["generation"] as? String ?? "",
+            maxBytes: maxIdentityBytes
+          ) != nil else {
+      return false
+    }
+    return true
+  }
+
+  private static func exactBoundedString(
+    _ value: Any?,
+    maxBytes: Int
+  ) -> String? {
+    guard let value = value as? String,
+          let normalized = boundedTrimmedString(value, maxBytes: maxBytes),
+          normalized == value else {
+      return nil
+    }
+    return value
+  }
+
+  private static func boundedTrimmedString(
+    _ value: String,
+    maxBytes: Int
+  ) -> String? {
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalized.isEmpty,
+          normalized.utf8.count <= maxBytes else {
+      return nil
+    }
+    return normalized
+  }
+
+  private static func isExactVersionOne(_ value: Any?) -> Bool {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID() else {
+      return false
+    }
+    return number.doubleValue == 1
+  }
+
+  private static func isValidFlutterNotificationId(_ value: Any?) -> Bool {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID(),
+          number.doubleValue.isFinite,
+          number.doubleValue.rounded() == number.doubleValue,
+          number.int64Value >= 0,
+          number.int64Value <= Int64(Int32.max) else {
+      return false
+    }
+    return true
+  }
+}
+
 enum IosGroupNotificationPhase: String, Equatable, Sendable {
   case message
   case reaction
@@ -42,22 +247,114 @@ struct IosGroupNotificationExpectedHashes: Equatable, Sendable {
   let groupIdSha256: String
   let eventIdSha256: String
   let targetMessageIdSha256: String
+  let expectedCollapseIdentifierSha256: String
+
+  init(
+    phase: IosGroupNotificationPhase,
+    groupIdSha256: String,
+    eventIdSha256: String,
+    targetMessageIdSha256: String,
+    expectedCollapseIdentifierSha256: String = String(repeating: "0", count: 64)
+  ) {
+    self.phase = phase
+    self.groupIdSha256 = groupIdSha256
+    self.eventIdSha256 = eventIdSha256
+    self.targetMessageIdSha256 = targetMessageIdSha256
+    self.expectedCollapseIdentifierSha256 =
+      expectedCollapseIdentifierSha256
+  }
 
   var isValid: Bool {
-    [groupIdSha256, eventIdSha256, targetMessageIdSha256].allSatisfy {
+    [
+      groupIdSha256,
+      eventIdSha256,
+      targetMessageIdSha256,
+      expectedCollapseIdentifierSha256,
+    ].allSatisfy {
       $0.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil
     }
   }
+}
+
+enum IosGroupNotificationDiagnosticReason: String, Equatable, Sendable {
+  case exactUseful
+  case exactSanitized
+  case exactFlutterLocal
+  case missingOrInvalidType
+  case groupHashMismatch
+  case partialContent
+  case unclassifiedRemote
+  case unclassifiedLocal
+}
+
+enum IosGroupNotificationDispatchClaim: String, Equatable, Sendable {
+  case groupInbox
+  case groupContent
+  case absent
+  case invalid
+}
+
+struct IosGroupNotificationProvenanceHashes: Equatable, Sendable {
+  let dispatchCorrelationSha256: String?
+  let claimedCollapseIdentifierSha256: String?
+  let providerMessageIdSha256: String?
+}
+
+struct IosGroupNotificationDiagnosticClassification: Equatable, Sendable {
+  let triggerOrigin: IosDirectNotificationTriggerOrigin
+  let sourceClass: IosDirectNotificationSource
+  let reason: IosGroupNotificationDiagnosticReason
+  let dispatchClaim: IosGroupNotificationDispatchClaim
 }
 
 /// Classifies only cards matching the exact hash-bound group event. A nil
 /// result is unrelated device inventory; `.unknown` is a run-owned event whose
 /// origin or typed shape failed closed.
 enum IosGroupNotificationSourceClassifier {
+  static let dispatchClaimKey = "mknoon_group_message_dispatch_source"
+  static let dispatchCorrelationKey = "mknoon_group_message_dispatch_id"
+  static let claimedCollapseIdentifierKey =
+    "mknoon_group_message_collapse_id"
+  static let providerMessageIdKey = "gcm.message_id"
   private static let envelopePrefix = "mknoon-conversation-card-v1:"
   private static let maxIdentityBytes = 512
   private static let maxEnvelopeBytes = 6_144
   private static let maxDecodedEnvelopeBytes = 4_096
+
+  /// Reduces bounded APNs/FCM provenance values to deterministic digests before
+  /// they enter a diagnostic record. Missing, malformed, open, or over-bound
+  /// values become nil; raw values never cross this projection boundary.
+  static func provenanceHashes(
+    userInfo: [AnyHashable: Any]
+  ) -> IosGroupNotificationProvenanceHashes {
+    let dispatchCorrelationSha256: String?
+    if let value = exactString(
+      userInfo[dispatchCorrelationKey],
+      maxBytes: 36
+    ),
+      value.range(
+        of: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        options: .regularExpression
+      ) != nil {
+      dispatchCorrelationSha256 = sha256(value)
+    } else {
+      dispatchCorrelationSha256 = nil
+    }
+
+    let claimedCollapseIdentifierSha256 = exactString(
+      userInfo[claimedCollapseIdentifierKey],
+      maxBytes: 64
+    ).map(sha256)
+    let providerMessageIdSha256 = exactString(
+      userInfo[providerMessageIdKey],
+      maxBytes: 160
+    ).map(sha256)
+    return IosGroupNotificationProvenanceHashes(
+      dispatchCorrelationSha256: dispatchCorrelationSha256,
+      claimedCollapseIdentifierSha256: claimedCollapseIdentifierSha256,
+      providerMessageIdSha256: providerMessageIdSha256
+    )
+  }
 
   static func classify(
     trigger: UNNotificationTrigger?,
@@ -73,6 +370,168 @@ enum IosGroupNotificationSourceClassifier {
       body: body,
       expected: expected
     )
+  }
+
+  /// Produces a diagnostic row only after the raw payload is bound to the
+  /// exact expected event. Trigger origin remains the sole source of remote
+  /// versus local authority; the bounded dispatch claim is correlation only.
+  static func diagnose(
+    triggerOrigin: IosDirectNotificationTriggerOrigin,
+    userInfo: [AnyHashable: Any],
+    title: String,
+    body: String,
+    expected: IosGroupNotificationExpectedHashes
+  ) -> IosGroupNotificationDiagnosticClassification? {
+    guard expected.isValid else { return nil }
+    switch triggerOrigin {
+    case .remote:
+      return diagnoseRemote(
+        userInfo: userInfo,
+        title: title,
+        body: body,
+        expected: expected
+      )
+    case .local:
+      return diagnoseLocal(userInfo: userInfo, expected: expected)
+    }
+  }
+
+  private static func diagnoseRemote(
+    userInfo: [AnyHashable: Any],
+    title: String,
+    body: String,
+    expected: IosGroupNotificationExpectedHashes
+  ) -> IosGroupNotificationDiagnosticClassification? {
+    let eventKey = expected.phase == .message ? "message_id" : "event_id"
+    guard let event = exactString(userInfo[eventKey], maxBytes: maxIdentityBytes),
+          sha256(event) == expected.eventIdSha256 else {
+      return nil
+    }
+    let claim = dispatchClaim(userInfo[dispatchClaimKey])
+    func unknown(
+      _ reason: IosGroupNotificationDiagnosticReason
+    ) -> IosGroupNotificationDiagnosticClassification {
+      IosGroupNotificationDiagnosticClassification(
+        triggerOrigin: .remote,
+        sourceClass: .unknown,
+        reason: reason,
+        dispatchClaim: claim
+      )
+    }
+
+    let expectedType = expected.phase == .message
+      ? "group_message"
+      : "group_reaction"
+    guard exactString(userInfo["type"], maxBytes: 64) == expectedType else {
+      return unknown(.missingOrInvalidType)
+    }
+    guard let group = exactString(userInfo["groupId"], maxBytes: maxIdentityBytes),
+          sha256(group) == expected.groupIdSha256 else {
+      return unknown(.groupHashMismatch)
+    }
+    if expected.phase == .reaction {
+      guard exactString(userInfo["action"], maxBytes: 16) == "add",
+            let target = exactString(
+              userInfo["target_message_id"],
+              maxBytes: maxIdentityBytes
+            ),
+            sha256(target) == expected.targetMessageIdSha256 else {
+        return unknown(.groupHashMismatch)
+      }
+    }
+    guard !userInfo.keys.contains("NotificationId"),
+          !userInfo.keys.contains("payload") else {
+      return unknown(.unclassifiedRemote)
+    }
+    let hasTitle = boundedTrimmed(title, maxBytes: 1_024) != nil
+    let hasBody = boundedTrimmed(body, maxBytes: 4_096) != nil
+    if hasTitle && hasBody {
+      return IosGroupNotificationDiagnosticClassification(
+        triggerOrigin: .remote,
+        sourceClass: .usefulProviderRich,
+        reason: .exactUseful,
+        dispatchClaim: claim
+      )
+    }
+    if !hasTitle && !hasBody {
+      return IosGroupNotificationDiagnosticClassification(
+        triggerOrigin: .remote,
+        sourceClass: .sanitizedProviderRich,
+        reason: .exactSanitized,
+        dispatchClaim: claim
+      )
+    }
+    return unknown(.partialContent)
+  }
+
+  private static func diagnoseLocal(
+    userInfo: [AnyHashable: Any],
+    expected: IosGroupNotificationExpectedHashes
+  ) -> IosGroupNotificationDiagnosticClassification? {
+    guard let payload = exactString(userInfo["payload"], maxBytes: maxEnvelopeBytes),
+          payload.hasPrefix(envelopePrefix),
+          let envelope = decodeEnvelope(payload),
+          let content = envelope["content"] as? [String: Any],
+          let event = exactString(content["event"], maxBytes: maxIdentityBytes),
+          sha256(event) == expected.eventIdSha256 else {
+      return nil
+    }
+    let claim = dispatchClaim(userInfo[dispatchClaimKey])
+    func unknown(
+      _ reason: IosGroupNotificationDiagnosticReason
+    ) -> IosGroupNotificationDiagnosticClassification {
+      IosGroupNotificationDiagnosticClassification(
+        triggerOrigin: .local,
+        sourceClass: .unknown,
+        reason: reason,
+        dispatchClaim: claim
+      )
+    }
+    guard let route = exactString(envelope["route"], maxBytes: maxIdentityBytes),
+          let conversation = exactString(
+            envelope["conversation"],
+            maxBytes: maxIdentityBytes
+          ),
+          matchesGroupRoute(route, expectedHash: expected.groupIdSha256),
+          matchesGroupRoute(
+            conversation,
+            expectedHash: expected.groupIdSha256
+          ) else {
+      return unknown(.groupHashMismatch)
+    }
+    guard isExactOne(envelope["v"]),
+          isExactOne(content["v"]),
+          userInfo.keys.contains("NotificationId"),
+          isValidFlutterNotificationId(userInfo["NotificationId"]),
+          !["type", "groupId", "message_id", "event_id"].contains(where: {
+            userInfo.keys.contains(AnyHashable($0))
+          }),
+          exactString(content["kind"], maxBytes: 32)
+            == (expected.phase == .message ? "message" : "reaction"),
+          boundedTrimmed(
+            content["generation"] as? String ?? "",
+            maxBytes: 512
+          ) != nil else {
+      return unknown(.unclassifiedLocal)
+    }
+    return IosGroupNotificationDiagnosticClassification(
+      triggerOrigin: .local,
+      sourceClass: .flutterLocal,
+      reason: .exactFlutterLocal,
+      dispatchClaim: claim
+    )
+  }
+
+  private static func dispatchClaim(
+    _ value: Any?
+  ) -> IosGroupNotificationDispatchClaim {
+    guard value != nil else { return .absent }
+    guard let value = value as? String else { return .invalid }
+    switch value {
+    case "group_inbox_v1": return .groupInbox
+    case "group_content_v1": return .groupContent
+    default: return .invalid
+    }
   }
 
   static func classify(
@@ -289,6 +748,7 @@ struct IosNotificationBadgeSnapshot: Equatable {
 
 enum IosNotificationRecoveryClaim: Equatable {
   case unique
+  case sameRequestDuplicate
   case duplicate
   case accountMismatch
   case unsupportedSchema
@@ -685,7 +1145,9 @@ final class IosNotificationRecoveryStore {
               existing.kind == identity.kind else {
           return .accountMismatch
         }
-        return .duplicate
+        return identity.kind == .ordinary && eventHash != nil
+          ? .sameRequestDuplicate
+          : .duplicate
       }
       guard state.requestRows.count < maxRows else {
         return .capacityExceeded
@@ -1448,6 +1910,7 @@ extension IosNotificationRecoveryStore: IosNotificationRecoveryHandoffStoring {}
 
 enum IosNotificationRecoveryHandoffDisposition: Equatable {
   case unique
+  case sameRequestDuplicate
   case duplicate
   case untracked
   case rejected
@@ -1482,6 +1945,8 @@ final class IosNotificationRecoveryHandoffOrchestrator {
       ) {
       case .unique:
         disposition = .unique
+      case .sameRequestDuplicate:
+        disposition = .sameRequestDuplicate
       case .duplicate:
         disposition = .duplicate
       case .accountMismatch, .unsupportedSchema:
@@ -1498,7 +1963,8 @@ final class IosNotificationRecoveryHandoffOrchestrator {
     beforeContentHandler(disposition)
     contentHandler(content)
     if identity != nil,
-       disposition == .unique || disposition == .duplicate {
+       disposition == .unique || disposition == .sameRequestDuplicate ||
+         disposition == .duplicate {
       _ = store?.markCommitted(requestIdentifier: requestIdentifier)
     }
     return disposition

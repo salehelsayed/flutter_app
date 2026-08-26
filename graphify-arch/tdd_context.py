@@ -1559,6 +1559,10 @@ _HEAD_OR_TAIL = re.compile(
 _WHOLE_STREAM = re.compile(
     r"(?:^|&&|\|\||;)\s*(?:command\s+)?(?:bat|cat)\s+(?P<args>[^;&|]+)"
 )
+_TOOL_OUTPUT_TRUNCATION = re.compile(
+    r"Warning:\s+truncated output\s+\(original token count:\s*(?P<tokens>\d+)\)",
+    re.I,
+)
 _INSTRUCTION_DOCUMENTS = {
     "agents.md", "changelog.md", "contributing.md", "license.md", "readme.md",
     "skill.md",
@@ -1692,6 +1696,11 @@ def _shell_command_segments(command: str) -> list[str]:
             quote = char
             index += 1
             continue
+        if char == "\\" and index + 1 < len(command) and command[index + 1] == "\n":
+            # A shell continuation is part of the same invocation. Keeping it
+            # intact is essential for multi-line `affected <path>...` coverage.
+            index += 2
+            continue
         if char in ";|&\n":
             segment = command[start:index].strip(" ()\t")
             if segment:
@@ -1749,6 +1758,45 @@ def _tool_output_text(value: Any) -> str:
         if "output" in value:
             return _tool_output_text(value["output"])
     return ""
+
+
+def _tool_output_details(value: Any) -> dict[str, Any]:
+    """Return model-visible output size and any Codex truncation metadata."""
+    text = _tool_output_text(value)
+    original_tokens = [
+        int(match.group("tokens"))
+        for match in _TOOL_OUTPUT_TRUNCATION.finditer(text)
+    ]
+    exit_codes: list[int] = []
+
+    def collect_exit_codes(item: Any) -> None:
+        if isinstance(item, dict):
+            for key in ("exit_code", "exitCode"):
+                value = item.get(key)
+                if isinstance(value, int):
+                    exit_codes.append(value)
+            for nested in item.values():
+                collect_exit_codes(nested)
+        elif isinstance(item, list):
+            for nested in item:
+                collect_exit_codes(nested)
+
+    collect_exit_codes(value)
+    if not exit_codes:
+        structured = re.search(r'["\']exit_code["\']\s*:\s*(-?\d+)', text)
+        standard = re.search(
+            r"(?im)^(?:exit code\s*:|process exited with code\s+)\s*(-?\d+)\b",
+            text,
+        )
+        match = structured or standard
+        if match:
+            exit_codes.append(int(match.group(1)))
+    return {
+        "chars": len(text),
+        "truncated": bool(original_tokens),
+        "original_tokens": max(original_tokens, default=0),
+        "exit_code": exit_codes[0] if exit_codes else None,
+    }
 
 
 def _load_usage_records(path: Path = STATS_PATH) -> list[dict[str, Any]]:
@@ -1817,49 +1865,290 @@ def _reminder_records_for_session(
     return records
 
 
-def _reminder_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Summarize whether a new Graphify context followed each advisory."""
+def _reminder_metrics(
+    records: list[dict[str, Any]],
+    *,
+    model_visible_tool_hashes: set[str] | None = None,
+    model_visible_input_hashes: set[str] | None = None,
+    model_visible_command_hashes: set[str] | None = None,
+) -> dict[str, Any]:
+    """Summarize executed hook events, enforced blocks, and rollout identity joins."""
     grouped: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in records:
         grouped[str(row.get("agent_sha256") or "root")].append(row)
 
+    reminder_kinds = {"initial", "handoff", "batch", "ceiling", "spawn_context"}
+    visible_tool_hashes = model_visible_tool_hashes or set()
+    visible_input_hashes = model_visible_input_hashes or set()
+    visible_command_hashes = model_visible_command_hashes or set()
+    visibility_available = bool(
+        visible_tool_hashes or visible_input_hashes or visible_command_hashes
+    )
+
+    def command_hashes(row: dict[str, Any]) -> set[str]:
+        value = row.get("command_sha256s")
+        if isinstance(value, list):
+            return {str(item) for item in value if item}
+        return {str(value)} if value else set()
+
+    def model_visible(row: dict[str, Any]) -> bool:
+        return bool(
+            (
+                row.get("tool_use_sha256")
+                and str(row["tool_use_sha256"]) in visible_tool_hashes
+            )
+            or (
+                row.get("tool_input_sha256")
+                and str(row["tool_input_sha256"]) in visible_input_hashes
+            )
+            or command_hashes(row).intersection(visible_command_hashes)
+        )
+
+    def identity_stored(row: dict[str, Any]) -> bool:
+        return bool(
+            row.get("tool_use_sha256")
+            or row.get("tool_input_sha256")
+            or command_hashes(row)
+        )
+
+    def same_delivery_batch(
+        reminder_row: dict[str, Any], later_row: dict[str, Any]
+    ) -> bool:
+        first_batch = reminder_row.get("batch_sha256")
+        later_batch = later_row.get("batch_sha256")
+        if first_batch and first_batch == later_batch:
+            return True
+        first_time = _audit_timestamp(reminder_row.get("ts"))
+        later_time = _audit_timestamp(later_row.get("ts"))
+        return bool(
+            first_time
+            and later_time
+            and dt.timedelta(0)
+            <= later_time - first_time
+            <= dt.timedelta(milliseconds=250)
+        )
+
     reminders = 0
     initial = 0
+    handoff = 0
+    batch = 0
     ceiling = 0
+    spawn = 0
     responded = 0
     ignored = 0
+    batched = 0
     pending = 0
-    for agent_records in grouped.values():
+    agent_summaries: list[dict[str, Any]] = []
+    for agent, agent_records in grouped.items():
+        raw_records = [
+            row
+            for row in agent_records
+            if row.get("event") == "code_browse" and not row.get("blocked")
+        ]
+        attempted_raw_records = [
+            row for row in agent_records if row.get("event") == "code_browse"
+        ]
+        enforced_raw_records = [
+            row
+            for row in raw_records
+            if "blocked" in row
+        ]
+        agent_summaries.append(
+            {
+                "agent_sha256": agent,
+                "code_browse_events": len(raw_records),
+                "code_browse_attempts": len(attempted_raw_records),
+                "context_events": sum(
+                    row.get("event") == "context" for row in agent_records
+                ),
+                "reminders": sum(
+                    row.get("reminder") in reminder_kinds for row in agent_records
+                ),
+                "max_gap": max(
+                    (int(row.get("raw_since_context", 0)) for row in raw_records),
+                    default=0,
+                ),
+                "enforced_max_gap": max(
+                    (
+                        int(row.get("raw_since_context", 0))
+                        for row in enforced_raw_records
+                    ),
+                    default=0,
+                ),
+                "batch_violations": sum(
+                    int(row.get("batch_size_hint", 0))
+                    > int(row.get("batch_budget", 8))
+                    for row in raw_records
+                ),
+                "blocks": sum(bool(row.get("blocked")) for row in agent_records),
+                "spawns": sum(row.get("event") == "spawn" for row in agent_records),
+            }
+        )
         for index, row in enumerate(agent_records):
             reminder = row.get("reminder")
-            if reminder not in {"initial", "ceiling"}:
+            if reminder not in reminder_kinds:
                 continue
             reminders += 1
             initial += int(reminder == "initial")
+            handoff += int(reminder == "handoff")
+            batch += int(reminder == "batch")
             ceiling += int(reminder == "ceiling")
+            spawn += int(reminder == "spawn_context")
             outcome = "pending"
+            visible_boundary_seen = False
             for later in agent_records[index + 1 :]:
                 if later.get("event") == "context":
                     outcome = "responded"
                     break
-                if later.get("reminder") in {"initial", "ceiling"}:
-                    outcome = "ignored"
+                if later.get("reminder") in reminder_kinds:
+                    nested_before_visibility = bool(
+                        visibility_available
+                        and not visible_boundary_seen
+                        and not model_visible(later)
+                    )
+                    outcome = (
+                        "batched"
+                        if same_delivery_batch(row, later)
+                        or nested_before_visibility
+                        else "ignored"
+                    )
                     break
+                if model_visible(later):
+                    visible_boundary_seen = True
             responded += int(outcome == "responded")
             ignored += int(outcome == "ignored")
+            batched += int(outcome == "batched")
             pending += int(outcome == "pending")
+    agent_summaries.sort(
+        key=lambda row: (
+            -int(row["max_gap"]),
+            -int(row["code_browse_events"]),
+            str(row["agent_sha256"]),
+        )
+    )
+    code_attempts = [row for row in records if row.get("event") == "code_browse"]
+    code_browse_events = sum(not row.get("blocked") for row in code_attempts)
+    blocked_code_browses = sum(bool(row.get("blocked")) for row in code_attempts)
+    blocked_events = [row for row in records if row.get("blocked")]
+    gate_counts = Counter(str(row.get("gate")) for row in blocked_events)
+    closure_events = [row for row in records if row.get("event") == "closure"]
+    affected_coverage_events = [
+        row for row in records if row.get("event") == "affected_coverage"
+    ]
+    closure_block_events = sum(bool(row.get("blocked")) for row in closure_events)
+    closure_blocks = max(
+        closure_block_events,
+        max((int(row.get("closure_blocks", 0)) for row in closure_events), default=0),
+    )
+    recovery_events = sum(bool(row.get("recovered")) for row in affected_coverage_events)
+    recoveries = max(
+        recovery_events,
+        max(
+            (
+                int(row.get("recoveries", 0))
+                for row in [*closure_events, *affected_coverage_events]
+            ),
+            default=0,
+        ),
+    )
+    latest_pending_affected = next(
+        (
+            int(row["pending_affected_count"])
+            for row in reversed(records)
+            if row.get("pending_affected_count") is not None
+        ),
+        0,
+    )
+    spawn_events = [row for row in records if row.get("event") == "spawn"]
+    enforcement_events = [row for row in records if "blocked" in row]
+    enforced_code_browses = [
+        row
+        for row in code_attempts
+        if "blocked" in row and not row.get("blocked")
+    ]
+    batch_hints = sum(
+        row.get("event") == "code_browse"
+        and not row.get("blocked")
+        and int(row.get("batch_size_hint", 0)) > 1
+        for row in records
+    )
+    batch_violations = sum(
+        row.get("event") == "code_browse"
+        and not row.get("blocked")
+        and int(row.get("batch_size_hint", 0))
+        > int(row.get("batch_budget", 8))
+        for row in records
+    )
+    tool_identity_events = sum(identity_stored(row) for row in records)
+    tool_identity_linked = sum(
+        identity_stored(row) and model_visible(row) for row in records
+    )
+    modern_identity_events = sum(
+        bool(row.get("tool_input_sha256") or command_hashes(row)) for row in records
+    )
+    modern_identity_linked = sum(
+        bool(row.get("tool_input_sha256") or command_hashes(row))
+        and model_visible(row)
+        for row in records
+    )
     return {
         "hook_tracking": bool(records),
-        "hook_code_browse_events": sum(
-            row.get("event") == "code_browse" for row in records
-        ),
+        "hook_event_count": len(records),
+        "hook_code_browse_attempts": len(code_attempts),
+        "hook_code_browse_events": code_browse_events,
+        "hook_blocked_code_browses": blocked_code_browses,
         "hook_context_events": sum(row.get("event") == "context" for row in records),
         "hook_reminders": reminders,
         "hook_initial_reminders": initial,
+        "hook_handoff_reminders": handoff,
+        "hook_batch_reminders": batch,
         "hook_ceiling_reminders": ceiling,
+        "hook_spawn_reminders": spawn,
         "hook_reminders_responded": responded,
         "hook_reminders_ignored": ignored,
+        "hook_reminders_batched": batched,
         "hook_reminders_pending": pending,
+        "hook_batch_hints": batch_hints,
+        "hook_batch_violations": batch_violations,
+        "hook_blocks": len(blocked_events),
+        "hook_initial_blocks": gate_counts["initial"],
+        "hook_handoff_blocks": gate_counts["handoff"],
+        "hook_batch_blocks": gate_counts["batch"],
+        "hook_ceiling_blocks": gate_counts["ceiling"],
+        "hook_spawn_blocks": gate_counts["spawn_context"],
+        "hook_affected_closure_attempts": len(closure_events),
+        "hook_affected_closure_blocks": gate_counts["affected_closure"],
+        "hook_affected_closure_block_counter": closure_blocks,
+        "hook_affected_closure_passes": sum(
+            not bool(row.get("blocked")) for row in closure_events
+        ),
+        "hook_affected_closure_recoveries": recoveries,
+        "hook_affected_closure_recovery_events": recovery_events,
+        "hook_affected_coverage_events": len(affected_coverage_events),
+        "hook_latest_pending_affected_count": latest_pending_affected,
+        "hook_spawn_events": len(spawn_events),
+        "hook_spawn_context_packets": sum(
+            bool(row.get("context_packet")) for row in spawn_events
+        ),
+        "hook_enforcement_active": bool(enforcement_events),
+        "hook_enforcement_events": len(enforcement_events),
+        "hook_enforced_code_browse_events": len(enforced_code_browses),
+        "hook_enforced_max_gap": max(
+            (
+                int(row.get("raw_since_context", 0))
+                for row in enforced_code_browses
+            ),
+            default=0,
+        ),
+        "hook_max_gap": max(
+            (int(row["max_gap"]) for row in agent_summaries), default=0
+        ),
+        "hook_tool_identity_events": tool_identity_events,
+        "hook_tool_identity_linked": tool_identity_linked,
+        "hook_modern_identity_events": modern_identity_events,
+        "hook_modern_identity_linked": modern_identity_linked,
+        "hook_nested_tool_events": tool_identity_events - tool_identity_linked,
+        "hook_agent_summaries": agent_summaries,
     }
 
 
@@ -1967,6 +2256,15 @@ def _is_code_context_path(path: str) -> bool:
     )
 
 
+def _is_app_owned_code_path(path: str) -> bool:
+    """Return whether a changed path belongs to the application/test surface."""
+    normalized = path.replace("\\", "/").lstrip("./")
+    first = normalized.split("/", 1)[0]
+    if first == "test_fixtures":
+        return Path(normalized).suffix.lower() in CODE_CONTEXT_SUFFIXES
+    return first != "graphify-arch" and _is_code_context_path(normalized)
+
+
 def _command_browse_kinds(command: str, *, root: Path = ROOT) -> tuple[bool, bool]:
     """Return (plan/spec document read, raw code browse) for a shell command."""
     lower = command.lower()
@@ -1989,54 +2287,20 @@ def _command_browse_kinds(command: str, *, root: Path = ROOT) -> tuple[bool, boo
 
 @functools.lru_cache(maxsize=512)
 def _audit_line_count(root_text: str, relative_path: str) -> int | None:
-    """Best-effort pre-edit line count for whole-file read classification."""
+    """Return the current line count for heuristic whole-file classification.
+
+    Session stats intentionally avoid a per-file `git show` on dirty paths. In
+    large active worktrees those subprocesses dominated a two-session audit,
+    while HEAD is not necessarily the file version that existed at read time.
+    Using the current file is deterministic, conservative for appended lines,
+    and keeps this explicitly heuristic metric usable.
+    """
     root = Path(root_text)
-    counts: list[int] = []
     try:
         data = (root / relative_path).read_bytes()
-        counts.append(data.count(b"\n") + int(bool(data) and not data.endswith(b"\n")))
+        return data.count(b"\n") + int(bool(data) and not data.endswith(b"\n"))
     except OSError:
-        pass
-    if relative_path in _audit_dirty_paths(root_text):
-        try:
-            proc = subprocess.run(
-                ["git", "show", f"HEAD:{relative_path}"],
-                cwd=root,
-                capture_output=True,
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            proc = None
-        if proc is not None and proc.returncode == 0:
-            data = proc.stdout
-            counts.append(
-                data.count(b"\n") + int(bool(data) and not data.endswith(b"\n"))
-            )
-    return min(counts) if counts else None
-
-
-@functools.lru_cache(maxsize=8)
-def _audit_dirty_paths(root_text: str) -> frozenset[str]:
-    """Resolve tracked dirty paths once so clean-file audits avoid git subprocesses."""
-    try:
-        proc = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD", "--"],
-            cwd=Path(root_text),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return frozenset()
-    if proc.returncode != 0:
-        return frozenset()
-    return frozenset(
-        line.strip().replace("\\", "/")
-        for line in proc.stdout.splitlines()
-        if line.strip()
-    )
+        return None
 
 
 def _normalize_audit_target(raw_path: str, *, root: Path) -> str | None:
@@ -2094,6 +2358,301 @@ def _file_read_intervals(
     return dict(intervals)
 
 
+def _merge_line_intervals(
+    intervals: Iterable[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Return inclusive line intervals as a sorted non-overlapping union."""
+    merged: list[list[int]] = []
+    for start, end in sorted(intervals):
+        if end < start:
+            continue
+        if not merged or start > merged[-1][1] + 1:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    return [(start, end) for start, end in merged]
+
+
+def _interval_line_total(intervals: Iterable[tuple[int, int]]) -> int:
+    return sum(end - start + 1 for start, end in _merge_line_intervals(intervals))
+
+
+def _interval_overlap_lines(
+    left: Iterable[tuple[int, int]],
+    right: Iterable[tuple[int, int]],
+) -> int:
+    """Count inclusive lines shared by two interval collections."""
+    first = _merge_line_intervals(left)
+    second = _merge_line_intervals(right)
+    first_index = second_index = 0
+    overlap = 0
+    while first_index < len(first) and second_index < len(second):
+        first_start, first_end = first[first_index]
+        second_start, second_end = second[second_index]
+        overlap += max(0, min(first_end, second_end) - max(first_start, second_start) + 1)
+        if first_end <= second_end:
+            first_index += 1
+        else:
+            second_index += 1
+    return overlap
+
+
+def _affected_paths_from_invocation(
+    invocation: str,
+    *,
+    root: Path = ROOT,
+) -> list[str]:
+    """Extract only paths named after the helper's ``affected`` subcommand."""
+    match = re.search(r"\baffected\b(?P<arguments>.*)$", invocation, re.DOTALL)
+    if match is None:
+        return []
+    seen: set[str] = set()
+    paths: list[str] = []
+    for target in _file_terms(match.group("arguments"), root=root, limit=256):
+        normalized = target.removeprefix("HEAD:")
+        if normalized in seen or not _is_app_owned_code_path(normalized):
+            continue
+        seen.add(normalized)
+        paths.append(normalized)
+    return paths
+
+
+def _document_read_metrics(
+    events: Iterable[dict[str, Any]],
+    call_outputs: dict[str, dict[str, Any]],
+    *,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    """Classify document coverage, revisits, overlap, and truncated output."""
+    covered_by_path: defaultdict[str, list[tuple[int, int]]] = defaultdict(list)
+    contributing_by_path: defaultdict[str, set[int]] = defaultdict(set)
+    first_pass_calls: set[int] = set()
+    targeted_revisit_calls: set[int] = set()
+    redundant_calls: set[int] = set()
+    truncated_calls: set[tuple[int, str]] = set()
+    whole_calls: set[int] = set()
+    whole_call_ids: set[str] = set()
+    whole_files: set[str] = set()
+    first_pass_targets = 0
+    targeted_revisit_targets = 0
+    redundant_targets = 0
+    truncated_targets = 0
+    first_pass_lines = 0
+    overlap_lines = 0
+
+    ordered_events = sorted(
+        events,
+        key=lambda event: (int(event["index"]), str(event["target"])),
+    )
+    for event in ordered_events:
+        index = int(event["index"])
+        call_id = str(event.get("call_id") or "")
+        target = str(event["target"])
+        requested = _merge_line_intervals(event.get("intervals") or [])
+        if not requested:
+            continue
+        output = call_outputs.get(call_id, {}) if call_id else {}
+        if output.get("truncated"):
+            truncated_calls.add((index, call_id))
+            truncated_targets += 1
+            # Requested ranges are not claimed as model-visible coverage when
+            # Codex says the result was cut off. A later bounded retry supplies
+            # the confirmable first pass instead of becoming a fake reread.
+            continue
+
+        line_count = _audit_line_count(str(root.resolve()), target)
+        prior = covered_by_path[target]
+        requested_lines = _interval_line_total(requested)
+        shared_lines = _interval_overlap_lines(requested, prior)
+        new_lines = requested_lines - shared_lines
+        overlap_lines += shared_lines
+        prior_full = _intervals_cover_file(target, prior, root=root)
+
+        if new_lines:
+            first_pass_targets += 1
+            first_pass_calls.add(index)
+            first_pass_lines += new_lines
+            contributing_by_path[target].add(index)
+        elif prior_full and line_count is not None and requested_lines < line_count:
+            targeted_revisit_targets += 1
+            targeted_revisit_calls.add(index)
+        else:
+            redundant_targets += 1
+            redundant_calls.add(index)
+
+        covered_by_path[target] = _merge_line_intervals([*prior, *requested])
+        if _intervals_cover_file(target, requested, root=root):
+            whole_calls.add(index)
+            whole_files.add(target)
+            if call_id:
+                whole_call_ids.add(call_id)
+
+    covered_files = {
+        target
+        for target, intervals in covered_by_path.items()
+        if _intervals_cover_file(target, intervals, root=root)
+    }
+    covered_calls: set[int] = set()
+    for target in covered_files:
+        covered_calls.update(contributing_by_path[target])
+
+    truncated_call_ids = {call_id for _, call_id in truncated_calls if call_id}
+    truncation_waste = round(
+        sum(int(call_outputs[call_id].get("chars", 0)) for call_id in truncated_call_ids)
+        / 4
+    )
+    truncation_dropped = sum(
+        max(
+            0,
+            int(call_outputs[call_id].get("original_tokens", 0))
+            - round(int(call_outputs[call_id].get("chars", 0)) / 4),
+        )
+        for call_id in truncated_call_ids
+    )
+    return {
+        "document_read_target_count": len(ordered_events),
+        "document_first_pass_read_calls": len(first_pass_calls),
+        "document_first_pass_read_targets": first_pass_targets,
+        "document_first_pass_lines": first_pass_lines,
+        "document_targeted_revisit_calls": len(targeted_revisit_calls),
+        "document_targeted_revisit_targets": targeted_revisit_targets,
+        "document_overlap_lines": overlap_lines,
+        "document_redundant_read_calls": len(redundant_calls),
+        "document_redundant_read_targets": redundant_targets,
+        "document_truncated_read_calls": len(truncated_calls),
+        "document_truncated_read_targets": truncated_targets,
+        "document_truncation_waste_tokens_estimate": truncation_waste,
+        "document_truncation_dropped_tokens_estimate": truncation_dropped,
+        "whole_document_read_calls": len(whole_calls),
+        "whole_document_file_count": len(whole_files),
+        "whole_document_call_ids": whole_call_ids,
+        "covered_document_read_calls": len(covered_calls),
+        "covered_document_file_count": len(covered_files),
+    }
+
+
+def _affected_coverage_metrics(
+    events: Iterable[dict[str, Any]],
+    canonical_records: Iterable[dict[str, Any]],
+    call_outputs: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Replay edit/impact occurrences, crediting only successful affected calls."""
+    canonical_candidates = []
+    for row in canonical_records:
+        canonical_candidates.append(
+            {
+                "digest": str(row.get("question_sha256") or ""),
+                "timestamp": _audit_timestamp(row.get("ts")),
+                "claimed": False,
+            }
+        )
+
+    def claim_canonical(
+        event: dict[str, Any],
+        *,
+        allow_untimed: bool,
+    ) -> bool:
+        digest = hashlib.sha256(
+            "\n".join(sorted(str(path) for path in event["paths"])).encode()
+        ).hexdigest()[:16]
+        event_time = event.get("timestamp")
+        matches: list[tuple[float, dict[str, Any]]] = []
+        for candidate in canonical_candidates:
+            if candidate["claimed"] or candidate["digest"] != digest:
+                continue
+            candidate_time = candidate["timestamp"]
+            if event_time is not None and candidate_time is not None:
+                distance = abs((event_time - candidate_time).total_seconds())
+                if distance > 120:
+                    continue
+            else:
+                if not allow_untimed:
+                    continue
+                distance = 0.0
+            matches.append((distance, candidate))
+        if not matches:
+            return False
+        selected = min(matches, key=lambda item: item[0])[1]
+        selected["claimed"] = True
+        return True
+
+    pending: dict[str, int] = {}
+    covered_files: set[str] = set()
+    covered_pending_paths = 0
+    full_calls = partial_calls = unrelated_calls = no_pending_calls = 0
+    successful_calls = failed_calls = unverified_calls = 0
+
+    for event in sorted(events, key=lambda row: int(row["index"])):
+        if event["kind"] == "patch":
+            for target in event["paths"]:
+                pending.pop(target, None)
+                pending[target] = int(event["index"])
+            continue
+
+        output = call_outputs.get(str(event.get("call_id") or ""), {})
+        exit_code = output.get("exit_code")
+        # An explicit failure cannot borrow a canonical record from a later
+        # same-path retry. Otherwise canonical usage proves that affected()
+        # reached its measured append, while an explicit zero exit is a valid
+        # fallback for logging-disabled runs.
+        canonical_success = claim_canonical(
+            event,
+            allow_untimed=not (isinstance(exit_code, int) and exit_code != 0),
+        )
+        successful = canonical_success or exit_code == 0
+        if not successful:
+            if isinstance(exit_code, int) and exit_code != 0:
+                failed_calls += 1
+            else:
+                unverified_calls += 1
+            continue
+
+        successful_calls += 1
+        pending_before = set(pending)
+        covered_pending = pending_before.intersection(event["paths"])
+        if not pending_before:
+            no_pending_calls += 1
+        elif covered_pending == pending_before:
+            full_calls += 1
+        elif covered_pending:
+            partial_calls += 1
+        else:
+            unrelated_calls += 1
+        covered_pending_paths += len(covered_pending)
+        covered_files.update(covered_pending)
+        for target in covered_pending:
+            pending.pop(target, None)
+
+    pending_paths = list(pending)
+    patch_events = [event for event in events if event["kind"] == "patch"]
+    if not patch_events:
+        coverage_status = "not_applicable"
+    elif not pending_paths:
+        coverage_status = "full"
+    elif covered_pending_paths:
+        coverage_status = "partial"
+    else:
+        coverage_status = "none"
+    return {
+        "affected_coverage_status": coverage_status,
+        "affected_pending_path_count": len(pending_paths),
+        "affected_pending_paths": pending_paths,
+        "affected_covered_pending_paths": covered_pending_paths,
+        "affected_covered_file_count": len(covered_files),
+        "affected_full_coverage_calls": full_calls,
+        "affected_partial_coverage_calls": partial_calls,
+        "affected_unrelated_calls": unrelated_calls,
+        "affected_no_pending_calls": no_pending_calls,
+        "affected_successful_calls": successful_calls,
+        "affected_failed_calls": failed_calls,
+        "affected_unverified_calls": unverified_calls,
+        "affected_after_latest_change": coverage_status in {
+            "not_applicable",
+            "full",
+        },
+    }
+
+
 def _intervals_cover_file(
     relative_path: str,
     intervals: Iterable[tuple[int, int]],
@@ -2122,7 +2681,9 @@ def _whole_file_targets(command: str, *, root: Path = ROOT) -> set[str]:
     }
 
 
-def _session_id(path: Path) -> str | None:
+@functools.lru_cache(maxsize=1024)
+def _session_metadata(path: Path) -> dict[str, Any]:
+    """Read the small rollout header used for cohorting and anonymous joins."""
     try:
         with path.open(encoding="utf-8") as handle:
             for _ in range(40):
@@ -2134,17 +2695,61 @@ def _session_id(path: Path) -> str | None:
                 except json.JSONDecodeError:
                     continue
                 if row.get("type") == "session_meta":
-                    session_id = row.get("payload", {}).get("id")
-                    return str(session_id) if session_id else None
+                    payload = row.get("payload")
+                    if not isinstance(payload, dict):
+                        break
+                    session_id = payload.get("id")
+                    thread_source = payload.get("thread_source")
+                    source_text = json.dumps(thread_source, sort_keys=True).lower()
+                    return {
+                        "session_id": str(session_id) if session_id else None,
+                        "started_at": payload.get("timestamp") or row.get("timestamp"),
+                        "session_kind": (
+                            "subagent" if "subagent" in source_text else "root"
+                        ),
+                        "cli_version": str(payload.get("cli_version") or "unknown"),
+                        "thread_source": thread_source,
+                    }
     except OSError:
-        return None
-    return None
+        pass
+    return {
+        "session_id": None,
+        "started_at": None,
+        "session_kind": "unknown",
+        "cli_version": "unknown",
+        "thread_source": None,
+    }
+
+
+def _session_id(path: Path) -> str | None:
+    return _session_metadata(path).get("session_id")
 
 
 def _session_digest(session_id: str | None) -> str:
     if not session_id:
         return "unknown"
     return hashlib.sha256(session_id.encode()).hexdigest()[:16]
+
+
+def _canonical_tool_input(value: Any) -> str:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return value.strip()
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _tool_input_digest(tool_name: Any, tool_input: Any) -> str:
+    short_name = str(tool_name or "").strip().lower().rsplit(".", 1)[-1]
+    return _session_digest(short_name + "\0" + _canonical_tool_input(tool_input))
+
+
+def _command_digest(command: str) -> str:
+    return _session_digest(command.strip())
 
 
 def _session_files(sessions_root: Path) -> list[Path]:
@@ -2190,7 +2795,67 @@ def _session_audit(
     usage_path: Path = STATS_PATH,
     reminder_path: Path = REMINDER_STATS_PATH,
 ) -> dict[str, Any]:
+    session_metadata = _session_metadata(path)
+    session_sha256 = _session_digest(session_metadata.get("session_id"))
+    reminder_records = _reminder_records_for_session(
+        session_sha256, path=reminder_path
+    )
+    blocked_candidates: list[dict[str, Any]] = []
+    for row in reminder_records:
+        if not row.get("blocked"):
+            continue
+        raw_commands = row.get("command_sha256s")
+        blocked_candidates.append(
+            {
+                "tool": str(row.get("tool_use_sha256") or ""),
+                "input": str(row.get("tool_input_sha256") or ""),
+                "commands": {
+                    str(value)
+                    for value in (
+                        raw_commands if isinstance(raw_commands, list) else [raw_commands]
+                    )
+                    if value
+                },
+                "timestamp": _audit_timestamp(row.get("ts")),
+                "claimed": False,
+            }
+        )
+
+    def claim_blocked_rollout(
+        *,
+        tool_hash: str,
+        input_hash: str,
+        command_hashes: set[str],
+        timestamp: dt.datetime | None,
+    ) -> bool:
+        matches: list[tuple[float, dict[str, Any]]] = []
+        for candidate in blocked_candidates:
+            if candidate["claimed"]:
+                continue
+            tool_match = bool(tool_hash and tool_hash == candidate["tool"])
+            input_match = bool(input_hash and input_hash == candidate["input"])
+            commands_match = bool(
+                command_hashes and command_hashes.issubset(candidate["commands"])
+            )
+            if not (tool_match or input_match or commands_match):
+                continue
+            candidate_time = candidate["timestamp"]
+            if timestamp is None or candidate_time is None:
+                if not tool_match:
+                    continue
+                distance = 0.0
+            else:
+                distance = abs((timestamp - candidate_time).total_seconds())
+                if distance > 10.0 and not tool_match:
+                    continue
+            matches.append((distance, candidate))
+        if not matches:
+            return False
+        selected = min(matches, key=lambda item: item[0])[1]
+        selected["claimed"] = True
+        return True
     tool_calls = 0
+    blocked_rollout_calls = 0
     exec_commands = 0
     document_read_indices: list[int] = []
     code_browse_indices: list[int] = []
@@ -2198,31 +2863,33 @@ def _session_audit(
     compact_code_events: list[tuple[int, dt.datetime | None, bool]] = []
     compact_code_unlogged_indices: list[int] = []
     affected_indices: list[int] = []
+    impact_events: list[dict[str, Any]] = []
     measured_native_indices: list[int] = []
     direct_native_code_indices: list[int] = []
     native_document_queries = 0
     branch_marker_indices: list[int] = []
     code_change_indices: list[int] = []
     changed_code_files: set[str] = set()
-    whole_document_calls: set[int] = set()
+    code_change_path_occurrences = 0
     whole_code_calls: set[int] = set()
     document_files: set[str] = set()
     code_files: set[str] = set()
-    whole_document_files: set[str] = set()
     whole_code_files: set[str] = set()
-    covered_document_calls: set[int] = set()
     covered_code_calls: set[int] = set()
-    covered_document_files: set[str] = set()
     covered_code_files: set[str] = set()
     read_coverage: defaultdict[str, list[tuple[int, int, int]]] = defaultdict(list)
+    document_read_events: list[dict[str, Any]] = []
     compact_document_queries = 0
     compact_document_events: list[tuple[int, dt.datetime | None, bool]] = []
     compact_document_unlogged_queries = 0
     call_output_chars: dict[str, int] = {}
+    call_outputs: dict[str, dict[str, Any]] = {}
     document_call_ids: set[str] = set()
     code_call_ids: set[str] = set()
-    whole_document_call_ids: set[str] = set()
     whole_code_call_ids: set[str] = set()
+    rollout_tool_hashes: set[str] = set()
+    rollout_tool_input_hashes: set[str] = set()
+    rollout_command_hashes: set[str] = set()
 
     try:
         handle = path.open(encoding="utf-8")
@@ -2241,9 +2908,9 @@ def _session_audit(
             if payload_type in {"custom_tool_call_output", "function_call_output"}:
                 call_id = payload.get("call_id")
                 if call_id:
-                    call_output_chars[str(call_id)] = len(
-                        _tool_output_text(payload.get("output"))
-                    )
+                    details = _tool_output_details(payload.get("output"))
+                    call_outputs[str(call_id)] = details
+                    call_output_chars[str(call_id)] = int(details["chars"])
                 continue
             if payload_type not in {"custom_tool_call", "function_call"}:
                 continue
@@ -2251,26 +2918,61 @@ def _session_audit(
             tool_calls += 1
             row_timestamp = _audit_timestamp(row.get("timestamp"))
             call_id = str(payload.get("call_id") or "")
-            tool_input = payload.get("input") or payload.get("arguments") or ""
+            call_tool_hash = _session_digest(call_id) if call_id else ""
+            if call_id:
+                rollout_tool_hashes.add(call_tool_hash)
+            raw_tool_input = payload.get("input")
+            if raw_tool_input is None:
+                raw_tool_input = payload.get("arguments")
+            if raw_tool_input is None:
+                raw_tool_input = ""
+            call_input_hash = _tool_input_digest(
+                payload.get("name"), raw_tool_input
+            )
+            rollout_tool_input_hashes.add(call_input_hash)
+            tool_input = raw_tool_input
             if not isinstance(tool_input, str):
                 try:
-                    tool_input = json.dumps(tool_input)
+                    tool_input = json.dumps(tool_input, sort_keys=True)
                 except (TypeError, ValueError):
                     tool_input = ""
             commands = _exec_commands_from_tool_input(tool_input)
+            call_command_hashes = {
+                _command_digest(command) for command in commands if command.strip()
+            }
+            rollout_command_hashes.update(call_command_hashes)
             exec_commands += len(commands)
+            if claim_blocked_rollout(
+                tool_hash=call_tool_hash,
+                input_hash=call_input_hash,
+                command_hashes=call_command_hashes,
+                timestamp=row_timestamp,
+            ):
+                blocked_rollout_calls += 1
+                continue
             call_document_read = False
             call_code_browse = False
             call_whole_documents: set[str] = set()
             call_whole_code: set[str] = set()
+            call_document_intervals: defaultdict[
+                str, list[tuple[int, int]]
+            ] = defaultdict(list)
 
             patch_paths = _patch_paths_from_tool_input(tool_input, root=root)
             code_patch_paths = {
-                target for target in patch_paths if _is_code_context_path(target)
+                target for target in patch_paths if _is_app_owned_code_path(target)
             }
             if code_patch_paths:
                 code_change_indices.append(tool_calls)
                 changed_code_files.update(code_patch_paths)
+                code_change_path_occurrences += len(code_patch_paths)
+                impact_events.append(
+                    {
+                        "kind": "patch",
+                        "index": tool_calls,
+                        "paths": sorted(code_patch_paths),
+                    }
+                )
 
             for command in commands:
                 command_paths = _repo_command_paths(command, root=root)
@@ -2317,6 +3019,20 @@ def _session_audit(
                                 compact_code_unlogged_indices.append(tool_calls)
                     elif operation == "affected":
                         affected_indices.append(tool_calls)
+                        impact_events.append(
+                            {
+                                "kind": "affected",
+                                "index": tool_calls,
+                                "call_id": call_id,
+                                "timestamp": row_timestamp,
+                                "paths": set(
+                                    _affected_paths_from_invocation(
+                                        invocation,
+                                        root=root,
+                                    )
+                                ),
+                            }
+                        )
                     elif operation == "native":
                         if document_query:
                             native_document_queries += 1
@@ -2336,6 +3052,8 @@ def _session_audit(
                     read_coverage[target].extend(
                         (tool_calls, start, end) for start, end in intervals
                     )
+                    if _is_plan_spec_document(target):
+                        call_document_intervals[target].extend(intervals)
                 for target in (
                     candidate
                     for candidate, intervals in command_intervals.items()
@@ -2354,27 +3072,39 @@ def _session_audit(
                 if call_id:
                     code_call_ids.add(call_id)
             if call_whole_documents:
-                whole_document_calls.add(tool_calls)
-                whole_document_files.update(call_whole_documents)
-                if call_id:
-                    whole_document_call_ids.add(call_id)
+                # Final whole-document accounting is output-aware below; a
+                # requested full stream that Codex truncated is not called a
+                # completed one-call read.
+                pass
             if call_whole_code:
                 whole_code_calls.add(tool_calls)
                 whole_code_files.update(call_whole_code)
                 if call_id:
                     whole_code_call_ids.add(call_id)
+            for target, intervals in call_document_intervals.items():
+                document_read_events.append(
+                    {
+                        "index": tool_calls,
+                        "call_id": call_id,
+                        "target": target,
+                        "intervals": intervals,
+                    }
+                )
 
     for target, spans in read_coverage.items():
         intervals = [(start, end) for _, start, end in spans]
         if not _intervals_cover_file(target, intervals, root=root):
             continue
         contributing_calls = {index for index, _, _ in spans}
-        if _is_plan_spec_document(target):
-            covered_document_files.add(target)
-            covered_document_calls.update(contributing_calls)
-        elif _is_code_context_path(target):
+        if _is_code_context_path(target):
             covered_code_files.add(target)
             covered_code_calls.update(contributing_calls)
+
+    document_metrics = _document_read_metrics(
+        document_read_events,
+        call_outputs,
+        root=root,
+    )
 
     handoff_status = "not_applicable"
     handoff_detail = "no plan/spec read followed by raw code browsing"
@@ -2404,10 +3134,12 @@ def _session_audit(
                     f"#{last_document} without an intervening code-only Graphify query"
                 )
 
-    session_sha256 = _session_digest(_session_id(path))
     usage_records = _usage_records_for_session(session_sha256, path=usage_path)
     reminder_metrics = _reminder_metrics(
-        _reminder_records_for_session(session_sha256, path=reminder_path)
+        reminder_records,
+        model_visible_tool_hashes=rollout_tool_hashes,
+        model_visible_input_hashes=rollout_tool_input_hashes,
+        model_visible_command_hashes=rollout_command_hashes,
     )
     canonical_queries = [
         row
@@ -2427,6 +3159,11 @@ def _session_audit(
     canonical_affected = [
         row for row in usage_records if row.get("operation") == "affected"
     ]
+    impact_metrics = _affected_coverage_metrics(
+        impact_events,
+        canonical_affected,
+        call_outputs,
+    )
     refinement_counts = Counter(
         str(row["refinement_of"])
         for row in canonical_queries
@@ -2492,14 +3229,10 @@ def _session_audit(
         ):
             branch_compliant += 1
 
-    latest_change = max(code_change_indices, default=None)
-    affected_after_latest_change = (
-        latest_change is None
-        or any(index > latest_change for index in affected_indices)
-    )
-
     def output_tokens(call_ids: set[str]) -> int:
         return round(sum(call_output_chars.get(call_id, 0) for call_id in call_ids) / 4)
+
+    whole_document_call_ids = set(document_metrics.pop("whole_document_call_ids"))
 
     latest_context = next(
         (
@@ -2554,18 +3287,20 @@ def _session_audit(
 
     return {
         "session_sha256": session_sha256,
+        "session_kind": session_metadata.get("session_kind", "unknown"),
+        "started_at": session_metadata.get("started_at"),
+        "cli_version": session_metadata.get("cli_version", "unknown"),
         "tool_calls": tool_calls,
+        "blocked_rollout_calls": blocked_rollout_calls,
         "exec_commands": exec_commands,
         "document_read_calls": len(set(document_read_indices)),
         "document_file_count": len(document_files),
+        "document_unique_file_count": len(document_files),
         "document_output_tokens_estimate": output_tokens(document_call_ids),
-        "whole_document_read_calls": len(whole_document_calls),
-        "whole_document_file_count": len(whole_document_files),
         "whole_document_output_tokens_estimate": output_tokens(
             whole_document_call_ids
         ),
-        "covered_document_read_calls": len(covered_document_calls),
-        "covered_document_file_count": len(covered_document_files),
+        **document_metrics,
         "code_browse_calls": len(set(code_browse_indices)),
         "code_file_count": len(code_files),
         "code_output_tokens_estimate": output_tokens(code_call_ids),
@@ -2623,8 +3358,9 @@ def _session_audit(
         "branch_markers": len(set(branch_marker_indices)),
         "branch_graphify_first": branch_compliant,
         "code_change_calls": len(set(code_change_indices)),
+        "code_change_path_occurrences": code_change_path_occurrences,
         "changed_code_file_count": len(changed_code_files),
-        "affected_after_latest_change": affected_after_latest_change,
+        **impact_metrics,
         "latest_query_id": str(latest_context.get("query_id"))
         if latest_context
         else None,
@@ -2641,23 +3377,41 @@ def _session_audit(
 def _session_audit_lines(audit: dict[str, Any]) -> list[str]:
     lines = [
         f"Codex/Graphify session audit: {audit['session_sha256']} "
-        f"({audit['tool_calls']} tool calls)",
+        f"({audit['tool_calls']} tool calls; {audit['session_kind']}; "
+        f"CLI {audit['cli_version']})",
         "- plan/spec documents: "
-        f"reads={audit['document_read_calls']} calls/{audit['document_file_count']} files; "
+        f"unique={audit['document_unique_file_count']}; "
+        f"read-calls={audit['document_read_calls']}; "
+        f"read-targets={audit['document_read_target_count']}; "
         f"whole-in-one-call={audit['whole_document_read_calls']} calls/"
-        f"{audit['whole_document_file_count']} files; cumulative-full="
-        f"{audit['covered_document_read_calls']} calls/"
-        f"{audit['covered_document_file_count']} files; output≈"
+        f"{audit['whole_document_file_count']} files; output≈"
         f"{audit['document_output_tokens_estimate']} tokens",
-        "- raw code browsing: "
+        "- document coverage: first-pass="
+        f"{audit['document_first_pass_read_calls']} calls/"
+        f"{audit['document_first_pass_read_targets']} targets/"
+        f"{audit['covered_document_file_count']} complete files/"
+        f"{audit['document_first_pass_lines']} unique lines; targeted-revisits="
+        f"{audit['document_targeted_revisit_calls']} calls/"
+        f"{audit['document_targeted_revisit_targets']} targets; overlap="
+        f"{audit['document_overlap_lines']} lines; redundant="
+        f"{audit['document_redundant_read_calls']} calls/"
+        f"{audit['document_redundant_read_targets']} targets",
+        "- document truncation: "
+        f"{audit['document_truncated_read_calls']} calls/"
+        f"{audit['document_truncated_read_targets']} targets; visible-retry-waste≈"
+        f"{audit['document_truncation_waste_tokens_estimate']} tokens; "
+        f"dropped-before-model≈"
+        f"{audit['document_truncation_dropped_tokens_estimate']} tokens",
+        "- executed raw code browsing: "
         f"reads={audit['code_browse_calls']} calls/{audit['code_file_count']} files; "
+        f"denied rollout cells excluded={audit['blocked_rollout_calls']}; "
         f"whole-in-one-call={audit['whole_code_read_calls']} calls/"
         f"{audit['whole_code_file_count']} files; cumulative-full="
         f"{audit['covered_code_read_calls']} calls/"
         f"{audit['covered_code_file_count']} files; output≈"
         f"{audit['code_output_tokens_estimate']} tokens; whole-output≈"
         f"{audit['whole_code_output_tokens_estimate']} tokens",
-        "- raw browse cadence: "
+        "- executed raw browse cadence: "
         f"current-gap={audit['raw_browse_current_gap']}; "
         f"max-gap={audit['raw_browse_max_gap']}; "
         f"p95-gap={audit['raw_browse_p95_gap']}; "
@@ -2676,28 +3430,87 @@ def _session_audit_lines(audit: dict[str, Any]) -> list[str]:
         f"broad-refinement={audit['broad_refined_queries']}/"
         f"{audit['broad_initial_queries']}; fallback-follow-up="
         f"{audit['fallback_followups']}/{audit['fallback_queries']}; "
-        f"affected-after-latest-edit="
-        f"{'YES' if audit['affected_after_latest_change'] else 'NO'}",
+        f"affected-coverage={str(audit['affected_coverage_status']).upper()}; "
+        f"pending={audit['affected_pending_path_count']}",
+        "- affected path debt: "
+        f"successful={audit['affected_successful_calls']}; "
+        f"failed={audit['affected_failed_calls']}; "
+        f"unverified={audit['affected_unverified_calls']}; "
+        f"covered-pending={audit['affected_covered_pending_paths']}; "
+        f"full-calls={audit['affected_full_coverage_calls']}; "
+        f"partial-calls={audit['affected_partial_coverage_calls']}; "
+        f"unrelated-calls={audit['affected_unrelated_calls']}; "
+        f"no-debt-calls={audit['affected_no_pending_calls']}; pending-paths="
+        f"{','.join(audit['affected_pending_paths']) or 'none'}",
         "- branch markers: "
         f"Graphify-first={audit['branch_graphify_first']}/"
         f"{audit['branch_markers']}",
         f"- plan→code handoff: {str(audit['handoff_status']).upper()} — "
         f"{audit['handoff_detail']}",
-        "- output-token and whole-file counts are heuristic; plan/spec and code reads are kept separate",
+        "- output-token and whole-file counts are heuristic; truncated ranges are not credited as confirmed coverage",
     ]
     if audit["hook_tracking"]:
         lines.insert(
             -1,
-            "- advisory hook: "
-            f"raw={audit['hook_code_browse_events']}; "
+            "- enforcement hook: "
+            f"enforced-era-raw={audit['hook_enforced_code_browse_events']} "
+            f"max-gap={audit['hook_enforced_max_gap']}; "
+            f"all-ledger-raw={audit['hook_code_browse_events']} vs "
+            f"rollout-browse-cells={audit['code_browse_calls']}; "
+            f"attempts={audit['hook_code_browse_attempts']}; "
+            f"blocks={audit['hook_blocks']} "
+            f"(initial={audit['hook_initial_blocks']}, "
+            f"handoff={audit['hook_handoff_blocks']}, "
+            f"batch={audit['hook_batch_blocks']}, "
+            f"ceiling={audit['hook_ceiling_blocks']}, "
+            f"spawn={audit['hook_spawn_blocks']}, "
+            f"affected-closure={audit['hook_affected_closure_blocks']}); "
             f"contexts={audit['hook_context_events']}; "
-            f"reminders={audit['hook_reminders']} "
+            f"legacy-advisories={audit['hook_reminders']} "
             f"(initial={audit['hook_initial_reminders']}, "
-            f"ceiling={audit['hook_ceiling_reminders']}); outcomes="
+            f"handoff={audit['hook_handoff_reminders']}, "
+            f"batch={audit['hook_batch_reminders']}, "
+            f"ceiling={audit['hook_ceiling_reminders']}, "
+            f"spawn={audit['hook_spawn_reminders']}); outcomes="
             f"responded={audit['hook_reminders_responded']}, "
             f"ignored={audit['hook_reminders_ignored']}, "
+            f"same-batch={audit['hook_reminders_batched']}, "
             f"pending={audit['hook_reminders_pending']}",
         )
+        lines.insert(
+            -1,
+            "- affected closure hook: "
+            f"attempts={audit['hook_affected_closure_attempts']}; "
+            f"blocks={audit['hook_affected_closure_blocks']} "
+            f"(counter={audit['hook_affected_closure_block_counter']}); "
+            f"passes={audit['hook_affected_closure_passes']}; "
+            f"coverage-events={audit['hook_affected_coverage_events']}; "
+            f"recoveries={audit['hook_affected_closure_recoveries']}; "
+            f"latest-pending={audit['hook_latest_pending_affected_count']}",
+        )
+        summaries = audit.get("hook_agent_summaries") or []
+        if summaries:
+            worst = summaries[0]
+            lines.insert(
+                -1,
+                "- enforcement agents/batches: "
+                f"agents={len(summaries)}; worst={worst['agent_sha256']} "
+                f"raw={worst['code_browse_events']}/"
+                f"{worst['code_browse_attempts']} max-gap={worst['max_gap']} "
+                f"enforced-max={worst['enforced_max_gap']} "
+                f"blocks={worst['blocks']}; "
+                f"multi-command-cells={audit['hook_batch_hints']}; "
+                f"over-budget={audit['hook_batch_violations']}; "
+                f"spawn-packets={audit['hook_spawn_context_packets']}/"
+                f"{audit['hook_spawn_events']}; identity stored="
+                f"{audit['hook_tool_identity_events']}/"
+                f"{audit['hook_event_count']} linked-to-rollout="
+                f"{audit['hook_tool_identity_linked']}/"
+                f"{audit['hook_tool_identity_events']} unlinked="
+                f"{audit['hook_nested_tool_events']}; modern-linked="
+                f"{audit['hook_modern_identity_linked']}/"
+                f"{audit['hook_modern_identity_events']}",
+            )
     if audit.get("latest_query_id"):
         lines.append(
             "- carry forward: "
@@ -2716,25 +3529,36 @@ def _aggregate_session_audit_lines(audits: list[dict[str, Any]]) -> list[str]:
         audit for audit in audits if audit["handoff_status"] in {"pass", "fail"}
     ]
     passed = sum(audit["handoff_status"] == "pass" for audit in eligible)
+    kinds = Counter(str(audit.get("session_kind") or "unknown") for audit in audits)
     lines = [
-        f"Codex/Graphify session audit: {len(audits)} recent sessions",
+        f"Codex/Graphify session audit: {len(audits)} recent sessions "
+        f"(roots={kinds['root']}, subagents={kinds['subagent']}, "
+        f"unknown={kinds['unknown']})",
         f"- plan→code handoff: {passed}/{len(eligible)} compliant"
         if eligible
         else "- plan→code handoff: no eligible sessions",
         "- plan/spec documents: "
-        f"reads={sum(a['document_read_calls'] for a in audits)} calls; "
+        f"unique/session-sum={sum(a['document_unique_file_count'] for a in audits)}; "
+        f"read-calls={sum(a['document_read_calls'] for a in audits)}; "
+        f"read-targets={sum(a['document_read_target_count'] for a in audits)}; "
         f"whole-in-one-call={sum(a['whole_document_read_calls'] for a in audits)} calls/"
         f"{sum(a['whole_document_file_count'] for a in audits)} files; "
-        f"cumulative-full={sum(a['covered_document_read_calls'] for a in audits)} calls/"
-        f"{sum(a['covered_document_file_count'] for a in audits)} files",
-        "- raw code browsing: "
+        f"first-pass-complete={sum(a['covered_document_file_count'] for a in audits)} files; "
+        f"targeted-revisits={sum(a['document_targeted_revisit_calls'] for a in audits)} calls; "
+        f"overlap={sum(a['document_overlap_lines'] for a in audits)} lines; "
+        f"redundant={sum(a['document_redundant_read_calls'] for a in audits)} calls; "
+        f"truncated={sum(a['document_truncated_read_calls'] for a in audits)} calls/≈"
+        f"{sum(a['document_truncation_waste_tokens_estimate'] for a in audits)} visible tokens",
+        "- executed raw code browsing: "
         f"reads={sum(a['code_browse_calls'] for a in audits)} calls; "
+        f"denied rollout cells excluded="
+        f"{sum(a['blocked_rollout_calls'] for a in audits)}; "
         f"whole-in-one-call={sum(a['whole_code_read_calls'] for a in audits)} calls/"
         f"{sum(a['whole_code_file_count'] for a in audits)} files; "
         f"cumulative-full={sum(a['covered_code_read_calls'] for a in audits)} calls/"
         f"{sum(a['covered_code_file_count'] for a in audits)} files; output≈"
         f"{sum(a['code_output_tokens_estimate'] for a in audits)} tokens",
-        "- raw browse cadence: "
+        "- executed raw browse cadence: "
         f"worst-current-gap={max(a['raw_browse_current_gap'] for a in audits)}; "
         f"worst-max-gap={max(a['raw_browse_max_gap'] for a in audits)}; "
         f"worst-p95-gap={max(a['raw_browse_p95_gap'] for a in audits)}",
@@ -2753,18 +3577,37 @@ def _aggregate_session_audit_lines(audits: list[dict[str, Any]]) -> list[str]:
         f"fallback-follow-up={sum(a['fallback_followups'] for a in audits)}/"
         f"{sum(a['fallback_queries'] for a in audits)}; "
         f"branch-first={sum(a['branch_graphify_first'] for a in audits)}/"
-        f"{sum(a['branch_markers'] for a in audits)}",
-        "- output-token and whole-file counts are heuristic; plan/spec and code reads are kept separate",
+        f"{sum(a['branch_markers'] for a in audits)}; affected-pending="
+        f"{sum(a['affected_pending_path_count'] for a in audits)} paths/"
+        f"{sum(bool(a['affected_pending_path_count']) for a in audits)} sessions",
+        "- output-token and whole-file counts are heuristic; truncated ranges are not credited as confirmed coverage",
     ]
     tracked = [audit for audit in audits if audit["hook_tracking"]]
     if tracked:
         lines.insert(
             -1,
-            f"- advisory hook: tracked={len(tracked)}/{len(audits)} sessions; "
-            f"reminders={sum(a['hook_reminders'] for a in tracked)}; outcomes="
+            f"- enforcement hook: tracked={len(tracked)}/{len(audits)} sessions; "
+            f"enforced-era-raw="
+            f"{sum(a['hook_enforced_code_browse_events'] for a in tracked)}; "
+            f"worst-enforced-gap={max(a['hook_enforced_max_gap'] for a in tracked)}; "
+            f"all-ledger-raw={sum(a['hook_code_browse_events'] for a in tracked)}; "
+            f"blocked={sum(a['hook_blocks'] for a in tracked)}; "
+            f"spawn-blocked={sum(a['hook_spawn_blocks'] for a in tracked)}; "
+            f"affected-closure=attempts="
+            f"{sum(a['hook_affected_closure_attempts'] for a in tracked)} "
+            f"blocks={sum(a['hook_affected_closure_blocks'] for a in tracked)} "
+            f"recoveries="
+            f"{sum(a['hook_affected_closure_recoveries'] for a in tracked)} "
+            f"pending={sum(a['hook_latest_pending_affected_count'] for a in tracked)}; "
+            f"legacy-advisories={sum(a['hook_reminders'] for a in tracked)}; outcomes="
             f"responded={sum(a['hook_reminders_responded'] for a in tracked)}, "
             f"ignored={sum(a['hook_reminders_ignored'] for a in tracked)}, "
-            f"pending={sum(a['hook_reminders_pending'] for a in tracked)}",
+            f"same-batch={sum(a['hook_reminders_batched'] for a in tracked)}, "
+            f"pending={sum(a['hook_reminders_pending'] for a in tracked)}; "
+            f"identity-linked={sum(a['hook_tool_identity_linked'] for a in tracked)}/"
+            f"{sum(a['hook_tool_identity_events'] for a in tracked)}; modern="
+            f"{sum(a['hook_modern_identity_linked'] for a in tracked)}/"
+            f"{sum(a['hook_modern_identity_events'] for a in tracked)}",
         )
     return lines
 
@@ -2773,8 +3616,29 @@ def _workflow_gates(
     audit: dict[str, Any],
     *,
     max_raw_gap: int,
+    enforce_closure: bool = False,
 ) -> list[tuple[str, bool | None, str]]:
     handoff = audit["handoff_status"]
+    pending_affected = int(
+        audit.get(
+            "affected_pending_path_count",
+            int(bool(audit.get("code_change_calls")))
+            if not audit.get("affected_after_latest_change", True)
+            else 0,
+        )
+    )
+    affected_coverage = str(
+        audit.get(
+            "affected_coverage_status",
+            "full" if not pending_affected else "none",
+        )
+    )
+    hook_cadence = bool(audit.get("hook_enforcement_active"))
+    executed_gap = (
+        int(audit["hook_enforced_max_gap"])
+        if hook_cadence
+        else int(audit["raw_browse_p95_gap"])
+    )
     return [
         (
             "telemetry parity",
@@ -2791,9 +3655,12 @@ def _workflow_gates(
         ),
         (
             "raw browse gap",
-            audit["raw_browse_p95_gap"] <= max_raw_gap,
-            f"p95={audit['raw_browse_p95_gap']} max={audit['raw_browse_max_gap']} "
-            f"target≤{max_raw_gap}",
+            executed_gap <= max_raw_gap
+            and audit["hook_batch_violations"] == 0,
+            f"executed={executed_gap} rollout-p95={audit['raw_browse_p95_gap']} "
+            f"rollout-max={audit['raw_browse_max_gap']} "
+            f"target≤{max_raw_gap}; over-budget-cells="
+            f"{audit['hook_batch_violations']}",
         ),
         (
             "broad→refinement",
@@ -2818,14 +3685,27 @@ def _workflow_gates(
         ),
         (
             "post-edit affected",
-            audit["affected_after_latest_change"]
+            (
+                pending_affected == 0
+                if enforce_closure
+                else (True if pending_affected == 0 else None)
+            )
             if audit["code_change_calls"]
             else None,
+            (
+                "status=PENDING "
+                if audit["code_change_calls"]
+                and pending_affected
+                and not enforce_closure
+                else ""
+            )
+            + f"coverage={affected_coverage.upper()} "
             f"edit-calls={audit['code_change_calls']} affected="
-            f"{audit['affected_queries']}",
+            f"{audit['affected_queries']} pending="
+            f"{pending_affected}",
         ),
         (
-            "advisory reminder response",
+            "legacy advisory response",
             audit["hook_reminders_ignored"] == 0
             if (
                 audit["hook_reminders_responded"]
@@ -2834,6 +3714,7 @@ def _workflow_gates(
             else None,
             f"responded={audit['hook_reminders_responded']} "
             f"ignored={audit['hook_reminders_ignored']} "
+            f"same-batch={audit['hook_reminders_batched']} "
             f"pending={audit['hook_reminders_pending']}",
         ),
     ]
@@ -2843,8 +3724,13 @@ def _workflow_benchmark_lines(
     audit: dict[str, Any],
     *,
     max_raw_gap: int,
+    enforce_closure: bool = False,
 ) -> tuple[list[str], bool]:
-    gates = _workflow_gates(audit, max_raw_gap=max_raw_gap)
+    gates = _workflow_gates(
+        audit,
+        max_raw_gap=max_raw_gap,
+        enforce_closure=enforce_closure,
+    )
     applicable = [gate for gate in gates if gate[1] is not None]
     passed = sum(bool(gate[1]) for gate in applicable)
     lines = [
@@ -2852,7 +3738,15 @@ def _workflow_benchmark_lines(
         f"for {audit['session_sha256']}"
     ]
     for name, status, detail in gates:
-        label = "N/A" if status is None else "PASS" if status else "FAIL"
+        label = (
+            "PENDING"
+            if status is None and detail.startswith("status=PENDING")
+            else "N/A"
+            if status is None
+            else "PASS"
+            if status
+            else "FAIL"
+        )
         lines.append(f"- {label} {name}: {detail}")
     lines.extend(
         [
@@ -2873,6 +3767,14 @@ def _checkpoint_lines(
     max_raw_gap: int,
     new_branch: bool,
 ) -> list[str]:
+    pending_affected = int(
+        audit.get(
+            "affected_pending_path_count",
+            int(bool(audit.get("code_change_calls")))
+            if not audit.get("affected_after_latest_change", True)
+            else 0,
+        )
+    )
     requery_reasons: list[str] = []
     if new_branch:
         requery_reasons.append("new investigation branch was declared")
@@ -2896,8 +3798,10 @@ def _checkpoint_lines(
             "full-graph fallback needs exactly one measured native follow-up"
             + (f" ({query_ids})" if query_ids else "")
         )
-    if audit["code_change_calls"] and not audit["affected_after_latest_change"]:
-        followup_reasons.append("latest code-change batch needs affected context")
+    if audit["code_change_calls"] and pending_affected:
+        followup_reasons.append(
+            f"latest code-change batch has {pending_affected} pending affected path(s)"
+        )
     if requery_reasons:
         status = "REQUERY_REQUIRED"
     elif followup_reasons:
@@ -2917,8 +3821,9 @@ def _checkpoint_lines(
         "- follow-ups: "
         f"broad={audit['broad_refined_queries']}/{audit['broad_initial_queries']}; "
         f"fallback={audit['fallback_followups']}/{audit['fallback_queries']}; "
-        f"affected-after-edit="
-        f"{'YES' if audit['affected_after_latest_change'] else 'NO'}",
+        f"affected-coverage="
+        f"{str(audit.get('affected_coverage_status', 'full' if not pending_affected else 'pending')).upper()}; "
+        f"pending={pending_affected}",
     ]
     lines.extend(f"- action: {reason}" for reason in requery_reasons + followup_reasons)
     if audit.get("latest_query_id"):
@@ -2936,6 +3841,9 @@ def session_stats(
     selector: str | None,
     recent: int | None,
     exclude_current: bool,
+    roots_only: bool = False,
+    subagents_only: bool = False,
+    started_after: str | None = None,
     sessions_root: Path | None = None,
 ) -> None:
     if sessions_root is None:
@@ -2950,6 +3858,35 @@ def session_stats(
                 path
                 for path in files
                 if _session_digest(_session_id(path)) != current_digest
+            ]
+        if roots_only:
+            files = [
+                path
+                for path in files
+                if _session_metadata(path).get("session_kind") == "root"
+            ]
+        if subagents_only:
+            files = [
+                path
+                for path in files
+                if _session_metadata(path).get("session_kind") == "subagent"
+            ]
+        if started_after:
+            cutoff = _audit_timestamp(started_after)
+            if cutoff is None:
+                raise SystemExit(
+                    "--started-after must be an ISO-8601 timestamp with a date"
+                )
+            files = [
+                path
+                for path in files
+                if (
+                    (started := _audit_timestamp(
+                        _session_metadata(path).get("started_at")
+                    ))
+                    is not None
+                    and started >= cutoff
+                )
             ]
         audits = [_session_audit(path) for path in files[:recent]]
         if not audits:
@@ -2988,6 +3925,7 @@ def workflow_benchmark(
     *,
     selector: str,
     max_raw_gap: int,
+    enforce_closure: bool = False,
     sessions_root: Path | None = None,
 ) -> bool:
     if sessions_root is None:
@@ -2998,6 +3936,7 @@ def workflow_benchmark(
     lines, passed = _workflow_benchmark_lines(
         _session_audit(path),
         max_raw_gap=max_raw_gap,
+        enforce_closure=enforce_closure,
     )
     print("\n".join(lines))
     return passed
@@ -3341,12 +4280,27 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="with --recent, omit the current Codex session",
     )
+    cohort = ss.add_mutually_exclusive_group()
+    cohort.add_argument(
+        "--roots-only",
+        action="store_true",
+        help="with --recent, include only user/root sessions",
+    )
+    cohort.add_argument(
+        "--subagents-only",
+        action="store_true",
+        help="with --recent, include only subagent sessions",
+    )
+    ss.add_argument(
+        "--started-after",
+        help="with --recent, include sessions started at/after this ISO-8601 time",
+    )
     cp = sub.add_parser(
         "checkpoint",
         help="report non-blocking branch and raw-browse workflow actions",
     )
     cp.add_argument("--session", default="current")
-    cp.add_argument("--max-raw-gap", type=int, default=20)
+    cp.add_argument("--max-raw-gap", type=int, default=10)
     cp.add_argument(
         "--new-branch",
         action="store_true",
@@ -3357,7 +4311,12 @@ def _parser() -> argparse.ArgumentParser:
         help="score Graphify adoption for one Codex session",
     )
     wb.add_argument("--session", default="current")
-    wb.add_argument("--max-raw-gap", type=int, default=20)
+    wb.add_argument("--max-raw-gap", type=int, default=10)
+    wb.add_argument(
+        "--closure",
+        action="store_true",
+        help="treat unresolved final affected-path debt as a failing closure gate",
+    )
     b = sub.add_parser("benchmark", help="run deterministic Graphify precision cases")
     b.add_argument("--cases", type=Path, default=BENCHMARK_PATH)
     return parser
@@ -3404,10 +4363,15 @@ def main() -> None:
             raise SystemExit("--recent must be positive")
         if args.exclude_current and args.recent is None:
             raise SystemExit("--exclude-current requires --recent")
+        if (args.roots_only or args.subagents_only or args.started_after) and args.recent is None:
+            raise SystemExit("cohort filters require --recent")
         session_stats(
             selector=args.session,
             recent=args.recent,
             exclude_current=args.exclude_current,
+            roots_only=args.roots_only,
+            subagents_only=args.subagents_only,
+            started_after=args.started_after,
         )
     elif args.command == "checkpoint":
         if args.max_raw_gap <= 0:
@@ -3423,6 +4387,7 @@ def main() -> None:
         if not workflow_benchmark(
             selector=args.session,
             max_raw_gap=args.max_raw_gap,
+            enforce_closure=args.closure,
         ):
             raise SystemExit(1)
     elif args.command == "benchmark":

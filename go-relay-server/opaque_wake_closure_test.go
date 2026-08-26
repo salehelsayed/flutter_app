@@ -758,7 +758,7 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 			t.Fatalf("glob production Go: %v", err)
 		}
 		fileSet := token.NewFileSet()
-		var lookupOwners, resolveOwners, selectionCallers, directAdapterCallers []string
+		var lookupOwners, resolveOwners, selectionCallers, groupSelectionCallers, directAdapterCallers []string
 		for _, path := range paths {
 			if strings.HasSuffix(path, "_test.go") {
 				continue
@@ -788,6 +788,8 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 						resolveOwners = append(resolveOwners, function.Name.Name)
 					case "sendSelectedPushThroughGateway":
 						selectionCallers = append(selectionCallers, function.Name.Name)
+					case "sendSelectedGroupPushThroughGateway":
+						groupSelectionCallers = append(groupSelectionCallers, function.Name.Name)
 					case "sendRichNotification":
 						directAdapterCallers = append(directAdapterCallers, function.Name.Name)
 					}
@@ -803,22 +805,34 @@ func TestRelayNotificationClosure_OpaqueWakeRouteSelectionAndLegacyCompatibility
 		}
 		sort.Strings(selectionCallers)
 		wantCallers := []string{
-			"SendGroupNotification",
-			// G26: strict-authority group content never reaches the group
-			// topic, so it needs its own adapter onto the shared gateway.
-			"sendGroupContentNotificationForRoute",
 			"sendGroupReactionNotificationForRoute",
 			"sendOpaqueWakeThroughGateway",
 			"sendReactionNotificationForRoute",
 			// TC-395: public direct sends and stored-custody direct sends
 			// converge before route selection in this one rich adapter.
 			"sendRichNotification",
+			// Exact group-message provider admission is centralized here;
+			// the three group-message entrypoints below share this wrapper.
+			"sendSelectedGroupPushThroughGateway",
 		}
 		if !reflect.DeepEqual(selectionCallers, wantCallers) {
 			t.Fatalf(
-				"selection callers = %#v, want five adapters plus outcome gateway %#v",
+				"selection callers = %#v, want shared adapters plus group admission wrapper %#v",
 				selectionCallers,
 				wantCallers,
+			)
+		}
+		sort.Strings(groupSelectionCallers)
+		wantGroupSelectionCallers := []string{
+			"SendGroupNotification",
+			"sendGroupContentNotificationForRoute",
+			"sendGroupOpaqueWakeThroughGateway",
+		}
+		if !reflect.DeepEqual(groupSelectionCallers, wantGroupSelectionCallers) {
+			t.Fatalf(
+				"group selection callers = %#v, want exact group entrypoints %#v",
+				groupSelectionCallers,
+				wantGroupSelectionCallers,
 			)
 		}
 		sort.Strings(directAdapterCallers)

@@ -13,12 +13,14 @@ final class IosReceiverBootstrapHandoff {
   static let responseSchema = "mknoon.sims.ios-provider-receiver-handoff.v2"
   static let senderRequestSchema = "mknoon.sims.ios-sender-projection-request.v1"
   static let senderResultSchema = "mknoon.sims.ios-sender-projection-result.v1"
-  static let recoveryRequestSchema = "mknoon.sims.ios-notification-recovery-request.v1"
-  static let recoveryResultSchema = "mknoon.sims.ios-notification-recovery-result.v1"
+  static let recoveryRequestSchema = "mknoon.sims.ios-notification-recovery-request.v2"
+  static let recoveryResultSchema = "mknoon.sims.ios-notification-recovery-result.v2"
   static let groupObservationRequestSchema =
-    "mknoon.sims.ios-group-notification-observation-request.v1"
+    "mknoon.sims.ios-group-notification-observation-request.v2"
   static let groupObservationResultSchema =
-    "mknoon.sims.ios-group-notification-observation-result.v1"
+    "mknoon.sims.ios-group-notification-observation-result.v3"
+  static let groupObservationDiagnosticSchema =
+    "mknoon.sims.ios-group-notification-diagnostics.v2"
   static let relativeDirectory = "mknoon.sims.ios-receiver-bootstrap"
   static let requestFileName = "request.json"
   static let responseFileName = "response.json"
@@ -262,7 +264,9 @@ final class IosReceiverBootstrapHandoff {
     deliveredAfter: Int,
     deliveredNotificationBadgeWasNil: Bool,
     sentinelSurvived: Bool,
-    removedExactOwnedNotification: Bool
+    removedExactOwnedNotification: Bool,
+    inventory: IosDirectNotificationInventory,
+    stableSampleCount: Int
   ) -> Bool {
     guard
       enabled,
@@ -274,7 +278,21 @@ final class IosReceiverBootstrapHandoff {
       deliveredWithSentinel >= 0,
       deliveredAfter >= 0,
       request["schema"] == Self.recoveryRequestSchema,
-      request["action"] == "prove_recovery",
+      let action = request["action"],
+      action == "prove_recovery" || action == "observe_direct",
+      let proofStage = request["proofStage"],
+      Self.isRecoveryProofStage(proofStage),
+      stableSampleCount >= 0,
+      stableSampleCount <= IosDirectNotificationInventory.stableSampleTarget,
+      inventory.matchingRemoteCount >= 0,
+      inventory.matchingLocalCount >= 0,
+      inventory.matchingUsefulProviderCount >= 0,
+      inventory.matchingSanitizedProviderCount >= 0,
+      inventory.matchingFlutterLocalCount >= 0,
+      inventory.matchingUnknownCount >= 0,
+      inventory.matchingTotalCount <= 8,
+      inventory.requestIdentifierSha256.count == inventory.matchingTotalCount,
+      inventory.requestIdentifierSha256.allSatisfy(Self.isSha256),
       let captureNonce = request["captureNonce"],
       let receiverDeviceId = request["receiverDeviceId"],
       let payloadSha256 = request["apnsPayloadSha256"]
@@ -282,7 +300,8 @@ final class IosReceiverBootstrapHandoff {
     do {
       let result: [String: Any] = [
         "schema": Self.recoveryResultSchema,
-        "action": "prove_recovery",
+        "action": action,
+        "proofStage": proofStage,
         "captureNonce": captureNonce,
         "receiverDeviceId": receiverDeviceId,
         "bundleId": "com.mknoon.app",
@@ -297,6 +316,21 @@ final class IosReceiverBootstrapHandoff {
         "deliveredNotificationBadgeWasNil": deliveredNotificationBadgeWasNil,
         "sentinelSurvived": sentinelSurvived,
         "removedExactOwnedNotification": removedExactOwnedNotification,
+        "matchingRemoteCount": inventory.matchingRemoteCount,
+        "matchingLocalCount": inventory.matchingLocalCount,
+        "matchingUsefulProviderCount": inventory.matchingUsefulProviderCount,
+        "matchingSanitizedProviderCount": inventory.matchingSanitizedProviderCount,
+        "matchingFlutterLocalCount": inventory.matchingFlutterLocalCount,
+        "matchingUnknownCount": inventory.matchingUnknownCount,
+        "matchingTotalCount": inventory.matchingTotalCount,
+        "stableSampleCount": stableSampleCount,
+        "stableSampleIntervalMilliseconds":
+          IosDirectNotificationInventory.stableSampleIntervalMilliseconds,
+        "settleDelayMilliseconds":
+          IosDirectNotificationInventory.settleDelayMilliseconds,
+        "observationDeadlineMilliseconds":
+          IosDirectNotificationInventory.observationDeadlineMilliseconds,
+        "requestIdentifierSha256": inventory.requestIdentifierSha256,
         "childBuildCount": 0,
         "manualActionCount": 0,
         "completedAt": Self.timestamp(now()),
@@ -349,8 +383,101 @@ final class IosReceiverBootstrapHandoff {
     stableSampleCount: Int,
     sampledThroughDeadline: Bool,
     badSourceSeen: Bool,
-    duplicateSeen: Bool
+    duplicateSeen: Bool,
+    diagnosticRecords: [IosGroupNotificationDiagnosticRecord] = [],
+    diagnosticOverflow: Bool = false,
+    diagnosticConflict: Bool = false,
+    diagnosticComplete: Bool = false
   ) -> Bool {
+    let sortedDiagnosticRecords = diagnosticRecords.sorted {
+      $0.requestIdentifierSha256 < $1.requestIdentifierSha256
+    }
+    let diagnosticHashes = sortedDiagnosticRecords.map(
+      \.requestIdentifierSha256
+    )
+    let inventoryHashes = inventory.requestIdentifierSha256
+    guard let expectedCollapseHash =
+      request["expectedCollapseIdentifierSha256"] else {
+      return false
+    }
+    let collapseMatchesAreConsistent = sortedDiagnosticRecords.allSatisfy {
+      $0.expectedCollapseIdentifierMatch
+        == ($0.requestIdentifierSha256 == expectedCollapseHash)
+    }
+    let inventoryHashesAreCovered = Set(inventoryHashes)
+      .isSubset(of: Set(diagnosticHashes))
+    let inventoryDiagnosticRecords = inventory.diagnosticRecords
+    let inventoryDiagnosticHashes = inventoryDiagnosticRecords
+      .map(\.requestIdentifierSha256)
+      .sorted()
+    let inventoryRecordsAreConsistent =
+      inventoryDiagnosticRecords.count == inventory.matchingTotalCount
+      && inventoryDiagnosticRecords.allSatisfy(\.isClosedAndConsistent)
+      && inventoryDiagnosticHashes == inventoryHashes
+      && Set(inventoryDiagnosticHashes).count
+        == inventoryDiagnosticHashes.count
+      && inventory.matchingRemoteCount
+        == inventoryDiagnosticRecords.filter { $0.triggerOrigin == .remote }.count
+      && inventory.matchingLocalCount
+        == inventoryDiagnosticRecords.filter { $0.triggerOrigin == .local }.count
+      && inventory.matchingUsefulProviderCount
+        == inventoryDiagnosticRecords.filter {
+          $0.sourceClass == .usefulProviderRich
+        }.count
+      && inventory.matchingSanitizedProviderCount
+        == inventoryDiagnosticRecords.filter {
+          $0.sourceClass == .sanitizedProviderRich
+        }.count
+      && inventory.matchingFlutterLocalCount
+        == inventoryDiagnosticRecords.filter {
+          $0.sourceClass == .flutterLocal
+        }.count
+      && inventory.matchingUnknownCount
+        == inventoryDiagnosticRecords.filter { $0.sourceClass == .unknown }.count
+    let computedDiagnosticComplete = sampledThroughDeadline
+      && !diagnosticOverflow
+      && !diagnosticConflict
+      && !sortedDiagnosticRecords.isEmpty
+      && sortedDiagnosticRecords.allSatisfy(\.isClosedAndConsistent)
+    let canonicalPassRecord = sortedDiagnosticRecords.count == 1
+      && sortedDiagnosticRecords[0].requestIdentifierSha256
+        == expectedCollapseHash
+      && sortedDiagnosticRecords[0].expectedCollapseIdentifierMatch
+      && sortedDiagnosticRecords[0].triggerOrigin == .remote
+      && sortedDiagnosticRecords[0].sourceClass == .usefulProviderRich
+      && sortedDiagnosticRecords[0].reason == .exactUseful
+    let exactUsefulSource = sampledThroughDeadline
+      && diagnosticComplete
+      && stableSampleCount == IosGroupNotificationInventory.stableSampleTarget
+      && !badSourceSeen
+      && !duplicateSeen
+      && !diagnosticOverflow
+      && !diagnosticConflict
+      && inventory.matchingRemoteCount == 1
+      && inventory.matchingLocalCount == 0
+      && inventory.matchingUsefulProviderCount == 1
+      && inventory.matchingSanitizedProviderCount == 0
+      && inventory.matchingFlutterLocalCount == 0
+      && inventory.matchingUnknownCount == 0
+      && inventory.matchingTotalCount == 1
+      && inventoryHashes == [expectedCollapseHash]
+      && canonicalPassRecord
+    let expectedResultCode: String
+    if exactUsefulSource {
+      expectedResultCode = "ok"
+    } else if !sampledThroughDeadline
+                || stableSampleCount != IosGroupNotificationInventory.stableSampleTarget {
+      expectedResultCode = "source_inventory_unstable"
+    } else if badSourceSeen {
+      expectedResultCode = "bad_source_seen"
+    } else if duplicateSeen {
+      expectedResultCode = "duplicate_seen"
+    } else {
+      expectedResultCode = "source_inventory_mismatch"
+    }
+    let statusAndResultAreConsistent =
+      status == (exactUsefulSource ? "passed" : "failed")
+        && resultCode == expectedResultCode
     guard
       enabled,
       request["schema"] == Self.groupObservationRequestSchema,
@@ -365,16 +492,30 @@ final class IosReceiverBootstrapHandoff {
       inventory.matchingSanitizedProviderCount >= 0,
       inventory.matchingFlutterLocalCount >= 0,
       inventory.matchingUnknownCount >= 0,
+      inventory.matchingRemoteCount + inventory.matchingLocalCount
+        == inventory.matchingTotalCount,
       inventory.matchingTotalCount <= 8,
-      inventory.requestIdentifierSha256.count == inventory.matchingTotalCount,
-      inventory.requestIdentifierSha256.allSatisfy(Self.isSha256),
+      inventoryHashes.count == inventory.matchingTotalCount,
+      inventoryHashes.allSatisfy(Self.isSha256),
+      inventoryHashes == inventoryHashes.sorted(),
+      Set(inventoryHashes).count == inventoryHashes.count,
+      sortedDiagnosticRecords.count <= 8,
+      diagnosticHashes == diagnosticHashes.sorted(),
+      Set(diagnosticHashes).count == diagnosticHashes.count,
+      sortedDiagnosticRecords.allSatisfy(\.isClosedAndConsistent),
+      diagnosticComplete == computedDiagnosticComplete,
+      inventoryRecordsAreConsistent,
+      statusAndResultAreConsistent,
       let captureNonce = request["captureNonce"],
       let receiverDeviceId = request["receiverDeviceId"],
       let phase = request["phase"],
       phase == "message" || phase == "reaction",
       let groupHash = request["expectedGroupIdSha256"],
       let eventHash = request["expectedEventIdSha256"],
-      let targetHash = request["expectedTargetMessageIdSha256"]
+      let targetHash = request["expectedTargetMessageIdSha256"],
+      Self.isSha256(expectedCollapseHash),
+      collapseMatchesAreConsistent,
+      inventoryHashesAreCovered
     else { return false }
     do {
       let result: [String: Any] = [
@@ -387,6 +528,7 @@ final class IosReceiverBootstrapHandoff {
         "expectedGroupIdSha256": groupHash,
         "expectedEventIdSha256": eventHash,
         "expectedTargetMessageIdSha256": targetHash,
+        "expectedCollapseIdentifierSha256": expectedCollapseHash,
         "status": status,
         "resultCode": resultCode,
         "matchingRemoteCount": inventory.matchingRemoteCount,
@@ -405,10 +547,21 @@ final class IosReceiverBootstrapHandoff {
         "badSourceSeen": badSourceSeen,
         "duplicateSeen": duplicateSeen,
         "requestIdentifierSha256": inventory.requestIdentifierSha256,
+        "diagnosticSchema": Self.groupObservationDiagnosticSchema,
+        "diagnosticRecords": sortedDiagnosticRecords.map(\.jsonObject),
+        "diagnosticRecordCount": sortedDiagnosticRecords.count,
+        "diagnosticOverflow": diagnosticOverflow,
+        "diagnosticConflict": diagnosticConflict,
+        "diagnosticComplete": diagnosticComplete,
         "childBuildCount": 0,
         "manualActionCount": 0,
         "completedAt": Self.timestamp(now()),
       ]
+      let encoded = try JSONSerialization.data(
+        withJSONObject: result,
+        options: [.sortedKeys]
+      )
+      guard encoded.count <= 8_192 else { return false }
       try publishAtomically(
         result,
         to: groupObservationResultURL,
@@ -588,7 +741,8 @@ final class IosReceiverBootstrapHandoff {
     let expectedKeys = Set([
       "schema", "action", "phase", "captureNonce", "receiverDeviceId",
       "bundleId", "expectedGroupIdSha256", "expectedEventIdSha256",
-      "expectedTargetMessageIdSha256", "createdAt", "expiresAt",
+      "expectedTargetMessageIdSha256", "expectedCollapseIdentifierSha256",
+      "createdAt", "expiresAt",
     ])
     guard
       Set(decoded.keys) == expectedKeys,
@@ -607,6 +761,9 @@ final class IosReceiverBootstrapHandoff {
       Self.isSha256(eventHash),
       let targetHash = decoded["expectedTargetMessageIdSha256"] as? String,
       Self.isSha256(targetHash),
+      let expectedCollapseHash =
+        decoded["expectedCollapseIdentifierSha256"] as? String,
+      Self.isSha256(expectedCollapseHash),
       let createdAtText = decoded["createdAt"] as? String,
       let createdAt = Self.parseTimestamp(createdAtText),
       let expiresAtText = decoded["expiresAt"] as? String,
@@ -630,6 +787,7 @@ final class IosReceiverBootstrapHandoff {
       "expectedGroupIdSha256": groupHash,
       "expectedEventIdSha256": eventHash,
       "expectedTargetMessageIdSha256": targetHash,
+      "expectedCollapseIdentifierSha256": expectedCollapseHash,
       "createdAt": createdAtText,
       "expiresAt": expiresAtText,
     ]
@@ -644,13 +802,14 @@ final class IosReceiverBootstrapHandoff {
     let decoded = try decodeObject(at: recoveryRequestURL)
     let expectedKeys = Set([
       "schema", "action", "captureNonce", "receiverDeviceId", "bundleId",
-      "accountPeerId", "sentinelIdentifier", "apnsPayloadSha256", "createdAt",
-      "expiresAt",
+      "accountPeerId", "expectedSenderPeerId", "expectedMessageId",
+      "sentinelIdentifier", "proofStage", "apnsPayloadSha256", "createdAt", "expiresAt",
     ])
     guard
       Set(decoded.keys) == expectedKeys,
       decoded["schema"] as? String == Self.recoveryRequestSchema,
-      decoded["action"] as? String == "prove_recovery",
+      let action = decoded["action"] as? String,
+      action == "prove_recovery" || action == "observe_direct",
       let captureNonce = decoded["captureNonce"] as? String,
       Self.isNonce(captureNonce),
       let receiverDeviceId = decoded["receiverDeviceId"] as? String,
@@ -658,8 +817,14 @@ final class IosReceiverBootstrapHandoff {
       decoded["bundleId"] as? String == "com.mknoon.app",
       let accountPeerId = decoded["accountPeerId"] as? String,
       Self.isTransportPeerId(accountPeerId),
+      let expectedSenderPeerId = decoded["expectedSenderPeerId"] as? String,
+      Self.isTransportPeerId(expectedSenderPeerId),
+      let expectedMessageId = decoded["expectedMessageId"] as? String,
+      Self.isBoundedRecoveryIdentifier(expectedMessageId),
       let sentinelIdentifier = decoded["sentinelIdentifier"] as? String,
       Self.isRecoverySentinelIdentifier(sentinelIdentifier),
+      let proofStage = decoded["proofStage"] as? String,
+      Self.isRecoveryProofStage(proofStage),
       let apnsPayloadSha256 = decoded["apnsPayloadSha256"] as? String,
       Self.isSha256(apnsPayloadSha256),
       let createdAtText = decoded["createdAt"] as? String,
@@ -677,12 +842,15 @@ final class IosReceiverBootstrapHandoff {
     else { return nil }
     return [
       "schema": Self.recoveryRequestSchema,
-      "action": "prove_recovery",
+      "action": action,
       "captureNonce": captureNonce,
       "receiverDeviceId": receiverDeviceId,
       "bundleId": "com.mknoon.app",
       "accountPeerId": accountPeerId,
+      "expectedSenderPeerId": expectedSenderPeerId,
+      "expectedMessageId": expectedMessageId,
       "sentinelIdentifier": sentinelIdentifier,
+      "proofStage": proofStage,
       "apnsPayloadSha256": apnsPayloadSha256,
       "createdAt": createdAtText,
       "expiresAt": expiresAtText,
@@ -870,6 +1038,19 @@ final class IosReceiverBootstrapHandoff {
       of: "^mknoon-sims-recovery-[0-9a-f]{24}$",
       options: .regularExpression
     ) != nil
+  }
+
+  static func isRecoveryProofStage(_ value: String) -> Bool {
+    value == "single_submission" || value == "retry_first" || value == "retry_second"
+  }
+
+  static func isBoundedRecoveryIdentifier(_ value: String) -> Bool {
+    guard !value.isEmpty,
+          value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+          value.lengthOfBytes(using: .utf8) <= 512 else { return false }
+    return !value.unicodeScalars.contains {
+      $0.value < 0x20 || ($0.value >= 0x7f && $0.value <= 0x9f)
+    }
   }
 
   static func isSenderProjectionStatus(_ value: String, action: String) -> Bool {

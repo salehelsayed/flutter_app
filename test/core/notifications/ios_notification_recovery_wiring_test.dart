@@ -515,6 +515,39 @@ void main() {
       source.substring(composition),
       contains('iosNotificationRecoveryCoordinator:'),
     );
+    expect(
+      source.substring(composition),
+      isNot(contains('onDirectConversationReadCommitted:')),
+      reason: 'read settlement should reuse the notification recovery owner',
+    );
+
+    final directComposition = File(
+      'lib/app/bootstrap/production_canonical_direct_projection_composition.dart',
+    ).readAsStringSync();
+    expect(
+      directComposition,
+      contains('is ConversationNotificationReadSettlement'),
+      reason: 'production must require the explicit read settlement capability',
+    );
+    expect(
+      directComposition,
+      contains('onReadCommitted: readSettlement?.settleConversationRead'),
+      reason: 'production must forward read settlement into the projector',
+    );
+
+    final groupListener = File(
+      'lib/features/groups/application/group_message_listener.dart',
+    ).readAsStringSync();
+    expect(
+      groupListener,
+      contains('is ConversationNotificationReadSettlement'),
+      reason: 'group reads must discover the explicit settlement capability',
+    );
+    expect(
+      groupListener,
+      contains('readSettlement: readSettlement'),
+      reason: 'group reads must forward settlement independently of card data',
+    );
 
     final cutover = source.indexOf('clearLocalStalePushToken: () async {');
     expect(cutover, isNonNegative);

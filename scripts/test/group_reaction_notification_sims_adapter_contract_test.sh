@@ -103,11 +103,12 @@ python3 - integration_test/scripts/run_group_reaction_notification_device.dart <
 import sys
 
 source = open(sys.argv[1], encoding='utf-8').read()
-start = source.index('final captureArgs = <String>[')
-end = source.index('\n  ];', start)
-capture_args = source[start:end]
-assert "if (args.contains('--android-state-prepared'))" in capture_args
-assert "'--android-state-prepared'" in capture_args
+start = source.index('final adapter = PhysicalDeviceCaptureAdapter(')
+end = source.index('final capture = await runPhysicalDeviceCapture(', start)
+adapter = source[start:end]
+assert 'additionalArguments: <String>[' in adapter
+assert "if (args.contains('--android-state-prepared'))" in adapter
+assert "'--android-state-prepared'" in adapter
 PY
 grep -q -- "--no-child-builds" \
   integration_test/scripts/capture_group_reaction_notification_device.dart ||

@@ -272,6 +272,13 @@ class IosNotificationRelayRemoteHelperTest(unittest.TestCase):
 
 
 class IosNotificationRelayFixtureDriverTest(unittest.TestCase):
+    def test_apns_activation_flags_require_exact_json_integers(self) -> None:
+        driver = _load(DRIVER, "ios_relay_fixture_driver_exact_apns_flags")
+        self.assertTrue(driver._exact_apns_one(1))
+        for invalid in (True, 1.0, "1", None):
+            with self.subTest(invalid=invalid):
+                self.assertFalse(driver._exact_apns_one(invalid))
+
     def test_relay_surface_has_no_standalone_apns_token_dependency(self) -> None:
         obsolete_environment = "SIMS_IOS_APNS_" + "DEVICE_TOKEN_PATH"
         for relative in (
@@ -296,7 +303,9 @@ class IosNotificationRelayFixtureDriverTest(unittest.TestCase):
                 "aps": {
                     "alert": {"title": "Title", "body": "Body"},
                     "mutable-content": 1,
+                    "content-available": 1,
                 },
+                "gcm.message_id": "ios-sims-bg-" + "c" * 32,
                 "type": "new_message",
                 "sender_id": "12D3KooW" + "b" * 44,
                 "message_id": "message-exact-byte-sha",
@@ -500,7 +509,9 @@ class IosNotificationRelayFixtureDriverTest(unittest.TestCase):
                         "body": request["expectedBody"],
                     },
                     "mutable-content": 1,
+                    "content-available": 1,
                 },
+                "gcm.message_id": "ios-sims-bg-" + "c" * 32,
                 "type": "new_message",
                 "sender_id": sender,
                 "message_id": "ios-sims-message-1234",
@@ -663,7 +674,7 @@ print(json.dumps(result, separators=(',',':'), sort_keys=True))
 
             provider_receipt = root / "provider-receipt.json"
             provider = {
-                "schema": driver.PROVIDER_RECEIPT_SCHEMA,
+                "schema": "mknoon.sims.ios-payload-fast-path-provider-receipt.v2",
                 "status": "accepted",
                 "runId": run_id,
                 "nonce": nonce,

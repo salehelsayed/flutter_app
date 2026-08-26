@@ -19,7 +19,7 @@ Future<void> publishIosReceiverBootstrapIdentityWhenReady({
   required String? Function() currentPeerId,
   required Stream<String?> peerIds,
   required Future<String?> Function() loadMlKemPublicKey,
-  Duration timeout = const Duration(minutes: 2),
+  Duration timeout = iosReceiverBootstrapIdentityPublicationTimeout,
 }) async {
   if (!Platform.isIOS ||
       !isIosReceiverBootstrapBuildProfile(_compiledSimsBuildProfile)) {
@@ -27,32 +27,45 @@ Future<void> publishIosReceiverBootstrapIdentityWhenReady({
   }
 
   try {
-    final current = currentPeerId()?.trim() ?? '';
-    final peerDeviceId = isIosReceiverBootstrapTransportPeerId(current)
-        ? current
-        : await peerIds
-              .map((value) => value?.trim() ?? '')
-              .firstWhere(isIosReceiverBootstrapTransportPeerId)
-              .timeout(timeout);
+    if (timeout <= Duration.zero) return;
     final deadline = DateTime.now().add(timeout);
+    final current = currentPeerId()?.trim() ?? '';
+    var peerDeviceId = current;
+    if (!isIosReceiverBootstrapTransportPeerId(peerDeviceId)) {
+      final peerBudget = deadline.difference(DateTime.now());
+      if (peerBudget <= Duration.zero) return;
+      peerDeviceId = await peerIds
+          .map((value) => value?.trim() ?? '')
+          .firstWhere(isIosReceiverBootstrapTransportPeerId)
+          .timeout(peerBudget);
+    }
     var mlKemPublicKey = '';
     while (DateTime.now().isBefore(deadline)) {
-      mlKemPublicKey = (await loadMlKemPublicKey())?.trim() ?? '';
+      final keyBudget = deadline.difference(DateTime.now());
+      if (keyBudget <= Duration.zero) return;
+      mlKemPublicKey =
+          (await loadMlKemPublicKey().timeout(keyBudget))?.trim() ?? '';
       if (isIosReceiverBootstrapMlKemPublicKey(mlKemPublicKey)) {
         break;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) return;
+      const pollInterval = Duration(milliseconds: 250);
+      await Future<void>.delayed(
+        remaining < pollInterval ? remaining : pollInterval,
+      );
     }
     if (!isIosReceiverBootstrapMlKemPublicKey(mlKemPublicKey)) {
       return;
     }
-    await _iosReceiverBootstrapChannel.invokeMethod<void>(
-      'publishTransportPeerId',
-      <String, String>{
-        'peerDeviceId': peerDeviceId,
-        'mlKemPublicKey': mlKemPublicKey,
-      },
-    );
+    final publicationBudget = deadline.difference(DateTime.now());
+    if (publicationBudget <= Duration.zero) return;
+    await _iosReceiverBootstrapChannel
+        .invokeMethod<void>('publishTransportPeerId', <String, String>{
+          'peerDeviceId': peerDeviceId,
+          'mlKemPublicKey': mlKemPublicKey,
+        })
+        .timeout(publicationBudget);
   } on PlatformException {
     // This test-only handoff is never load-bearing for production startup.
     // The host-side bootstrap times out with a redacted typed failure.

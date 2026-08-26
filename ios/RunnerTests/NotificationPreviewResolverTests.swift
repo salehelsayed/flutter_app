@@ -4,7 +4,213 @@ import UserNotifications
 import XCTest
 
 final class NotificationPreviewResolverTests: XCTestCase {
+  func testTC398DifferentRequestOrdinaryDuplicateRetainsTrustedPreviewPassively() {
+    let identity = IosNotificationRecoveryIdentity(
+      accountPeerId: "peer-self",
+      lane: .group,
+      conversationId: "group-team",
+      eventId: "message-398",
+      kind: .ordinary
+    )
+    let trustedDuplicate = NotificationPreviewResult(
+      title: "Team Chat",
+      body: "Alice: exact trusted message",
+      threadIdentifier: "group-team",
+      didDecrypt: true,
+      reason: "group",
+      suppress: false,
+      markAsShown: true,
+      recoveryIdentity: identity
+    )
+    let content = UNMutableNotificationContent()
+    content.title = "Provider title"
+    content.body = "Provider body"
+    content.threadIdentifier = "provider-thread"
+    content.badge = 99
+    content.sound = .default
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .active
+    }
+
+    XCTAssertTrue(
+      applyTrustedPassiveOrdinaryDifferentRequestDuplicatePreviewResult(
+        trustedDuplicate,
+        disposition: .duplicate,
+        to: content
+      )
+    )
+    XCTAssertEqual(content.title, "Team Chat")
+    XCTAssertEqual(content.body, "Alice: exact trusted message")
+    XCTAssertEqual(content.threadIdentifier, "group-team")
+    XCTAssertNil(content.badge)
+    XCTAssertNil(content.sound)
+    if #available(iOS 15.0, *) {
+      XCTAssertEqual(content.interruptionLevel, .passive)
+    }
+  }
+
+  func testTC398DifferentRequestPassivePolicyFailsClosedForNonExactInputs() {
+    func identity(
+      account: String = "peer-self",
+      lane: IosNotificationRecoveryLane = .group,
+      conversation: String = "group-team",
+      event: String? = "message-398",
+      kind: IosNotificationRecoveryKind = .ordinary
+    ) -> IosNotificationRecoveryIdentity {
+      IosNotificationRecoveryIdentity(
+        accountPeerId: account,
+        lane: lane,
+        conversationId: conversation,
+        eventId: event,
+        kind: kind
+      )
+    }
+
+    func preview(
+      title: String = "Team Chat",
+      body: String = "Alice: exact trusted message",
+      didDecrypt: Bool = true,
+      suppress: Bool = false,
+      markAsShown: Bool = true,
+      identity: IosNotificationRecoveryIdentity? = identity()
+    ) -> NotificationPreviewResult {
+      NotificationPreviewResult(
+        title: title,
+        body: body,
+        threadIdentifier: "group-team",
+        didDecrypt: didDecrypt,
+        reason: "group",
+        suppress: suppress,
+        markAsShown: markAsShown,
+        recoveryIdentity: identity
+      )
+    }
+
+    let cases: [(
+      String,
+      IosNotificationRecoveryHandoffDisposition,
+      NotificationPreviewResult?
+    )] = [
+      ("unique", .unique, preview()),
+      ("same request", .sameRequestDuplicate, preview()),
+      ("untracked", .untracked, preview()),
+      ("rejected", .rejected, preview()),
+      ("reaction", .duplicate, preview(identity: identity(kind: .reaction))),
+      ("missing event", .duplicate, preview(identity: identity(event: nil))),
+      ("blank event", .duplicate, preview(identity: identity(event: " "))),
+      ("blank account", .duplicate, preview(identity: identity(account: " "))),
+      ("blank group", .duplicate, preview(identity: identity(conversation: " "))),
+      (
+        "group mismatch",
+        .duplicate,
+        preview(identity: identity(conversation: "group-other"))
+      ),
+      (
+        "lane mismatch",
+        .duplicate,
+        preview(identity: identity(lane: .direct))
+      ),
+      ("missing identity", .duplicate, preview(identity: nil)),
+      ("not decrypted", .duplicate, preview(didDecrypt: false)),
+      ("suppressed", .duplicate, preview(suppress: true)),
+      ("not marked", .duplicate, preview(markAsShown: false)),
+      ("blank title", .duplicate, preview(title: " \n ")),
+      ("blank body", .duplicate, preview(body: " \n ")),
+      ("missing preview", .duplicate, nil),
+    ]
+
+    for (name, disposition, candidate) in cases {
+      let content = UNMutableNotificationContent()
+      content.title = "Provider title"
+      content.body = "Provider body"
+      content.badge = 99
+      content.sound = .default
+      if #available(iOS 15.0, *) {
+        content.interruptionLevel = .active
+      }
+
+      XCTAssertFalse(
+        applyTrustedPassiveOrdinaryDifferentRequestDuplicatePreviewResult(
+          candidate,
+          disposition: disposition,
+          to: content
+        ),
+        name
+      )
+      XCTAssertEqual(content.title, "", name)
+      XCTAssertEqual(content.body, "", name)
+      XCTAssertNil(content.badge, name)
+      XCTAssertNil(content.sound, name)
+      if #available(iOS 15.0, *) {
+        XCTAssertEqual(content.interruptionLevel, .passive, name)
+      }
+    }
+  }
+
+  func testTC396SameCollapseOrdinaryRetryPreservesTrustedContentPassively() {
+    let identity = IosNotificationRecoveryIdentity(
+      accountPeerId: "peer-self",
+      lane: .direct,
+      conversationId: "peer-alice",
+      eventId: "message-42",
+      kind: .ordinary
+    )
+    let trustedRetry = NotificationPreviewResult(
+      title: "Trusted Alice",
+      body: "Trusted body",
+      threadIdentifier: "peer-alice",
+      didDecrypt: true,
+      reason: "chat",
+      suppress: false,
+      markAsShown: true,
+      recoveryIdentity: identity
+    )
+    let sameRequestContent = UNMutableNotificationContent()
+    sameRequestContent.title = "Provider title"
+    sameRequestContent.body = "Provider body"
+    sameRequestContent.sound = .default
+
+    XCTAssertTrue(applyTrustedPassiveOrdinaryRetryPreviewResult(
+      trustedRetry,
+      to: sameRequestContent
+    ))
+    XCTAssertEqual(sameRequestContent.title, "Trusted Alice")
+    XCTAssertEqual(sameRequestContent.body, "Trusted body")
+    XCTAssertEqual(sameRequestContent.threadIdentifier, "peer-alice")
+    XCTAssertNil(sameRequestContent.sound)
+    if #available(iOS 15.0, *) {
+      XCTAssertEqual(sameRequestContent.interruptionLevel, .passive)
+    }
+
+    let differentRequestContent = UNMutableNotificationContent()
+    differentRequestContent.title = "Trusted Alice"
+    differentRequestContent.body = "Trusted body"
+    differentRequestContent.sound = .default
+    sanitizeNotificationContentForUnresolvedExpiry(differentRequestContent)
+    XCTAssertEqual(differentRequestContent.title, "")
+    XCTAssertEqual(differentRequestContent.body, "")
+    XCTAssertNil(differentRequestContent.sound)
+    if #available(iOS 15.0, *) {
+      XCTAssertEqual(differentRequestContent.interruptionLevel, .passive)
+    }
+  }
+
   func testPublicNseProofPayloadExposesOnlyWhitelistedMarkers() throws {
+    let received = try XCTUnwrap(nsePublicProofPayload(
+      event: "PUSH_NSE_DID_RECEIVE",
+      details: [
+        "requestIdentifier": "must-not-escape",
+        "pushId": "must-not-escape",
+        "ciphertext": "must-not-escape",
+      ]
+    ))
+    let receivedJson = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(received.utf8)) as? [String: Any]
+    )
+    XCTAssertEqual(receivedJson["event"] as? String, "PUSH_NSE_DID_RECEIVE")
+    XCTAssertEqual(receivedJson["details"] as? [String: String], [:])
+    XCTAssertFalse(received.contains("must-not-escape"))
+
     let staged = try XCTUnwrap(nsePublicProofPayload(
       event: "PUSH_NSE_ENVELOPE_STAGED",
       details: ["success": "true", "pushId": "must-not-escape"]
@@ -19,9 +225,31 @@ final class NotificationPreviewResolverTests: XCTestCase {
     )
     XCTAssertFalse(staged.contains("must-not-escape"))
 
+    let rejectedStage = try XCTUnwrap(nsePublicProofPayload(
+      event: "PUSH_NSE_ENVELOPE_STAGED",
+      details: [
+        "success": "false",
+        "pushId": "must-not-escape",
+        "ciphertext": "must-not-escape",
+      ]
+    ))
+    let rejectedStageJson = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(rejectedStage.utf8))
+        as? [String: Any]
+    )
+    XCTAssertEqual(
+      rejectedStageJson["details"] as? [String: String],
+      ["success": "false"]
+    )
+    XCTAssertFalse(rejectedStage.contains("must-not-escape"))
+
     let handedOff = try XCTUnwrap(nsePublicProofPayload(
       event: "PUSH_NSE_CONTENT_HANDOFF",
-      details: ["authorized": "true", "title": "must-not-escape"]
+      details: [
+        "authorized": "true",
+        "presentation": "trusted_passive",
+        "title": "must-not-escape",
+      ]
     ))
     let handedOffJson = try XCTUnwrap(
       JSONSerialization.jsonObject(with: Data(handedOff.utf8)) as? [String: Any]
@@ -32,7 +260,10 @@ final class NotificationPreviewResolverTests: XCTestCase {
     )
     XCTAssertEqual(
       handedOffJson["details"] as? [String: String],
-      ["authorized": "true"]
+      [
+        "authorized": "true",
+        "presentation": "trusted_passive",
+      ]
     )
     XCTAssertFalse(handedOff.contains("must-not-escape"))
 
@@ -42,6 +273,26 @@ final class NotificationPreviewResolverTests: XCTestCase {
     ))
     XCTAssertFalse(failed.contains("private-diagnostic"))
     XCTAssertFalse(failed.contains("secret"))
+
+    let classifiedFailure = try XCTUnwrap(nsePublicProofPayload(
+      event: "PUSH_NSE_DECRYPT_FAIL",
+      details: [
+        "kind": "group",
+        "reason": "group_decrypt_error",
+        "groupId": "must-not-escape",
+        "ciphertext": "must-not-escape",
+      ]
+    ))
+    let classifiedFailureJson = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(classifiedFailure.utf8))
+        as? [String: Any]
+    )
+    XCTAssertEqual(
+      classifiedFailureJson["details"] as? [String: String],
+      ["failureClass": "crypto", "kind": "group"]
+    )
+    XCTAssertFalse(classifiedFailure.contains("group_decrypt_error"))
+    XCTAssertFalse(classifiedFailure.contains("must-not-escape"))
 
     XCTAssertNil(nsePublicProofPayload(
       event: "FDC_NSE_PEERID_AVAILABLE",
@@ -662,15 +913,17 @@ final class NotificationPreviewResolverTests: XCTestCase {
   }
 
   func testDecryptsNativeV3GroupPreviewFromEncryptedExtra() throws {
+    // Match Go's production internal.GroupMessagePayload exactly. Group and
+    // sender authority live in the signed outer envelope; the encrypted
+    // content repeats only the message identity in `extra`.
     let plaintext = try jsonString([
-      "groupId": "group-team",
-      "senderPeerId": "peer-alice",
       "text": "Hello group",
       "timestamp": "2026-06-05T19:33:38.064850Z",
-      "username": "Alice",
+      "username": "Untrusted wire username",
       "extra": [
         "groupName": "Team Chat",
         "messageId": "native-msg-1",
+        "publishedAtNano": "1780688018064850000",
       ],
     ])
     let keyReader = MemoryPushKeyReader([
@@ -2166,7 +2419,14 @@ final class NotificationPreviewResolverTests: XCTestCase {
     content.summaryArgument = "FORGED SUMMARY"
     content.summaryArgumentCount = 7
     content.launchImageName = "forged.png"
-    content.userInfo = ["type": "new_message", "sender_id": "peer-alice"]
+    content.userInfo = [
+      "type": "new_message",
+      "sender_id": "peer-alice",
+      "mknoon_group_message_dispatch_id":
+        "01234567-89ab-4cde-8fab-0123456789ab",
+      "mknoon_group_message_collapse_id": "group-message:collapse-398",
+      "gcm.message_id": "0:1900000398%aabbccdd",
+    ]
     if #available(iOS 15.0, *) {
       content.targetContentIdentifier = "FORGED_TARGET"
       content.relevanceScore = 1
@@ -2191,6 +2451,18 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(content.launchImageName, "")
     XCTAssertEqual(content.userInfo["type"] as? String, "new_message")
     XCTAssertEqual(content.userInfo["sender_id"] as? String, "peer-alice")
+    XCTAssertEqual(
+      content.userInfo["mknoon_group_message_dispatch_id"] as? String,
+      "01234567-89ab-4cde-8fab-0123456789ab"
+    )
+    XCTAssertEqual(
+      content.userInfo["mknoon_group_message_collapse_id"] as? String,
+      "group-message:collapse-398"
+    )
+    XCTAssertEqual(
+      content.userInfo["gcm.message_id"] as? String,
+      "0:1900000398%aabbccdd"
+    )
     if #available(iOS 15.0, *) {
       XCTAssertEqual(content.targetContentIdentifier, "")
       XCTAssertEqual(content.relevanceScore, 0)

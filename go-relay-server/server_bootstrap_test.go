@@ -79,6 +79,34 @@ func TestNewControlPlaneStores_SelectsRedisBackends(t *testing.T) {
 	if _, ok := storesA.PushTokenBackend.(*redisPushTokenBackend); !ok {
 		t.Fatalf("expected Redis push token backend, got %T", storesA.PushTokenBackend)
 	}
+	admissionA, ok := storesA.GroupMessageDispatchAdmissionBackend.(*redisGroupMessageDispatchAdmissionBackend)
+	if !ok {
+		t.Fatalf(
+			"expected Redis group-message dispatch admission backend, got %T",
+			storesA.GroupMessageDispatchAdmissionBackend,
+		)
+	}
+	admissionB, ok := storesB.GroupMessageDispatchAdmissionBackend.(*redisGroupMessageDispatchAdmissionBackend)
+	if !ok {
+		t.Fatalf(
+			"expected second Redis group-message dispatch admission backend, got %T",
+			storesB.GroupMessageDispatchAdmissionBackend,
+		)
+	}
+	identity, valid := newGroupMessageDispatchAdmissionIdentity(
+		"bootstrap-recipient",
+		"bootstrap-group",
+		"bootstrap-message",
+	)
+	if !valid {
+		t.Fatal("bootstrap admission identity rejected")
+	}
+	if _, acquired, err := admissionA.TryAcquire(context.Background(), identity); err != nil || !acquired {
+		t.Fatalf("first bootstrapped Redis admission acquire = (%v, %v), want acquired", acquired, err)
+	}
+	if _, acquired, err := admissionB.TryAcquire(context.Background(), identity); err != nil || acquired {
+		t.Fatalf("second bootstrapped Redis admission acquire = (%v, %v), want shared suppression", acquired, err)
+	}
 
 	storesA.Rendezvous.Register("ns-1", "peer-1", []byte("record-1"), 60)
 	results := storesB.Rendezvous.Discover("ns-1", "other-peer", 10)

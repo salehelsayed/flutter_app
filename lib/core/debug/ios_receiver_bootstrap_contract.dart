@@ -1,6 +1,9 @@
 import 'dart:convert';
 
 const String iosReceiverBootstrapBuildProfile = 'ios.device.production';
+const Duration iosReceiverBootstrapIdentityPublicationTimeout = Duration(
+  seconds: 90,
+);
 
 bool isIosReceiverBootstrapBuildProfile(String value) =>
     value == iosReceiverBootstrapBuildProfile;

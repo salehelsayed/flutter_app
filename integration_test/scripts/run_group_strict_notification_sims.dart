@@ -11,6 +11,7 @@ import '_android_app_package.dart';
 import 'group_reaction_notification_device_criteria.dart';
 import 'group_strict_notification_criteria.dart'
     hide groupStrictNotificationScenarioId;
+import 'physical_device_capture_harness.dart';
 
 const String _captureDriver =
     'integration_test/scripts/capture_group_reaction_notification_device.dart';
@@ -285,47 +286,36 @@ Future<Object> _capture({
   required String preparedSha,
   required String packageName,
 }) async {
-  late final Process child;
-  try {
-    child = await Process.start(
-      Platform.resolvedExecutable,
-      <String>[
-        'run',
-        File(_captureDriver).absolute.path,
-        '--scenario',
-        groupStrictNotificationScenarioId,
-        '--sender',
-        emulator,
-        '--recipient',
-        physical,
-        '--artifact-dir',
-        captureDirectory.path,
-        '--staging-manifest',
-        staging.path,
-        '--relay-target',
-        relayTarget,
-        '--relay-key',
-        relayKey.path,
-        '--service-account',
-        credential.path,
-        '--prebuilt-android-apk',
-        preparedArtifact.path,
-        '--no-child-builds',
-        '--android-state-prepared',
-      ],
-      environment: environment,
-      includeParentEnvironment: true,
-    );
-  } on ProcessException catch (error) {
+  final adapter = PhysicalDeviceCaptureAdapter(
+    captureDriver: File(_captureDriver),
+    scenarioId: groupStrictNotificationScenarioId,
+    senderDeviceId: emulator,
+    recipientDeviceId: physical,
+    artifactDirectory: captureDirectory,
+    additionalArguments: <String>[
+      '--staging-manifest',
+      staging.path,
+      '--relay-target',
+      relayTarget,
+      '--relay-key',
+      relayKey.path,
+      '--service-account',
+      credential.path,
+      '--prebuilt-android-apk',
+      preparedArtifact.path,
+      '--no-child-builds',
+      '--android-state-prepared',
+    ],
+    environment: environment,
+  );
+  final capture = await runPhysicalDeviceCapture(adapter);
+  if (capture.launchError case final error?) {
     return _blocked(
       'missingDriver',
       'Strict capture launch failed: ${error.message}',
     );
   }
-  final stdoutDone = child.stdout.listen(stderr.add).asFuture<void>();
-  final stderrDone = child.stderr.listen(stderr.add).asFuture<void>();
-  final childExit = await child.exitCode;
-  await Future.wait<void>(<Future<void>>[stdoutDone, stderrDone]);
+  final childExit = capture.exitCode!;
   if (childExit != 0) {
     return childExit == 78
         ? _blocked(
@@ -340,9 +330,9 @@ Future<Object> _capture({
             artifactPresent: false,
           );
   }
-  final artifact = File(
-    '${captureDirectory.path}${Platform.pathSeparator}'
-    '$groupStrictNotificationScenarioId.json',
+  final artifact = physicalDeviceCaptureArtifact(
+    captureDirectory,
+    groupStrictNotificationScenarioId,
   );
   final validation = await validateGroupStrictNotificationArtifact(
     artifactFile: artifact,

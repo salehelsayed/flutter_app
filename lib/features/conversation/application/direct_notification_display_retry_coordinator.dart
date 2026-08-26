@@ -1,11 +1,15 @@
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome.dart';
 
+typedef ConsumeDirectRemotePresentationProof = Future<bool> Function();
+
 /// The exact authenticated authority captured before a durable direct effect.
 ///
 /// Raw peer and event identifiers live only in memory. The durable ledger sees
 /// their canonical digests, while the existing optional v116 writer receives
-/// the original authenticated tuple after the effect becomes terminal.
+/// the original authenticated tuple after the effect becomes terminal. An
+/// optional in-memory proof cleanup token is carried with the same attempt so
+/// it cannot consume an unrelated ambient iOS announcement after settlement.
 final class DirectNotificationDurableEffectAuthority {
   const DirectNotificationDurableEffectAuthority({
     required this.currentOpaqueBinding,
@@ -14,6 +18,7 @@ final class DirectNotificationDurableEffectAuthority {
     required this.eventKey,
     required this.receipt,
     this.sqlReadyRevision,
+    this.consumeRemotePresentationProof,
   });
 
   final String currentOpaqueBinding;
@@ -22,16 +27,23 @@ final class DirectNotificationDurableEffectAuthority {
   final String eventKey;
   final DurableLocalNotificationEffectReceipt receipt;
   final int? sqlReadyRevision;
+  final ConsumeDirectRemotePresentationProof? consumeRemotePresentationProof;
 
-  DirectNotificationDurableEffectAuthority withSqlReadyRevision(int revision) =>
-      DirectNotificationDurableEffectAuthority(
-        currentOpaqueBinding: currentOpaqueBinding,
-        physicalPeerId: physicalPeerId,
-        outcomeProducerKind: outcomeProducerKind,
-        eventKey: eventKey,
-        receipt: receipt,
-        sqlReadyRevision: revision,
-      );
+  bool get remotePresentationAdopted => consumeRemotePresentationProof != null;
+
+  DirectNotificationDurableEffectAuthority withSqlReadyRevision(
+    int revision, {
+    ConsumeDirectRemotePresentationProof? consumeRemotePresentationProof,
+  }) => DirectNotificationDurableEffectAuthority(
+    currentOpaqueBinding: currentOpaqueBinding,
+    physicalPeerId: physicalPeerId,
+    outcomeProducerKind: outcomeProducerKind,
+    eventKey: eventKey,
+    receipt: receipt,
+    sqlReadyRevision: revision,
+    consumeRemotePresentationProof:
+        consumeRemotePresentationProof ?? this.consumeRemotePresentationProof,
+  );
 }
 
 enum DirectNotificationDisplayRetryDisposition {

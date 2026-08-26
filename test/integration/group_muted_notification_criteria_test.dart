@@ -949,7 +949,9 @@ void main() {
         );
       }
 
-      expect(groupReactionNotificationScenarios, hasLength(6));
+      // The legacy matrix now includes Plan 397's physical-iOS chat-group row;
+      // the three muted/killed-card source extensions still remain outside it.
+      expect(groupReactionNotificationScenarios, hasLength(7));
       expect(
         groupReactionNotificationScenarios.map((scenario) => scenario.id),
         isNot(contains(groupMutedMessageSuppressionScenarioId)),

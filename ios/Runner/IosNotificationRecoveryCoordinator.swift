@@ -3,9 +3,10 @@ import Foundation
 import UIKit
 import UserNotifications
 
-struct IosGroupNotificationInventory: Equatable, Sendable {
+struct IosDirectNotificationInventory: Equatable, Sendable {
   static let stableSampleTarget = 3
   static let stableSampleIntervalMilliseconds = 500
+  static let settleDelayMilliseconds = 3_000
   static let observationDeadlineMilliseconds = 8_000
 
   let matchingRemoteCount: Int
@@ -21,7 +22,7 @@ struct IosGroupNotificationInventory: Equatable, Sendable {
       + matchingFlutterLocalCount + matchingUnknownCount
   }
 
-  static let empty = IosGroupNotificationInventory(
+  static let empty = IosDirectNotificationInventory(
     matchingRemoteCount: 0,
     matchingLocalCount: 0,
     matchingUsefulProviderCount: 0,
@@ -33,8 +34,9 @@ struct IosGroupNotificationInventory: Equatable, Sendable {
 
   static func project(
     _ notifications: [UNNotification],
-    expected: IosGroupNotificationExpectedHashes
-  ) -> IosGroupNotificationInventory {
+    expectedPeerId: String,
+    expectedMessageId: String
+  ) -> IosDirectNotificationInventory {
     var remote = 0
     var local = 0
     var useful = 0
@@ -44,27 +46,28 @@ struct IosGroupNotificationInventory: Equatable, Sendable {
     var requestHashes: [String] = []
     for notification in notifications.prefix(8) {
       let request = notification.request
-      guard let source = IosGroupNotificationSourceClassifier.classify(
+      let isRemote = request.trigger is UNPushNotificationTrigger
+      if isRemote { remote += 1 } else { local += 1 }
+      switch IosDirectNotificationSourceClassifier.classify(
         trigger: request.trigger,
         userInfo: request.content.userInfo,
         title: request.content.title,
         body: request.content.body,
-        expected: expected
-      ) else { continue }
-      if request.trigger is UNPushNotificationTrigger {
-        remote += 1
-      } else {
-        local += 1
-      }
-      switch source {
-      case .usefulProviderRich: useful += 1
-      case .sanitizedProviderRich: sanitized += 1
-      case .flutterLocal: flutterLocal += 1
-      case .unknown: unknown += 1
+        expectedPeerId: expectedPeerId,
+        expectedMessageId: expectedMessageId
+      ) {
+      case .usefulProviderRich:
+        useful += 1
+      case .sanitizedProviderRich:
+        sanitized += 1
+      case .flutterLocal:
+        flutterLocal += 1
+      case .unknown:
+        unknown += 1
       }
       requestHashes.append(sha256(request.identifier))
     }
-    return IosGroupNotificationInventory(
+    return IosDirectNotificationInventory(
       matchingRemoteCount: remote,
       matchingLocalCount: local,
       matchingUsefulProviderCount: useful,
@@ -72,6 +75,270 @@ struct IosGroupNotificationInventory: Equatable, Sendable {
       matchingFlutterLocalCount: flutterLocal,
       matchingUnknownCount: unknown,
       requestIdentifierSha256: requestHashes.sorted()
+    )
+  }
+
+  private static func sha256(_ value: String) -> String {
+    SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+struct IosGroupDeliveredNotificationProjection: @unchecked Sendable {
+  let requestIdentifier: String
+  let triggerOrigin: IosDirectNotificationTriggerOrigin
+  let userInfo: [AnyHashable: Any]
+  let title: String
+  let body: String
+
+  init(
+    requestIdentifier: String,
+    triggerOrigin: IosDirectNotificationTriggerOrigin,
+    userInfo: [AnyHashable: Any],
+    title: String,
+    body: String
+  ) {
+    self.requestIdentifier = requestIdentifier
+    self.triggerOrigin = triggerOrigin
+    self.userInfo = userInfo
+    self.title = title
+    self.body = body
+  }
+
+  init(_ notification: UNNotification) {
+    let request = notification.request
+    self.init(
+      requestIdentifier: request.identifier,
+      triggerOrigin: request.trigger is UNPushNotificationTrigger
+        ? .remote
+        : .local,
+      userInfo: request.content.userInfo,
+      title: request.content.title,
+      body: request.content.body
+    )
+  }
+}
+
+struct IosGroupNotificationDiagnosticRecord: Equatable, Sendable {
+  let requestIdentifierSha256: String
+  let triggerOrigin: IosDirectNotificationTriggerOrigin
+  let sourceClass: IosDirectNotificationSource
+  let reason: IosGroupNotificationDiagnosticReason
+  let expectedCollapseIdentifierMatch: Bool
+  let dispatchClaim: IosGroupNotificationDispatchClaim
+  let dispatchCorrelationSha256: String?
+  let claimedCollapseIdentifierSha256: String?
+  let providerMessageIdSha256: String?
+
+  init(
+    requestIdentifierSha256: String,
+    triggerOrigin: IosDirectNotificationTriggerOrigin,
+    sourceClass: IosDirectNotificationSource,
+    reason: IosGroupNotificationDiagnosticReason,
+    expectedCollapseIdentifierMatch: Bool,
+    dispatchClaim: IosGroupNotificationDispatchClaim,
+    dispatchCorrelationSha256: String? = nil,
+    claimedCollapseIdentifierSha256: String? = nil,
+    providerMessageIdSha256: String? = nil
+  ) {
+    self.requestIdentifierSha256 = requestIdentifierSha256
+    self.triggerOrigin = triggerOrigin
+    self.sourceClass = sourceClass
+    self.reason = reason
+    self.expectedCollapseIdentifierMatch = expectedCollapseIdentifierMatch
+    self.dispatchClaim = dispatchClaim
+    self.dispatchCorrelationSha256 = dispatchCorrelationSha256
+    self.claimedCollapseIdentifierSha256 =
+      claimedCollapseIdentifierSha256
+    self.providerMessageIdSha256 = providerMessageIdSha256
+  }
+
+  var isClosedAndConsistent: Bool {
+    guard Self.isSha256(requestIdentifierSha256),
+          Self.isOptionalSha256(dispatchCorrelationSha256),
+          Self.isOptionalSha256(claimedCollapseIdentifierSha256),
+          Self.isOptionalSha256(providerMessageIdSha256) else {
+      return false
+    }
+    switch (triggerOrigin, sourceClass, reason) {
+    case (.remote, .usefulProviderRich, .exactUseful),
+         (.remote, .sanitizedProviderRich, .exactSanitized),
+         (.local, .flutterLocal, .exactFlutterLocal),
+         (.remote, .unknown, .missingOrInvalidType),
+         (.remote, .unknown, .groupHashMismatch),
+         (.remote, .unknown, .partialContent),
+         (.remote, .unknown, .unclassifiedRemote),
+         (.local, .unknown, .groupHashMismatch),
+         (.local, .unknown, .unclassifiedLocal):
+      return true
+    default:
+      return false
+    }
+  }
+
+  var jsonObject: [String: Any] {
+    [
+      "requestIdentifierSha256": requestIdentifierSha256,
+      "triggerOrigin": triggerOrigin.rawValue,
+      "sourceClass": diagnosticSourceClass,
+      "reason": reason.rawValue,
+      "expectedCollapseIdentifierMatch": expectedCollapseIdentifierMatch,
+      "dispatchClaim": dispatchClaim.rawValue,
+      "dispatchCorrelationSha256": dispatchCorrelationSha256 ?? NSNull(),
+      "claimedCollapseIdentifierSha256":
+        claimedCollapseIdentifierSha256 ?? NSNull(),
+      "providerMessageIdSha256": providerMessageIdSha256 ?? NSNull(),
+    ]
+  }
+
+  private var diagnosticSourceClass: String {
+    switch sourceClass {
+    case .usefulProviderRich: return "usefulProviderRich"
+    case .sanitizedProviderRich: return "sanitizedProviderRich"
+    case .flutterLocal: return "flutterLocal"
+    case .unknown: return "unknown"
+    }
+  }
+
+  private static func isSha256(_ value: String) -> Bool {
+    value.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil
+  }
+
+  private static func isOptionalSha256(_ value: String?) -> Bool {
+    guard let value else { return true }
+    return isSha256(value)
+  }
+}
+
+struct IosGroupNotificationInventory: Equatable, Sendable {
+  static let stableSampleTarget = 3
+  static let stableSampleIntervalMilliseconds = 500
+  static let observationDeadlineMilliseconds = 8_000
+
+  let matchingRemoteCount: Int
+  let matchingLocalCount: Int
+  let matchingUsefulProviderCount: Int
+  let matchingSanitizedProviderCount: Int
+  let matchingFlutterLocalCount: Int
+  let matchingUnknownCount: Int
+  let requestIdentifierSha256: [String]
+  let diagnosticRecords: [IosGroupNotificationDiagnosticRecord]
+  let diagnosticOverflow: Bool
+  let diagnosticConflict: Bool
+
+  init(
+    matchingRemoteCount: Int,
+    matchingLocalCount: Int,
+    matchingUsefulProviderCount: Int,
+    matchingSanitizedProviderCount: Int,
+    matchingFlutterLocalCount: Int,
+    matchingUnknownCount: Int,
+    requestIdentifierSha256: [String],
+    diagnosticRecords: [IosGroupNotificationDiagnosticRecord] = [],
+    diagnosticOverflow: Bool = false,
+    diagnosticConflict: Bool = false
+  ) {
+    self.matchingRemoteCount = matchingRemoteCount
+    self.matchingLocalCount = matchingLocalCount
+    self.matchingUsefulProviderCount = matchingUsefulProviderCount
+    self.matchingSanitizedProviderCount = matchingSanitizedProviderCount
+    self.matchingFlutterLocalCount = matchingFlutterLocalCount
+    self.matchingUnknownCount = matchingUnknownCount
+    self.requestIdentifierSha256 = requestIdentifierSha256
+    self.diagnosticRecords = diagnosticRecords
+    self.diagnosticOverflow = diagnosticOverflow
+    self.diagnosticConflict = diagnosticConflict
+  }
+
+  var matchingTotalCount: Int {
+    matchingUsefulProviderCount + matchingSanitizedProviderCount
+      + matchingFlutterLocalCount + matchingUnknownCount
+  }
+
+  static let empty = IosGroupNotificationInventory(
+    matchingRemoteCount: 0,
+    matchingLocalCount: 0,
+    matchingUsefulProviderCount: 0,
+    matchingSanitizedProviderCount: 0,
+    matchingFlutterLocalCount: 0,
+    matchingUnknownCount: 0,
+    requestIdentifierSha256: [],
+    diagnosticRecords: [],
+    diagnosticOverflow: false,
+    diagnosticConflict: false
+  )
+
+  static func project(
+    _ notifications: [UNNotification],
+    expected: IosGroupNotificationExpectedHashes
+  ) -> IosGroupNotificationInventory {
+    project(notifications.map(IosGroupDeliveredNotificationProjection.init), expected: expected)
+  }
+
+  static func project(
+    _ notifications: [IosGroupDeliveredNotificationProjection],
+    expected: IosGroupNotificationExpectedHashes
+  ) -> IosGroupNotificationInventory {
+    var recordsByHash: [String: IosGroupNotificationDiagnosticRecord] = [:]
+    var overflow = false
+    var conflict = false
+    for notification in notifications {
+      guard let classification = IosGroupNotificationSourceClassifier.diagnose(
+        triggerOrigin: notification.triggerOrigin,
+        userInfo: notification.userInfo,
+        title: notification.title,
+        body: notification.body,
+        expected: expected
+      ) else { continue }
+      let requestHash = sha256(notification.requestIdentifier)
+      let provenance = IosGroupNotificationSourceClassifier.provenanceHashes(
+        userInfo: notification.userInfo
+      )
+      let record = IosGroupNotificationDiagnosticRecord(
+        requestIdentifierSha256: requestHash,
+        triggerOrigin: classification.triggerOrigin,
+        sourceClass: classification.sourceClass,
+        reason: classification.reason,
+        expectedCollapseIdentifierMatch:
+          requestHash == expected.expectedCollapseIdentifierSha256,
+        dispatchClaim: classification.dispatchClaim,
+        dispatchCorrelationSha256:
+          provenance.dispatchCorrelationSha256,
+        claimedCollapseIdentifierSha256:
+          provenance.claimedCollapseIdentifierSha256,
+        providerMessageIdSha256: provenance.providerMessageIdSha256
+      )
+      if let existing = recordsByHash[requestHash] {
+        if existing != record { conflict = true }
+        continue
+      }
+      guard recordsByHash.count < 8 else {
+        overflow = true
+        continue
+      }
+      recordsByHash[requestHash] = record
+    }
+    let records = recordsByHash.values.sorted {
+      $0.requestIdentifierSha256 < $1.requestIdentifierSha256
+    }
+    let remote = records.filter { $0.triggerOrigin == .remote }.count
+    let local = records.filter { $0.triggerOrigin == .local }.count
+    let useful = records.filter { $0.sourceClass == .usefulProviderRich }.count
+    let sanitized = records.filter {
+      $0.sourceClass == .sanitizedProviderRich
+    }.count
+    let flutterLocal = records.filter { $0.sourceClass == .flutterLocal }.count
+    let unknown = records.filter { $0.sourceClass == .unknown }.count
+    return IosGroupNotificationInventory(
+      matchingRemoteCount: remote,
+      matchingLocalCount: local,
+      matchingUsefulProviderCount: useful,
+      matchingSanitizedProviderCount: sanitized,
+      matchingFlutterLocalCount: flutterLocal,
+      matchingUnknownCount: unknown,
+      requestIdentifierSha256: records.map(\.requestIdentifierSha256),
+      diagnosticRecords: records,
+      diagnosticOverflow: overflow,
+      diagnosticConflict: conflict
     )
   }
 

@@ -1,4 +1,4 @@
-.PHONY: ios android macos all clean test testpeer lint verify-bindings
+.PHONY: ios nse-ios android macos all clean test testpeer lint verify-bindings
 
 MODULE := github.com/mknoon/go-mknoon
 BIND_PKG := $(MODULE)/bridge
@@ -12,8 +12,10 @@ export GOTOOLCHAIN := go1.25.0
 
 # Output paths relative to the Flutter project
 IOS_OUT := ../ios/Runner/GoMknoon.xcframework
+NSE_IOS_OUT := ../ios/Runner/GoMknoonNSE.xcframework
 MACOS_OUT := ../macos/Runner/GoMknoon.xcframework
 ANDROID_OUT := ../android/app/libs/GoMknoon.aar
+NSE_BIND_PKG := $(MODULE)/nsebridge
 
 # Android min API level (matches Flutter minSdk)
 ANDROID_API ?= 24
@@ -31,8 +33,16 @@ endif
 
 all: ios android
 
-ios:
+ios: nse-ios
 	gomobile bind -target=ios -o $(IOS_OUT) $(BIND_PKG)
+
+# Notification service extensions have a much smaller memory ceiling than the
+# app. Build only the crypto entrypoints used by rich pushes and fail the
+# not-yet-advertised opaque mailbox route closed, so libp2p is not linked into
+# the extension process.
+nse-ios:
+	gomobile bind -target=ios -tags=nse_lite -ldflags "-s -w" \
+		-o $(NSE_IOS_OUT) $(NSE_BIND_PKG)
 
 macos:
 	gomobile bind -target=macos -o $(MACOS_OUT) $(BIND_PKG)
@@ -44,7 +54,7 @@ android:
 	|| { rm -f $(ANDROID_OUT); exit 1; }
 
 clean:
-	rm -rf $(IOS_OUT) $(MACOS_OUT) $(ANDROID_OUT) GoMknoon-sources.jar
+	rm -rf $(IOS_OUT) $(NSE_IOS_OUT) $(MACOS_OUT) $(ANDROID_OUT) GoMknoon-sources.jar
 
 testpeer:
 	go build -o bin/testpeer ./cmd/testpeer

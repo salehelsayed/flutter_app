@@ -160,6 +160,9 @@ void main() {
     'composition phases preserve reset root-build post-launch runtime-ready and poller ownership',
     () {
       final mainSource = File('lib/main.dart').readAsStringSync();
+      final appDelegateSource = File(
+        'ios/Runner/AppDelegate.swift',
+      ).readAsStringSync();
       final productionSource = File(
         'lib/app/bootstrap/production_application_bootstrap.dart',
       ).readAsStringSync();
@@ -179,6 +182,44 @@ void main() {
           '    bootstrapFactory: ProductionApplicationBootstrap.new,',
         ),
         reason: 'the public entrypoint must delegate through the stable runner',
+      );
+      final dartMainEntry = mainSource.indexOf(
+        'acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured()',
+      );
+      final applicationBootstrap = mainSource.indexOf(
+        'runApplicationBootstrap(',
+      );
+      expect(dartMainEntry, greaterThanOrEqualTo(0));
+      expect(
+        dartMainEntry,
+        lessThan(applicationBootstrap),
+        reason:
+            'the exact Plan-398 Dart entry receipt must close before '
+            'production bootstrap',
+      );
+
+      final nativeEntry = appDelegateSource.indexOf(
+        'iosSetupReadinessEntryCoordinator.armNativeLaunch(',
+      );
+      final didFinishSuper = appDelegateSource.indexOf(
+        'super.application(application, didFinishLaunchingWithOptions:',
+      );
+      final implicitEngine = appDelegateSource.indexOf(
+        'func didInitializeImplicitFlutterEngine(',
+      );
+      final entryBridge = appDelegateSource.indexOf(
+        'setupIosSetupReadinessEntryBridge(messenger: messenger)',
+        implicitEngine,
+      );
+      expect(nativeEntry, greaterThanOrEqualTo(0));
+      expect(nativeEntry, lessThan(didFinishSuper));
+      expect(implicitEngine, greaterThanOrEqualTo(0));
+      expect(
+        entryBridge,
+        greaterThan(implicitEngine),
+        reason:
+            'the Dart-main acknowledgement channel must use the existing '
+            'implicit-engine messenger boundary',
       );
 
       final reset = productionSource.indexOf('runDisposableResetIfRequested()');
@@ -264,7 +305,12 @@ void main() {
         ),
       );
       for (final token in const <String>[
+        'armGroupReactionNotificationIosSetupBootstrapReadinessIfConfigured',
         'runSimulatorAutoSetupIfConfigured',
+        'resolveGroupReactionNotificationIosSetupReadinessAttempt(',
+        'buildGroupReactionNotificationIosSetupBootstrapReadinessReceipt(',
+        'runGroupReactionNotificationIosSetupReadiness<IdentityModel>(',
+        'writeGroupReactionNotificationIosSetupReadinessReceipt(',
         'unawaited(\n      runIosSenderProjectionFixtureLoop(',
         'publishIosReceiverBootstrapIdentityWhenReady(',
         'startIntroE2EPoller(',

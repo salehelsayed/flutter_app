@@ -47,19 +47,22 @@ DEVICE_GROUP_OBSERVATION_RESULT = (
 SENDER_REQUEST_SCHEMA = "mknoon.sims.ios-sender-projection-request.v1"
 SENDER_RESULT_SCHEMA = "mknoon.sims.ios-sender-projection-result.v1"
 SENDER_HOST_RECEIPT_SCHEMA = "mknoon.sims.ios-sender-projection-host-receipt.v1"
-RECOVERY_REQUEST_SCHEMA = "mknoon.sims.ios-notification-recovery-request.v1"
-RECOVERY_RESULT_SCHEMA = "mknoon.sims.ios-notification-recovery-result.v1"
+RECOVERY_REQUEST_SCHEMA = "mknoon.sims.ios-notification-recovery-request.v2"
+RECOVERY_RESULT_SCHEMA = "mknoon.sims.ios-notification-recovery-result.v2"
 RECOVERY_HOST_RECEIPT_SCHEMA = (
-    "mknoon.sims.ios-notification-recovery-host-receipt.v1"
+    "mknoon.sims.ios-notification-recovery-host-receipt.v2"
 )
 GROUP_OBSERVATION_REQUEST_SCHEMA = (
-    "mknoon.sims.ios-group-notification-observation-request.v1"
+    "mknoon.sims.ios-group-notification-observation-request.v2"
 )
 GROUP_OBSERVATION_RESULT_SCHEMA = (
-    "mknoon.sims.ios-group-notification-observation-result.v1"
+    "mknoon.sims.ios-group-notification-observation-result.v3"
 )
 GROUP_OBSERVATION_HOST_RECEIPT_SCHEMA = (
-    "mknoon.sims.ios-group-notification-observation-host-receipt.v1"
+    "mknoon.sims.ios-group-notification-observation-host-receipt.v3"
+)
+GROUP_OBSERVATION_DIAGNOSTIC_SCHEMA = (
+    "mknoon.sims.ios-group-notification-diagnostics.v2"
 )
 PRIVATE_PAYLOAD_SCHEMA = "mknoon.sims.ios-payload-private-fixture.v1"
 RESULT_PREFIX = "IOS_RECEIVER_BOOTSTRAP_RESULT_JSON="
@@ -351,6 +354,7 @@ class _DeviceControl:
         destination: Path,
         label: str,
         source: str = DEVICE_RESPONSE,
+        timeout: int = 30,
     ) -> bool:
         return self.run(
             [
@@ -369,6 +373,7 @@ class _DeviceControl:
                 BUNDLE_ID,
             ],
             label,
+            timeout=timeout,
         )
 
 
@@ -410,6 +415,7 @@ def _read_private_sender_payload(path: Path) -> tuple[dict[str, Any], bytes]:
         "type",
         "sender_id",
         "message_id",
+        "gcm.message_id",
         "kem",
         "ciphertext",
         "nonce",
@@ -421,9 +427,11 @@ def _read_private_sender_payload(path: Path) -> tuple[dict[str, Any], bytes]:
         or payload.get("fixture_schema") != PRIVATE_PAYLOAD_SCHEMA
         or payload.get("type") != "new_message"
         or not isinstance(aps, dict)
-        or set(aps) != {"alert", "mutable-content"}
+        or set(aps) != {"alert", "mutable-content", "content-available"}
         or aps.get("mutable-content") != 1
         or isinstance(aps.get("mutable-content"), bool)
+        or aps.get("content-available") != 1
+        or isinstance(aps.get("content-available"), bool)
         or not isinstance(alert, dict)
         or set(alert) != {"title", "body"}
         or not isinstance(username, str)
@@ -435,8 +443,15 @@ def _read_private_sender_payload(path: Path) -> tuple[dict[str, Any], bytes]:
         or _PEER_ID.fullmatch(sender) is None
         or any(
             not isinstance(payload.get(key), str) or not payload[key]
-            for key in ("message_id", "kem", "ciphertext", "nonce")
+            for key in (
+                "message_id",
+                "gcm.message_id",
+                "kem",
+                "ciphertext",
+                "nonce",
+            )
         )
+        or len(str(payload.get("gcm.message_id", ""))) > 160
     ):
         raise BootstrapBlocked("the encrypted APNs payload has no exact sender route")
     return payload, raw
@@ -681,6 +696,8 @@ def _read_recovery_result(
     nonce: str,
     receiver: str,
     payload_sha: str,
+    action: str,
+    proof_stage: str,
 ) -> dict[str, Any]:
     try:
         metadata = path.lstat()
@@ -691,6 +708,7 @@ def _read_recovery_result(
     exact_keys = {
         "schema",
         "action",
+        "proofStage",
         "captureNonce",
         "receiverDeviceId",
         "bundleId",
@@ -705,6 +723,18 @@ def _read_recovery_result(
         "deliveredNotificationBadgeWasNil",
         "sentinelSurvived",
         "removedExactOwnedNotification",
+        "matchingRemoteCount",
+        "matchingLocalCount",
+        "matchingUsefulProviderCount",
+        "matchingSanitizedProviderCount",
+        "matchingFlutterLocalCount",
+        "matchingUnknownCount",
+        "matchingTotalCount",
+        "stableSampleCount",
+        "stableSampleIntervalMilliseconds",
+        "settleDelayMilliseconds",
+        "observationDeadlineMilliseconds",
+        "requestIdentifierSha256",
         "childBuildCount",
         "manualActionCount",
         "completedAt",
@@ -719,7 +749,8 @@ def _read_recovery_result(
         or len(raw) > 4096
         or set(result) != exact_keys
         or result.get("schema") != RECOVERY_RESULT_SCHEMA
-        or result.get("action") != "prove_recovery"
+        or result.get("action") != action
+        or result.get("proofStage") != proof_stage
         or result.get("captureNonce") != nonce
         or result.get("receiverDeviceId") != receiver
         or result.get("bundleId") != BUNDLE_ID
@@ -736,6 +767,17 @@ def _read_recovery_result(
                 "deliveredBefore",
                 "deliveredWithSentinel",
                 "deliveredAfter",
+                "matchingRemoteCount",
+                "matchingLocalCount",
+                "matchingUsefulProviderCount",
+                "matchingSanitizedProviderCount",
+                "matchingFlutterLocalCount",
+                "matchingUnknownCount",
+                "matchingTotalCount",
+                "stableSampleCount",
+                "stableSampleIntervalMilliseconds",
+                "settleDelayMilliseconds",
+                "observationDeadlineMilliseconds",
                 "childBuildCount",
                 "manualActionCount",
             )
@@ -743,21 +785,53 @@ def _read_recovery_result(
         or not isinstance(result.get("sentinelSurvived"), bool)
         or not isinstance(result.get("deliveredNotificationBadgeWasNil"), bool)
         or not isinstance(result.get("removedExactOwnedNotification"), bool)
+        or not isinstance(result.get("requestIdentifierSha256"), list)
+        or len(result["requestIdentifierSha256"]) != result.get("matchingTotalCount")
+        or len(result["requestIdentifierSha256"]) > 8
+        or any(
+            not isinstance(value, str) or _SHA256.fullmatch(value) is None
+            for value in result["requestIdentifierSha256"]
+        )
+        or len(set(result["requestIdentifierSha256"]))
+        != len(result["requestIdentifierSha256"])
         or completed_at is None
         or completed_at > now + datetime.timedelta(seconds=15)
         or now - completed_at > datetime.timedelta(minutes=5)
     ):
         raise BootstrapFailure("the notification recovery result failed exact validation")
+    exact_source = (
+        result["matchingRemoteCount"] == 1
+        and result["matchingLocalCount"] == 0
+        and result["matchingUsefulProviderCount"] == 1
+        and result["matchingSanitizedProviderCount"] == 0
+        and result["matchingFlutterLocalCount"] == 0
+        and result["matchingUnknownCount"] == 0
+        and result["matchingTotalCount"] == 1
+        and result["stableSampleCount"] == 3
+        and result["stableSampleIntervalMilliseconds"] == 500
+        and result["settleDelayMilliseconds"] == 3000
+        and result["observationDeadlineMilliseconds"] == 8000
+    )
+    exact_action = (
+        result["badgeBefore"] == 1
+        and result["badgeAfter"] == 0
+        and result["deliveredBefore"] == 1
+        and result["deliveredWithSentinel"] == 2
+        and result["deliveredAfter"] == 1
+        and result["deliveredNotificationBadgeWasNil"] is True
+        and result["sentinelSurvived"] is True
+        and result["removedExactOwnedNotification"] is True
+        if action == "prove_recovery"
+        else result["deliveredBefore"] == 1
+        and result["deliveredWithSentinel"] == 1
+        and result["deliveredAfter"] == 1
+        and result["sentinelSurvived"] is False
+        and result["removedExactOwnedNotification"] is False
+    )
     if result["status"] == "passed" and (
         result["resultCode"] != "ok"
-        or result["badgeBefore"] != 1
-        or result["badgeAfter"] != 0
-        or result["deliveredBefore"] != 1
-        or result["deliveredWithSentinel"] != 2
-        or result["deliveredAfter"] != 1
-        or result["deliveredNotificationBadgeWasNil"] is not True
-        or result["sentinelSurvived"] is not True
-        or result["removedExactOwnedNotification"] is not True
+        or not exact_source
+        or not exact_action
         or result["childBuildCount"] != 0
         or result["manualActionCount"] != 0
     ):
@@ -771,7 +845,7 @@ def _notification_recovery_action(args: argparse.Namespace) -> dict[str, Any]:
     if _SAFE_ID.fullmatch(receiver) is None or _SAFE_NONCE.fullmatch(nonce) is None:
         raise BootstrapBlocked("receiver or capture nonce is invalid")
     payload_path = Path(args.payload).expanduser().absolute()
-    _, payload_raw = _read_private_sender_payload(payload_path)
+    payload, payload_raw = _read_private_sender_payload(payload_path)
     payload_sha = hashlib.sha256(payload_raw).hexdigest()
     handoff = _read_handoff(
         Path(args.handoff).expanduser().absolute(),
@@ -792,12 +866,15 @@ def _notification_recovery_action(args: argparse.Namespace) -> dict[str, Any]:
     now = datetime.datetime.now(datetime.timezone.utc)
     request = {
         "schema": RECOVERY_REQUEST_SCHEMA,
-        "action": "prove_recovery",
+        "action": "prove_recovery" if args.action == "prove-recovery" else "observe_direct",
         "captureNonce": nonce,
         "receiverDeviceId": receiver,
         "bundleId": BUNDLE_ID,
         "accountPeerId": handoff["peerDeviceId"],
+        "expectedSenderPeerId": payload["sender_id"],
+        "expectedMessageId": payload["message_id"],
         "sentinelIdentifier": sentinel,
+        "proofStage": args.proof_stage,
         "apnsPayloadSha256": payload_sha,
         "createdAt": _utc(now),
         "expiresAt": _utc(now + datetime.timedelta(minutes=3)),
@@ -812,6 +889,7 @@ def _notification_recovery_action(args: argparse.Namespace) -> dict[str, Any]:
         pulled_result = temporary / "recovery-result.json"
         cleanup_request = temporary / "cleanup-request.json"
         cleanup_probe = temporary / "recovery-cleanup-probe.json"
+        time.sleep(3.0)
         _write_json_private(request_path, request)
         if not control.copy_to(
             request_path,
@@ -840,6 +918,8 @@ def _notification_recovery_action(args: argparse.Namespace) -> dict[str, Any]:
                     nonce=nonce,
                     receiver=receiver,
                     payload_sha=payload_sha,
+                    action=request["action"],
+                    proof_stage=args.proof_stage,
                 )
                 break
             time.sleep(0.5)
@@ -868,14 +948,11 @@ def _notification_recovery_action(args: argparse.Namespace) -> dict[str, Any]:
             raise BootstrapFailure("the recovery result cleanup did not complete")
 
     assert native_result is not None
-    if native_result["status"] != "passed":
-        raise BootstrapFailure(
-            f"native recovery proof failed closed: {native_result['resultCode']}"
-        )
     host_receipt = {
         "schema": RECOVERY_HOST_RECEIPT_SCHEMA,
-        "action": "prove-recovery",
-        "status": "PASS",
+        "action": args.action,
+        "proofStage": args.proof_stage,
+        "status": "PASS" if native_result["status"] == "passed" else "FAIL",
         "containsSecrets": False,
         "bundleId": BUNDLE_ID,
         "captureNonceSha256": hashlib.sha256(nonce.encode()).hexdigest(),
@@ -893,13 +970,89 @@ def _notification_recovery_action(args: argparse.Namespace) -> dict[str, Any]:
         "removedExactOwnedNotification": native_result[
             "removedExactOwnedNotification"
         ],
+        "matchingRemoteCount": native_result["matchingRemoteCount"],
+        "matchingLocalCount": native_result["matchingLocalCount"],
+        "matchingUsefulProviderCount": native_result[
+            "matchingUsefulProviderCount"
+        ],
+        "matchingSanitizedProviderCount": native_result[
+            "matchingSanitizedProviderCount"
+        ],
+        "matchingFlutterLocalCount": native_result["matchingFlutterLocalCount"],
+        "matchingUnknownCount": native_result["matchingUnknownCount"],
+        "matchingTotalCount": native_result["matchingTotalCount"],
+        "stableSampleCount": native_result["stableSampleCount"],
+        "stableSampleIntervalMilliseconds": native_result[
+            "stableSampleIntervalMilliseconds"
+        ],
+        "settleDelayMilliseconds": native_result["settleDelayMilliseconds"],
+        "observationDeadlineMilliseconds": native_result[
+            "observationDeadlineMilliseconds"
+        ],
+        "requestIdentifierSha256": native_result["requestIdentifierSha256"],
         "childBuildCount": native_result["childBuildCount"],
         "manualActionCount": native_result["manualActionCount"],
         "resultCode": native_result["resultCode"],
         "completedAt": native_result["completedAt"],
     }
     _write_json_private(receipt_path, host_receipt)
+    if native_result["status"] != "passed":
+        raise BootstrapFailure(
+            f"native recovery proof failed closed: {native_result['resultCode']}"
+        )
     return host_receipt
+
+
+def _valid_group_diagnostic_record(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {
+        "requestIdentifierSha256",
+        "dispatchCorrelationSha256",
+        "claimedCollapseIdentifierSha256",
+        "providerMessageIdSha256",
+        "triggerOrigin",
+        "sourceClass",
+        "reason",
+        "expectedCollapseIdentifierMatch",
+        "dispatchClaim",
+    }:
+        return False
+    request_sha = value.get("requestIdentifierSha256")
+    nullable_hashes = (
+        value.get("dispatchCorrelationSha256"),
+        value.get("claimedCollapseIdentifierSha256"),
+        value.get("providerMessageIdSha256"),
+    )
+    if (
+        not isinstance(request_sha, str)
+        or _SHA256.fullmatch(request_sha) is None
+        or any(
+            digest is not None
+            and (
+                not isinstance(digest, str)
+                or _SHA256.fullmatch(digest) is None
+            )
+            for digest in nullable_hashes
+        )
+        or not isinstance(value.get("expectedCollapseIdentifierMatch"), bool)
+        or value.get("dispatchClaim")
+        not in {"groupInbox", "groupContent", "absent", "invalid"}
+    ):
+        return False
+    return (
+        value.get("triggerOrigin"),
+        value.get("sourceClass"),
+        value.get("reason"),
+    ) in {
+        ("remote", "usefulProviderRich", "exactUseful"),
+        ("remote", "sanitizedProviderRich", "exactSanitized"),
+        ("local", "flutterLocal", "exactFlutterLocal"),
+        ("remote", "unknown", "missingOrInvalidType"),
+        ("remote", "unknown", "groupHashMismatch"),
+        ("remote", "unknown", "partialContent"),
+        ("remote", "unknown", "unclassifiedRemote"),
+        ("local", "unknown", "groupHashMismatch"),
+        ("local", "unknown", "unclassifiedLocal"),
+    }
 
 
 def _read_group_observation_result(
@@ -911,6 +1064,7 @@ def _read_group_observation_result(
     group_sha256: str,
     event_sha256: str,
     target_message_sha256: str,
+    expected_collapse_identifier_sha256: str,
 ) -> dict[str, Any]:
     try:
         metadata = path.lstat()
@@ -930,6 +1084,7 @@ def _read_group_observation_result(
         "expectedGroupIdSha256",
         "expectedEventIdSha256",
         "expectedTargetMessageIdSha256",
+        "expectedCollapseIdentifierSha256",
         "status",
         "resultCode",
         "matchingRemoteCount",
@@ -946,6 +1101,12 @@ def _read_group_observation_result(
         "badSourceSeen",
         "duplicateSeen",
         "requestIdentifierSha256",
+        "diagnosticSchema",
+        "diagnosticRecords",
+        "diagnosticRecordCount",
+        "diagnosticOverflow",
+        "diagnosticConflict",
+        "diagnosticComplete",
         "childBuildCount",
         "manualActionCount",
         "completedAt",
@@ -963,15 +1124,45 @@ def _read_group_observation_result(
         "stableSampleCount",
         "stableSampleIntervalMilliseconds",
         "observationDeadlineMilliseconds",
+        "diagnosticRecordCount",
         "childBuildCount",
         "manualActionCount",
+    )
+    diagnostics = (
+        result.get("diagnosticRecords") if isinstance(result, dict) else None
+    )
+    final_hashes = (
+        result.get("requestIdentifierSha256")
+        if isinstance(result, dict)
+        else None
+    )
+    diagnostic_hashes = (
+        [value.get("requestIdentifierSha256") for value in diagnostics]
+        if isinstance(diagnostics, list)
+        and all(isinstance(value, dict) for value in diagnostics)
+        else []
+    )
+    diagnostics_valid = (
+        isinstance(diagnostics, list)
+        and len(diagnostics) <= 8
+        and all(_valid_group_diagnostic_record(value) for value in diagnostics)
+        and diagnostic_hashes == sorted(diagnostic_hashes)
+        and len(set(diagnostic_hashes)) == len(diagnostic_hashes)
+        and all(
+            value["expectedCollapseIdentifierMatch"]
+            == (
+                value["requestIdentifierSha256"]
+                == expected_collapse_identifier_sha256
+            )
+            for value in diagnostics
+        )
     )
     if (
         not stat.S_ISREG(metadata.st_mode)
         or path.is_symlink()
         or metadata.st_mode & 0o077
         or not isinstance(result, dict)
-        or len(raw) > 4096
+        or len(raw) > 8192
         or set(result) != exact_keys
         or result.get("schema") != GROUP_OBSERVATION_RESULT_SCHEMA
         or result.get("action") != "observe_group"
@@ -982,6 +1173,8 @@ def _read_group_observation_result(
         or result.get("expectedGroupIdSha256") != group_sha256
         or result.get("expectedEventIdSha256") != event_sha256
         or result.get("expectedTargetMessageIdSha256") != target_message_sha256
+        or result.get("expectedCollapseIdentifierSha256")
+        != expected_collapse_identifier_sha256
         or result.get("status") not in {"passed", "failed"}
         or _RESULT_CODE.fullmatch(str(result.get("resultCode", ""))) is None
         or any(
@@ -993,21 +1186,81 @@ def _read_group_observation_result(
         or not isinstance(result.get("sampledThroughDeadline"), bool)
         or not isinstance(result.get("badSourceSeen"), bool)
         or not isinstance(result.get("duplicateSeen"), bool)
-        or not isinstance(result.get("requestIdentifierSha256"), list)
-        or len(result["requestIdentifierSha256"]) != result.get("matchingTotalCount")
-        or len(result["requestIdentifierSha256"]) > 8
+        or result.get("diagnosticSchema") != GROUP_OBSERVATION_DIAGNOSTIC_SCHEMA
+        or not diagnostics_valid
+        or result.get("diagnosticRecordCount") != len(diagnostic_hashes)
+        or not isinstance(result.get("diagnosticOverflow"), bool)
+        or not isinstance(result.get("diagnosticConflict"), bool)
+        or not isinstance(result.get("diagnosticComplete"), bool)
+        or not isinstance(final_hashes, list)
+        or len(final_hashes) != result.get("matchingTotalCount")
+        or len(final_hashes) > 8
         or any(
             not isinstance(value, str) or _SHA256.fullmatch(value) is None
-            for value in result["requestIdentifierSha256"]
+            for value in final_hashes
         )
-        or len(set(result["requestIdentifierSha256"]))
-        != len(result["requestIdentifierSha256"])
+        or final_hashes != sorted(final_hashes)
+        or len(set(final_hashes)) != len(final_hashes)
+        or not set(final_hashes).issubset(set(diagnostic_hashes))
         or completed_at is None
         or completed_at > now + datetime.timedelta(seconds=15)
         or now - completed_at > datetime.timedelta(minutes=5)
     ):
         raise BootstrapFailure(
             "the group notification observation result failed exact validation"
+        )
+    final_hash_set = set(final_hashes)
+    final_diagnostics = [
+        value
+        for value in diagnostics
+        if value["requestIdentifierSha256"] in final_hash_set
+    ]
+    computed_counts = {
+        "matchingRemoteCount": sum(
+            value["triggerOrigin"] == "remote" for value in final_diagnostics
+        ),
+        "matchingLocalCount": sum(
+            value["triggerOrigin"] == "local" for value in final_diagnostics
+        ),
+        "matchingUsefulProviderCount": sum(
+            value["sourceClass"] == "usefulProviderRich"
+            for value in final_diagnostics
+        ),
+        "matchingSanitizedProviderCount": sum(
+            value["sourceClass"] == "sanitizedProviderRich"
+            for value in final_diagnostics
+        ),
+        "matchingFlutterLocalCount": sum(
+            value["sourceClass"] == "flutterLocal"
+            for value in final_diagnostics
+        ),
+        "matchingUnknownCount": sum(
+            value["sourceClass"] == "unknown" for value in final_diagnostics
+        ),
+    }
+    if (
+        result["matchingRemoteCount"] + result["matchingLocalCount"]
+        != result["matchingTotalCount"]
+        or result["matchingUsefulProviderCount"]
+        + result["matchingSanitizedProviderCount"]
+        + result["matchingFlutterLocalCount"]
+        + result["matchingUnknownCount"]
+        != result["matchingTotalCount"]
+        or len(final_diagnostics) != result["matchingTotalCount"]
+        or any(result[key] != count for key, count in computed_counts.items())
+    ):
+        raise BootstrapFailure(
+            "the group notification observation aggregates are contradictory"
+        )
+    computed_diagnostic_complete = (
+        result["sampledThroughDeadline"] is True
+        and result["diagnosticOverflow"] is False
+        and result["diagnosticConflict"] is False
+        and bool(diagnostics)
+    )
+    if result["diagnosticComplete"] is not computed_diagnostic_complete:
+        raise BootstrapFailure(
+            "the group notification diagnostic completeness is contradictory"
         )
     exact_source = (
         result["matchingRemoteCount"] == 1
@@ -1023,14 +1276,39 @@ def _read_group_observation_result(
         and result["sampledThroughDeadline"] is True
         and result["badSourceSeen"] is False
         and result["duplicateSeen"] is False
+        and result["diagnosticComplete"] is True
+        and len(diagnostics) == 1
+        and diagnostics[0]["triggerOrigin"] == "remote"
+        and diagnostics[0]["sourceClass"] == "usefulProviderRich"
+        and diagnostics[0]["reason"] == "exactUseful"
+        and diagnostics[0]["expectedCollapseIdentifierMatch"] is True
         and result["childBuildCount"] == 0
         and result["manualActionCount"] == 0
     )
-    if result["status"] == "passed" and (
-        result["resultCode"] != "ok" or not exact_source
+    if exact_source:
+        expected_status = "passed"
+        expected_result_code = "ok"
+    elif (
+        result["sampledThroughDeadline"] is not True
+        or result["stableSampleCount"] != 3
+    ):
+        expected_status = "failed"
+        expected_result_code = "source_inventory_unstable"
+    elif result["badSourceSeen"] is True:
+        expected_status = "failed"
+        expected_result_code = "bad_source_seen"
+    elif result["duplicateSeen"] is True:
+        expected_status = "failed"
+        expected_result_code = "duplicate_seen"
+    else:
+        expected_status = "failed"
+        expected_result_code = "source_inventory_mismatch"
+    if (
+        result["status"] != expected_status
+        or result["resultCode"] != expected_result_code
     ):
         raise BootstrapFailure(
-            "the group notification observation pass result is incomplete"
+            "the group notification observation status or result code is contradictory"
         )
     return result
 
@@ -1044,11 +1322,19 @@ def _group_notification_observation_action(
     group_sha256 = args.expected_group_id_sha256.strip()
     event_sha256 = args.expected_event_id_sha256.strip()
     target_message_sha256 = args.expected_target_message_id_sha256.strip()
+    expected_collapse_identifier_sha256 = (
+        args.expected_collapse_identifier_sha256.strip()
+    )
     if _SAFE_ID.fullmatch(receiver) is None or _SAFE_NONCE.fullmatch(nonce) is None:
         raise BootstrapBlocked("receiver or capture nonce is invalid")
     if phase not in {"message", "reaction"} or any(
         _SHA256.fullmatch(value) is None
-        for value in (group_sha256, event_sha256, target_message_sha256)
+        for value in (
+            group_sha256,
+            event_sha256,
+            target_message_sha256,
+            expected_collapse_identifier_sha256,
+        )
     ):
         raise BootstrapBlocked("group observation phase or expected digest is invalid")
     receipt_path = Path(args.group_observation_receipt).expanduser().absolute()
@@ -1071,6 +1357,9 @@ def _group_notification_observation_action(
         "expectedGroupIdSha256": group_sha256,
         "expectedEventIdSha256": event_sha256,
         "expectedTargetMessageIdSha256": target_message_sha256,
+        "expectedCollapseIdentifierSha256": (
+            expected_collapse_identifier_sha256
+        ),
         "createdAt": _utc(now),
         "expiresAt": _utc(now + datetime.timedelta(minutes=3)),
     }
@@ -1078,6 +1367,7 @@ def _group_notification_observation_action(
     native_result: dict[str, Any] | None = None
     primary: BaseException | None = None
     termination_failed = False
+    polling_deadline_elapsed = False
     with tempfile.TemporaryDirectory(prefix="mknoon-ios-group-observation-") as raw:
         temporary = Path(raw)
         os.chmod(temporary, 0o700)
@@ -1120,10 +1410,14 @@ def _group_notification_observation_action(
                         group_sha256=group_sha256,
                         event_sha256=event_sha256,
                         target_message_sha256=target_message_sha256,
+                        expected_collapse_identifier_sha256=(
+                            expected_collapse_identifier_sha256
+                        ),
                     )
                     break
                 time.sleep(0.5)
             if native_result is None:
+                polling_deadline_elapsed = True
                 raise BootstrapFailure(
                     "the app did not finish the group observation in time"
                 )
@@ -1136,6 +1430,38 @@ def _group_notification_observation_action(
             termination_failed = not control.terminate(
                 "terminate-after-group-observation"
             )
+            if (
+                polling_deadline_elapsed
+                and not termination_failed
+                and native_result is None
+            ):
+                try:
+                    pulled_result.unlink(missing_ok=True)
+                    if control.copy_from(
+                        pulled_result,
+                        "pull-group-observation-after-termination",
+                        DEVICE_GROUP_OBSERVATION_RESULT,
+                        timeout=5,
+                    ):
+                        try:
+                            os.chmod(pulled_result, 0o600)
+                        except OSError:
+                            pass
+                        native_result = _read_group_observation_result(
+                            pulled_result,
+                            nonce=nonce,
+                            receiver=receiver,
+                            phase=phase,
+                            group_sha256=group_sha256,
+                            event_sha256=event_sha256,
+                            target_message_sha256=target_message_sha256,
+                            expected_collapse_identifier_sha256=(
+                                expected_collapse_identifier_sha256
+                            ),
+                        )
+                        primary = None
+                except BaseException as error:
+                    primary = error
     if primary is not None:
         raise primary
     if termination_failed:
@@ -1155,6 +1481,9 @@ def _group_notification_observation_action(
         "expectedGroupIdSha256": group_sha256,
         "expectedEventIdSha256": event_sha256,
         "expectedTargetMessageIdSha256": target_message_sha256,
+        "expectedCollapseIdentifierSha256": (
+            expected_collapse_identifier_sha256
+        ),
         "matchingRemoteCount": native_result["matchingRemoteCount"],
         "matchingLocalCount": native_result["matchingLocalCount"],
         "matchingUsefulProviderCount": native_result[
@@ -1177,6 +1506,12 @@ def _group_notification_observation_action(
         "badSourceSeen": native_result["badSourceSeen"],
         "duplicateSeen": native_result["duplicateSeen"],
         "requestIdentifierSha256": native_result["requestIdentifierSha256"],
+        "diagnosticSchema": native_result["diagnosticSchema"],
+        "diagnosticRecords": native_result["diagnosticRecords"],
+        "diagnosticRecordCount": native_result["diagnosticRecordCount"],
+        "diagnosticOverflow": native_result["diagnosticOverflow"],
+        "diagnosticConflict": native_result["diagnosticConflict"],
+        "diagnosticComplete": native_result["diagnosticComplete"],
         "childBuildCount": native_result["childBuildCount"],
         "manualActionCount": native_result["manualActionCount"],
         "runnerTerminated": True,
@@ -1247,7 +1582,11 @@ def _cleanup_group_notification_observation_action(
     }
 
 
-def _capture(args: argparse.Namespace) -> dict[str, Any]:
+def _capture(
+    args: argparse.Namespace,
+    *,
+    preserve_successful_launch: bool = False,
+) -> dict[str, Any]:
     receiver = args.receiver.strip()
     nonce = args.nonce.strip()
     if _SAFE_ID.fullmatch(receiver) is None or _SAFE_NONCE.fullmatch(nonce) is None:
@@ -1317,27 +1656,29 @@ def _capture(args: argparse.Namespace) -> dict[str, Any]:
         except BaseException as error:
             primary = error
         finally:
-            try:
-                _write_json_private(
-                    cleanup_request,
-                    _request(
-                        action="cleanup",
-                        nonce=nonce,
-                        receiver=receiver,
-                        now=datetime.datetime.now(datetime.timezone.utc),
-                    ),
-                )
-                cleanup_failed = not (
-                    control.copy_to(cleanup_request, "stage-cleanup")
-                    and control.launch("cleanup")
-                )
-                if not cleanup_failed:
-                    time.sleep(0.25)
-                    cleanup_failed = control.copy_from(
-                        cleanup_probe, "verify-cleanup"
+            successful_handoff = primary is None and handoff is not None
+            if not (preserve_successful_launch and successful_handoff):
+                try:
+                    _write_json_private(
+                        cleanup_request,
+                        _request(
+                            action="cleanup",
+                            nonce=nonce,
+                            receiver=receiver,
+                            now=datetime.datetime.now(datetime.timezone.utc),
+                        ),
                     )
-            except BaseException:
-                cleanup_failed = True
+                    cleanup_failed = not (
+                        control.copy_to(cleanup_request, "stage-cleanup")
+                        and control.launch("cleanup")
+                    )
+                    if not cleanup_failed:
+                        time.sleep(0.25)
+                        cleanup_failed = control.copy_from(
+                            cleanup_probe, "verify-cleanup"
+                        )
+                except BaseException:
+                    cleanup_failed = True
 
     if primary is not None:
         try:
@@ -1438,9 +1779,11 @@ def main() -> None:
         "--action",
         choices=(
             "capture-receiver",
+            "capture-receiver-final",
             "seed-sender",
             "cleanup-sender",
             "prove-recovery",
+            "observe-direct",
             "observe-group",
             "cleanup-group-observation",
         ),
@@ -1458,10 +1801,16 @@ def main() -> None:
     parser.add_argument("--expected-group-id-sha256")
     parser.add_argument("--expected-event-id-sha256")
     parser.add_argument("--expected-target-message-id-sha256")
+    parser.add_argument("--expected-collapse-identifier-sha256")
+    parser.add_argument(
+        "--proof-stage",
+        choices=("single_submission", "retry_first", "retry_second"),
+        default="single_submission",
+    )
     parser.add_argument("--timeout-seconds", type=int, default=120)
     options = parser.parse_args()
     sender_action = options.action in {"seed-sender", "cleanup-sender"}
-    recovery_action = options.action == "prove-recovery"
+    recovery_action = options.action in {"prove-recovery", "observe-direct"}
     group_observation_action = options.action in {
         "observe-group",
         "cleanup-group-observation",
@@ -1514,6 +1863,10 @@ def main() -> None:
                     options.expected_target_message_id_sha256,
                     "SIMS_IOS_GROUP_NOTIFICATION_EXPECTED_TARGET_MESSAGE_ID_SHA256",
                 )
+                options.expected_collapse_identifier_sha256 = _required(
+                    options.expected_collapse_identifier_sha256,
+                    "SIMS_IOS_GROUP_NOTIFICATION_EXPECTED_COLLAPSE_IDENTIFIER_SHA256",
+                )
                 receipt = _group_notification_observation_action(options)
             else:
                 receipt = _cleanup_group_notification_observation_action(options)
@@ -1521,7 +1874,12 @@ def main() -> None:
             options.output = _required(
                 options.output, "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH"
             )
-            handoff = _capture(options)
+            handoff = _capture(
+                options,
+                preserve_successful_launch=(
+                    options.action == "capture-receiver-final"
+                ),
+            )
     except BootstrapBlocked as error:
         if group_observation_action:
             _group_observation_die("BLOCKED", str(error), 78)

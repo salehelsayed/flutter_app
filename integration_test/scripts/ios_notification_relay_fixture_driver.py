@@ -26,13 +26,14 @@ from typing import Any, Mapping, NoReturn
 SCENARIO = "payload_fast_path_ios_receiver"
 STAGING_SCHEMA = "mknoon.sims.ios-payload-fast-path-staging.v1"
 REQUEST_SCHEMA = "mknoon.sims.ios-payload-fast-path-provider-request.v1"
-PROVIDER_RECEIPT_SCHEMA = "mknoon.sims.ios-payload-fast-path-provider-receipt.v1"
+PROVIDER_RECEIPT_SCHEMA = "mknoon.sims.ios-payload-fast-path-provider-receipt.v2"
 FIXTURE_RECEIPT_SCHEMA = "mknoon.sims.ios-payload-relay-fixture-receipt.v1"
 PRIVATE_PAYLOAD_SCHEMA = "mknoon.sims.ios-payload-private-fixture.v1"
 LIFECYCLE_SCHEMA = "mknoon.sims.ios-provider-lifecycle.v1"
 REMOTE_REQUEST_SCHEMA = "mknoon.sims.ios-payload-relay-remote-request.v1"
 REMOTE_RESULT_SCHEMA = "mknoon.sims.ios-payload-relay-remote-result.v1"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_GCM_MESSAGE_ID = re.compile(r"^ios-sims-bg-[0-9a-f]{32}$")
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9._:@+-]{4,256}$")
 _RECEIVER = re.compile(r"^[A-Za-z0-9._:-]{4,160}$")
 _UTC_MILLISECONDS = re.compile(
@@ -123,6 +124,10 @@ def _bounded(value: object, maximum: int = 512) -> bool:
         and "\n" not in value
         and "\r" not in value
     )
+
+
+def _exact_apns_one(value: object) -> bool:
+    return type(value) is int and value == 1
 
 
 def _bounded_fixture_text(value: object, maximum: int) -> bool:
@@ -274,17 +279,20 @@ def _validate_inputs(
             "type",
             "sender_id",
             "message_id",
+            "gcm.message_id",
             "kem",
             "ciphertext",
             "nonce",
         }
         or not isinstance(alert, dict)
-        or set(aps) != {"alert", "mutable-content"}
+        or set(aps) != {"alert", "mutable-content", "content-available"}
         or set(alert) != {"title", "body"}
         or alert.get("title") != request.get("expectedTitle")
         or alert.get("body") != request.get("expectedBody")
-        or aps.get("mutable-content") != 1
-        or isinstance(aps.get("mutable-content"), bool)
+        or not _exact_apns_one(aps.get("mutable-content"))
+        or not _exact_apns_one(aps.get("content-available"))
+        or _GCM_MESSAGE_ID.fullmatch(str(payload.get("gcm.message_id", "")))
+        is None
         or payload.get("fixture_schema") != PRIVATE_PAYLOAD_SCHEMA
         or payload.get("type") != "new_message"
         or _PEER_ID.fullmatch(str(payload.get("sender_id", ""))) is None

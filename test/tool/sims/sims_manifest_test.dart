@@ -638,6 +638,51 @@ void main() {
     expect(capability.declaredBuildException, isFalse);
   });
 
+  test(
+    'TC-396 iOS payload artifact schema registers source and retry checks exactly once',
+    () async {
+      final matches = manifest.capabilities
+          .where(
+            (capability) =>
+                capability.id == 'notifications.ios_payload_fast_path',
+          )
+          .toList(growable: false);
+      expect(matches, hasLength(1));
+      final capability = matches.single;
+      const addedAssertions = <String>[
+        'ios.direct_source_useful_provider_only',
+        'ios.background_contender_suppressed',
+        'ios.same_payload_retry_single_useful_card',
+        'ios.retry_receipts_distinct_and_bound',
+        'ios.host_failure_diagnostic_retention_contract',
+        'ios.host_unconditional_cleanup_contract',
+      ];
+      for (final assertion in addedAssertions) {
+        expect(
+          capability.assertionIds.where((value) => value == assertion),
+          hasLength(1),
+        );
+      }
+
+      final result = await Process.run('dart', <String>[
+        'integration_test/scripts/run_ios_notification_payload_sims.dart',
+        '--artifact-schema',
+      ]);
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      final schema = '${result.stdout}';
+      for (final check in const <String>[
+        'directSourceUsefulProviderOnly',
+        'backgroundContenderSuppressed',
+        'samePayloadRetrySingleUsefulCard',
+        'retryReceiptsDistinctAndBound',
+        'hostFailureDiagnosticRetentionContract',
+        'hostUnconditionalCleanupContract',
+      ]) {
+        expect(RegExp('"$check"').allMatches(schema), hasLength(1));
+      }
+    },
+  );
+
   test('typed reaction reuses the central production APK', () {
     final matches = manifest.capabilities
         .where(

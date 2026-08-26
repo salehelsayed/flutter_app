@@ -15,6 +15,9 @@ go_root="$repo_root/go-mknoon"
 framework_root="$repo_root/ios/Runner/GoMknoon.xcframework"
 framework_info="$framework_root/Info.plist"
 header="$framework_root/ios-arm64_x86_64-simulator/GoMknoon.framework/Headers/Bridge.objc.h"
+nse_framework_root="$repo_root/ios/Runner/GoMknoonNSE.xcframework"
+nse_framework_info="$nse_framework_root/Info.plist"
+nse_header="$nse_framework_root/ios-arm64_x86_64-simulator/GoMknoonNSE.framework/Headers/Bridge.objc.h"
 verify_script="$repo_root/scripts/verify_gomobile_bindings.sh"
 input_helper="$repo_root/scripts/gomobile_binding_inputs.sh"
 input_stamp="$repo_root/ios/Runner/GoMknoon.inputs.sha256"
@@ -28,7 +31,8 @@ if [[ -f "$input_stamp" ]]; then
 fi
 
 needs_rebuild=0
-if [[ ! -f "$framework_info" || ! -f "$header" ]]; then
+if [[ ! -f "$framework_info" || ! -f "$header" ||
+      ! -f "$nse_framework_info" || ! -f "$nse_header" ]]; then
   needs_rebuild=1
 elif [[ "$stored_digest" != "$input_digest" ]]; then
   needs_rebuild=1

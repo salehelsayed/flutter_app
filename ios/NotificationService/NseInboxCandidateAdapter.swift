@@ -2,8 +2,8 @@ import CoreFoundation
 import CryptoKit
 import Foundation
 
-#if canImport(Runner)
-@testable import Runner
+#if DEBUG && canImport(Runner)
+  @testable import Runner
 #endif
 
 enum NseInboxCandidatePolicy: Equatable {

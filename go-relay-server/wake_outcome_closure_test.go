@@ -135,6 +135,138 @@ func waitForWakeProviderCalls(t *testing.T, recorder *recordingPushSender, want 
 	}
 }
 
+func TestRelayNotificationClosure_DelayedGroupWakeSharesProviderAdmission(t *testing.T) {
+	const (
+		peerID    = "wake-group-provider-admission-peer"
+		groupID   = "group"
+		messageID = "wake-group-provider-admission-message"
+		prefix    = "wake-group-provider-admission:"
+	)
+	newFixture := func(t *testing.T) (*wakeOutcomeTestFixture, wakeOutcomeAdmission, pushRouteLease, string) {
+		t.Helper()
+		fixture := newWakeOutcomeTestFixture(t, prefix+t.Name()+":")
+		fixture.push.groupMessageDispatchAdmission = newRedisGroupMessageDispatchAdmissionBackend(
+			fixture.pushBackend.client,
+			prefix+t.Name()+":",
+			groupMessageDispatchAdmissionTTL,
+		)
+		route := plan367RegisterEncrypted(
+			t,
+			fixture.pushBackend,
+			peerID,
+			"wake-group-provider-admission-token",
+			"ios",
+			opaqueWakeCapability,
+			wakeOutcomeCapability,
+		)
+		message := wakeOutcomeGroupEnvelope("wake-group-provider-admission-logical", messageID)
+		admissions, _ := fixture.group.groupWakeOutcomeAdmissions(
+			groupID,
+			"sender",
+			message,
+			[]string{peerID},
+			wakeOutcomeProducerGroupMessage,
+			"",
+			"",
+			fixture.now.UnixMilli(),
+			fixture.now.Add(24*time.Hour).UnixMilli(),
+		)
+		if len(admissions) != 1 || admissions[0].groupMessageDispatchAdmissionKey == "" {
+			t.Fatalf("production group wake outcome admission = %#v, want exact provider key", admissions)
+		}
+		admission := admissions[0]
+		result, statuses, err := fixture.groupBackend.StoreWithRecipientsAndWakeOutcomes(
+			groupID,
+			"sender",
+			message,
+			[]string{peerID},
+			[]wakeOutcomeAdmission{admission},
+		)
+		if err != nil || result != GroupInboxStoreResultStored || len(statuses) != 1 ||
+			statuses[0].status != wakeOutcomeAdmissionDelayed {
+			t.Fatalf("store delayed group wake = %q/%#v/%v", result, statuses, err)
+		}
+		record := requireWakeOutcomeRecord(t, fixture.state, peerID, admission.correlation)
+		if record.GroupMessageDispatchAdmissionKey != admission.groupMessageDispatchAdmissionKey ||
+			strings.Contains(record.GroupMessageDispatchAdmissionKey, peerID) ||
+			strings.Contains(record.GroupMessageDispatchAdmissionKey, groupID) ||
+			strings.Contains(record.GroupMessageDispatchAdmissionKey, messageID) {
+			t.Fatalf("persisted group provider admission key = %q", record.GroupMessageDispatchAdmissionKey)
+		}
+		return fixture, admission, route, message
+	}
+	runDue := func(t *testing.T, fixture *wakeOutcomeTestFixture) {
+		t.Helper()
+		due := fixture.now.Add(wakeOutcomeDebounce)
+		coordinator := newWakeOutcomeCoordinator(
+			fixture.state,
+			fixture.push.sendWakeOutcomeThroughGateway,
+			func() time.Time { return due },
+		)
+		coordinator.sendGroup = fixture.push.sendGroupWakeOutcomeThroughGateway
+		if err := coordinator.RunDue(context.Background()); err != nil {
+			t.Fatalf("run delayed group wake: %v", err)
+		}
+	}
+
+	t.Run("parallel group adapter sends first", func(t *testing.T) {
+		fixture, admission, route, message := newFixture(t)
+		recorder := newRecordingPushSender()
+		fixture.push.sender = recorder.Send
+		fixture.push.SendGroupNotification(
+			context.Background(), peerID, groupID, "sender", messageID, message, route,
+		)
+		runDue(t, fixture)
+		if got := recorder.SendCallCount(); got != 1 {
+			t.Fatalf("parallel adapter then delayed due provider calls = %d, want 1", got)
+		}
+		if record := requireWakeOutcomeRecord(t, fixture.state, peerID, admission.correlation); record.State != wakeOutcomeStateCompleted {
+			t.Fatalf("suppressed delayed group wake did not complete: %#v", record)
+		}
+	})
+
+	t.Run("delayed due sends first", func(t *testing.T) {
+		fixture, admission, route, message := newFixture(t)
+		recorder := newRecordingPushSender()
+		fixture.push.sender = recorder.Send
+		runDue(t, fixture)
+		fixture.push.SendGroupNotification(
+			context.Background(), peerID, groupID, "sender", messageID, message, route,
+		)
+		if got := recorder.SendCallCount(); got != 1 {
+			t.Fatalf("delayed due then parallel adapter provider calls = %d, want 1", got)
+		}
+		if record := requireWakeOutcomeRecord(t, fixture.state, peerID, admission.correlation); record.State != wakeOutcomeStateCompleted {
+			t.Fatalf("accepted delayed group wake did not complete: %#v", record)
+		}
+	})
+
+	t.Run("keyed claim never falls back to generic sender when group callback is absent", func(t *testing.T) {
+		fixture, admission, _, _ := newFixture(t)
+		var genericCalls atomic.Int32
+		due := fixture.now.Add(wakeOutcomeDebounce)
+		coordinator := newWakeOutcomeCoordinator(
+			fixture.state,
+			func(context.Context, string, wakeOutcomeRoutePolicy) pushDeliveryResult {
+				genericCalls.Add(1)
+				return pushDeliveryAccepted
+			},
+			func() time.Time { return due },
+		)
+
+		if err := coordinator.RunDue(context.Background()); err != nil {
+			t.Fatalf("run keyed claim without group callback: %v", err)
+		}
+		if got := genericCalls.Load(); got != 0 {
+			t.Fatalf("keyed claim called generic sender %d time(s), want fail-closed", got)
+		}
+		record := requireWakeOutcomeRecord(t, fixture.state, peerID, admission.correlation)
+		if record.State != wakeOutcomeStatePending || record.RetryCount != 1 {
+			t.Fatalf("keyed claim without group callback settled as %#v, want retryable pending", record)
+		}
+	})
+}
+
 func TestRelayNotificationClosure_WakeOutcomeCapabilityAndLegacyMatrix(t *testing.T) {
 	fixture := newWakeOutcomeTestFixture(t, "wake-matrix:")
 	const peerID = "wake-matrix-recipient"

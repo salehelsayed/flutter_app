@@ -25,6 +25,125 @@ final class NotificationTapUITests: XCTestCase {
     try tapExistingNotification(waitForHostPush: false)
   }
 
+  /// Physical-device proof for the Local Network privacy boundary. Apple does
+  /// not model this permission on Simulator, so reset only this app's decision,
+  /// launch the real discovery path, and require the exact prompt to be allowed.
+  @available(iOS 15.4, *)
+  func testAutomateLocalNetworkPermission() {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    let autoSetupUsername = ProcessInfo.processInfo.environment["MKNOON_397_AUTO_SETUP_USERNAME"]?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let autoSetupUsername, !autoSetupUsername.isEmpty else {
+      XCTFail("Missing Plan 397 auto-setup username")
+      return
+    }
+    app.launchEnvironment["MKNOON_397_AUTO_SETUP_USERNAME"] = autoSetupUsername
+
+    app.terminate()
+    app.resetAuthorizationStatus(for: .localNetwork)
+    app.launch()
+    XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+
+    // A fresh install can surface Notifications before Local Network. Probe
+    // Local Network first so the permission boundary stays exact, then settle
+    // only an identified Notifications blocker before retrying Local Network.
+    let localNetworkAllowedImmediately = allowLocalNetworkPromptIfPresent(
+      in: app,
+      springboard: springboard,
+      timeout: 3
+    )
+    if !localNetworkAllowedImmediately {
+      allowNotificationPromptIfPresent(
+        in: app,
+        springboard: springboard,
+        timeout: 15
+      )
+    }
+    XCTAssertTrue(
+      localNetworkAllowedImmediately || allowLocalNetworkPromptIfPresent(
+        in: app,
+        springboard: springboard,
+        timeout: 20
+      ),
+      "Expected the physical iPhone Local Network prompt to be automated"
+    )
+  }
+
+  /// Idempotent permission boundary used by a physical-device campaign after
+  /// the strict reset-and-tap proof has already run. A campaign retry must not
+  /// reset an authorization decision and manufacture a second privacy prompt.
+  /// If no prompt is present, later identity/relay stages remain the authority
+  /// for whether the already-settled device state is usable.
+  @available(iOS 15.4, *)
+  func testSettleLocalNetworkPermissionForCampaign() {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    let autoSetupUsername = ProcessInfo.processInfo.environment["MKNOON_397_AUTO_SETUP_USERNAME"]?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let autoSetupUsername, !autoSetupUsername.isEmpty else {
+      XCTFail("Missing Plan 397 auto-setup username")
+      return
+    }
+    let setupReadinessAttempt = ProcessInfo.processInfo.environment[
+      "MKNOON_398_SETUP_READINESS_ATTEMPT"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let setupReadinessAttempt,
+          (16...160).contains(setupReadinessAttempt.count),
+          setupReadinessAttempt.range(
+            of: "^[A-Za-z0-9._:-]+$",
+            options: .regularExpression
+          ) != nil else {
+      XCTFail("Missing Plan 398 setup-readiness attempt")
+      return
+    }
+    let setupEntryProfileId = ProcessInfo.processInfo.environment[
+      "MKNOON_398_SETUP_ENTRY_PROFILE_ID"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard setupEntryProfileId == "ios.device.group_reaction_notification_397" else {
+      XCTFail("Missing Plan 398 setup-entry profile")
+      return
+    }
+    app.launchEnvironment["MKNOON_397_AUTO_SETUP_USERNAME"] = autoSetupUsername
+    app.launchEnvironment["MKNOON_398_SETUP_READINESS_ATTEMPT"] = setupReadinessAttempt
+    app.launchEnvironment["MKNOON_398_SETUP_ENTRY_PROFILE_ID"] = setupEntryProfileId
+
+    app.terminate()
+    app.launch()
+    guard app.wait(for: .runningForeground, timeout: 30) else {
+      XCTFail("Expected the physical iPhone setup app in foreground")
+      return
+    }
+
+    let localNetworkAllowedImmediately = allowLocalNetworkPromptIfPresent(
+      in: app,
+      springboard: springboard,
+      timeout: 3
+    )
+    if !localNetworkAllowedImmediately {
+      allowNotificationPromptIfPresent(
+        in: app,
+        springboard: springboard,
+        timeout: 15
+      )
+    }
+    let localNetworkAllowedAfterNotification = localNetworkAllowedImmediately
+      ? false
+      : allowLocalNetworkPromptIfPresent(
+          in: app,
+          springboard: springboard,
+          timeout: 20
+        )
+    if !localNetworkAllowedImmediately && !localNetworkAllowedAfterNotification {
+      let marker = "MKNOON_IOS_PERMISSION_STATE permission=local_network action=no_prompt"
+      NSLog("%@", marker)
+      fputs("\(marker)\n", stdout)
+      fflush(stdout)
+    }
+  }
+
   /// Pure decoder coverage for the system-owned Control Center switch. This
   /// selector does not launch an app or change device radio state.
   func testAirplaneToggleStateDecoderContract() {
@@ -97,6 +216,25 @@ final class NotificationTapUITests: XCTestCase {
   func testPreparePayloadFastPathNotificationTap() throws {
     try prepareWarmNotificationTap()
     emitPlan258Marker("READY", fields: ["permission_automated": "true"])
+  }
+
+  /// Backgrounds the exact app process most recently launched by the receiver
+  /// bootstrap. This selector deliberately never terminates or relaunches it.
+  func testBackgroundRegisteredPayloadFastPathNotificationTap() {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    guard app.wait(for: .runningForeground, timeout: 10) else {
+      XCTFail("The freshly registered receiver is not running in foreground")
+      return
+    }
+    XCUIDevice.shared.press(.home)
+    guard springboard.wait(for: .runningForeground, timeout: 10) else {
+      XCTFail("The freshly registered receiver did not enter background")
+      return
+    }
+    settleOnSpringboard()
+    emitPlan258Marker("FINAL_READY", fields: ["registration_bound": "true"])
   }
 
   /// Plan 258 / Plan 225 TC-B12 physical-iPhone closure. The provider has
@@ -407,9 +545,15 @@ final class NotificationTapUITests: XCTestCase {
     }
 
     let app = XCUIApplication(bundleIdentifier: bundleId)
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
     app.terminate()
     app.launch()
     XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+    allowLocalNetworkPromptIfPresent(
+      in: app,
+      springboard: springboard,
+      timeout: 20
+    )
 
     app.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.08)).tap()
     let newGroup = element(in: app, containing: "New Group")
@@ -463,9 +607,15 @@ final class NotificationTapUITests: XCTestCase {
     }
 
     let app = XCUIApplication(bundleIdentifier: bundleId)
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
     app.terminate()
     app.launch()
     XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+    allowLocalNetworkPromptIfPresent(
+      in: app,
+      springboard: springboard,
+      timeout: 5
+    )
     let group = element(in: app, containing: expectedGroupName)
     XCTAssertTrue(group.waitForExistence(timeout: 60))
     group.tap()
@@ -1228,12 +1378,21 @@ final class NotificationTapUITests: XCTestCase {
     app.terminate()
     app.launch()
     XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+    // Local discovery can raise its own system alert before notification
+    // authorization. Classify and settle that prompt first so the notification
+    // helper cannot grant the wrong permission through a generic "Allow" match.
+    allowLocalNetworkPromptIfPresent(
+      in: app,
+      springboard: springboard,
+      timeout: 5
+    )
     // #21 fix: poll for the (late-appearing) notification-permission alert across
     // the pre-background window and grant it the moment it shows, instead of a
     // one-shot check that the prompt usually beats. Returns early once granted,
     // otherwise the poll itself doubles as the app-settle wait.
     allowNotificationPromptIfPresent(
-      in: springboard,
+      in: app,
+      springboard: springboard,
       timeout: max(preBackgroundWait, 15)
     )
     RunLoop.current.run(until: Date().addingTimeInterval(2))
@@ -1279,10 +1438,19 @@ final class NotificationTapUITests: XCTestCase {
     XCUIDevice.shared.press(.home)
     XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 10))
     settleOnSpringboard()
-    // #21: a permission alert can still be up over Springboard (granted late, or
-    // raised after we backgrounded). Clear it before hunting the banner, else the
-    // notification stays undelivered/untappable.
-    allowNotificationPromptIfPresent(in: springboard, timeout: 3)
+    // Permission alerts can still be up over Springboard (raised late or after
+    // backgrounding). Settle each by its identifying copy before hunting the
+    // banner, else the notification stays undelivered or untappable.
+    allowLocalNetworkPromptIfPresent(
+      in: app,
+      springboard: springboard,
+      timeout: 3
+    )
+    allowNotificationPromptIfPresent(
+      in: app,
+      springboard: springboard,
+      timeout: 3
+    )
 
     if waitForHostPush {
       waitForHostPushInjection()
@@ -1345,32 +1513,90 @@ final class NotificationTapUITests: XCTestCase {
     RunLoop.current.run(until: Date().addingTimeInterval(postTapWait))
   }
 
-  /// Grants the iOS "Would Like to Send You Notifications" permission alert.
-  ///
-  /// #21 fix: the alert appears several seconds AFTER `app.launch()` (the app
-  /// requests authorization only once startup settles), so a one-shot check
-  /// right after launch races — and loses to — the prompt, leaving it lingering
-  /// over Springboard and blocking notification delivery. Poll across [timeout]
-  /// and tap "Allow" the moment it appears. Returns true once granted.
+  /// Grants only the iOS Local Network privacy alert.
   @discardableResult
-  private func allowNotificationPromptIfPresent(
-    in springboard: XCUIApplication,
+  private func allowLocalNetworkPromptIfPresent(
+    in app: XCUIApplication,
+    springboard: XCUIApplication,
     timeout: TimeInterval = 3
   ) -> Bool {
-    let allowPredicate = NSPredicate(format: "label CONTAINS[c] %@", "Allow")
+    allowPermissionPromptIfPresent(
+      in: [app, springboard],
+      identifyingText: "Local Network",
+      permission: "local_network",
+      timeout: timeout
+    )
+  }
+
+  /// Grants only the iOS "Would Like to Send You Notifications" alert.
+  @discardableResult
+  private func allowNotificationPromptIfPresent(
+    in app: XCUIApplication,
+    springboard: XCUIApplication,
+    timeout: TimeInterval = 3
+  ) -> Bool {
+    allowPermissionPromptIfPresent(
+      in: [app, springboard],
+      identifyingText: "Notifications",
+      permission: "notifications",
+      timeout: timeout
+    )
+  }
+
+  /// Polls for one identified system permission and taps Allow inside that
+  /// alert. It never searches globally for an Allow button.
+  @discardableResult
+  private func allowPermissionPromptIfPresent(
+    in applications: [XCUIApplication],
+    identifyingText: String,
+    permission: String,
+    timeout: TimeInterval
+  ) -> Bool {
+    let identifyingTextPredicate = NSPredicate(
+      format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+      identifyingText,
+      identifyingText
+    )
     let deadline = Date().addingTimeInterval(timeout)
+    var sawPrompt = false
     while Date() < deadline {
-      let allowButton = springboard.buttons["Allow"]
-      if allowButton.exists && allowButton.isHittable {
+      for application in applications {
+        let alert = application.alerts.firstMatch
+        let identifyingTextElement = alert.descendants(matching: .staticText)
+          .matching(identifyingTextPredicate)
+          .firstMatch
+        guard alert.exists && identifyingTextElement.exists else {
+          continue
+        }
+        sawPrompt = true
+        let allowButton = alert.buttons["Allow"]
+        guard allowButton.exists && allowButton.isHittable else {
+          continue
+        }
         allowButton.tap()
-        return true
-      }
-      let matchingButton = springboard.buttons.matching(allowPredicate).firstMatch
-      if matchingButton.exists && matchingButton.isHittable {
-        matchingButton.tap()
+        let marker = "MKNOON_IOS_PERMISSION_AUTOMATED permission=\(permission) action=allow"
+        NSLog("%@", marker)
+        fputs("\(marker)\n", stdout)
+        fflush(stdout)
+        let dismissed = XCTNSPredicateExpectation(
+          // `alerts.firstMatch` is dynamic: iOS can replace Notifications with
+          // Local Network immediately, leaving an alert present. Track the
+          // identified permission copy so a succeeding alert is not mistaken
+          // for the prompt that was just allowed.
+          predicate: NSPredicate { _, _ in !identifyingTextElement.exists },
+          object: nil
+        )
+        XCTAssertEqual(
+          XCTWaiter.wait(for: [dismissed], timeout: 10),
+          .completed,
+          "The \(identifyingText) permission alert did not dismiss after Allow"
+        )
         return true
       }
       RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+    }
+    if sawPrompt {
+      XCTFail("The \(identifyingText) permission alert had no hittable Allow action")
     }
     return false
   }

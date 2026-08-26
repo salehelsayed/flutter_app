@@ -480,7 +480,8 @@ void main() {
 
     test('iOS receiver requires the durable APNs/NSE proof chain', () {
       final artifact = _iosNotificationArtifact();
-      expect(validateNotificationArtifact(artifact).ok, isTrue);
+      final validation = validateNotificationArtifact(artifact);
+      expect(validation.ok, isTrue, reason: validation.detail);
 
       artifact['platform'] = 'android';
       expect(validateNotificationArtifact(artifact).ok, isFalse);
@@ -529,6 +530,43 @@ void main() {
       }
     });
 
+    test('TC-396 durable proof rejects unbound retry and cleanup claims', () {
+      for (final mutation in <void Function(Map<String, Object?>)>[
+        (artifact) => artifact['retryRunId'] = artifact['recoveryRunId'],
+        (artifact) => artifact['retryRequestIdentifierSha256'] = _digestB,
+        (artifact) => artifact['retryProviderMessageIdSha256'] = <String>[
+          _digest,
+          _digest,
+        ],
+        (artifact) =>
+            (artifact['retryCounts']! as Map)['matchingTotalCount'] = 2,
+        (artifact) =>
+            (artifact['retryCounts']! as Map)['recentRemoteSuppressionCount'] =
+                0,
+        (artifact) =>
+            (artifact['retryCounts']! as Map)['recentRemoteSuppressionCount'] =
+                1,
+        (artifact) => (artifact['evidenceSha256']! as Map).remove(
+          'retryCausalDiagnostic',
+        ),
+        (artifact) => artifact['passDiagnosticRetained'] = false,
+        (artifact) =>
+            (artifact['checks']! as Map)['hostUnconditionalCleanupContract'] =
+                false,
+        (artifact) => ((artifact['cleanupOwners']! as Map)['retry'] as Map)
+            .remove('sender'),
+        (artifact) =>
+            ((((artifact['cleanupOwners']! as Map)['recovery']
+                        as Map)['providerCleanup']
+                    as Map))['completed'] =
+                false,
+      ]) {
+        final artifact = _iosNotificationArtifact();
+        mutation(artifact);
+        expect(validateNotificationArtifact(artifact).ok, isFalse);
+      }
+    });
+
     test('notification proof rejects secret-bearing durable fields', () {
       final artifact = _iosNotificationArtifact()
         ..['apnsToken'] = 'raw-provider-token';
@@ -550,6 +588,22 @@ const String _digest =
 const String _digestB =
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
+Map<String, Object?> _successfulIosNotificationCleanupOwners() =>
+    <String, Object?>{
+      for (final owner in const <String>['ui', 'sender', 'providerCleanup'])
+        owner: <String, bool>{
+          'required': true,
+          'attempted': true,
+          'completed': true,
+        },
+      for (final owner in const <String>['providerRecovery', 'directInstall'])
+        owner: <String, bool>{
+          'required': false,
+          'attempted': false,
+          'completed': false,
+        },
+    };
+
 Map<String, Object?> _iosNotificationArtifact() {
   return <String, Object?>{
     'schema': 'mknoon.sims.proof.v1',
@@ -557,6 +611,8 @@ Map<String, Object?> _iosNotificationArtifact() {
     'validatorIds': <String>['validateNotificationArtifact'],
     'testCase': 'TC-B12',
     'recoveryTestCase': 'TC-333-08',
+    'directSourceTestCase': 'TC-396-03',
+    'retryTestCase': 'TC-396-04',
     'scenario': 'payload_fast_path_ios_receiver',
     'status': 'passed',
     'platform': 'ios',
@@ -584,16 +640,33 @@ Map<String, Object?> _iosNotificationArtifact() {
       'exactOwnedNotificationRetired': true,
       'unrelatedSentinelSurvived': true,
       'zeroBadgePublished': true,
+      'directSourceUsefulProviderOnly': true,
+      'backgroundContenderSuppressed': true,
+      'samePayloadRetrySingleUsefulCard': true,
+      'retryReceiptsDistinctAndBound': true,
+      'hostFailureDiagnosticRetentionContract': true,
+      'hostUnconditionalCleanupContract': true,
+    },
+    'passDiagnosticRetained': true,
+    'cleanupOwners': <String, Object?>{
+      'recovery': _successfulIosNotificationCleanupOwners(),
+      'retry': _successfulIosNotificationCleanupOwners(),
     },
     'runId': 'ios-payload-1234',
     'nonce': 'nonce-1234',
     'recoveryRunId': 'ios-payload-recovery-1234',
     'recoveryNonce': 'nonce-recovery-1234',
+    'retryRunId': 'ios-payload-retry-1234',
+    'retryNonce': 'nonce-retry-1234',
     'preparedApplicationSha256': _digest,
     'providerRequestSha256': _digest,
     'payloadProducerSha256': _digest,
     'apnsPayloadSha256': _digest,
     'recoveryApnsPayloadSha256': _digestB,
+    'retryApnsPayloadSha256': _digestB,
+    'retryCollapseIdentitySha256': _digest,
+    'retryRequestIdentifierSha256': _digest,
+    'retryProviderMessageIdSha256': <String>[_digest, _digestB],
     'childBuildCount': 0,
     'manualActionCount': 0,
     'recoveryCounts': <String, int>{
@@ -602,6 +675,44 @@ Map<String, Object?> _iosNotificationArtifact() {
       'deliveredBefore': 1,
       'deliveredWithSentinel': 2,
       'deliveredAfter': 1,
+      'matchingRemoteCount': 1,
+      'matchingLocalCount': 0,
+      'matchingUsefulProviderCount': 1,
+      'matchingSanitizedProviderCount': 0,
+      'matchingFlutterLocalCount': 0,
+      'matchingUnknownCount': 0,
+      'matchingTotalCount': 1,
+      'stableSampleCount': 3,
+      'stableSampleIntervalMilliseconds': 500,
+      'settleDelayMilliseconds': 3000,
+      'observationDeadlineMilliseconds': 8000,
+      'backgroundHandlerCount': 1,
+      'recentRemoteSuppressionCount': 1,
+      'matchingNotificationShownCount': 0,
+      'nseEnvelopeStagedCount': 1,
+      'nseDecryptOkCount': 1,
+      'nseAuthorizedHandoffCount': 1,
+      'nseActiveHandoffCount': 1,
+      'nseTrustedPassiveHandoffCount': 0,
+      'nseSanitizedHandoffCount': 0,
+    },
+    'retryCounts': <String, int>{
+      'providerAcceptedCount': 2,
+      'matchingUsefulProviderCount': 1,
+      'matchingSanitizedProviderCount': 0,
+      'matchingFlutterLocalCount': 0,
+      'matchingUnknownCount': 0,
+      'matchingTotalCount': 1,
+      'stableSampleCount': 3,
+      'nseEnvelopeStagedCount': 2,
+      'nseDecryptOkCount': 2,
+      'nseAuthorizedHandoffCount': 2,
+      'nseActiveHandoffCount': 1,
+      'nseTrustedPassiveHandoffCount': 1,
+      'nseSanitizedHandoffCount': 0,
+      'backgroundHandlerCount': 2,
+      'recentRemoteSuppressionCount': 2,
+      'matchingNotificationShownCount': 0,
     },
     'evidenceSha256': <String, Object?>{
       'preparedApplication': _digest,
@@ -625,6 +736,21 @@ Map<String, Object?> _iosNotificationArtifact() {
       'recoveryRecipientLog': _digest,
       'recoveryUiAutomationLog': _digest,
       'recoveryStagedEnvelope': _digest,
+      'recoveryCausalDiagnostic': _digestB,
+      'retryPreparedApplication': _digest,
+      'retryPayloadProducer': _digest,
+      'retryApnsPayload': _digestB,
+      'retryFirstProviderReceipt': _digest,
+      'retrySecondProviderReceipt': _digestB,
+      'retryProviderCleanupReceipt': _digest,
+      'retryFirstInventoryReceipt': _digest,
+      'retrySecondInventoryReceipt': _digestB,
+      'retryRelayLog': _digest,
+      'retryNseLog': _digest,
+      'retryRecipientLog': _digest,
+      'retryUiAutomationLog': _digest,
+      'retryCausalDiagnostic': _digestB,
+      'retryStagedEnvelope': _digest,
     },
     'buildProfile': 'ios.device.production',
     'stagingEnvironment': 'staging',
@@ -633,6 +759,7 @@ Map<String, Object?> _iosNotificationArtifact() {
     'candidateRelaySha256': _digest,
     'automationReceiptSha256': _digest,
     'recoveryAutomationReceiptSha256': _digestB,
+    'retryAutomationReceiptSha256': _digest,
   };
 }
 

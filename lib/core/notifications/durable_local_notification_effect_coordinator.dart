@@ -62,6 +62,7 @@ final class DurableLocalNotificationEffectContext {
     this.expectedRecordRevision,
     this.onEffectTerminal,
     this.terminalObserverCompletesSqlHandoff = false,
+    this.remotePresentationEstablished = false,
   });
 
   final String currentOpaqueBinding;
@@ -86,10 +87,33 @@ final class DurableLocalNotificationEffectContext {
   /// file terminal and its SQL handoff.
   final bool terminalObserverCompletesSqlHandoff;
 
+  /// Exact external proof that iOS already presented this remote event.
+  /// The coordinator persists this authority as an adoption attempt before it
+  /// can return, so a crash cannot later reinterpret the event as a local post.
+  final bool remotePresentationEstablished;
+
+  DurableLocalNotificationEffectContext withEstablishedRemotePresentation({
+    required LocalNotificationPresentationOwner presentationOwner,
+  }) => DurableLocalNotificationEffectContext(
+    currentOpaqueBinding: currentOpaqueBinding,
+    eventCorrelation: eventCorrelation,
+    conversationDigest: conversationDigest,
+    producerKind: producerKind,
+    sourceCustody: sourceCustody,
+    presentationOwner: presentationOwner,
+    readFinalCanonicalDisposition: readFinalCanonicalDisposition,
+    expectedRecordRevision: expectedRecordRevision,
+    onEffectTerminal: onEffectTerminal,
+    terminalObserverCompletesSqlHandoff: terminalObserverCompletesSqlHandoff,
+    remotePresentationEstablished: true,
+  );
+
   bool get isValid =>
       isCanonicalRuntimeOpaqueBinding(currentOpaqueBinding) &&
       _lowercaseDigest.hasMatch(eventCorrelation) &&
       _lowercaseDigest.hasMatch(conversationDigest) &&
+      (!remotePresentationEstablished ||
+          _isNativePresentationOwner(presentationOwner)) &&
       (expectedRecordRevision == null ||
           _isPositiveLedgerInt64(expectedRecordRevision));
 }
@@ -291,7 +315,14 @@ final class DurableLocalNotificationEffectCoordinator {
       if (record.effectPhase == LocalNotificationEffectPhase.effectTerminal) {
         return _terminalResult(record);
       }
-      if (record.effectPhase == LocalNotificationEffectPhase.publishing) {
+      final remoteReconciliationPending =
+          context.remotePresentationEstablished ||
+          record.attemptKind ==
+              LocalNotificationAttemptKind.adoptExistingRemote ||
+          record.attemptKind ==
+              LocalNotificationAttemptKind.cancelLocalForRemoteAdoption;
+      if (record.effectPhase == LocalNotificationEffectPhase.publishing &&
+          !remoteReconciliationPending) {
         return _recoverPublishingLockHeld(
           context: context,
           record: record,
@@ -312,6 +343,46 @@ final class DurableLocalNotificationEffectCoordinator {
       // READY and an aged CLAIMED record continue through the ordinary state
       // machine below while retaining the incumbent native owner and token.
       // A fresh CLAIMED record still waits for its normal recovery horizon.
+    }
+
+    final adoptsEstablishedRemote =
+        context.remotePresentationEstablished ||
+        record.attemptKind ==
+            LocalNotificationAttemptKind.adoptExistingRemote ||
+        record.attemptKind ==
+            LocalNotificationAttemptKind.cancelLocalForRemoteAdoption;
+    if (adoptsEstablishedRemote) {
+      if (record.effectPhase == LocalNotificationEffectPhase.publishing &&
+          record.attemptKind == LocalNotificationAttemptKind.cancel) {
+        // A previously armed cancellation remains authoritative. The remote
+        // marker proves an earlier presentation, but it cannot resurrect a
+        // card whose exact durable owner is already cancelling it.
+        return _recoverPublishingLockHeld(
+          context: context,
+          record: record,
+          notificationId: notificationId,
+          appVisibility: appVisibility,
+          conversationIdentity: conversationIdentity,
+          retireCurrent: retireCurrent,
+          ensureContentActivated: ensureContentActivated,
+          hasContentActivationIntent: hasContentActivationIntent,
+          completeContentActivation: completeContentActivation,
+          exactContentIsCurrent: exactContentIsCurrent,
+          clearActivatedContent: clearActivatedContent,
+          publishNative: publishNative,
+          publishNativeSilently: publishNativeSilently,
+          activeNotificationIds: activeNotificationIds,
+        );
+      }
+      return _adoptEstablishedRemotePresentationLockHeld(
+        context: context,
+        record: record,
+        notificationId: notificationId,
+        contentGeneration: metadata.generation!,
+        retireCurrent: retireCurrent,
+        completeContentActivation: completeContentActivation,
+        clearActivatedContent: clearActivatedContent,
+      );
     }
 
     final materializedNativeOwner =
@@ -605,6 +676,261 @@ final class DurableLocalNotificationEffectCoordinator {
     );
   }
 
+  Future<DurableLocalNotificationEffectResult>
+  _adoptEstablishedRemotePresentationLockHeld({
+    required DurableLocalNotificationEffectContext context,
+    required LocalNotificationRecordV1 record,
+    required int notificationId,
+    required String contentGeneration,
+    required Future<void> Function() retireCurrent,
+    required Future<void> Function() completeContentActivation,
+    required Future<void> Function() clearActivatedContent,
+  }) async {
+    if (!_recordMatchesBaseIdentity(record: record, context: context) ||
+        record.sourceCustody != context.sourceCustody ||
+        !_recordMatchesContent(
+          record: record,
+          notificationId: notificationId,
+          contentGeneration: contentGeneration,
+        )) {
+      return const DurableLocalNotificationEffectResult.retryable();
+    }
+    if (record.effectPhase == LocalNotificationEffectPhase.effectTerminal ||
+        record.effectPhase == LocalNotificationEffectPhase.settled) {
+      return _terminalResult(record);
+    }
+
+    var currentRecord = record;
+    var claimedByCurrentInvocation = false;
+    if (currentRecord.effectPhase == LocalNotificationEffectPhase.ready) {
+      if (!context.remotePresentationEstablished) {
+        return const DurableLocalNotificationEffectResult.retryable();
+      }
+      final currentEnvelope = await _ledgerStore.readLockHeld(
+        currentOpaqueBinding: context.currentOpaqueBinding,
+      );
+      final exactRecord = currentEnvelope?.records[context.eventCorrelation];
+      if (currentEnvelope == null ||
+          exactRecord == null ||
+          exactRecord.revision != currentRecord.revision ||
+          _hasUnsettledConversationOwner(
+            envelope: currentEnvelope,
+            candidate: exactRecord,
+          )) {
+        return const DurableLocalNotificationEffectResult.retryable();
+      }
+      final token = _effectTokenFactory();
+      if (!_lowercaseDigest.hasMatch(token)) {
+        return const DurableLocalNotificationEffectResult.retryable();
+      }
+      final claimed = await _transitionLockHeld(
+        currentOpaqueBinding: context.currentOpaqueBinding,
+        current: exactRecord,
+        next: exactRecord.copyWith(
+          presentationOwner: context.presentationOwner,
+          effectPhase: LocalNotificationEffectPhase.claimed,
+          attemptKind: LocalNotificationAttemptKind.adoptExistingRemote,
+          effectToken: token,
+          revision: exactRecord.revision + 1,
+          updatedAtUtc: _canonicalNow(),
+        ),
+      );
+      if (claimed == null) {
+        return const DurableLocalNotificationEffectResult.retryable();
+      }
+      currentRecord = claimed;
+      claimedByCurrentInvocation = true;
+    } else if (currentRecord.effectPhase ==
+        LocalNotificationEffectPhase.claimed) {
+      if (!claimedByCurrentInvocation &&
+          !_claimedRecoveryHorizonReached(currentRecord)) {
+        return const DurableLocalNotificationEffectResult.retryable();
+      }
+      if (currentRecord.attemptKind !=
+          LocalNotificationAttemptKind.adoptExistingRemote) {
+        if (!context.remotePresentationEstablished ||
+            currentRecord.attemptKind !=
+                LocalNotificationAttemptKind.postOrUpdate) {
+          return const DurableLocalNotificationEffectResult.retryable();
+        }
+        final adoptedClaim = await _transitionLockHeld(
+          currentOpaqueBinding: context.currentOpaqueBinding,
+          current: currentRecord,
+          next: currentRecord.copyWith(
+            presentationOwner: context.presentationOwner,
+            attemptKind: LocalNotificationAttemptKind.adoptExistingRemote,
+            revision: currentRecord.revision + 1,
+            updatedAtUtc: _canonicalNow(),
+          ),
+        );
+        if (adoptedClaim == null) {
+          return const DurableLocalNotificationEffectResult.retryable();
+        }
+        currentRecord = adoptedClaim;
+      }
+    } else if (currentRecord.effectPhase ==
+        LocalNotificationEffectPhase.publishing) {
+      if (currentRecord.attemptKind ==
+          LocalNotificationAttemptKind.adoptExistingRemote) {
+        return _finishEstablishedRemotePresentationLockHeld(
+          context: context,
+          record: currentRecord,
+        );
+      }
+      if (currentRecord.attemptKind ==
+          LocalNotificationAttemptKind.cancelLocalForRemoteAdoption) {
+        return _finishEstablishedRemoteAfterLocalRetirementLockHeld(
+          context: context,
+          record: currentRecord,
+          retireCurrent: retireCurrent,
+          completeContentActivation: completeContentActivation,
+          clearActivatedContent: clearActivatedContent,
+        );
+      }
+      if (!context.remotePresentationEstablished ||
+          currentRecord.attemptKind !=
+              LocalNotificationAttemptKind.postOrUpdate) {
+        return const DurableLocalNotificationEffectResult.retryable();
+      }
+      final armedReconciliation = await _transitionLockHeld(
+        currentOpaqueBinding: context.currentOpaqueBinding,
+        current: currentRecord,
+        next: currentRecord.copyWith(
+          presentationOwner: context.presentationOwner,
+          attemptKind:
+              LocalNotificationAttemptKind.cancelLocalForRemoteAdoption,
+          revision: currentRecord.revision + 1,
+          updatedAtUtc: _canonicalNow(),
+        ),
+      );
+      if (armedReconciliation == null) {
+        return const DurableLocalNotificationEffectResult.retryable();
+      }
+      return _finishEstablishedRemoteAfterLocalRetirementLockHeld(
+        context: context,
+        record: armedReconciliation,
+        retireCurrent: retireCurrent,
+        completeContentActivation: completeContentActivation,
+        clearActivatedContent: clearActivatedContent,
+      );
+    } else {
+      return const DurableLocalNotificationEffectResult.retryable();
+    }
+
+    final publishing = await _transitionLockHeld(
+      currentOpaqueBinding: context.currentOpaqueBinding,
+      current: currentRecord,
+      next: currentRecord.copyWith(
+        effectPhase: LocalNotificationEffectPhase.publishing,
+        revision: currentRecord.revision + 1,
+        updatedAtUtc: _canonicalNow(),
+      ),
+    );
+    if (publishing == null) {
+      return const DurableLocalNotificationEffectResult.retryable();
+    }
+    return _finishEstablishedRemotePresentationLockHeld(
+      context: context,
+      record: publishing,
+    );
+  }
+
+  Future<DurableLocalNotificationEffectResult>
+  _finishEstablishedRemoteAfterLocalRetirementLockHeld({
+    required DurableLocalNotificationEffectContext context,
+    required LocalNotificationRecordV1 record,
+    required Future<void> Function() retireCurrent,
+    required Future<void> Function() completeContentActivation,
+    required Future<void> Function() clearActivatedContent,
+  }) async {
+    if (record.effectPhase != LocalNotificationEffectPhase.publishing ||
+        record.attemptKind !=
+            LocalNotificationAttemptKind.cancelLocalForRemoteAdoption) {
+      return const DurableLocalNotificationEffectResult.retryable();
+    }
+    try {
+      await retireCurrent();
+    } on Object {
+      return const DurableLocalNotificationEffectResult.ambiguous(
+        currentNativeEntryAttempted: true,
+      );
+    }
+    await completeContentActivation();
+    await clearActivatedContent();
+
+    final canonical = await context.readFinalCanonicalDisposition();
+    if (canonical ==
+        DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
+      return const DurableLocalNotificationEffectResult.retryable();
+    }
+    final terminalAt = _canonicalNow();
+    final terminal = await _transitionLockHeld(
+      currentOpaqueBinding: context.currentOpaqueBinding,
+      current: record,
+      next: record.copyWith(
+        readState:
+            canonical == DurableLocalNotificationCanonicalDisposition.read
+            ? LocalNotificationReadState.read
+            : record.readState,
+        presentationState: LocalNotificationPresentationState.osPosted,
+        lastEvaluatedLifecycle: LocalNotificationEvaluatedLifecycle.unknown,
+        visibilityRevision: null,
+        lifecycleGeneration: null,
+        effectPhase: LocalNotificationEffectPhase.effectTerminal,
+        attemptKind: null,
+        effectToken: null,
+        revision: record.revision + 1,
+        updatedAtUtc: terminalAt,
+        terminalAtUtc: terminalAt,
+      ),
+    );
+    return terminal == null
+        ? const DurableLocalNotificationEffectResult.retryable()
+        : _terminalResult(terminal);
+  }
+
+  Future<DurableLocalNotificationEffectResult>
+  _finishEstablishedRemotePresentationLockHeld({
+    required DurableLocalNotificationEffectContext context,
+    required LocalNotificationRecordV1 record,
+  }) async {
+    if (record.effectPhase != LocalNotificationEffectPhase.publishing ||
+        record.attemptKind !=
+            LocalNotificationAttemptKind.adoptExistingRemote) {
+      return const DurableLocalNotificationEffectResult.retryable();
+    }
+    final canonical = await context.readFinalCanonicalDisposition();
+    if (canonical ==
+        DurableLocalNotificationCanonicalDisposition.retryableUnknown) {
+      return const DurableLocalNotificationEffectResult.retryable();
+    }
+
+    final terminalAt = _canonicalNow();
+    final terminal = await _transitionLockHeld(
+      currentOpaqueBinding: context.currentOpaqueBinding,
+      current: record,
+      next: record.copyWith(
+        readState:
+            canonical == DurableLocalNotificationCanonicalDisposition.read
+            ? LocalNotificationReadState.read
+            : record.readState,
+        presentationState: LocalNotificationPresentationState.osPosted,
+        lastEvaluatedLifecycle: LocalNotificationEvaluatedLifecycle.unknown,
+        visibilityRevision: null,
+        lifecycleGeneration: null,
+        effectPhase: LocalNotificationEffectPhase.effectTerminal,
+        attemptKind: null,
+        effectToken: null,
+        revision: record.revision + 1,
+        updatedAtUtc: terminalAt,
+        terminalAtUtc: terminalAt,
+      ),
+    );
+    return terminal == null
+        ? const DurableLocalNotificationEffectResult.retryable()
+        : _terminalResult(terminal);
+  }
+
   Future<DurableLocalNotificationEffectResult> _recoverPublishingLockHeld({
     required DurableLocalNotificationEffectContext context,
     required LocalNotificationRecordV1 record,
@@ -622,6 +948,23 @@ final class DurableLocalNotificationEffectCoordinator {
     required ResolveDurableLocalNotificationActiveIds? activeNotificationIds,
   }) async {
     var currentRecord = record;
+    if (currentRecord.attemptKind ==
+        LocalNotificationAttemptKind.adoptExistingRemote) {
+      return _finishEstablishedRemotePresentationLockHeld(
+        context: context,
+        record: currentRecord,
+      );
+    }
+    if (currentRecord.attemptKind ==
+        LocalNotificationAttemptKind.cancelLocalForRemoteAdoption) {
+      return _finishEstablishedRemoteAfterLocalRetirementLockHeld(
+        context: context,
+        record: currentRecord,
+        retireCurrent: retireCurrent,
+        completeContentActivation: completeContentActivation,
+        clearActivatedContent: clearActivatedContent,
+      );
+    }
     final activationIntentPending = await hasContentActivationIntent();
     final contentIsCurrent = await exactContentIsCurrent();
 

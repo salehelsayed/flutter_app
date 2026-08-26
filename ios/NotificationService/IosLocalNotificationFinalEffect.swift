@@ -4,8 +4,8 @@ import Darwin
 import Foundation
 import UserNotifications
 
-#if canImport(Runner)
-@testable import Runner
+#if DEBUG && canImport(Runner)
+  @testable import Runner
 #endif
 
 struct IosLocalNotificationDeliveredInventory: Equatable {
@@ -285,6 +285,18 @@ final class IosLocalNotificationFinalEffect {
             contentGeneration: generation
           ) else {
       return .genericFallback
+    }
+
+    if (current.effectPhase == "CLAIMED" ||
+        current.effectPhase == "PUBLISHING"),
+       let attemptKind = current.attemptKind,
+       Self.dartOwnedRemoteAdoptionAttemptKinds.contains(attemptKind) {
+      return finishAmbiguousPublishing(
+        candidate: candidate,
+        lease: lease,
+        content: content,
+        contentHandler: contentHandler
+      )
     }
 
     switch current.effectPhase {
@@ -1464,6 +1476,9 @@ final class IosLocalNotificationFinalEffect {
     "direct_message", "direct_reaction", "group_message", "group_reaction",
   ]
   fileprivate static let allowedContentKinds: Set<String> = ["message", "reaction"]
+  fileprivate static let dartOwnedRemoteAdoptionAttemptKinds: Set<String> = [
+    "ADOPT_EXISTING_REMOTE", "CANCEL_LOCAL_FOR_REMOTE_ADOPTION",
+  ]
   private static let allowedAuthorityProjectionKeys: Set<String> = [
     PushSharedKeyNames.directReactionContacts,
     PushSharedKeyNames.directReactionAuthoredTargets,
@@ -1685,7 +1700,11 @@ private struct LedgerRecord: Equatable {
     let requiresAttempt = effectPhase == "CLAIMED" || effectPhase == "PUBLISHING"
     guard requiresAttempt == (attemptKind != nil),
           requiresAttempt == (effectToken != nil),
-          attemptKind.map({ ["POST_OR_UPDATE", "CANCEL"].contains($0) }) ?? true,
+          attemptKind.map({
+            ["POST_OR_UPDATE", "CANCEL"].contains($0) ||
+              IosLocalNotificationFinalEffect
+                .dartOwnedRemoteAdoptionAttemptKinds.contains($0)
+          }) ?? true,
           effectToken.map(IosLocalNotificationFinalEffect.isDigest) ?? true else {
       return false
     }

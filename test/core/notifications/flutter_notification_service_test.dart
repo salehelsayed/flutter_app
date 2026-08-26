@@ -842,12 +842,15 @@ void main() {
         ),
         isFalse,
       );
+      await (service as ConversationNotificationReadSettlement)
+          .settleConversationRead('peer:read-without-local-card');
       await service.clearDeliveredNotifications();
 
       expect(updated, <String>['updated', 'updated']);
       expect(conversations, <String>[
         'peer-never-allocated',
         'group:generation-never-allocated',
+        'peer:read-without-local-card',
       ]);
       expect(allCleared, 1);
     },

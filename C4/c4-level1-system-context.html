@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mknoon — The Big Picture</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --fg:#16191d; --fg-muted:#5b636c;
+    --border:#dfe3e8; --line:#7b848d; --accent:#1168bd;
+    --chip-bg:#eef2f6; --table-head:#f0f3f6; --table-row:#fafbfc;
+    --person:#08427b; --system:#1168bd; --supporting:#2e6295; --external:#6b6b6b;
+    --on-fill:#ffffff; --on-fill-dim:#cfdcea;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14171a; --card:#1c2023; --fg:#e8eaed; --fg-muted:#a7b0b8;
+      --border:#2e3438; --line:#98a2ab; --accent:#5aa9e6;
+      --chip-bg:#252b30; --table-head:#232930; --table-row:#1f2428;
+      --person:#0d4f8f; --system:#1d78d0; --supporting:#3a76ab; --external:#7d858c;
+      --on-fill:#ffffff; --on-fill-dim:#d8e4f0;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14171a; --card:#1c2023; --fg:#e8eaed; --fg-muted:#a7b0b8;
+    --border:#2e3438; --line:#98a2ab; --accent:#5aa9e6;
+    --chip-bg:#252b30; --table-head:#232930; --table-row:#1f2428;
+    --person:#0d4f8f; --system:#1d78d0; --supporting:#3a76ab; --external:#7d858c;
+    --on-fill:#ffffff; --on-fill-dim:#d8e4f0;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px; line-height:1.6;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:40px 20px 72px}
+  header{margin-bottom:28px}
+  h1{font-size:1.8rem; line-height:1.2; margin:0 0 8px; letter-spacing:-0.01em}
+  .sub{color:var(--fg-muted); margin:0 0 14px; max-width:66ch}
+  .chips{display:flex; flex-wrap:wrap; gap:8px}
+  .chip{background:var(--chip-bg); border:1px solid var(--border); color:var(--fg-muted);
+        font-size:.75rem; padding:3px 9px; border-radius:999px; white-space:nowrap}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:12px;
+        padding:18px; margin:22px 0}
+  .scroll{overflow-x:auto}
+  svg{display:block; width:100%; min-width:940px; height:auto}
+  h2{font-size:1.1rem; margin:34px 0 10px; letter-spacing:-0.005em}
+  h2 .num{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:8px}
+  .legend{display:flex; flex-wrap:wrap; gap:18px; margin-top:16px; padding-top:16px;
+          border-top:1px solid var(--border); font-size:.82rem; color:var(--fg-muted)}
+  .legend span{display:flex; align-items:center; gap:7px}
+  .sw{width:14px; height:14px; border-radius:3px; display:inline-block}
+  table{width:100%; border-collapse:collapse; font-size:.88rem}
+  th,td{text-align:left; padding:10px 11px; border-bottom:1px solid var(--border); vertical-align:top}
+  th{background:var(--table-head); font-weight:600; font-size:.78rem;
+     text-transform:uppercase; letter-spacing:.04em; color:var(--fg-muted)}
+  tbody tr:nth-child(even){background:var(--table-row)}
+  td:first-child{font-weight:600}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.86em;
+       background:var(--chip-bg); padding:1px 5px; border-radius:4px}
+  ul{margin:8px 0 0; padding-left:20px} li{margin:7px 0}
+  .muted{color:var(--fg-muted)}
+  details{margin-top:6px} summary{cursor:pointer; color:var(--accent); font-size:.9rem}
+  footer{margin-top:40px; padding-top:16px; border-top:1px solid var(--border);
+         color:var(--fg-muted); font-size:.8rem}
+  .b-person{fill:var(--person)} .b-system{fill:var(--system)}
+  .b-supporting{fill:var(--supporting)} .b-external{fill:var(--external)}
+  .t-title{fill:var(--on-fill); font-size:14px; font-weight:700}
+  .t-type{fill:var(--on-fill-dim); font-size:10.5px; font-style:italic}
+  .t-desc{fill:var(--on-fill); font-size:11px; opacity:.94}
+  .edge{stroke:var(--line); stroke-width:1.7; fill:none}
+  .edge-dash{stroke-dasharray:6 4}
+  .edge-label{fill:var(--fg-muted); font-size:11px;
+              paint-order:stroke; stroke:var(--bg); stroke-width:4px; stroke-linejoin:round}
+  .boundary{fill:none; stroke:var(--line); stroke-width:1.3; stroke-dasharray:7 6; opacity:.55}
+  .boundary-label{fill:var(--fg-muted); font-size:11px; font-style:italic; opacity:.85}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>mknoon — the big picture</h1>
+  <p class="sub">Who uses mknoon, and what it talks to. The app is one single box here.
+     What sits inside that box is the next drawing.</p>
+  <div class="chips">
+    <span class="chip">Drawing 1 of 4 — the big picture</span>
+    <span class="chip">2 people · the app · 5 other pieces</span>
+    <span class="chip">Checked 24 Aug 2026</span>
+  </div>
+</header>
+
+<div class="card scroll">
+<svg viewBox="0 0 1240 1010" role="img" aria-label="Big picture of mknoon: who uses it and what it talks to">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--line)"/>
+    </marker>
+  </defs>
+
+  <rect class="boundary" x="24" y="46" width="1192" height="470" rx="14"/>
+  <text class="boundary-label" x="40" y="70">On the phones</text>
+
+  <!-- you -->
+  <g>
+    <circle class="b-person" cx="345" cy="76" r="26"/>
+    <rect class="b-person" x="250" y="102" width="190" height="104" rx="7"/>
+    <text class="t-title" x="345" y="130" text-anchor="middle">You</text>
+    <text class="t-type" x="345" y="147" text-anchor="middle">a person</text>
+    <text class="t-desc" x="345" y="170" text-anchor="middle">The one using the app.</text>
+    <text class="t-desc" x="345" y="184" text-anchor="middle">Sends messages, photos,</text>
+    <text class="t-desc" x="345" y="198" text-anchor="middle">voice notes and reactions.</text>
+  </g>
+
+  <!-- friend -->
+  <g>
+    <circle class="b-person" cx="1005" cy="76" r="26"/>
+    <rect class="b-person" x="910" y="102" width="190" height="104" rx="7"/>
+    <text class="t-title" x="1005" y="130" text-anchor="middle">Your friend</text>
+    <text class="t-type" x="1005" y="147" text-anchor="middle">a person</text>
+    <text class="t-desc" x="1005" y="170" text-anchor="middle">Someone you added by</text>
+    <text class="t-desc" x="1005" y="184" text-anchor="middle">scanning their code. Same</text>
+    <text class="t-desc" x="1005" y="198" text-anchor="middle">app, on their own phone.</text>
+  </g>
+
+  <!-- the app -->
+  <g>
+    <rect class="b-system" x="430" y="300" width="390" height="190" rx="8"/>
+    <text class="t-title" x="625" y="340" text-anchor="middle" style="font-size:16px">The mknoon app</text>
+    <text class="t-type" x="625" y="358" text-anchor="middle">on iPhone and Android</text>
+    <text class="t-desc" x="625" y="386" text-anchor="middle">Your account, your chats and your photos all</text>
+    <text class="t-desc" x="625" y="402" text-anchor="middle">live on your own phone. Nothing is kept on a</text>
+    <text class="t-desc" x="625" y="418" text-anchor="middle">company server. Messages travel straight to</text>
+    <text class="t-desc" x="625" y="434" text-anchor="middle">your friend's phone, locked so that only the</text>
+    <text class="t-desc" x="625" y="450" text-anchor="middle">two of you can open them.</text>
+  </g>
+
+  <!-- the phone -->
+  <g>
+    <rect class="b-external" x="50" y="300" width="250" height="150" rx="8"/>
+    <text class="t-title" x="175" y="334" text-anchor="middle">The phone itself</text>
+    <text class="t-type" x="175" y="352" text-anchor="middle">made by Apple or Google</text>
+    <text class="t-desc" x="175" y="378" text-anchor="middle">Keeps your secret keys in the</text>
+    <text class="t-desc" x="175" y="394" text-anchor="middle">phone's built-in safe. Opens</text>
+    <text class="t-desc" x="175" y="410" text-anchor="middle">the camera, shows the little</text>
+    <text class="t-desc" x="175" y="426" text-anchor="middle">banners, wakes the app up.</text>
+  </g>
+
+  <!-- helper server -->
+  <g>
+    <rect class="b-supporting" x="170" y="610" width="320" height="170" rx="8"/>
+    <text class="t-title" x="330" y="644" text-anchor="middle">The helper server</text>
+    <text class="t-type" x="330" y="662" text-anchor="middle">run by the mknoon team</text>
+    <text class="t-desc" x="330" y="688" text-anchor="middle">Introduces two phones so they can</text>
+    <text class="t-desc" x="330" y="704" text-anchor="middle">find each other. Passes messages</text>
+    <text class="t-desc" x="330" y="720" text-anchor="middle">along when they cannot reach each</text>
+    <text class="t-desc" x="330" y="736" text-anchor="middle">other. Holds a message while the</text>
+    <text class="t-desc" x="330" y="752" text-anchor="middle">other phone is off. Cannot read it.</text>
+  </g>
+
+  <!-- google alerts -->
+  <g>
+    <rect class="b-external" x="790" y="590" width="300" height="130" rx="8"/>
+    <text class="t-title" x="940" y="624" text-anchor="middle">Google's alert service</text>
+    <text class="t-type" x="940" y="642" text-anchor="middle">an outside service</text>
+    <text class="t-desc" x="940" y="668" text-anchor="middle">Taps a phone on the shoulder to say</text>
+    <text class="t-desc" x="940" y="684" text-anchor="middle">something is waiting. Used for both</text>
+    <text class="t-desc" x="940" y="700" text-anchor="middle">Android phones and iPhones.</text>
+  </g>
+
+  <!-- apple alerts -->
+  <g>
+    <rect class="b-external" x="790" y="800" width="300" height="110" rx="8"/>
+    <text class="t-title" x="940" y="834" text-anchor="middle">Apple's alert service</text>
+    <text class="t-type" x="940" y="852" text-anchor="middle">an outside service</text>
+    <text class="t-desc" x="940" y="878" text-anchor="middle">The last step for iPhones. Google's</text>
+    <text class="t-desc" x="940" y="894" text-anchor="middle">service hands the alert over to it.</text>
+  </g>
+
+  <!-- health board -->
+  <g>
+    <rect class="b-supporting" x="170" y="860" width="320" height="110" rx="8"/>
+    <text class="t-title" x="330" y="894" text-anchor="middle">Health dashboard</text>
+    <text class="t-type" x="330" y="912" text-anchor="middle">run by the mknoon team</text>
+    <text class="t-desc" x="330" y="938" text-anchor="middle">Shows whether the helper server is</text>
+    <text class="t-desc" x="330" y="954" text-anchor="middle">healthy. Never sees your messages.</text>
+  </g>
+
+  <!-- arrows -->
+  <path class="edge" d="M345,206 L497,297" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="418" y="230" text-anchor="middle">Sets up an account, scans a friend's</text>
+  <text class="edge-label" x="418" y="244" text-anchor="middle">code, sends and reads messages</text>
+
+  <path class="edge" d="M820,330 L937,209" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text class="edge-label" x="870" y="312">Messages go straight from one phone</text>
+  <text class="edge-label" x="870" y="328">to the other, locked on the way</text>
+  <text class="edge-label" x="870" y="344" style="opacity:.8">Over the internet, or over the same Wi-Fi</text>
+
+  <path class="edge" d="M427,330 L303,330" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text class="edge-label" x="365" y="272" text-anchor="middle">Puts the keys in the safe, opens the</text>
+  <text class="edge-label" x="365" y="288" text-anchor="middle">camera, shows the alert banners</text>
+
+  <path class="edge" d="M540,490 L402,607" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text class="edge-label" x="505" y="524">Asks it to find a friend's phone, and</text>
+  <text class="edge-label" x="505" y="540">picks up anything that was waiting</text>
+  <text class="edge-label" x="505" y="556">while the app was closed</text>
+
+  <path class="edge" d="M490,660 L787,642" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="640" y="616" text-anchor="middle">"Something is waiting for this phone"</text>
+  <text class="edge-label" x="640" y="632" text-anchor="middle">— sent when the phone was offline</text>
+
+  <path class="edge" d="M940,720 L940,797" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="925" y="763" text-anchor="end">for iPhones</text>
+
+  <path class="edge edge-dash" d="M1090,655 H1160 V420 H833" marker-end="url(#arrow)"/>
+  <path class="edge edge-dash" d="M1090,855 H1160 V660"/>
+  <text class="edge-label" x="995" y="406" text-anchor="middle">The phone gets the alert</text>
+
+  <path class="edge edge-dash" d="M330,780 L330,857" marker-end="url(#arrow)"/>
+  <text class="edge-label" x="345" y="824">Reports how it is doing</text>
+</svg>
+
+<div class="legend">
+  <span><i class="sw" style="background:var(--person)"></i>A person</span>
+  <span><i class="sw" style="background:var(--system)"></i>The app — what this drawing is about</span>
+  <span><i class="sw" style="background:var(--supporting)"></i>Built by the mknoon team</span>
+  <span><i class="sw" style="background:var(--external)"></i>Someone else's service</span>
+  <span><svg width="26" height="10" aria-hidden="true"><line x1="0" y1="5" x2="26" y2="5" class="edge" stroke-dasharray="6 4"/></svg>Happens on its own, in the background</span>
+</div>
+</div>
+
+<h2><span class="num">1</span>The pieces</h2>
+<div class="card scroll">
+<table>
+  <thead><tr><th>Piece</th><th>What it is</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td>You</td><td>A person</td>
+        <td>Set up an account with a 12-word phrase, show or scan a code to add someone, then chat one to one or in groups.</td></tr>
+    <tr><td>Your friend</td><td>A person</td>
+        <td>Uses the same app on their own phone. There is no account for them on any server — they only exist on the phones that added them.</td></tr>
+    <tr><td>The mknoon app</td><td>The thing this drawing is about</td>
+        <td>Runs on iPhone and Android. Holds your keys, your chats and your photos on your own phone, and sends messages straight to your friend's phone, locked so only the two of you can open them.</td></tr>
+    <tr><td>The helper server</td><td>Built by the mknoon team</td>
+        <td>Has three small jobs. It introduces two phones so they can find each other. It passes messages along when the two phones cannot reach each other directly. And it holds a message for a while when the other phone is switched off. It cannot open anything it holds.</td></tr>
+    <tr><td>Google's alert service</td><td>Someone else's service</td>
+        <td>The way an app is allowed to tap a phone on the shoulder. Works for Android phones and, through Apple, for iPhones too.</td></tr>
+    <tr><td>Apple's alert service</td><td>Someone else's service</td>
+        <td>The last step for iPhones. mknoon never talks to it directly — Google's service does.</td></tr>
+    <tr><td>The phone itself</td><td>Someone else's service</td>
+        <td>Every phone has a built-in safe for secrets. mknoon puts your keys there. The phone also lends the app its camera, its alert banners, and its Wi-Fi.</td></tr>
+    <tr><td>Health dashboard</td><td>Built by the mknoon team</td>
+        <td>Watches the helper server only, so the team can see it is running. It has no connection to anyone's phone or messages.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2><span class="num">2</span>Who talks to whom</h2>
+<div class="card scroll">
+<table>
+  <thead><tr><th>From</th><th>To</th><th>What passes between them</th></tr></thead>
+  <tbody>
+    <tr><td>You</td><td>The app</td>
+        <td>Taps on the screen. Setting up, scanning a code, writing and reading messages.</td></tr>
+    <tr><td>The app</td><td>Your friend's phone</td>
+        <td>The messages themselves. They go phone to phone and are locked the whole way.</td></tr>
+    <tr><td>The app</td><td>The helper server</td>
+        <td>"Where is my friend's phone?" and "was anything left for me while I was away?"</td></tr>
+    <tr><td>The helper server</td><td>Google's alert service</td>
+        <td>A short note that says something is waiting for a phone. Not the message.</td></tr>
+    <tr><td>Google's alert service</td><td>Apple's alert service</td>
+        <td>The same note, handed over when the phone is an iPhone.</td></tr>
+    <tr><td>Alert services</td><td>The app</td>
+        <td>The tap on the shoulder. It wakes the app, or shows you a banner.</td></tr>
+    <tr><td>The app</td><td>The phone itself</td>
+        <td>Keys going into the safe, the camera opening, banners being shown.</td></tr>
+    <tr><td>The helper server</td><td>Health dashboard</td>
+        <td>Numbers about the server itself: is it up, is it busy, is anything failing.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2><span class="num">3</span>What this drawing tells you</h2>
+<div class="card">
+<ul>
+  <li><strong>There is no company server holding your chats.</strong> The helper server only introduces phones and keeps a message for a short while when the other phone is off. It cannot open any of it.</li>
+  <li><strong>Your stuff lives on your phone.</strong> Your keys sit in the phone's built-in safe. Your chat history sits in a locked file on the phone.</li>
+  <li><strong>Only two pieces belong to anyone else</strong> — the alert services and the phone itself. Both are only used to say "something is waiting". Neither one carries your messages.</li>
+  <li><strong>An alert is a doorbell, not the delivery.</strong> The alert only wakes the app. The message itself still comes from your friend's phone, or from the helper server that was holding it.</li>
+  <li class="muted">Left out on purpose: what is inside the app, and what is inside the helper server. Those are the next drawings.</li>
+</ul>
+</div>
+
+<h2><span class="num">4</span>The proper names</h2>
+<div class="card">
+  <p class="muted" style="margin:0 0 4px">Same picture, in the words an engineer would use.</p>
+  <details open>
+    <summary>Show the technical names</summary>
+    <table style="margin-top:12px">
+      <thead><tr><th>Plain name</th><th>Technical name</th></tr></thead>
+      <tbody>
+        <tr><td>The mknoon app</td><td>Flutter app with an embedded Go libp2p node; local SQLCipher database</td></tr>
+        <tr><td>Locked so only the two of you can open them</td><td>End-to-end encryption: ML-KEM-768 key exchange + AES-256-GCM</td></tr>
+        <tr><td>The helper server</td><td>libp2p rendezvous + circuit relay v2 + offline inbox, Go on EC2 at <code>mknoun.xyz</code></td></tr>
+        <tr><td>Google's alert service</td><td>Firebase Cloud Messaging (FCM)</td></tr>
+        <tr><td>Apple's alert service</td><td>Apple Push Notification service (APNs)</td></tr>
+        <tr><td>The phone's built-in safe</td><td>iOS Keychain / Android EncryptedSharedPreferences</td></tr>
+        <tr><td>Health dashboard</td><td>Prometheus scrape on <code>:2112</code>, Grafana boards</td></tr>
+        <tr><td>This drawing</td><td>C4 model, Level 1 — System Context</td></tr>
+      </tbody>
+    </table>
+  </details>
+</div>
+
+<h2><span class="num">5</span>Where the facts come from</h2>
+<div class="card">
+<ul>
+  <li><code>C4/README.md</code> — the earlier version of this drawing.</li>
+  <li><code>lib/core/constants/network_constants.dart:15</code> and <code>go-mknoon/node/config.go:11</code> — the address of the helper server.</li>
+  <li><code>go-relay-server/inbox.go:188</code> and <code>inbox.go:944</code> — every alert, iPhone ones included, leaves through Google's service.</li>
+  <li><code>go-relay-server/main.go:23</code> — the numbers the health dashboard reads.</li>
+  <li><code>README.md</code> — the feature list and the locks used on each path.</li>
+</ul>
+</div>
+
+<footer>The big picture · mknoon · 24 Aug 2026 · next drawing: what is inside the app — <code>C4/README.md</code>, Level 2</footer>
+
+</div>
+</body>
+</html>

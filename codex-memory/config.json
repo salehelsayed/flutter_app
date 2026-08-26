@@ -11,6 +11,12 @@
     "auto_refresh": true,
     "check": "stat"
   },
+  "adoption": {
+    "secondary_mode": "inject",
+    "primary_idle_seconds": 86400,
+    "secondary_budget": 300,
+    "secondary_min_raw_tokens": 300
+  },
   "retrieval": {
     "default_budget": 300,
     "hard_cap": 900,

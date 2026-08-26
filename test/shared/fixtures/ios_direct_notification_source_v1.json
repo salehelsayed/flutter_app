@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "expectedPeerId": "peer-alice",
+  "expectedMessageId": "message-42",
+  "vectors": [
+    {
+      "name": "useful-provider-rich",
+      "origin": "remote",
+      "visibleContent": "useful",
+      "userInfo": {
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "message-42"
+      },
+      "expectedSource": "useful_provider_rich"
+    },
+    {
+      "name": "sanitized-provider-rich",
+      "origin": "remote",
+      "visibleContent": "sanitized",
+      "userInfo": {
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "message-42"
+      },
+      "expectedSource": "sanitized_provider_rich"
+    },
+    {
+      "name": "legacy-flutter-local-min-notification-id",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 0,
+        "payload": "peer-alice"
+      },
+      "expectedSource": "flutter_local"
+    },
+    {
+      "name": "typed-envelope-flutter-local-max-notification-id",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 2147483647,
+        "payload": "mknoon-conversation-card-v1:eyJ2IjoxLCJyb3V0ZSI6InBlZXItYWxpY2UiLCJjb252ZXJzYXRpb24iOiJwZWVyLWFsaWNlIiwiY29udGVudCI6eyJ2IjoxLCJraW5kIjoibWVzc2FnZSIsImV2ZW50IjoibWVzc2FnZS00MiIsImdlbmVyYXRpb24iOiJnZW5lcmF0aW9uLTQyIn19"
+      },
+      "expectedSource": "flutter_local"
+    },
+    {
+      "name": "provider-shape-from-local-trigger",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "message-42"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "local-shape-from-remote-trigger",
+      "origin": "remote",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 398,
+        "payload": "peer-alice"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "mixed-provider-and-local-shapes",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 399,
+        "payload": "peer-alice",
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "message-42"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "typed-envelope-malformed-base64",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 400,
+        "payload": "mknoon-conversation-card-v1:a"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "typed-envelope-malformed-json",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 401,
+        "payload": "mknoon-conversation-card-v1:bm90LWpzb24"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "typed-envelope-wrong-route",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 402,
+        "payload": "mknoon-conversation-card-v1:eyJ2IjoxLCJyb3V0ZSI6InBlZXItYm9iIiwiY29udmVyc2F0aW9uIjoicGVlci1hbGljZSIsImNvbnRlbnQiOnsidiI6MSwia2luZCI6Im1lc3NhZ2UiLCJldmVudCI6Im1lc3NhZ2UtNDIiLCJnZW5lcmF0aW9uIjoiZ2VuZXJhdGlvbi00MiJ9fQ"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "typed-envelope-wrong-conversation",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 403,
+        "payload": "mknoon-conversation-card-v1:eyJ2IjoxLCJyb3V0ZSI6InBlZXItYWxpY2UiLCJjb252ZXJzYXRpb24iOiJwZWVyLWJvYiIsImNvbnRlbnQiOnsidiI6MSwia2luZCI6Im1lc3NhZ2UiLCJldmVudCI6Im1lc3NhZ2UtNDIiLCJnZW5lcmF0aW9uIjoiZ2VuZXJhdGlvbi00MiJ9fQ"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "typed-envelope-wrong-content-version",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 404,
+        "payload": "mknoon-conversation-card-v1:eyJ2IjoxLCJyb3V0ZSI6InBlZXItYWxpY2UiLCJjb252ZXJzYXRpb24iOiJwZWVyLWFsaWNlIiwiY29udGVudCI6eyJ2IjoyLCJraW5kIjoibWVzc2FnZSIsImV2ZW50IjoibWVzc2FnZS00MiIsImdlbmVyYXRpb24iOiJnZW5lcmF0aW9uLTQyIn19"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "typed-envelope-wrong-kind",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 405,
+        "payload": "mknoon-conversation-card-v1:eyJ2IjoxLCJyb3V0ZSI6InBlZXItYWxpY2UiLCJjb252ZXJzYXRpb24iOiJwZWVyLWFsaWNlIiwiY29udGVudCI6eyJ2IjoxLCJraW5kIjoicmVhY3Rpb24iLCJldmVudCI6Im1lc3NhZ2UtNDIiLCJnZW5lcmF0aW9uIjoiZ2VuZXJhdGlvbi00MiJ9fQ"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "typed-envelope-wrong-event",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 406,
+        "payload": "mknoon-conversation-card-v1:eyJ2IjoxLCJyb3V0ZSI6InBlZXItYWxpY2UiLCJjb252ZXJzYXRpb24iOiJwZWVyLWFsaWNlIiwiY29udGVudCI6eyJ2IjoxLCJraW5kIjoibWVzc2FnZSIsImV2ZW50Ijoib3RoZXItbWVzc2FnZSIsImdlbmVyYXRpb24iOiJnZW5lcmF0aW9uLTQyIn19"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "typed-envelope-empty-generation",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 407,
+        "payload": "mknoon-conversation-card-v1:eyJ2IjoxLCJyb3V0ZSI6InBlZXItYWxpY2UiLCJjb252ZXJzYXRpb24iOiJwZWVyLWFsaWNlIiwiY29udGVudCI6eyJ2IjoxLCJraW5kIjoibWVzc2FnZSIsImV2ZW50IjoibWVzc2FnZS00MiIsImdlbmVyYXRpb24iOiIifX0"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "typed-envelope-wrong-version",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 408,
+        "payload": "mknoon-conversation-card-v1:eyJ2IjoyLCJyb3V0ZSI6InBlZXItYWxpY2UiLCJjb252ZXJzYXRpb24iOiJwZWVyLWFsaWNlIiwiY29udGVudCI6eyJ2IjoxLCJraW5kIjoibWVzc2FnZSIsImV2ZW50IjoibWVzc2FnZS00MiIsImdlbmVyYXRpb24iOiJnZW5lcmF0aW9uLTQyIn19"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "negative-local-notification-id",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": -1,
+        "payload": "peer-alice"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "overflow-local-notification-id",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 2147483648,
+        "payload": "peer-alice"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "fractional-local-notification-id",
+      "origin": "local",
+      "visibleContent": "useful",
+      "userInfo": {
+        "NotificationId": 402.5,
+        "payload": "peer-alice"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "provider-partial-visible-content",
+      "origin": "remote",
+      "visibleContent": "partial",
+      "userInfo": {
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "message-42"
+      },
+      "expectedSource": "unknown"
+    },
+    {
+      "name": "provider-wrong-event",
+      "origin": "remote",
+      "visibleContent": "useful",
+      "userInfo": {
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "other-message"
+      },
+      "expectedSource": "unknown"
+    }
+  ]
+}

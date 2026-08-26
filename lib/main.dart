@@ -1,9 +1,11 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_headless_canonical_recovery.dart';
 import 'package:flutter_app/core/debug/android_canonical_runtime_h0_probe.dart';
 import 'package:flutter_app/core/debug/android_headless_recovery_374_fixture.dart';
 import 'package:flutter_app/core/notifications/headless_canonical_recovery_entrypoint.dart';
+import 'package:flutter_app/debug/debug_e2e_composition_root.dart';
 
 export 'package:flutter_app/app/application_root.dart'
     show MyApp, openIntroNotificationOrbitRoute;
@@ -11,6 +13,8 @@ export 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart'
     show keychainMirrorBackfill;
 
 void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await DebugE2ECompositionRoot.acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured();
   await runApplicationBootstrap(
     bootstrapFactory: ProductionApplicationBootstrap.new,
     host: const FlutterApplicationHost(),

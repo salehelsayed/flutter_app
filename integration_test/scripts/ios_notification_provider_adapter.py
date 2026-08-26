@@ -38,7 +38,14 @@ PROVIDER_REQUEST_SCHEMA = (
     "mknoon.sims.ios-payload-fast-path-provider-request.v1"
 )
 PROVIDER_RECEIPT_SCHEMA = (
-    "mknoon.sims.ios-payload-fast-path-provider-receipt.v1"
+    "mknoon.sims.ios-payload-fast-path-provider-receipt.v2"
+)
+PROVIDER_RETRY_RECEIPT_SCHEMA = (
+    "mknoon.sims.ios-payload-fast-path-provider-retry-receipt.v1"
+)
+PRIVATE_PAYLOAD_SCHEMA = "mknoon.sims.ios-payload-private-fixture.v1"
+APNS_UNIQUE_ID_PRIVATE_SCHEMA = (
+    "mknoon.sims.ios-apns-unique-id-private-provenance.v1"
 )
 CLEANUP_RECEIPT_SCHEMA = (
     "mknoon.sims.ios-payload-fast-path-provider-cleanup-receipt.v1"
@@ -57,6 +64,7 @@ APNS_HOSTS = {
 APNS_DELIVERY_WINDOW_SECONDS = 120
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_GCM_MESSAGE_ID = re.compile(r"^ios-sims-bg-[0-9a-f]{32}$")
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9._:@+-]{4,256}$")
 _RELAY_REVISION = re.compile(r"^v[0-9A-Za-z][0-9A-Za-z._+-]{0,127}$")
 _RECEIVER_ID = re.compile(r"^[A-Za-z0-9._:-]{4,160}$")
@@ -68,9 +76,11 @@ _KEY_ID = re.compile(r"^[A-Z0-9]{10}$")
 _TEAM_ID = re.compile(r"^[A-Z0-9]{10}$")
 _DEVICE_TOKEN = re.compile(r"^[0-9a-fA-F]{64,256}$")
 _PUBLIC_KEY = re.compile(r"^[A-Za-z0-9_+/=-]{16,8192}$")
+_APNS_UNIQUE_ID = re.compile(r"^[A-Za-z0-9._:-]{8,160}$")
 _FORBIDDEN_KEYS = {
     "token",
     "apnstoken",
+    "apnsuniqueid",
     "devicetoken",
     "fcmtoken",
     "ciphertext",
@@ -466,13 +476,34 @@ def validate_apns_payload(
     if not isinstance(alert, dict):
         raise AdapterBlocked("APNs payload has no visible alert")
     if (
-        alert.get("title") != request.get("expectedTitle")
+        set(payload)
+        != {
+            "fixture_schema",
+            "aps",
+            "type",
+            "sender_id",
+            "message_id",
+            "gcm.message_id",
+            "kem",
+            "ciphertext",
+            "nonce",
+        }
+        or set(aps) != {"alert", "mutable-content", "content-available"}
+        or set(alert) != {"title", "body"}
+        or payload.get("fixture_schema") != PRIVATE_PAYLOAD_SCHEMA
+        or alert.get("title") != request.get("expectedTitle")
         or alert.get("body") != request.get("expectedBody")
     ):
         raise AdapterBlocked("APNs alert is not bound to the provider request")
     mutable = aps.get("mutable-content")
-    if isinstance(mutable, bool) or mutable != 1:
+    if type(mutable) is not int or mutable != 1:
         raise AdapterBlocked("APNs payload must invoke the notification extension")
+    content_available = aps.get("content-available")
+    if type(content_available) is not int or content_available != 1:
+        raise AdapterBlocked("APNs payload must invoke the background callback")
+    synthetic_message_id = payload.get("gcm.message_id")
+    if _GCM_MESSAGE_ID.fullmatch(str(synthetic_message_id or "")) is None:
+        raise AdapterBlocked("APNs payload requires one bounded synthetic message ID")
 
     required_route = ("sender_id", "message_id", "kem", "ciphertext", "nonce")
     if payload.get("type") != "new_message" or any(
@@ -736,6 +767,8 @@ def _state_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
 _LIFECYCLE_STATES = {
     "fixture_spawn_pending",
     "accepted",
+    "retry_spawn_pending",
+    "retry_accepted",
     "cleanup_spawn_pending",
     "cleaned",
     "rollback_spawn_pending",
@@ -981,8 +1014,10 @@ def _validate_common(args: argparse.Namespace) -> ProviderContext:
         raise AdapterBlocked(
             "this run/nonce already has a lifecycle; use cleanup or rollback"
         )
-    if args.action == "cleanup" and bound is None:
-        raise AdapterBlocked("cleanup requires the setup lifecycle binding")
+    if args.action in {"cleanup", "retry"} and bound is None:
+        raise AdapterBlocked(f"{args.action} requires the setup lifecycle binding")
+    if args.action == "retry" and bound is not None and bound.get("state") != "accepted":
+        raise AdapterBlocked("retry requires exactly one accepted first submission")
 
     if bound is not None and payload_snapshot.exists():
         snapshot = _private_regular_file(
@@ -1376,6 +1411,8 @@ def _submit_apns(
     *,
     curl: Path,
     jwt: str,
+    collapse_identity: str,
+    submission_stage: str,
 ) -> tuple[str, str]:
     if _sha256_file(context.payload_snapshot) != context.payload_sha:
         raise AdapterFailure("private APNs payload snapshot changed before submission")
@@ -1401,6 +1438,7 @@ def _submit_apns(
                 f'header = "{_curl_quote("apns-topic: " + BUNDLE_ID)}"',
                 'header = "apns-push-type: alert"',
                 'header = "apns-priority: 10"',
+                f'header = "{_curl_quote("apns-collapse-id: " + collapse_identity)}"',
                 f'header = "apns-expiration: {expiration}"',
                 f'data-binary = "@{_curl_quote(str(context.payload_snapshot))}"',
                 f'dump-header = "{_curl_quote(str(headers))}"',
@@ -1432,16 +1470,88 @@ def _submit_apns(
             raise_for_apns_failure(status, response.get("reason"))
         if not headers.is_file():
             raise AdapterFailure("APNs response omitted headers")
-        match = re.search(
+        response_headers = headers.read_text(
+            encoding="utf-8", errors="replace"
+        )
+        apns_id_match = re.search(
             r"^apns-id:\s*([^\s]+)\s*$",
-            headers.read_text(encoding="utf-8", errors="replace"),
+            response_headers,
             re.IGNORECASE | re.MULTILINE,
         )
-        if match is None:
+        if apns_id_match is None:
             raise AdapterFailure("APNs response omitted its message ID")
+        apns_unique_id_match = re.search(
+            r"^apns-unique-id:\s*([^\r\n]+?)\s*$",
+            response_headers,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if (
+            apns_unique_id_match is None
+            or _APNS_UNIQUE_ID.fullmatch(apns_unique_id_match.group(1)) is None
+        ):
+            raise AdapterFailure(
+                "APNs response omitted a bounded development delivery unique ID"
+            )
+        apns_id = apns_id_match.group(1)
+        apns_unique_id = apns_unique_id_match.group(1)
     if _sha256_file(context.payload_snapshot) != context.payload_sha:
         raise AdapterFailure("private APNs payload snapshot changed during submission")
-    return match.group(1), _utc_now()
+    _write_apns_unique_id_provenance(
+        context,
+        submission_stage=submission_stage,
+        apns_id=apns_id,
+        apns_unique_id=apns_unique_id,
+    )
+    return apns_id, _utc_now()
+
+
+def _apns_unique_id_provenance_path(
+    context: ProviderContext,
+    submission_stage: str,
+) -> Path:
+    if submission_stage not in {"first", "retry"}:
+        raise AdapterFailure("APNs provenance stage is invalid")
+    return context.state_directory / (
+        f"apns-unique-id-{submission_stage}.private.json"
+    )
+
+
+def _write_apns_unique_id_provenance(
+    context: ProviderContext,
+    *,
+    submission_stage: str,
+    apns_id: str,
+    apns_unique_id: str,
+) -> None:
+    if _APNS_UNIQUE_ID.fullmatch(apns_unique_id) is None:
+        raise AdapterFailure("APNs response omitted a bounded delivery unique ID")
+    apns_id_sha256 = _sha256_text(apns_id)
+    apns_unique_id_sha256 = _sha256_text(apns_unique_id)
+    provenance = {
+        "schema": APNS_UNIQUE_ID_PRIVATE_SCHEMA,
+        "submissionStage": submission_stage,
+        "runId": context.args.run_id,
+        "nonce": context.args.nonce,
+        "receiverDeviceIdSha256": _sha256_text(context.args.receiver),
+        "apnsPayloadSha256": context.payload_sha,
+        "receiverHandoffSha256": context.handoff.digest,
+        "apnsIdSha256": apns_id_sha256,
+        "apnsUniqueId": apns_unique_id,
+        "apnsUniqueIdSha256": apns_unique_id_sha256,
+        "providerMessageIdSha256": apns_id_sha256,
+        "createdAt": _utc_now(),
+    }
+    _write_json_private(
+        _apns_unique_id_provenance_path(context, submission_stage),
+        provenance,
+    )
+
+
+def _collapse_identity(context: ProviderContext) -> str:
+    value = f"mknoon-{context.payload_sha[:40]}"
+    if not value or len(value.encode("utf-8")) > 64:
+        raise AdapterFailure("derived APNs collapse identity is out of bounds")
+    return value
 
 
 def _fixture_driver() -> Path:
@@ -1765,6 +1875,30 @@ def _remove_payload_snapshot(context: ProviderContext) -> None:
         raise AdapterFailure("private APNs payload snapshot remained after cleanup")
 
 
+def _remove_apns_unique_id_provenance(context: ProviderContext) -> None:
+    failed_paths = 0
+    for submission_stage in ("first", "retry"):
+        path = _apns_unique_id_provenance_path(context, submission_stage)
+        failed = False
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            failed = True
+        try:
+            remained = path.exists()
+        except OSError:
+            failed = True
+        else:
+            failed = failed or remained
+        if failed:
+            failed_paths += 1
+    if failed_paths:
+        raise AdapterFailure(
+            "private APNs delivery provenance cleanup failed for "
+            f"{failed_paths} file(s)"
+        )
+
+
 def _perform_recovery(context: ProviderContext) -> list[str]:
     failures: list[str] = []
     try:
@@ -1786,11 +1920,14 @@ def _perform_recovery(context: ProviderContext) -> list[str]:
         _remove_candidate_application(context)
     except Exception:
         failures.append("candidate-app removal")
-    if not failures:
-        try:
-            _remove_payload_snapshot(context)
-        except Exception:
-            failures.append("payload snapshot removal")
+    try:
+        _remove_payload_snapshot(context)
+    except Exception:
+        failures.append("payload snapshot removal")
+    try:
+        _remove_apns_unique_id_provenance(context)
+    except Exception:
+        failures.append("APNs unique-ID provenance removal")
     if not failures:
         try:
             _write_lifecycle(context, "recovered")
@@ -1806,6 +1943,7 @@ def _provider_receipt(
     accepted_at: str,
     relay_log_name: str,
     relay_log_sha: str,
+    collapse_identity: str,
 ) -> dict[str, Any]:
     args = context.args
     return {
@@ -1826,6 +1964,14 @@ def _provider_receipt(
         "apnsPayloadSha256": context.payload_sha,
         "receiverHandoffSha256": context.handoff.digest,
         "providerMessageIdSha256": _sha256_text(provider_id),
+        "collapseIdentitySha256": _sha256_text(collapse_identity),
+        "syntheticMessageIdSha256": _sha256_text(
+            str(decode_json_object_bytes(
+                context.payload_snapshot.read_bytes(),
+                "bound encrypted APNs payload",
+            )["gcm.message_id"])
+        ),
+        "submissionStage": "first",
         "relayLogPath": relay_log_name,
         "relayLogSha256": relay_log_sha,
         "stagedEnvelopeSha256": context.staged_sha,
@@ -1843,7 +1989,14 @@ def _setup(context: ProviderContext) -> None:
         _validate_fixture_receipt(fixture_receipt, context, action="setup")
         if _sha256_file(context.payload_snapshot) != context.payload_sha:
             raise AdapterFailure("relay fixture changed the private payload snapshot")
-        provider_id, accepted_at = _submit_apns(context, curl=curl, jwt=jwt)
+        collapse_identity = _collapse_identity(context)
+        provider_id, accepted_at = _submit_apns(
+            context,
+            curl=curl,
+            jwt=jwt,
+            collapse_identity=collapse_identity,
+            submission_stage="first",
+        )
         relay_log_name, relay_log_sha = _write_relay_log(context, output)
         receipt = _provider_receipt(
             context,
@@ -1851,6 +2004,7 @@ def _setup(context: ProviderContext) -> None:
             accepted_at=accepted_at,
             relay_log_name=relay_log_name,
             relay_log_sha=relay_log_sha,
+            collapse_identity=collapse_identity,
         )
         if _secret_bearing_field(receipt) is not None:
             raise AdapterFailure("generated provider receipt contains a secret field")
@@ -1861,6 +2015,98 @@ def _setup(context: ProviderContext) -> None:
         if failures:
             raise AdapterFailure(
                 "provider setup failed and automated rollback was incomplete: "
+                + ", ".join(failures)
+            )
+        raise
+
+
+def _bound_first_provider_receipt(
+    context: ProviderContext,
+    path: Path,
+) -> tuple[dict[str, Any], str]:
+    receipt, _ = _read_json_object(path, "first provider receipt")
+    expected = {
+        "schema": PROVIDER_RECEIPT_SCHEMA,
+        "status": "accepted",
+        "submissionStage": "first",
+        "runId": context.args.run_id,
+        "nonce": context.args.nonce,
+        "receiverDeviceIdSha256": _sha256_text(context.args.receiver),
+        "requestSha256": context.request_sha,
+        "apnsPayloadSha256": context.payload_sha,
+        "receiverHandoffSha256": context.handoff.digest,
+        "collapseIdentitySha256": _sha256_text(_collapse_identity(context)),
+    }
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        raise AdapterBlocked("first provider receipt is not bound to retry")
+    first_provider_hash = receipt.get("providerMessageIdSha256")
+    if _SHA256.fullmatch(str(first_provider_hash or "")) is None:
+        raise AdapterBlocked("first provider receipt has no bounded provider ID hash")
+    return receipt, _sha256_file(path)
+
+
+def _retry(context: ProviderContext) -> None:
+    args = context.args
+    if not args.provider_receipt:
+        raise AdapterBlocked("retry requires the exact first provider receipt")
+    first_path = _private_regular_file(
+        args.provider_receipt,
+        "first provider receipt",
+    )
+    first, first_receipt_sha = _bound_first_provider_receipt(context, first_path)
+    auth_key, key_id, curl = _prepare_apns_credentials(context)
+    jwt = _mint_apns_jwt(auth_key, key_id, context.signing_team_id)
+    collapse_identity = _collapse_identity(context)
+    _write_lifecycle(context, "retry_spawn_pending")
+    try:
+        second_provider_id, second_accepted_at = _submit_apns(
+            context,
+            curl=curl,
+            jwt=jwt,
+            collapse_identity=collapse_identity,
+            submission_stage="retry",
+        )
+        second_hash = _sha256_text(second_provider_id)
+        first_hash = str(first["providerMessageIdSha256"])
+        if second_hash == first_hash:
+            raise AdapterFailure("retry APNs acceptance reused the first provider ID")
+        first_accepted_at = _utc_timestamp(first.get("acceptedAt"), "first acceptedAt")
+        second_timestamp = _utc_timestamp(second_accepted_at, "second acceptedAt")
+        if second_timestamp < first_accepted_at:
+            raise AdapterFailure("retry APNs acceptance timestamp preceded the first")
+        receipt = {
+            "schema": PROVIDER_RETRY_RECEIPT_SCHEMA,
+            "action": "retry",
+            "status": "accepted",
+            "provider": "apns",
+            "runId": args.run_id,
+            "nonce": args.nonce,
+            "receiverDeviceIdSha256": _sha256_text(args.receiver),
+            "requestSha256": context.request_sha,
+            "apnsPayloadSha256": context.payload_sha,
+            "receiverHandoffSha256": context.handoff.digest,
+            "collapseIdentitySha256": _sha256_text(collapse_identity),
+            "firstProviderReceiptSha256": first_receipt_sha,
+            "firstProviderMessageIdSha256": first_hash,
+            "secondProviderMessageIdSha256": second_hash,
+            "firstAcceptedAt": first["acceptedAt"],
+            "secondAcceptedAt": second_accepted_at,
+            "providerAcceptedCount": 2,
+            "payloadBytesIdentical": True,
+            "collapseIdentityReused": True,
+            "providerIdsDistinct": True,
+            "childBuildCount": 0,
+            "manualActionCount": 0,
+        }
+        if _secret_bearing_field(receipt) is not None:
+            raise AdapterFailure("generated retry receipt contains a secret field")
+        _write_json_private(Path(args.output).expanduser().absolute(), receipt)
+        _write_lifecycle(context, "retry_accepted")
+    except Exception:
+        failures = _perform_recovery(context)
+        if failures:
+            raise AdapterFailure(
+                "provider retry failed and automated rollback was incomplete: "
                 + ", ".join(failures)
             )
         raise
@@ -1929,6 +2175,7 @@ def _cleanup(context: ProviderContext) -> None:
         _cleanup_sender_projection(context)
         _remove_candidate_application(context)
         _remove_payload_snapshot(context)
+        _remove_apns_unique_id_provenance(context)
         _write_lifecycle(context, "cleaned")
         receipt = _cleanup_receipt(context, provider_receipt_sha)
         _write_json_private(Path(args.output).expanduser().absolute(), receipt)
@@ -1974,7 +2221,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--action",
         required=True,
-        choices=("probe", "setup", "cleanup", "rollback"),
+        choices=("probe", "setup", "retry", "cleanup", "rollback"),
     )
     parser.add_argument("--scenario")
     parser.add_argument("--receiver")
@@ -2023,6 +2270,8 @@ def main(argv: list[str] | None = None) -> int:
         context = _validate_common(args)
         if args.action == "setup":
             _setup(context)
+        elif args.action == "retry":
+            _retry(context)
         elif args.action == "cleanup":
             _cleanup(context)
         else:

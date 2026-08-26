@@ -624,6 +624,174 @@ void main() {
     }
   });
 
+  test(
+    'Plan 398 provider evidence requires one first-attempt acceptance without retry or fallback',
+    () {
+      expect(
+        relayJournalProvesSingleFirstAttemptProviderAcceptance(
+          'relay: [PUSH] outcome=success attempt=1 total_attempts=3',
+        ),
+        isTrue,
+        reason: 'TC-398-06 provider attempt',
+      );
+      for (final journal in const <String>[
+        '',
+        '[PUSH] outcome=success attempt=2 total_attempts=3',
+        '[PUSH] outcome=retrying attempt=1 total_attempts=3\n'
+            '[PUSH] outcome=success attempt=2 total_attempts=3',
+        '[PUSH] outcome=success fallback=strict',
+        '[PUSH] outcome=success attempt=1 total_attempts=3\n'
+            '[PUSH] outcome=success attempt=1 total_attempts=3',
+        '[PUSH] outcome=failed attempts=3',
+      ]) {
+        expect(
+          relayJournalProvesSingleFirstAttemptProviderAcceptance(journal),
+          isFalse,
+          reason: journal,
+        );
+      }
+    },
+  );
+
+  test('Plan 398 provider journal parser returns only the pinned hashes', () {
+    const dispatch =
+        '1111111111111111111111111111111111111111111111111111111111111111';
+    const collapse =
+        '2222222222222222222222222222222222222222222222222222222222222222';
+    const providerMessage =
+        '4444444444444444444444444444444444444444444444444444444444444444';
+    Map<String, Object?> acceptedRecord({
+      bool includeProviderMessage = true,
+    }) => <String, Object?>{
+      'schema': 'mknoon.relay.group-message-provider-attempt.v1',
+      'source': 'group_content',
+      'provenance': 'complete',
+      'dispatchCorrelationSha256': dispatch,
+      'claimedCollapseIdentifierSha256': collapse,
+      'providerAttempt': 1,
+      'attemptKind': 'primary',
+      'outcome': 'accepted',
+      'firebaseResponseNameSha256':
+          '3333333333333333333333333333333333333333333333333333333333333333',
+      if (includeProviderMessage) 'providerMessageIdSha256': providerMessage,
+    };
+
+    final complete = parseRelayAcceptedGroupMessageProviderAttempt(
+      'relay[1]: [GROUP_MESSAGE_PROVIDER_ATTEMPT] '
+      '${jsonEncode(acceptedRecord())}',
+    );
+    expect(complete?.dispatchCorrelationSha256, dispatch);
+    expect(complete?.source, 'group_content');
+    expect(complete?.claimedCollapseIdentifierSha256, collapse);
+    expect(complete?.providerMessageIdSha256, providerMessage);
+    final joined = bindRelayAcceptedGroupMessageProviderAttempt(
+      attempt: complete,
+      relayGroupMessageDispatchSource: 'groupContent',
+      expectedCollapseIdentifierSha256: collapse,
+    );
+    expect(joined?.dispatchCorrelationSha256, dispatch);
+    expect(joined?.providerMessageIdSha256, providerMessage);
+
+    expect(
+      bindRelayAcceptedGroupMessageProviderAttempt(
+        attempt: complete,
+        relayGroupMessageDispatchSource: 'groupInbox',
+        expectedCollapseIdentifierSha256: collapse,
+      ),
+      isNull,
+      reason: 'a group_content journal row cannot join groupInbox metrics',
+    );
+    expect(
+      bindRelayAcceptedGroupMessageProviderAttempt(
+        attempt: complete,
+        relayGroupMessageDispatchSource: 'groupContent',
+        expectedCollapseIdentifierSha256:
+            '5555555555555555555555555555555555555555555555555555555555555555',
+      ),
+      isNull,
+      reason: 'the claimed collapse hash must match the run-owned card hash',
+    );
+
+    final withoutNormalizedProvider =
+        parseRelayAcceptedGroupMessageProviderAttempt(
+          '[GROUP_MESSAGE_PROVIDER_ATTEMPT] '
+          '${jsonEncode(acceptedRecord(includeProviderMessage: false))}',
+        );
+    final joinedWithoutNormalizedProvider =
+        bindRelayAcceptedGroupMessageProviderAttempt(
+          attempt: withoutNormalizedProvider,
+          relayGroupMessageDispatchSource: 'groupContent',
+          expectedCollapseIdentifierSha256: collapse,
+        );
+    expect(
+      joinedWithoutNormalizedProvider?.dispatchCorrelationSha256,
+      dispatch,
+    );
+    expect(joinedWithoutNormalizedProvider?.providerMessageIdSha256, isNull);
+  });
+
+  test(
+    'Plan 398 provider journal parser rejects malformed open or ambiguous rows',
+    () {
+      const hash =
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      Map<String, Object?> acceptedRecord() => <String, Object?>{
+        'schema': 'mknoon.relay.group-message-provider-attempt.v1',
+        'source': 'group_inbox',
+        'provenance': 'complete',
+        'dispatchCorrelationSha256': hash,
+        'claimedCollapseIdentifierSha256': hash,
+        'providerAttempt': 1,
+        'attemptKind': 'primary',
+        'outcome': 'accepted',
+        'firebaseResponseNameSha256': hash,
+        'providerMessageIdSha256': hash,
+      };
+
+      final valid =
+          '[GROUP_MESSAGE_PROVIDER_ATTEMPT] ${jsonEncode(acceptedRecord())}';
+      final uppercase = acceptedRecord()
+        ..['dispatchCorrelationSha256'] = hash.toUpperCase();
+      final raw = acceptedRecord()
+        ..['dispatchCorrelationSha256'] = 'raw-dispatch-correlation';
+      final invalidCollapse = acceptedRecord()
+        ..['claimedCollapseIdentifierSha256'] = 'raw-collapse-identifier';
+      final invalidFirebaseResponse = acceptedRecord()
+        ..['firebaseResponseNameSha256'] = hash.toUpperCase();
+      final open = acceptedRecord()..['rawProviderResponseName'] = 'projects/p';
+      final retry = acceptedRecord()
+        ..['providerAttempt'] = 2
+        ..['outcome'] = 'accepted';
+      final fallback = acceptedRecord()..['attemptKind'] = 'strict_fallback';
+      final nullProvider = acceptedRecord()..['providerMessageIdSha256'] = null;
+      for (final journal in <String>[
+        '',
+        '[GROUP_MESSAGE_PROVIDER_ATTEMPT] {',
+        '[GROUP_MESSAGE_PROVIDER_ATTEMPT] ${jsonEncode(uppercase)}',
+        '[GROUP_MESSAGE_PROVIDER_ATTEMPT] ${jsonEncode(raw)}',
+        '[GROUP_MESSAGE_PROVIDER_ATTEMPT] ${jsonEncode(invalidCollapse)}',
+        '[GROUP_MESSAGE_PROVIDER_ATTEMPT] ${jsonEncode(invalidFirebaseResponse)}',
+        '[GROUP_MESSAGE_PROVIDER_ATTEMPT] ${jsonEncode(open)}',
+        '[GROUP_MESSAGE_PROVIDER_ATTEMPT] ${jsonEncode(retry)}',
+        '[GROUP_MESSAGE_PROVIDER_ATTEMPT] ${jsonEncode(fallback)}',
+        '[GROUP_MESSAGE_PROVIDER_ATTEMPT] ${jsonEncode(nullProvider)}',
+        '$valid\n$valid',
+        // Duplicate JSON members are ambiguous even when their values agree.
+        valid.replaceFirst(
+          '"dispatchCorrelationSha256":"$hash"',
+          '"dispatchCorrelationSha256":"$hash",'
+              '"dispatchCorrelationSha256":"$hash"',
+        ),
+      ]) {
+        expect(
+          parseRelayAcceptedGroupMessageProviderAttempt(journal),
+          isNull,
+          reason: journal,
+        );
+      }
+    },
+  );
+
   test('campaign provider wait passes a since-scoped journal slice', () {
     final source = File(
       'integration_test/scripts/notification_android_payload_campaign.dart',
