@@ -120,6 +120,45 @@ void main() {
     expect(iosDetails.presentBadge, isTrue);
   });
 
+  test(
+    'all message channels and publications use notification audio usage',
+    () {
+      expect(
+        mknoonMessageAudioAttributesUsage,
+        AudioAttributesUsage.notification,
+      );
+      expect(
+        mknoonMessagesChannel.audioAttributesUsage,
+        mknoonMessageAudioAttributesUsage,
+      );
+      expect(
+        mknoonMessagesSilentChannel.audioAttributesUsage,
+        mknoonMessageAudioAttributesUsage,
+      );
+
+      final details = <AndroidNotificationDetails>[
+        mknoonMessagesNotificationDetails.android as AndroidNotificationDetails,
+        mknoonGenericNotificationDetails(androidTag: 'tag').android
+            as AndroidNotificationDetails,
+        mknoonMessagesSilentNotificationDetails.android
+            as AndroidNotificationDetails,
+        mknoonConversationNotificationDetails(
+              conversationKey: 'peer-audible',
+            ).android
+            as AndroidNotificationDetails,
+        mknoonConversationNotificationDetails(
+              conversationKey: 'peer-silent',
+              silent: true,
+            ).android
+            as AndroidNotificationDetails,
+      ];
+      expect(
+        details.map((detail) => detail.audioAttributesUsage),
+        everyElement(mknoonMessageAudioAttributesUsage),
+      );
+    },
+  );
+
   test('silent notification details disable sound and vibration', () {
     final androidDetails =
         mknoonMessagesSilentNotificationDetails.android

@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:video_player/video_player.dart';
 
@@ -89,6 +92,25 @@ abstract class MediaPlaybackAdapter {
 typedef MediaPlaybackAdapterFactory =
     MediaPlaybackAdapter Function(MediaViewerItem item);
 
+/// Audio policy for user-initiated video playback.
+///
+/// Android keeps ExoPlayer's audio-focus manager enabled so genuine transient
+/// and permanent losses remain platform-owned. App notification channels use
+/// notification audio attributes, so their standard focus request ducks this
+/// media without changing its playing state. Apple and other platforms retain
+/// the explicit mixing behavior.
+VideoPlayerOptions userInitiatedMediaVideoPlayerOptions() => VideoPlayerOptions(
+  mixWithOthers: defaultTargetPlatform != TargetPlatform.android,
+);
+
+typedef VideoPlayerControllerFactory =
+    VideoPlayerController Function(File file, VideoPlayerOptions options);
+
+VideoPlayerController _defaultVideoPlayerControllerFactory(
+  File file,
+  VideoPlayerOptions options,
+) => VideoPlayerController.file(file, videoPlayerOptions: options);
+
 /// Production factory: a real [VideoPlayerController] over the item's local
 /// file. Requires a downloaded video (`localPath != null`).
 MediaPlaybackAdapter defaultMediaPlaybackAdapterFactory(MediaViewerItem item) =>
@@ -99,24 +121,73 @@ MediaPlaybackAdapter defaultMediaPlaybackAdapterFactory(MediaViewerItem item) =>
 /// Extends (not implements) so it inherits the shared [seekBy] clamp; only the
 /// leaf controller operations are overridden here.
 class VideoPlayerControllerAdapter extends MediaPlaybackAdapter {
-  VideoPlayerControllerAdapter(this._filePath);
+  VideoPlayerControllerAdapter(
+    this._filePath, {
+    VideoPlayerControllerFactory? controllerFactory,
+    Stream<void>? becomingNoisyEvents,
+  }) : _controllerFactory =
+           controllerFactory ?? _defaultVideoPlayerControllerFactory,
+       _injectedBecomingNoisyEvents = becomingNoisyEvents;
 
   final String _filePath;
+  final VideoPlayerControllerFactory _controllerFactory;
+  final Stream<void>? _injectedBecomingNoisyEvents;
   VideoPlayerController? _controller;
+  StreamSubscription<void>? _becomingNoisySubscription;
   Object? _initializationError;
   double _speed = 1.0;
+  bool _disposed = false;
 
   @override
   Future<void> initialize() async {
-    final controller = VideoPlayerController.file(File(_filePath));
+    final controller = _controllerFactory(
+      File(_filePath),
+      userInitiatedMediaVideoPlayerOptions(),
+    );
     _controller = controller;
     try {
       await controller.initialize();
       await controller.setLooping(false);
+      await _subscribeToBecomingNoisy(controller);
     } catch (error) {
       _initializationError = error;
       rethrow;
     }
+  }
+
+  Future<void> _subscribeToBecomingNoisy(
+    VideoPlayerController controller,
+  ) async {
+    try {
+      final events =
+          _injectedBecomingNoisyEvents ??
+          (await AudioSession.instance).becomingNoisyEventStream;
+      if (_disposed || !identical(controller, _controller)) return;
+      _becomingNoisySubscription = events.listen((_) {
+        final activeController = _controller;
+        if (_disposed ||
+            activeController == null ||
+            !activeController.value.isPlaying) {
+          return;
+        }
+        unawaited(_pauseAfterBecomingNoisy(activeController));
+      });
+    } catch (_) {
+      // Playback remains usable when a platform has no noisy-event source.
+    }
+  }
+
+  Future<void> _pauseAfterBecomingNoisy(
+    VideoPlayerController controller,
+  ) async {
+    if (_disposed ||
+        !identical(controller, _controller) ||
+        !controller.value.isPlaying) {
+      return;
+    }
+    try {
+      await controller.pause();
+    } catch (_) {}
   }
 
   @override
@@ -185,5 +256,13 @@ class VideoPlayerControllerAdapter extends MediaPlaybackAdapter {
   }
 
   @override
-  Future<void> dispose() async => _controller?.dispose();
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    await _becomingNoisySubscription?.cancel();
+    _becomingNoisySubscription = null;
+    final controller = _controller;
+    _controller = null;
+    await controller?.dispose();
+  }
 }

@@ -1,7 +1,10 @@
 // ignore_for_file: depend_on_referenced_packages
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -14,6 +17,406 @@ import '../../fakes/fake_just_audio.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('UserInitiatedVoicePlaybackPolicy', () {
+    Future<void> flushInterruptionTasks() =>
+        Future<void>.delayed(Duration.zero);
+
+    test('disables the plugin default interruption handler', () {
+      expect(
+        UserInitiatedVoicePlaybackPolicy.handlePluginInterruptions,
+        isFalse,
+      );
+    });
+
+    test(
+      'mixes notification audio on iOS and ducks instead of pausing on Android',
+      () {
+        final configuration =
+            UserInitiatedVoicePlaybackPolicy.audioSessionConfiguration;
+
+        expect(
+          configuration.avAudioSessionCategory,
+          AVAudioSessionCategory.playback,
+        );
+        expect(
+          configuration.avAudioSessionMode,
+          AVAudioSessionMode.spokenAudio,
+        );
+        expect(
+          configuration.avAudioSessionCategoryOptions,
+          AVAudioSessionCategoryOptions.mixWithOthers,
+        );
+        expect(
+          configuration.androidAudioAttributes?.contentType,
+          AndroidAudioContentType.speech,
+        );
+        expect(
+          configuration.androidAudioAttributes?.usage,
+          AndroidAudioUsage.media,
+        );
+        expect(
+          configuration.androidAudioFocusGainType,
+          AndroidAudioFocusGainType.gain,
+        );
+        expect(configuration.androidWillPauseWhenDucked, isFalse);
+      },
+    );
+
+    test('duck interruption begin and end preserve voice playback state', () {
+      var pauseCalls = 0;
+      var resumeCalls = 0;
+      final handler = UserInitiatedVoiceInterruptionHandler(
+        isPlaying: () => true,
+        pause: () async => pauseCalls++,
+        resume: () async => resumeCalls++,
+      );
+
+      handler.handle(AudioInterruptionEvent(true, AudioInterruptionType.duck));
+      handler.handle(AudioInterruptionEvent(false, AudioInterruptionType.duck));
+
+      expect(pauseCalls, 0);
+      expect(resumeCalls, 0);
+    });
+
+    test(
+      'pause interruption pauses active voice and owns exactly one resume',
+      () async {
+        var playing = true;
+        var pauseCalls = 0;
+        var resumeCalls = 0;
+        final handler = UserInitiatedVoiceInterruptionHandler(
+          isPlaying: () => playing,
+          pause: () async {
+            pauseCalls++;
+            playing = false;
+          },
+          resume: () async {
+            resumeCalls++;
+            playing = true;
+          },
+        );
+
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        expect(pauseCalls, 1);
+        expect(playing, isFalse);
+
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        await flushInterruptionTasks();
+
+        expect(resumeCalls, 1);
+        expect(playing, isTrue);
+      },
+    );
+
+    test(
+      'pause interruption never restarts already paused or cancelled voice',
+      () async {
+        var playing = false;
+        var pauseCalls = 0;
+        var resumeCalls = 0;
+        final handler = UserInitiatedVoiceInterruptionHandler(
+          isPlaying: () => playing,
+          pause: () async {
+            pauseCalls++;
+            playing = false;
+          },
+          resume: () async {
+            resumeCalls++;
+            playing = true;
+          },
+        );
+
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        expect(pauseCalls, 0);
+        expect(resumeCalls, 0);
+
+        playing = true;
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        handler.cancelPendingResume();
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        await flushInterruptionTasks();
+        expect(pauseCalls, 1);
+        expect(resumeCalls, 0);
+      },
+    );
+
+    test(
+      'cancelling an in-flight interruption resume prevents a stale restart',
+      () async {
+        var playing = true;
+        var pauseCalls = 0;
+        var resumeCalls = 0;
+        final resumeStarted = Completer<void>();
+        final allowResumeToSettle = Completer<void>();
+        final handler = UserInitiatedVoiceInterruptionHandler(
+          isPlaying: () => playing,
+          pause: () async {
+            pauseCalls++;
+            playing = false;
+          },
+          resume: () async {
+            resumeCalls++;
+            resumeStarted.complete();
+            await allowResumeToSettle.future;
+            playing = true;
+          },
+        );
+
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        await flushInterruptionTasks();
+        expect(pauseCalls, 1);
+        expect(playing, isFalse);
+
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        await resumeStarted.future;
+        expect(resumeCalls, 1);
+
+        // Models a source change or disposal after resume has started but
+        // before its asynchronous platform command settles.
+        handler.cancelPendingResume();
+        allowResumeToSettle.complete();
+        await flushInterruptionTasks();
+
+        expect(playing, isFalse);
+        expect(pauseCalls, greaterThan(1));
+      },
+    );
+
+    test(
+      'a second pause interruption supersedes an in-flight auto-resume',
+      () async {
+        var playing = true;
+        var pauseCalls = 0;
+        var resumeCalls = 0;
+        final firstResumeStarted = Completer<void>();
+        final allowFirstResumeToSettle = Completer<void>();
+        final handler = UserInitiatedVoiceInterruptionHandler(
+          isPlaying: () => playing,
+          pause: () async {
+            pauseCalls++;
+            playing = false;
+          },
+          resume: () async {
+            resumeCalls++;
+            if (resumeCalls == 1) {
+              firstResumeStarted.complete();
+              await allowFirstResumeToSettle.future;
+            }
+            playing = true;
+          },
+        );
+
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        await flushInterruptionTasks();
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        await firstResumeStarted.future;
+
+        // The platform resume command is unresolved and has not reported the
+        // player as active yet. This second interruption must still supersede
+        // it, own a new pause/resume cycle, and ignore duplicate callbacks.
+        expect(playing, isFalse);
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+
+        allowFirstResumeToSettle.complete();
+        for (var i = 0; i < 5; i++) {
+          await flushInterruptionTasks();
+        }
+
+        expect(
+          pauseCalls,
+          3,
+          reason:
+              'initial pause, second interruption pause, and stale-resume re-pause',
+        );
+        expect(resumeCalls, 2, reason: 'one resume per completed interruption');
+        expect(playing, isTrue);
+      },
+    );
+
+    test(
+      'cancelling an in-flight resume denies a later pause cycle resume authority',
+      () async {
+        var playing = true;
+        var pauseCalls = 0;
+        var resumeCalls = 0;
+        final firstResumeStarted = Completer<void>();
+        final allowFirstResumeToSettle = Completer<void>();
+        final handler = UserInitiatedVoiceInterruptionHandler(
+          isPlaying: () => playing,
+          pause: () async {
+            pauseCalls++;
+            playing = false;
+          },
+          resume: () async {
+            resumeCalls++;
+            firstResumeStarted.complete();
+            await allowFirstResumeToSettle.future;
+            playing = true;
+          },
+        );
+
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        await flushInterruptionTasks();
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        await firstResumeStarted.future;
+
+        // A user pause, source change, or disposal revokes the first cycle's
+        // authority while its already-issued platform play call is unresolved.
+        handler.cancelPendingResume();
+        expect(playing, isFalse);
+
+        // The cancelled in-flight command must not make this callback look as
+        // though active playback entered a new reversible interruption.
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+
+        allowFirstResumeToSettle.complete();
+        for (var i = 0; i < 5; i++) {
+          await flushInterruptionTasks();
+        }
+
+        expect(resumeCalls, 1, reason: 'cancellation denies a second resume');
+        expect(playing, isFalse, reason: 'the stale play command is re-paused');
+        expect(pauseCalls, 3);
+      },
+    );
+
+    test(
+      'unknown loss clears pause ownership and never auto-resumes voice',
+      () async {
+        var isPlaying = true;
+        var pauseCalls = 0;
+        var resumeCalls = 0;
+        final handler = UserInitiatedVoiceInterruptionHandler(
+          isPlaying: () => isPlaying,
+          pause: () async {
+            pauseCalls++;
+            isPlaying = false;
+          },
+          resume: () async {
+            resumeCalls++;
+            isPlaying = true;
+          },
+        );
+
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.unknown),
+        );
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.unknown),
+        );
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        await flushInterruptionTasks();
+
+        expect(pauseCalls, 1);
+        expect(resumeCalls, 0);
+        expect(isPlaying, isFalse);
+
+        isPlaying = true;
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.unknown),
+        );
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.unknown),
+        );
+        await flushInterruptionTasks();
+
+        expect(pauseCalls, 2);
+        expect(resumeCalls, 0);
+        expect(isPlaying, isFalse);
+      },
+    );
+
+    test(
+      'becoming noisy pauses and cancels any pending automatic resume',
+      () async {
+        var isPlaying = true;
+        var pauseCalls = 0;
+        var resumeCalls = 0;
+        final handler = UserInitiatedVoiceInterruptionHandler(
+          isPlaying: () => isPlaying,
+          pause: () async {
+            pauseCalls++;
+            isPlaying = false;
+          },
+          resume: () async {
+            resumeCalls++;
+            isPlaying = true;
+          },
+        );
+
+        handler.handleBecomingNoisy();
+        expect(pauseCalls, 1);
+        expect(isPlaying, isFalse);
+
+        isPlaying = true;
+        handler.handle(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        handler.handleBecomingNoisy();
+        handler.handle(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        await flushInterruptionTasks();
+
+        expect(pauseCalls, 2);
+        expect(resumeCalls, 0);
+        expect(isPlaying, isFalse);
+      },
+    );
+  });
 
   Widget buildApp(
     MediaAttachment attachment, {
@@ -84,11 +487,11 @@ void main() {
 
   group('AudioPlayerWidget', () {
     late JustAudioPlatform originalPlatform;
-    late FakeJustAudioPlatform fakePlatform;
+    late _TrackingFakeJustAudioPlatform fakePlatform;
 
     setUp(() {
       originalPlatform = JustAudioPlatform.instance;
-      fakePlatform = FakeJustAudioPlatform();
+      fakePlatform = _TrackingFakeJustAudioPlatform();
       JustAudioPlatform.instance = fakePlatform;
     });
 
@@ -121,6 +524,100 @@ void main() {
       // Should find the play icon
       expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     });
+
+    testWidgets(
+      'transient pause retains an offscreen player through its owned resume',
+      (tester) async {
+        final interruptions =
+            StreamController<AudioInterruptionEvent>.broadcast(sync: true);
+        final scrollController = ScrollController();
+        addTearDown(interruptions.close);
+        addTearDown(scrollController.dispose);
+        final load = fakePlatform.enqueueLoad(
+          reportedDuration: const Duration(seconds: 6),
+        );
+        final attachment = availableAttachment(
+          id: 'transient-offscreen',
+          localPath: '/tmp/transient_offscreen.m4a',
+          durationMs: 6000,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: ListView.builder(
+                controller: scrollController,
+                itemCount: 24,
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return SizedBox(
+                      height: 120,
+                      child: AudioPlayerWidget(
+                        key: const ValueKey('transient-offscreen-player'),
+                        attachment: attachment,
+                        interruptionEvents: interruptions.stream,
+                      ),
+                    );
+                  }
+                  return SizedBox(height: 400, child: Text('Tall row $index'));
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await load.started;
+        load.complete();
+        await settleCompletedLoad(tester);
+
+        expect(scrollController.offset, 0);
+        expect(find.byType(AudioPlayerWidget), findsOneWidget);
+        expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+        final playButton = tester.widget<GestureDetector>(
+          find.ancestor(
+            of: find.byIcon(Icons.play_arrow_rounded),
+            matching: find.byType(GestureDetector),
+          ),
+        );
+        expect(playButton.onTap, isNotNull);
+        await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+        for (var i = 0; i < 5 && fakePlatform.playCallCount == 0; i++) {
+          await flushAsyncPlayerTasks(tester);
+        }
+        expect(fakePlatform.playCallCount, 1);
+
+        scrollController.jumpTo(scrollController.position.maxScrollExtent);
+        await tester.pump();
+        expect(fakePlatform.disposePlayerCallCount, 0);
+
+        interruptions.add(
+          AudioInterruptionEvent(true, AudioInterruptionType.pause),
+        );
+        await flushAsyncPlayerTasks(tester);
+
+        expect(
+          fakePlatform.disposePlayerCallCount,
+          0,
+          reason:
+              'an interruption-owned pause must not release offscreen playback',
+        );
+        expect(fakePlatform.activePlayerIds, hasLength(1));
+
+        interruptions.add(
+          AudioInterruptionEvent(false, AudioInterruptionType.pause),
+        );
+        await flushAsyncPlayerTasks(tester);
+
+        expect(fakePlatform.playCallCount, 2);
+        expect(fakePlatform.disposePlayerCallCount, 0);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
 
     testWidgets(
       'known attachment duration renders before delayed local source load completes',
@@ -434,4 +931,35 @@ void main() {
       expect(retryCount, 1);
     });
   });
+}
+
+class _TrackingFakeJustAudioPlatform extends FakeJustAudioPlatform {
+  final Map<String, AudioPlayerPlatform> _activePlayers = {};
+  int disposePlayerCallCount = 0;
+
+  Iterable<String> get activePlayerIds => _activePlayers.keys;
+
+  @override
+  Future<AudioPlayerPlatform> init(InitRequest request) async {
+    final player = await super.init(request);
+    _activePlayers[request.id] = player;
+    return player;
+  }
+
+  @override
+  Future<DisposePlayerResponse> disposePlayer(
+    DisposePlayerRequest request,
+  ) async {
+    disposePlayerCallCount++;
+    _activePlayers.remove(request.id);
+    return super.disposePlayer(request);
+  }
+
+  @override
+  Future<DisposeAllPlayersResponse> disposeAllPlayers(
+    DisposeAllPlayersRequest request,
+  ) async {
+    _activePlayers.clear();
+    return super.disposeAllPlayers(request);
+  }
 }

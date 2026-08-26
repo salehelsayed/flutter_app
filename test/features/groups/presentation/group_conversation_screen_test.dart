@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart' as intl;
+import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -39,6 +40,7 @@ import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/shared/widgets/media/video_thumbnail_overlay.dart';
 
+import '../../../shared/fakes/fake_just_audio.dart';
 import '../../../shared/helpers/readability_test_helpers.dart';
 
 const _validContentHash =
@@ -58,6 +60,50 @@ const _validPngBytes = <int>[
   0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, //
   0x42, 0x60, 0x82, //
 ];
+
+class _TrackingFakeJustAudioPlatform extends FakeJustAudioPlatform {
+  final Map<String, AudioPlayerPlatform> _activePlayers = {};
+  int initCallCount = 0;
+  int disposePlayerCallCount = 0;
+
+  Iterable<String> get activePlayerIds => _activePlayers.keys;
+
+  AudioPlayerPlatform player(String id) => _activePlayers[id]!;
+
+  @override
+  Future<AudioPlayerPlatform> init(InitRequest request) async {
+    initCallCount++;
+    final player = await super.init(request);
+    _activePlayers[request.id] = player;
+    return player;
+  }
+
+  @override
+  Future<DisposePlayerResponse> disposePlayer(
+    DisposePlayerRequest request,
+  ) async {
+    disposePlayerCallCount++;
+    _activePlayers.remove(request.id);
+    return super.disposePlayer(request);
+  }
+
+  @override
+  Future<DisposeAllPlayersResponse> disposeAllPlayers(
+    DisposeAllPlayersRequest request,
+  ) async {
+    _activePlayers.clear();
+    return super.disposeAllPlayers(request);
+  }
+}
+
+Future<void> _flushAsyncPlayerTasks(WidgetTester tester) async {
+  await tester.runAsync(
+    () => Future<void>.delayed(const Duration(milliseconds: 10)),
+  );
+  for (var i = 0; i < 3; i++) {
+    await tester.pump();
+  }
+}
 
 void main() {
   final l10n = lookupAppLocalizations(const Locale('en'));
@@ -1163,6 +1209,94 @@ void main() {
       waveform: const <double>[0.2, 0.6, 0.3],
     );
   }
+
+  testWidgets(
+    'incoming group message preserves the active voice player without reloading',
+    (tester) async {
+      final originalPlatform = JustAudioPlatform.instance;
+      final fakePlatform = _TrackingFakeJustAudioPlatform();
+      JustAudioPlatform.instance = fakePlatform;
+      addTearDown(() async {
+        await fakePlatform.disposeAllPlayers(DisposeAllPlayersRequest());
+        JustAudioPlatform.instance = originalPlatform;
+      });
+
+      final timestamp = DateTime.utc(2026, 8, 26, 18);
+      final voice = GroupMessage(
+        id: 'group-voice-message',
+        groupId: testGroup.id,
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: '',
+        timestamp: timestamp,
+        createdAt: timestamp,
+        isIncoming: true,
+        media: [
+          makeAudioAttachment(
+            id: 'group-voice-attachment',
+            messageId: 'group-voice-message',
+            downloadStatus: 'done',
+            localPath: '/tmp/group_voice_message.m4a',
+          ),
+        ],
+      );
+      final incomingText = GroupMessage(
+        id: 'group-incoming-text',
+        groupId: testGroup.id,
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'New group message while listening',
+        timestamp: timestamp.add(const Duration(minutes: 1)),
+        createdAt: timestamp.add(const Duration(minutes: 1)),
+        isIncoming: true,
+      );
+
+      final sourceLoad = fakePlatform.enqueueLoad(
+        reportedDuration: const Duration(milliseconds: 4200),
+      );
+      await tester.pumpWidget(
+        buildTestWidget(messages: [voice], initialLoadDone: true),
+      );
+      await tester.pump();
+      await sourceLoad.started;
+      sourceLoad.complete();
+      await _flushAsyncPlayerTasks(tester);
+
+      expect(fakePlatform.activePlayerIds, hasLength(1));
+      expect(fakePlatform.loadedUris, hasLength(1));
+      final originalPlayerId = fakePlatform.activePlayerIds.single;
+      final originalPlayer = fakePlatform.player(originalPlayerId);
+
+      // Drive the exact platform player owned by the visible voice control
+      // into the playing state, then verify the UI reflects that state.
+      await originalPlayer.play(PlayRequest());
+      await _flushAsyncPlayerTasks(tester);
+
+      expect(fakePlatform.playCallCount, 1);
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+
+      await tester.pumpWidget(
+        buildTestWidget(messages: [voice, incomingText], initialLoadDone: true),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1));
+
+      expect(find.text('New group message while listening'), findsOneWidget);
+      expect(fakePlatform.initCallCount, 1);
+      expect(fakePlatform.disposePlayerCallCount, 0);
+      expect(fakePlatform.loadedUris, hasLength(1));
+      expect(fakePlatform.activePlayerIds.single, originalPlayerId);
+      expect(
+        identical(fakePlatform.player(originalPlayerId), originalPlayer),
+        isTrue,
+      );
+      expect(fakePlatform.playCallCount, 1);
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
 
   testWidgets('passes isSending through to the compose send affordance', (
     tester,

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:just_audio/just_audio.dart';
@@ -8,6 +9,203 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'media_display_helpers.dart';
 import 'waveform_seek_bar.dart';
 
+/// Cross-platform audio-session rules for voice messages whose playback was
+/// explicitly started by the user.
+///
+/// iOS mixes system/notification audio into the playback session instead of
+/// interrupting it. Android classifies the content as speech/media and allows
+/// notification-style focus changes to duck without converting them to a
+/// pause. [AudioPlayer] interruption handling is disabled and the narrower
+/// app-owned policy below handles genuine pause interruptions, permanent loss,
+/// and unplugged outputs.
+class UserInitiatedVoicePlaybackPolicy {
+  const UserInitiatedVoicePlaybackPolicy._();
+
+  static const bool handlePluginInterruptions = false;
+
+  static const AudioSessionConfiguration audioSessionConfiguration =
+      AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions:
+            AVAudioSessionCategoryOptions.mixWithOthers,
+        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+        androidAudioAttributes: AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.speech,
+          usage: AndroidAudioUsage.media,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+        androidWillPauseWhenDucked: false,
+      );
+
+  static AudioPlayer createPlayer() =>
+      AudioPlayer(handleInterruptions: handlePluginInterruptions);
+}
+
+/// Preserves user playback ownership across audio-session interruptions.
+///
+/// Duck interruptions leave playback state unchanged. A pause interruption
+/// pauses only active playback and owns one resume after the pause command has
+/// settled. User actions and completion can revoke that ownership. Unknown
+/// loss and unplugged outputs pause fail-safe without any automatic resume.
+class UserInitiatedVoiceInterruptionHandler {
+  UserInitiatedVoiceInterruptionHandler({
+    required this.isPlaying,
+    required this.pause,
+    required this.resume,
+    this.onPlaybackRetentionChanged,
+  });
+
+  final bool Function() isPlaying;
+  final Future<void> Function() pause;
+  final Future<void> Function() resume;
+  final void Function()? onPlaybackRetentionChanged;
+
+  bool _ownsPauseResume = false;
+  bool _pauseCommandSettled = false;
+  bool _pauseEndReceived = false;
+  int _pauseGeneration = 0;
+  int? _resumeInFlightGeneration;
+  Future<void>? _resumeInFlightTask;
+
+  /// True while a reversible interruption still owns playback continuity,
+  /// including while its asynchronous resume command is settling.
+  bool get retainsUserPlayback =>
+      _ownsPauseResume || _resumeInFlightTask != null;
+
+  void handle(AudioInterruptionEvent event) {
+    switch (event.type) {
+      case AudioInterruptionType.duck:
+        return;
+      case AudioInterruptionType.pause:
+        if (event.begin) {
+          _beginPauseInterruption();
+        } else {
+          _endPauseInterruption();
+        }
+        return;
+      case AudioInterruptionType.unknown:
+        if (event.begin) {
+          cancelPendingResume();
+          _pauseWithoutResumeIfPlaying();
+        }
+        return;
+    }
+  }
+
+  void handleBecomingNoisy() {
+    cancelPendingResume();
+    _pauseWithoutResumeIfPlaying();
+  }
+
+  /// Revokes interruption-owned resume authority after a user action,
+  /// completion, source change, or disposal.
+  void cancelPendingResume() {
+    final retainedBefore = retainsUserPlayback;
+    final hadInFlightResume = _resumeInFlightTask != null;
+    _resumeInFlightGeneration = null;
+    _resumeInFlightTask = null;
+    _ownsPauseResume = false;
+    _pauseCommandSettled = false;
+    _pauseEndReceived = false;
+    _pauseGeneration++;
+    _notifyRetentionChange(retainedBefore);
+    if (hadInFlightResume) unawaited(_pauseSafely());
+  }
+
+  void _beginPauseInterruption() {
+    final resumeToReconcile = _resumeInFlightTask;
+    if (_ownsPauseResume || (!isPlaying() && resumeToReconcile == null)) {
+      return;
+    }
+    final retainedBefore = retainsUserPlayback;
+    _ownsPauseResume = true;
+    _pauseCommandSettled = false;
+    _pauseEndReceived = false;
+    final generation = ++_pauseGeneration;
+    _notifyRetentionChange(retainedBefore);
+    unawaited(
+      _pauseForInterruption(generation, resumeToReconcile: resumeToReconcile),
+    );
+  }
+
+  Future<void> _pauseForInterruption(
+    int generation, {
+    required Future<void>? resumeToReconcile,
+  }) async {
+    try {
+      await pause();
+    } catch (_) {
+      if (generation == _pauseGeneration) cancelPendingResume();
+      return;
+    }
+    // A newer transient loss cannot settle until the older resume command has
+    // either stayed paused or been re-paused by its generation fence.
+    if (resumeToReconcile != null) await resumeToReconcile;
+    if (generation != _pauseGeneration || !_ownsPauseResume) return;
+    _pauseCommandSettled = true;
+    _resumeAfterPauseEndIfOwned();
+  }
+
+  void _endPauseInterruption() {
+    if (!_ownsPauseResume) return;
+    _pauseEndReceived = true;
+    _resumeAfterPauseEndIfOwned();
+  }
+
+  void _resumeAfterPauseEndIfOwned() {
+    if (!_ownsPauseResume || !_pauseCommandSettled || !_pauseEndReceived) {
+      return;
+    }
+    final retainedBefore = retainsUserPlayback;
+    _ownsPauseResume = false;
+    _pauseCommandSettled = false;
+    _pauseEndReceived = false;
+    final generation = ++_pauseGeneration;
+    if (!isPlaying()) {
+      final task = _resumeSafely(generation);
+      _resumeInFlightTask = task;
+      unawaited(task);
+    }
+    _notifyRetentionChange(retainedBefore);
+  }
+
+  void _pauseWithoutResumeIfPlaying() {
+    if (isPlaying()) unawaited(_pauseSafely());
+  }
+
+  Future<void> _pauseSafely() async {
+    try {
+      await pause();
+    } catch (_) {}
+  }
+
+  Future<void> _resumeSafely(int generation) async {
+    if (generation != _pauseGeneration) return;
+    _resumeInFlightGeneration = generation;
+    try {
+      await resume();
+    } catch (_) {}
+    // A source change, disposal, completion, or user action may invalidate an
+    // already-started platform play command. Reassert the newer paused state
+    // after that stale asynchronous command settles.
+    if (generation != _pauseGeneration && isPlaying()) {
+      await _pauseSafely();
+    }
+    if (_resumeInFlightGeneration == generation) {
+      final retainedBefore = retainsUserPlayback;
+      _resumeInFlightGeneration = null;
+      _resumeInFlightTask = null;
+      _notifyRetentionChange(retainedBefore);
+    }
+  }
+
+  void _notifyRetentionChange(bool retainedBefore) {
+    if (retainedBefore != retainsUserPlayback) {
+      onPlaybackRetentionChanged?.call();
+    }
+  }
+}
+
 /// Inline audio player with play/pause button, progress bar, and duration.
 class AudioPlayerWidget extends StatefulWidget {
   final MediaAttachment attachment;
@@ -15,29 +213,46 @@ class AudioPlayerWidget extends StatefulWidget {
   final VoidCallback? onRetryUnavailableMedia;
   final String? renderedSemanticsLabel;
 
+  @visibleForTesting
+  final Stream<AudioInterruptionEvent>? interruptionEvents;
+
   const AudioPlayerWidget({
     super.key,
     required this.attachment,
     this.requireVerifiedContentHash = false,
     this.onRetryUnavailableMedia,
     this.renderedSemanticsLabel,
+    this.interruptionEvents,
   });
 
   @override
   State<AudioPlayerWidget> createState() => _AudioPlayerWidgetState();
 }
 
-class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
+class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
+    with AutomaticKeepAliveClientMixin<AudioPlayerWidget> {
   late final AudioPlayer _player;
   late final StreamSubscription<PlayerState> _playerStateSubscription;
   late final StreamSubscription<Duration?> _durationSubscription;
+  late final UserInitiatedVoiceInterruptionHandler _interruptionHandler;
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
+  StreamSubscription<void>? _becomingNoisySubscription;
   Timer? _positionTimer;
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _isLoaded = false;
   String? _loadedPath;
+  String? _loadingPath;
   int _loadVersion = 0;
+  bool _playStartPending = false;
+  bool _isDisposing = false;
+  bool _retainsInterruptedPlayback = false;
+
+  /// Retain only active or reversibly interrupted user playback. User-paused,
+  /// completed, failed, and never-started rows remain normally recyclable.
+  @override
+  bool get wantKeepAlive => _isPlaying || _retainsInterruptedPlayback;
 
   bool get _isAvailable =>
       widget.attachment.localPath != null &&
@@ -65,10 +280,31 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
   @override
   void initState() {
     super.initState();
-    _player = AudioPlayer();
+    _player = UserInitiatedVoicePlaybackPolicy.createPlayer();
+    _interruptionHandler = UserInitiatedVoiceInterruptionHandler(
+      isPlaying: () => mounted && _player.playing,
+      pause: () async {
+        if (mounted) await _player.pause();
+      },
+      resume: () async {
+        if (!mounted ||
+            !_isLoaded ||
+            _player.processingState == ProcessingState.completed) {
+          return;
+        }
+        await _player.play();
+      },
+      onPlaybackRetentionChanged: () {
+        _retainsInterruptedPlayback = _interruptionHandler.retainsUserPlayback;
+        if (mounted && !_isDisposing) updateKeepAlive();
+      },
+    );
 
     _playerStateSubscription = _player.playerStateStream.listen((state) {
       if (!mounted) return;
+      if (state.processingState == ProcessingState.completed) {
+        _interruptionHandler.cancelPendingResume();
+      }
       if (state.playing && state.processingState != ProcessingState.completed) {
         _startPositionTimer();
       } else {
@@ -83,6 +319,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
           _player.pause();
         }
       });
+      updateKeepAlive();
     });
 
     _durationSubscription = _player.durationStream.listen((dur) {
@@ -99,8 +336,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
   Future<void> _loadAudio() async {
     final path = widget.attachment.localPath;
     if (path == null || !_isAvailable) return;
-    if (_isLoaded && _loadedPath == path) return;
+    if ((_isLoaded && _loadedPath == path) || _loadingPath == path) return;
     final loadVersion = ++_loadVersion;
+    _loadingPath = path;
 
     try {
       await _player.setFilePath(path);
@@ -121,6 +359,8 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
           _loadedPath = null;
         });
       }
+    } finally {
+      if (loadVersion == _loadVersion) _loadingPath = null;
     }
   }
 
@@ -144,7 +384,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   Future<void> _reloadAudioForNewAttachment() async {
     _loadVersion++;
+    _loadingPath = null;
     _stopPositionTimer();
+    _interruptionHandler.cancelPendingResume();
 
     try {
       await _player.stop();
@@ -158,6 +400,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
         _isLoaded = false;
         _loadedPath = null;
       });
+      updateKeepAlive();
     }
 
     if (_isAvailable) {
@@ -167,9 +410,13 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   @override
   void dispose() {
+    _isDisposing = true;
     _stopPositionTimer();
+    _interruptionHandler.cancelPendingResume();
     unawaited(_playerStateSubscription.cancel());
     unawaited(_durationSubscription.cancel());
+    unawaited(_interruptionSubscription?.cancel());
+    unawaited(_becomingNoisySubscription?.cancel());
     unawaited(_player.dispose());
     super.dispose();
   }
@@ -189,10 +436,41 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   void _togglePlayPause() {
     if (!_isLoaded) return;
+    _interruptionHandler.cancelPendingResume();
     if (_isPlaying) {
-      _player.pause();
+      unawaited(_player.pause());
     } else {
-      _player.play();
+      unawaited(_startUserInitiatedPlayback());
+    }
+  }
+
+  Future<void> _startUserInitiatedPlayback() async {
+    if (_playStartPending || !_isLoaded || _isPlaying) return;
+    _playStartPending = true;
+    final loadVersion = _loadVersion;
+    try {
+      final session = await AudioSession.instance;
+      if (!mounted) return;
+
+      _interruptionSubscription ??=
+          (widget.interruptionEvents ?? session.interruptionEventStream).listen(
+            _interruptionHandler.handle,
+          );
+      _becomingNoisySubscription ??= session.becomingNoisyEventStream.listen((
+        _,
+      ) {
+        if (mounted) _interruptionHandler.handleBecomingNoisy();
+      });
+      await session.configure(
+        UserInitiatedVoicePlaybackPolicy.audioSessionConfiguration,
+      );
+
+      if (!mounted || loadVersion != _loadVersion || !_isLoaded || _isPlaying) {
+        return;
+      }
+      unawaited(_player.play());
+    } finally {
+      _playStartPending = false;
     }
   }
 
@@ -207,6 +485,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     if (_isEvicted) {
       return _buildEvictedAudio();
     }

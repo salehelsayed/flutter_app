@@ -634,6 +634,11 @@ class GroupConversationScreen extends StatelessWidget {
     // compute only for direct-construction widget tests.
     final displayItems =
         precomputedDisplayItems ?? _buildGroupDisplayItems(context);
+    final childIndexByKey = <Key, int>{
+      for (var index = 0; index < displayItems.length; index++)
+        if (displayItems[index].type == GroupDisplayItemType.message)
+          ValueKey<String>('grp-msg-${displayItems[index].message!.id}'): index,
+    };
     // 156 QW-10 (lists-scrolling-1): build the quoted-parent lookup ONCE per
     // frame instead of an O(N) `messages.firstWhere(...)` scan per visible row.
     final messagesById = <String, GroupMessage>{
@@ -651,6 +656,7 @@ class GroupConversationScreen extends StatelessWidget {
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       itemCount: displayItems.length,
+      findChildIndexCallback: (key) => childIndexByKey[key],
       itemBuilder: (context, index) {
         // Reversed display list: index 0 = newest.
         final item = displayItems[index];

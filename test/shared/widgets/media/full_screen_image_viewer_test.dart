@@ -1,9 +1,43 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_playback_adapter.dart';
+import 'package:video_player/video_player.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: child);
+
+  testWidgets(
+    'production video factory receives notification-safe playback options',
+    (tester) async {
+      const videoPath = '/tmp/notification-safe.mp4';
+      File? capturedFile;
+      VideoPlayerOptions? capturedOptions;
+
+      await tester.pumpWidget(
+        wrap(
+          FullScreenImageViewer(
+            localPath: videoPath,
+            videoPlayerControllerFactory: (file, options) {
+              capturedFile = file;
+              capturedOptions = options;
+              return _NoopVideoPlayerController();
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(capturedFile?.path, videoPath);
+      expect(
+        capturedOptions?.mixWithOthers,
+        userInitiatedMediaVideoPlayerOptions().mixWithOthers,
+      );
+      expect(capturedOptions?.allowBackgroundPlayback, isFalse);
+    },
+  );
 
   testWidgets('uses the video page builder for video paths', (tester) async {
     const videoPath = '/tmp/sample.mp4';
@@ -40,7 +74,9 @@ void main() {
     expect(find.byType(InteractiveViewer), findsOneWidget);
   });
 
-  testWidgets('renders GIF paths without ResizeImage cache hints', (tester) async {
+  testWidgets('renders GIF paths without ResizeImage cache hints', (
+    tester,
+  ) async {
     const gifPath = '/tmp/sample.gif';
 
     await tester.pumpWidget(
@@ -74,4 +110,21 @@ void main() {
 
     expect(find.text('2 / 2'), findsOneWidget);
   });
+}
+
+class _NoopVideoPlayerController extends VideoPlayerController {
+  _NoopVideoPlayerController()
+    : super.networkUrl(Uri.parse('https://example.invalid/noop.mp4'));
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<void> setLooping(bool looping) async {}
+
+  @override
+  Future<void> play() async {}
+
+  @override
+  Future<void> pause() async {}
 }

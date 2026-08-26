@@ -6098,11 +6098,19 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         return;
       }
       try {
+        final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.group,
+          value: 'group:${_group.id}',
+        );
+        Widget viewerBuilder(BuildContext _) =>
+            GroupPrivateMediaViewer(grant: grant, controller: controller);
         await Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) =>
-                GroupPrivateMediaViewer(grant: grant, controller: controller),
-          ),
+          visibilityIdentity == null
+              ? MaterialPageRoute<void>(builder: viewerBuilder)
+              : AppVisibilityInheritedConversationRoute<void>(
+                  identity: visibilityIdentity,
+                  builder: viewerBuilder,
+                ),
         );
       } catch (_) {
         await controller.settle(
@@ -6198,21 +6206,29 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       }
     }
     try {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => FullScreenTypedMediaViewer(
-            items: items,
-            initialIndex: startIndex,
-            onAction: _onViewerAction,
-            resumeStore: _mediaViewerResumeStore,
-            pictureInPictureControllerFactory: _mediaViewerResumeStore == null
-                ? null
-                : _createMediaPictureInPictureController,
-            loadPictureInPictureAuthorization: _mediaViewerResumeStore == null
-                ? null
-                : _loadGroupPictureInPictureAuthorization,
-          ),
-        ),
+      final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.group,
+        value: 'group:${_group.id}',
+      );
+      Widget viewerBuilder(BuildContext _) => FullScreenTypedMediaViewer(
+        items: items,
+        initialIndex: startIndex,
+        onAction: _onViewerAction,
+        resumeStore: _mediaViewerResumeStore,
+        pictureInPictureControllerFactory: _mediaViewerResumeStore == null
+            ? null
+            : _createMediaPictureInPictureController,
+        loadPictureInPictureAuthorization: _mediaViewerResumeStore == null
+            ? null
+            : _loadGroupPictureInPictureAuthorization,
+      );
+      await Navigator.of(context).push<void>(
+        visibilityIdentity == null
+            ? MaterialPageRoute<void>(builder: viewerBuilder)
+            : AppVisibilityInheritedConversationRoute<void>(
+                identity: visibilityIdentity,
+                builder: viewerBuilder,
+              ),
       );
     } finally {
       for (final item in items) {
@@ -6712,28 +6728,36 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         !_group.isDissolved &&
         mediaRepo is MediaLibraryRepository &&
         mediaRepo is MediaLibraryStateRepository;
+    final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.group,
+      value: 'group:${_group.id}',
+    );
+    Widget infoBuilder(BuildContext _) => GroupInfoWired(
+      group: _group,
+      groupRepo: widget.groupRepo,
+      msgRepo: widget.msgRepo,
+      inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+      contactRepo: widget.contactRepo,
+      bridge: widget.bridge,
+      identityRepo: widget.identityRepo,
+      p2pService: widget.p2pService,
+      imageProcessor: widget.imageProcessor,
+      mediaPicker: widget.mediaPicker,
+      backgroundPreference: widget.backgroundPreference,
+      sharedMediaRouteBuilder: libraryAvailable
+          ? (_, liveGroup) => _buildSharedMediaLibrary(
+              liveGroup,
+              mediaRepo as MediaAttachmentRepository,
+            )
+          : null,
+    );
     final result = await Navigator.of(context).push<Object?>(
-      MaterialPageRoute(
-        builder: (_) => GroupInfoWired(
-          group: _group,
-          groupRepo: widget.groupRepo,
-          msgRepo: widget.msgRepo,
-          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
-          contactRepo: widget.contactRepo,
-          bridge: widget.bridge,
-          identityRepo: widget.identityRepo,
-          p2pService: widget.p2pService,
-          imageProcessor: widget.imageProcessor,
-          mediaPicker: widget.mediaPicker,
-          backgroundPreference: widget.backgroundPreference,
-          sharedMediaRouteBuilder: libraryAvailable
-              ? (_, liveGroup) => _buildSharedMediaLibrary(
-                  liveGroup,
-                  mediaRepo as MediaAttachmentRepository,
-                )
-              : null,
-        ),
-      ),
+      visibilityIdentity == null
+          ? MaterialPageRoute<Object?>(builder: infoBuilder)
+          : AppVisibilityInheritedConversationRoute<Object?>(
+              identity: visibilityIdentity,
+              builder: infoBuilder,
+            ),
     );
     if (!mounted) return;
     await _refreshAfterInfoRoute();

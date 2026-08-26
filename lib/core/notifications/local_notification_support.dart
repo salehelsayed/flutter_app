@@ -8,6 +8,13 @@ const mknoonMessagesChannelId = 'mknoon_messages';
 const mknoonMessagesChannelName = 'Messages';
 const mknoonMessagesChannelDescription = 'Incoming message notifications';
 
+/// Keep audible chat notifications in Android's notification audio lane.
+///
+/// This is intentionally explicit rather than inheriting the plugin default:
+/// notification usage is eligible to mix/duck media, while media/alarm usage
+/// can take stronger focus and interrupt user-initiated voice or video.
+const mknoonMessageAudioAttributesUsage = AudioAttributesUsage.notification;
+
 // 118 Phase 3: a separate, low-importance SILENT channel. An Android channel's
 // sound is immutable after `createNotificationChannel`, so a no-sound variant
 // requires a distinct channel id rather than mutating the high channel above.
@@ -21,6 +28,7 @@ const mknoonMessagesChannel = AndroidNotificationChannel(
   mknoonMessagesChannelName,
   description: mknoonMessagesChannelDescription,
   importance: Importance.high,
+  audioAttributesUsage: mknoonMessageAudioAttributesUsage,
 );
 
 const mknoonMessagesSilentChannel = AndroidNotificationChannel(
@@ -30,6 +38,7 @@ const mknoonMessagesSilentChannel = AndroidNotificationChannel(
   importance: Importance.low,
   playSound: false,
   enableVibration: false,
+  audioAttributesUsage: mknoonMessageAudioAttributesUsage,
 );
 
 const mknoonMessagesNotificationDetails = NotificationDetails(
@@ -40,6 +49,7 @@ const mknoonMessagesNotificationDetails = NotificationDetails(
     importance: Importance.high,
     priority: Priority.high,
     playSound: true,
+    audioAttributesUsage: mknoonMessageAudioAttributesUsage,
   ),
   iOS: DarwinNotificationDetails(
     presentSound: true,
@@ -60,6 +70,7 @@ NotificationDetails mknoonGenericNotificationDetails({String? androidTag}) {
       importance: Importance.high,
       priority: Priority.high,
       playSound: true,
+      audioAttributesUsage: mknoonMessageAudioAttributesUsage,
       tag: androidTag,
     ),
     iOS: const DarwinNotificationDetails(
@@ -83,6 +94,7 @@ const mknoonMessagesSilentNotificationDetails = NotificationDetails(
     playSound: false,
     enableVibration: false,
     onlyAlertOnce: true,
+    audioAttributesUsage: mknoonMessageAudioAttributesUsage,
   ),
   iOS: DarwinNotificationDetails(
     presentSound: false,
@@ -129,6 +141,7 @@ NotificationDetails mknoonConversationNotificationDetails({
       // the low-importance continuation channel.
       silent: silent,
       category: AndroidNotificationCategory.message,
+      audioAttributesUsage: mknoonMessageAudioAttributesUsage,
       autoCancel: autoCancel,
       number: unreadMessageCount != null && unreadMessageCount > 0
           ? unreadMessageCount

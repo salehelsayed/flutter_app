@@ -5,6 +5,8 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart';
@@ -369,15 +371,23 @@ class _GroupSharedMediaLibraryScreenState
       }
     }
     if (_controller.entryFor(attachmentId) == null || !mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _GroupSharedMediaViewerHost(
-          screen: widget,
-          controller: _controller,
-          initialAttachmentId: attachmentId,
-          confirmDelete: _confirmDelete,
-        ),
-      ),
+    final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.group,
+      value: 'group:${widget.groupId}',
+    );
+    Widget viewerBuilder(BuildContext _) => _GroupSharedMediaViewerHost(
+      screen: widget,
+      controller: _controller,
+      initialAttachmentId: attachmentId,
+      confirmDelete: _confirmDelete,
+    );
+    Navigator.of(context).push<void>(
+      visibilityIdentity == null
+          ? MaterialPageRoute<void>(builder: viewerBuilder)
+          : AppVisibilityInheritedConversationRoute<void>(
+              identity: visibilityIdentity,
+              builder: viewerBuilder,
+            ),
     );
   }
 

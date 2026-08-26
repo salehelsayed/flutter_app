@@ -15,6 +15,8 @@ import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/core/widgets/quiet_confirm.dart';
@@ -455,6 +457,9 @@ class _ConversationScreenState extends State<ConversationScreen>
     with RouteAware {
   bool _wasEmpty = true;
   bool _shouldRequestComposerFocus = false;
+  // Keeps stateful media content mounted when a new row later sheds its
+  // temporary entrance-animation wrapper.
+  final Map<String, GlobalKey> _messageContentKeys = {};
   final Set<DirectPrivateMediaViewerIdentity> _privateOpenInFlight = {};
   final Map<DirectPrivateMediaViewerIdentity, DirectPrivateMediaOpenResult>
   _privateOpenFailures = {};
@@ -516,6 +521,12 @@ class _ConversationScreenState extends State<ConversationScreen>
     if (oldWidget.messages.isEmpty && widget.messages.isNotEmpty) {
       _wasEmpty = true;
     }
+    final retainedMessageIds = widget.messages
+        .map((message) => message.id)
+        .toSet();
+    _messageContentKeys.removeWhere(
+      (messageId, _) => !retainedMessageIds.contains(messageId),
+    );
     if (!identical(
       oldWidget.protectionCoordinator,
       widget.protectionCoordinator,
@@ -881,6 +892,11 @@ class _ConversationScreenState extends State<ConversationScreen>
 
   Widget _buildMessageList() {
     final displayItems = _buildDisplayItems();
+    final childIndexByKey = <Key, int>{
+      for (var index = 0; index < displayItems.length; index++)
+        if (displayItems[index].type == _ItemType.message)
+          ValueKey<String>('msg-${displayItems[index].message!.id}'): index,
+    };
 
     // 156 QW-10 (lists-scrolling-1): build the quoted-parent lookup ONCE per
     // frame instead of an O(N) `widget.messages.where(...)` scan per visible row.
@@ -909,6 +925,7 @@ class _ConversationScreenState extends State<ConversationScreen>
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       itemCount: displayItems.length,
+      findChildIndexCallback: (key) => childIndexByKey[key],
       itemBuilder: (context, index) {
         final item = displayItems[index];
         switch (item.type) {
@@ -1367,6 +1384,10 @@ class _ConversationScreenState extends State<ConversationScreen>
             }
 
             Widget letterCard = Builder(
+              key: _messageContentKeys.putIfAbsent(
+                message.id,
+                () => GlobalKey(debugLabel: 'message-content-${message.id}'),
+              ),
               builder: (cardContext) => buildLetterCard(
                 onLongPress: canOpenContextOverlay
                     ? () => _showMessageContextOverlay(
@@ -1392,12 +1413,11 @@ class _ConversationScreenState extends State<ConversationScreen>
 
             // 156 QW-11 (lists-scrolling-4): entrance-animate ONLY a genuinely
             // new (appended) message, not every row on the initial paint.
-            final shouldAnimate = isNew;
-            Widget bubble = shouldAnimate
+            Widget bubble = isNew
                 ? _AnimatedLetterCard(
                     key: ValueKey(message.id),
                     delayMs: 0,
-                    isNewMessage: isNew,
+                    isNewMessage: true,
                     child: letterCard,
                   )
                 : letterCard;
@@ -2045,19 +2065,27 @@ class _ConversationScreenState extends State<ConversationScreen>
           currentParentDecision: currentParentDecision,
         ),
     ];
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => FullScreenTypedMediaViewer(
-          items: items,
-          initialIndex: initialIndex,
-          onAction: (item, action) => _handleViewerAction(item, action),
-          resumeStore: widget.mediaViewerResumeStore,
-          pictureInPictureControllerFactory:
-              widget.pictureInPictureControllerFactory,
-          loadPictureInPictureAuthorization:
-              widget.loadPictureInPictureAuthorization,
-        ),
-      ),
+    final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.direct,
+      value: widget.contactPeerId,
+    );
+    Widget viewerBuilder(BuildContext _) => FullScreenTypedMediaViewer(
+      items: items,
+      initialIndex: initialIndex,
+      onAction: (item, action) => _handleViewerAction(item, action),
+      resumeStore: widget.mediaViewerResumeStore,
+      pictureInPictureControllerFactory:
+          widget.pictureInPictureControllerFactory,
+      loadPictureInPictureAuthorization:
+          widget.loadPictureInPictureAuthorization,
+    );
+    Navigator.of(context).push<void>(
+      visibilityIdentity == null
+          ? MaterialPageRoute<void>(builder: viewerBuilder)
+          : AppVisibilityInheritedConversationRoute<void>(
+              identity: visibilityIdentity,
+              builder: viewerBuilder,
+            ),
     );
   }
 
@@ -2586,9 +2614,13 @@ class _AnimatedLetterCardState extends State<_AnimatedLetterCard>
     _translateY = Tween<double>(begin: translateStart, end: 0).animate(curve);
     _scale = Tween<double>(begin: scaleStart, end: 1).animate(curve);
 
-    Future.delayed(Duration(milliseconds: widget.delayMs), () {
-      if (mounted) _controller.forward();
-    });
+    if (widget.isNewMessage) {
+      Future.delayed(Duration(milliseconds: widget.delayMs), () {
+        if (mounted) _controller.forward();
+      });
+    } else {
+      _controller.value = 1;
+    }
   }
 
   @override

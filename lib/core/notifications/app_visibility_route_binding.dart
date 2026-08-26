@@ -5,12 +5,34 @@ import 'package:flutter/material.dart';
 import 'app_visibility_authority.dart';
 import 'app_visibility_snapshot.dart';
 
+/// A route that remains inside the exact conversation it covers.
+///
+/// The root [AppVisibilityRouteObserver] honors this marker only when the
+/// immediately covered route is already registered for [identity]. A caller
+/// therefore cannot manufacture chat visibility from settings (or inherit a
+/// different chat) merely by pushing this route. Media viewers opened by a
+/// conversation use this route so their transition never publishes an
+/// intermediate `null` visibility value.
+final class AppVisibilityInheritedConversationRoute<T>
+    extends MaterialPageRoute<T> {
+  AppVisibilityInheritedConversationRoute({
+    required this.identity,
+    required super.builder,
+    super.settings,
+    super.maintainState,
+    super.fullscreenDialog,
+  });
+
+  final AppVisibilityConversationIdentity identity;
+}
+
 /// The incumbent root observer, generalized with route removal/replacement
 /// topology that Flutter's base [RouteObserver] does not deliver to RouteAware.
 /// It remains one NavigatorObserver and preserves ordinary RouteAware behavior.
 final class AppVisibilityRouteObserver extends RouteObserver<ModalRoute<void>> {
   final Map<ModalRoute<void>, _VisibilityRouteRegistration> _registrations =
       <ModalRoute<void>, _VisibilityRouteRegistration>{};
+  final Set<ModalRoute<void>> _inheritedRoutes = <ModalRoute<void>>{};
   ModalRoute<void>? _topRoute;
 
   void registerVisibilityRoute({
@@ -19,6 +41,7 @@ final class AppVisibilityRouteObserver extends RouteObserver<ModalRoute<void>> {
     required AppVisibilityRouteRegistry registry,
     required AppVisibilityConversationIdentity identity,
   }) {
+    _inheritedRoutes.remove(route);
     _registrations[route] = _VisibilityRouteRegistration(
       owner: owner,
       registry: registry,
@@ -44,34 +67,89 @@ final class AppVisibilityRouteObserver extends RouteObserver<ModalRoute<void>> {
 
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    final modalRoute = _modalRoute(route);
+    _registerInheritedRoute(
+      route: modalRoute,
+      coveredRoute: _modalRoute(previousRoute),
+      allowUnmarkedPopup: true,
+    );
     super.didPush(route, previousRoute);
-    _changeTop(_modalRoute(route));
+    _changeTop(modalRoute);
   }
 
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
     super.didPop(route, previousRoute);
     if (identical(_topRoute, route)) _changeTop(_modalRoute(previousRoute));
+    _removeInheritedRoute(_modalRoute(route));
   }
 
   @override
   void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
     super.didRemove(route, previousRoute);
     if (identical(_topRoute, route)) _changeTop(_modalRoute(previousRoute));
+    _removeInheritedRoute(_modalRoute(route));
   }
 
   @override
   void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    final newModalRoute = _modalRoute(newRoute);
+    final oldModalRoute = _modalRoute(oldRoute);
+    _registerInheritedRoute(route: newModalRoute, coveredRoute: oldModalRoute);
     super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
-    if (identical(_topRoute, oldRoute)) _changeTop(_modalRoute(newRoute));
+    if (identical(_topRoute, oldRoute)) _changeTop(newModalRoute);
+    _removeInheritedRoute(oldModalRoute);
+  }
+
+  void _registerInheritedRoute({
+    required ModalRoute<void>? route,
+    required ModalRoute<void>? coveredRoute,
+    bool allowUnmarkedPopup = false,
+  }) {
+    if (route == null) return;
+    final covered = _registrations[coveredRoute];
+    if (covered == null) return;
+
+    if (route is AppVisibilityInheritedConversationRoute) {
+      if (covered.identity != route.identity) return;
+    } else if (!allowUnmarkedPopup || route is! PopupRoute) {
+      return;
+    }
+
+    // Popup routes are transient overlays on the immediately covered route.
+    // Only didPush enables this implicit inheritance; replacement stays
+    // fail-closed unless it carries the exact explicit marker above.
+    _registrations[route] = _VisibilityRouteRegistration(
+      owner: route,
+      registry: covered.registry,
+      identity: covered.identity,
+    );
+    _inheritedRoutes.add(route);
+  }
+
+  void _removeInheritedRoute(ModalRoute<void>? route) {
+    if (route == null || !_inheritedRoutes.remove(route)) return;
+    _registrations.remove(route);
   }
 
   void _changeTop(ModalRoute<void>? nextRoute) {
     if (identical(_topRoute, nextRoute)) return;
     final previous = _registrations[_topRoute];
+    final next = _registrations[nextRoute];
+    if (previous != null &&
+        next != null &&
+        identical(previous.registry, next.registry) &&
+        previous.identity == next.identity &&
+        next.registry._handoffTop(
+          fromOwner: previous.owner,
+          toOwner: next.owner,
+          identity: next.identity,
+        )) {
+      _topRoute = nextRoute;
+      return;
+    }
     if (previous != null) previous.registry._leftTop(previous.owner);
     _topRoute = nextRoute;
-    final next = _registrations[nextRoute];
     if (next != null) next.registry._becameTop(next.owner, next.identity);
   }
 
@@ -180,6 +258,20 @@ final class AppVisibilityRouteRegistry implements AppVisibilityTopRouteReader {
     _topOwner = null;
     _topConversation = null;
     _track(_authority.clearVisibleConversation());
+  }
+
+  bool _handoffTop({
+    required Object fromOwner,
+    required Object toOwner,
+    required AppVisibilityConversationIdentity identity,
+  }) {
+    if (_disposed ||
+        !identical(_topOwner, fromOwner) ||
+        _topConversation != identity) {
+      return false;
+    }
+    _topOwner = toOwner;
+    return true;
   }
 
   void _track(Future<bool> projection) {
@@ -298,16 +390,28 @@ final class _AppVisibilityRouteBindingState
   }
 
   @override
-  void didPush() => widget.registry._becameTop(this, widget.identity);
+  void didPush() {
+    if (_visibilityObserver == null) {
+      widget.registry._becameTop(this, widget.identity);
+    }
+  }
 
   @override
-  void didPopNext() => widget.registry._becameTop(this, widget.identity);
+  void didPopNext() {
+    if (_visibilityObserver == null) {
+      widget.registry._becameTop(this, widget.identity);
+    }
+  }
 
   @override
-  void didPushNext() => widget.registry._leftTop(this);
+  void didPushNext() {
+    if (_visibilityObserver == null) widget.registry._leftTop(this);
+  }
 
   @override
-  void didPop() => widget.registry._leftTop(this);
+  void didPop() {
+    if (_visibilityObserver == null) widget.registry._leftTop(this);
+  }
 
   @override
   void dispose() {

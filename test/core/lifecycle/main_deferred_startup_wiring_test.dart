@@ -124,9 +124,9 @@ void main() {
         'direct_media_blob_local_cleanup':
             'cleanupDirectMediaBlobCustodyLocally',
         'group_media_blob_local_cleanup': 'cleanupGroupMediaBlobCustodyLocally',
-        'group_context_backfill': 'await groupContextBackfill;',
+        'group_context_backfill': '() => groupContextBackfill',
         'group_reaction_comparand_backfill':
-            'await groupReactionComparandBackfill;',
+            '() => groupReactionComparandBackfill',
         'firebase_ready': 'await ensureFirebaseReady();',
         'bridge_initialize': 'await bridge.initialize();',
         'notification_service_initialize':
@@ -182,8 +182,12 @@ void main() {
       );
 
       for (final entry in asyncSteps.entries) {
+        final checkpointInvocationPattern = RegExp(
+          'liveServiceStartupSteps\\.runAsync\\(\\s*'
+          "'${RegExp.escape(entry.key)}'",
+        );
         expect(
-          "'${entry.key}'".allMatches(startupBody),
+          checkpointInvocationPattern.allMatches(startupBody),
           hasLength(1),
           reason: '${entry.key} must have one stable checkpoint ID',
         );

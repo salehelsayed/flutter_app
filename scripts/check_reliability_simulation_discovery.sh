@@ -197,6 +197,10 @@ classify_path() {
       record "ignored" "$path" "ignored" "manual Android received-video Picture-in-Picture proof outside default reliability-sim"
       return
       ;;
+    integration_test/media_notification_playback_continuity_test.dart)
+      record "ignored" "$path" "ignored" "physical Android media-notification playback audio-focus proof outside default reliability-sim"
+      return
+      ;;
     integration_test/received_media_native_egress_proof_test.dart)
       record "ignored" "$path" "ignored" "manual Android/iOS received-media native egress proof outside default reliability-sim"
       return

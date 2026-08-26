@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/share/application/direct_media_batch_forward_delivery_coordinator.dart';
@@ -277,16 +279,31 @@ class _DirectSharedMediaLibraryScreenState
       }
     }
     if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _SharedMediaViewerHost(
-          screen: widget,
-          controller: _controller,
-          initialAttachmentId: attachmentId,
-          pictureInPictureByAttachmentId: pictureInPictureByAttachmentId,
-          confirmDelete: _confirmDeleteForMe,
-        ),
-      ),
+    final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.direct,
+      value: widget.contactPeerId,
+    );
+    Navigator.of(context).push<void>(
+      visibilityIdentity == null
+          ? MaterialPageRoute<void>(
+              builder: (_) => _SharedMediaViewerHost(
+                screen: widget,
+                controller: _controller,
+                initialAttachmentId: attachmentId,
+                pictureInPictureByAttachmentId: pictureInPictureByAttachmentId,
+                confirmDelete: _confirmDeleteForMe,
+              ),
+            )
+          : AppVisibilityInheritedConversationRoute<void>(
+              identity: visibilityIdentity,
+              builder: (_) => _SharedMediaViewerHost(
+                screen: widget,
+                controller: _controller,
+                initialAttachmentId: attachmentId,
+                pictureInPictureByAttachmentId: pictureInPictureByAttachmentId,
+                confirmDelete: _confirmDeleteForMe,
+              ),
+            ),
     );
   }
 

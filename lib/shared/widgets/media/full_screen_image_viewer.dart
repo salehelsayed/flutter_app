@@ -5,6 +5,8 @@ import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:video_player/video_player.dart';
 
+import 'media_playback_adapter.dart';
+
 typedef FullScreenVideoPageBuilder =
     Widget Function(String path, bool isActive);
 
@@ -21,6 +23,7 @@ class FullScreenImageViewer extends StatefulWidget {
   final List<String> allPaths;
   final int initialIndex;
   final FullScreenVideoPageBuilder? videoPageBuilder;
+  final VideoPlayerControllerFactory? videoPlayerControllerFactory;
 
   const FullScreenImageViewer({
     super.key,
@@ -28,6 +31,7 @@ class FullScreenImageViewer extends StatefulWidget {
     this.allPaths = const [],
     this.initialIndex = 0,
     this.videoPageBuilder,
+    this.videoPlayerControllerFactory,
   });
 
   @override
@@ -93,6 +97,9 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
               key: ValueKey(path),
               path: path,
               isActive: index == _currentPage,
+              controllerFactory:
+                  widget.videoPlayerControllerFactory ??
+                  _defaultLegacyVideoPlayerControllerFactory,
             );
           }
 
@@ -115,14 +122,21 @@ class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
   }
 }
 
+VideoPlayerController _defaultLegacyVideoPlayerControllerFactory(
+  File file,
+  VideoPlayerOptions options,
+) => VideoPlayerController.file(file, videoPlayerOptions: options);
+
 class _FullScreenVideoPage extends StatefulWidget {
   final String path;
   final bool isActive;
+  final VideoPlayerControllerFactory controllerFactory;
 
   const _FullScreenVideoPage({
     super.key,
     required this.path,
     required this.isActive,
+    required this.controllerFactory,
   });
 
   @override
@@ -168,7 +182,10 @@ class _FullScreenVideoPageState extends State<_FullScreenVideoPage> {
 
   void _createController() {
     _initializationError = null;
-    final controller = VideoPlayerController.file(File(widget.path));
+    final controller = widget.controllerFactory(
+      File(widget.path),
+      userInitiatedMediaVideoPlayerOptions(),
+    );
     _controller = controller;
     _initializeFuture = controller
         .initialize()

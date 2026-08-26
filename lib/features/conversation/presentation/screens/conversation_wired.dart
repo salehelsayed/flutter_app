@@ -3288,51 +3288,59 @@ class _ConversationWiredState extends State<ConversationWired>
     DirectPrivateMediaSettleResult? settled;
     var routePushFailed = false;
     try {
-      privateRoute = MaterialPageRoute<void>(
-        builder: (_) => DirectPrivateMediaViewer(
-          grant: grant,
-          controller: controller,
-          onSafeAction: (action) async {
-            switch (action) {
-              case DirectPrivateMediaAction.reply:
-                _onQuoteReply(identity.messageId);
-                return;
-              case DirectPrivateMediaAction.info:
-                if (!mounted) return;
-                final l10n = AppLocalizations.of(context)!;
-                await showDialog<void>(
-                  context: context,
-                  builder: (dialogContext) => AlertDialog(
-                    title: Text(l10n.private_media_notification_body),
-                    content: Text(l10n.private_media_notification_body),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(dialogContext).pop(),
-                        child: Text(
-                          MaterialLocalizations.of(context).closeButtonLabel,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-                return;
-              case DirectPrivateMediaAction.deleteForMe:
-                await _onDeleteMediaMessage(identity.messageId);
-                return;
-              case DirectPrivateMediaAction.openInApp:
-              case DirectPrivateMediaAction.explicitDownload:
-              case DirectPrivateMediaAction.saveToPhotos:
-              case DirectPrivateMediaAction.saveToFiles:
-              case DirectPrivateMediaAction.externalShare:
-              case DirectPrivateMediaAction.internalForward:
-              case DirectPrivateMediaAction.bookmark:
-              case DirectPrivateMediaAction.sharedMedia:
-              case DirectPrivateMediaAction.pictureInPicture:
-                return;
-            }
-          },
-        ),
+      final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.direct,
+        value: _contact.peerId,
       );
+      Widget viewerBuilder(BuildContext _) => DirectPrivateMediaViewer(
+        grant: grant,
+        controller: controller,
+        onSafeAction: (action) async {
+          switch (action) {
+            case DirectPrivateMediaAction.reply:
+              _onQuoteReply(identity.messageId);
+              return;
+            case DirectPrivateMediaAction.info:
+              if (!mounted) return;
+              final l10n = AppLocalizations.of(context)!;
+              await showDialog<void>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  title: Text(l10n.private_media_notification_body),
+                  content: Text(l10n.private_media_notification_body),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: Text(
+                        MaterialLocalizations.of(context).closeButtonLabel,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+              return;
+            case DirectPrivateMediaAction.deleteForMe:
+              await _onDeleteMediaMessage(identity.messageId);
+              return;
+            case DirectPrivateMediaAction.openInApp:
+            case DirectPrivateMediaAction.explicitDownload:
+            case DirectPrivateMediaAction.saveToPhotos:
+            case DirectPrivateMediaAction.saveToFiles:
+            case DirectPrivateMediaAction.externalShare:
+            case DirectPrivateMediaAction.internalForward:
+            case DirectPrivateMediaAction.bookmark:
+            case DirectPrivateMediaAction.sharedMedia:
+            case DirectPrivateMediaAction.pictureInPicture:
+              return;
+          }
+        },
+      );
+      privateRoute = visibilityIdentity == null
+          ? MaterialPageRoute<void>(builder: viewerBuilder)
+          : AppVisibilityInheritedConversationRoute<void>(
+              identity: visibilityIdentity,
+              builder: viewerBuilder,
+            );
       await Navigator.of(context).push<void>(privateRoute);
       await privateRoute.completed;
     } catch (_) {
@@ -7066,7 +7074,13 @@ class _ConversationWiredState extends State<ConversationWired>
     );
     final result = await Navigator.of(context)
         .push<DirectSharedMediaLibraryResult>(
-          MaterialPageRoute(
+          AppVisibilityInheritedConversationRoute<
+            DirectSharedMediaLibraryResult
+          >(
+            identity: AppVisibilityConversationIdentity.tryParse(
+              lane: AppVisibilityConversationLane.direct,
+              value: _contact.peerId,
+            )!,
             builder: (_) => DirectSharedMediaLibraryScreen(
               contactPeerId: _contact.peerId,
               contactUsername: _contact.username,

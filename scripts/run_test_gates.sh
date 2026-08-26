@@ -1562,6 +1562,11 @@ classify_path() {
   # them as an explicit manual category so the completeness gate stops reporting
   # them as un-classified (they are intentionally outside the automated host
   # sweep, not silently dropped).
+  if [[ "$path" == "integration_test/media_notification_playback_continuity_test.dart" ]]; then
+    printf 'manual reliability-sim device-proof suite'
+    return 0
+  fi
+
   if [[ "$path" =~ ^integration_test/.*_proof_test\.dart$ ]]; then
     printf 'manual device-proof suite'
     return 0

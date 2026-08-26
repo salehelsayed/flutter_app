@@ -2,7 +2,10 @@ package com.mknoon.app
 
 import android.app.Activity
 import android.app.PictureInPictureParams
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Color
 import android.media.AudioAttributes
@@ -111,11 +114,71 @@ internal class PictureInPictureExitClassifier {
     }
 }
 
+internal enum class PictureInPictureAudioFocusAction {
+    NONE,
+    PAUSE,
+    RESUME,
+    STOP,
+}
+
+/**
+ * Preserves playback ownership across reversible audio-focus changes.
+ *
+ * Duckable focus leaves playback state unchanged. A plain transient loss
+ * pauses only media that was actively playing and owns exactly one resume on
+ * gain. A noisy output change pauses active media and always clears that
+ * transient resume ownership so unplugging cannot later restart on a speaker.
+ * Already-paused or completed media never restarts, while permanent focus loss
+ * remains terminal.
+ */
+internal class PictureInPictureAudioFocusPolicy {
+    private var resumeAfterTransientLoss = false
+
+    fun onAudioFocusChange(change: Int, isPlaying: Boolean): PictureInPictureAudioFocusAction =
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                resumeAfterTransientLoss = false
+                PictureInPictureAudioFocusAction.STOP
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                if (isPlaying) {
+                    resumeAfterTransientLoss = true
+                    PictureInPictureAudioFocusAction.PAUSE
+                } else {
+                    PictureInPictureAudioFocusAction.NONE
+                }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                if (resumeAfterTransientLoss) {
+                    resumeAfterTransientLoss = false
+                    PictureInPictureAudioFocusAction.RESUME
+                } else {
+                    PictureInPictureAudioFocusAction.NONE
+                }
+            }
+            else -> PictureInPictureAudioFocusAction.NONE
+        }
+
+    fun onAudioBecomingNoisy(isPlaying: Boolean): PictureInPictureAudioFocusAction {
+        resumeAfterTransientLoss = false
+        return if (isPlaying) {
+            PictureInPictureAudioFocusAction.PAUSE
+        } else {
+            PictureInPictureAudioFocusAction.NONE
+        }
+    }
+
+    fun reset() {
+        resumeAfterTransientLoss = false
+    }
+}
+
 /** Dedicated video-only Android PiP owner. It never hosts Flutter or chat UI. */
 class ReceivedVideoPictureInPictureActivity : Activity() {
     private val registry = PictureInPictureProcessRegistry.registry
     private val mainHandler = Handler(Looper.getMainLooper())
     private val exitClassifier = PictureInPictureExitClassifier()
+    private val audioFocusPolicy = PictureInPictureAudioFocusPolicy()
     private val audioManager by lazy {
         getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
@@ -124,6 +187,7 @@ class ReceivedVideoPictureInPictureActivity : Activity() {
     private var videoView: VideoView? = null
     private var mediaPlayer: MediaPlayer? = null
     private var audioFocusRequest: AudioFocusRequest? = null
+    private var audioBecomingNoisyReceiverRegistered = false
     private var prepared = false
     private var activated = false
     private var enteredPictureInPicture = false
@@ -153,11 +217,23 @@ class ReceivedVideoPictureInPictureActivity : Activity() {
     }
 
     private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        if (
-            change == AudioManager.AUDIOFOCUS_LOSS ||
-            change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-        ) {
-            stopNativePlayback("interrupted")
+        when (audioFocusPolicy.onAudioFocusChange(change, safeIsPlaying())) {
+            PictureInPictureAudioFocusAction.NONE -> Unit
+            PictureInPictureAudioFocusAction.PAUSE -> pauseForTransientFocusLoss()
+            PictureInPictureAudioFocusAction.RESUME -> resumeAfterTransientFocusLoss()
+            PictureInPictureAudioFocusAction.STOP -> stopNativePlayback("interrupted")
+        }
+    }
+
+    private val audioBecomingNoisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != AudioManager.ACTION_AUDIO_BECOMING_NOISY) return
+            if (
+                audioFocusPolicy.onAudioBecomingNoisy(isPlayingForNoisyOutput()) ==
+                PictureInPictureAudioFocusAction.PAUSE
+            ) {
+                pauseForNoisyOutputChange()
+            }
         }
     }
 
@@ -263,6 +339,14 @@ class ReceivedVideoPictureInPictureActivity : Activity() {
         val current = request ?: return false
         if (terminating || !prepared || activated) return false
         if (!requestAudioFocus()) {
+            stopWithTerminal(
+                current = current,
+                state = "stopped",
+                reason = "interrupted",
+            )
+            return false
+        }
+        if (!registerAudioBecomingNoisyReceiver()) {
             stopWithTerminal(
                 current = current,
                 state = "stopped",
@@ -424,6 +508,7 @@ class ReceivedVideoPictureInPictureActivity : Activity() {
             .build()
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(attributes)
+            .setWillPauseWhenDucked(false)
             .setOnAudioFocusChangeListener(audioFocusListener, mainHandler)
             .build()
         audioFocusRequest = request
@@ -433,6 +518,8 @@ class ReceivedVideoPictureInPictureActivity : Activity() {
     private fun releasePlayback() {
         if (playbackReleased) return
         playbackReleased = true
+        unregisterAudioBecomingNoisyReceiver()
+        audioFocusPolicy.reset()
         try {
             videoView?.stopPlayback()
         } catch (_: RuntimeException) {
@@ -450,10 +537,80 @@ class ReceivedVideoPictureInPictureActivity : Activity() {
         videoView = null
     }
 
+    private fun registerAudioBecomingNoisyReceiver(): Boolean {
+        if (audioBecomingNoisyReceiverRegistered) return true
+        return try {
+            val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            // This is a system-only broadcast and is exempt from Android 14's
+            // runtime receiver export-flag requirement.
+            @Suppress("DEPRECATION", "UnspecifiedRegisterReceiverFlag")
+            registerReceiver(audioBecomingNoisyReceiver, filter)
+            audioBecomingNoisyReceiverRegistered = true
+            true
+        } catch (_: RuntimeException) {
+            false
+        }
+    }
+
+    private fun unregisterAudioBecomingNoisyReceiver() {
+        if (!audioBecomingNoisyReceiverRegistered) return
+        audioBecomingNoisyReceiverRegistered = false
+        try {
+            unregisterReceiver(audioBecomingNoisyReceiver)
+        } catch (_: RuntimeException) {
+            // Playback ownership is already fenced; cleanup is best-effort.
+        }
+    }
+
+    private fun pauseForTransientFocusLoss() {
+        if (terminating) return
+        try {
+            videoView?.pause()
+        } catch (_: RuntimeException) {
+            // A reversible focus callback must not terminate owned playback.
+        }
+    }
+
+    private fun pauseForNoisyOutputChange() {
+        if (terminating) return
+        try {
+            videoView?.pause()
+        } catch (_: RuntimeException) {
+            // Output is about to move to a speaker. Fail terminally if a safe
+            // pause cannot be confirmed instead of allowing audio to spill.
+            stopNativePlayback("interrupted")
+        }
+    }
+
+    private fun resumeAfterTransientFocusLoss() {
+        if (terminating || !activated) return
+        try {
+            videoView?.start()
+        } catch (_: RuntimeException) {
+            stopNativePlayback("playback_error")
+        }
+    }
+
     private fun safeCurrentPosition(): Int = try {
         videoView?.currentPosition?.coerceAtLeast(0) ?: 0
     } catch (_: RuntimeException) {
         0
+    }
+
+    private fun safeIsPlaying(): Boolean = try {
+        videoView?.isPlaying == true
+    } catch (_: RuntimeException) {
+        false
+    }
+
+    private fun isPlayingForNoisyOutput(): Boolean {
+        val video = videoView ?: return false
+        return try {
+            video.isPlaying
+        } catch (_: RuntimeException) {
+            // On an output-unplug boundary, uncertainty must fail toward pause.
+            true
+        }
     }
 
     private fun safeAspectRatio(width: Int, height: Int): Rational {

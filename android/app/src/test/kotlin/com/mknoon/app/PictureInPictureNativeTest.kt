@@ -3,6 +3,7 @@ package com.mknoon.app
 import android.app.Activity
 import android.content.Intent
 import android.media.AudioManager
+import android.widget.VideoView
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -251,35 +252,178 @@ class PictureInPictureNativeTest {
     }
 
     @Test
-    fun `audio focus loss and transient loss each settle interrupted exactly once`() {
-        for (
-            focusChange in listOf(
-                AudioManager.AUDIOFOCUS_LOSS,
+    fun `transient focus loss and gain preserve playback ownership while permanent loss settles once`() {
+        val events = mutableListOf<Map<*, *>>()
+        ShadowLog.clear()
+        val (activity, listener) = focusActivity(events)
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+
+        assertTrue(PictureInPictureProcessRegistry.registry.snapshot().active)
+        assertTrue(events.isEmpty())
+        assertFalse(activity.isFinishing)
+        assertTrue(
+            ShadowLog.getLogsForTag("MknoonPiP")
+                .none { it.msg.startsWith("[MKNOON_PIP] TERMINAL") },
+        )
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+
+        assertEquals(1, events.size)
+        assertEquals("stopped", events.single()["state"])
+        assertEquals("interrupted", events.single()["reason"])
+        assertFalse(PictureInPictureProcessRegistry.registry.snapshot().active)
+        val terminals = ShadowLog.getLogsForTag("MknoonPiP")
+            .map { it.msg }
+            .filter { it.startsWith("[MKNOON_PIP] TERMINAL") }
+        assertEquals(
+            listOf(
+                "[MKNOON_PIP] TERMINAL state=stopped reason=interrupted",
+            ),
+            terminals,
+        )
+        assertTrue(activity.isFinishing)
+    }
+
+    @Test
+    fun `focus policy pauses playing transient resumes once and never restarts paused media`() {
+        val policy = PictureInPictureAudioFocusPolicy()
+
+        assertEquals(
+            PictureInPictureAudioFocusAction.PAUSE,
+            policy.onAudioFocusChange(
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-            )
-        ) {
-            val events = mutableListOf<Map<*, *>>()
-            ShadowLog.clear()
-            val (activity, listener) = focusActivity(events)
+                isPlaying = true,
+            ),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                isPlaying = false,
+            ),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.RESUME,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_GAIN,
+                isPlaying = false,
+            ),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_GAIN,
+                isPlaying = true,
+            ),
+        )
 
-            listener.onAudioFocusChange(focusChange)
-            listener.onAudioFocusChange(focusChange)
+        // Media that was already paused or completed never acquires resume
+        // ownership from a plain transient loss.
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                isPlaying = false,
+            ),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_GAIN,
+                isPlaying = false,
+            ),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
+                isPlaying = true,
+            ),
+        )
 
-            assertEquals(1, events.size)
-            assertEquals("stopped", events.single()["state"])
-            assertEquals("interrupted", events.single()["reason"])
-            assertFalse(PictureInPictureProcessRegistry.registry.snapshot().active)
-            val terminals = ShadowLog.getLogsForTag("MknoonPiP")
-                .map { it.msg }
-                .filter { it.startsWith("[MKNOON_PIP] TERMINAL") }
-            assertEquals(
-                listOf(
-                    "[MKNOON_PIP] TERMINAL state=stopped reason=interrupted",
-                ),
-                terminals,
-            )
-            assertTrue(activity.isFinishing)
-        }
+        // A permanent loss clears a pending transient resume and remains
+        // terminal; a later gain cannot restart playback.
+        assertEquals(
+            PictureInPictureAudioFocusAction.PAUSE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                isPlaying = true,
+            ),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.STOP,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_LOSS,
+                isPlaying = true,
+            ),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_GAIN,
+                isPlaying = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `duckable notification focus never pauses or acquires resume ownership`() {
+        val policy = PictureInPictureAudioFocusPolicy()
+
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
+                isPlaying = true,
+            ),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_GAIN,
+                isPlaying = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `output unplug pauses active playback and clears transient resume ownership`() {
+        val policy = PictureInPictureAudioFocusPolicy()
+
+        assertEquals(
+            PictureInPictureAudioFocusAction.PAUSE,
+            policy.onAudioBecomingNoisy(isPlaying = true),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_GAIN,
+                isPlaying = false,
+            ),
+        )
+
+        assertEquals(
+            PictureInPictureAudioFocusAction.PAUSE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                isPlaying = true,
+            ),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioBecomingNoisy(isPlaying = false),
+        )
+        assertEquals(
+            PictureInPictureAudioFocusAction.NONE,
+            policy.onAudioFocusChange(
+                AudioManager.AUDIOFOCUS_GAIN,
+                isPlaying = false,
+            ),
+        )
     }
 
     @Test
@@ -310,6 +454,58 @@ class PictureInPictureNativeTest {
             ShadowLog.getLogsForTag("MknoonPiP")
                 .count { it.msg.startsWith("[MKNOON_PIP] TERMINAL") },
         )
+    }
+
+    @Test
+    fun `activity focus listener pauses resumes ducks and cannot restart after release`() {
+        val events = mutableListOf<Map<*, *>>()
+        val (activity, listener) = focusActivity(events)
+        val player = ReceivedVideoPictureInPictureActivity::class.java
+            .getDeclaredField("videoView")
+            .apply { isAccessible = true }
+            .get(activity) as? RecordingVideoView
+
+        assertTrue(player != null)
+        val activePlayer = requireNotNull(player)
+        assertTrue(activePlayer.isPlaying)
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertEquals(1, activePlayer.pauseCalls)
+        assertEquals(0, activePlayer.startCalls)
+        assertFalse(activePlayer.isPlaying)
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertEquals(1, activePlayer.pauseCalls)
+        assertEquals(0, activePlayer.startCalls)
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertEquals(1, activePlayer.pauseCalls)
+        assertEquals(1, activePlayer.startCalls)
+        assertTrue(activePlayer.isPlaying)
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertEquals(1, activePlayer.pauseCalls)
+        assertEquals(1, activePlayer.startCalls)
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertEquals(2, activePlayer.pauseCalls)
+        ReceivedVideoPictureInPictureActivity::class.java
+            .getDeclaredMethod("releasePlayback")
+            .apply { isAccessible = true }
+            .invoke(activity)
+        assertEquals(1, activePlayer.stopCalls)
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertEquals(1, activePlayer.startCalls)
+
+        assertTrue(activity.stopNativePlayback("interrupted"))
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertEquals(1, activePlayer.startCalls)
+        assertEquals(1, events.size)
+        assertFalse(PictureInPictureProcessRegistry.registry.snapshot().active)
+        assertTrue(activity.isFinishing)
     }
 
     @Test
@@ -347,6 +543,37 @@ class PictureInPictureNativeTest {
     private fun activity(): Activity =
         Robolectric.buildActivity(Activity::class.java).setup().get()
 
+    private class RecordingVideoView(activity: Activity) : VideoView(activity) {
+        var pauseCalls = 0
+            private set
+        var startCalls = 0
+            private set
+        var stopCalls = 0
+            private set
+        private var playing = false
+
+        fun markPlaying() {
+            playing = true
+        }
+
+        override fun isPlaying(): Boolean = playing
+
+        override fun pause() {
+            pauseCalls += 1
+            playing = false
+        }
+
+        override fun start() {
+            startCalls += 1
+            playing = true
+        }
+
+        override fun stopPlayback() {
+            stopCalls += 1
+            playing = false
+        }
+    }
+
     private fun focusActivity(
         events: MutableList<Map<*, *>>,
     ): Pair<ReceivedVideoPictureInPictureActivity, AudioManager.OnAudioFocusChangeListener> {
@@ -362,6 +589,15 @@ class PictureInPictureNativeTest {
             .getDeclaredField("request")
             .apply { isAccessible = true }
             .set(activity, current)
+        val player = RecordingVideoView(activity).apply { markPlaying() }
+        ReceivedVideoPictureInPictureActivity::class.java
+            .getDeclaredField("videoView")
+            .apply { isAccessible = true }
+            .set(activity, player)
+        ReceivedVideoPictureInPictureActivity::class.java
+            .getDeclaredField("activated")
+            .apply { isAccessible = true }
+            .setBoolean(activity, true)
         val listener = ReceivedVideoPictureInPictureActivity::class.java
             .getDeclaredField("audioFocusListener")
             .apply { isAccessible = true }

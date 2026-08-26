@@ -7,9 +7,379 @@ import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'unmarked dialog and bottom sheet atomically retain their exact covered conversation',
+    (tester) async {
+      final bridge = _RoutePlatformBridge();
+      final authority = AppVisibilityAuthority(platformBridge: bridge);
+      final registry = AppVisibilityRouteRegistry(authority: authority);
+      final observer = AppVisibilityRouteObserver();
+      final navigatorKey = GlobalKey<NavigatorState>();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigatorKey,
+          navigatorObservers: <NavigatorObserver>[observer],
+          builder: (context, child) => DirectPrivateMediaRouteObserverScope(
+            observer: observer,
+            appVisibilityRouteRegistry: registry,
+            child: child!,
+          ),
+          home: const _BoundConversation(
+            lane: AppVisibilityConversationLane.direct,
+            value: 'peer-A',
+            label: 'direct-a',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      unawaited(
+        showDialog<void>(
+          context: navigatorKey.currentContext!,
+          builder: (_) => const AlertDialog(content: Text('chat-dialog')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      expect(registry.currentTopConversation, _directA);
+      expect(await authority.maySuppress(_directA), isTrue);
+      expect(
+        bridge.publishedConversationDigests,
+        isNot(contains(null)),
+        reason: 'the popup handoff must never publish a transient null',
+      );
+
+      navigatorKey.currentState!.pop();
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      unawaited(
+        navigatorKey.currentState!.push<void>(
+          AppVisibilityInheritedConversationRoute<void>(
+            identity: _directA,
+            builder: (_) => const Scaffold(body: Text('inherited-media')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      unawaited(
+        showModalBottomSheet<void>(
+          context: navigatorKey.currentContext!,
+          builder: (_) =>
+              const SizedBox(height: 120, child: Text('chat-bottom-sheet')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      expect(registry.currentTopConversation, _directA);
+      expect(await authority.maySuppress(_directA), isTrue);
+      expect(
+        bridge.publishedConversationDigests,
+        isNot(contains(null)),
+        reason:
+            'a popup over an inherited chat route must retain the same identity atomically',
+      );
+
+      navigatorKey.currentState!.pop();
+      await tester.pumpAndSettle();
+      await registry.settle();
+      expect(registry.currentTopConversation, _directA);
+      expect(bridge.publishedConversationDigests, isNot(contains(null)));
+
+      registry.dispose();
+      authority.dispose();
+    },
+  );
+
+  testWidgets('popup over a non-conversation route remains fail closed', (
+    tester,
+  ) async {
+    final bridge = _RoutePlatformBridge();
+    final authority = AppVisibilityAuthority(platformBridge: bridge);
+    final registry = AppVisibilityRouteRegistry(authority: authority);
+    final observer = AppVisibilityRouteObserver();
+    final navigatorKey = GlobalKey<NavigatorState>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        navigatorObservers: <NavigatorObserver>[observer],
+        builder: (context, child) => DirectPrivateMediaRouteObserverScope(
+          observer: observer,
+          appVisibilityRouteRegistry: registry,
+          child: child!,
+        ),
+        home: const Scaffold(body: Text('settings')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await registry.settle();
+
+    unawaited(
+      showDialog<void>(
+        context: navigatorKey.currentContext!,
+        builder: (_) => const AlertDialog(content: Text('settings-dialog')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await registry.settle();
+
+    expect(registry.currentTopConversation, isNull);
+    expect(await authority.maySuppress(_directA), isFalse);
+    expect(bridge.snapshot.visibleConversationDigest, isNull);
+
+    registry.dispose();
+    authority.dispose();
+  });
+
+  for (final testCase
+      in <({AppVisibilityConversationLane lane, String value, String label})>[
+        (
+          lane: AppVisibilityConversationLane.direct,
+          value: 'peer-A',
+          label: 'direct',
+        ),
+        (
+          lane: AppVisibilityConversationLane.group,
+          value: 'group:team-1',
+          label: 'group',
+        ),
+      ]) {
+    testWidgets(
+      'active ${testCase.label} conversation remains visible while its full-screen media viewer is top',
+      (tester) async {
+        final bridge = _RoutePlatformBridge();
+        final authority = AppVisibilityAuthority(platformBridge: bridge);
+        final registry = AppVisibilityRouteRegistry(authority: authority);
+        final observer = AppVisibilityRouteObserver();
+        final navigatorKey = GlobalKey<NavigatorState>();
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: testCase.lane,
+          value: testCase.value,
+        )!;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorKey: navigatorKey,
+            navigatorObservers: <NavigatorObserver>[observer],
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            builder: (context, child) => DirectPrivateMediaRouteObserverScope(
+              observer: observer,
+              appVisibilityRouteRegistry: registry,
+              child: child!,
+            ),
+            home: _BoundConversation(
+              lane: testCase.lane,
+              value: testCase.value,
+              label: '${testCase.label}-conversation',
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await registry.settle();
+        expect(await authority.maySuppress(identity), isTrue);
+
+        unawaited(
+          navigatorKey.currentState!.push<void>(
+            AppVisibilityInheritedConversationRoute(
+              identity: identity,
+              builder: (_) => const FullScreenTypedMediaViewer(
+                items: <MediaViewerItem>[
+                  MediaViewerItem(
+                    attachmentId: 'attachment-1',
+                    messageId: 'message-1',
+                    kind: MediaViewerKind.image,
+                    mime: 'image/jpeg',
+                    localPath: null,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await registry.settle();
+
+        expect(
+          registry.currentTopConversation,
+          identity,
+          reason:
+              'the media viewer is still part of the conversation notification context',
+        );
+        expect(
+          await authority.maySuppress(identity),
+          isTrue,
+          reason:
+              'a same-chat message must remain in-chat/no-native-notification',
+        );
+        expect(
+          bridge.publishedConversationDigests,
+          isNot(contains(null)),
+          reason:
+              'the route handoff must not create a notification-eligible transition window',
+        );
+
+        navigatorKey.currentState!.pop();
+        await tester.pumpAndSettle();
+        await registry.settle();
+        expect(registry.currentTopConversation, identity);
+        expect(bridge.publishedConversationDigests, isNot(contains(null)));
+
+        registry.dispose();
+        authority.dispose();
+      },
+    );
+  }
+
+  testWidgets(
+    'inherited route cannot manufacture visibility for a different conversation',
+    (tester) async {
+      final bridge = _RoutePlatformBridge();
+      final authority = AppVisibilityAuthority(platformBridge: bridge);
+      final registry = AppVisibilityRouteRegistry(authority: authority);
+      final observer = AppVisibilityRouteObserver();
+      final navigatorKey = GlobalKey<NavigatorState>();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigatorKey,
+          navigatorObservers: <NavigatorObserver>[observer],
+          builder: (context, child) => DirectPrivateMediaRouteObserverScope(
+            observer: observer,
+            appVisibilityRouteRegistry: registry,
+            child: child!,
+          ),
+          home: const _BoundConversation(
+            lane: AppVisibilityConversationLane.direct,
+            value: 'peer-A',
+            label: 'direct-a',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      unawaited(
+        navigatorKey.currentState!.push<void>(
+          AppVisibilityInheritedConversationRoute<void>(
+            identity: _groupB,
+            builder: (_) => const Scaffold(body: Text('wrong-group-media')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      expect(registry.currentTopConversation, isNull);
+      expect(await authority.maySuppress(_directA), isFalse);
+      expect(await authority.maySuppress(_groupB), isFalse);
+      expect(bridge.publishedConversationDigests.last, isNull);
+
+      registry.dispose();
+      authority.dispose();
+    },
+  );
+
+  testWidgets(
+    'inherited replacement is atomic only for the exact covered conversation',
+    (tester) async {
+      final bridge = _RoutePlatformBridge();
+      final authority = AppVisibilityAuthority(platformBridge: bridge);
+      final registry = AppVisibilityRouteRegistry(authority: authority);
+      final observer = AppVisibilityRouteObserver();
+      final navigatorKey = GlobalKey<NavigatorState>();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigatorKey,
+          navigatorObservers: <NavigatorObserver>[observer],
+          builder: (context, child) => DirectPrivateMediaRouteObserverScope(
+            observer: observer,
+            appVisibilityRouteRegistry: registry,
+            child: child!,
+          ),
+          home: const _BoundConversation(
+            lane: AppVisibilityConversationLane.direct,
+            value: 'peer-A',
+            label: 'direct-a',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      unawaited(
+        navigatorKey.currentState!.push<void>(
+          AppVisibilityInheritedConversationRoute<void>(
+            identity: _directA,
+            builder: (_) => const Scaffold(body: Text('direct-media-a')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+      bridge.publishedConversationDigests.clear();
+
+      unawaited(
+        navigatorKey.currentState!.pushReplacement<void, void>(
+          AppVisibilityInheritedConversationRoute<void>(
+            identity: _directA,
+            builder: (_) =>
+                const Scaffold(body: Text('direct-media-a-replacement')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      expect(registry.currentTopConversation, _directA);
+      expect(find.text('direct-media-a-replacement'), findsOneWidget);
+      expect(
+        bridge.publishedConversationDigests,
+        isEmpty,
+        reason: 'an exact replacement must hand off without publishing null',
+      );
+
+      unawaited(
+        navigatorKey.currentState!.pushReplacement<void, void>(
+          AppVisibilityInheritedConversationRoute<void>(
+            identity: _groupB,
+            builder: (_) =>
+                const Scaffold(body: Text('mismatched-group-media')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await registry.settle();
+
+      expect(registry.currentTopConversation, isNull);
+      expect(find.text('mismatched-group-media'), findsOneWidget);
+      expect(
+        bridge.publishedConversationDigests,
+        <String?>[null],
+        reason:
+            'a mismatched replacement must fail closed with one final clear',
+      );
+      expect(bridge.snapshot.visibleConversationDigest, isNull);
+
+      registry.dispose();
+      authority.dispose();
+    },
+  );
+
   testWidgets(
     'TC-371-03 one root route owner clears covered chats and restores only the frontmost conversation',
     (tester) async {
@@ -294,6 +664,7 @@ final class _RoutePlatformBridge implements AppVisibilityPlatformBridge {
   int nowMs = 1001;
   int readSideEffects = 0;
   int notificationCancellationSideEffects = 0;
+  final List<String?> publishedConversationDigests = <String?>[];
 
   void transition(AppVisibilityLifecycle lifecycle) {
     nowMs++;
@@ -321,6 +692,7 @@ final class _RoutePlatformBridge implements AppVisibilityPlatformBridge {
     required String? visibleConversationDigest,
     required int lifecycleGeneration,
   }) async {
+    publishedConversationDigests.add(visibleConversationDigest);
     if (snapshot.lifecycle != AppVisibilityLifecycle.foregroundActive ||
         lifecycleGeneration != snapshot.lifecycleGeneration) {
       return AppVisibilityPlatformWrite(

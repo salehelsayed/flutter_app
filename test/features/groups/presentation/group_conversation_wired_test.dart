@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -22,12 +23,18 @@ import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
@@ -63,6 +70,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/linked_group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_shared_media_library_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
@@ -879,6 +887,87 @@ class CountingMediaAttachmentRepository
   }) async {
     getAttachmentsForMessagesCalls++;
     return super.getAttachmentsForMessages(messageIds, owner: owner);
+  }
+}
+
+class _RouteAwareMediaAttachmentRepository
+    extends CountingMediaAttachmentRepository
+    implements MediaLibraryRepository, MediaLibraryStateRepository {
+  _RouteAwareMediaAttachmentRepository({required this.groupId});
+
+  final String groupId;
+  MediaLibraryEntry? entry;
+
+  @override
+  Future<MediaLibraryPage> getMediaLibraryPage({
+    required MediaLibraryScope scope,
+    MediaLibraryFilter filter = const MediaLibraryFilter(),
+    int limit = 50,
+    String? cursor,
+  }) async {
+    if (scope != MediaLibraryScope.group(groupId)) {
+      throw StateError('unexpected shared-media scope');
+    }
+    if (cursor != null) {
+      return const MediaLibraryPage(entries: [], nextCursor: null);
+    }
+    final current = entry;
+    return MediaLibraryPage(
+      entries: current == null ? const [] : <MediaLibraryEntry>[current],
+      nextCursor: null,
+    );
+  }
+
+  @override
+  Future<void> setBookmarked(String id, {required bool bookmarked}) async {}
+
+  @override
+  Future<void> updatePlaybackPosition(String id, int positionMs) async {}
+}
+
+final class _GroupRoutePlatformBridge implements AppVisibilityPlatformBridge {
+  AppVisibilitySnapshotV1 snapshot = const AppVisibilitySnapshotV1(
+    schemaVersion: appVisibilitySnapshotSchemaVersion,
+    revision: 1,
+    lifecycleGeneration: 1,
+    lifecycle: AppVisibilityLifecycle.foregroundActive,
+    visibleConversationDigest: null,
+    updatedMonotonicMs: 1000,
+    bootSession: 'test:group-route',
+  );
+  int nowMs = 1001;
+  final List<String?> publishedConversationDigests = <String?>[];
+
+  @override
+  Future<AppVisibilityPlatformRead?> readSnapshot() async =>
+      AppVisibilityPlatformRead(
+        snapshot: snapshot,
+        currentMonotonicMs: nowMs,
+        currentBootSession: snapshot.bootSession,
+      );
+
+  @override
+  Future<AppVisibilityPlatformWrite?> publishVisibleConversation({
+    required String? visibleConversationDigest,
+    required int lifecycleGeneration,
+  }) async {
+    publishedConversationDigests.add(visibleConversationDigest);
+    nowMs++;
+    snapshot = AppVisibilitySnapshotV1(
+      schemaVersion: snapshot.schemaVersion,
+      revision: snapshot.revision + 1,
+      lifecycleGeneration: snapshot.lifecycleGeneration,
+      lifecycle: snapshot.lifecycle,
+      visibleConversationDigest: visibleConversationDigest,
+      updatedMonotonicMs: nowMs,
+      bootSession: snapshot.bootSession,
+    );
+    return AppVisibilityPlatformWrite(
+      committed: true,
+      snapshot: snapshot,
+      currentMonotonicMs: nowMs,
+      currentBootSession: snapshot.bootSession,
+    );
   }
 }
 
@@ -1755,11 +1844,9 @@ MediaAttachment successfulGroupUploadFixture({
 /// passing run completes in milliseconds regardless of the number here. The
 /// four voice tests that used a 10s ceiling were the only ones to fail in a
 /// batched `host-all` (four suites in parallel), while their 30s siblings
-/// passed — the work being awaited is a real file copy plus SQLite writes, so
-/// the ceiling was racing host load rather than proving anything. One generous
-/// shared constant keeps the proof event-driven and machine-speed independent.
-const _uploadStartCeiling = Duration(seconds: 60);
-
+/// passed — the work being awaited crosses widget fake-async and real file/DB
+/// work. Tests below pump until their causal event or future settles instead of
+/// racing host load with arbitrary delays or inflated wall-clock ceilings.
 void main() {
   group('GroupConversationWired', () {
     late InMemoryGroupRepository groupRepo;
@@ -1865,6 +1952,8 @@ void main() {
       OpenAnnouncementSenderConversation? openAnnouncementSenderConversation,
       GroupPrivateMediaAvailability privateMediaAvailability =
           productionGroupPrivateMediaAvailability,
+      AppVisibilityRouteObserver? visibilityRouteObserver,
+      AppVisibilityRouteRegistry? visibilityRouteRegistry,
     }) {
       final g = group ?? makeChatGroup();
       final effectiveMsgRepo = messageRepo ?? msgRepo;
@@ -1872,6 +1961,15 @@ void main() {
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
+        navigatorObservers: <NavigatorObserver>[?visibilityRouteObserver],
+        builder:
+            visibilityRouteObserver == null || visibilityRouteRegistry == null
+            ? null
+            : (context, child) => DirectPrivateMediaRouteObserverScope(
+                observer: visibilityRouteObserver,
+                appVisibilityRouteRegistry: visibilityRouteRegistry,
+                child: child!,
+              ),
         home: GroupConversationWired(
           group: g,
           groupRepo: groupRepo,
@@ -4663,6 +4761,9 @@ void main() {
         final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
         final uploadStarted = Completer<void>();
         final uploadGate = Completer<void>();
+        addTearDown(() {
+          if (!uploadGate.isCompleted) uploadGate.complete();
+        });
 
         await tester.pumpWidget(
           buildWidget(
@@ -4725,13 +4826,11 @@ void main() {
         final stopRecording =
             recordingScreen.onRecordStop! as Future<void> Function();
         late Future<void> stopFuture;
-        await tester.runAsync(() async {
-          stopFuture = stopRecording();
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        });
-        await tester.runAsync(() async {
-          await uploadStarted.future.timeout(_uploadStartCeiling);
-        });
+        stopFuture = stopRecording();
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
+        );
         expect(uploadStarted.isCompleted, isTrue);
         await pumpFrames(tester, count: 5);
         await pumpUntil(
@@ -4768,9 +4867,7 @@ void main() {
         );
 
         uploadGate.complete();
-        await tester.runAsync(() async {
-          await stopFuture;
-        });
+        await pumpUntilFuturesComplete(tester, [stopFuture]);
         await pumpFrames(tester, count: 20);
 
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
@@ -6576,13 +6673,9 @@ void main() {
       final stopRecording =
           recordingScreen.onRecordStop! as Future<void> Function();
       late Future<void> stopFuture;
-      await tester.runAsync(() async {
-        stopFuture = stopRecording();
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-      });
-      await tester.runAsync(() async {
-        await uploadStarted.future.timeout(_uploadStartCeiling);
-      });
+      stopFuture = stopRecording();
+      await pumpUntilAsyncWorkSettles(tester, () => uploadStarted.isCompleted);
+      expect(uploadStarted.isCompleted, isTrue);
       final emptyRoster = runGroupMembershipMutationLocked<void>(
         groupId: group.id,
         action: () async {
@@ -9915,6 +10008,214 @@ void main() {
       // GroupInfoScreen should appear (inside GroupInfoWired)
       expect(find.byType(GroupInfoScreen), findsOneWidget);
     });
+
+    testWidgets(
+      'same-group visibility survives info shared media and typed viewer hops atomically',
+      (tester) async {
+        tester.view.physicalSize = const Size(1200, 4000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        const messageId = 'group-route-message';
+        const attachmentId = 'group-route-attachment';
+        final createdAt = DateTime.utc(2026, 8, 26, 10);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: messageId,
+            text: 'route identity image',
+            timestamp: createdAt,
+          ),
+        );
+        final mediaFile = File(
+          '${Directory.systemTemp.createTempSync('group-route-').path}/route.png',
+        )..writeAsBytesSync(_tinyPngBytes);
+        addTearDown(() => mediaFile.parent.deleteSync(recursive: true));
+        final routeMediaRepo = _RouteAwareMediaAttachmentRepository(
+          groupId: group.id,
+        );
+        final attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          localPath: mediaFile.path,
+          downloadStatus: kMediaDownloadStatusDone,
+          createdAt: createdAt.toIso8601String(),
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'a2V5',
+          encryptionNonce: 'bm9uY2U=',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        await routeMediaRepo.saveAttachment(
+          attachment,
+          owner: MediaOwnerLane.group,
+        );
+        routeMediaRepo.entry = MediaLibraryEntry(
+          attachment: attachment.copyWith(ownerLane: MediaOwnerLane.group),
+          parentTimestamp: createdAt.toIso8601String(),
+          parentSenderPeerId: 'peer-alice',
+        );
+
+        final platformBridge = _GroupRoutePlatformBridge();
+        final authority = AppVisibilityAuthority(
+          platformBridge: platformBridge,
+        );
+        final registry = AppVisibilityRouteRegistry(authority: authority);
+        final observer = AppVisibilityRouteObserver();
+        const pictureInPictureEvents = MethodChannel(
+          'mknoon/picture_in_picture/events',
+        );
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              pictureInPictureEvents,
+              (_) async => null,
+            );
+        addTearDown(() {
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(pictureInPictureEvents, null);
+          registry.dispose();
+          authority.dispose();
+        });
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.group,
+          value: 'group:${group.id}',
+        )!;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: routeMediaRepo,
+            visibilityRouteObserver: observer,
+            visibilityRouteRegistry: registry,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        await registry.settle();
+        expect(registry.currentTopConversation, identity);
+        platformBridge.publishedConversationDigests.clear();
+
+        await tester.tap(find.byIcon(Icons.info_outline));
+        await pumpFrames(tester, count: 20);
+        await registry.settle();
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+        expect(registry.currentTopConversation, identity);
+
+        final sharedMediaEntry = find.byKey(
+          const ValueKey('group-shared-media-entry'),
+        );
+        await tester.ensureVisible(sharedMediaEntry);
+        await tester.pump();
+        await tester.tap(sharedMediaEntry);
+        await pumpFrames(tester, count: 20);
+        await registry.settle();
+        expect(find.byType(GroupSharedMediaLibraryScreen), findsOneWidget);
+        expect(registry.currentTopConversation, identity);
+
+        final mediaCell = find.byKey(
+          const ValueKey('media-grid-cell-$messageId-$attachmentId'),
+        );
+        expect(mediaCell, findsOneWidget);
+        await tester.tap(mediaCell);
+        await pumpFrames(tester, count: 20);
+        await registry.settle();
+
+        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        expect(registry.currentTopConversation, identity);
+        expect(await authority.maySuppress(identity), isTrue);
+        expect(
+          platformBridge.publishedConversationDigests,
+          isNot(contains(null)),
+          reason: 'no route hop may create a notification-eligible window',
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)),
+        );
+        await pumpFrames(tester, count: 5);
+      },
+    );
+
+    testWidgets(
+      'invalid group identity opens shared-media viewer fail closed without crashing',
+      (tester) async {
+        final routeMediaRepo = _RouteAwareMediaAttachmentRepository(
+          groupId: 'bad:id',
+        );
+        final mediaFile = File(
+          '${Directory.systemTemp.createTempSync('invalid-group-route-').path}/route.png',
+        )..writeAsBytesSync(_tinyPngBytes);
+        addTearDown(() => mediaFile.parent.deleteSync(recursive: true));
+        final attachment = MediaAttachment(
+          id: 'invalid-route-attachment',
+          messageId: 'invalid-route-message',
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          localPath: mediaFile.path,
+          downloadStatus: kMediaDownloadStatusDone,
+          createdAt: '2026-08-26T10:00:00.000Z',
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'a2V5',
+          encryptionNonce: 'bm9uY2U=',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.group,
+        );
+        routeMediaRepo.entry = MediaLibraryEntry(
+          attachment: attachment,
+          parentTimestamp: '2026-08-26T10:00:00.000Z',
+        );
+        final platformBridge = _GroupRoutePlatformBridge();
+        final authority = AppVisibilityAuthority(
+          platformBridge: platformBridge,
+        );
+        final registry = AppVisibilityRouteRegistry(authority: authority);
+        final observer = AppVisibilityRouteObserver();
+        addTearDown(() {
+          registry.dispose();
+          authority.dispose();
+        });
+
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: <NavigatorObserver>[observer],
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            builder: (context, child) => DirectPrivateMediaRouteObserverScope(
+              observer: observer,
+              appVisibilityRouteRegistry: registry,
+              child: child!,
+            ),
+            home: GroupSharedMediaLibraryScreen(
+              groupId: 'bad:id',
+              libraryRepository: routeMediaRepo,
+              stateRepository: routeMediaRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester, count: 10);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)),
+        );
+        await pumpFrames(tester, count: 5);
+        await tester.tap(
+          find.byKey(
+            const ValueKey(
+              'media-grid-cell-invalid-route-message-invalid-route-attachment',
+            ),
+          ),
+        );
+        await pumpFrames(tester, count: 10);
+        await registry.settle();
+
+        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        expect(registry.currentTopConversation, isNull);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets('returning from group info reloads the latest group name', (
       tester,
@@ -16441,6 +16742,9 @@ void main() {
           ..fakeOutputPath = tempVoice.path;
         final uploadGate = Completer<void>();
         final uploadStarted = Completer<void>();
+        addTearDown(() {
+          if (!uploadGate.isCompleted) uploadGate.complete();
+        });
         String? receivedBlobId;
         String? receivedLocalPath;
         bool? ownedAtFirstDurableVisibility;
@@ -16536,13 +16840,12 @@ void main() {
         final stopRecording =
             recordingScreen.onRecordStop! as Future<void> Function();
         late Future<void> stopFuture;
-        await tester.runAsync(() async {
-          stopFuture = stopRecording();
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        });
-        await tester.runAsync(() async {
-          await uploadStarted.future.timeout(_uploadStartCeiling);
-        });
+        stopFuture = stopRecording();
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
+        );
+        expect(uploadStarted.isCompleted, isTrue);
         await pumpFrames(tester, count: 5);
 
         expect(mediaFileManager.copyCalls, 1);
@@ -16579,9 +16882,7 @@ void main() {
         );
 
         uploadGate.complete();
-        await tester.runAsync(() async {
-          await stopFuture;
-        });
+        await pumpUntilFuturesComplete(tester, [stopFuture]);
         await pumpFrames(tester, count: 20);
         expect(mediaUploadInFlightTracker.inFlightCount, 0);
       },
@@ -16619,6 +16920,9 @@ void main() {
           ..fakeOutputPath = tempVoice.path;
         final uploadGate = Completer<void>();
         final uploadStarted = Completer<void>();
+        addTearDown(() {
+          if (!uploadGate.isCompleted) uploadGate.complete();
+        });
         String? receivedBlobId;
         String? receivedLocalPath;
 
@@ -16677,13 +16981,12 @@ void main() {
         final stopRecording =
             recordingScreen.onRecordStop! as Future<void> Function();
         late Future<void> stopFuture;
-        await tester.runAsync(() async {
-          stopFuture = stopRecording();
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        });
-        await tester.runAsync(() async {
-          await uploadStarted.future.timeout(_uploadStartCeiling);
-        });
+        stopFuture = stopRecording();
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
+        );
+        expect(uploadStarted.isCompleted, isTrue);
         await pumpFrames(tester, count: 5);
 
         expect(mediaFileManager.copyCalls, 1);
@@ -16717,9 +17020,7 @@ void main() {
         );
 
         uploadGate.complete();
-        await tester.runAsync(() async {
-          await stopFuture;
-        });
+        await pumpUntilFuturesComplete(tester, [stopFuture]);
         await pumpFrames(tester, count: 20);
 
         final failedScreen = tester.widget<GroupConversationScreen>(
@@ -17127,8 +17428,12 @@ void main() {
           ..fakeOutputPath = tempVoice.path;
         final uploadGate = Completer<void>();
         final uploadStarted = Completer<void>();
+        addTearDown(() {
+          if (!uploadGate.isCompleted) uploadGate.complete();
+        });
         String? receivedBlobId;
         String? receivedLocalPath;
+        bool? tempSourceExistedAtUpload;
 
         await tester.pumpWidget(
           buildWidget(
@@ -17157,12 +17462,7 @@ void main() {
                   if (!uploadStarted.isCompleted) {
                     uploadStarted.complete();
                   }
-                  expect(
-                    File(tempVoice.path).existsSync(),
-                    isFalse,
-                    reason:
-                        'temp source file should no longer matter after durable copy',
-                  );
+                  tempSourceExistedAtUpload = File(tempVoice.path).existsSync();
                   await uploadGate.future;
                   return MediaAttachment(
                     id: blobId!,
@@ -17208,13 +17508,17 @@ void main() {
         final stopRecording =
             recordingScreen.onRecordStop! as Future<void> Function();
         late Future<void> stopFuture;
-        await tester.runAsync(() async {
-          stopFuture = stopRecording();
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        });
-        await tester.runAsync(() async {
-          await uploadStarted.future.timeout(_uploadStartCeiling);
-        });
+        stopFuture = stopRecording();
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
+        );
+        expect(uploadStarted.isCompleted, isTrue);
+        expect(
+          tempSourceExistedAtUpload,
+          isFalse,
+          reason: 'temp source file should no longer matter after durable copy',
+        );
         await pumpFrames(tester, count: 5);
 
         expect(mediaFileManager.copyCalls, 1);
@@ -17246,9 +17550,7 @@ void main() {
         );
 
         uploadGate.complete();
-        await tester.runAsync(() async {
-          await stopFuture;
-        });
+        await pumpUntilFuturesComplete(tester, [stopFuture]);
         await pumpFrames(tester, count: 20);
 
         final savedMessage = await msgRepo.getLatestMessage(group.id);
@@ -17308,6 +17610,9 @@ void main() {
           ..fakeOutputPath = tempVoice.path;
         final uploadGate = Completer<void>();
         final uploadStarted = Completer<void>();
+        addTearDown(() {
+          if (!uploadGate.isCompleted) uploadGate.complete();
+        });
 
         await tester.pumpWidget(
           buildWidget(
@@ -17368,13 +17673,12 @@ void main() {
         final stopRecording =
             recordingScreen.onRecordStop! as Future<void> Function();
         late Future<void> stopFuture;
-        await tester.runAsync(() async {
-          stopFuture = stopRecording();
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        });
-        await tester.runAsync(() async {
-          await uploadStarted.future.timeout(_uploadStartCeiling);
-        });
+        stopFuture = stopRecording();
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
+        );
+        expect(uploadStarted.isCompleted, isTrue);
         await pumpUntilAsync(tester, () async {
           final messages = await msgRepo.getMessagesPage(group.id);
           return messages.length == 1 && messages.single.status == 'sending';
@@ -17387,10 +17691,8 @@ void main() {
         expect(inFlightMessages, hasLength(1));
         expect(inFlightMessages.single.status, 'sending');
 
-        await tester.runAsync(() async {
-          uploadGate.complete();
-          await stopFuture;
-        });
+        uploadGate.complete();
+        await pumpUntilFuturesComplete(tester, [stopFuture]);
         await pumpFrames(tester, count: 20);
 
         final messages = await msgRepo.getMessagesPage(group.id);
@@ -17610,13 +17912,12 @@ void main() {
         final stopRecording =
             recordingScreen.onRecordStop! as Future<void> Function();
         late Future<void> stopFuture;
-        await tester.runAsync(() async {
-          stopFuture = stopRecording();
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        });
-        await tester.runAsync(() async {
-          await uploadStarted.future.timeout(_uploadStartCeiling);
-        });
+        stopFuture = stopRecording();
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
+        );
+        expect(uploadStarted.isCompleted, isTrue);
         final deleteGroup = runGroupMembershipMutationLocked<void>(
           groupId: missingGroup.id,
           action: () => groupRepo.deleteGroup(missingGroup.id),
@@ -17760,13 +18061,12 @@ void main() {
         final stopRecording =
             recordingScreen.onRecordStop! as Future<void> Function();
         late Future<void> stopFuture;
-        await tester.runAsync(() async {
-          stopFuture = stopRecording();
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        });
-        await tester.runAsync(() async {
-          await uploadStarted.future.timeout(_uploadStartCeiling);
-        });
+        stopFuture = stopRecording();
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => uploadStarted.isCompleted,
+        );
+        expect(uploadStarted.isCompleted, isTrue);
         await pumpFrames(tester, count: 5);
 
         final inFlightMessage = await msgRepo.getLatestMessage(group.id);

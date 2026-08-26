@@ -1226,45 +1226,53 @@ class _LinkedGroupConversationWiredState
         (attachment) => attachment.id == selectedId,
       );
       if (selectedIndex < 0 || displayable.isEmpty || !mounted) return;
+      final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.group,
+        value: 'group:${widget.group.id}',
+      );
+      Widget viewerBuilder(BuildContext _) => FullScreenTypedMediaViewer(
+        items: displayable
+            .map(
+              (attachment) => MediaViewerItem(
+                attachmentId: attachment.id,
+                messageId: message.id,
+                kind: attachment.mediaType == 'video'
+                    ? MediaViewerKind.video
+                    : attachment.mime == 'image/gif'
+                    ? MediaViewerKind.gif
+                    : MediaViewerKind.image,
+                mime: attachment.mime,
+                owner: MediaOwnerLane.group,
+                localPath: attachment.localPath == null
+                    ? null
+                    : MediaFileManager.resolveStoredPathSync(
+                        attachment.localPath!,
+                      ),
+                sizeBytes: attachment.size,
+                width: attachment.width,
+                height: attachment.height,
+                durationMs: attachment.durationMs,
+                caption: message.text.isEmpty ? null : message.text,
+                timestamp: message.timestamp,
+                showMetadataDetails: false,
+                canEnterPictureInPicture: false,
+                protection: const MediaViewerProtection(
+                  isDownloaded: true,
+                  isIntegrityVerified: true,
+                ),
+                capabilities: MediaViewerActionCapabilities.none,
+              ),
+            )
+            .toList(growable: false),
+        initialIndex: selectedIndex,
+      );
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => FullScreenTypedMediaViewer(
-            items: displayable
-                .map(
-                  (attachment) => MediaViewerItem(
-                    attachmentId: attachment.id,
-                    messageId: message.id,
-                    kind: attachment.mediaType == 'video'
-                        ? MediaViewerKind.video
-                        : attachment.mime == 'image/gif'
-                        ? MediaViewerKind.gif
-                        : MediaViewerKind.image,
-                    mime: attachment.mime,
-                    owner: MediaOwnerLane.group,
-                    localPath: attachment.localPath == null
-                        ? null
-                        : MediaFileManager.resolveStoredPathSync(
-                            attachment.localPath!,
-                          ),
-                    sizeBytes: attachment.size,
-                    width: attachment.width,
-                    height: attachment.height,
-                    durationMs: attachment.durationMs,
-                    caption: message.text.isEmpty ? null : message.text,
-                    timestamp: message.timestamp,
-                    showMetadataDetails: false,
-                    canEnterPictureInPicture: false,
-                    protection: const MediaViewerProtection(
-                      isDownloaded: true,
-                      isIntegrityVerified: true,
-                    ),
-                    capabilities: MediaViewerActionCapabilities.none,
-                  ),
-                )
-                .toList(growable: false),
-            initialIndex: selectedIndex,
-          ),
-        ),
+        visibilityIdentity == null
+            ? MaterialPageRoute<void>(builder: viewerBuilder)
+            : AppVisibilityInheritedConversationRoute<void>(
+                identity: visibilityIdentity,
+                builder: viewerBuilder,
+              ),
       );
     }
     await _reload();

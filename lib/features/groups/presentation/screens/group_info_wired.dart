@@ -12,6 +12,8 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -2868,9 +2870,21 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       includeAnnouncements: true,
     );
     if (!mounted || live == null) return;
+    final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.group,
+      value: 'group:${live.id}',
+    );
+    Widget sharedMediaBuilder(BuildContext context) =>
+        routeBuilder(context, live);
     final result = await Navigator.of(context)
         .push<GroupSharedMediaLibraryResult>(
-          MaterialPageRoute(builder: (context) => routeBuilder(context, live)),
+          visibilityIdentity == null
+              ? MaterialPageRoute<GroupSharedMediaLibraryResult>(
+                  builder: sharedMediaBuilder,
+                )
+              : AppVisibilityInheritedConversationRoute<
+                  GroupSharedMediaLibraryResult
+                >(identity: visibilityIdentity, builder: sharedMediaBuilder),
         );
     if (!mounted || result == null) return;
     Navigator.of(context).pop(result);

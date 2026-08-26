@@ -70,6 +70,13 @@ class MainActivityOnNewIntentTest {
             android.content.Context.MODE_PRIVATE,
         ).edit().clear().commit()
         val store = DroppedPushRecoveryStore(activity)
+        // Recovery markers are installation/account-bound. Establish the
+        // production precondition so this test reaches onNewIntent instead of
+        // failing closed while arranging an impossible unbound marker.
+        assertEquals(
+            "on-new-intent-test/account-a",
+            store.setCurrentBinding("on-new-intent-test/account-a").currentBinding,
+        )
         assertEquals(1L, store.recordDeletion())
         val signalled = mutableListOf<Long>()
         val bridge = DroppedPushRecoveryBridge(
