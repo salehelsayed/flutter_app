@@ -641,6 +641,7 @@ void main() {
       addTearDown(() => ledgerDirectory.delete(recursive: true));
       final ledgerStore = LocalNotificationLedgerStore(
         directory: ledgerDirectory,
+        nowUtc: () => DateTime.parse('2026-08-16T12:00:01.000Z').toUtc(),
       );
       expect(
         await ledgerStore.initializeOrRebind(currentOpaqueBinding: _binding),

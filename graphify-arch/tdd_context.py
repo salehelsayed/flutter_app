@@ -942,6 +942,19 @@ def _compact_lines(
             "proof_files": [],
             **scope_route,
         }
+    if confidence == "anchored":
+        lines.append(
+            "Query use: navigation only — verify current source and exact test assertions; "
+            "missing graph evidence does not prove implementation absence."
+        )
+    else:
+        lines.append(
+            "Query use: anchor discovery only — no exact symbol, filename, gate, or node ID matched."
+        )
+        lines.append(
+            "Do not answer implementation, absence, completeness, reliability, or authority "
+            "questions from this output."
+        )
     if not seeds:
         lines.append("No matching graph anchors. Use an exact class, function, or filename.")
         miss_terms, miss_structured = _tokens(question)
@@ -949,6 +962,10 @@ def _compact_lines(
         if suggestions:
             lines.append("Did you mean:")
             lines.extend(suggestions)
+        lines.append(
+            "Required next step: obtain one exact symbol or filename, then query that anchor "
+            "with one specific caller, implementation, test, or gate relationship."
+        )
         return lines, {
             "confidence": "none",
             "sources": 0,
@@ -992,6 +1009,31 @@ def _compact_lines(
             if suggestions:
                 lines.append("Did you mean:")
                 lines.extend(suggestions)
+
+        # Ordinary vocabulary can land on plausible but unrelated nodes.  A
+        # broad result is useful only for choosing an exact refinement anchor;
+        # withholding related files and proof candidates prevents callers from
+        # silently treating ranked graph proximity as an answer.
+        lines.append(
+            "Required next step: choose a semantically relevant exact anchor above and refine "
+            "it with one specific caller, implementation, test, or gate relationship."
+        )
+        lines.append(
+            "If no candidate matches, run one --level component discovery query for the "
+            "subsystem, then anchor on a returned key symbol; do not retry broad code synonyms."
+        )
+        return lines, {
+            "confidence": confidence,
+            "sources": 0,
+            "tests": 0,
+            "seeds": [str(graph.nodes[n].get("label", n)) for n in seeds],
+            "seed_count": len(seeds),
+            "suggestions": len(suggestions),
+            "exact_anchor_count": exact_anchor_count,
+            "selected_files": [],
+            "proof_files": [],
+            **scope_route,
+        }
 
     files, edges = graph.context_files(seeds, terms)
     primary_production = [
@@ -4093,9 +4135,42 @@ def query(
             overlay = load_overlay()
             lines, meta = _compact_lines(graph, overlay, question, profile)
     if lines:
-        lines[0] += f" query_id={query_id}"
+        if meta.get("route") == "document_handoff":
+            answer_scope = "not_queried"
+        elif meta.get("confidence") in {"broad", "none"}:
+            answer_scope = "anchor_discovery_only"
+        else:
+            answer_scope = "navigation_only"
+        meta["answer_scope"] = answer_scope
+        lines[0] += f" answer_scope={answer_scope} query_id={query_id}"
         if meta.get("route") != "document_handoff":
             lines[0] += f" evidence_digest={_context_evidence_digest(meta)}"
+    if (
+        level == "code"
+        and meta.get("route") == "architecture"
+        and meta.get("confidence") in {"broad", "none"}
+    ):
+        if query_stage == "initial":
+            guidance = (
+                "Refine command: python3 graphify-arch/tdd_context.py query "
+                '"<EXACT_SYMBOL_OR_FILENAME> <one specific caller/test/gate relationship>" '
+                f"--profile {profile} --budget {budget} --stage refinement "
+                f"--refines {query_id}"
+            )
+        else:
+            guidance = (
+                "Refinement still has no exact anchor. Stop rephrasing with broad synonyms; "
+                "use a Did-you-mean candidate or targeted symbol/filename search."
+            )
+        insert_at = next(
+            (
+                index + 1
+                for index, line in enumerate(lines)
+                if line.startswith("Required next step:")
+            ),
+            min(3, len(lines)),
+        )
+        lines.insert(insert_at, guidance)
     if meta.get("route") == "full_graph_fallback":
         targets = [str(path) for path in meta.get("fallback_targets", [])]
         if targets:
@@ -4225,7 +4300,13 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("build", help="rebuild the deterministic TDD proof overlay")
     q = sub.add_parser("query", help="render compact architecture context")
-    q.add_argument("question")
+    q.add_argument(
+        "question",
+        help=(
+            "code-index question shaped as '<exact symbol or filename> "
+            "<one specific caller/test/gate relationship>'; not a product-truth question"
+        ),
+    )
     q.add_argument("--profile", choices=("general", "tdd", "review"), default="general")
     q.add_argument(
         "--level",

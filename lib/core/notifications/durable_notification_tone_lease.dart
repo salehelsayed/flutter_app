@@ -346,7 +346,7 @@ class DurableNotificationToneLease {
   DurableNotificationToneLease({
     required this.directory,
     DateTime Function()? now,
-    this.toneWindow = const Duration(seconds: 30),
+    this.toneWindow = const Duration(seconds: 10),
     this.eventTtl = const Duration(hours: 48),
     this.maxEventClaims = 256,
     this.maxToneLeases = 256,

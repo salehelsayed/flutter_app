@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -191,6 +192,74 @@ void main() {
       expect(events.single.event, 'PUSH_FOREGROUND_MESSAGE_ROUTED');
       expect(events.single.details['kind'], 'conversation');
     });
+
+    test(
+      'successful exact 1:1 drain awaits conversation read settlement',
+      () async {
+        final settlementGate = Completer<void>();
+        final trace = <String>[];
+        var completed = false;
+
+        final handling =
+            handleForegroundRemoteMessage(
+              data: newMessageData(senderId: 'peer-visible'),
+              messageId: 'fcm-visible',
+              drainOfflineInbox: () async {
+                fail('the exact full-drain callback must own this path');
+              },
+              drainGroupOfflineInboxForGroup: (_) async {
+                fail('a direct message must not use the group drain');
+              },
+              drainOfflineInboxCompletely: () async {
+                trace.add('drain');
+                return true;
+              },
+              settleForegroundConversationRead: (peerId) async {
+                trace.add('settle:$peerId');
+                await settlementGate.future;
+                trace.add('settled');
+              },
+            ).then((result) {
+              completed = true;
+              return result;
+            });
+
+        await Future<void>.delayed(Duration.zero);
+        expect(trace, <String>['drain', 'settle:peer-visible']);
+        expect(
+          completed,
+          isFalse,
+          reason: 'canonical foreground handling must not outrun badge settle',
+        );
+
+        settlementGate.complete();
+        expect(await handling, ForegroundRemoteMessageResult.drained);
+        expect(trace, <String>['drain', 'settle:peer-visible', 'settled']);
+      },
+    );
+
+    test(
+      'incomplete exact 1:1 drain does not settle a conversation read',
+      () async {
+        var settlements = 0;
+
+        final result = await handleForegroundRemoteMessage(
+          data: newMessageData(senderId: 'peer-visible'),
+          messageId: 'fcm-incomplete-visible',
+          drainOfflineInbox: () async {
+            fail('the exact full-drain callback must own this path');
+          },
+          drainGroupOfflineInboxForGroup: (_) async {},
+          drainOfflineInboxCompletely: () async => false,
+          settleForegroundConversationRead: (_) async {
+            settlements += 1;
+          },
+        );
+
+        expect(result, ForegroundRemoteMessageResult.drainFailed);
+        expect(settlements, 0);
+      },
+    );
 
     test(
       'contact request, intros, and group invite stay on the 1:1 path',

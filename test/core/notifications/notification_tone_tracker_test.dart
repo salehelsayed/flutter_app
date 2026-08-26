@@ -8,10 +8,11 @@ void main() {
 
     setUp(() {
       now = DateTime.utc(2026, 6, 13, 12);
-      tracker = NotificationToneTracker(
-        clock: () => now,
-        window: const Duration(seconds: 30),
-      );
+      tracker = NotificationToneTracker(clock: () => now);
+    });
+
+    test('defaults to a ten-second tone window', () {
+      expect(tracker.window, const Duration(seconds: 10));
     });
 
     test('first message in a quiet conversation plays a tone', () {
@@ -24,24 +25,21 @@ void main() {
       expect(tracker.shouldPlayTone('peer-1'), isFalse);
     });
 
-    test('the first message after the window plays again', () {
+    test('the first message at the window boundary plays again', () {
       expect(tracker.shouldPlayTone('peer-1'), isTrue);
-      now = now.add(const Duration(seconds: 31));
+      now = now.add(const Duration(seconds: 10));
       expect(tracker.shouldPlayTone('peer-1'), isTrue);
     });
 
-    test(
-      'the window is keyed to the last AUDIBLE tone and does not extend on '
-      'silent updates',
-      () {
-        expect(tracker.shouldPlayTone('peer-1'), isTrue); // tone at t=0
-        now = now.add(const Duration(seconds: 20));
-        expect(tracker.shouldPlayTone('peer-1'), isFalse); // silent at t=20
-        // t=31 is >30s since the last TONE (t=0), not since the last call.
-        now = now.add(const Duration(seconds: 11));
-        expect(tracker.shouldPlayTone('peer-1'), isTrue);
-      },
-    );
+    test('the window is keyed to the last AUDIBLE tone and does not extend on '
+        'silent updates', () {
+      expect(tracker.shouldPlayTone('peer-1'), isTrue); // tone at t=0
+      now = now.add(const Duration(seconds: 7));
+      expect(tracker.shouldPlayTone('peer-1'), isFalse); // silent at t=7
+      // t=10 is 10s since the last TONE (t=0), not since the last call.
+      now = now.add(const Duration(seconds: 3));
+      expect(tracker.shouldPlayTone('peer-1'), isTrue);
+    });
 
     test('each conversation gets its own first tone', () {
       expect(tracker.shouldPlayTone('peer-1'), isTrue);
@@ -51,17 +49,14 @@ void main() {
       expect(tracker.shouldPlayTone('peer-2'), isFalse);
     });
 
-    test(
-      'group route variants normalize to the same conversation bucket',
-      () {
-        // First group message via the anchored route plays a tone.
-        expect(tracker.shouldPlayTone('group:g1|message:abc'), isTrue);
-        now = now.add(const Duration(seconds: 5));
-        // A follow-up addressed by the bare group key is silent (same bucket).
-        expect(tracker.shouldPlayTone('group:g1'), isFalse);
-        // And another anchored variant within the window is also silent.
-        expect(tracker.shouldPlayTone('group:g1|message:def'), isFalse);
-      },
-    );
+    test('group route variants normalize to the same conversation bucket', () {
+      // First group message via the anchored route plays a tone.
+      expect(tracker.shouldPlayTone('group:g1|message:abc'), isTrue);
+      now = now.add(const Duration(seconds: 5));
+      // A follow-up addressed by the bare group key is silent (same bucket).
+      expect(tracker.shouldPlayTone('group:g1'), isFalse);
+      // And another anchored variant within the window is also silent.
+      expect(tracker.shouldPlayTone('group:g1|message:def'), isFalse);
+    });
   });
 }

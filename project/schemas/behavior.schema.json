@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mknoon.local/schemas/behavior.schema.json",
+  "title": "Mknoon behavior collection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "featureId", "questions", "behaviors"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "featureId": { "type": "string" },
+    "questions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/question" }
+    },
+    "behaviors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/behavior" }
+    }
+  },
+  "$defs": {
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "prompt"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^OQ-[0-9]{2}$" },
+        "title": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string", "minLength": 1 }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value", "required", "rationale"],
+      "properties": {
+        "kind": { "enum": ["symbol", "file"] },
+        "value": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "rationale": { "type": "string", "minLength": 1 }
+      }
+    },
+    "proofPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredBoundaries", "availabilityBounded"],
+      "properties": {
+        "requiredBoundaries": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "availabilityBounded": { "type": "boolean" }
+      }
+    },
+    "behavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "plainDescription",
+        "requirement",
+        "sourceRefs",
+        "priority",
+        "intentStatus",
+        "implementationAnchors",
+        "proofPolicy"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9-]+$" },
+        "title": { "type": "string", "minLength": 1 },
+        "plainDescription": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "requirement": { "type": "string", "minLength": 1 },
+        "sourceRefs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "priority": { "enum": ["critical", "high", "normal", "low"] },
+        "intentStatus": { "enum": ["active", "provisional", "deprecated"] },
+        "openQuestions": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^OQ-[0-9]{2}$" },
+          "uniqueItems": true
+        },
+        "implementationAnchors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/anchor" },
+          "minItems": 1
+        },
+        "proofPolicy": { "$ref": "#/$defs/proofPolicy" }
+      }
+    }
+  }
+}

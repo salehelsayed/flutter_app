@@ -2434,7 +2434,7 @@ final class AppGroupNotificationToneLeaseStore:
 
   init?(
     appGroupIdentifier: String = mknoonSharedAppGroupIdentifier,
-    leaseSeconds: TimeInterval = 30,
+    leaseSeconds: TimeInterval = 10,
     maxEntries: Int = 256,
     ttlSeconds: TimeInterval = 48 * 60 * 60
   ) {
@@ -2458,7 +2458,7 @@ final class AppGroupNotificationToneLeaseStore:
 
   init(
     directory: URL,
-    leaseSeconds: TimeInterval = 30,
+    leaseSeconds: TimeInterval = 10,
     maxEntries: Int = 256,
     ttlSeconds: TimeInterval = 48 * 60 * 60
   ) {

@@ -606,6 +606,51 @@ void main() {
   );
 
   test(
+    'conversation read retires native pending state before canonical settlement',
+    () async {
+      final events = <String>[];
+      final bridge = _FakeBridge(events: events);
+      final coordinator = IosNotificationRecoveryCoordinator(
+        platformEnabled: true,
+        bridge: bridge,
+        loadActiveAccountPeerId: () async {
+          events.add('account');
+          return 'account-a';
+        },
+        loadCanonicalState: () async {
+          events.add('load');
+          return _emptyState;
+        },
+      );
+
+      await coordinator.settleConversationRead('peer-a');
+      await coordinator.settleConversationRead(' group:group-a ');
+
+      expect(bridge.retired, <String>[
+        'account-a|direct|peer-a',
+        'account-a|group|group-a',
+      ]);
+      expect(events, <String>[
+        'account',
+        'retire',
+        'account',
+        'begin',
+        'load',
+        'account',
+        'commit',
+        'account',
+        'retire',
+        'account',
+        'begin',
+        'load',
+        'account',
+        'commit',
+      ]);
+      expect(bridge.completeness, <bool>[true, true]);
+    },
+  );
+
+  test(
     'TC-395-03 group invite retirement scheduler contains failures and never waits',
     () async {
       final bridge = _FakeBridge(events: <String>[]);
@@ -733,6 +778,7 @@ final class _FakeBridge implements IosNotificationRecoveryBridge {
     required CanonicalNotificationLane lane,
     required String conversationId,
   }) async {
+    events.add('retire');
     retired.add('$accountPeerId|${lane.name}|$conversationId');
   }
 

@@ -17,6 +17,9 @@ const _plan374FixturePath =
     'lib/core/debug/android_headless_recovery_374_fixture.dart';
 const _headlessRecoveryPath =
     'lib/core/notifications/headless_canonical_recovery_entrypoint.dart';
+const _debugE2eCompositionRootPath =
+    'lib/debug/debug_e2e_composition_root.dart';
+const _flutterWidgetsPath = 'package:flutter/widgets.dart';
 
 String _libraryPath(UriBasedDirective directive) {
   final uri = directive.uri.stringValue;
@@ -24,6 +27,7 @@ String _libraryPath(UriBasedDirective directive) {
   if (uri.startsWith('package:flutter_app/')) {
     return 'lib/${uri.substring('package:flutter_app/'.length)}';
   }
+  if (uri.startsWith('package:')) return uri;
   return 'lib/$uri';
 }
 
@@ -54,13 +58,27 @@ void main() {
     expect(body, isA<BlockFunctionBody>());
     final block = (body as BlockFunctionBody).block;
 
-    // This is deliberately the first ownership assertion: at DTR-14 HEAD it
-    // fails against the real 7k-line body, rather than because a future file
-    // is absent.
+    // Keep the supported entrypoint exact: framework initialization and the
+    // iOS receipt acknowledgement must precede the one live delegation.
     expect(
       block.statements,
-      hasLength(1),
-      reason: 'the supported main() must contain only its live delegation',
+      hasLength(3),
+      reason:
+          'the supported main() must contain only its two preflight steps '
+          'and live delegation',
+    );
+    expect(
+      block.statements[0].toSource(),
+      'WidgetsFlutterBinding.ensureInitialized();',
+    );
+    expect(
+      block.statements[1].toSource(),
+      'await DebugE2ECompositionRoot.'
+      'acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured();',
+    );
+    expect(
+      block.statements[2].toSource(),
+      contains('await runApplicationBootstrap('),
     );
     final bodySource = body.toSource();
     expect(_occurrences(bodySource, 'runApplicationBootstrap('), 1);
@@ -110,9 +128,11 @@ void main() {
         _h0ProbePath,
         _plan374FixturePath,
         _headlessRecoveryPath,
+        _debugE2eCompositionRootPath,
+        _flutterWidgetsPath,
       }),
       reason:
-          'main.dart imports only the stable app runner and exact native entrypoint owners',
+          'main.dart imports only the stable app runner and exact entrypoint owners',
     );
     final exports = unit.directives
         .whereType<ExportDirective>()
@@ -122,12 +142,9 @@ void main() {
 
     for (final forbidden in const <String>[
       "package:flutter_app/features/",
-      "package:flutter_app/debug/",
       'Firebase.initializeApp',
       'openEncryptedDatabase(',
       'P2PServiceImpl(',
-      'DebugE2ECompositionRoot',
-      'WidgetsFlutterBinding.ensureInitialized',
       'runApp(',
       'MyApp(',
       'class _MyAppState',

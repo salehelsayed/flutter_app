@@ -94,7 +94,7 @@ void main() {
     gate = RecentRemoteNotificationGate(filePath: '${tempDir.path}/gate.json');
     toneTracker = NotificationToneTracker(
       clock: () => now,
-      window: const Duration(seconds: 30),
+      window: const Duration(seconds: 10),
     );
 
     listener = ChatMessageListener(
@@ -242,7 +242,7 @@ void main() {
       );
       expect(notificationService.shown.last.silent, isFalse);
 
-      // Second message in the same conversation, still inside the 30s window.
+      // Second message in the same conversation, still inside the 10s window.
       // Distinct text so it is a genuinely new message, not an F8 content
       // duplicate (same text+timestamp under a new id is dropped by the tier-1
       // existsByContent dedup) — this exercises the real tone debounce.

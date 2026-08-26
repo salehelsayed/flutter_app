@@ -3,15 +3,17 @@
 **Product Requirements Document for Mknoon**  
 **Version:** 1.2  
 **Date:** 4 August 2026  
-**Status:** Proposed target state; OQ-01 through OQ-05 must be resolved before story creation
+**Status:** Proposed target state; OQ-01 through OQ-04 are adopted, and OQ-05 remains open for mute-related stories
 
 > **Decision summary:** Direct connections and pubsub remain low-latency paths, but the encrypted per-device inbox is the durable source of truth. APNs and FCM carry only a fixed generic wake-up. The recipient device fetches, decrypts, deduplicates, applies local policy and renders the final notification. Notification presentation is decided from the current app lifecycle and visible conversation, never from the transport that delivered the event.
 
-> **Version 1.2 change:** The PRD now distinguishes an OS notification, a locally posted OS notification and a remote push/wake. It also adds a story-creation gate: OQ-01 through OQ-05 must map the current same-chat cue, chat-open cleanup, local read predicate, linked-device read clearing and any existing mute components before the affected clauses become final stories.
+> **Version 1.2 change:** The PRD distinguishes an OS notification, a locally posted OS notification and a remote push/wake. It originally added a story-creation gate for OQ-01 through OQ-05; the dated decision addenda below record which questions have since been adopted.
 
 > **Implementation-economy addendum (8 August 2026):** Close the requirements through the smallest dependency-ordered vertical slices that produce usable behavior. Reuse existing custody, retry, ledger, platform-adapter and test-harness owners by default. A new durable owner requires evidence of a different authority, lifetime or atomic transition; a new protocol, scheduler, queue or harness requires a concrete compatibility or otherwise unprovable execution boundary.
 
 > **Reaction-audience addendum (18 August 2026):** §6.5 makes the author-only reaction alert audience normative (AC-13): only the reacted-to message's author is eligible for a reaction alert; every other member receives silent state; self-reactions and reaction removals alert no one.
+
+> **OQ-01 decision addendum (26 August 2026):** When Mknoon is foreground-active in the exact chat receiving a new message, the open chat updates and the phone stays quiet. Mknoon shows no OS notification, plays no notification sound, produces no vibration and produces no app haptic. The visual chat update is the only current cue. There is no in-chat cue setting or mention-specific cue. Retained physical-device validation remains required as proof, but it is no longer an open product decision.
 
 > **Privacy limit:** Apple or Google must receive a device push token to route a push. They can observe that this app sent a push to a device at a certain time. This design prevents the push payload from revealing sender, conversation, group, message type, content or media URL. It does not eliminate timing correlation.
 
@@ -164,7 +166,7 @@ Signal’s public clients use **thread-specific**, not app-wide, foreground supp
 
 | App lifecycle | Visible destination | Required result | Read/cancel effect |
 |---|---|---|---|
-| `FOREGROUND_ACTIVE` | Same chat A | Persist and update A; no OS banner; same-chat cue follows OQ-01. | Do not mark read merely because the banner was suppressed; use the predicate resolved under OQ-03. |
+| `FOREGROUND_ACTIVE` | Same chat A | Persist and update A; no OS notification, notification sound, vibration or app haptic. The visual chat update is the only cue. | Do not mark read merely because the notification was suppressed; use the predicate resolved under OQ-03. |
 | `FOREGROUND_ACTIVE` | Chat B | Post/update an OS notification for A; keep B open. | Read state follows OQ-03; chat-open cleanup follows OQ-02. |
 | `FOREGROUND_ACTIVE` | Chat list, settings, media or other screen | Post/update an OS notification for A. | Unread state remains until verified read rule. |
 | `INACTIVE` / transition | Any | OS notification required; ignore the previous visible-thread value. | No automatic read. |
@@ -180,8 +182,8 @@ When chat A is genuinely frontmost and the app is foreground-active:
 
 - persist and deduplicate the event;
 - update the open conversation;
-- suppress A’s OS banner; Signal’s reference behavior uses a settings-dependent cue: a quieter notification sound on iOS while active and a configurable, rate-limited in-chat sound on Android;
-- treat Mknoon’s cue as provisional pending OQ-01 and do not assume a new haptic or setting;
+- suppress A’s OS notification, notification sound, vibration and app haptic;
+- use the visual update in the open chat as the only current cue; there is no in-chat cue setting or mention-specific exception;
 - do not mark the message read merely because the banner was suppressed; use the predicate resolved under OQ-03;
 - record `IN_CHAT` in the local ledger;
 - send `wake_not_required` only after the completed local outcome.
@@ -397,7 +399,7 @@ For each item, record status, exact file/function, current behaviour, risk, requ
 
 ## 12. Core acceptance criteria
 
-- **AC-01:** Same-chat A while foreground-active updates A without an OS banner; cue and read behavior match the approved OQ-01 and OQ-03 resolutions.
+- **AC-01:** Same-chat A while foreground-active updates A visually without an OS notification, notification sound, vibration or app haptic; read behavior follows the adopted OQ-03 predicate.
 - **AC-02:** Chat B while foreground-active still produces A’s notification and leaves B open.
 - **AC-03:** Chat list/settings/media viewer still produces A’s notification.
 - **AC-04:** A direct event received after the app becomes inactive/background-running cannot end as persistence-only.
@@ -415,7 +417,7 @@ For each item, record status, exact file/function, current behaviour, risk, requ
 
 - Payload forbidden-field and fixed-shape tests.
 - Event identity and idempotency tests for every path order.
-- Visible-thread isolation: same chat suppresses; chat B and non-chat screens still notify for A.
+- Visible-thread isolation: same chat updates visually and stays quiet, with no OS notification, notification sound, vibration or app haptic; chat B and non-chat screens still notify for A.
 - Lifecycle transition: deliver immediately before and after resign-active/onPause/background.
 - Final gate: open A or background between decision and post.
 - Acknowledgement separation: delivery ack without outcome still causes generic wake.
@@ -427,12 +429,17 @@ For each item, record status, exact file/function, current behaviour, risk, requ
 ## 14. Open questions and adopted product decisions
 
 OQ-02, OQ-03, and OQ-04 were resolved on 15 August 2026 for implementation
-planning. OQ-01 and OQ-05 still require the retained platform evidence described
-below. These decisions do not weaken the P0 inbox, privacy, event-identity, or
-deduplication invariants.
+planning. OQ-01 was resolved on 26 August 2026 by adopting the existing quiet
+same-chat behavior. OQ-05 remains open. Retained physical-device evidence for
+OQ-01 is still verification work, not an open product decision. These decisions
+do not weaken the P0 inbox, privacy, event-identity, or deduplication invariants.
 
 Normative adopted decisions:
 
+- **OQ-01:** when the app is foreground-active in exact chat A, a new message
+  updates A visually and produces no OS notification, notification sound,
+  vibration or app haptic. The visual update is the only current cue. There is
+  no in-chat cue setting and no mention-specific cue behavior.
 - **OQ-02:** exact-conversation activation cleanup is independent from read.
   Activation updates the exact active-conversation authority synchronously,
   cancels only the captured notification generation, and a final effect gate
@@ -449,9 +456,15 @@ Implementation remains with the owning lifecycle/final-effect/read gaps; this
 decision record does not authorize N03 to create a parallel ledger or cleanup
 owner.
 
+The OQ-01 decision preserves the current code contract: the exact-chat
+visibility gate stops notification presentation before native sound or vibration
+is requested, while the open chat still receives its visual update. Deterministic
+host tests cover that suppression. The declared physical-device sound check had
+no retained passing run on 26 August 2026, so device proof remains outstanding.
+
 | ID | Topic | Investigation and evidence required | Affected PRD parts and required update |
 |---|---|---|---|
-| **OQ-01** | Same-chat sound / haptic | Trace text, media, reaction and mention events while chat A is frontmost on iOS and Android. Identify existing Flutter/native handlers, sound or haptic components, settings, mute/channel interactions, ringer/Focus behavior and throttling. Record current defaults and real-device evidence. | Full PRD: FR-006, FR-018; §§6.1, 7.4, 8.3, 9.4–9.5, 12.1, AC-11, Matrix A and automated tests. Replace all provisional same-chat cue clauses with the approved behavior. Do not add a new haptic or setting without a decision. |
+| **OQ-01 — adopted** | Same-chat sound / haptic | Preserve the current quiet behavior: exact foreground chat A updates visually with no OS notification, notification sound, vibration or app haptic. Retain real-device iOS and Android checks for text, media, reaction and mention paths as verification evidence. | The product wording is now final. Do not add an in-chat cue, haptic, mention exception or setting without a new product decision. The missing retained device run is proof debt, not an intent question. |
 | **OQ-02 — adopted** | Chat-open notification cleanup | Preserve stable IDs/generation CAS and implement one exact activation cleanup trigger independent from read, including the final pre-effect race gate. | Update FR-021/022/024/025, §§7.4, 8.3, 9.3, 9.5–9.7, 11.4, 12.1–12.3, A-28/A-30, and AC-16/AC-18 to the normative decision above. |
 | **OQ-03 — adopted** | Local read predicate | Implement `resumed && exact conversation tracked`; all unknown/null/mismatch states fail false. No viewport/latest-row/scroll or OS action is implied. | Update FR-024/025, §§6.1, 9.3–9.7, 11.4, 12.1–12.2, A-29/A-30, and AC-11/16/19 while keeping OQ-02 cleanup independent. |
 | **OQ-04 — adopted** | Linked-device read and clearing | Preserve installation-local read/unread/badge/cleanup/outcome state and sibling independence. | Narrow FR-004/007/024/025, §§6.1, 9.3, 9.6–9.7, 11.2–11.4, 12, 15.2–15.3, A-18/A-28/A-30, AC-18/19, and D-09; remove cross-device clearing as an acceptance requirement. |
@@ -464,8 +477,11 @@ For each answer, record the current behavior, evidence, recommendation and exact
 ```text
 Use “Mknoon Private and Reliable Notifications PRD” version 1.2 as the target state.
 
-Before converting findings into stories, answer OQ-01 through OQ-05.
-For each open question:
+OQ-01 through OQ-04 are adopted product decisions. Preserve those decisions
+unless new evidence shows the implementation differs from the stated behavior.
+
+Before converting mute-related findings into stories, answer OQ-05.
+For that open question:
 - cite exact files, classes, functions, settings, schemas and platform configuration;
 - describe current iOS and Android behavior in simple English;
 - include deterministic or real-device evidence;

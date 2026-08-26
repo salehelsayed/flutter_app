@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mknoon.local/schemas/e2e-test.schema.json",
+  "title": "Mknoon declared proof test",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "testType", "path", "level", "boundaries", "platforms"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9-]+$" },
+    "title": { "type": "string", "minLength": 1 },
+    "testType": { "enum": ["unit", "integration", "contract", "native_unit", "device"] },
+    "path": { "type": "string", "minLength": 1 },
+    "level": { "enum": ["unit", "host", "native", "integration", "device"] },
+    "boundaries": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "platforms": {
+      "type": "array",
+      "items": { "enum": ["host", "android", "ios", "relay"] },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "runner": { "type": "string" }
+  }
+}

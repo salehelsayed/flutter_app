@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_app/app/application_root.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/helpers/canonical_notification_badge_state_db_helpers.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
 import 'package:flutter_app/core/notifications/ios_mailbox_alert_silent_replay_context.dart';
 import 'package:flutter_app/core/notifications/ios_notification_recovery_bridge.dart';
@@ -16,6 +18,64 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
 void main() {
+  test(
+    'foreground conversation read authority awaits only the resumed exact peer',
+    () async {
+      final tracker = ActiveConversationTracker()..setActive('peer-visible');
+      final settlementGate = Completer<void>();
+      final settledPeers = <String>[];
+      var completed = false;
+
+      final settlement =
+          settleForegroundConversationReadIfVisible(
+            peerId: ' peer-visible ',
+            lifecycleState: AppLifecycleState.resumed,
+            conversationTracker: tracker,
+            markConversationRead: (peerId) async {
+              settledPeers.add(peerId);
+              await settlementGate.future;
+              return 1;
+            },
+          ).then((result) {
+            completed = true;
+            return result;
+          });
+
+      await Future<void>.delayed(Duration.zero);
+      expect(settledPeers, <String>['peer-visible']);
+      expect(completed, isFalse);
+      settlementGate.complete();
+      expect(await settlement, isTrue);
+
+      expect(
+        await settleForegroundConversationReadIfVisible(
+          peerId: 'peer-visible',
+          lifecycleState: AppLifecycleState.inactive,
+          conversationTracker: tracker,
+          markConversationRead: (_) async {
+            settledPeers.add('inactive');
+            return 1;
+          },
+        ),
+        isFalse,
+      );
+      tracker.setActive('peer-other');
+      expect(
+        await settleForegroundConversationReadIfVisible(
+          peerId: 'peer-visible',
+          lifecycleState: AppLifecycleState.resumed,
+          conversationTracker: tracker,
+          markConversationRead: (_) async {
+            settledPeers.add('other');
+            return 1;
+          },
+        ),
+        isFalse,
+      );
+      expect(settledPeers, <String>['peer-visible']);
+    },
+  );
+
   test(
     'strict initial APNs route adapter surfaces false for custody retry',
     () async {
@@ -449,6 +509,20 @@ void main() {
       expect(foreground, contains('result.needsNotification'));
       expect(
         foreground,
+        allOf(
+          contains('settleForegroundConversationRead:'),
+          contains('settleForegroundConversationReadIfVisible('),
+          contains('lifecycleState: WidgetsBinding.instance.lifecycleState'),
+          contains('conversationTracker: widget.conversationTracker'),
+          contains('markConversationRead:'),
+          contains('widget.messageRepository.markConversationAsRead'),
+        ),
+        reason:
+            'an exact visible direct chat must settle its read inside the '
+            'foreground iOS mutation',
+      );
+      expect(
+        foreground,
         contains('widget.iosNotificationRecoveryCoordinator == null'),
         reason: 'exact multi-page drains are iOS recovery-only',
       );
@@ -508,8 +582,19 @@ void main() {
     expect(
       source.substring(composition),
       contains(
+        'onConversationReadSettled:\n          '
+        'iosNotificationRecoveryCoordinator?.settleConversationRead',
+      ),
+      reason:
+          'a committed read must retire exact native pending state before the '
+          'canonical badge pass',
+    );
+    expect(
+      source.substring(composition),
+      contains(
         'onConversationCleared: iosNotificationRecoveryCoordinator == null',
       ),
+      reason: 'non-read card cancellation must not retire native unread state',
     );
     expect(
       source.substring(composition),

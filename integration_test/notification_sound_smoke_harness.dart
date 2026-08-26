@@ -916,7 +916,7 @@ void _runAlice() {
     }
 
     // ════════════════════════════════════════════════════════════════
-    //  S14: tone-window debounce — two 1:1 texts inside the 30s window.
+    //  S14: tone-window debounce — two 1:1 texts inside the 10s window.
     //       The orchestrator gates the second send so it can capture the
     //       first message's notification id before the in-place update.
     // ════════════════════════════════════════════════════════════════

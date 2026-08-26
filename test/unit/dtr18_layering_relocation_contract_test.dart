@@ -188,8 +188,11 @@ const _privacySha256 =
 // through that same application-owned resume boundary; nothing relocates.
 // Plan 372 threads canonical-notification binding retirement through the same
 // MyApp/startup-router account boundary; no adapter or resume owner moves.
+// Plan 395 adds group-invite notification routing and retirement at that same
+// app-owned route boundary; the resume owner and feature-import floor remain
+// unchanged.
 const _applicationRootNormalizedSha256 =
-    'e5a771243ee5d68428d691202f204ee13c5ebc335ede35f715f098163e212834';
+    '0fa3a8682a3ce268546a699a6aaff9c0888873bf29bfe933bea5464966c7400d';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -254,7 +257,10 @@ const _productionBootstrapNormalizedSha256 =
     // bootstrap boundary; no repository adapter or core shim moves.
     // Plan 393 adds exact-conversation activation cleanup at the existing
     // app-owned visibility registry; no repository adapter or core shim moves.
-    '7df45086a3874e0ca7afaf89554efda5907a9456edde0f5f7f92d08165aad02a';
+    // The iOS badge repair forwards committed conversation-read settlement to
+    // the existing app-owned recovery coordinator; no adapter or resume owner
+    // changes layer.
+    'b361b90923ec7bd00704d20c05ee0484fd902e92fc1ee80ad4ec73f9fd91f6ce';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

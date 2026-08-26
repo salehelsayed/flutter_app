@@ -1,0 +1,206 @@
+{
+  "$schema": "../../schemas/behavior.schema.json",
+  "schemaVersion": 1,
+  "featureId": "notifications",
+  "questions": [
+    {
+      "id": "OQ-05",
+      "title": "What mute should silence",
+      "prompt": "Does Mknoon currently have a mute option? If it does, which notifications should that option silence?"
+    }
+  ],
+  "behaviors": [
+    {
+      "id": "NOTIF-AC-01",
+      "title": "Foreground same-chat suppression",
+      "plainDescription": "If you are already looking at a chat, a new message appears there quietly. The phone does not show a notification, play a sound or vibrate.",
+      "requirement": "While chat A is exactly frontmost and the app is foreground-active, update A visually without an OS notification, notification sound, vibration or app haptic. The visual update is the only current cue, and read follows the adopted local predicate.",
+      "sourceRefs": ["AC-01", "§6.1", "OQ-01", "OQ-03"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "openQuestions": [],
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/app_visibility_authority.dart", "required": true, "rationale": "Owns the fresh foreground and exact-conversation decision authority."},
+        {"kind": "file", "value": "lib/core/notifications/direct_notification_presentation_coordinator.dart", "required": true, "rationale": "Coordinates direct-message presentation outcomes."},
+        {"kind": "file", "value": "android/app/src/main/kotlin/com/mknoon/app/AppVisibilitySnapshot.kt", "required": false, "rationale": "Android native visibility snapshot evidence lives in the full graph."},
+        {"kind": "file", "value": "ios/NotificationService/IosAppVisibilitySnapshot.swift", "required": false, "rationale": "iOS native snapshot evidence is platform-specific."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host", "device_ui", "ios_native"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-02",
+      "title": "Another chat remains open and still notifies",
+      "plainDescription": "If you are reading one chat and a message arrives in another, the app keeps you where you are and shows a notification for the new message.",
+      "requirement": "When chat B is frontmost and A receives an event, keep B open and post or update A's OS notification.",
+      "sourceRefs": ["AC-02", "§6.2"],
+      "priority": "critical",
+      "intentStatus": "provisional",
+      "openQuestions": ["OQ-05"],
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/app_visibility_authority.dart", "required": true, "rationale": "Distinguishes exact visible conversation from app-wide foreground state."},
+        {"kind": "file", "value": "lib/core/notifications/direct_notification_presentation_coordinator.dart", "required": true, "rationale": "Owns the direct-message visible outcome."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host", "device_ui"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-03",
+      "title": "Non-chat foreground screens still notify",
+      "plainDescription": "If the app is open on any screen other than that chat, a new message still shows a phone notification.",
+      "requirement": "Chat list, settings, media and other foreground screens must not globally suppress an incoming conversation notification.",
+      "sourceRefs": ["AC-03", "§6.2"],
+      "priority": "critical",
+      "intentStatus": "provisional",
+      "openQuestions": ["OQ-05"],
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/app_visibility_route_binding.dart", "required": true, "rationale": "Binds navigation state to the visibility authority."},
+        {"kind": "file", "value": "lib/core/notifications/app_visibility_authority.dart", "required": true, "rationale": "Unknown or non-conversation destinations fail toward notification."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-04",
+      "title": "Background direct delivery cannot become persistence-only",
+      "plainDescription": "If a message arrives just after you leave the app, you should still get a notification.",
+      "requirement": "A direct event received after inactive or background transition must complete local presentation or retain confirmed opaque-push ownership.",
+      "sourceRefs": ["AC-04", "§6.3", "A-24"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/recent_background_notification_gate.dart", "required": true, "rationale": "Guards background presentation ownership."},
+        {"kind": "file", "value": "lib/core/notifications/durable_local_notification_effect_coordinator.dart", "required": true, "rationale": "Coordinates durable local effect completion."},
+        {"kind": "file", "value": "lib/features/push/application/background_message_handler.dart", "required": false, "rationale": "Normalizes background push entry."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["sqlcipher", "android_device"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-05",
+      "title": "Delivery acknowledgement is not wake outcome",
+      "plainDescription": "Knowing that a message reached the phone does not mean the user was alerted, so the app must keep trying unless no alert is needed.",
+      "requirement": "Delivery acknowledgement without a completed wake-not-required outcome must not suppress the generic wake.",
+      "sourceRefs": ["AC-05", "§5.1", "A-26"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/notification_completed_outcome.dart", "required": true, "rationale": "Defines local completed-outcome evidence."},
+        {"kind": "file", "value": "lib/core/notifications/notification_completed_outcome_outbox_repository.dart", "required": true, "rationale": "Persists completed outcomes independently from delivery acknowledgement."},
+        {"kind": "file", "value": "go-relay-server/inbox.go", "required": false, "rationale": "Relay-side wake outcome admission and dispatch."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host", "relay"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-06",
+      "title": "Exact chat activation prevents stale notification",
+      "plainDescription": "If you open a chat while its notification is being prepared, that old notification should not appear, and notifications for other chats should stay.",
+      "requirement": "Activating A while its notification is being built cancels only the captured A generation and does not clear B or a newer A generation.",
+      "sourceRefs": ["AC-06", "§6.4", "OQ-02"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/active_conversation_tracker.dart", "required": true, "rationale": "Owns exact active-conversation authority."},
+        {"kind": "file", "value": "lib/core/notifications/durable_local_notification_effect_coordinator.dart", "required": true, "rationale": "Provides the final pre-effect gate and generation fencing."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-07",
+      "title": "Backgrounding between decision and post is rechecked",
+      "plainDescription": "If you leave the app while a notification is being prepared, the system checks again and makes sure the notification is still shown.",
+      "requirement": "If lifecycle changes between decision and effect, the final gate must post or preserve OS notification ownership.",
+      "sourceRefs": ["AC-07", "§6.3", "§9"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/app_visibility_snapshot.dart", "required": true, "rationale": "Carries revisioned lifecycle state."},
+        {"kind": "file", "value": "lib/core/notifications/durable_local_notification_effect_coordinator.dart", "required": true, "rationale": "Rechecks state before the local side effect."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host", "android_device"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-08",
+      "title": "Delayed wake does not recreate handled notification",
+      "plainDescription": "A late alert must not bring back a notification for a message that was already read, opened, deleted, expired, or dealt with.",
+      "requirement": "A delayed wake after installation-local read, open, delete, expiry or handling must not recreate an alert.",
+      "sourceRefs": ["AC-08", "§6.4", "OQ-04"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/recent_remote_notification_gate.dart", "required": true, "rationale": "Rejects already handled remote events."},
+        {"kind": "file", "value": "lib/core/notifications/direct_notification_read_projector.dart", "required": true, "rationale": "Projects installation-local direct read cleanup."},
+        {"kind": "file", "value": "lib/core/notifications/group_notification_read_projector.dart", "required": false, "rationale": "Projects installation-local group read cleanup."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-09",
+      "title": "Dismiss, visibility and read remain separate",
+      "plainDescription": "Removing a notification does not mean the message was read, and simply seeing the app does not mark it as read.",
+      "requirement": "Dismissal does not mark read; visibility changes read only through resumed plus exact-conversation tracking.",
+      "sourceRefs": ["AC-09", "§6.4", "OQ-03"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/direct_notification_read_projector.dart", "required": true, "rationale": "Owns direct read projection and exact cleanup."},
+        {"kind": "file", "value": "lib/core/notifications/group_notification_read_projector.dart", "required": true, "rationale": "Owns group read projection and exact cleanup."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-10",
+      "title": "Multi-path delivery converges once",
+      "plainDescription": "No matter how a message reaches the phone, it should appear once, increase the unread count once, and normally alert the user once.",
+      "requirement": "Direct, push and inbox arrival orders converge on one local event, unread transition and current conversation notification, normally with one alert.",
+      "sourceRefs": ["AC-10", "§9", "A-15", "A-27"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/local_notification_ledger.dart", "required": true, "rationale": "Defines shared local presentation state."},
+        {"kind": "file", "value": "lib/core/notifications/local_notification_ledger_store.dart", "required": true, "rationale": "Persists atomic ledger transitions."},
+        {"kind": "file", "value": "lib/core/notifications/direct_notification_canonical_reconciler.dart", "required": false, "rationale": "Converges direct replay and presentation state."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host", "sqlcipher"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-11",
+      "title": "Provider payload is fixed and private",
+      "plainDescription": "Apple and Google are told only to wake the app. They must never receive details about the sender, chat, message, or attachment.",
+      "requirement": "Captured APNs and FCM requests use one generic shape and contain none of the forbidden identity, conversation, content or modality fields.",
+      "sourceRefs": ["AC-11", "§4", "§7", "A-06", "A-16"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "go-relay-server/inbox.go", "required": true, "rationale": "Owns provider wake dispatch from durable inbox state."},
+        {"kind": "file", "value": "lib/features/push/application/background_push_notification_fallback.dart", "required": true, "rationale": "Owns generic local fallback rather than private provider content."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["relay", "provider_payload"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-12",
+      "title": "Launch recovers missed pushes from inbox",
+      "plainDescription": "When the app opens after some alerts were missed, it finds the missing messages without adding any message twice.",
+      "requirement": "App launch after missed pushes synchronizes retained inbox events without duplicate local events.",
+      "sourceRefs": ["AC-12", "§5", "A-03"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/dropped_push_recovery_coordinator.dart", "required": true, "rationale": "Coordinates durable recovery after a dropped wake."},
+        {"kind": "file", "value": "lib/core/notifications/canonical_recovery_runtime.dart", "required": true, "rationale": "Runs canonical inbox recovery and acknowledgement ordering."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["host", "android_device"], "availabilityBounded": true}
+    },
+    {
+      "id": "NOTIF-AC-13",
+      "title": "Reaction alert audience is author-only",
+      "plainDescription": "A reaction alerts only the person who wrote the message. Other people receive it without an alert, and reacting to your own message alerts no one.",
+      "requirement": "Only the reacted-to message author is alert-eligible; non-authors receive silent state, and self-reactions or removals alert no one.",
+      "sourceRefs": ["AC-13", "§6.5"],
+      "priority": "critical",
+      "intentStatus": "active",
+      "implementationAnchors": [
+        {"kind": "file", "value": "lib/core/notifications/group_reaction_notification_projection.dart", "required": true, "rationale": "Projects the local group reaction alert disposition."},
+        {"kind": "file", "value": "go-relay-server/reaction_push.go", "required": true, "rationale": "Narrows relay-side reaction wake nomination."},
+        {"kind": "file", "value": "lib/core/notifications/direct_reaction_notification_projection.dart", "required": false, "rationale": "Projects the direct reaction alert disposition."}
+      ],
+      "proofPolicy": {"requiredBoundaries": ["relay", "device_ui"], "availabilityBounded": true}
+    }
+  ]
+}

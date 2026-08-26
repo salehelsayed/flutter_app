@@ -1194,13 +1194,13 @@ final class _AndroidNotificationCampaign {
   // Shared audible-alert discipline (G12).
   //
   // The durable tone lease keys on the CONVERSATION and every campaign send
-  // shares one, so a second audible-asserting send inside the 30 s window
+  // shares one, so a second audible-asserting send inside the 10 s window
   // (`durable_notification_tone_lease.dart:349`, committed at `:1190-1204`)
   // lands silently BY DESIGN. Spacing every such send is what makes a silent
   // card a real defect rather than a timing artefact.
   // ---------------------------------------------------------------------
 
-  static const Duration _toneWindowSpacing = Duration(seconds: 31);
+  static const Duration _toneWindowSpacing = Duration(seconds: 11);
   static const Duration _toneCommitGrace = Duration(seconds: 3);
 
   /// Blocks until the conversation's tone window has expired, and returns the

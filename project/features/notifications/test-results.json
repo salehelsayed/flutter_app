@@ -1,0 +1,17 @@
+{
+  "$schema": "../../schemas/test-run.schema.json",
+  "schemaVersion": 1,
+  "featureId": "notifications",
+  "runs": [
+    {
+      "testId": "NOTIF-T05-OUTCOME",
+      "status": "passed",
+      "revision": "221e161211ff05815cff9b0c1a37e9d17b0f7b8f",
+      "workingTreeDirty": true,
+      "recordedAt": "2026-08-26T14:12:40.687842+00:00",
+      "platform": "host",
+      "target": "macos-host",
+      "command": "flutter test test/core/notifications/notification_completed_outcome_correlation_test.dart"
+    }
+  ]
+}

@@ -1,0 +1,2952 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-26T15:02:34.137529+00:00",
+  "repository": {
+    "revision": "221e161211ff05815cff9b0c1a37e9d17b0f7b8f",
+    "shortRevision": "221e161211ff",
+    "applicationDirty": true
+  },
+  "graphs": {
+    "architecture": {
+      "path": "graphify-arch/graphify-out/graph.json",
+      "available": true,
+      "fingerprint": "3505b34d363cc9ce",
+      "freshness": {
+        "status": "current",
+        "newerSource": null
+      }
+    },
+    "fullFallback": {
+      "path": "graphify-out/graph.json",
+      "available": true,
+      "fingerprint": "f4b4aaa0a7c33b42",
+      "freshness": {
+        "status": "not_checked",
+        "newerSource": null,
+        "reason": "The full graph is a fallback; exact evidence still requires source verification."
+      }
+    }
+  },
+  "evidencePolicy": {
+    "graphMatchesAreCandidates": true,
+    "graphMissesAreNotAbsenceProof": true,
+    "testFilesAreNotRunResults": true,
+    "coveredRequiresCurrentReviewAndProof": true
+  },
+  "summary": {
+    "features": 1,
+    "requiredBehaviors": 13,
+    "implementationCandidates": 13,
+    "implementationConfirmed": 0,
+    "verified": 0,
+    "covered": 0,
+    "testGaps": 0,
+    "implementationNotEvidenced": 0,
+    "proofNotRun": 13,
+    "proofPartial": 0,
+    "openIntent": 2,
+    "failingProof": 0,
+    "staleEvidence": 0,
+    "assessments": {
+      "intent_open_question": 2,
+      "proof_not_run": 11
+    }
+  },
+  "features": [
+    {
+      "id": "notifications",
+      "title": "Private and Reliable Notifications",
+      "description": "Durable, private and lifecycle-correct notification behavior across direct, inbox and opaque push paths.",
+      "intentStatus": "proposed",
+      "prd": {
+        "path": "UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md",
+        "exists": true,
+        "version": "1.2",
+        "date": "2026-08-04"
+      },
+      "openQuestions": [
+        "OQ-05"
+      ],
+      "summary": {
+        "requiredBehaviors": 13,
+        "implementationCandidates": 13,
+        "implementationConfirmed": 0,
+        "verified": 0,
+        "covered": 0,
+        "implementationNotEvidenced": 0,
+        "testGaps": 0,
+        "proofNotRun": 13,
+        "proofPartial": 0,
+        "openIntent": 2,
+        "failingProof": 0,
+        "staleEvidence": 0,
+        "assessments": {
+          "intent_open_question": 2,
+          "proof_not_run": 11
+        }
+      },
+      "behaviors": [
+        {
+          "id": "NOTIF-AC-01",
+          "title": "Foreground same-chat suppression",
+          "plainDescription": "If you are already looking at a chat, a new message appears there quietly. The phone does not show a notification, play a sound or vibrate.",
+          "requirement": "While chat A is exactly frontmost and the app is foreground-active, update A visually without an OS notification, notification sound, vibration or app haptic. The visual update is the only current cue, and read follows the adopted local predicate.",
+          "sourceRefs": [
+            "AC-01",
+            "§6.1",
+            "OQ-01",
+            "OQ-03"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 4,
+            "totalAnchors": 4,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture",
+              "full_fallback"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/app_visibility_authority.dart",
+                "required": true,
+                "rationale": "Owns the fresh foreground and exact-conversation decision authority.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority",
+                    "label": "app_visibility_authority.dart",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_adoptforegroundread",
+                    "label": "_adoptForegroundRead",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L368"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityauthority",
+                    "label": "AppVisibilityAuthority",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L204"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityevaluation",
+                    "label": "AppVisibilityEvaluation",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L150"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityplatformbridge",
+                    "label": "AppVisibilityPlatformBridge",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L42"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityplatformchannelname",
+                    "label": "appVisibilityPlatformChannelName",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L7"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                "required": true,
+                "rationale": "Coordinates direct-message presentation outcomes.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator",
+                    "label": "direct_notification_presentation_coordinator.dart",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_debugactivekeycount",
+                    "label": "debugActiveKeyCount",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L37"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_directnotificationpresentationcoordinator",
+                    "label": "DirectNotificationPresentationCoordinator",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L8"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_directoperationqueue",
+                    "label": "_DirectOperationQueue",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L40"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_pending",
+                    "label": "pending",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L42"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_queues",
+                    "label": "_queues",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L9"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "android/app/src/main/kotlin/com/mknoon/app/AppVisibilitySnapshot.kt",
+                "required": false,
+                "rationale": "Android native visibility snapshot evidence lives in the full graph.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "full_fallback",
+                    "nodeId": "android_app_src_main_kotlin_com_mknoon_app_appvisibilitysnapshot",
+                    "label": "AppVisibilitySnapshot.kt",
+                    "sourceFile": "android/app/src/main/kotlin/com/mknoon/app/AppVisibilitySnapshot.kt",
+                    "sourceLocation": "L1"
+                  },
+                  {
+                    "graph": "full_fallback",
+                    "nodeId": "android_app_src_main_kotlin_com_mknoon_app_appvisibilitysnapshot_appvisibilitylifecycle",
+                    "label": "AppVisibilityLifecycle",
+                    "sourceFile": "android/app/src/main/kotlin/com/mknoon/app/AppVisibilitySnapshot.kt",
+                    "sourceLocation": "L16"
+                  },
+                  {
+                    "graph": "full_fallback",
+                    "nodeId": "android_app_src_main_kotlin_com_mknoon_app_appvisibilitysnapshot_appvisibilitylifecycle_foreground_active",
+                    "label": "FOREGROUND_ACTIVE",
+                    "sourceFile": "android/app/src/main/kotlin/com/mknoon/app/AppVisibilitySnapshot.kt",
+                    "sourceLocation": "L17"
+                  },
+                  {
+                    "graph": "full_fallback",
+                    "nodeId": "android_app_src_main_kotlin_com_mknoon_app_appvisibilitysnapshot_appvisibilitylifecycle_inactive",
+                    "label": "INACTIVE",
+                    "sourceFile": "android/app/src/main/kotlin/com/mknoon/app/AppVisibilitySnapshot.kt",
+                    "sourceLocation": "L18"
+                  },
+                  {
+                    "graph": "full_fallback",
+                    "nodeId": "android_app_src_main_kotlin_com_mknoon_app_appvisibilitysnapshot_appvisibilitylifecycle_background",
+                    "label": "BACKGROUND",
+                    "sourceFile": "android/app/src/main/kotlin/com/mknoon/app/AppVisibilitySnapshot.kt",
+                    "sourceLocation": "L19"
+                  },
+                  {
+                    "graph": "full_fallback",
+                    "nodeId": "android_app_src_main_kotlin_com_mknoon_app_appvisibilitysnapshot_appvisibilitysnapshotv1",
+                    "label": "AppVisibilitySnapshotV1",
+                    "sourceFile": "android/app/src/main/kotlin/com/mknoon/app/AppVisibilitySnapshot.kt",
+                    "sourceLocation": "L22"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+                "required": false,
+                "rationale": "iOS native snapshot evidence is platform-specific.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "ios_notificationservice_iosappvisibilitysnapshot",
+                    "label": "IosAppVisibilitySnapshot.swift",
+                    "sourceFile": "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+                    "sourceLocation": "L1"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "ios_notificationservice_iosappvisibilitysnapshot_codingkeys",
+                    "label": "CodingKeys",
+                    "sourceFile": "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+                    "sourceLocation": "L35"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "ios_notificationservice_iosappvisibilitysnapshot_codingkeys_bootsession",
+                    "label": "bootSession",
+                    "sourceFile": "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+                    "sourceLocation": "L42"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "ios_notificationservice_iosappvisibilitysnapshot_codingkeys_lifecycle",
+                    "label": "lifecycle",
+                    "sourceFile": "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+                    "sourceLocation": "L39"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "ios_notificationservice_iosappvisibilitysnapshot_codingkeys_lifecyclegeneration",
+                    "label": "lifecycleGeneration",
+                    "sourceFile": "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+                    "sourceLocation": "L38"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "ios_notificationservice_iosappvisibilitysnapshot_codingkeys_revision",
+                    "label": "revision",
+                    "sourceFile": "ios/NotificationService/IosAppVisibilitySnapshot.swift",
+                    "sourceLocation": "L37"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "device_ui",
+              "host",
+              "ios_native"
+            ],
+            "declaredBoundaries": [
+              "android_device",
+              "device_ui",
+              "host",
+              "ios_native"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "device_ui",
+              "host",
+              "ios_native"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T01-VISIBILITY-HOST",
+                "title": "Fresh exact-conversation visibility authority",
+                "testType": "unit",
+                "path": "test/core/notifications/app_visibility_authority_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T01-SOUND-DEVICE",
+                "title": "Same-chat notification sound disposition",
+                "testType": "device",
+                "path": "integration_test/notification_sound_smoke_harness.dart",
+                "level": "device",
+                "boundaries": [
+                  "device_ui"
+                ],
+                "platforms": [
+                  "android",
+                  "ios"
+                ],
+                "runner": "integration_test/scripts/run_notification_sound_smoke.dart",
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T01-IOS-VISIBILITY",
+                "title": "iOS visibility snapshot native contract",
+                "testType": "native_unit",
+                "path": "ios/RunnerTests/IosAppVisibilitySnapshotTests.swift",
+                "level": "native",
+                "boundaries": [
+                  "ios_native"
+                ],
+                "platforms": [
+                  "ios"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T01-ANDROID-VISIBILITY",
+                "title": "Android lifecycle visibility instrumentation",
+                "testType": "device",
+                "path": "android/app/src/appVisibility371AndroidTest/kotlin/com/mknoon/app/AppVisibilityLifecycleInstrumentationTest.kt",
+                "level": "device",
+                "boundaries": [
+                  "android_device"
+                ],
+                "platforms": [
+                  "android"
+                ],
+                "runner": "scripts/run_app_visibility_android_e2e.sh",
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-02",
+          "title": "Another chat remains open and still notifies",
+          "plainDescription": "If you are reading one chat and a message arrives in another, the app keeps you where you are and shows a notification for the new message.",
+          "requirement": "When chat B is frontmost and A receives an event, keep B open and post or update A's OS notification.",
+          "sourceRefs": [
+            "AC-02",
+            "§6.2"
+          ],
+          "priority": "critical",
+          "intentStatus": "provisional",
+          "openQuestions": [
+            {
+              "id": "OQ-05",
+              "title": "What mute should silence",
+              "prompt": "Does Mknoon currently have a mute option? If it does, which notifications should that option silence?"
+            }
+          ],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 2,
+            "totalAnchors": 2,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/app_visibility_authority.dart",
+                "required": true,
+                "rationale": "Distinguishes exact visible conversation from app-wide foreground state.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority",
+                    "label": "app_visibility_authority.dart",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_adoptforegroundread",
+                    "label": "_adoptForegroundRead",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L368"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityauthority",
+                    "label": "AppVisibilityAuthority",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L204"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityevaluation",
+                    "label": "AppVisibilityEvaluation",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L150"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityplatformbridge",
+                    "label": "AppVisibilityPlatformBridge",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L42"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityplatformchannelname",
+                    "label": "appVisibilityPlatformChannelName",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L7"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                "required": true,
+                "rationale": "Owns the direct-message visible outcome.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator",
+                    "label": "direct_notification_presentation_coordinator.dart",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_debugactivekeycount",
+                    "label": "debugActiveKeyCount",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L37"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_directnotificationpresentationcoordinator",
+                    "label": "DirectNotificationPresentationCoordinator",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L8"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_directoperationqueue",
+                    "label": "_DirectOperationQueue",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L40"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_pending",
+                    "label": "pending",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L42"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_presentation_coordinator_queues",
+                    "label": "_queues",
+                    "sourceFile": "lib/core/notifications/direct_notification_presentation_coordinator.dart",
+                    "sourceLocation": "L9"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "device_ui",
+              "host"
+            ],
+            "declaredBoundaries": [
+              "device_ui",
+              "host"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "device_ui",
+              "host"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T01-VISIBILITY-HOST",
+                "title": "Fresh exact-conversation visibility authority",
+                "testType": "unit",
+                "path": "test/core/notifications/app_visibility_authority_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T02-OTHER-CHAT",
+                "title": "Notification opened while another chat remains active",
+                "testType": "device",
+                "path": "integration_test/notification_open_during_other_chat_harness.dart",
+                "level": "device",
+                "boundaries": [
+                  "device_ui"
+                ],
+                "platforms": [
+                  "android"
+                ],
+                "runner": "integration_test/scripts/run_notification_open_during_other_chat.dart",
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "intent_open_question",
+            "reason": "The requirement still depends on an unresolved product decision."
+          }
+        },
+        {
+          "id": "NOTIF-AC-03",
+          "title": "Non-chat foreground screens still notify",
+          "plainDescription": "If the app is open on any screen other than that chat, a new message still shows a phone notification.",
+          "requirement": "Chat list, settings, media and other foreground screens must not globally suppress an incoming conversation notification.",
+          "sourceRefs": [
+            "AC-03",
+            "§6.2"
+          ],
+          "priority": "critical",
+          "intentStatus": "provisional",
+          "openQuestions": [
+            {
+              "id": "OQ-05",
+              "title": "What mute should silence",
+              "prompt": "Does Mknoon currently have a mute option? If it does, which notifications should that option silence?"
+            }
+          ],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 2,
+            "totalAnchors": 2,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/app_visibility_route_binding.dart",
+                "required": true,
+                "rationale": "Binds navigation state to the visibility authority.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_route_binding",
+                    "label": "app_visibility_route_binding.dart",
+                    "sourceFile": "lib/core/notifications/app_visibility_route_binding.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_route_binding_appvisibilityroutebinding",
+                    "label": "AppVisibilityRouteBinding",
+                    "sourceFile": "lib/core/notifications/app_visibility_route_binding.dart",
+                    "sourceLocation": "L221"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_route_binding_appvisibilityroutebindingstate",
+                    "label": "_AppVisibilityRouteBindingState",
+                    "sourceFile": "lib/core/notifications/app_visibility_route_binding.dart",
+                    "sourceLocation": "L240"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_route_binding_appvisibilityrouteobserver",
+                    "label": "AppVisibilityRouteObserver",
+                    "sourceFile": "lib/core/notifications/app_visibility_route_binding.dart",
+                    "sourceLocation": "L11"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_route_binding_appvisibilityrouteregistry",
+                    "label": "AppVisibilityRouteRegistry",
+                    "sourceFile": "lib/core/notifications/app_visibility_route_binding.dart",
+                    "sourceLocation": "L111"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_route_binding_appvisibilitytoproutereader",
+                    "label": "AppVisibilityTopRouteReader",
+                    "sourceFile": "lib/core/notifications/app_visibility_route_binding.dart",
+                    "sourceLocation": "L97"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/app_visibility_authority.dart",
+                "required": true,
+                "rationale": "Unknown or non-conversation destinations fail toward notification.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority",
+                    "label": "app_visibility_authority.dart",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_adoptforegroundread",
+                    "label": "_adoptForegroundRead",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L368"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityauthority",
+                    "label": "AppVisibilityAuthority",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L204"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityevaluation",
+                    "label": "AppVisibilityEvaluation",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L150"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityplatformbridge",
+                    "label": "AppVisibilityPlatformBridge",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L42"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_authority_appvisibilityplatformchannelname",
+                    "label": "appVisibilityPlatformChannelName",
+                    "sourceFile": "lib/core/notifications/app_visibility_authority.dart",
+                    "sourceLocation": "L7"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "host"
+            ],
+            "declaredBoundaries": [
+              "host"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "host"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T01-VISIBILITY-HOST",
+                "title": "Fresh exact-conversation visibility authority",
+                "testType": "unit",
+                "path": "test/core/notifications/app_visibility_authority_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "intent_open_question",
+            "reason": "The requirement still depends on an unresolved product decision."
+          }
+        },
+        {
+          "id": "NOTIF-AC-04",
+          "title": "Background direct delivery cannot become persistence-only",
+          "plainDescription": "If a message arrives just after you leave the app, you should still get a notification.",
+          "requirement": "A direct event received after inactive or background transition must complete local presentation or retain confirmed opaque-push ownership.",
+          "sourceRefs": [
+            "AC-04",
+            "§6.3",
+            "A-24"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 3,
+            "totalAnchors": 3,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/recent_background_notification_gate.dart",
+                "required": true,
+                "rationale": "Guards background presentation ownership.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_background_notification_gate",
+                    "label": "recent_background_notification_gate.dart",
+                    "sourceFile": "lib/core/notifications/recent_background_notification_gate.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_background_notification_gate_clear",
+                    "label": "clear",
+                    "sourceFile": "lib/core/notifications/recent_background_notification_gate.dart",
+                    "sourceLocation": "L115"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_background_notification_gate_coercetimestamp",
+                    "label": "_coerceTimestamp",
+                    "sourceFile": "lib/core/notifications/recent_background_notification_gate.dart",
+                    "sourceLocation": "L187"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_background_notification_gate_debugresetrecentbackgroundnotificationgate",
+                    "label": "debugResetRecentBackgroundNotificationGate",
+                    "sourceFile": "lib/core/notifications/recent_background_notification_gate.dart",
+                    "sourceLocation": "L25"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_background_notification_gate_debugsetrecentbackgroundnotificationgate",
+                    "label": "debugSetRecentBackgroundNotificationGate",
+                    "sourceFile": "lib/core/notifications/recent_background_notification_gate.dart",
+                    "sourceLocation": "L18"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_background_notification_gate_defaultrecentbackgroundgateloaderror",
+                    "label": "_defaultRecentBackgroundGateLoadError",
+                    "sourceFile": "lib/core/notifications/recent_background_notification_gate.dart",
+                    "sourceLocation": "L29"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                "required": true,
+                "rationale": "Coordinates durable local effect completion.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator",
+                    "label": "durable_local_notification_effect_coordinator.dart",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_adoptestablishedremotepresentationlockheld",
+                    "label": "_adoptEstablishedRemotePresentationLockHeld",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L680"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_ambiguous",
+                    "label": "ambiguous",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L157"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_armcancelattemptlockheld",
+                    "label": "_armCancelAttemptLockHeld",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L1167"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_armpostattemptlockheld",
+                    "label": "_armPostAttemptLockHeld",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L1193"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_authorizedurablelocalnotificationnativeentry",
+                    "label": "AuthorizeDurableLocalNotificationNativeEntry",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L27"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/features/push/application/background_message_handler.dart",
+                "required": false,
+                "rationale": "Normalizes background push entry.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_message_handler",
+                    "label": "background_message_handler.dart",
+                    "sourceFile": "lib/features/push/application/background_message_handler.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_message_handler_accountnetworkallowed",
+                    "label": "accountNetworkAllowed",
+                    "sourceFile": "lib/features/push/application/background_message_handler.dart",
+                    "sourceLocation": "L3075"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_message_handler_acknowledgement",
+                    "label": "acknowledgement",
+                    "sourceFile": "lib/features/push/application/background_message_handler.dart",
+                    "sourceLocation": "L2271"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_message_handler_acknowledgementcontentgeneration",
+                    "label": "acknowledgementContentGeneration",
+                    "sourceFile": "lib/features/push/application/background_message_handler.dart",
+                    "sourceLocation": "L2256"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_message_handler_acknowledgementidentity",
+                    "label": "acknowledgementIdentity",
+                    "sourceFile": "lib/features/push/application/background_message_handler.dart",
+                    "sourceLocation": "L2253"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_message_handler_action",
+                    "label": "action",
+                    "sourceFile": "lib/features/push/application/background_message_handler.dart",
+                    "sourceLocation": "L3739"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "android_device",
+              "sqlcipher"
+            ],
+            "declaredBoundaries": [
+              "android_device",
+              "sqlcipher"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "android_device",
+              "sqlcipher"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T04-DURABILITY",
+                "title": "Background direct notification durability",
+                "testType": "integration",
+                "path": "integration_test/direct_notification_durability_sqlcipher_proof_test.dart",
+                "level": "integration",
+                "boundaries": [
+                  "sqlcipher"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T01-ANDROID-VISIBILITY",
+                "title": "Android lifecycle visibility instrumentation",
+                "testType": "device",
+                "path": "android/app/src/appVisibility371AndroidTest/kotlin/com/mknoon/app/AppVisibilityLifecycleInstrumentationTest.kt",
+                "level": "device",
+                "boundaries": [
+                  "android_device"
+                ],
+                "platforms": [
+                  "android"
+                ],
+                "runner": "scripts/run_app_visibility_android_e2e.sh",
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-05",
+          "title": "Delivery acknowledgement is not wake outcome",
+          "plainDescription": "Knowing that a message reached the phone does not mean the user was alerted, so the app must keep trying unless no alert is needed.",
+          "requirement": "Delivery acknowledgement without a completed wake-not-required outcome must not suppress the generic wake.",
+          "sourceRefs": [
+            "AC-05",
+            "§5.1",
+            "A-26"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 3,
+            "totalAnchors": 3,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/notification_completed_outcome.dart",
+                "required": true,
+                "rationale": "Defines local completed-outcome evidence.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome",
+                    "label": "notification_completed_outcome.dart",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_completedat",
+                    "label": "completedAt",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome.dart",
+                    "sourceLocation": "L48"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_createdat",
+                    "label": "createdAt",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome.dart",
+                    "sourceLocation": "L72"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_eventkey",
+                    "label": "eventKey",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome.dart",
+                    "sourceLocation": "L46"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_expiresat",
+                    "label": "expiresAt",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome.dart",
+                    "sourceLocation": "L73"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_frommap",
+                    "label": "fromMap",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome.dart",
+                    "sourceLocation": "L88"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/notification_completed_outcome_outbox_repository.dart",
+                "required": true,
+                "rationale": "Persists completed outcomes independently from delivery acknowledgement.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_outbox_repository",
+                    "label": "notification_completed_outcome_outbox_repository.dart",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome_outbox_repository.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_outbox_repository_completeifexact",
+                    "label": "completeIfExact",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome_outbox_repository.dart",
+                    "sourceLocation": "L52"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_outbox_repository_database",
+                    "label": "database",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome_outbox_repository.dart",
+                    "sourceLocation": "L7"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_outbox_repository_loadexact",
+                    "label": "loadExact",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome_outbox_repository.dart",
+                    "sourceLocation": "L26"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_outbox_repository_loadready",
+                    "label": "loadReady",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome_outbox_repository.dart",
+                    "sourceLocation": "L15"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_notification_completed_outcome_outbox_repository_notificationcompletedoutcomeoutboxrepository",
+                    "label": "NotificationCompletedOutcomeOutboxRepository",
+                    "sourceFile": "lib/core/notifications/notification_completed_outcome_outbox_repository.dart",
+                    "sourceLocation": "L6"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "go-relay-server/inbox.go",
+                "required": false,
+                "rationale": "Relay-side wake outcome admission and dispatch.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_chatpushmetadata",
+                    "label": "chatPushMetadata",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L1957"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxhistorygap",
+                    "label": "groupInboxHistoryGap",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3078"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxmessage",
+                    "label": "groupInboxMessage",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3070"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxstore",
+                    "label": "GroupInboxStore",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3089"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxstore_fanoutgroupreactionpush",
+                    "label": ".fanOutGroupReactionPush()",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3485"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxstore_fanoutpush",
+                    "label": ".fanOutPush()",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3594"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "stale",
+            "requiredBoundaries": [
+              "host",
+              "relay"
+            ],
+            "declaredBoundaries": [
+              "host",
+              "relay"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "host",
+              "relay"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T05-OUTCOME",
+                "title": "Completed outcome correlation remains distinct from delivery",
+                "testType": "unit",
+                "path": "test/core/notifications/notification_completed_outcome_correlation_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "stale_passed",
+                "current": false,
+                "latestRun": {
+                  "testId": "NOTIF-T05-OUTCOME",
+                  "status": "passed",
+                  "revision": "221e161211ff05815cff9b0c1a37e9d17b0f7b8f",
+                  "workingTreeDirty": true,
+                  "recordedAt": "2026-08-26T14:12:40.687842+00:00",
+                  "platform": "host",
+                  "target": "macos-host",
+                  "command": "flutter test test/core/notifications/notification_completed_outcome_correlation_test.dart"
+                }
+              },
+              {
+                "id": "NOTIF-T05-WAKE-GO",
+                "title": "Inbox wake outcome protocol",
+                "testType": "integration",
+                "path": "go-mknoon/bridge/inbox_wake_outcome_test.go",
+                "level": "integration",
+                "boundaries": [
+                  "relay"
+                ],
+                "platforms": [
+                  "relay"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-06",
+          "title": "Exact chat activation prevents stale notification",
+          "plainDescription": "If you open a chat while its notification is being prepared, that old notification should not appear, and notifications for other chats should stay.",
+          "requirement": "Activating A while its notification is being built cancels only the captured A generation and does not clear B or a newer A generation.",
+          "sourceRefs": [
+            "AC-06",
+            "§6.4",
+            "OQ-02"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 2,
+            "totalAnchors": 2,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/active_conversation_tracker.dart",
+                "required": true,
+                "rationale": "Owns exact active-conversation authority.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_active_conversation_tracker",
+                    "label": "active_conversation_tracker.dart",
+                    "sourceFile": "lib/core/notifications/active_conversation_tracker.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_active_conversation_tracker_activeconversationtracker",
+                    "label": "ActiveConversationTracker",
+                    "sourceFile": "lib/core/notifications/active_conversation_tracker.dart",
+                    "sourceLocation": "L5"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_active_conversation_tracker_activepeerid",
+                    "label": "_activePeerId",
+                    "sourceFile": "lib/core/notifications/active_conversation_tracker.dart",
+                    "sourceLocation": "L6"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_active_conversation_tracker_clear",
+                    "label": "clear",
+                    "sourceFile": "lib/core/notifications/active_conversation_tracker.dart",
+                    "sourceLocation": "L21"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_active_conversation_tracker_clearifactive",
+                    "label": "clearIfActive",
+                    "sourceFile": "lib/core/notifications/active_conversation_tracker.dart",
+                    "sourceLocation": "L26"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_active_conversation_tracker_isviewing",
+                    "label": "isViewing",
+                    "sourceFile": "lib/core/notifications/active_conversation_tracker.dart",
+                    "sourceLocation": "L33"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                "required": true,
+                "rationale": "Provides the final pre-effect gate and generation fencing.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator",
+                    "label": "durable_local_notification_effect_coordinator.dart",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_adoptestablishedremotepresentationlockheld",
+                    "label": "_adoptEstablishedRemotePresentationLockHeld",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L680"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_ambiguous",
+                    "label": "ambiguous",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L157"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_armcancelattemptlockheld",
+                    "label": "_armCancelAttemptLockHeld",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L1167"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_armpostattemptlockheld",
+                    "label": "_armPostAttemptLockHeld",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L1193"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_authorizedurablelocalnotificationnativeentry",
+                    "label": "AuthorizeDurableLocalNotificationNativeEntry",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L27"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "host"
+            ],
+            "declaredBoundaries": [
+              "host"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "host"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T06-FINAL-EFFECT",
+                "title": "Exact generation final-effect gate",
+                "testType": "unit",
+                "path": "test/core/notifications/local_notification_final_effect_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-07",
+          "title": "Backgrounding between decision and post is rechecked",
+          "plainDescription": "If you leave the app while a notification is being prepared, the system checks again and makes sure the notification is still shown.",
+          "requirement": "If lifecycle changes between decision and effect, the final gate must post or preserve OS notification ownership.",
+          "sourceRefs": [
+            "AC-07",
+            "§6.3",
+            "§9"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 2,
+            "totalAnchors": 2,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/app_visibility_snapshot.dart",
+                "required": true,
+                "rationale": "Carries revisioned lifecycle state.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_snapshot",
+                    "label": "app_visibility_snapshot.dart",
+                    "sourceFile": "lib/core/notifications/app_visibility_snapshot.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_snapshot_agems",
+                    "label": "ageMs",
+                    "sourceFile": "lib/core/notifications/app_visibility_snapshot.dart",
+                    "sourceLocation": "L229"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_snapshot_appvisibilityconversationidentity",
+                    "label": "AppVisibilityConversationIdentity",
+                    "sourceFile": "lib/core/notifications/app_visibility_snapshot.dart",
+                    "sourceLocation": "L60"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_snapshot_appvisibilityconversationlane",
+                    "label": "AppVisibilityConversationLane",
+                    "sourceFile": "lib/core/notifications/app_visibility_snapshot.dart",
+                    "sourceLocation": "L38"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_snapshot_appvisibilitydigestdomain",
+                    "label": "appVisibilityDigestDomain",
+                    "sourceFile": "lib/core/notifications/app_visibility_snapshot.dart",
+                    "sourceLocation": "L17"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_app_visibility_snapshot_appvisibilityfreshnesswindow",
+                    "label": "appVisibilityFreshnessWindow",
+                    "sourceFile": "lib/core/notifications/app_visibility_snapshot.dart",
+                    "sourceLocation": "L10"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                "required": true,
+                "rationale": "Rechecks state before the local side effect.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator",
+                    "label": "durable_local_notification_effect_coordinator.dart",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_adoptestablishedremotepresentationlockheld",
+                    "label": "_adoptEstablishedRemotePresentationLockHeld",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L680"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_ambiguous",
+                    "label": "ambiguous",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L157"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_armcancelattemptlockheld",
+                    "label": "_armCancelAttemptLockHeld",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L1167"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_armpostattemptlockheld",
+                    "label": "_armPostAttemptLockHeld",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L1193"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_durable_local_notification_effect_coordinator_authorizedurablelocalnotificationnativeentry",
+                    "label": "AuthorizeDurableLocalNotificationNativeEntry",
+                    "sourceFile": "lib/core/notifications/durable_local_notification_effect_coordinator.dart",
+                    "sourceLocation": "L27"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "android_device",
+              "host"
+            ],
+            "declaredBoundaries": [
+              "android_device",
+              "host"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "android_device",
+              "host"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T06-FINAL-EFFECT",
+                "title": "Exact generation final-effect gate",
+                "testType": "unit",
+                "path": "test/core/notifications/local_notification_final_effect_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T01-ANDROID-VISIBILITY",
+                "title": "Android lifecycle visibility instrumentation",
+                "testType": "device",
+                "path": "android/app/src/appVisibility371AndroidTest/kotlin/com/mknoon/app/AppVisibilityLifecycleInstrumentationTest.kt",
+                "level": "device",
+                "boundaries": [
+                  "android_device"
+                ],
+                "platforms": [
+                  "android"
+                ],
+                "runner": "scripts/run_app_visibility_android_e2e.sh",
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-08",
+          "title": "Delayed wake does not recreate handled notification",
+          "plainDescription": "A late alert must not bring back a notification for a message that was already read, opened, deleted, expired, or dealt with.",
+          "requirement": "A delayed wake after installation-local read, open, delete, expiry or handling must not recreate an alert.",
+          "sourceRefs": [
+            "AC-08",
+            "§6.4",
+            "OQ-04"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 3,
+            "totalAnchors": 3,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/recent_remote_notification_gate.dart",
+                "required": true,
+                "rationale": "Rejects already handled remote events.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_remote_notification_gate",
+                    "label": "recent_remote_notification_gate.dart",
+                    "sourceFile": "lib/core/notifications/recent_remote_notification_gate.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_remote_notification_gate_clear",
+                    "label": "clear",
+                    "sourceFile": "lib/core/notifications/recent_remote_notification_gate.dart",
+                    "sourceLocation": "L503"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_remote_notification_gate_coercetimestamp",
+                    "label": "_coerceTimestamp",
+                    "sourceFile": "lib/core/notifications/recent_remote_notification_gate.dart",
+                    "sourceLocation": "L606"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_remote_notification_gate_consumeifrecentannouncement",
+                    "label": "consumeIfRecentAnnouncement",
+                    "sourceFile": "lib/core/notifications/recent_remote_notification_gate.dart",
+                    "sourceLocation": "L468"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_remote_notification_gate_consumeifrecentexactannouncement",
+                    "label": "consumeIfRecentExactAnnouncement",
+                    "sourceFile": "lib/core/notifications/recent_remote_notification_gate.dart",
+                    "sourceLocation": "L393"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_recent_remote_notification_gate_consumeifrecentpayload",
+                    "label": "consumeIfRecentPayload",
+                    "sourceFile": "lib/core/notifications/recent_remote_notification_gate.dart",
+                    "sourceLocation": "L325"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/direct_notification_read_projector.dart",
+                "required": true,
+                "rationale": "Projects installation-local direct read cleanup.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector",
+                    "label": "direct_notification_read_projector.dart",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_cancellation",
+                    "label": "_cancellation",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L37"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_commitdirectconversationread",
+                    "label": "CommitDirectConversationRead",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L14"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_commitread",
+                    "label": "_commitRead",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L38"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_coordinator",
+                    "label": "_coordinator",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L36"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_directconversationreadcommit",
+                    "label": "DirectConversationReadCommit",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L4"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/group_notification_read_projector.dart",
+                "required": false,
+                "rationale": "Projects installation-local group read cleanup.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector",
+                    "label": "group_notification_read_projector.dart",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_cancel",
+                    "label": "cancel",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L399"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_cancellation",
+                    "label": "_cancellation",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L64"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_capture",
+                    "label": "capture",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L384"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_captured",
+                    "label": "_captured",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L382"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_completestartupcanonicalrecovery",
+                    "label": "completeStartupCanonicalRecovery",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L98"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "host"
+            ],
+            "declaredBoundaries": [
+              "host"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "host"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T08-READ-DIRECT",
+                "title": "Direct read and exact notification cleanup",
+                "testType": "unit",
+                "path": "test/core/notifications/direct_notification_read_projector_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T08-READ-GROUP",
+                "title": "Group read and exact notification cleanup",
+                "testType": "unit",
+                "path": "test/core/notifications/group_notification_read_projector_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T12-RECOVERY-HOST",
+                "title": "Dropped-push canonical recovery",
+                "testType": "unit",
+                "path": "test/core/notifications/dropped_push_recovery_coordinator_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-09",
+          "title": "Dismiss, visibility and read remain separate",
+          "plainDescription": "Removing a notification does not mean the message was read, and simply seeing the app does not mark it as read.",
+          "requirement": "Dismissal does not mark read; visibility changes read only through resumed plus exact-conversation tracking.",
+          "sourceRefs": [
+            "AC-09",
+            "§6.4",
+            "OQ-03"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 2,
+            "totalAnchors": 2,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/direct_notification_read_projector.dart",
+                "required": true,
+                "rationale": "Owns direct read projection and exact cleanup.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector",
+                    "label": "direct_notification_read_projector.dart",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_cancellation",
+                    "label": "_cancellation",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L37"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_commitdirectconversationread",
+                    "label": "CommitDirectConversationRead",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L14"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_commitread",
+                    "label": "_commitRead",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L38"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_coordinator",
+                    "label": "_coordinator",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L36"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_read_projector_directconversationreadcommit",
+                    "label": "DirectConversationReadCommit",
+                    "sourceFile": "lib/core/notifications/direct_notification_read_projector.dart",
+                    "sourceLocation": "L4"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/group_notification_read_projector.dart",
+                "required": true,
+                "rationale": "Owns group read projection and exact cleanup.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector",
+                    "label": "group_notification_read_projector.dart",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_cancel",
+                    "label": "cancel",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L399"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_cancellation",
+                    "label": "_cancellation",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L64"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_capture",
+                    "label": "capture",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L384"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_captured",
+                    "label": "_captured",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L382"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_notification_read_projector_completestartupcanonicalrecovery",
+                    "label": "completeStartupCanonicalRecovery",
+                    "sourceFile": "lib/core/notifications/group_notification_read_projector.dart",
+                    "sourceLocation": "L98"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "host"
+            ],
+            "declaredBoundaries": [
+              "host"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "host"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T08-READ-DIRECT",
+                "title": "Direct read and exact notification cleanup",
+                "testType": "unit",
+                "path": "test/core/notifications/direct_notification_read_projector_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T08-READ-GROUP",
+                "title": "Group read and exact notification cleanup",
+                "testType": "unit",
+                "path": "test/core/notifications/group_notification_read_projector_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-10",
+          "title": "Multi-path delivery converges once",
+          "plainDescription": "No matter how a message reaches the phone, it should appear once, increase the unread count once, and normally alert the user once.",
+          "requirement": "Direct, push and inbox arrival orders converge on one local event, unread transition and current conversation notification, normally with one alert.",
+          "sourceRefs": [
+            "AC-10",
+            "§9",
+            "A-15",
+            "A-27"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 3,
+            "totalAnchors": 3,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/local_notification_ledger.dart",
+                "required": true,
+                "rationale": "Defines shared local presentation state.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger",
+                    "label": "local_notification_ledger.dart",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_adoptsbeforepublication",
+                    "label": "adoptsBeforePublication",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger.dart",
+                    "sourceLocation": "L663"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_attemptkind",
+                    "label": "attemptKind",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger.dart",
+                    "sourceLocation": "L189"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_canonicalutc",
+                    "label": "_canonicalUtc",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger.dart",
+                    "sourceLocation": "L13"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_claimssuspended",
+                    "label": "claimsSuspended",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger.dart",
+                    "sourceLocation": "L439"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_contentgeneration",
+                    "label": "contentGeneration",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger.dart",
+                    "sourceLocation": "L184"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/local_notification_ledger_store.dart",
+                "required": true,
+                "rationale": "Persists atomic ledger transitions.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_store",
+                    "label": "local_notification_ledger_store.dart",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger_store.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_store_afterrenamebeforedirectorysync",
+                    "label": "_afterRenameBeforeDirectorySync",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger_store.dart",
+                    "sourceLocation": "L55"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_store_beforerename",
+                    "label": "_beforeRename",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger_store.dart",
+                    "sourceLocation": "L53"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_store_coordinationlockfile",
+                    "label": "coordinationLockFile",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger_store.dart",
+                    "sourceLocation": "L60"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_store_coordinationlockfilename",
+                    "label": "coordinationLockFileName",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger_store.dart",
+                    "sourceLocation": "L47"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_local_notification_ledger_store_directory",
+                    "label": "directory",
+                    "sourceFile": "lib/core/notifications/local_notification_ledger_store.dart",
+                    "sourceLocation": "L49"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/direct_notification_canonical_reconciler.dart",
+                "required": false,
+                "rationale": "Converges direct replay and presentation state.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_canonical_reconciler",
+                    "label": "direct_notification_canonical_reconciler.dart",
+                    "sourceFile": "lib/core/notifications/direct_notification_canonical_reconciler.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_canonical_reconciler_coordinator",
+                    "label": "_coordinator",
+                    "sourceFile": "lib/core/notifications/direct_notification_canonical_reconciler.dart",
+                    "sourceLocation": "L49"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_canonical_reconciler_directnotificationcanonicalcontentdecision",
+                    "label": "DirectNotificationCanonicalContentDecision",
+                    "sourceFile": "lib/core/notifications/direct_notification_canonical_reconciler.dart",
+                    "sourceLocation": "L15"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_canonical_reconciler_directnotificationcanonicalcontentresolver",
+                    "label": "DirectNotificationCanonicalContentResolver",
+                    "sourceFile": "lib/core/notifications/direct_notification_canonical_reconciler.dart",
+                    "sourceLocation": "L4"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_canonical_reconciler_directnotificationcanonicalreconciler",
+                    "label": "DirectNotificationCanonicalReconciler",
+                    "sourceFile": "lib/core/notifications/direct_notification_canonical_reconciler.dart",
+                    "sourceLocation": "L24"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_notification_canonical_reconciler_directnotificationcanonicalreconciliationretryable",
+                    "label": "DirectNotificationCanonicalReconciliationRetryable",
+                    "sourceFile": "lib/core/notifications/direct_notification_canonical_reconciler.dart",
+                    "sourceLocation": "L17"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "host",
+              "sqlcipher"
+            ],
+            "declaredBoundaries": [
+              "host",
+              "sqlcipher"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "host",
+              "sqlcipher"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T10-LEDGER",
+                "title": "Atomic local notification ledger",
+                "testType": "unit",
+                "path": "test/core/notifications/local_notification_ledger_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T10-CONVERGENCE",
+                "title": "Multi-owner projection convergence",
+                "testType": "unit",
+                "path": "test/core/notifications/local_notification_projection_convergence_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T04-DURABILITY",
+                "title": "Background direct notification durability",
+                "testType": "integration",
+                "path": "integration_test/direct_notification_durability_sqlcipher_proof_test.dart",
+                "level": "integration",
+                "boundaries": [
+                  "sqlcipher"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-11",
+          "title": "Provider payload is fixed and private",
+          "plainDescription": "Apple and Google are told only to wake the app. They must never receive details about the sender, chat, message, or attachment.",
+          "requirement": "Captured APNs and FCM requests use one generic shape and contain none of the forbidden identity, conversation, content or modality fields.",
+          "sourceRefs": [
+            "AC-11",
+            "§4",
+            "§7",
+            "A-06",
+            "A-16"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 2,
+            "totalAnchors": 2,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "go-relay-server/inbox.go",
+                "required": true,
+                "rationale": "Owns provider wake dispatch from durable inbox state.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_chatpushmetadata",
+                    "label": "chatPushMetadata",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L1957"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxhistorygap",
+                    "label": "groupInboxHistoryGap",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3078"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxmessage",
+                    "label": "groupInboxMessage",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3070"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxstore",
+                    "label": "GroupInboxStore",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3089"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxstore_fanoutgroupreactionpush",
+                    "label": ".fanOutGroupReactionPush()",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3485"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupinboxstore_fanoutpush",
+                    "label": ".fanOutPush()",
+                    "sourceFile": "go-relay-server/inbox.go",
+                    "sourceLocation": "L3594"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/features/push/application/background_push_notification_fallback.dart",
+                "required": true,
+                "rationale": "Owns generic local fallback rather than private provider content.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_push_notification_fallback",
+                    "label": "background_push_notification_fallback.dart",
+                    "sourceFile": "lib/features/push/application/background_push_notification_fallback.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_push_notification_fallback_action",
+                    "label": "action",
+                    "sourceFile": "lib/features/push/application/background_push_notification_fallback.dart",
+                    "sourceLocation": "L113"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_push_notification_fallback_allow",
+                    "label": "allow",
+                    "sourceFile": "lib/features/push/application/background_push_notification_fallback.dart",
+                    "sourceLocation": "L139"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_push_notification_fallback_authenticatedinner",
+                    "label": "authenticatedInner",
+                    "sourceFile": "lib/features/push/application/background_push_notification_fallback.dart",
+                    "sourceLocation": "L103"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_push_notification_fallback_backgroundpushdefaultbody",
+                    "label": "backgroundPushDefaultBody",
+                    "sourceFile": "lib/features/push/application/background_push_notification_fallback.dart",
+                    "sourceLocation": "L17"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_features_push_application_background_push_notification_fallback_backgroundpushdefaulttitle",
+                    "label": "backgroundPushDefaultTitle",
+                    "sourceFile": "lib/features/push/application/background_push_notification_fallback.dart",
+                    "sourceLocation": "L16"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "provider_payload",
+              "relay"
+            ],
+            "declaredBoundaries": [
+              "provider_payload",
+              "relay"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "provider_payload",
+              "relay"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T11-PAYLOAD-GO",
+                "title": "Provider payload privacy closure",
+                "testType": "integration",
+                "path": "go-relay-server/push_payload_closure_test.go",
+                "level": "integration",
+                "boundaries": [
+                  "relay",
+                  "provider_payload"
+                ],
+                "platforms": [
+                  "relay"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T11-PAYLOAD-FIXTURE",
+                "title": "Android provider payload capture contract",
+                "testType": "contract",
+                "path": "test/core/debug/android_notification_payload_e2e_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "provider_payload"
+                ],
+                "platforms": [
+                  "host",
+                  "android"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-12",
+          "title": "Launch recovers missed pushes from inbox",
+          "plainDescription": "When the app opens after some alerts were missed, it finds the missing messages without adding any message twice.",
+          "requirement": "App launch after missed pushes synchronizes retained inbox events without duplicate local events.",
+          "sourceRefs": [
+            "AC-12",
+            "§5",
+            "A-03"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 2,
+            "totalAnchors": 2,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/dropped_push_recovery_coordinator.dart",
+                "required": true,
+                "rationale": "Coordinates durable recovery after a dropped wake.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_dropped_push_recovery_coordinator",
+                    "label": "dropped_push_recovery_coordinator.dart",
+                    "sourceFile": "lib/core/notifications/dropped_push_recovery_coordinator.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_dropped_push_recovery_coordinator_directdroppedpushdrain",
+                    "label": "DirectDroppedPushDrain",
+                    "sourceFile": "lib/core/notifications/dropped_push_recovery_coordinator.dart",
+                    "sourceLocation": "L26"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_dropped_push_recovery_coordinator_dispose",
+                    "label": "dispose",
+                    "sourceFile": "lib/core/notifications/dropped_push_recovery_coordinator.dart",
+                    "sourceLocation": "L134"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_dropped_push_recovery_coordinator_disposition",
+                    "label": "disposition",
+                    "sourceFile": "lib/core/notifications/dropped_push_recovery_coordinator.dart",
+                    "sourceLocation": "L21"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_dropped_push_recovery_coordinator_drain",
+                    "label": "drain",
+                    "sourceFile": "lib/core/notifications/dropped_push_recovery_coordinator.dart",
+                    "sourceLocation": "L55"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_dropped_push_recovery_coordinator_draindirectinboxfully",
+                    "label": "_drainDirectInboxFully",
+                    "sourceFile": "lib/core/notifications/dropped_push_recovery_coordinator.dart",
+                    "sourceLocation": "L90"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/canonical_recovery_runtime.dart",
+                "required": true,
+                "rationale": "Runs canonical inbox recovery and acknowledgement ordering.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_canonical_recovery_runtime",
+                    "label": "canonical_recovery_runtime.dart",
+                    "sourceFile": "lib/core/notifications/canonical_recovery_runtime.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_canonical_recovery_runtime_acknowledgecanonicalrecoverymarker",
+                    "label": "AcknowledgeCanonicalRecoveryMarker",
+                    "sourceFile": "lib/core/notifications/canonical_recovery_runtime.dart",
+                    "sourceLocation": "L128"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_canonical_recovery_runtime_acknowledgemarker",
+                    "label": "_acknowledgeMarker",
+                    "sourceFile": "lib/core/notifications/canonical_recovery_runtime.dart",
+                    "sourceLocation": "L202"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_canonical_recovery_runtime_acquirecanonicalrecoverysession",
+                    "label": "AcquireCanonicalRecoverySession",
+                    "sourceFile": "lib/core/notifications/canonical_recovery_runtime.dart",
+                    "sourceLocation": "L123"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_canonical_recovery_runtime_acquiresession",
+                    "label": "_acquireSession",
+                    "sourceFile": "lib/core/notifications/canonical_recovery_runtime.dart",
+                    "sourceLocation": "L201"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_canonical_recovery_runtime_authorityfingerprint",
+                    "label": "authorityFingerprint",
+                    "sourceFile": "lib/core/notifications/canonical_recovery_runtime.dart",
+                    "sourceLocation": "L153"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "android_device",
+              "host"
+            ],
+            "declaredBoundaries": [
+              "android_device",
+              "host"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "android_device",
+              "host"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T12-RECOVERY-HOST",
+                "title": "Dropped-push canonical recovery",
+                "testType": "unit",
+                "path": "test/core/notifications/dropped_push_recovery_coordinator_test.dart",
+                "level": "host",
+                "boundaries": [
+                  "host"
+                ],
+                "platforms": [
+                  "host"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T12-RECOVERY-ANDROID",
+                "title": "Android dropped-push recovery completion",
+                "testType": "device",
+                "path": "integration_test/android_notification_recovery_completion_proof_test.dart",
+                "level": "device",
+                "boundaries": [
+                  "android_device"
+                ],
+                "platforms": [
+                  "android"
+                ],
+                "runner": "integration_test/scripts/run_android_notification_recovery_completion.dart",
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        },
+        {
+          "id": "NOTIF-AC-13",
+          "title": "Reaction alert audience is author-only",
+          "plainDescription": "A reaction alerts only the person who wrote the message. Other people receive it without an alert, and reacting to your own message alerts no one.",
+          "requirement": "Only the reacted-to message author is alert-eligible; non-authors receive silent state, and self-reactions or removals alert no one.",
+          "sourceRefs": [
+            "AC-13",
+            "§6.5"
+          ],
+          "priority": "critical",
+          "intentStatus": "active",
+          "openQuestions": [],
+          "implementation": {
+            "status": "candidate",
+            "graphStatus": "candidate",
+            "matchedAnchors": 3,
+            "totalAnchors": 3,
+            "requiredMatched": 2,
+            "requiredTotal": 2,
+            "graphScopes": [
+              "architecture"
+            ],
+            "anchors": [
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/group_reaction_notification_projection.dart",
+                "required": true,
+                "rationale": "Projects the local group reaction alert disposition.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_reaction_notification_projection",
+                    "label": "group_reaction_notification_projection.dart",
+                    "sourceFile": "lib/core/notifications/group_reaction_notification_projection.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_reaction_notification_projection_accountpeerid",
+                    "label": "accountPeerId",
+                    "sourceFile": "lib/core/notifications/group_reaction_notification_projection.dart",
+                    "sourceLocation": "L1223"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_reaction_notification_projection_authoritativetimestamp",
+                    "label": "authoritativeTimestamp",
+                    "sourceFile": "lib/core/notifications/group_reaction_notification_projection.dart",
+                    "sourceLocation": "L1368"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_reaction_notification_projection_authority",
+                    "label": "authority",
+                    "sourceFile": "lib/core/notifications/group_reaction_notification_projection.dart",
+                    "sourceLocation": "L1474"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_reaction_notification_projection_authorityeventat",
+                    "label": "authorityEventAt",
+                    "sourceFile": "lib/core/notifications/group_reaction_notification_projection.dart",
+                    "sourceLocation": "L71"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_group_reaction_notification_projection_authorityeventid",
+                    "label": "authorityEventId",
+                    "sourceFile": "lib/core/notifications/group_reaction_notification_projection.dart",
+                    "sourceLocation": "L72"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "go-relay-server/reaction_push.go",
+                "required": true,
+                "rationale": "Narrows relay-side reaction wake nomination.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_directreactionpushmetadata",
+                    "label": "directReactionPushMetadata",
+                    "sourceFile": "go-relay-server/reaction_push.go",
+                    "sourceLocation": "L69"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_groupreactionpushmetadata",
+                    "label": "groupReactionPushMetadata",
+                    "sourceFile": "go-relay-server/reaction_push.go",
+                    "sourceLocation": "L135"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_reaction_push",
+                    "label": "reaction_push.go",
+                    "sourceFile": "go-relay-server/reaction_push.go",
+                    "sourceLocation": "L1"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_reaction_push_applygroupreactionpushrollout",
+                    "label": "applyGroupReactionPushRollout()",
+                    "sourceFile": "go-relay-server/reaction_push.go",
+                    "sourceLocation": "L646"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_reaction_push_boundedreactioneventidentity",
+                    "label": "boundedReactionEventIdentity()",
+                    "sourceFile": "go-relay-server/reaction_push.go",
+                    "sourceLocation": "L556"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "go_relay_server_reaction_push_buildgroupreactionpushmessage",
+                    "label": "buildGroupReactionPushMessage()",
+                    "sourceFile": "go-relay-server/reaction_push.go",
+                    "sourceLocation": "L454"
+                  }
+                ]
+              },
+              {
+                "kind": "file",
+                "value": "lib/core/notifications/direct_reaction_notification_projection.dart",
+                "required": false,
+                "rationale": "Projects the direct reaction alert disposition.",
+                "matched": true,
+                "evidence": [
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_reaction_notification_projection",
+                    "label": "direct_reaction_notification_projection.dart",
+                    "sourceFile": "lib/core/notifications/direct_reaction_notification_projection.dart",
+                    "sourceLocation": ""
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_reaction_notification_projection_accountpeerid",
+                    "label": "accountPeerId",
+                    "sourceFile": "lib/core/notifications/direct_reaction_notification_projection.dart",
+                    "sourceLocation": "L657"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_reaction_notification_projection_authorizedtransportpeerids",
+                    "label": "_authorizedTransportPeerIds",
+                    "sourceFile": "lib/core/notifications/direct_reaction_notification_projection.dart",
+                    "sourceLocation": "L579"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_reaction_notification_projection_boundedauthorizedtransports",
+                    "label": "_boundedAuthorizedTransports",
+                    "sourceFile": "lib/core/notifications/direct_reaction_notification_projection.dart",
+                    "sourceLocation": "L552"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_reaction_notification_projection_boundedtargets",
+                    "label": "_boundedTargets",
+                    "sourceFile": "lib/core/notifications/direct_reaction_notification_projection.dart",
+                    "sourceLocation": "L537"
+                  },
+                  {
+                    "graph": "architecture",
+                    "nodeId": "lib_core_notifications_direct_reaction_notification_projection_clearforlogout",
+                    "label": "clearForLogout",
+                    "sourceFile": "lib/core/notifications/direct_reaction_notification_projection.dart",
+                    "sourceLocation": "L78"
+                  }
+                ]
+              }
+            ],
+            "reviewState": "none",
+            "review": null
+          },
+          "verification": {
+            "status": "declared",
+            "requiredBoundaries": [
+              "device_ui",
+              "relay"
+            ],
+            "declaredBoundaries": [
+              "device_ui",
+              "relay"
+            ],
+            "satisfiedBoundaries": [],
+            "missingBoundaries": [
+              "device_ui",
+              "relay"
+            ],
+            "undeclaredBoundaries": [],
+            "tests": [
+              {
+                "id": "NOTIF-T13-REACTION-GO",
+                "title": "Group reaction author-only wake nomination",
+                "testType": "integration",
+                "path": "go-relay-server/group_reaction_push_test.go",
+                "level": "integration",
+                "boundaries": [
+                  "relay"
+                ],
+                "platforms": [
+                  "relay"
+                ],
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              },
+              {
+                "id": "NOTIF-T13-REACTION-DEVICE",
+                "title": "Announcement reaction notification audience",
+                "testType": "device",
+                "path": "integration_test/group_announcement_reaction_notification_proof_test.dart",
+                "level": "device",
+                "boundaries": [
+                  "device_ui"
+                ],
+                "platforms": [
+                  "android"
+                ],
+                "runner": "integration_test/scripts/run_group_reaction_notification_device.dart",
+                "exists": true,
+                "state": "not_run",
+                "current": false,
+                "latestRun": null
+              }
+            ]
+          },
+          "assessment": {
+            "status": "proof_not_run",
+            "reason": "Proof is declared but no current qualifying pass is recorded."
+          }
+        }
+      ]
+    }
+  ]
+}

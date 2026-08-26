@@ -58,6 +58,8 @@ void main() {
     ConversationNotificationGenerationFactory? generationFactory,
     NotificationRecoverySettlementCallback? onNotificationUpdated,
     ConversationNotificationRecoverySettlementCallback? onConversationCleared,
+    ConversationNotificationRecoverySettlementCallback?
+    onConversationReadSettled,
     NotificationRecoverySettlementCallback? onAllNotificationsCleared,
   }) {
     final resolvedRegistry =
@@ -70,6 +72,7 @@ void main() {
       notificationGenerationFactory: generationFactory,
       onNotificationUpdated: onNotificationUpdated,
       onConversationCleared: onConversationCleared,
+      onConversationReadSettled: onConversationReadSettled,
       onAllNotificationsCleared: onAllNotificationsCleared,
     );
   }
@@ -807,10 +810,12 @@ void main() {
     () async {
       final updated = <String>[];
       final conversations = <String>[];
+      final readSettlements = <String>[];
       var allCleared = 0;
       final service = buildService(
         onNotificationUpdated: () async => updated.add('updated'),
         onConversationCleared: (key) async => conversations.add(key),
+        onConversationReadSettled: (key) async => readSettlements.add(key),
         onAllNotificationsCleared: () async => allCleared += 1,
       );
       await service.initialize();
@@ -850,9 +855,88 @@ void main() {
       expect(conversations, <String>[
         'peer-never-allocated',
         'group:generation-never-allocated',
-        'peer:read-without-local-card',
       ]);
+      expect(readSettlements, <String>['peer:read-without-local-card']);
       expect(allCleared, 1);
+    },
+  );
+
+  test(
+    'conversation-read settlement reports a failed iOS badge reconciliation to its caller',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      final service = buildService(
+        onConversationReadSettled: (_) async {
+          throw StateError('badge reconciliation failed');
+        },
+      );
+
+      await expectLater(
+        (service as ConversationNotificationReadSettlement)
+            .settleConversationRead('peer:read-settlement-failure'),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        events,
+        contains(
+          isA<Map<String, dynamic>>()
+              .having(
+                (event) => event['event'],
+                'event',
+                'IOS_NOTIFICATION_RECOVERY_SETTLEMENT_ERROR',
+              )
+              .having((event) => event['details'], 'details', <String, dynamic>{
+                'operation': 'conversation_read_settled',
+                'errorType': 'StateError',
+              }),
+        ),
+      );
+    },
+  );
+
+  test(
+    'notification-update and all-clear settlement failures remain best effort',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      final service = buildService(
+        onNotificationUpdated: () async {
+          throw StateError('update settlement failed');
+        },
+        onAllNotificationsCleared: () async {
+          throw ArgumentError('all-clear settlement failed');
+        },
+      );
+      await service.initialize();
+
+      await expectLater(
+        service.showMessageNotification(
+          contactPeerId: 'peer:best-effort-update',
+          senderUsername: 'Alice',
+          messageText: 'hello',
+        ),
+        completes,
+      );
+      await expectLater(service.clearDeliveredNotifications(), completes);
+
+      final settlementErrors = events
+          .where(
+            (event) =>
+                event['event'] == 'IOS_NOTIFICATION_RECOVERY_SETTLEMENT_ERROR',
+          )
+          .map((event) => event['details'])
+          .toList();
+      expect(settlementErrors, <Map<String, dynamic>>[
+        <String, dynamic>{
+          'operation': 'notification_updated',
+          'errorType': 'StateError',
+        },
+        <String, dynamic>{
+          'operation': 'all_notifications_cleared',
+          'errorType': 'ArgumentError',
+        },
+      ]);
     },
   );
 

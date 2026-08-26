@@ -23,7 +23,7 @@ void main() {
   });
 
   DurableNotificationToneLease lease({
-    Duration window = const Duration(seconds: 30),
+    Duration window = const Duration(seconds: 10),
     Duration ttl = const Duration(hours: 12),
     int maxClaims = 256,
     Duration pendingWait = const Duration(milliseconds: 50),
@@ -45,6 +45,11 @@ void main() {
     claimTokenFactory: claimTokenFactory,
     exclusiveClaimWriter: exclusiveClaimWriter,
   );
+
+  test('defaults to a ten-second durable tone window', () {
+    final coordinator = DurableNotificationToneLease(directory: directory);
+    expect(coordinator.toneWindow, const Duration(seconds: 10));
+  });
 
   test('simultaneous event claims have exactly one winner', () async {
     final coordinatorA = lease();
@@ -387,10 +392,10 @@ void main() {
     () async {
       expect(await lease().acquireTone('peer-alice'), isTrue);
 
-      now = now.add(const Duration(seconds: 10));
+      now = now.add(const Duration(seconds: 5));
       expect(await lease().acquireTone('peer-alice'), isFalse);
 
-      now = now.add(const Duration(seconds: 20));
+      now = now.add(const Duration(seconds: 5));
       expect(await lease().acquireTone('peer-alice'), isTrue);
     },
   );
@@ -403,7 +408,7 @@ void main() {
     now = now.add(const Duration(seconds: 20));
     expect(await reservation!.commit(), isTrue);
 
-    now = now.add(const Duration(seconds: 29));
+    now = now.add(const Duration(seconds: 9));
     expect(await lease().reserveTone('peer-commit-window'), isNull);
 
     now = now.add(const Duration(seconds: 1));
@@ -641,7 +646,7 @@ void main() {
     final coordinator = lease();
     expect(await coordinator.claimEvent(identity), isFalse);
     expect(await coordinator.acquireTone('peer-alice'), isFalse);
-    now = now.add(const Duration(seconds: 31));
+    now = now.add(const Duration(seconds: 10));
     expect(await coordinator.acquireTone('peer-alice'), isTrue);
   });
 
@@ -668,7 +673,7 @@ void main() {
       expect(await lease().reserveTone('legacy-seconds'), isNull);
       expect(await lease().reserveTone('legacy-milliseconds'), isNull);
 
-      now = now.add(const Duration(seconds: 30));
+      now = now.add(const Duration(seconds: 10));
       final secondsReservation = await lease().reserveTone('legacy-seconds');
       final millisecondsReservation = await lease().reserveTone(
         'legacy-milliseconds',

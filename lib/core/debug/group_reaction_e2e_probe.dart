@@ -98,7 +98,11 @@ Future<Map<String, Object?>> runGroupReactionE2EProbeAction({
   final firstMarker = token('firstMarker', maxLength: 120, allowEmpty: true);
   final secondMarker = token('secondMarker', maxLength: 120, allowEmpty: true);
   final targetMarker = token('targetMarker', maxLength: 120, allowEmpty: true);
-  final phase = token('phase', maxLength: 16, allowEmpty: true);
+  // Phase was added for the combined iOS journey. Existing schema-v1 Android
+  // requests omit it and retain the original empty-phase semantics.
+  final phase = config.containsKey('phase')
+      ? token('phase', maxLength: 16, allowEmpty: true)
+      : '';
   if (config['schema'] != groupReactionE2EProbeRequestSchema ||
       !groupReactionE2EAndroidScenarios.contains(scenario) ||
       !<String>{

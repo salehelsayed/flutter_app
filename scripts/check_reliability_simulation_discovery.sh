@@ -237,8 +237,9 @@ classify_path() {
       ;;
     integration_test/scripts/group_reaction_notification_device_criteria.dart|\
     integration_test/scripts/capture_group_reaction_notification_device.dart|\
+    integration_test/scripts/ios_group_message_diagnostic_staging.py|\
     integration_test/group_reaction_notification_sqlcipher_probe_test.dart)
-      record "support" "$path" "support" "257 staged group/announcement reaction-notification capture, SQLCipher observer, and strict evidence criteria"
+      record "support" "$path" "support" "257/398 staged group/announcement reaction-notification capture, diagnostic transaction, SQLCipher observer, and strict evidence criteria"
       return
       ;;
     integration_test/scripts/group_notification_projection_android_criteria.dart)
@@ -278,6 +279,7 @@ classify_path() {
       return
       ;;
     integration_test/scripts/_android_app_package.dart|\
+    integration_test/scripts/physical_device_capture_harness.dart|\
     integration_test/scripts/routing_smoke_group_criteria.dart|\
     integration_test/sims_dispatcher.dart|\
     integration_test/setup_device.dart|\

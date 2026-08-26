@@ -16,7 +16,7 @@ class NotificationToneTracker {
 
   NotificationToneTracker({
     DateTime Function()? clock,
-    this.window = const Duration(seconds: 30),
+    this.window = const Duration(seconds: 10),
   }) : _clock = clock ?? DateTime.now;
 
   /// Returns true (and records the tone time) when [conversationKey] may play

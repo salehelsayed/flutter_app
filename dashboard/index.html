@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Mknoon Project Evidence</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">Mknoon project operating system</p>
+        <h1>Intent, code evidence, and proof</h1>
+        <p class="lede">
+          Graph matches are candidates. Test files are declarations. Coverage
+          requires current proof and a revision-matched review.
+        </p>
+      </div>
+      <div id="health-badge" class="health-badge">Loading evidence…</div>
+    </header>
+
+    <main>
+      <section id="provenance" class="provenance" aria-label="Evidence provenance"></section>
+
+      <section aria-labelledby="project-health-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Project overview</p>
+            <h2 id="project-health-title">Project health</h2>
+          </div>
+          <p id="generated-at" class="muted"></p>
+        </div>
+        <div id="summary-cards" class="summary-grid"></div>
+      </section>
+
+      <section class="feature-panel" aria-labelledby="feature-title">
+        <div class="section-heading feature-heading">
+          <div>
+            <p id="feature-kicker" class="eyebrow"></p>
+            <h2 id="feature-title">Feature</h2>
+            <p id="feature-description" class="muted"></p>
+          </div>
+          <div class="feature-actions">
+            <label id="feature-selector-wrap" class="feature-selector" hidden>
+              <span>Feature</span>
+              <select id="feature-select"></select>
+            </label>
+            <a id="prd-link" class="prd-link" href="#">Open authoritative PRD</a>
+          </div>
+        </div>
+
+        <div id="feature-summary" class="summary-grid feature-summary"></div>
+
+        <div class="toolbar" aria-label="Behavior filters">
+          <label>
+            <span>Search behaviors</span>
+            <input id="behavior-search" type="search" placeholder="ID, title, requirement…" />
+          </label>
+          <label>
+            <span>Assessment</span>
+            <select id="assessment-filter">
+              <option value="all">All assessments</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="behavior-workspace" class="behavior-workspace">
+          <div class="behavior-list">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Behavior</th>
+                    <th scope="col">Intent</th>
+                    <th scope="col">Code evidence</th>
+                    <th scope="col">Proof</th>
+                    <th scope="col">Assessment</th>
+                  </tr>
+                </thead>
+                <tbody id="behavior-rows"></tbody>
+              </table>
+            </div>
+            <p id="empty-state" class="empty-state" hidden>No behaviors match these filters.</p>
+          </div>
+
+          <aside
+            id="behavior-details"
+            class="behavior-details"
+            aria-labelledby="details-title"
+            aria-live="polite"
+            hidden
+          >
+            <div class="details-header">
+              <div>
+                <p id="details-id" class="eyebrow"></p>
+                <h2 id="details-title"></h2>
+              </div>
+              <button
+                id="details-close"
+                class="close-button"
+                type="button"
+                aria-label="Close behavior details"
+              >
+                ×
+              </button>
+            </div>
+            <div id="details-content" class="details-content"></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <template id="status-template">
+      <span class="status-pill"></span>
+    </template>
+
+    <noscript>This dashboard requires JavaScript to read the generated project index.</noscript>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

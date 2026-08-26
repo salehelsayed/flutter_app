@@ -915,7 +915,7 @@ Map<String, dynamic> _sanitizeNotificationRecord(String record) {
 
 /// Light-weight active-record capture: the dumpsys poll ONLY, with no shade
 /// expansion, uiautomator dump, or screenshot. Used for S14's phase-1 capture,
-/// which must complete well inside the 30s tone window.
+/// which must complete well inside the 10s tone window.
 Future<List<Map<String, dynamic>>> _captureActiveRecords({
   required int expectedCount,
 }) async {
@@ -1866,15 +1866,15 @@ Future<void> main(List<String> args) async {
     );
 
     // ════════════════════════════════════════════════════════════════
-    //  S14: tone-window debounce (1:1). Two texts inside the 30s window:
+    //  S14: tone-window debounce (1:1). Two texts inside the 10s window:
     //       the first is audible, the second is a SILENT in-place update of
     //       the SAME notification id.
     // ════════════════════════════════════════════════════════════════
     // The window anchors on the last AUDIBLE tone for this conversation key
     // (`notification_tone_tracker.dart:31-43`), so wait it out first —
     // otherwise msg1 inherits an open window and the pair is inconclusive.
-    _log('ORCH', 'S14: 31s tone cooldown so msg1 is deterministically audible');
-    await Future<void>.delayed(const Duration(seconds: 31));
+    _log('ORCH', 'S14: 11s tone cooldown so msg1 is deterministically audible');
+    await Future<void>.delayed(const Duration(seconds: 11));
     _signals.writeSignal('s14_go');
     final s14FirstVerdict = await _signals.waitForJson(
       's14_first_bob_verdict',
@@ -1884,7 +1884,7 @@ Future<void> main(List<String> args) async {
     if (_isSelectedRow('S14')) {
       if (s14FirstVerdict['programmaticPass'] as bool? ?? false) {
         // LIGHT capture only — the shade/uiautomator dance would burn most of
-        // the 30s window before msg2 could be sent.
+        // the 10s window before msg2 could be sent.
         final phase1 = await _captureActiveRecords(expectedCount: 1);
         s14PriorRecordIds = phase1
             .map((record) => record['id'])
@@ -1941,8 +1941,8 @@ Future<void> main(List<String> args) async {
     //       `paused` with no active conversation while the bridge stays live;
     //       delivery must still post one audible OS record.
     // ════════════════════════════════════════════════════════════════
-    _log('ORCH', 'S16: 31s tone cooldown before the paused-lifecycle leg');
-    await Future<void>.delayed(const Duration(seconds: 31));
+    _log('ORCH', 'S16: 11s tone cooldown before the paused-lifecycle leg');
+    await Future<void>.delayed(const Duration(seconds: 11));
     _log('ORCH', 'Waiting for Bob to report a backgrounded lifecycle...');
     await _signals.waitForSignal(
       'bob_backgrounded',

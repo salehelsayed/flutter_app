@@ -96,7 +96,7 @@ class OneToOneTestUser {
     required RecentRemoteNotificationGate gate,
     required DateTime Function() clock,
     AppLifecycleState lifecycle = AppLifecycleState.resumed,
-    Duration toneWindow = const Duration(seconds: 30),
+    Duration toneWindow = const Duration(seconds: 10),
   }) {
     final bridge = RecordingFakeBridge();
     bridge.whenCommand(

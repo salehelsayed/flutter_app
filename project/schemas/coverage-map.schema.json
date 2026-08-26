@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mknoon.local/schemas/coverage-map.schema.json",
+  "title": "Mknoon behavior proof map",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "featureId", "tests", "mappings"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "featureId": { "type": "string" },
+    "description": { "type": "string" },
+    "tests": {
+      "type": "array",
+      "items": { "$ref": "e2e-test.schema.json" }
+    },
+    "mappings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["behaviorId", "testIds"],
+        "properties": {
+          "behaviorId": { "type": "string" },
+          "testIds": {
+            "type": "array",
+            "items": { "type": "string" },
+            "uniqueItems": true
+          }
+        }
+      }
+    }
+  }
+}

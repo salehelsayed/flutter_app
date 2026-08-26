@@ -1,0 +1,42 @@
+{
+  "$schema": "../../schemas/coverage-map.schema.json",
+  "schemaVersion": 1,
+  "featureId": "notifications",
+  "description": "Explicit qualifying proof map. The historical filename is retained, but the charter permits host, native, integration and device evidence rather than forcing every behavior into E2E.",
+  "tests": [
+    {"id": "NOTIF-T01-VISIBILITY-HOST", "title": "Fresh exact-conversation visibility authority", "testType": "unit", "path": "test/core/notifications/app_visibility_authority_test.dart", "level": "host", "boundaries": ["host"], "platforms": ["host"]},
+    {"id": "NOTIF-T01-SOUND-DEVICE", "title": "Same-chat notification sound disposition", "testType": "device", "path": "integration_test/notification_sound_smoke_harness.dart", "level": "device", "boundaries": ["device_ui"], "platforms": ["android", "ios"], "runner": "integration_test/scripts/run_notification_sound_smoke.dart"},
+    {"id": "NOTIF-T01-IOS-VISIBILITY", "title": "iOS visibility snapshot native contract", "testType": "native_unit", "path": "ios/RunnerTests/IosAppVisibilitySnapshotTests.swift", "level": "native", "boundaries": ["ios_native"], "platforms": ["ios"]},
+    {"id": "NOTIF-T01-ANDROID-VISIBILITY", "title": "Android lifecycle visibility instrumentation", "testType": "device", "path": "android/app/src/appVisibility371AndroidTest/kotlin/com/mknoon/app/AppVisibilityLifecycleInstrumentationTest.kt", "level": "device", "boundaries": ["android_device"], "platforms": ["android"], "runner": "scripts/run_app_visibility_android_e2e.sh"},
+    {"id": "NOTIF-T02-OTHER-CHAT", "title": "Notification opened while another chat remains active", "testType": "device", "path": "integration_test/notification_open_during_other_chat_harness.dart", "level": "device", "boundaries": ["device_ui"], "platforms": ["android"], "runner": "integration_test/scripts/run_notification_open_during_other_chat.dart"},
+    {"id": "NOTIF-T04-DURABILITY", "title": "Background direct notification durability", "testType": "integration", "path": "integration_test/direct_notification_durability_sqlcipher_proof_test.dart", "level": "integration", "boundaries": ["sqlcipher"], "platforms": ["host"]},
+    {"id": "NOTIF-T05-OUTCOME", "title": "Completed outcome correlation remains distinct from delivery", "testType": "unit", "path": "test/core/notifications/notification_completed_outcome_correlation_test.dart", "level": "host", "boundaries": ["host"], "platforms": ["host"]},
+    {"id": "NOTIF-T05-WAKE-GO", "title": "Inbox wake outcome protocol", "testType": "integration", "path": "go-mknoon/bridge/inbox_wake_outcome_test.go", "level": "integration", "boundaries": ["relay"], "platforms": ["relay"]},
+    {"id": "NOTIF-T06-FINAL-EFFECT", "title": "Exact generation final-effect gate", "testType": "unit", "path": "test/core/notifications/local_notification_final_effect_test.dart", "level": "host", "boundaries": ["host"], "platforms": ["host"]},
+    {"id": "NOTIF-T08-READ-DIRECT", "title": "Direct read and exact notification cleanup", "testType": "unit", "path": "test/core/notifications/direct_notification_read_projector_test.dart", "level": "host", "boundaries": ["host"], "platforms": ["host"]},
+    {"id": "NOTIF-T08-READ-GROUP", "title": "Group read and exact notification cleanup", "testType": "unit", "path": "test/core/notifications/group_notification_read_projector_test.dart", "level": "host", "boundaries": ["host"], "platforms": ["host"]},
+    {"id": "NOTIF-T10-LEDGER", "title": "Atomic local notification ledger", "testType": "unit", "path": "test/core/notifications/local_notification_ledger_test.dart", "level": "host", "boundaries": ["host"], "platforms": ["host"]},
+    {"id": "NOTIF-T10-CONVERGENCE", "title": "Multi-owner projection convergence", "testType": "unit", "path": "test/core/notifications/local_notification_projection_convergence_test.dart", "level": "host", "boundaries": ["host"], "platforms": ["host"]},
+    {"id": "NOTIF-T11-PAYLOAD-GO", "title": "Provider payload privacy closure", "testType": "integration", "path": "go-relay-server/push_payload_closure_test.go", "level": "integration", "boundaries": ["relay", "provider_payload"], "platforms": ["relay"]},
+    {"id": "NOTIF-T11-PAYLOAD-FIXTURE", "title": "Android provider payload capture contract", "testType": "contract", "path": "test/core/debug/android_notification_payload_e2e_test.dart", "level": "host", "boundaries": ["provider_payload"], "platforms": ["host", "android"]},
+    {"id": "NOTIF-T12-RECOVERY-HOST", "title": "Dropped-push canonical recovery", "testType": "unit", "path": "test/core/notifications/dropped_push_recovery_coordinator_test.dart", "level": "host", "boundaries": ["host"], "platforms": ["host"]},
+    {"id": "NOTIF-T12-RECOVERY-ANDROID", "title": "Android dropped-push recovery completion", "testType": "device", "path": "integration_test/android_notification_recovery_completion_proof_test.dart", "level": "device", "boundaries": ["android_device"], "platforms": ["android"], "runner": "integration_test/scripts/run_android_notification_recovery_completion.dart"},
+    {"id": "NOTIF-T13-REACTION-GO", "title": "Group reaction author-only wake nomination", "testType": "integration", "path": "go-relay-server/group_reaction_push_test.go", "level": "integration", "boundaries": ["relay"], "platforms": ["relay"]},
+    {"id": "NOTIF-T13-REACTION-DEVICE", "title": "Announcement reaction notification audience", "testType": "device", "path": "integration_test/group_announcement_reaction_notification_proof_test.dart", "level": "device", "boundaries": ["device_ui"], "platforms": ["android"], "runner": "integration_test/scripts/run_group_reaction_notification_device.dart"}
+  ],
+  "mappings": [
+    {"behaviorId": "NOTIF-AC-01", "testIds": ["NOTIF-T01-VISIBILITY-HOST", "NOTIF-T01-SOUND-DEVICE", "NOTIF-T01-IOS-VISIBILITY", "NOTIF-T01-ANDROID-VISIBILITY"]},
+    {"behaviorId": "NOTIF-AC-02", "testIds": ["NOTIF-T01-VISIBILITY-HOST", "NOTIF-T02-OTHER-CHAT"]},
+    {"behaviorId": "NOTIF-AC-03", "testIds": ["NOTIF-T01-VISIBILITY-HOST"]},
+    {"behaviorId": "NOTIF-AC-04", "testIds": ["NOTIF-T04-DURABILITY", "NOTIF-T01-ANDROID-VISIBILITY"]},
+    {"behaviorId": "NOTIF-AC-05", "testIds": ["NOTIF-T05-OUTCOME", "NOTIF-T05-WAKE-GO"]},
+    {"behaviorId": "NOTIF-AC-06", "testIds": ["NOTIF-T06-FINAL-EFFECT"]},
+    {"behaviorId": "NOTIF-AC-07", "testIds": ["NOTIF-T06-FINAL-EFFECT", "NOTIF-T01-ANDROID-VISIBILITY"]},
+    {"behaviorId": "NOTIF-AC-08", "testIds": ["NOTIF-T08-READ-DIRECT", "NOTIF-T08-READ-GROUP", "NOTIF-T12-RECOVERY-HOST"]},
+    {"behaviorId": "NOTIF-AC-09", "testIds": ["NOTIF-T08-READ-DIRECT", "NOTIF-T08-READ-GROUP"]},
+    {"behaviorId": "NOTIF-AC-10", "testIds": ["NOTIF-T10-LEDGER", "NOTIF-T10-CONVERGENCE", "NOTIF-T04-DURABILITY"]},
+    {"behaviorId": "NOTIF-AC-11", "testIds": ["NOTIF-T11-PAYLOAD-GO", "NOTIF-T11-PAYLOAD-FIXTURE"]},
+    {"behaviorId": "NOTIF-AC-12", "testIds": ["NOTIF-T12-RECOVERY-HOST", "NOTIF-T12-RECOVERY-ANDROID"]},
+    {"behaviorId": "NOTIF-AC-13", "testIds": ["NOTIF-T13-REACTION-GO", "NOTIF-T13-REACTION-DEVICE"]}
+  ]
+}

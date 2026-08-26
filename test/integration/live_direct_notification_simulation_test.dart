@@ -182,7 +182,7 @@ void main() {
     );
     expect(alice.notificationService.shown.last.silent, isFalse);
 
-    // Second message from the same sender, still inside the 30s window.
+    // Second message from the same sender, still inside the 10s window.
     now = now.add(const Duration(seconds: 5));
     await DirectMessageRouter.deliver(
       bob,

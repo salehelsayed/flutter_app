@@ -9,6 +9,8 @@ typedef DrainGroupOfflineInboxForGroupFn =
 typedef DrainOfflineInboxCompletelyFn = Future<bool> Function();
 typedef DrainGroupOfflineInboxForGroupCompletelyFn =
     Future<bool> Function(String groupId);
+typedef SettleForegroundConversationReadFn =
+    Future<void> Function(String peerId);
 
 enum ForegroundRemoteMessageResult {
   drained(canonicalStateComplete: true, needsNotification: false),
@@ -44,6 +46,7 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
   DrainOfflineInboxCompletelyFn? drainOfflineInboxCompletely,
   DrainGroupOfflineInboxForGroupCompletelyFn?
   drainGroupOfflineInboxForGroupCompletely,
+  SettleForegroundConversationReadFn? settleForegroundConversationRead,
   RecentRemoteNotificationGate? recentRemoteGate,
 }) async {
   final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
@@ -107,6 +110,20 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
   try {
     switch (routeTarget.kind) {
       case NotificationRouteTargetKind.conversation:
+        final complete = drainOfflineInboxCompletely == null
+            ? await (() async {
+                await drainOfflineInbox();
+                return true;
+              })()
+            : await drainOfflineInboxCompletely();
+        if (!complete) {
+          return ForegroundRemoteMessageResult.drainFailed;
+        }
+        final peerId = routeTarget.peerId;
+        if (peerId != null) {
+          await settleForegroundConversationRead?.call(peerId);
+        }
+        return ForegroundRemoteMessageResult.drained;
       case NotificationRouteTargetKind.contactRequest:
       case NotificationRouteTargetKind.groupInvite:
       case NotificationRouteTargetKind.intros:

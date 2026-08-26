@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mknoon.local/schemas/test-run.schema.json",
+  "title": "Mknoon revisioned test run collection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "featureId", "runs"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "featureId": { "type": "string" },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "testId",
+          "status",
+          "revision",
+          "recordedAt",
+          "platform",
+          "target",
+          "command"
+        ],
+        "properties": {
+          "testId": { "type": "string" },
+          "status": { "enum": ["passed", "failed", "blocked", "not_applicable"] },
+          "revision": { "type": "string", "minLength": 1 },
+          "workingTreeDirty": { "type": "boolean" },
+          "recordedAt": { "type": "string", "format": "date-time" },
+          "platform": { "type": "string", "minLength": 1 },
+          "target": { "type": "string", "minLength": 1 },
+          "command": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string" },
+          "artifacts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "uniqueItems": true
+          }
+        }
+      }
+    }
+  }
+}

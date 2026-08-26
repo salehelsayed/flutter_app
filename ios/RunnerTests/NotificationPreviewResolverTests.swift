@@ -2265,26 +2265,20 @@ final class NotificationPreviewResolverTests: XCTestCase {
 
     let toneDir = FileManager.default.temporaryDirectory
       .appendingPathComponent("reaction-tones-\(UUID().uuidString)")
-    let firstProcess = AppGroupNotificationToneLeaseStore(
-      directory: toneDir,
-      leaseSeconds: 30
-    )
+    let firstProcess = AppGroupNotificationToneLeaseStore(directory: toneDir)
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     XCTAssertTrue(firstProcess.acquire(conversationId: "peer-alice", now: now))
-    let restartedProcess = AppGroupNotificationToneLeaseStore(
-      directory: toneDir,
-      leaseSeconds: 30
-    )
+    let restartedProcess = AppGroupNotificationToneLeaseStore(directory: toneDir)
     XCTAssertFalse(
       restartedProcess.acquire(
         conversationId: "peer-alice",
-        now: now.addingTimeInterval(29)
+        now: now.addingTimeInterval(9)
       )
     )
     XCTAssertTrue(
       restartedProcess.acquire(
         conversationId: "peer-alice",
-        now: now.addingTimeInterval(31)
+        now: now.addingTimeInterval(10)
       )
     )
 
@@ -2781,13 +2775,13 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: pendingURL.path))
     guard case .leaseHeld = store.reserve(
       conversationId: "peer-alice",
-      now: now.addingTimeInterval(29)
+      now: now.addingTimeInterval(11)
     ) else {
       return XCTFail("committed tone window must suppress a burst")
     }
     guard case let .reserved(third) = store.reserve(
       conversationId: "peer-alice",
-      now: now.addingTimeInterval(33)
+      now: now.addingTimeInterval(12)
     ) else {
       return XCTFail("expired tone window must allow a new reservation")
     }

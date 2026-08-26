@@ -1754,6 +1754,119 @@ final class IosNotificationRecoveryTests: XCTestCase {
     recorder.completeLast()
   }
 
+  func testSerializedBadgeWriterRetriesTransientSetterFailure() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = IosNotificationRecoveryStore(directory: directory)
+    _ = store.claimPrepared(
+      requestIdentifier: "request",
+      identity: ordinaryIdentity(eventId: "event")
+    )
+    let queue = DispatchQueue(
+      label: "IosNotificationRecoveryTests.transient-badge-retry"
+    )
+    let attempts = LockedArray<Int>()
+    let recoveredWrite = expectation(description: "retried badge write")
+    let writer = IosNotificationSerializedBadgeWriter(
+      store: store,
+      setter: { count, completion in
+        attempts.append(count)
+        if attempts.values.count == 1 {
+          completion(BadgeSetterTestError.failed)
+        } else {
+          recoveredWrite.fulfill()
+          completion(nil)
+        }
+      },
+      queue: queue
+    )
+
+    writer.requestWrite()
+
+    wait(for: [recoveredWrite], timeout: 2)
+    queue.sync {}
+    XCTAssertEqual(attempts.values, [1, 1])
+  }
+
+  func testSerializedBadgeWriterBoundsFailuresAndReleasesLock() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = IosNotificationRecoveryStore(directory: directory)
+    _ = store.claimPrepared(
+      requestIdentifier: "request",
+      identity: ordinaryIdentity(eventId: "event")
+    )
+    let queue = DispatchQueue(
+      label: "IosNotificationRecoveryTests.bounded-badge-retry"
+    )
+    let attempts = LockedArray<Int>()
+    let thirdAttempt = expectation(description: "third badge attempt")
+    let writer = IosNotificationSerializedBadgeWriter(
+      store: store,
+      setter: { count, completion in
+        attempts.append(count)
+        let attempt = attempts.values.count
+        if attempt == 3 { thirdAttempt.fulfill() }
+        completion(
+          attempt <= 3 ? BadgeSetterTestError.failed : nil
+        )
+      },
+      queue: queue
+    )
+
+    writer.requestWrite()
+
+    wait(for: [thirdAttempt], timeout: 2)
+    queue.sync {}
+    XCTAssertEqual(attempts.values, [1, 1, 1])
+
+    let subsequentWrite = expectation(
+      description: "subsequent writer acquires released badge lock"
+    )
+    let subsequentWriter = IosNotificationSerializedBadgeWriter(
+      store: store,
+      setter: { count, completion in
+        XCTAssertEqual(count, 1)
+        subsequentWrite.fulfill()
+        completion(nil)
+      }
+    )
+    subsequentWriter.requestWrite()
+    wait(for: [subsequentWrite], timeout: 2)
+  }
+
+  func testSerializedBadgeWriterPrefersNewRevisionAfterSetterFailure() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = IosNotificationRecoveryStore(directory: directory)
+    _ = store.claimPrepared(
+      requestIdentifier: "first",
+      identity: ordinaryIdentity(eventId: "first")
+    )
+    let firstWrite = expectation(description: "first badge write")
+    let repairedWrite = expectation(description: "latest badge write")
+    let recorder = BadgeSetterRecorder(
+      firstExpectation: firstWrite,
+      secondExpectation: repairedWrite
+    )
+    let writer = IosNotificationSerializedBadgeWriter(
+      store: store,
+      setter: recorder.set
+    )
+    writer.requestWrite()
+    wait(for: [firstWrite], timeout: 2)
+
+    _ = store.claimPrepared(
+      requestIdentifier: "second",
+      identity: ordinaryIdentity(eventId: "second")
+    )
+    recorder.completeFirst(error: BadgeSetterTestError.failed)
+
+    wait(for: [repairedWrite], timeout: 2)
+    XCTAssertEqual(recorder.counts, [1, 2])
+    recorder.completeLast()
+  }
+
   func testLegacyBadgeWriterUsesInjectedMainThreadFallback() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -2009,11 +2122,11 @@ private final class BadgeSetterRecorder: @unchecked Sendable {
     if index == 2 { secondExpectation.fulfill() }
   }
 
-  func completeFirst() {
+  func completeFirst(error: Error? = nil) {
     lock.lock()
     let completion = completions.removeFirst()
     lock.unlock()
-    completion(nil)
+    completion(error)
   }
 
   func completeLast() {
@@ -2026,6 +2139,10 @@ private final class BadgeSetterRecorder: @unchecked Sendable {
     lock.unlock()
     completion(nil)
   }
+}
+
+private enum BadgeSetterTestError: Error {
+  case failed
 }
 
 private final class OrderedHandoffStore: IosNotificationRecoveryHandoffStoring {

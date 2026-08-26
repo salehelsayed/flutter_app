@@ -507,6 +507,48 @@ final class IosNotificationRecoveryCoordinator {
     );
   }
 
+  /// Settles an interactive read in two ordered legs.
+  ///
+  /// Exact native retirement removes any delivery-side pending event for this
+  /// conversation immediately. Canonical reconciliation then publishes the
+  /// authoritative direct + group unread total, including conversations that
+  /// remain unread. Keeping both legs here prevents read callers from silently
+  /// depending on a later lifecycle recovery pass to lower the icon badge.
+  Future<void> settleConversationRead(String rawConversationKey) async {
+    if (!_platformEnabled || _accountClearFenced) return;
+    final conversationKey = rawConversationKey.trim();
+    if (conversationKey.isEmpty) {
+      throw ArgumentError.value(
+        rawConversationKey,
+        'conversationKey',
+        'must not be empty',
+      );
+    }
+    const groupPrefix = 'group:';
+    final isGroup = conversationKey.startsWith(groupPrefix);
+    final conversationId = isGroup
+        ? conversationKey.substring(groupPrefix.length).trim()
+        : conversationKey;
+    if (conversationId.isEmpty) {
+      throw ArgumentError.value(
+        rawConversationKey,
+        'conversationKey',
+        'must contain a conversation identifier',
+      );
+    }
+
+    try {
+      await retireConversation(
+        lane: isGroup
+            ? CanonicalNotificationLane.group
+            : CanonicalNotificationLane.direct,
+        conversationId: conversationId,
+      );
+    } finally {
+      await reconcile();
+    }
+  }
+
   /// Starts exact native group-invite retirement without joining the caller's
   /// acceptance or navigation path. Both a synchronous adapter throw and an
   /// asynchronously failed MethodChannel future are contained here.

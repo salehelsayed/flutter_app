@@ -2074,11 +2074,11 @@ void main() {
         final senderPeerId = 'sender-notif-tone-wired';
         contactRepo.seedContact(_makeContact(senderPeerId, username: 'Bob'));
 
-        // Single fixed clock so both messages fall inside the 30s window.
+        // Single fixed clock so both messages fall inside the 10s window.
         final fixedNow = DateTime.utc(2026, 6, 13, 12, 0, 0);
         final toneTracker = NotificationToneTracker(
           clock: () => fixedNow,
-          window: const Duration(seconds: 30),
+          window: const Duration(seconds: 10),
         );
 
         final listener = createListenerWithNotifications(

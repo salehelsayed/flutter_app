@@ -1,0 +1,16 @@
+{
+  "$schema": "../../schemas/feature.schema.json",
+  "schemaVersion": 1,
+  "id": "notifications",
+  "title": "Private and Reliable Notifications",
+  "description": "Durable, private and lifecycle-correct notification behavior across direct, inbox and opaque push paths.",
+  "prd": "UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md",
+  "prdVersion": "1.2",
+  "prdDate": "2026-08-04",
+  "intentStatus": "proposed",
+  "behaviorsFile": "behaviors.json",
+  "coverageFile": "e2e-coverage.json",
+  "testResultsFile": "test-results.json",
+  "implementationReviewsFile": "implementation-reviews.json",
+  "openQuestions": ["OQ-05"]
+}

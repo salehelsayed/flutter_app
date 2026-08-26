@@ -3,8 +3,9 @@
 
 The hook denies only an ungrounded code browse, plan/spec-to-code transition,
 over-budget browse batch, cadence breach, or code-exploration spawn without a
-compact context packet. A successful compact/native query immediately unlocks
-the branch. Classification and persistence errors remain fail-open. Plan/spec
+compact context packet. An anchored compact query, exact raw-search route, or
+measured native fallback unlocks the branch; broad questions do not.
+Classification and persistence errors remain fail-open. Plan/spec
 document reads are classified separately and never increment the code counter.
 
 Only anonymous counters and truncated SHA-256 join identities are written to
@@ -215,15 +216,71 @@ def _commands(payload: dict[str, Any]) -> list[str]:
     return _dedupe(candidates)
 
 
+def _query_question(invocation: str, *, direct_native: bool = False) -> str | None:
+    """Extract the positional question from a recognized Graphify invocation."""
+    try:
+        tokens = shlex.split(invocation)
+    except ValueError:
+        return None
+    for index, token in enumerate(tokens):
+        name = Path(token).name
+        helper = name == "tdd_context.py"
+        native = direct_native and name == "graphify"
+        if not (helper or native):
+            continue
+        if index + 2 >= len(tokens) or tokens[index + 1] != "query":
+            return None
+        return tokens[index + 2]
+    return None
+
+
+def _has_exact_anchor_shape(question: str | None) -> bool:
+    """Require the same symbol/file-shaped term used by compact anchoring."""
+    if not question:
+        return False
+    _, structured = context._tokens(question)
+    return bool(structured)
+
+
+def _query_is_grounded(question: str | None) -> bool:
+    """Mirror compact-query anchoring/routing before crediting hook context."""
+    if not _has_exact_anchor_shape(question):
+        return False
+    assert question is not None
+    try:
+        graph = context._load_graph()
+        seeds, confidence, _ = graph.seeds(question, "general")
+        route = context._scope_route(question, confidence)
+    except (OSError, ValueError, json.JSONDecodeError, SystemExit):
+        # Hook classification remains fail-open if graph state cannot be read.
+        return True
+    if route.get("route") == "raw_search_fallback":
+        return True
+    return (
+        bool(seeds)
+        and confidence == "anchored"
+        and route.get("route") == "architecture"
+    )
+
+
 def _has_code_context(commands: Iterable[str]) -> bool:
     for command in commands:
         for operation, invocation in context._helper_invocations(command):
             if operation not in {"query", "native", "affected"}:
                 continue
-            if not context._document_terms(invocation, root=context.ROOT):
+            if context._document_terms(invocation, root=context.ROOT):
+                continue
+            if operation in {"native", "affected"} or _query_is_grounded(
+                _query_question(invocation)
+            ):
                 return True
         for invocation in context._direct_native_invocations(command):
-            if not context._document_terms(invocation, root=context.ROOT):
+            if (
+                not context._document_terms(invocation, root=context.ROOT)
+                and _has_exact_anchor_shape(
+                    _query_question(invocation, direct_native=True)
+                )
+            ):
                 return True
     return False
 
@@ -304,9 +361,10 @@ def _query_anchors(payload: dict[str, Any], commands: Iterable[str]) -> str | No
     anchors: list[str] = []
 
     def add(value: str) -> None:
-        cleaned = re.sub(r"[^A-Za-z0-9_.@+-]+", "", Path(value).name)
+        normalized = value.replace("\\", "/").removeprefix("./")
+        cleaned = re.sub(r"[^A-Za-z0-9_./@+-]+", "", normalized)
         if cleaned:
-            anchors.append(cleaned[:100])
+            anchors.append(cleaned[:160])
 
     raw_path = _direct_path(payload)
     if raw_path:
@@ -1044,7 +1102,7 @@ def _query_command(anchors: str | None) -> str:
 def _initial_message(anchors: str | None) -> str:
     return (
         "Graphify advisory (non-blocking): raw app-code browsing started without "
-        "a compact/native Graphify query. The current call was allowed. Before "
+        "an anchored compact/native Graphify query. The current call was allowed. Before "
         f"further code exploration, run `{_query_command(anchors)}`. "
         "Plan/spec and instruction-document reads are excluded from this counter."
     )
@@ -1106,8 +1164,9 @@ def _gate_message(
     return (
         f"Graphify {kind} gate: {reasons[kind]}. This browse did not run. "
         f"Run `{_query_command(anchors)}` using only code symbols/filenames, then "
-        "retry the browse. A successful compact/native query unlocks the branch; "
-        "direct reads of the named plan/spec remain allowed."
+        "retry the browse. A broad query does not unlock the branch; "
+        "use an exact symbol, filename, gate, or node ID. "
+        "Direct reads of the named plan/spec remain allowed."
     )
 
 

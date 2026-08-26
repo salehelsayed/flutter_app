@@ -1981,6 +1981,8 @@ protocol IosNotificationBadgeWriting: AnyObject {
 final class IosNotificationSerializedBadgeWriter: IosNotificationBadgeWriting {
   typealias Setter = (Int, @escaping (Error?) -> Void) -> Void
 
+  private static let maximumAttemptsPerRevision = 3
+
   private let store: IosNotificationRecoveryStore
   private let setter: Setter
   private let queue: DispatchQueue
@@ -2020,20 +2022,34 @@ final class IosNotificationSerializedBadgeWriter: IosNotificationBadgeWriting {
 
   private func writeLatest(fd: Int32) {
     guard let snapshot = store.desiredBadgeSnapshot() else {
-      flock(fd, LOCK_UN)
-      close(fd)
+      finish(fd: fd)
       return
     }
-    setter(snapshot.count) { [self] _ in
+    write(snapshot: snapshot, attempt: 1, fd: fd)
+  }
+
+  private func write(
+    snapshot: IosNotificationBadgeSnapshot,
+    attempt: Int,
+    fd: Int32
+  ) {
+    setter(snapshot.count) { [self] error in
       self.queue.async {
         if let latest = self.store.desiredBadgeSnapshot(),
            latest.revision != snapshot.revision {
-          self.writeLatest(fd: fd)
+          self.write(snapshot: latest, attempt: 1, fd: fd)
+        } else if error != nil,
+                  attempt < Self.maximumAttemptsPerRevision {
+          self.write(snapshot: snapshot, attempt: attempt + 1, fd: fd)
         } else {
-          flock(fd, LOCK_UN)
-          close(fd)
+          self.finish(fd: fd)
         }
       }
     }
+  }
+
+  private func finish(fd: Int32) {
+    flock(fd, LOCK_UN)
+    close(fd)
   }
 }

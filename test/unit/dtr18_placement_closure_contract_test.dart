@@ -186,7 +186,9 @@ const _relocations = <String, List<String>>{
     // metadata PREPARED projection, and exact restart repair to this already-
     // relocated adapter; its placement and stale-import checks remain
     // unchanged.
-    '1128da7e6d890736b5ad8b5f14d68440cda277d9d8c6ac4fd0a2c33eee3eca89',
+    // Plan 395 makes the empty fresh-install authority mirror a no-op in this
+    // same data adapter; no repository responsibility changes layer.
+    'f0c2aea9b9fe238954b8249b054c2d5e1274bdeab0ef6980985c066fdba0de07',
   ],
   'lib/features/groups/domain/repositories/'
       'pending_group_invite_repository_impl.dart': <String>[

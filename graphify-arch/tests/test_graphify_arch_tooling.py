@@ -188,6 +188,55 @@ class GraphifyArchToolingTest(unittest.TestCase):
         self.assertIn("Did you mean:", text)
         self.assertIn("GroupConversationWired", text)
 
+    def test_broad_conclusion_question_is_anchor_discovery_only(self):
+        lines, meta = CONTEXT._compact_lines(
+            self.graph,
+            self.overlay,
+            "Can the graph determine whether product behavior is implemented "
+            "or absent and serve as an authoritative dashboard?",
+            "review",
+        )
+        output = "\n".join(lines)
+        self.assertEqual(meta["confidence"], "broad")
+        self.assertEqual(meta["selected_files"], [])
+        self.assertEqual(meta["proof_files"], [])
+        self.assertIn("Query use: anchor discovery only", output)
+        self.assertIn("Do not answer implementation, absence", output)
+        self.assertIn("Required next step:", output)
+        self.assertIn("--level component", output)
+        self.assertNotIn("Production/related files:", output)
+        self.assertNotIn("Direct proof candidates:", output)
+
+    def test_broad_query_prints_linked_exact_refinement_shape(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            CONTEXT.query(
+                "Can the graph determine whether product behavior is implemented?",
+                profile="review",
+                budget=800,
+                ensure_fresh=False,
+            )
+        rendered = output.getvalue()
+        self.assertIn("answer_scope=anchor_discovery_only", rendered)
+        self.assertIn("<EXACT_SYMBOL_OR_FILENAME>", rendered)
+        self.assertRegex(
+            rendered,
+            r"--stage refinement --refines [0-9a-f]{16}",
+        )
+
+    def test_anchored_query_states_navigation_answer_boundary(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            CONTEXT.query(
+                "deleteMessageForMe callers tests gates",
+                profile="tdd",
+                budget=700,
+                ensure_fresh=False,
+            )
+        rendered = output.getvalue()
+        self.assertIn("answer_scope=navigation_only", rendered)
+        self.assertIn("missing graph evidence does not prove implementation absence", rendered)
+
     def test_anchored_query_reports_zero_suggestions(self):
         _, meta = CONTEXT._compact_lines(
             self.graph, self.overlay,
@@ -939,7 +988,7 @@ const results = await Promise.all([
                     self.assertIsNotNone(result)
                     rendered = result["hookSpecificOutput"]["additionalContext"]
                     self.assertIn("plan→code handoff", rendered)
-                    self.assertIn("main.dart", rendered)
+                    self.assertIn("lib/main.dart", rendered)
                 else:
                     self.assertIsNotNone(result)
                     rendered = json.dumps(result)
@@ -1039,7 +1088,7 @@ const results = await Promise.all([
                 REMINDER.process_hook(
                     event(
                         "query",
-                        "python3 graphify-arch/tdd_context.py query main.dart "
+                        "python3 graphify-arch/tdd_context.py query lib/main.dart "
                         "--profile general --budget 600",
                     ),
                     state_dir=state_dir,
@@ -1072,7 +1121,7 @@ const results = await Promise.all([
                 "tool_name": "functions.exec",
                 "tool_input": (
                     "const r = await tools.exec_command({cmd: "
-                    "\"python3 graphify-arch/tdd_context.py query main.dart "
+                    "\"python3 graphify-arch/tdd_context.py query lib/main.dart "
                     "--profile general --budget 600\"}); text(r.output);"
                 ),
                 "tool_use_id": "query",
@@ -1147,7 +1196,7 @@ const results = await Promise.all([
 
             query = event(
                 "query",
-                "python3 graphify-arch/tdd_context.py query main.dart "
+                "python3 graphify-arch/tdd_context.py query lib/main.dart "
                 "--profile general --budget 600",
             )
             self.assertIsNone(
@@ -1170,6 +1219,76 @@ const results = await Promise.all([
             self.assertTrue(all(row.get("tool_input_sha256") for row in rows))
             self.assertTrue(all("tool_input" not in row for row in rows))
 
+    def test_codex_gate_does_not_accept_broad_conclusion_query_as_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+
+            def event(tool_id: str, command: str):
+                return {
+                    "session_id": "broad-query-session",
+                    "cwd": str(ROOT),
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "exec_command",
+                    "tool_input": {"cmd": command},
+                    "tool_use_id": tool_id,
+                }
+
+            broad = event(
+                "broad-query",
+                "python3 graphify-arch/tdd_context.py query "
+                '"is this product behavior implemented and reliable?" '
+                "--profile review --budget 800",
+            )
+            self.assertIsNone(REMINDER.process_hook(broad, state_dir=state_dir))
+
+            denied = REMINDER.process_hook(
+                event("browse-after-broad", "sed -n '1,20p' lib/main.dart"),
+                state_dir=state_dir,
+            )
+            reason = denied["hookSpecificOutput"]["permissionDecisionReason"]
+            self.assertIn("broad query does not unlock", reason)
+
+            typo = event(
+                "typo-query",
+                "python3 graphify-arch/tdd_context.py query "
+                '"GroupConversatoinWired construction" '
+                "--profile general --budget 600",
+            )
+            self.assertIsNone(REMINDER.process_hook(typo, state_dir=state_dir))
+            still_denied = REMINDER.process_hook(
+                event("browse-after-typo", "sed -n '1,20p' lib/main.dart"),
+                state_dir=state_dir,
+            )
+            self.assertEqual(
+                still_denied["hookSpecificOutput"]["permissionDecision"],
+                "deny",
+            )
+
+            anchored = event(
+                "anchored-query",
+                "python3 graphify-arch/tdd_context.py query lib/main.dart "
+                "--profile general --budget 600",
+            )
+            self.assertIsNone(REMINDER.process_hook(anchored, state_dir=state_dir))
+            self.assertIsNone(
+                REMINDER.process_hook(
+                    event("browse-after-anchor", "sed -n '1,20p' lib/main.dart"),
+                    state_dir=state_dir,
+                )
+            )
+
+    def test_codex_context_credit_waits_for_measured_full_graph_fallback(self):
+        compact = (
+            "python3 graphify-arch/tdd_context.py query "
+            '"graphify-arch/tdd_context.py" --profile general --budget 600'
+        )
+        native = (
+            "python3 graphify-arch/tdd_context.py native "
+            '"graphify-arch/tdd_context.py" --budget 800 --follows 12345678'
+        )
+        self.assertFalse(REMINDER._has_code_context([compact]))
+        self.assertTrue(REMINDER._has_code_context([native]))
+
     def test_codex_gate_enforces_plan_handoff_batch_and_ceiling(self):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
@@ -1185,7 +1304,7 @@ const results = await Promise.all([
                 }
 
             query_command = (
-                "python3 graphify-arch/tdd_context.py query main.dart "
+                "python3 graphify-arch/tdd_context.py query lib/main.dart "
                 "--profile general --budget 600"
             )
             self.assertIsNone(
@@ -1293,7 +1412,7 @@ const results = await Promise.all([
                 "hook_event_name": "PreToolUse",
                 "tool_name": "exec_command",
                 "tool_input": {
-                    "cmd": "python3 graphify-arch/tdd_context.py query main.dart "
+                    "cmd": "python3 graphify-arch/tdd_context.py query lib/main.dart "
                     "--profile general --budget 600"
                 },
                 "tool_use_id": "query",
@@ -1485,7 +1604,15 @@ print(json.dumps(_without_sources(data, {'lib/changed.dart'})))
         text = skill.read_text()
         self.assertLess(len(text), 10_000)
         self.assertIn("tdd_context.py query", text)
+        self.assertIn("code-index question", text)
+        self.assertIn("not implementation truth", text)
         self.assertNotIn("close_agent", text)
+
+    def test_root_agents_requires_answer_oriented_anchored_queries(self):
+        text = (ROOT / "AGENTS.md").read_text()
+        self.assertIn("code-index question", text)
+        self.assertIn("Never ask Graphify to decide whether", text)
+        self.assertIn("Missing graph nodes", text)
 
     def test_tdd_skills_share_compact_profiles(self):
         home = Path.home() / ".codex" / "skills"

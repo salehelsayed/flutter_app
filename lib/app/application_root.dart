@@ -353,6 +353,29 @@ final class IosApnsInitialNotificationOpenGate {
   }
 }
 
+/// Settles a foreground direct-message read only when the exact conversation
+/// is still visible under genuine resumed lifecycle authority.
+///
+/// The returned future includes the repository projection and its native iOS
+/// badge reconciliation. Callers must await it before closing their canonical
+/// foreground-notification mutation.
+Future<bool> settleForegroundConversationReadIfVisible({
+  required String peerId,
+  required AppLifecycleState? lifecycleState,
+  required ActiveConversationTracker conversationTracker,
+  required Future<int> Function(String peerId) markConversationRead,
+}) async {
+  final normalizedPeerId = peerId.trim();
+  if (normalizedPeerId.isEmpty ||
+      lifecycleState != AppLifecycleState.resumed ||
+      !conversationTracker.isViewing(normalizedPeerId)) {
+    return false;
+  }
+
+  await markConversationRead(normalizedPeerId);
+  return true;
+}
+
 class MyApp extends StatefulWidget {
   final IdentityRepositoryImpl repository;
   final ContactRepositoryImpl contactRepository;
@@ -2815,6 +2838,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.iosNotificationRecoveryCoordinator == null
             ? null
             : drainGroupInboxCompletely,
+        settleForegroundConversationRead:
+            widget.iosNotificationRecoveryCoordinator == null
+            ? null
+            : (peerId) async {
+                await settleForegroundConversationReadIfVisible(
+                  peerId: peerId,
+                  lifecycleState: WidgetsBinding.instance.lifecycleState,
+                  conversationTracker: widget.conversationTracker,
+                  markConversationRead:
+                      widget.messageRepository.markConversationAsRead,
+                );
+              },
       );
 
       DurableNotificationToneLease? groupReactionCoordinator;

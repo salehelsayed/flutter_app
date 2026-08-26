@@ -237,6 +237,22 @@
       }
     },
     {
+      "name": "broad-conclusion-is-discovery-only",
+      "question": "Can the graph determine whether product behavior is implemented or absent and serve as an authoritative dashboard?",
+      "profile": "review",
+      "budget": 800,
+      "expected": {
+        "confidence": "broad",
+        "route": "architecture",
+        "contains": [
+          "Query use: anchor discovery only",
+          "Do not answer implementation, absence",
+          "Required next step:",
+          "--level component"
+        ]
+      }
+    },
+    {
       "name": "total-miss-suggests-symbol",
       "question": "deleteMesageForMe",
       "profile": "general",

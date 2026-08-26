@@ -4405,6 +4405,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       onConversationCleared: iosNotificationRecoveryCoordinator == null
           ? null
           : (_) => iosNotificationRecoveryCoordinator.reconcile(),
+      onConversationReadSettled:
+          iosNotificationRecoveryCoordinator?.settleConversationRead,
       onAllNotificationsCleared: iosNotificationRecoveryCoordinator?.reconcile,
     );
     final groupNotificationPresentationCoordinator =

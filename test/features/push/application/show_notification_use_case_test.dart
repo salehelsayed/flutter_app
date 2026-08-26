@@ -1276,7 +1276,7 @@ void main() {
         expect(claimFile.readAsStringSync(), contains('"state":"committed"'));
         expect(_pendingToneFiles(directory), isEmpty);
 
-        now = now.add(const Duration(seconds: 29));
+        now = now.add(const Duration(seconds: 9));
         await show('message-delayed-2');
         now = now.add(const Duration(seconds: 1));
         await show('message-delayed-3');
@@ -2316,7 +2316,7 @@ void main() {
       now = DateTime.utc(2026, 6, 13, 12);
       toneTracker = NotificationToneTracker(
         clock: () => now,
-        window: const Duration(seconds: 30),
+        window: const Duration(seconds: 10),
       );
     });
 
@@ -2351,7 +2351,7 @@ void main() {
 
     test('first live message after the window sounds again', () async {
       await showLive(contactPeerId: 'peer-1', messageId: 'm1');
-      now = now.add(const Duration(seconds: 31));
+      now = now.add(const Duration(seconds: 10));
       await showLive(contactPeerId: 'peer-1', messageId: 'm2');
       expect(notificationService.shown.map((s) => s.silent).toList(), <bool>[
         false,

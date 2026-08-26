@@ -47,6 +47,8 @@ class FlutterNotificationService
   final NotificationRecoverySettlementCallback? _onNotificationUpdated;
   final ConversationNotificationRecoverySettlementCallback?
   _onConversationCleared;
+  final ConversationNotificationRecoverySettlementCallback?
+  _onConversationReadSettled;
   final NotificationRecoverySettlementCallback? _onAllNotificationsCleared;
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -66,6 +68,8 @@ class FlutterNotificationService
     ConversationNotificationGenerationFactory? notificationGenerationFactory,
     NotificationRecoverySettlementCallback? onNotificationUpdated,
     ConversationNotificationRecoverySettlementCallback? onConversationCleared,
+    ConversationNotificationRecoverySettlementCallback?
+    onConversationReadSettled,
     NotificationRecoverySettlementCallback? onAllNotificationsCleared,
   }) : _requestApplePermissions = requestApplePermissions,
        _notificationIdResolver = notificationIdResolver,
@@ -77,6 +81,7 @@ class FlutterNotificationService
            createConversationNotificationGeneration,
        _onNotificationUpdated = onNotificationUpdated,
        _onConversationCleared = onConversationCleared,
+       _onConversationReadSettled = onConversationReadSettled,
        _onAllNotificationsCleared = onAllNotificationsCleared,
        _notificationIdRegistryResolver =
            notificationIdRegistryResolver ??
@@ -636,7 +641,7 @@ class FlutterNotificationService
 
   @override
   Future<void> settleConversationRead(String conversationKey) =>
-      _notifyConversationCleared(conversationKey);
+      _notifyConversationReadSettled(conversationKey);
 
   @override
   Future<bool> cancelConversationNotificationGeneration(
@@ -848,6 +853,15 @@ class FlutterNotificationService
         operation: 'conversation_cleared',
       );
 
+  Future<void> _notifyConversationReadSettled(String conversationKey) =>
+      _runRecoverySettlement(
+        callback: _onConversationReadSettled == null
+            ? null
+            : () => _onConversationReadSettled(conversationKey),
+        operation: 'conversation_read_settled',
+        propagateFailure: true,
+      );
+
   Future<void> _notifyAllNotificationsCleared() => _runRecoverySettlement(
     callback: _onAllNotificationsCleared,
     operation: 'all_notifications_cleared',
@@ -856,6 +870,7 @@ class FlutterNotificationService
   Future<void> _runRecoverySettlement({
     required NotificationRecoverySettlementCallback? callback,
     required String operation,
+    bool propagateFailure = false,
   }) async {
     if (callback == null) return;
     try {
@@ -869,6 +884,7 @@ class FlutterNotificationService
           'errorType': error.runtimeType.toString(),
         },
       );
+      if (propagateFailure) rethrow;
     }
   }
 
