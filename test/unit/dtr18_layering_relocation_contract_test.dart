@@ -191,8 +191,11 @@ const _privacySha256 =
 // Plan 395 adds group-invite notification routing and retirement at that same
 // app-owned route boundary; the resume owner and feature-import floor remain
 // unchanged.
+// The iOS foreground direct-read repair forwards exact visible-conversation
+// settlement through the existing recovery coordinator; it moves no resume
+// owner and adds no core shim.
 const _applicationRootNormalizedSha256 =
-    '0fa3a8682a3ce268546a699a6aaff9c0888873bf29bfe933bea5464966c7400d';
+    'ec1787d05923f35c5623af5690e5039f5eaf4a405fa9501764c2db1199e73ab9';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
