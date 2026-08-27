@@ -208,3 +208,11 @@ codex-memory/state/
 codex-memory/config.local.json
 /docker-ws/plan380_emu_logcat_run.txt
 /docker-ws/plan380_e2e_receipts.txt
+
+# Local Orbit visual-prototype source, tests, and runtime evidence.
+/artifacts/orbital_quiet_runtime/
+/artifacts/orbital_quiet_v2_runtime/
+/lib/debug/orbital_quiet_prototype_app.dart
+/lib/features/orbit/presentation/prototype/
+/lib/orbital_quiet_prototype_main.dart
+/test/features/orbit/presentation/prototype/

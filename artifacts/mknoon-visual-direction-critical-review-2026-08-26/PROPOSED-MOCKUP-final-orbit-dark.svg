@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="430" height="1000" viewBox="0 0 430 1000">
+  <defs>
+    <linearGradient id="night" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#05070D"/><stop offset=".58" stop-color="#080C14"/><stop offset="1" stop-color="#0B1520"/>
+    </linearGradient>
+    <radialGradient id="core"><stop stop-color="#A7FFD0"/><stop offset=".28" stop-color="#24C884"/><stop offset=".7" stop-color="#0A6048"/><stop offset="1" stop-color="#062A25"/></radialGradient>
+    <radialGradient id="coral"><stop stop-color="#FFD3D7"/><stop offset=".3" stop-color="#F06474"/><stop offset=".72" stop-color="#8C243B"/><stop offset="1" stop-color="#321321"/></radialGradient>
+    <radialGradient id="green"><stop stop-color="#C1FFD6"/><stop offset=".3" stop-color="#45D983"/><stop offset=".72" stop-color="#137B48"/><stop offset="1" stop-color="#0B3022"/></radialGradient>
+    <radialGradient id="violet"><stop stop-color="#E1D5FF"/><stop offset=".3" stop-color="#9B78E8"/><stop offset=".72" stop-color="#513095"/><stop offset="1" stop-color="#21163C"/></radialGradient>
+    <radialGradient id="gold"><stop stop-color="#FFF4B5"/><stop offset=".3" stop-color="#E4C44A"/><stop offset=".72" stop-color="#8E6F16"/><stop offset="1" stop-color="#33280D"/></radialGradient>
+    <radialGradient id="cyan"><stop stop-color="#D2F6FF"/><stop offset=".3" stop-color="#62C9ED"/><stop offset=".72" stop-color="#24799D"/><stop offset="1" stop-color="#102F40"/></radialGradient>
+    <radialGradient id="ambient"><stop stop-color="#163447" stop-opacity=".34"/><stop offset=".5" stop-color="#102037" stop-opacity=".13"/><stop offset="1" stop-color="#07101A" stop-opacity="0"/></radialGradient>
+    <pattern id="stars" width="88" height="96" patternUnits="userSpaceOnUse">
+      <circle cx="13" cy="17" r=".75" fill="#E7F2FF" opacity=".28"/><circle cx="65" cy="39" r=".55" fill="#E7F2FF" opacity=".16"/><circle cx="35" cy="82" r=".45" fill="#E7F2FF" opacity=".12"/>
+    </pattern>
+    <filter id="softGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="controlShadow" x="-80%" y="-80%" width="260%" height="260%"><feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#000" flood-opacity=".34"/></filter>
+  </defs>
+
+  <rect width="430" height="44" fill="#EEF2F5"/>
+  <text x="16" y="27" fill="#25323B" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Arial" font-size="11" font-weight="750" letter-spacing=".45">PROPOSED MOCKUP · ORBIT PRESERVED · DARK</text>
+
+  <g transform="translate(0 44)">
+    <rect width="430" height="956" fill="url(#night)"/>
+    <ellipse cx="214" cy="506" rx="278" ry="310" fill="url(#ambient)"/>
+    <rect width="430" height="956" fill="url(#stars)"/>
+
+    <!-- Status bar -->
+    <text x="24" y="31" fill="#F4F7F9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Arial" font-size="14" font-weight="650">9:41</text>
+    <g fill="#F4F7F9"><rect x="353" y="21" width="3" height="7" rx="1"/><rect x="358" y="18" width="3" height="10" rx="1"/><rect x="363" y="15" width="3" height="13" rx="1"/><rect x="397" y="17" width="22" height="11" rx="3" fill="none" stroke="#F4F7F9" stroke-width="1.5"/><rect x="399" y="19" width="16" height="7" rx="1.5"/></g>
+
+    <!-- Existing Orbit header model: list switch, connection, create -->
+    <circle cx="38" cy="84" r="23" fill="#0B111A" stroke="#4A5662" stroke-width="1.2"/>
+    <g stroke="#E5EBEF" stroke-width="2" stroke-linecap="round" fill="#E5EBEF">
+      <circle cx="30" cy="77" r="1.6" stroke="none"/><line x1="36" y1="77" x2="47" y2="77"/>
+      <circle cx="30" cy="84" r="1.6" stroke="none"/><line x1="36" y1="84" x2="47" y2="84"/>
+      <circle cx="30" cy="91" r="1.6" stroke="none"/><line x1="36" y1="91" x2="47" y2="91"/>
+    </g>
+    <circle cx="297" cy="84" r="4" fill="#54D68A"/><text x="309" y="89" fill="#C1CBD2" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Arial" font-size="13" font-weight="650">Online · 2</text>
+    <circle cx="397" cy="84" r="23" fill="#0B111A" stroke="#7CC8F5" stroke-width="1.8" filter="url(#controlShadow)"/><path d="M397 74v20M387 84h20" stroke="#DDF3FF" stroke-width="2.2" stroke-linecap="round"/>
+
+    <!-- The product concept remains a spatial orbital relationship canvas. -->
+    <g transform="translate(0 8)">
+      <circle cx="215" cy="510" r="210" fill="none" stroke="#596B83" stroke-opacity=".35" stroke-width="1.25" stroke-dasharray="7 10"/>
+      <circle cx="215" cy="510" r="150" fill="none" stroke="#5D7D83" stroke-opacity=".42" stroke-width="1.35" stroke-dasharray="8 8"/>
+      <circle cx="215" cy="510" r="88" fill="none" stroke="#80A8B5" stroke-opacity=".5" stroke-width="1.45" stroke-dasharray="8 7"/>
+
+      <!-- restrained active arcs establish depth without changing ring placement -->
+      <path d="M215 300a210 210 0 0 1 159 73" fill="none" stroke="#7CC8F5" stroke-opacity=".48" stroke-width="2" stroke-linecap="round"/>
+      <path d="M96 601a150 150 0 0 1-31-91" fill="none" stroke="#9B78E8" stroke-opacity=".45" stroke-width="2" stroke-linecap="round"/>
+      <path d="M215 422a88 88 0 0 1 71 36" fill="none" stroke="#F06474" stroke-opacity=".54" stroke-width="2" stroke-linecap="round"/>
+
+      <!-- central self/connection node -->
+      <circle cx="215" cy="510" r="46" fill="#0A1719" opacity=".8" filter="url(#softGlow)"/>
+      <circle cx="215" cy="510" r="34" fill="none" stroke="#DCE9E7" stroke-width="2.8" stroke-dasharray="10 6"/>
+      <circle cx="215" cy="510" r="25" fill="#092F28" stroke="#21B779" stroke-width="2.2"/>
+      <circle cx="215" cy="510" r="17" fill="url(#core)" filter="url(#softGlow)"/>
+      <circle cx="215" cy="510" r="4" fill="#B7FFD7"/>
+
+      <!-- relationship nodes stay on their rings; color belongs to the relationship -->
+      <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Arial" font-size="11" font-weight="760" text-anchor="middle" fill="#F7FAFC">
+        <circle cx="215" cy="422" r="28" fill="#0B1017" stroke="#F06474" stroke-width="2.2" stroke-dasharray="7 4"/>
+        <circle cx="215" cy="422" r="18" fill="url(#coral)" filter="url(#softGlow)"/><text x="215" y="426">M</text>
+        <circle cx="237" cy="401" r="9" fill="#7CC8F5" stroke="#071018" stroke-width="2"/><text x="237" y="405" font-size="9" fill="#061018">3</text>
+
+        <circle cx="330" cy="414" r="27" fill="#0B1017" stroke="#4FD184" stroke-width="1.8" stroke-dasharray="7 5"/>
+        <circle cx="330" cy="414" r="17" fill="url(#green)"/><text x="330" y="418">N</text>
+
+        <circle cx="65" cy="510" r="27" fill="#0B1017" stroke="#9B78E8" stroke-width="1.8" stroke-dasharray="7 5"/>
+        <circle cx="65" cy="510" r="17" fill="url(#violet)"/><text x="65" y="514">S</text>
+
+        <circle cx="109" cy="617" r="27" fill="#0B1017" stroke="#D9BD4E" stroke-width="1.8" stroke-dasharray="7 5"/>
+        <circle cx="109" cy="617" r="17" fill="url(#gold)"/><text x="109" y="621">L</text>
+
+        <circle cx="365" cy="657" r="27" fill="#0B1017" stroke="#62C9ED" stroke-width="1.8" stroke-dasharray="7 5"/>
+        <circle cx="365" cy="657" r="17" fill="url(#cyan)"/><text x="365" y="661">A</text>
+      </g>
+    </g>
+
+    <!-- Existing search action remains in place. -->
+    <circle cx="386" cy="880" r="25" fill="#0B111A" stroke="#4A5662" stroke-width="1.2" filter="url(#controlShadow)"/>
+    <circle cx="382" cy="876" r="8" fill="none" stroke="#EDF3F6" stroke-width="2.2"/><path d="M388 882l7 7" stroke="#EDF3F6" stroke-width="2.2" stroke-linecap="round"/>
+    <rect x="151" y="930" width="128" height="5" rx="3" fill="#F3F6F8" fill-opacity=".74"/>
+  </g>
+</svg>

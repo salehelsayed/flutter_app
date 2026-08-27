@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1290" height="800" viewBox="0 0 1290 800">
+  <defs>
+    <linearGradient id="bgA" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#05060D"/><stop offset="1" stop-color="#0B1020"/></linearGradient>
+    <linearGradient id="bgB" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#06090F"/><stop offset="1" stop-color="#0A1520"/></linearGradient>
+    <linearGradient id="bgC" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#070914"/><stop offset=".55" stop-color="#101329"/><stop offset="1" stop-color="#071822"/></linearGradient>
+    <radialGradient id="r"><stop stop-color="#FFD5DA"/><stop offset=".3" stop-color="#F06474"/><stop offset="1" stop-color="#5A182A"/></radialGradient>
+    <radialGradient id="g"><stop stop-color="#D0FFE0"/><stop offset=".3" stop-color="#46D882"/><stop offset="1" stop-color="#0D5234"/></radialGradient>
+    <radialGradient id="v"><stop stop-color="#E8DEFF"/><stop offset=".3" stop-color="#9B78E8"/><stop offset="1" stop-color="#3C246D"/></radialGradient>
+    <radialGradient id="c"><stop stop-color="#D8F7FF"/><stop offset=".3" stop-color="#64C9EB"/><stop offset="1" stop-color="#1B607D"/></radialGradient>
+    <radialGradient id="y"><stop stop-color="#FFF5B7"/><stop offset=".3" stop-color="#DEC246"/><stop offset="1" stop-color="#6F5717"/></radialGradient>
+    <radialGradient id="ambientB"><stop stop-color="#17445A" stop-opacity=".33"/><stop offset="1" stop-color="#07121C" stop-opacity="0"/></radialGradient>
+    <radialGradient id="ambientC"><stop stop-color="#5F3E9C" stop-opacity=".28"/><stop offset=".52" stop-color="#1A5470" stop-opacity=".12"/><stop offset="1" stop-color="#08111D" stop-opacity="0"/></radialGradient>
+    <pattern id="starsA" width="72" height="69" patternUnits="userSpaceOnUse"><circle cx="11" cy="18" r=".8" fill="#EAF3FF" opacity=".28"/><circle cx="56" cy="45" r=".5" fill="#EAF3FF" opacity=".18"/></pattern>
+    <pattern id="starsB" width="91" height="87" patternUnits="userSpaceOnUse"><circle cx="15" cy="22" r=".7" fill="#DDEEFF" opacity=".18"/><circle cx="70" cy="59" r=".45" fill="#DDEEFF" opacity=".11"/></pattern>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+
+  <!-- A: the closest polish pass on today's visual language -->
+  <g>
+    <rect width="430" height="800" fill="url(#bgA)"/><rect width="430" height="800" fill="url(#starsA)"/>
+    <text x="16" y="24" fill="#F4F7FA" font-family="-apple-system,Arial" font-size="12" font-weight="800">ALTERNATIVE A · REFINED ORIGINAL</text>
+    <text x="16" y="44" fill="#9FAAB5" font-family="-apple-system,Arial" font-size="11">Faithful, brighter glow and stronger colored rings</text>
+    <circle cx="38" cy="96" r="22" fill="#0B1019" stroke="#626C7B"/>
+    <g stroke="#F1F4F7" stroke-width="2" stroke-linecap="round" fill="#F1F4F7"><circle cx="30" cy="89" r="1.5" stroke="none"/><line x1="36" y1="89" x2="47" y2="89"/><circle cx="30" cy="96" r="1.5" stroke="none"/><line x1="36" y1="96" x2="47" y2="96"/><circle cx="30" cy="103" r="1.5" stroke="none"/><line x1="36" y1="103" x2="47" y2="103"/></g>
+    <circle cx="292" cy="96" r="4" fill="#52D285"/><text x="303" y="101" fill="#C2CBD2" font-family="-apple-system,Arial" font-size="12.5">Online · 2</text>
+    <circle cx="397" cy="96" r="22" fill="#121226" stroke="#A387F3" stroke-width="2"/><path d="M397 87v18M388 96h18" stroke="#EEE8FF" stroke-width="2" stroke-linecap="round"/>
+    <g transform="translate(0 8)">
+      <circle cx="215" cy="430" r="184" fill="none" stroke="#66549C" stroke-opacity=".48" stroke-width="1.6" stroke-dasharray="8 8"/>
+      <circle cx="215" cy="430" r="130" fill="none" stroke="#3D837D" stroke-opacity=".53" stroke-width="1.6" stroke-dasharray="8 7"/>
+      <circle cx="215" cy="430" r="76" fill="none" stroke="#A083D9" stroke-opacity=".62" stroke-width="1.7" stroke-dasharray="8 6"/>
+      <circle cx="215" cy="430" r="33" fill="#0C2B25" stroke="#E1ECE9" stroke-width="2.8" stroke-dasharray="9 5"/><circle cx="215" cy="430" r="19" fill="url(#g)" filter="url(#glow)"/>
+      <circle cx="215" cy="354" r="25" fill="#0B1017" stroke="#F06474" stroke-width="2.2" stroke-dasharray="7 4"/><circle cx="215" cy="354" r="16" fill="url(#r)" filter="url(#glow)"/>
+      <circle cx="315" cy="347" r="24" fill="#0B1017" stroke="#4FD184" stroke-width="2" stroke-dasharray="7 4"/><circle cx="315" cy="347" r="15" fill="url(#g)"/>
+      <circle cx="85" cy="430" r="24" fill="#0B1017" stroke="#9B78E8" stroke-width="2" stroke-dasharray="7 4"/><circle cx="85" cy="430" r="15" fill="url(#v)"/>
+      <circle cx="103" cy="554" r="24" fill="#0B1017" stroke="#DEC246" stroke-width="2" stroke-dasharray="7 4"/><circle cx="103" cy="554" r="15" fill="url(#y)"/>
+      <circle cx="345" cy="548" r="24" fill="#0B1017" stroke="#64C9EB" stroke-width="2" stroke-dasharray="7 4"/><circle cx="345" cy="548" r="15" fill="url(#c)"/>
+    </g>
+    <circle cx="386" cy="732" r="24" fill="#0B1019" stroke="#626C7B"/><circle cx="382" cy="728" r="8" fill="none" stroke="#EDF3F6" stroke-width="2"/><path d="M388 734l7 7" stroke="#EDF3F6" stroke-width="2"/>
+    <text x="16" y="774" fill="#D0D7DE" font-family="-apple-system,Arial" font-size="11" font-weight="700">KEEP:</text><text x="53" y="774" fill="#909CA6" font-family="-apple-system,Arial" font-size="11">fidelity</text><text x="116" y="774" fill="#D0D7DE" font-family="-apple-system,Arial" font-size="11" font-weight="700">RISK:</text><text x="150" y="774" fill="#909CA6" font-family="-apple-system,Arial" font-size="11">glow competes with relationship state</text>
+  </g>
+
+  <!-- B: recommended -->
+  <g transform="translate(430 0)">
+    <rect width="430" height="800" fill="url(#bgB)"/><ellipse cx="215" cy="432" rx="260" ry="280" fill="url(#ambientB)"/><rect width="430" height="800" fill="url(#starsB)"/>
+    <text x="16" y="24" fill="#F4F7FA" font-family="-apple-system,Arial" font-size="12" font-weight="800">ALTERNATIVE B · ORBITAL QUIET</text>
+    <text x="16" y="44" fill="#9FAAB5" font-family="-apple-system,Arial" font-size="11">Recommended · calm rings, color belongs to people</text>
+    <circle cx="38" cy="96" r="22" fill="#0B111A" stroke="#4A5662"/>
+    <g stroke="#F1F4F7" stroke-width="2" stroke-linecap="round" fill="#F1F4F7"><circle cx="30" cy="89" r="1.5" stroke="none"/><line x1="36" y1="89" x2="47" y2="89"/><circle cx="30" cy="96" r="1.5" stroke="none"/><line x1="36" y1="96" x2="47" y2="96"/><circle cx="30" cy="103" r="1.5" stroke="none"/><line x1="36" y1="103" x2="47" y2="103"/></g>
+    <circle cx="292" cy="96" r="4" fill="#52D285"/><text x="303" y="101" fill="#C2CBD2" font-family="-apple-system,Arial" font-size="12.5">Online · 2</text>
+    <circle cx="397" cy="96" r="22" fill="#0B111A" stroke="#7CC8F5" stroke-width="1.8"/><path d="M397 87v18M388 96h18" stroke="#DDF3FF" stroke-width="2" stroke-linecap="round"/>
+    <g transform="translate(0 8)">
+      <circle cx="215" cy="430" r="184" fill="none" stroke="#596B83" stroke-opacity=".34" stroke-width="1.25" stroke-dasharray="7 10"/>
+      <circle cx="215" cy="430" r="130" fill="none" stroke="#5D7D83" stroke-opacity=".42" stroke-width="1.35" stroke-dasharray="8 8"/>
+      <circle cx="215" cy="430" r="76" fill="none" stroke="#80A8B5" stroke-opacity=".5" stroke-width="1.45" stroke-dasharray="8 7"/>
+      <path d="M215 246a184 184 0 0 1 135 59" fill="none" stroke="#7CC8F5" stroke-opacity=".45" stroke-width="2"/>
+      <circle cx="215" cy="430" r="33" fill="#0A1719" stroke="#DCE9E7" stroke-width="2.8" stroke-dasharray="9 5"/><circle cx="215" cy="430" r="19" fill="url(#g)"/>
+      <circle cx="215" cy="354" r="25" fill="#0B1017" stroke="#F06474" stroke-width="2.2" stroke-dasharray="7 4"/><circle cx="215" cy="354" r="16" fill="url(#r)"/>
+      <circle cx="315" cy="347" r="24" fill="#0B1017" stroke="#4FD184" stroke-width="1.8" stroke-dasharray="7 5"/><circle cx="315" cy="347" r="15" fill="url(#g)"/>
+      <circle cx="85" cy="430" r="24" fill="#0B1017" stroke="#9B78E8" stroke-width="1.8" stroke-dasharray="7 5"/><circle cx="85" cy="430" r="15" fill="url(#v)"/>
+      <circle cx="103" cy="554" r="24" fill="#0B1017" stroke="#DEC246" stroke-width="1.8" stroke-dasharray="7 5"/><circle cx="103" cy="554" r="15" fill="url(#y)"/>
+      <circle cx="345" cy="548" r="24" fill="#0B1017" stroke="#64C9EB" stroke-width="1.8" stroke-dasharray="7 5"/><circle cx="345" cy="548" r="15" fill="url(#c)"/>
+    </g>
+    <circle cx="386" cy="732" r="24" fill="#0B111A" stroke="#4A5662"/><circle cx="382" cy="728" r="8" fill="none" stroke="#EDF3F6" stroke-width="2"/><path d="M388 734l7 7" stroke="#EDF3F6" stroke-width="2"/>
+    <text x="16" y="774" fill="#D0D7DE" font-family="-apple-system,Arial" font-size="11" font-weight="700">KEEP:</text><text x="53" y="774" fill="#909CA6" font-family="-apple-system,Arial" font-size="11">calm hierarchy</text><text x="137" y="774" fill="#D0D7DE" font-family="-apple-system,Arial" font-size="11" font-weight="700">RISK:</text><text x="171" y="774" fill="#909CA6" font-family="-apple-system,Arial" font-size="11">needs motion to feel alive</text>
+  </g>
+
+  <!-- C: stronger brand atmosphere, same product model -->
+  <g transform="translate(860 0)">
+    <rect width="430" height="800" fill="url(#bgC)"/><ellipse cx="215" cy="430" rx="300" ry="320" fill="url(#ambientC)"/><rect width="430" height="800" fill="url(#starsA)" opacity=".72"/>
+    <text x="16" y="24" fill="#F4F7FA" font-family="-apple-system,Arial" font-size="12" font-weight="800">ALTERNATIVE C · COSMIC SIGNATURE</text>
+    <text x="16" y="44" fill="#A6AEC1" font-family="-apple-system,Arial" font-size="11">More expressive depth, same rings and interaction model</text>
+    <circle cx="38" cy="96" r="22" fill="#101326" stroke="#6A718A"/>
+    <g stroke="#F1F4F7" stroke-width="2" stroke-linecap="round" fill="#F1F4F7"><circle cx="30" cy="89" r="1.5" stroke="none"/><line x1="36" y1="89" x2="47" y2="89"/><circle cx="30" cy="96" r="1.5" stroke="none"/><line x1="36" y1="96" x2="47" y2="96"/><circle cx="30" cy="103" r="1.5" stroke="none"/><line x1="36" y1="103" x2="47" y2="103"/></g>
+    <circle cx="292" cy="96" r="4" fill="#52D285"/><text x="303" y="101" fill="#C9CEDA" font-family="-apple-system,Arial" font-size="12.5">Online · 2</text>
+    <circle cx="397" cy="96" r="22" fill="#11172A" stroke="#7BD6ED" stroke-width="1.8"/><path d="M397 87v18M388 96h18" stroke="#E2F9FF" stroke-width="2" stroke-linecap="round"/>
+    <g transform="translate(0 8)">
+      <circle cx="215" cy="430" r="184" fill="none" stroke="#8173B8" stroke-opacity=".44" stroke-width="1.45" stroke-dasharray="2 11"/>
+      <circle cx="215" cy="430" r="130" fill="none" stroke="#4B9D9A" stroke-opacity=".43" stroke-width="1.45" stroke-dasharray="10 8"/>
+      <circle cx="215" cy="430" r="76" fill="none" stroke="#8BB9C7" stroke-opacity=".53" stroke-width="1.5" stroke-dasharray="8 7"/>
+      <path d="M61 329a184 184 0 0 1 302-15" fill="none" stroke="#9B78E8" stroke-opacity=".31" stroke-width="8" filter="url(#glow)"/>
+      <path d="M94 500a130 130 0 0 0 190 42" fill="none" stroke="#64C9EB" stroke-opacity=".26" stroke-width="7" filter="url(#glow)"/>
+      <circle cx="215" cy="430" r="35" fill="#10242A" stroke="#DCE9E7" stroke-width="2.6" stroke-dasharray="9 5"/><circle cx="215" cy="430" r="20" fill="url(#g)" filter="url(#glow)"/>
+      <circle cx="215" cy="354" r="26" fill="#111425" stroke="#F06474" stroke-width="2.2" stroke-dasharray="7 4"/><circle cx="215" cy="354" r="16" fill="url(#r)" filter="url(#glow)"/>
+      <circle cx="315" cy="347" r="24" fill="#111425" stroke="#4FD184" stroke-width="1.9" stroke-dasharray="7 5"/><circle cx="315" cy="347" r="15" fill="url(#g)" filter="url(#glow)"/>
+      <circle cx="85" cy="430" r="24" fill="#111425" stroke="#9B78E8" stroke-width="1.9" stroke-dasharray="7 5"/><circle cx="85" cy="430" r="15" fill="url(#v)" filter="url(#glow)"/>
+      <circle cx="103" cy="554" r="24" fill="#111425" stroke="#DEC246" stroke-width="1.9" stroke-dasharray="7 5"/><circle cx="103" cy="554" r="15" fill="url(#y)" filter="url(#glow)"/>
+      <circle cx="345" cy="548" r="24" fill="#111425" stroke="#64C9EB" stroke-width="1.9" stroke-dasharray="7 5"/><circle cx="345" cy="548" r="15" fill="url(#c)" filter="url(#glow)"/>
+    </g>
+    <circle cx="386" cy="732" r="24" fill="#11172A" stroke="#6A718A"/><circle cx="382" cy="728" r="8" fill="none" stroke="#EDF3F6" stroke-width="2"/><path d="M388 734l7 7" stroke="#EDF3F6" stroke-width="2"/>
+    <text x="16" y="774" fill="#D0D7DE" font-family="-apple-system,Arial" font-size="11" font-weight="700">KEEP:</text><text x="53" y="774" fill="#9AA3B6" font-family="-apple-system,Arial" font-size="11">brand depth</text><text x="122" y="774" fill="#D0D7DE" font-family="-apple-system,Arial" font-size="11" font-weight="700">RISK:</text><text x="156" y="774" fill="#9AA3B6" font-family="-apple-system,Arial" font-size="11">atmosphere can become noise</text>
+  </g>
+</svg>

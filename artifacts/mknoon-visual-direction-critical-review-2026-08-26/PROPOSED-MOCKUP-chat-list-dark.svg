@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="430" height="1000" viewBox="0 0 430 1000">
+  <defs>
+    <linearGradient id="odbg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#070A0F"/><stop offset=".62" stop-color="#0A0E15"/><stop offset="1" stop-color="#0C1420"/></linearGradient>
+    <radialGradient id="odv"><stop stop-color="#D1BEFF"/><stop offset=".35" stop-color="#7E61D9"/><stop offset="1" stop-color="#281F42"/></radialGradient>
+    <radialGradient id="odg"><stop stop-color="#95F0B2"/><stop offset=".38" stop-color="#31B86B"/><stop offset="1" stop-color="#123724"/></radialGradient>
+    <radialGradient id="ody"><stop stop-color="#FFF6A4"/><stop offset=".38" stop-color="#D7B932"/><stop offset="1" stop-color="#3A3212"/></radialGradient>
+    <radialGradient id="odc"><stop stop-color="#ACEDFF"/><stop offset=".4" stop-color="#54B7DB"/><stop offset="1" stop-color="#153748"/></radialGradient>
+    <pattern id="stars" width="94" height="82" patternUnits="userSpaceOnUse"><circle cx="11" cy="18" r=".8" fill="#DDEFFF" opacity=".22"/><circle cx="62" cy="51" r=".55" fill="#DDEFFF" opacity=".14"/><circle cx="88" cy="10" r=".5" fill="#DDEFFF" opacity=".12"/></pattern>
+    <filter id="odsh" x="-70%" y="-70%" width="240%" height="240%"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity=".38"/></filter>
+  </defs>
+  <rect width="430" height="44" fill="#EEF2F5"/>
+  <text x="16" y="27" fill="#25323B" font-family="-apple-system,Arial" font-size="11" font-weight="750" letter-spacing=".5">PROPOSED MOCKUP · CHAT LIST ONLY · DARK</text>
+  <g transform="translate(0 44)">
+    <rect width="430" height="956" fill="url(#odbg)"/><rect width="430" height="956" fill="url(#stars)"/>
+    <path d="M-40 716Q145 582 334 735T520 650" fill="none" stroke="#7CC8F5" stroke-opacity=".055" stroke-width="72"/>
+    <circle cx="374" cy="102" r="118" fill="none" stroke="#7CC8F5" stroke-opacity=".045" stroke-width="1" stroke-dasharray="6 9"/>
+    <text x="24" y="31" fill="#F3F6F8" font-family="-apple-system,Arial" font-size="14" font-weight="650">9:41</text>
+    <g fill="#F3F6F8"><rect x="353" y="21" width="3" height="7" rx="1"/><rect x="358" y="18" width="3" height="10" rx="1"/><rect x="363" y="15" width="3" height="13" rx="1"/><rect x="397" y="17" width="22" height="11" rx="3" fill="none" stroke="#F3F6F8" stroke-width="1.5"/><rect x="399" y="19" width="16" height="7" rx="1.5"/></g>
+
+    <!-- Preserve current header layout: self orbit, plain status, create orbit -->
+    <circle cx="38" cy="84" r="23" fill="#10151D" stroke="#2A333D"/>
+    <circle cx="38" cy="84" r="15" fill="none" stroke="#AEB8C0" stroke-width="2" stroke-dasharray="6 4"/><circle cx="38" cy="84" r="7" fill="none" stroke="#D8E0E5" stroke-width="2.2"/>
+    <circle cx="297" cy="84" r="4" fill="#53D184"/><text x="309" y="89" fill="#B6C0C8" font-family="-apple-system,Arial" font-size="13" font-weight="650">Online · 2</text>
+    <circle cx="397" cy="84" r="23" fill="#10151D" stroke="#7CC8F5" stroke-width="1.8" filter="url(#odsh)"/><path d="M397 74v20M387 84h20" stroke="#DDF3FF" stroke-width="2.2" stroke-linecap="round"/>
+
+    <!-- Flat filter rail, one orbital active marker -->
+    <line x1="18" y1="128" x2="412" y2="128" stroke="#2A333D"/>
+    <text x="60" y="159" fill="#F3F6F8" font-family="-apple-system,Arial" font-size="13.5" font-weight="720">All</text><text x="91" y="159" fill="#7CC8F5" font-family="-apple-system,Arial" font-size="12" font-weight="700">50</text>
+    <text x="194" y="159" fill="#8A96A0" font-family="-apple-system,Arial" font-size="13.5" font-weight="650">Intros</text><circle cx="239" cy="151" r="3" fill="#7CC8F5"/>
+    <text x="329" y="159" fill="#8A96A0" font-family="-apple-system,Arial" font-size="13.5" font-weight="650">Archived</text>
+    <path d="M50 174h53" stroke="#7CC8F5" stroke-width="2.5" stroke-linecap="round"/><circle cx="50" cy="174" r="3.5" fill="#7CC8F5"/>
+
+    <!-- Unread uses a quiet field, not selected-card theater -->
+    <rect x="12" y="192" width="406" height="78" rx="14" fill="#111820"/>
+    <circle cx="58" cy="231" r="23" fill="#0B1017" stroke="#53D184" stroke-width="2" stroke-dasharray="7 4"/><circle cx="58" cy="231" r="15" fill="url(#odv)"/><circle cx="58" cy="231" r="4.5" fill="#D0BCFF"/>
+    <text x="96" y="220" fill="#F3F6F8" font-family="-apple-system,Arial" font-size="15.5" font-weight="720">Maya</text>
+    <text x="96" y="243" fill="#D3DADE" font-family="-apple-system,Arial" font-size="13" font-weight="570">Right above the rooftops ✨</text>
+    <text x="392" y="218" text-anchor="end" fill="#A0ABB3" font-family="-apple-system,Arial" font-size="11.5">2m</text>
+    <circle cx="386" cy="244" r="11" fill="#7CC8F5"/><text x="386" y="248" text-anchor="middle" fill="#071018" font-family="-apple-system,Arial" font-size="10.5" font-weight="800">3</text>
+
+    <!-- Dense rows; orbit marks are the brand -->
+    <g font-family="-apple-system,Arial">
+      <circle cx="58" cy="313" r="22" fill="#0B1017" stroke="#53D184" stroke-width="1.8" stroke-dasharray="6 4"/><circle cx="58" cy="313" r="14.5" fill="url(#odg)"/><circle cx="58" cy="313" r="4" fill="#A2F2BC"/>
+      <text x="96" y="306" fill="#F3F6F8" font-size="15" font-weight="680">Noah</text><text x="96" y="329" fill="#B6C0C8" font-size="13">Voice message · 0:18</text><text x="392" y="306" text-anchor="end" fill="#8A96A0" font-size="11.5">18m</text><line x1="96" y1="351" x2="412" y2="351" stroke="#2A333D" stroke-opacity=".65"/>
+      <circle cx="58" cy="391" r="22" fill="#0B1017" stroke="#8576AA" stroke-width="1.8" stroke-dasharray="6 4"/><circle cx="58" cy="391" r="14.5" fill="url(#ody)"/><circle cx="58" cy="391" r="4" fill="#FFF4A2"/>
+      <text x="96" y="384" fill="#F3F6F8" font-size="15" font-weight="680">Lina</text><text x="96" y="407" fill="#B6C0C8" font-size="13">The layout feels much calmer now</text><text x="392" y="384" text-anchor="end" fill="#8A96A0" font-size="11.5">1h</text><line x1="96" y1="429" x2="412" y2="429" stroke="#2A333D" stroke-opacity=".65"/>
+      <circle cx="58" cy="469" r="22" fill="#0B1017" stroke="#7CC8F5" stroke-width="1.8" stroke-dasharray="6 4"/><circle cx="58" cy="469" r="14.5" fill="url(#odc)"/><circle cx="58" cy="469" r="4" fill="#C3F3FF"/>
+      <text x="96" y="462" fill="#F3F6F8" font-size="15" font-weight="680">Ari</text><text x="96" y="485" fill="#B6C0C8" font-size="13">Photo</text><text x="392" y="462" text-anchor="end" fill="#8A96A0" font-size="11.5">3h</text><line x1="96" y1="507" x2="412" y2="507" stroke="#2A333D" stroke-opacity=".65"/>
+      <circle cx="58" cy="547" r="22" fill="#0B1017" stroke="#9B8AC8" stroke-width="1.8" stroke-dasharray="6 4"/><circle cx="58" cy="547" r="14.5" fill="url(#odv)"/><circle cx="58" cy="547" r="4" fill="#CEBAFF"/>
+      <text x="96" y="540" fill="#F3F6F8" font-size="15" font-weight="680">فريق التصميم · Studio</text><text x="96" y="563" fill="#B6C0C8" font-size="13">سارة: أرسلت النسخة النهائية</text><text x="392" y="540" text-anchor="end" fill="#8A96A0" font-size="11.5">Tue</text><text x="96" y="580" fill="#7CC8F5" font-size="9.5" font-weight="750" letter-spacing=".7">GROUP</text><line x1="96" y1="595" x2="412" y2="595" stroke="#2A333D" stroke-opacity=".65"/>
+      <circle cx="58" cy="635" r="22" fill="#0B1017" stroke="#6F7881" stroke-width="1.8" stroke-dasharray="6 4"/><circle cx="58" cy="635" r="14.5" fill="url(#odg)" opacity=".65"/><circle cx="58" cy="635" r="4" fill="#8BE1A8"/>
+      <text x="96" y="628" fill="#F3F6F8" font-size="15" font-weight="680">Alexandria Johnson-Rahman 🌙</text><text x="96" y="651" fill="#B6C0C8" font-size="13">You: See you tomorrow</text><text x="392" y="628" text-anchor="end" fill="#8A96A0" font-size="11.5">Mon</text>
+    </g>
+
+    <!-- Current navigation model: search stays a floating action until invoked -->
+    <circle cx="386" cy="880" r="25" fill="#10151D" stroke="#2A333D" filter="url(#odsh)"/><circle cx="382" cy="876" r="8" fill="none" stroke="#E8EFF3" stroke-width="2"/><path d="M388 882l7 7" stroke="#E8EFF3" stroke-width="2" stroke-linecap="round"/>
+    <rect x="151" y="930" width="128" height="5" rx="3" fill="#F3F6F8" fill-opacity=".72"/>
+  </g>
+</svg>
