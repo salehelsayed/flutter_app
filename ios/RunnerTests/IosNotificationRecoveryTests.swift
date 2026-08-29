@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import UserNotifications
 import XCTest
@@ -1754,6 +1755,193 @@ final class IosNotificationRecoveryTests: XCTestCase {
     recorder.completeLast()
   }
 
+  func testSerializedBadgeWriterReleasesFileLockWhileCompletionIsPending()
+    throws
+  {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = IosNotificationRecoveryStore(directory: directory)
+    _ = store.claimPrepared(
+      requestIdentifier: "request",
+      identity: ordinaryIdentity(eventId: "event")
+    )
+    let setterInvoked = expectation(description: "badge setter invoked")
+    let unusedSecondWrite = XCTestExpectation(description: "unused second write")
+    let recorder = BadgeSetterRecorder(
+      firstExpectation: setterInvoked,
+      secondExpectation: unusedSecondWrite
+    )
+    let queue = DispatchQueue(
+      label: "IosNotificationRecoveryTests.pending-badge-completion"
+    )
+    let writer = IosNotificationSerializedBadgeWriter(
+      store: store,
+      setter: recorder.set,
+      queue: queue
+    )
+
+    writer.requestWrite()
+    wait(for: [setterInvoked], timeout: 2)
+    queue.sync {}
+
+    let probeFd = open(
+      store.badgeLockURL.path,
+      O_RDWR | O_CREAT,
+      S_IRUSR | S_IWUSR
+    )
+    XCTAssertGreaterThanOrEqual(probeFd, 0)
+    guard probeFd >= 0 else {
+      recorder.completeLast()
+      queue.sync {}
+      return
+    }
+    let lockResult = flock(probeFd, LOCK_EX | LOCK_NB)
+    if lockResult == 0 {
+      _ = flock(probeFd, LOCK_UN)
+    }
+    close(probeFd)
+
+    // Always release the production writer so a RED run leaves no blocked
+    // queue or descriptor behind for the remaining test process.
+    recorder.completeLast()
+    queue.sync {}
+
+    XCTAssertEqual(
+      lockResult,
+      0,
+      "the badge lock must not span an asynchronous setter completion"
+    )
+    XCTAssertEqual(recorder.counts, [1])
+  }
+
+  func testSerializedBadgeWritersOverlapWithoutWaitingForFirstCompletion()
+    throws
+  {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = IosNotificationRecoveryStore(directory: directory)
+    _ = store.claimPrepared(
+      requestIdentifier: "request",
+      identity: ordinaryIdentity(eventId: "event")
+    )
+    let firstSetterInvoked = expectation(description: "first setter invoked")
+    let secondSetterInvoked = expectation(description: "second setter invoked")
+    let firstRecorder = BadgeSetterRecorder(
+      firstExpectation: firstSetterInvoked,
+      secondExpectation: XCTestExpectation(description: "unused first repair")
+    )
+    let secondRecorder = BadgeSetterRecorder(
+      firstExpectation: secondSetterInvoked,
+      secondExpectation: XCTestExpectation(description: "unused second repair")
+    )
+    let firstQueue = DispatchQueue(
+      label: "IosNotificationRecoveryTests.first-overlapping-writer"
+    )
+    let secondQueue = DispatchQueue(
+      label: "IosNotificationRecoveryTests.second-overlapping-writer"
+    )
+    let firstWriter = IosNotificationSerializedBadgeWriter(
+      store: store,
+      setter: firstRecorder.set,
+      queue: firstQueue
+    )
+    let secondWriter = IosNotificationSerializedBadgeWriter(
+      store: store,
+      setter: secondRecorder.set,
+      queue: secondQueue
+    )
+
+    firstWriter.requestWrite()
+    wait(for: [firstSetterInvoked], timeout: 2)
+    firstQueue.sync {}
+    secondWriter.requestWrite()
+    let overlapResult = XCTWaiter.wait(
+      for: [secondSetterInvoked],
+      timeout: 2
+    )
+
+    // Cleanup is ordered so the pre-fix RED run cannot strand either queue:
+    // releasing writer one lets a blocked writer two finish its submission.
+    firstRecorder.completeLast()
+    firstQueue.sync {}
+    secondQueue.sync {}
+    secondRecorder.completeLast()
+    secondQueue.sync {}
+
+    XCTAssertEqual(
+      overlapResult,
+      .completed,
+      "a missing first completion must not prevent a later badge submission"
+    )
+    XCTAssertEqual(firstRecorder.counts, [1])
+    XCTAssertEqual(secondRecorder.counts, [1])
+  }
+
+  func testSerializedBadgeWriterDoesNotRestartExhaustedLatestRevisionFromStaleCompletion()
+    throws
+  {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = IosNotificationRecoveryStore(directory: directory)
+    _ = store.claimPrepared(
+      requestIdentifier: "first",
+      identity: ordinaryIdentity(eventId: "first")
+    )
+    let queue = DispatchQueue(
+      label: "IosNotificationRecoveryTests.stale-completion-retry-bound"
+    )
+    let counts = LockedArray<Int>()
+    let completions = LockedArray<(Error?) -> Void>()
+    let firstRevision = expectation(description: "first revision submitted")
+    let latestRevision = expectation(description: "latest revision submitted")
+    let latestRetryTwo = expectation(description: "latest retry two")
+    let latestRetryThree = expectation(description: "latest retry three")
+    let writer = IosNotificationSerializedBadgeWriter(
+      store: store,
+      setter: { count, completion in
+        counts.append(count)
+        completions.append(completion)
+        switch counts.values.count {
+        case 1: firstRevision.fulfill()
+        case 2: latestRevision.fulfill()
+        case 3: latestRetryTwo.fulfill()
+        case 4: latestRetryThree.fulfill()
+        default: break
+        }
+      },
+      queue: queue
+    )
+
+    writer.requestWrite()
+    wait(for: [firstRevision], timeout: 2)
+    queue.sync {}
+
+    _ = store.claimPrepared(
+      requestIdentifier: "second",
+      identity: ordinaryIdentity(eventId: "second")
+    )
+    writer.requestWrite()
+    wait(for: [latestRevision], timeout: 2)
+    queue.sync {}
+
+    try XCTUnwrap(completions.value(at: 1))(BadgeSetterTestError.failed)
+    wait(for: [latestRetryTwo], timeout: 2)
+    queue.sync {}
+    try XCTUnwrap(completions.value(at: 2))(BadgeSetterTestError.failed)
+    wait(for: [latestRetryThree], timeout: 2)
+    queue.sync {}
+    try XCTUnwrap(completions.value(at: 3))(BadgeSetterTestError.failed)
+    queue.sync {}
+    XCTAssertEqual(counts.values, [1, 2, 2, 2])
+
+    // A late callback from revision one must not reset revision two's exhausted
+    // retry budget or duplicate the latest submission.
+    try XCTUnwrap(completions.value(at: 0))(nil)
+    queue.sync {}
+    XCTAssertEqual(counts.values, [1, 2, 2, 2])
+    completions.removeAll()
+  }
+
   func testSerializedBadgeWriterRetriesTransientSetterFailure() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -1971,6 +2159,19 @@ private final class LockedArray<Element>: @unchecked Sendable {
     storage.append(value)
     lock.unlock()
   }
+
+  func value(at index: Int) -> Element? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard storage.indices.contains(index) else { return nil }
+    return storage[index]
+  }
+
+  func removeAll() {
+    lock.lock()
+    storage.removeAll()
+    lock.unlock()
+  }
 }
 
 private final class MemoryRecoveryCenter: IosNotificationRecoveryCenter,
@@ -2124,6 +2325,10 @@ private final class BadgeSetterRecorder: @unchecked Sendable {
 
   func completeFirst(error: Error? = nil) {
     lock.lock()
+    guard !completions.isEmpty else {
+      lock.unlock()
+      return
+    }
     let completion = completions.removeFirst()
     lock.unlock()
     completion(error)

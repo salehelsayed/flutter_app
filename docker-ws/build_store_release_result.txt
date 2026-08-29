@@ -1,0 +1,4 @@
+PROVENANCE version=1.0.0+108 name=1.0.0 build=108 sha=39b45abd5 branch=protected-view dirty_files=6 date=2026-08-29 12:06:24
+WARNING dirty tree (6 files) — store artifacts will not match any commit exactly
+PLAY OK build/app/outputs/bundle/release/app-release.aab (153 MB) versionName=1.0.0 versionCode=108
+IOS FAILED(binary-gate: Go bridge not linked — run 'cd ios && pod install' and rebuild)

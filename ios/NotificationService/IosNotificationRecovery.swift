@@ -1975,9 +1975,10 @@ protocol IosNotificationBadgeWriting: AnyObject {
   func requestWrite()
 }
 
-/// iOS 16+ absolute badge writer. Its separate flock remains held through the
-/// asynchronous UserNotifications completion, serializing Runner and NSE. It
-/// re-reads desired state before releasing if a newer sequence arrived.
+/// iOS 16+ absolute badge writer. Its separate flock serializes the synchronous
+/// UserNotifications submission across Runner and NSE, then is released before
+/// the asynchronous completion can outlive the process. Each completion
+/// re-reads desired state and submits a fresh locked attempt when needed.
 final class IosNotificationSerializedBadgeWriter: IosNotificationBadgeWriting {
   typealias Setter = (Int, @escaping (Error?) -> Void) -> Void
 
@@ -1986,6 +1987,10 @@ final class IosNotificationSerializedBadgeWriter: IosNotificationBadgeWriting {
   private let store: IosNotificationRecoveryStore
   private let setter: Setter
   private let queue: DispatchQueue
+  // Accessed only from `queue`. A newer desired revision starts a fresh budget;
+  // duplicate requests and stale completions cannot restart that same budget.
+  private var latestSubmittedRevision: UInt64?
+  private var latestSubmittedAttempts = 0
 
   init(
     store: IosNotificationRecoveryStore,
@@ -2006,7 +2011,7 @@ final class IosNotificationSerializedBadgeWriter: IosNotificationBadgeWriting {
     queue.async { self.beginLockedWrite() }
   }
 
-  private func beginLockedWrite() {
+  private func beginLockedWrite(retryingRevision: UInt64? = nil) {
     let fd = open(
       store.badgeLockURL.path,
       O_RDWR | O_CREAT,
@@ -2017,32 +2022,43 @@ final class IosNotificationSerializedBadgeWriter: IosNotificationBadgeWriting {
       close(fd)
       return
     }
-    writeLatest(fd: fd)
-  }
-
-  private func writeLatest(fd: Int32) {
+    defer { finish(fd: fd) }
     guard let snapshot = store.desiredBadgeSnapshot() else {
-      finish(fd: fd)
       return
     }
-    write(snapshot: snapshot, attempt: 1, fd: fd)
+    if let retryingRevision {
+      guard snapshot.revision == retryingRevision,
+            latestSubmittedRevision == retryingRevision,
+            latestSubmittedAttempts < Self.maximumAttemptsPerRevision else {
+        if snapshot.revision != latestSubmittedRevision {
+          submitNewRevision(snapshot)
+        }
+        return
+      }
+      latestSubmittedAttempts += 1
+      write(snapshot: snapshot)
+      return
+    }
+    guard snapshot.revision != latestSubmittedRevision else { return }
+    submitNewRevision(snapshot)
   }
 
-  private func write(
-    snapshot: IosNotificationBadgeSnapshot,
-    attempt: Int,
-    fd: Int32
-  ) {
+  private func submitNewRevision(_ snapshot: IosNotificationBadgeSnapshot) {
+    latestSubmittedRevision = snapshot.revision
+    latestSubmittedAttempts = 1
+    write(snapshot: snapshot)
+  }
+
+  private func write(snapshot: IosNotificationBadgeSnapshot) {
     setter(snapshot.count) { [self] error in
       self.queue.async {
         if let latest = self.store.desiredBadgeSnapshot(),
            latest.revision != snapshot.revision {
-          self.write(snapshot: latest, attempt: 1, fd: fd)
+          self.beginLockedWrite()
         } else if error != nil,
-                  attempt < Self.maximumAttemptsPerRevision {
-          self.write(snapshot: snapshot, attempt: attempt + 1, fd: fd)
-        } else {
-          self.finish(fd: fd)
+                  self.latestSubmittedRevision == snapshot.revision,
+                  self.latestSubmittedAttempts < Self.maximumAttemptsPerRevision {
+          self.beginLockedWrite(retryingRevision: snapshot.revision)
         }
       }
     }

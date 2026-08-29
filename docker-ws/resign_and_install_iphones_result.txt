@@ -1,3 +1,3 @@
-ARTIFACT build/ios/iphoneos/Runner.app bundleVersion=260827123536 shortVersion=1.0.06076489.21.260827123536 runner_mtime=Aug 27 12:39:33 2026
-00008030-001A6D2801BB802E OK bundleVersion=260827123536 (verified)
-00008110-00184D622289801E OK bundleVersion=260827123536 (verified)
+ARTIFACT build/ios/iphoneos/Runner.app bundleVersion=260829114633 shortVersion=1.0.039455.1.260829114633 runner_mtime=Aug 29 11:54:15 2026
+00008030-001A6D2801BB802E OK bundleVersion=260829114633 (verified)
+00008110-00184D622289801E OK bundleVersion=260829114633 (verified)
