@@ -281,21 +281,25 @@ Future<void> runRelayRecoveryBenchmark(WidgetTester tester) async {
     for (var i = 0; i < 3; i++) {
       print('\n--- Cycle ${i + 1}/3 ---');
 
-      await node.bridge.send(
-        jsonEncode({
-          'cmd': 'peer:disconnect',
-          'payload': {'peerId': relayPeerId},
-        }),
-      );
-
-      await waitFor(
-        () => !isRelayReadyBadgeState(node.service.currentState),
-        timeout: const Duration(seconds: 15),
-        label: 'Lost dotted state cycle ${i + 1}',
-      );
-
       final events = await captureFlowEventsUntil(
         () async {
+          // Capture before disconnecting. A fast relay can complete the
+          // entire degraded -> recovered transition between two state polls;
+          // starting capture afterwards then loses the valid timing events
+          // and incorrectly reports a missing recovery sample.
+          await node.bridge.send(
+            jsonEncode({
+              'cmd': 'peer:disconnect',
+              'payload': {'peerId': relayPeerId},
+            }),
+          );
+
+          await waitFor(
+            () => !isRelayReadyBadgeState(node.service.currentState),
+            timeout: const Duration(seconds: 15),
+            label: 'Lost dotted state cycle ${i + 1}',
+          );
+
           await node.service.performImmediateHealthCheck();
           await node.service.drainOfflineInbox();
           await waitForSendableBadge(

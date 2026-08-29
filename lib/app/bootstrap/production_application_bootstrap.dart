@@ -27,6 +27,7 @@ import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_pro
 import 'package:flutter_app/debug/debug_e2e_composition_root.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/database/migrations/107_direct_notification_durability.dart';
+import 'package:flutter_app/core/database/legacy_push_transport_repair.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
@@ -794,6 +795,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             },
           );
     await repairDirectNotificationDurabilityDeleteTriggers(db);
+    await repairLegacyPushMessageTransports(db);
     Future<bool>? canonicalRuntimeShutdownInFlight;
     Future<bool> shutdownCanonicalRuntime() {
       final current = canonicalRuntimeShutdownInFlight;

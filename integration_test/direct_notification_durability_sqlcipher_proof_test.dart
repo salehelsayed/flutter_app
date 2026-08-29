@@ -39,10 +39,16 @@ const _v107Indexes = <String>{
 };
 const _currentDirectIndexes = <String>{
   ..._v107Indexes,
+  'idx_direct_contact_device_bindings_contact_state',
+  'idx_direct_contact_device_bindings_transport_owner',
   'idx_direct_inbox_custody_outbox_fair_load',
+  'idx_direct_inbox_custody_outbox_generation',
   'idx_direct_reaction_inbox_custody_outbox_fair_load',
+  'idx_direct_reaction_inbox_custody_outbox_generation',
   'idx_direct_media_blob_custody_inbox_incarnation',
+  'idx_direct_media_blob_custody_incoming_attachment',
   'idx_direct_media_blob_custody_message',
+  'idx_direct_media_blob_custody_outgoing_target',
   'idx_direct_media_blob_custody_state_retry',
 };
 
@@ -196,7 +202,7 @@ Future<void> _seedV106(sqlcipher.Database db) async {
     'text': 'direct collision sentinel',
     'timestamp': _t0,
     'status': 'delivered',
-    'is_incoming': 1,
+    'is_incoming': 0,
     'created_at': _t0,
   });
   await db.insert('groups', <String, Object?>{
@@ -311,7 +317,7 @@ Future<void> _expectTypedIsolation(sqlcipher.Database db) async {
       actorPeerId: _actorId,
     ),
     allOf(
-      containsPair('reaction_id', 'direct-reaction'),
+      containsPair('reaction_id', _reactionRowId),
       containsPair('terminal_event_id', _eventId),
     ),
   );
@@ -457,7 +463,7 @@ void main() {
           messageId: _messageId,
           actorPeerId: _actorId,
           eventTimestamp: _t0,
-          reactionId: 'direct-reaction',
+          reactionId: _reactionRowId,
           reactionAction: 'add',
           reactionTombstone: false,
           createdAt: _t0,
@@ -504,7 +510,7 @@ void main() {
             expectedMessageId: _messageId,
             expectedActorPeerId: _actorId,
             expectedEventTimestamp: _t0,
-            expectedReactionId: 'direct-reaction',
+            expectedReactionId: _reactionRowId,
             expectedReactionAction: 'add',
             expectedReactionTombstone: false,
             completedAt: _t1,

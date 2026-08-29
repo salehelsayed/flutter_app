@@ -263,7 +263,10 @@ const _productionBootstrapNormalizedSha256 =
     // The iOS badge repair forwards committed conversation-read settlement to
     // the existing app-owned recovery coordinator; no adapter or resume owner
     // changes layer.
-    'b361b90923ec7bd00704d20c05ee0484fd902e92fc1ee80ad4ec73f9fd91f6ce';
+    // The legacy push-transport repair runs after the existing writable
+    // database open at this app-owned composition boundary; no adapter or
+    // resume owner changes layer.
+    'd0f40053c8f43a09471dad58e6d697a10bcadd7fd22b5c13cf6493b13eff7dc5';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

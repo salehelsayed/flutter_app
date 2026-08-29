@@ -86,7 +86,7 @@ void main() {
         expect(upCount, 0);
         expect(cancelCount, 0);
         expect(isRecording, true);
-        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
 
         await gesture.up();
         await tester.pump();
@@ -95,7 +95,7 @@ void main() {
         expect(upCount, 0);
         expect(cancelCount, 0);
         expect(isRecording, true);
-        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
       },
     );
 
@@ -192,7 +192,7 @@ void main() {
       },
     );
 
-    testWidgets('shows the recording state with the stop icon and semantics', (
+    testWidgets('shows the recording state with the send icon and semantics', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -204,7 +204,7 @@ void main() {
         ),
       );
 
-      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
       expect(find.bySemanticsLabel('Stop recording'), findsOneWidget);
     });
   });

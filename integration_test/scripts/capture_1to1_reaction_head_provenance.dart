@@ -1511,30 +1511,35 @@ class _HeadProvenanceCampaign {
   Future<String> _seedIncomingMessage(String marker) async {
     await _openConversation(recipient, sender.username);
     await _adb(recipientId, ['logcat', '-c']);
-    final initialDump = await _uiDump(recipientId);
-    final initialEditor = findNodeBoundsByClass(
-      initialDump,
-      'android.widget.EditText',
+    final markerEntry = await enterGroupComposeMarkerOnce(
+      marker: marker,
+      readUiDump: () => _uiDump(recipientId),
+      tapEditor: (center) async {
+        await _adbShell(recipientId, [
+          'input',
+          'tap',
+          '${center.$1}',
+          '${center.$2}',
+        ]);
+      },
+      injectMarker: (value) async {
+        await _adbShell(recipientId, ['input', 'text', value]);
+      },
+      maximumFocusPolls: 40,
+      maximumAcceptancePolls: 40,
     );
-    if (initialEditor == null) {
+    if (markerEntry != GroupComposeMarkerEntryOutcome.accepted) {
       throw _CampaignFailure(
         _stage,
-        'The recipient conversation did not expose its compose editor.',
+        'The recipient compose marker was not accepted: ${markerEntry.name}.',
       );
     }
-    await _adbShell(recipientId, [
-      'input',
-      'tap',
-      '${(initialEditor.$1 + initialEditor.$3) ~/ 2}',
-      '${(initialEditor.$2 + initialEditor.$4) ~/ 2}',
-    ]);
-    await _adbShell(recipientId, ['input', 'text', marker]);
-    await _waitForUiText(recipientId, marker, const Duration(seconds: 10));
 
     final typedDump = await _uiDump(recipientId);
-    final typedEditor = findNodeBoundsByClass(
+    final typedEditor = findEnabledFocusableGroupComposeEditorBounds(
       typedDump,
-      'android.widget.EditText',
+      requireFocused: true,
+      exactText: marker,
     );
     if (typedEditor == null) {
       throw _CampaignFailure(
@@ -1914,7 +1919,12 @@ class _HeadProvenanceCampaign {
       'recipient android push registration accepted by the relay',
       const Duration(minutes: 3),
       () async => androidRelayPushRegistrationAccepted(
-        (await _adb(recipientId, ['logcat', '-d', '-v', 'brief'])).stdout,
+        (await _adb(recipientId, [
+          'logcat',
+          '-d',
+          '-v',
+          'brief',
+        ], allowFail: true)).stdout,
       ),
     );
   }
@@ -2176,6 +2186,21 @@ class _HeadProvenanceCampaign {
     }
   }
 
+  /// Stops the just-unregistered recipient before Android background work can
+  /// restart the process and register a fresh push route. Unlike force-stop,
+  /// `stop-app` preserves normal push eligibility, so the following relay
+  /// metric probe still detects any route that was actually left behind.
+  Future<void> _stopRecipientAfterRouteUnregister() async {
+    await _adbShell(recipientId, ['input', 'keyevent', 'KEYCODE_HOME']);
+    await _adbShell(recipientId, [
+      'cmd',
+      'activity',
+      'stop-app',
+      appPackage,
+    ]);
+    await _waitForProcessAndActivityAbsent(recipientId);
+  }
+
   Future<void> _terminateRecipient() async {
     await _adbShell(recipientId, ['input', 'keyevent', 'KEYCODE_HOME']);
     await Future<void>.delayed(const Duration(seconds: 1));
@@ -2417,7 +2442,7 @@ class _HeadProvenanceCampaign {
           '${jsonEncode(<String, Object?>{'schema': unregisterReceipt['schema'], 'transport_action': unregisterReceipt['transport_action'], 'scenario': unregisterReceipt['scenario'], 'status': unregisterReceipt['status'], 'success': unregisterReceipt['success'], 'unregistered': unregisterReceipt['unregistered'], 'authenticatedMainAppAction': true})}\n',
           flush: true,
         );
-    await _terminateRecipient();
+    await _stopRecipientAfterRouteUnregister();
     // Both transition targets already carry the same reaction used by this
     // campaign. Reusing either one would toggle that reaction off and emit
     // REACTION_REMOVE_SUCCESS, which cannot prove a fresh post-unregister
@@ -2832,9 +2857,7 @@ class _HeadProvenanceCampaign {
                 details['presentationState'] == 'OS_POSTED';
           })
           .toList(growable: false);
-      if (acknowledgements.length > 1 ||
-          directShows.length > 1 ||
-          settlements.length > 1) {
+      if (acknowledgements.length > 1 || directShows.length > 1) {
         throw _CampaignFailure(
           _stage,
           '$stem observed duplicate marker ACK or canonical notification show.',
@@ -2906,9 +2929,16 @@ class _HeadProvenanceCampaign {
         );
         if (errors.isEmpty) canonical = contentCards.single;
       } else if (contentCards.length > 1) {
+        final diagnostic = File(
+          '${artifactDir.path}/$stem-unexpected-content-notifications.txt',
+        )..writeAsStringSync(dump, flush: true);
+        final ids = contentCards
+            .map((card) => card.id?.toString() ?? 'null')
+            .join(',');
         throw _CampaignFailure(
           _stage,
-          '$stem has ${contentCards.length} canonical content cards.',
+          '$stem has ${contentCards.length} canonical content cards '
+          '(ids=$ids; diagnostic=${diagnostic.path}).',
         );
       }
 
@@ -2916,7 +2946,10 @@ class _HeadProvenanceCampaign {
       final show = directShows.isEmpty ? null : directShows.single;
       final showDetails = show?['details'];
       final exactShow = showDetails is Map && showDetails['silent'] == false;
-      final exactSettlement = settlements.length == 1;
+      // SQL-B recovery may idempotently replay the durable ledger settlement
+      // after the one OS post. That replay is not a duplicate notification;
+      // the one-show and one-ACK checks above remain the alerting boundary.
+      final exactSettlement = settlements.isNotEmpty;
       final exactAck =
           ack != null &&
           (!requireHeadlessWorker ||
@@ -2954,7 +2987,7 @@ class _HeadProvenanceCampaign {
             ),
           ),
           settlement: Map<String, Object?>.unmodifiable(
-            (settlements.single['details']! as Map).map<String, Object?>(
+            (settlements.first['details']! as Map).map<String, Object?>(
               (key, value) => MapEntry('$key', value),
             ),
           ),
@@ -3180,7 +3213,8 @@ class _HeadProvenanceCampaign {
           final decoded = jsonDecode(candidate);
           return decoded is Map &&
                   decoded['stepId'] == stepId &&
-                  decoded['status'] == 'complete'
+                  (decoded['status'] == 'complete' ||
+                      decoded['status'] == 'failed')
               ? candidate
               : null;
         } on FormatException {
@@ -3190,9 +3224,17 @@ class _HeadProvenanceCampaign {
     );
     await _deleteAppFile(recipientId, 'intro_e2e_config.json');
     await _deleteAppFile(recipientId, 'intro_e2e_result.json');
-    return (jsonDecode(raw) as Map).map<String, Object?>(
+    final receipt = (jsonDecode(raw) as Map).map<String, Object?>(
       (key, value) => MapEntry('$key', value),
     );
+    if (receipt['status'] != 'complete') {
+      throw _CampaignFailure(
+        _stage,
+        'Authenticated notification action $action reported '
+        '${receipt['errorType'] ?? 'failure'}.',
+      );
+    }
+    return receipt;
   }
 
   Future<Map<String, Object?>> _captureRouteAbsenceProbe(String marker) async {
@@ -4076,9 +4118,23 @@ class _HeadProvenanceCampaign {
     await Future<void>.delayed(const Duration(milliseconds: 750));
     for (var attempt = 0; attempt < 6; attempt++) {
       final xml = await _uiDump(recipientId);
-      final title = findSemanticNodeCenter(xml, card.title);
-      final body = findSemanticNodeCenter(xml, card.body);
-      if (title != null && body != null) return body;
+      final target = findAndroidNotificationCardTapTarget(
+        xml,
+        title: card.title,
+        body: card.body,
+      );
+      if (target != null) {
+        final expand = target.collapsedGroupExpandCenter;
+        if (expand == null) return target.cardCenter;
+        await _adbShell(recipientId, [
+          'input',
+          'tap',
+          '${expand.$1}',
+          '${expand.$2}',
+        ]);
+        await Future<void>.delayed(const Duration(milliseconds: 750));
+        continue;
+      }
       if (attempt < 5) {
         await _adbShell(recipientId, [
           'input',
@@ -5333,8 +5389,30 @@ class _HeadProvenanceCampaign {
     }
   }
 
-  Future<String> _notificationDump(String deviceId) async =>
-      _adbShell(deviceId, ['dumpsys', 'notification', '--noredact']);
+  Future<String> _notificationDump(String deviceId) async {
+    _CommandOutput? lastFailure;
+    // A device-local proof can outlive an adbd transport replacement. The
+    // failed recovery run recovered after the old sub-second retry window, so
+    // keep the snapshot bounded while covering the real reconnect interval.
+    for (var attempt = 0; attempt < 12; attempt += 1) {
+      final result = await _adb(deviceId, [
+        'shell',
+        'dumpsys',
+        'notification',
+        '--noredact',
+      ], allowFail: true);
+      if (result.exitCode == 0) return result.stdout;
+      lastFailure = result;
+      if (attempt < 11) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    }
+    throw _CampaignFailure(
+      _stage,
+      'adb notification snapshot failed (${lastFailure!.exitCode}): '
+      '${_lastLine(lastFailure.stderr + lastFailure.stdout)}',
+    );
+  }
 
   Future<void> _longPressText(String deviceId, String text) async {
     final bounds = await _waitForBounds(
@@ -5382,10 +5460,18 @@ class _HeadProvenanceCampaign {
 
   Future<String> _uiDump(String deviceId) async {
     const remote = '/data/local/tmp/256_ui.xml';
-    await _adbShell(deviceId, ['uiautomator', 'dump', remote], allowFail: true);
-    final xml = await _adbShell(deviceId, ['cat', remote], allowFail: true);
-    await _adbShell(deviceId, ['rm', '-f', remote], allowFail: true);
-    return xml;
+    return readCompleteAndroidUiHierarchyWithRetry(
+      readAttempt: (_) async {
+        await _adbShell(deviceId, [
+          'uiautomator',
+          'dump',
+          remote,
+        ], allowFail: true);
+        final xml = await _adbShell(deviceId, ['cat', remote], allowFail: true);
+        await _adbShell(deviceId, ['rm', '-f', remote], allowFail: true);
+        return xml;
+      },
+    );
   }
 
   (int, int)? _boundsForText(String xml, String target) {

@@ -236,6 +236,96 @@ for required_seam in \
   }
 done
 
+# Fixture bootstrap must not delete an intro command until the exact terminal
+# receipt proves the target device consumed it. Group creation likewise must
+# clear any stale field value and prove the complete EditText value before the
+# irreversible Start action.
+python3 - "$capture_driver" <<'ANDROID_FIXTURE_RECEIPT_AND_GROUP_NAME_CONTRACT'
+import sys
+
+source = open(sys.argv[1], encoding='utf-8').read()
+
+
+def fail(message):
+    print('FAIL: Android fixture receipt/name contract: ' + message, file=sys.stderr)
+    sys.exit(1)
+
+
+def require(condition, message):
+    if not condition:
+        fail(message)
+
+
+def function_body(signature):
+    start = source.find(signature)
+    if start < 0:
+        fail('capture driver is missing ' + signature)
+    async_marker = source.find('async {', start)
+    opening = source.find('{', async_marker)
+    if opening < 0:
+        fail('capture driver has no body for ' + signature)
+    depth = 0
+    for index in range(opening, len(source)):
+        character = source[index]
+        if character == '{':
+            depth += 1
+        elif character == '}':
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    fail('capture driver has an unterminated body for ' + signature)
+
+
+prepopulate = function_body('Future<void> _prepopulateContact(')
+pre_stage_stop = prepopulate.find("'force-stop'")
+stale_result_cleanup = prepopulate.find(
+    "_deleteAppFile(owner.deviceId, 'intro_e2e_result.json')"
+)
+config_write = prepopulate.find("_writeAppFile(")
+first_start = prepopulate.find('_startAndroid(owner.deviceId)', config_write)
+result_read = prepopulate.find(
+    "_readAppFile(\n            owner.deviceId,\n            'intro_e2e_result.json'",
+    first_start,
+)
+step_binding = prepopulate.find("result['stepId'] != stepId", result_read)
+terminal_status = prepopulate.find("result['status'] != 'complete'", step_binding)
+success = prepopulate.find("result['success'] != true", terminal_status)
+terminal_result_cleanup = prepopulate.find(
+    "_deleteAppFile(owner.deviceId, 'intro_e2e_result.json')",
+    success,
+)
+second_launch = prepopulate.find(
+    '_launchAndroid(owner.deviceId)', terminal_result_cleanup
+)
+require(
+    0 <= pre_stage_stop < stale_result_cleanup < config_write < first_start < result_read
+    < step_binding < terminal_status < success < terminal_result_cleanup
+    < second_launch,
+    'contact bootstrap does not stop before staging, start without a second '
+    'force-stop, await an exact successful terminal receipt, then clean up '
+    'and relaunch',
+)
+require(
+    prepopulate.count('_launchAndroid(owner.deviceId)') == 1,
+    'contact bootstrap can race the staged command with an extra cold launch',
+)
+require('finally {' in prepopulate, 'contact bootstrap cleanup is not guaranteed')
+
+group_setup = function_body(
+    'Future<void> _createAndAcceptGroup({String? name, String? groupType}) async'
+)
+field_tap = group_setup.find("'tap'")
+move_end = group_setup.find("'KEYCODE_MOVE_END'", field_tap)
+delete = group_setup.find("'KEYCODE_DEL'", move_end)
+text_input = group_setup.find("'text',\n      _groupName", delete)
+exact_value = group_setup.find('findNodeBoundsByClassWithExactText(', text_input)
+start = group_setup.find("_tapText(creator.deviceId, 'Start group chat')", exact_value)
+require(
+    0 <= field_tap < move_end < delete < text_input < exact_value < start,
+    'group creation does not clear, type, and exact-verify the name before Start',
+)
+ANDROID_FIXTURE_RECEIPT_AND_GROUP_NAME_CONTRACT
+
 # TC-398-10: the existing-state trace is a sibling of the destructive Plan 397
 # campaign, not a shortcut through it. Keep this source contract ahead of the
 # device/setup contracts so an absent trace route is the authored RED.
@@ -866,11 +956,10 @@ IOS_PERMISSION_ORDER
 #
 # Deliberately SCOPED rather than the tap-campaign's file-wide seam
 # (`notification_tap_campaign_adapter_contract_test.sh:239-252`). Ported
-# verbatim that seam is UNSATISFIABLE here: it bans `['logcat', '-c']` outright
-# and tests `'logcat',` x `'-d',` co-occurrence across the whole file, while
-# this capture legitimately keeps ten `logcat -c` clears and two
-# process-scoped `logcat -d --pid=<pid>` readiness polls. A permanent red is
-# not a causal red, so the assertions below name the exact graded shapes.
+# verbatim that seam is UNSATISFIABLE here because it bans `['logcat', '-c']`
+# outright, while this capture legitimately keeps ten clears. The recorder is
+# device-local so a transient host ADB disconnect cannot kill it; setup polls
+# preserve their current-process boundary by filtering that same archive.
 python3 - "$capture_driver" <<'STREAM_SEAM'
 import re
 import sys
@@ -887,23 +976,19 @@ for required in (
     '_startDeviceLogStream',
     '_deviceLogcatCursor',
     '_deviceLogSince',
+    'logcat -T 1 -v threadtime -f',
+    "'exec-out'",
+    "'tail'",
+    'filterAndroidThreadtimeLogByProcessId',
 ):
     if required not in source:
         fail('capture driver lacks the live log stream seam ' + required)
 
-# The exact 4-element post-hoc reads the graded paths used before Plan 386.
-# Compared whitespace-insensitively so a reformat cannot smuggle one back.
+# No second logcat reader may compete with the device-local archive. Compared
+# whitespace-insensitively so a reformat cannot smuggle one back.
 compact = re.sub(r'\s+', '', source)
-for banned in ("'logcat','-d','-v','threadtime'", "'logcat','-d','-v','brief'"):
-    if banned in compact:
-        fail('a graded capture read still uses a post-hoc logcat -d window')
-
-# The two surviving `logcat -d` reads are process-scoped setup polls: they must
-# observe only the CURRENT pid, which a whole-device stream cannot express, and
-# they gate fixture readiness rather than producing artifact evidence.
-for read in re.findall(r"'logcat',\s*'-d',(.*?)\]", source, re.S):
-    if '--pid=' not in read:
-        fail('an ungated post-hoc logcat -d read remains on a graded path')
+if "'logcat','-d'" in compact:
+    fail('a competing post-hoc logcat reader remains in the capture')
 
 # The clears stay. The stream turns each one into a floor instead of destroying
 # evidence, so the destructive-action ban stays green.

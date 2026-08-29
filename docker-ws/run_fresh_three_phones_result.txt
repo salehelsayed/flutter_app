@@ -1,4 +1,4 @@
-PROVENANCE tree=current-working-tree sha=2df17387f branch=protected-view dirty_files=22 build_name=1.0.0-2df17387f.d22.t260826234650 ios_bundle_version=260826234650 date=2026-08-26 23:46:50
+PROVENANCE tree=current-working-tree sha=607648bb9 branch=protected-view dirty_files=21 build_name=1.0.0-607648bb9.d21.t260827123536 ios_bundle_version=260827123536 date=2026-08-27 12:35:36
 00008030-001A6D2801BB802E FAILED(install)
 00008110-00184D622289801E FAILED(install)
-21071FDF600CSC OK 1.0.0-2df17387f.d22.t260826234650 (verified)
+21071FDF600CSC OK 1.0.0-607648bb9.d21.t260827123536 (verified)

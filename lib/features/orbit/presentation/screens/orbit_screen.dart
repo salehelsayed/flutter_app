@@ -22,6 +22,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
+import 'package:flutter_app/features/orbit/presentation/orbital_quiet_visuals.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_view_toggle_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
@@ -319,6 +320,14 @@ class OrbitScreen extends StatefulWidget {
   /// callers keep the toggle.
   final bool hideShellNav;
 
+  /// Isolated, opt-in visual prototype seams. Defaults preserve production.
+  final OrbitVisualTreatment visualTreatment;
+  final bool? orbitalQuietLightOverride;
+  final bool orbitalQuietNeutralGlobalActions;
+  final OrbitalQuietV2Options orbitalQuietV2Options;
+  final Set<int> prototypeFocusedIndices;
+  final Widget? connectionIndicatorOverride;
+
   const OrbitScreen({
     super.key,
     required this.headerProjectionListenable,
@@ -369,6 +378,12 @@ class OrbitScreen extends StatefulWidget {
     this.onSelfAvatarTap,
     this.p2pService,
     this.hideShellNav = false,
+    this.visualTreatment = OrbitVisualTreatment.current,
+    this.orbitalQuietLightOverride,
+    this.orbitalQuietNeutralGlobalActions = false,
+    this.orbitalQuietV2Options = const OrbitalQuietV2Options(),
+    this.prototypeFocusedIndices = const <int>{},
+    this.connectionIndicatorOverride,
   });
 
   @override
@@ -466,6 +481,12 @@ class _OrbitScreenState extends State<OrbitScreen> {
     innerCircleResetListenable: widget.innerCircleResetListenable,
     onSelfAvatarTap: widget.onSelfAvatarTap,
     p2pService: widget.p2pService,
+    visualTreatment: widget.visualTreatment,
+    orbitalQuietLightOverride: widget.orbitalQuietLightOverride,
+    orbitalQuietNeutralGlobalActions: widget.orbitalQuietNeutralGlobalActions,
+    orbitalQuietV2Options: widget.orbitalQuietV2Options,
+    prototypeFocusedIndices: widget.prototypeFocusedIndices,
+    connectionIndicatorOverride: widget.connectionIndicatorOverride,
     innerEditing: _innerEditing,
     onInnerEdit: _onInnerEdit,
     ringsFindSignal: _ringsFindSignal,
@@ -528,6 +549,12 @@ class _OrbitScreenView extends StatelessWidget {
 
   /// 211 — connection-status pill source (see [OrbitScreen.p2pService]).
   final P2PService? p2pService;
+  final OrbitVisualTreatment visualTreatment;
+  final bool? orbitalQuietLightOverride;
+  final bool orbitalQuietNeutralGlobalActions;
+  final OrbitalQuietV2Options orbitalQuietV2Options;
+  final Set<int> prototypeFocusedIndices;
+  final Widget? connectionIndicatorOverride;
 
   /// 205 item 6 — whether the inner-circle surface is mid edit-session (gates
   /// the toggle + QR chrome).
@@ -599,6 +626,12 @@ class _OrbitScreenView extends StatelessWidget {
     required this.innerCircleResetListenable,
     this.onSelfAvatarTap,
     this.p2pService,
+    required this.visualTreatment,
+    required this.orbitalQuietLightOverride,
+    required this.orbitalQuietNeutralGlobalActions,
+    required this.orbitalQuietV2Options,
+    required this.prototypeFocusedIndices,
+    required this.connectionIndicatorOverride,
     required this.ringsFindSignal,
     required this.ringsFindOpenListenable,
     required this.onRingsFindOpenChanged,
@@ -684,277 +717,295 @@ class _OrbitScreenView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AmbientBackground(
-      preference: backgroundPreference,
-      readableToneOverride: readableToneOverride,
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        resizeToAvoidBottomInset: false,
-        body: Stack(
-          children: [
-            // Layer 1: the active surface — the Inner-Circle visualization
-            // (default on every entry) or the classic all-chats list, per
-            // [viewMode]. The two surfaces are disjoint: no list affordance
-            // leaks onto the circle, and no visualization header onto the list.
-            SafeArea(
-              child: viewMode == OrbitViewMode.innerCircle
-                  ? _buildInnerCircleSurface(context)
-                  : _buildAllChatsListSurface(context),
+    final scaffold = Scaffold(
+      backgroundColor: Colors.transparent,
+      resizeToAvoidBottomInset: false,
+      body: Stack(
+        children: [
+          // Layer 1: the active surface — the Inner-Circle visualization
+          // (default on every entry) or the classic all-chats list, per
+          // [viewMode]. The two surfaces are disjoint: no list affordance
+          // leaks onto the circle, and no visualization header onto the list.
+          SafeArea(
+            child: viewMode == OrbitViewMode.innerCircle
+                ? _buildInnerCircleSurface(context)
+                : _buildAllChatsListSurface(context),
+          ),
+
+          // Layer 1b: top-left view toggle — present on BOTH surfaces so it
+          // can flip the view either way. Only mounted when a toggle handler
+          // is wired, so bare-OrbitScreen pumps are unaffected. Physical
+          // top-left (RTL-safe) — see OrbitViewToggleButton.
+          // 205 item 6: hidden while the inner-circle surface is editing, so
+          // it never occludes the edit Reset chrome nor steals its taps.
+          if (onToggleView != null && !innerEditing)
+            OrbitViewToggleButton(viewMode: viewMode, onToggle: onToggleView!),
+
+          // (209: Layer 1c — the twin My QR / Scan chrome pair — retired.
+          // The entries live as labeled tiles on the Settings page, reached
+          // via the 206 center self-avatar.)
+
+          // Layer 2: Close button — standalone mode only. When the
+          // persistent Feed/Orbit nav is shown, the Feed tab is the way back,
+          // so the redundant X is omitted.
+          if (!_showsPersistentNav)
+            Positioned(
+              bottom: 36,
+              right: 16,
+              child: OrbitCloseButton(onTap: onClose),
             ),
 
-            // Layer 1b: top-left view toggle — present on BOTH surfaces so it
-            // can flip the view either way. Only mounted when a toggle handler
-            // is wired, so bare-OrbitScreen pumps are unaffected. Physical
-            // top-left (RTL-safe) — see OrbitViewToggleButton.
-            // 205 item 6: hidden while the inner-circle surface is editing, so
-            // it never occludes the edit Reset chrome nor steals its taps.
-            if (onToggleView != null && !innerEditing)
-              OrbitViewToggleButton(
-                viewMode: viewMode,
-                onToggle: onToggleView!,
-              ),
-
-            // (209: Layer 1c — the twin My QR / Scan chrome pair — retired.
-            // The entries live as labeled tiles on the Settings page, reached
-            // via the 206 center self-avatar.)
-
-            // Layer 2: Close button — standalone mode only. When the
-            // persistent Feed/Orbit nav is shown, the Feed tab is the way back,
-            // so the redundant X is omitted.
-            if (!_showsPersistentNav)
-              Positioned(
-                bottom: 36,
-                right: 16,
-                child: OrbitCloseButton(onTap: onClose),
-              ),
-
-            // Layer 3: Search trigger — standalone mode floats above the close
-            // button. In persistent mode the trigger rides the nav line
-            // instead, inside the nav band layer below. Search is an all-chats
-            // affordance — never shown on the Inner-Circle surface.
-            if (!_showsPersistentNav && viewMode == OrbitViewMode.allChats)
-              AnimatedBuilder(
-                animation: searchTriggerAnimation,
-                builder: (context, child) {
-                  final t = searchTriggerAnimation.value;
-                  return Positioned(
-                    bottom: 88,
-                    right: 16,
-                    child: Opacity(
-                      opacity: t,
-                      child: Transform.scale(
-                        scale: 0.985 + 0.015 * t,
-                        child: Transform.translate(
-                          offset: Offset(0, (1 - t) * 14),
-                          child: IgnorePointer(ignoring: t < 0.5, child: child),
-                        ),
+          // Layer 3: Search trigger — standalone mode floats above the close
+          // button. In persistent mode the trigger rides the nav line
+          // instead, inside the nav band layer below. Search is an all-chats
+          // affordance — never shown on the Inner-Circle surface.
+          if (!_showsPersistentNav && viewMode == OrbitViewMode.allChats)
+            AnimatedBuilder(
+              animation: searchTriggerAnimation,
+              builder: (context, child) {
+                final t = searchTriggerAnimation.value;
+                return Positioned(
+                  bottom: 88,
+                  right: 16,
+                  child: Opacity(
+                    opacity: t,
+                    child: Transform.scale(
+                      scale: 0.985 + 0.015 * t,
+                      child: Transform.translate(
+                        offset: Offset(0, (1 - t) * 14),
+                        child: IgnorePointer(ignoring: t < 0.5, child: child),
                       ),
                     ),
-                  );
-                },
-                child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
-              ),
-
-            // Layer 4: Search dock (slides up from bottom) — all-chats only
-            // (search is a list affordance; the Inner-Circle surface never
-            // mounts the dock, so its TextField cannot linger over the circle).
-            if (viewMode == OrbitViewMode.allChats)
-              AnimatedBuilder(
-                animation: searchDockAnimation,
-                builder: (context, child) {
-                  final t = searchDockAnimation.value;
-                  return Positioned(
-                    bottom: _searchDockBottomOffset(context),
-                    left: 0,
-                    right: 0,
-                    child: Transform.translate(
-                      offset: Offset(0, (1 - t) * 300),
-                      child: IgnorePointer(ignoring: t < 0.1, child: child),
-                    ),
-                  );
-                },
-                child: ValueListenableBuilder<OrbitViewProjection>(
-                  valueListenable: listProjectionListenable,
-                  builder: (context, projection, child) => OrbitSearchDock(
-                    controller: searchController,
-                    focusNode: searchFocusNode,
-                    onChanged: onSearchChanged,
-                    onClear: onSearchClear,
-                    onClose: onSearchClose,
-                    query: projection.searchQuery,
                   ),
-                ),
-              ),
+                );
+              },
+              child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
+            ),
 
-            if (_showsPersistentNav)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: _persistentNavBottomOffset(context),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    clipBehavior: Clip.none,
-                    children: [
-                      // Center keeps the Feed/Orbit bar horizontally centered
-                      // without flex balancing, independent of the trigger.
-                      // hideShellNav suppresses ONLY this toggle (Orbit
-                      // chromeless landing). We keep it in the layout via
-                      // Visibility(maintainSize) — invisible + non-interactive
-                      // but still occupying the bar's box — so this Stack keeps
-                      // the bar's height and the nav-line search trigger / rings
-                      // find pill stay on their line. A bare SizedBox.shrink
-                      // collapses the Stack to ~0 height, dropping the trigger
-                      // to the band's bottom anchor where the screen edge clips
-                      // it (the reported search-icon bug).
-                      Center(
-                        child: Visibility(
-                          visible: !hideShellNav,
-                          maintainSize: true,
-                          maintainAnimation: true,
-                          maintainState: true,
-                          child: _buildNavigationBar(),
-                        ),
-                      ),
-
-                      // Search trigger — rides the nav line at the physical
-                      // right edge (Positioned, not directional → RTL-safe),
-                      // vertically centered on the bar via the Stack
-                      // alignment. All-chats only. Keeps the persistent
-                      // transform set (opacity + scale, no translate) and the
-                      // STRUCTURAL t<0.5 tap-inertness (IgnorePointer, per the
-                      // 212 TC-212-06 trap). This layer sits after the Layer 4
-                      // dock, so the fading trigger paints over the rising
-                      // dock mid-transit; the settled dock rests above the
-                      // nav band, clear of the trigger.
-                      if (viewMode == OrbitViewMode.allChats)
-                        Positioned(
-                          right: 0,
-                          child: AnimatedBuilder(
-                            animation: searchTriggerAnimation,
-                            builder: (context, child) {
-                              final t = searchTriggerAnimation.value;
-                              return Opacity(
-                                opacity: t,
-                                child: Transform.scale(
-                                  scale: 0.985 + 0.015 * t,
-                                  child: IgnorePointer(
-                                    ignoring: t < 0.5,
-                                    child: child,
-                                  ),
-                                ),
-                              );
-                            },
-                            child: OrbitSearchTrigger(
-                              onSearchTap: onSearchOpen,
-                            ),
-                          ),
-                        ),
-
-                      // Rings find pill — the Inner-Circle collapsed find
-                      // affordance re-seated on the SAME nav-line slot, so
-                      // both surfaces keep one bottom-right search home. The
-                      // surface still owns the find session; this pill pokes
-                      // it open and hides while the expanded bar is up (the
-                      // bar carries its own close X).
-                      if (viewMode == OrbitViewMode.innerCircle)
-                        Positioned(
-                          right: 0,
-                          child: ValueListenableBuilder<bool>(
-                            valueListenable: ringsFindOpenListenable,
-                            builder: (context, findOpen, child) =>
-                                findOpen ? const SizedBox.shrink() : child!,
-                            child: _RingsFindPill(onTap: ringsFindSignal.poke),
-                          ),
-                        ),
-                    ],
+          // Layer 4: Search dock (slides up from bottom) — all-chats only
+          // (search is a list affordance; the Inner-Circle surface never
+          // mounts the dock, so its TextField cannot linger over the circle).
+          if (viewMode == OrbitViewMode.allChats)
+            AnimatedBuilder(
+              animation: searchDockAnimation,
+              builder: (context, child) {
+                final t = searchDockAnimation.value;
+                return Positioned(
+                  bottom: _searchDockBottomOffset(context),
+                  left: 0,
+                  right: 0,
+                  child: Transform.translate(
+                    offset: Offset(0, (1 - t) * 300),
+                    child: IgnorePointer(ignoring: t < 0.1, child: child),
                   ),
-                ),
-              ),
-
-            // Layer 4c: intro dock (207) — top-row review entry for the
-            // Inner-Circle view, seated immediately to the right of the
-            // physical-left view toggle. Raw reviewCount gates the slot so a
-            // dismissed backlog leaves the calm remnant; unseenReviewCount
-            // selects dock vs remnant. Mounted before the FAB so the open-menu
-            // scrim covers it.
-            if (viewMode == OrbitViewMode.innerCircle && !innerEditing)
-              ValueListenableBuilder<OrbitViewProjection>(
+                );
+              },
+              child: ValueListenableBuilder<OrbitViewProjection>(
                 valueListenable: listProjectionListenable,
-                builder: (context, projection, child) {
-                  if (projection.reviewCount == 0) {
-                    return const SizedBox.shrink();
-                  }
+                builder: (context, projection, child) => OrbitSearchDock(
+                  controller: searchController,
+                  focusNode: searchFocusNode,
+                  onChanged: onSearchChanged,
+                  onClear: onSearchClear,
+                  onClose: onSearchClose,
+                  query: projection.searchQuery,
+                ),
+              ),
+            ),
 
-                  final textScale =
-                      MediaQuery.textScalerOf(context).scale(14) / 14;
-                  return Positioned(
-                    key: const ValueKey('orbit-intro-dock-slot'),
-                    top: MediaQuery.of(context).padding.top + 8,
-                    left: 64,
-                    right: _kIntroDockRightReserve * textScale,
-                    height: 40,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: OrbitIntroDock(
-                        foldedReviewItems:
-                            projection.introsData?.foldedReviewItems ??
-                            const [],
-                        pendingGroupInviteCount:
-                            projection.pendingGroupInviteCount,
-                        unseenCount: projection.unseenReviewCount,
-                        dismissed: projection.unseenReviewCount == 0,
-                        onTap: onIntroDockTap ?? () {},
-                        onDismissed: onIntroDockDismissed ?? () {},
+          if (_showsPersistentNav)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: _persistentNavBottomOffset(context),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Center keeps the Feed/Orbit bar horizontally centered
+                    // without flex balancing, independent of the trigger.
+                    // hideShellNav suppresses ONLY this toggle (Orbit
+                    // chromeless landing). We keep it in the layout via
+                    // Visibility(maintainSize) — invisible + non-interactive
+                    // but still occupying the bar's box — so this Stack keeps
+                    // the bar's height and the nav-line search trigger / rings
+                    // find pill stay on their line. A bare SizedBox.shrink
+                    // collapses the Stack to ~0 height, dropping the trigger
+                    // to the band's bottom anchor where the screen edge clips
+                    // it (the reported search-icon bug).
+                    Center(
+                      child: Visibility(
+                        visible: !hideShellNav,
+                        maintainSize: true,
+                        maintainAnimation: true,
+                        maintainState: true,
+                        child: _buildNavigationBar(),
                       ),
                     ),
-                  );
-                },
-              ),
 
-            // Layer 4b: connection-status pill (211) — migrated from the Feed
-            // header. Physical right (RTL-safe, same rationale as the toggle);
-            // right = 16 (FAB inset) + 40 (FAB) + 8 gap. height:40 + Center
-            // keeps the pill vertically aligned with the FAB at any text
-            // scale. Hidden during sculpt-edit because the edit banner spans
-            // the full top width. Mounted BEFORE the FAB so the open-menu
-            // scrim covers it (196/209 precedence convention) — the FAB must
-            // stay the LAST Stack child (trailing-scan element matching keeps
-            // its State alive across viewMode/innerEditing flips).
-            if (p2pService != null && !innerEditing)
-              Positioned(
-                key: const ValueKey('orbit-connection-indicator'),
-                top: MediaQuery.of(context).padding.top + 8,
-                right: 64,
-                height: 40,
-                child: Center(
-                  child: ConnectionStatusIndicator(p2pService: p2pService!),
+                    // Search trigger — rides the nav line at the physical
+                    // right edge (Positioned, not directional → RTL-safe),
+                    // vertically centered on the bar via the Stack
+                    // alignment. All-chats only. Keeps the persistent
+                    // transform set (opacity + scale, no translate) and the
+                    // STRUCTURAL t<0.5 tap-inertness (IgnorePointer, per the
+                    // 212 TC-212-06 trap). This layer sits after the Layer 4
+                    // dock, so the fading trigger paints over the rising
+                    // dock mid-transit; the settled dock rests above the
+                    // nav band, clear of the trigger.
+                    if (viewMode == OrbitViewMode.allChats)
+                      Positioned(
+                        right: 0,
+                        child: AnimatedBuilder(
+                          animation: searchTriggerAnimation,
+                          builder: (context, child) {
+                            final t = searchTriggerAnimation.value;
+                            return Opacity(
+                              opacity: t,
+                              child: Transform.scale(
+                                scale: 0.985 + 0.015 * t,
+                                child: IgnorePointer(
+                                  ignoring: t < 0.5,
+                                  child: child,
+                                ),
+                              ),
+                            );
+                          },
+                          child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
+                        ),
+                      ),
+
+                    // Rings find pill — the Inner-Circle collapsed find
+                    // affordance re-seated on the SAME nav-line slot, so
+                    // both surfaces keep one bottom-right search home. The
+                    // surface still owns the find session; this pill pokes
+                    // it open and hides while the expanded bar is up (the
+                    // bar carries its own close X).
+                    if (viewMode == OrbitViewMode.innerCircle)
+                      Positioned(
+                        right: 0,
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: ringsFindOpenListenable,
+                          builder: (context, findOpen, child) =>
+                              findOpen ? const SizedBox.shrink() : child!,
+                          child: _RingsFindPill(onTap: ringsFindSignal.poke),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-
-            // Layer 5: ExpandableFab (create group)
-            ExpandableFab(
-              anchor: ExpandableFabAnchor.topRight,
-              fabSize: 40,
-              fabSemanticLabel: 'orbit_create_group_fab',
-              safeAreaPadding: MediaQuery.of(context).padding,
-              items: [
-                ExpandableFabItem(
-                  label: AppLocalizations.of(context)!.orbit_new_group,
-                  icon: Icons.group_outlined,
-                  onTap: () => onCreateGroup(GroupType.chat),
-                ),
-                ExpandableFabItem(
-                  label: AppLocalizations.of(context)!.orbit_new_announce,
-                  icon: Icons.campaign_outlined,
-                  onTap: () => onCreateGroup(GroupType.announcement),
-                ),
-              ],
             ),
-          ],
-        ),
+
+          // Layer 4c: intro dock (207) — top-row review entry for the
+          // Inner-Circle view, seated immediately to the right of the
+          // physical-left view toggle. Raw reviewCount gates the slot so a
+          // dismissed backlog leaves the calm remnant; unseenReviewCount
+          // selects dock vs remnant. Mounted before the FAB so the open-menu
+          // scrim covers it.
+          if (viewMode == OrbitViewMode.innerCircle && !innerEditing)
+            ValueListenableBuilder<OrbitViewProjection>(
+              valueListenable: listProjectionListenable,
+              builder: (context, projection, child) {
+                if (projection.reviewCount == 0) {
+                  return const SizedBox.shrink();
+                }
+
+                final textScale =
+                    MediaQuery.textScalerOf(context).scale(14) / 14;
+                return Positioned(
+                  key: const ValueKey('orbit-intro-dock-slot'),
+                  top: MediaQuery.of(context).padding.top + 8,
+                  left: 64,
+                  right: _kIntroDockRightReserve * textScale,
+                  height: 40,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: OrbitIntroDock(
+                      foldedReviewItems:
+                          projection.introsData?.foldedReviewItems ?? const [],
+                      pendingGroupInviteCount:
+                          projection.pendingGroupInviteCount,
+                      unseenCount: projection.unseenReviewCount,
+                      dismissed: projection.unseenReviewCount == 0,
+                      onTap: onIntroDockTap ?? () {},
+                      onDismissed: onIntroDockDismissed ?? () {},
+                    ),
+                  ),
+                );
+              },
+            ),
+
+          // Layer 4b: connection-status pill (211) — migrated from the Feed
+          // header. Physical right (RTL-safe, same rationale as the toggle);
+          // right = 16 (FAB inset) + 40 (FAB) + 8 gap. height:40 + Center
+          // keeps the pill vertically aligned with the FAB at any text
+          // scale. Hidden during sculpt-edit because the edit banner spans
+          // the full top width. Mounted BEFORE the FAB so the open-menu
+          // scrim covers it (196/209 precedence convention) — the FAB must
+          // stay the LAST Stack child (trailing-scan element matching keeps
+          // its State alive across viewMode/innerEditing flips).
+          if ((connectionIndicatorOverride != null || p2pService != null) &&
+              !innerEditing)
+            Positioned(
+              key: const ValueKey('orbit-connection-indicator'),
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 64,
+              height: 40,
+              child: Center(
+                child:
+                    connectionIndicatorOverride ??
+                    ConnectionStatusIndicator(p2pService: p2pService!),
+              ),
+            ),
+
+          // Layer 5: ExpandableFab (create group)
+          ExpandableFab(
+            anchor: ExpandableFabAnchor.topRight,
+            fabSize: 40,
+            fabSemanticLabel: 'orbit_create_group_fab',
+            safeAreaPadding: MediaQuery.of(context).padding,
+            quietOutlined: visualTreatment != OrbitVisualTreatment.current,
+            refinedNeutral:
+                visualTreatment == OrbitVisualTreatment.orbitalQuietV2 &&
+                orbitalQuietV2Options.refinedNeutralControls,
+            items: [
+              ExpandableFabItem(
+                label: AppLocalizations.of(context)!.orbit_new_group,
+                icon: Icons.group_outlined,
+                onTap: () => onCreateGroup(GroupType.chat),
+              ),
+              ExpandableFabItem(
+                label: AppLocalizations.of(context)!.orbit_new_announce,
+                icon: Icons.campaign_outlined,
+                onTap: () => onCreateGroup(GroupType.announcement),
+              ),
+            ],
+          ),
+        ],
       ),
+    );
+    final surface = visualTreatment == OrbitVisualTreatment.current
+        ? AmbientBackground(
+            preference: backgroundPreference,
+            readableToneOverride: readableToneOverride,
+            child: scaffold,
+          )
+        : OrbitalQuietBackground(
+            light:
+                orbitalQuietLightOverride ??
+                Theme.of(context).brightness == Brightness.light,
+            neutralGlobalActions: orbitalQuietNeutralGlobalActions,
+            version2: visualTreatment == OrbitVisualTreatment.orbitalQuietV2,
+            localAtmosphere: orbitalQuietV2Options.localAtmosphere,
+            child: scaffold,
+          );
+    return OrbitVisualScope(
+      treatment: visualTreatment,
+      focusedIndices: prototypeFocusedIndices,
+      v2Options: orbitalQuietV2Options,
+      child: surface,
     );
   }
 

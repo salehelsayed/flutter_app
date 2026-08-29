@@ -66,7 +66,15 @@ void main() {
         final breadcrumbs = <String>[];
         debugSetMigrationBreadcrumbSink(breadcrumbs.add);
 
-        final plaintextBytes = utf8.encode('downloaded group plaintext bytes');
+        final plaintextBytes = <int>[
+          0xff,
+          0xd8,
+          0xff,
+          0xe0,
+          0x00,
+          0x10,
+          ...utf8.encode('downloaded group plaintext bytes'),
+        ];
         final relayContentHash = sha256
             .convert(utf8.encode('encrypted relay blob bytes'))
             .toString();
@@ -178,9 +186,7 @@ void main() {
         expect(await mediaFile.exists(), isTrue);
         expect(
           bundle.manifest.entries
-              .where(
-                (entry) => entry.kind == MigrationTransferEntryKind.file,
-              )
+              .where((entry) => entry.kind == MigrationTransferEntryKind.file)
               .map((entry) => entry.relativePath),
           contains(relativePath),
         );
@@ -260,7 +266,7 @@ void main() {
                   line.contains('phase=buildFilePayload') &&
                   line.contains('reason=fileManifestBlockingIssues'),
               'ASSEMBLY_FAIL naming phase=buildFilePayload '
-                  'reason=fileManifestBlockingIssues',
+              'reason=fileManifestBlockingIssues',
             ),
           ),
         );

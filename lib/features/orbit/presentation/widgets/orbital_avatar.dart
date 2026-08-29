@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/unread_orbit_indicator.dart';
 
+enum OrbitalAvatarFocusTreatment { none, halo }
+
 /// A positioned avatar on an orbital ring with a staggered entrance animation.
 ///
 /// Uses [SingleTickerProviderStateMixin] for its entrance animation.
@@ -45,6 +47,12 @@ class OrbitalAvatar extends StatefulWidget {
   /// 194 — when false the unread indicator's rotation is frozen (still visible).
   /// Threaded from the visualization's reduce-motion read.
   final bool unreadMotionEnabled;
+  final bool focused;
+  final bool quietEntrance;
+  final Color? unreadAccent;
+  final OrbitalAvatarFocusTreatment focusTreatment;
+  final bool avatarGlowEnabled;
+  final bool unreadCountBadge;
 
   const OrbitalAvatar({
     super.key,
@@ -62,6 +70,12 @@ class OrbitalAvatar extends StatefulWidget {
     this.animateEntrance = true,
     this.unreadCount = 0,
     this.unreadMotionEnabled = true,
+    this.focused = false,
+    this.quietEntrance = false,
+    this.unreadAccent,
+    this.focusTreatment = OrbitalAvatarFocusTreatment.none,
+    this.avatarGlowEnabled = false,
+    this.unreadCountBadge = false,
   });
 
   @override
@@ -105,6 +119,7 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
     final tapTargetSize = widget.onTap == null || widget.size >= 48
         ? widget.size
         : 48.0;
+    final accent = widget.unreadAccent ?? UnreadOrbitIndicator.kUnreadAccent;
     final avatar = SizedBox(
       width: tapTargetSize,
       height: tapTargetSize,
@@ -116,6 +131,26 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
         clipBehavior: Clip.none,
         alignment: Alignment.center,
         children: [
+          if (widget.focusTreatment == OrbitalAvatarFocusTreatment.halo)
+            Container(
+              key: const ValueKey('orbit-node-focus-cue'),
+              width: widget.size + 12,
+              height: widget.size + 12,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: widget.borderColor.withValues(alpha: 0.72),
+                  width: 1.4,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: widget.borderColor.withValues(alpha: 0.18),
+                    blurRadius: 10,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+            ),
           Center(
             child: Container(
               width: widget.size,
@@ -126,9 +161,19 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
                   color: widget.borderColor,
                   width: widget.borderWidth,
                 ),
+                boxShadow: widget.avatarGlowEnabled
+                    ? [
+                        BoxShadow(
+                          color: widget.borderColor.withValues(alpha: 0.22),
+                          blurRadius: 9,
+                          spreadRadius: 1,
+                        ),
+                      ]
+                    : null,
               ),
               child: ClipOval(
-                child: widget.child ??
+                child:
+                    widget.child ??
                     UserAvatar(
                       peerId: widget.peerId,
                       size: widget.size - widget.borderWidth * 2,
@@ -159,6 +204,9 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
                     unreadCount: widget.unreadCount,
                     diameter: widget.size,
                     motionEnabled: widget.unreadMotionEnabled,
+                    accent: accent,
+                    showSatellites: !widget.unreadCountBadge,
+                    showCountBadge: widget.unreadCountBadge,
                   ),
                 ),
               ),

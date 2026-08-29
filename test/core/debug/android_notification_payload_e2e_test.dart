@@ -30,6 +30,13 @@ Map<String, dynamic> _request({
 const _notReady = NodeState(isStarted: true);
 const _stopped = NodeState.stopped;
 const _inboxReady = NodeState(isStarted: true, inboxCapabilityReady: true);
+const _transportReady = NodeState(
+  isStarted: true,
+  relayState: 'online',
+  healthyRelayCount: 1,
+  sendCapabilityReady: true,
+  inboxCapabilityReady: true,
+);
 
 ConversationMessage _message(String id) => ConversationMessage(
   id: id,
@@ -81,6 +88,7 @@ void main() {
         androidNotificationA6ObserveAction,
         androidNotificationPostTapObserveAction,
         androidNotificationDrainObserveAction,
+        androidNotificationTransportReadyAction,
         androidNotificationDeletePushTokenAction,
       ]) {
         expect(isAndroidNotificationPayloadE2EAction(action), isTrue);
@@ -111,6 +119,57 @@ void main() {
     expect(request.contactPeerId, isNull);
     expect(request.expectedText, isEmpty);
     expect(request.expectedMessageId, isNull);
+  });
+
+  test('unregister retries a transient relay refusal', () async {
+    final bridge = _UnregisterBridge(<Map<String, dynamic>>[
+      <String, dynamic>{'ok': false, 'unregistered': false},
+      <String, dynamic>{'ok': true, 'unregistered': true},
+    ]);
+
+    final receipt = await runAndroidNotificationPayloadE2EAction(
+      config: _request(action: androidNotificationUnregisterPushAction),
+      p2pService: _DrainP2PService(_inboxReady),
+      bridge: bridge,
+      messageRepo: _SequenceMessageRepository(const <List<ConversationMessage>>[
+        <ConversationMessage>[],
+      ]),
+      pushEnvelopeStagingStore: _UnusedPushEnvelopeStagingStore(),
+      writeProgress: (_) async {},
+    );
+
+    expect(receipt['status'], 'complete');
+    expect(receipt['success'], isTrue);
+    expect(receipt['unregistered'], isTrue);
+    expect(bridge.unregisterCalls, 2);
+  });
+
+  test('transport readiness requires two consecutive exact samples', () async {
+    final p2pService = _DrainP2PService(
+      _notReady,
+      statesAfterHealthCheck: const <NodeState>[
+        _transportReady,
+        _transportReady,
+      ],
+    );
+
+    final receipt = await runAndroidNotificationPayloadE2EAction(
+      config: _request(action: androidNotificationTransportReadyAction),
+      p2pService: p2pService,
+      bridge: _PendingBridge(<Map<String, dynamic>>[]),
+      messageRepo: _SequenceMessageRepository(const <List<ConversationMessage>>[
+        <ConversationMessage>[],
+      ]),
+      pushEnvelopeStagingStore: _UnusedPushEnvelopeStagingStore(),
+      writeProgress: (_) async {},
+    );
+
+    expect(receipt['status'], 'complete');
+    expect(receipt['transportReady'], isTrue);
+    expect(receipt['sendCapabilityReady'], isTrue);
+    expect(receipt['inboxCapabilityReady'], isTrue);
+    expect(receipt['relayReady'], isTrue);
+    expect(p2pService.healthCheckCalls, 2);
   });
 
   test('rejects stale schema, action, scenario, and step bindings', () {
@@ -268,42 +327,39 @@ void main() {
     expect(bridge.pendingCalls, 1);
   });
 
-  test(
-    'A6 replay observation retries a non-empty pending list instead of '
-    'reporting a custody failure',
-    () async {
-      final message = _message('message-notification-1');
-      final p2pService = _DrainP2PService(_inboxReady);
-      final messageRepo = _ReplayEventMessageRepository(
-        <List<ConversationMessage>>[
-          <ConversationMessage>[message],
+  test('A6 replay observation retries a non-empty pending list instead of '
+      'reporting a custody failure', () async {
+    final message = _message('message-notification-1');
+    final p2pService = _DrainP2PService(_inboxReady);
+    final messageRepo = _ReplayEventMessageRepository(
+      <List<ConversationMessage>>[
+        <ConversationMessage>[message],
+      ],
+    );
+    // The relay re-serves an entry until its ACK purges it, so a sample
+    // taken inside a replay window reads non-empty for a delivery that is
+    // converging exactly once (device-measured 2026-08-19).
+    final bridge = _PendingBridge(<Map<String, dynamic>>[
+      <String, dynamic>{
+        'ok': true,
+        'messages': <Object?>[
+          <String, dynamic>{'id': 'entry-still-being-replayed'},
         ],
-      );
-      // The relay re-serves an entry until its ACK purges it, so a sample
-      // taken inside a replay window reads non-empty for a delivery that is
-      // converging exactly once (device-measured 2026-08-19).
-      final bridge = _PendingBridge(<Map<String, dynamic>>[
-        <String, dynamic>{
-          'ok': true,
-          'messages': <Object?>[
-            <String, dynamic>{'id': 'entry-still-being-replayed'},
-          ],
-        },
-        <String, dynamic>{'ok': true, 'messages': <Object?>[]},
-      ]);
+      },
+      <String, dynamic>{'ok': true, 'messages': <Object?>[]},
+    ]);
 
-      final receipt = await _runReplay(
-        p2pService: p2pService,
-        bridge: bridge,
-        messageRepo: messageRepo,
-      );
+    final receipt = await _runReplay(
+      p2pService: p2pService,
+      bridge: bridge,
+      messageRepo: messageRepo,
+    );
 
-      expect(receipt['status'], 'complete');
-      expect(receipt['success'], isTrue);
-      expect(receipt['pendingRelayEntries'], 0);
-      expect(bridge.pendingCalls, 2);
-    },
-  );
+    expect(receipt['status'], 'complete');
+    expect(receipt['success'], isTrue);
+    expect(receipt['pendingRelayEntries'], 0);
+    expect(bridge.pendingCalls, 2);
+  });
 
   test(
     'A6 replay observation fails closed on a duplicate commit before it ever '
@@ -405,27 +461,30 @@ void main() {
     );
   });
 
-  test('delete-push-token action fails closed with no token to rotate', () async {
-    final messaging = _RotatingFakeMessaging(const <String>['']);
+  test(
+    'delete-push-token action fails closed with no token to rotate',
+    () async {
+      final messaging = _RotatingFakeMessaging(const <String>['']);
 
-    await expectLater(
-      runAndroidNotificationPayloadE2EAction(
-        config: _tokenRotationRequest(),
-        p2pService: _DrainP2PService(_inboxReady),
-        bridge: _PendingBridge(<Map<String, dynamic>>[]),
-        messageRepo: _SequenceMessageRepository(
-          const <List<ConversationMessage>>[<ConversationMessage>[]],
+      await expectLater(
+        runAndroidNotificationPayloadE2EAction(
+          config: _tokenRotationRequest(),
+          p2pService: _DrainP2PService(_inboxReady),
+          bridge: _PendingBridge(<Map<String, dynamic>>[]),
+          messageRepo: _SequenceMessageRepository(
+            const <List<ConversationMessage>>[<ConversationMessage>[]],
+          ),
+          pushEnvelopeStagingStore: _UnusedPushEnvelopeStagingStore(),
+          writeProgress: (_) async {},
+          fcmTokenProvider: messaging.getToken,
+          fcmTokenInvalidator: messaging.deleteToken,
         ),
-        pushEnvelopeStagingStore: _UnusedPushEnvelopeStagingStore(),
-        writeProgress: (_) async {},
-        fcmTokenProvider: messaging.getToken,
-        fcmTokenInvalidator: messaging.deleteToken,
-      ),
-      throwsA(isA<StateError>()),
-    );
-    // The provider is never mutated when there was nothing to rotate.
-    expect(messaging.deleteCalls, 0);
-  });
+        throwsA(isA<StateError>()),
+      );
+      // The provider is never mutated when there was nothing to rotate.
+      expect(messaging.deleteCalls, 0);
+    },
+  );
 
   test(
     'transient drain and pending failures retry within the action budget',
@@ -509,12 +568,15 @@ class _DrainP2PService implements P2PService {
     this._state, {
     this.drainOutcomes = const <Object?>[],
     this.statesAfterDrain = const <NodeState?>[],
+    this.statesAfterHealthCheck = const <NodeState>[],
   });
 
   NodeState _state;
   final List<Object?> drainOutcomes;
   final List<NodeState?> statesAfterDrain;
+  final List<NodeState> statesAfterHealthCheck;
   int drainCalls = 0;
+  int healthCheckCalls = 0;
 
   @override
   NodeState get currentState => _state;
@@ -529,6 +591,15 @@ class _DrainP2PService implements P2PService {
     }
     if (index < statesAfterDrain.length) {
       _state = statesAfterDrain[index] ?? _state;
+    }
+  }
+
+  @override
+  Future<void> performImmediateHealthCheck() async {
+    final index = healthCheckCalls;
+    healthCheckCalls++;
+    if (index < statesAfterHealthCheck.length) {
+      _state = statesAfterHealthCheck[index];
     }
   }
 
@@ -567,6 +638,29 @@ class _PendingBridge implements Bridge {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _UnregisterBridge implements Bridge {
+  _UnregisterBridge(this.responses);
+
+  final List<Map<String, dynamic>> responses;
+  int unregisterCalls = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    if (request['cmd'] != 'inbox:unregister_token') {
+      throw StateError('unexpected bridge command');
+    }
+    final index = unregisterCalls < responses.length
+        ? unregisterCalls
+        : responses.length - 1;
+    unregisterCalls++;
+    return jsonEncode(responses[index]);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 /// Emits the staged->ack pair the A6 probe looks for from INSIDE the action.
 ///
 /// `_observeReplayBeforeAck` installs its own E2E flow-event sink as its first
@@ -585,7 +679,10 @@ class _ReplayEventMessageRepository implements MessageRepository {
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_INBOX_STAGED_CHAT_COMMITTED',
-        details: <String, dynamic>{'entryId': 'entry-1', 'reasonCode': 'stored'},
+        details: <String, dynamic>{
+          'entryId': 'entry-1',
+          'reasonCode': 'stored',
+        },
       );
       emitFlowEvent(
         layer: 'FL',

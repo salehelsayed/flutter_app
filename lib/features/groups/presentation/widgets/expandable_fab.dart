@@ -31,6 +31,8 @@ class ExpandableFab extends StatefulWidget {
   final double fabSize;
   final EdgeInsets? safeAreaPadding;
   final String? fabSemanticLabel;
+  final bool quietOutlined;
+  final bool refinedNeutral;
 
   const ExpandableFab({
     super.key,
@@ -39,6 +41,8 @@ class ExpandableFab extends StatefulWidget {
     this.fabSize = 56,
     this.safeAreaPadding,
     this.fabSemanticLabel,
+    this.quietOutlined = false,
+    this.refinedNeutral = false,
   });
 
   @override
@@ -94,6 +98,9 @@ class _ExpandableFabState extends State<ExpandableFab>
       onPressed: _toggle,
       backgroundColor: readableColors.ctaBg,
       ringColor: readableColors.ctaIcon,
+      glowEnabled: !widget.quietOutlined,
+      ringWidth: widget.quietOutlined ? 1.5 : 2,
+      refinedNeutral: widget.refinedNeutral,
       icon: AnimatedBuilder(
         animation: _controller,
         builder: (context, child) {

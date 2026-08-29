@@ -261,14 +261,26 @@ void main() {
         expect(fresh['private_media_policy_version'], 0);
         expect(fresh['private_media_mode'], 'ordinary');
         expect(fresh['private_media_state'], 'none');
+        final freshGroupColumns = (await db.rawQuery(
+          'PRAGMA table_info(group_messages)',
+        )).map((row) => row['name'] as String).toSet();
         expect(
           productionCreateMigrations.any((entry) => entry.version == 101),
-          isFalse,
+          isTrue,
+        );
+        expect(freshGroupColumns, isNot(contains('media_policy_version')));
+        expect(
+          await db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name='idx_group_messages_private_media_expiry'",
+          ),
+          isEmpty,
         );
       } finally {
         if (db != null && db.isOpen) await db.close();
         if (await tempDir.exists()) await tempDir.delete(recursive: true);
       }
     },
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 }

@@ -56,7 +56,7 @@ void main() {
     expect(decoration.color, colors.accent);
     expect(decoration.boxShadow!.single.color, colors.micShadow);
 
-    final icon = tester.widget<Icon>(find.byIcon(Icons.stop_rounded));
+    final icon = tester.widget<Icon>(find.byIcon(Icons.arrow_upward_rounded));
     expect(icon.color, colors.accentIcon);
   });
 

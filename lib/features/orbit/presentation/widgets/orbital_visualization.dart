@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.da
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
+import 'package:flutter_app/features/orbit/presentation/orbital_quiet_visuals.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'orbital_ring_painter.dart';
 import 'orbital_avatar.dart';
@@ -110,6 +112,73 @@ class OrbitalVisualization extends StatelessWidget {
     return 1.0;
   }
 
+  String _relationshipId(OrbitItem item) => switch (item) {
+    OrbitFriendItem(:final friend) => friend.peerId,
+    OrbitGroupItem(:final group) => group.groupId,
+  };
+
+  int _unreadCount(OrbitItem item) => switch (item) {
+    OrbitFriendItem(:final friend) => friend.unreadCount,
+    OrbitGroupItem(:final group) => group.unreadCount,
+  };
+
+  Widget _buildSelfAvatar(
+    String peerId,
+    Uint8List? avatarBytes,
+    OrbitVisualTreatment treatment,
+    OrbitalQuietV2Options v2Options,
+  ) {
+    final avatar = UserAvatar(
+      peerId: peerId,
+      avatarBytes: avatarBytes,
+      size: 48,
+    );
+    if (treatment != OrbitVisualTreatment.orbitalQuietV2) return avatar;
+
+    return switch (v2Options.selfTreatment) {
+      OrbitalQuietSelfTreatment.neutralCore => Container(
+        key: const ValueKey('orbit-self-neutralCore'),
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0x806F828D), width: 1.4),
+        ),
+        child: ClipOval(child: avatar),
+      ),
+      OrbitalQuietSelfTreatment.layeredCore => SizedBox(
+        key: const ValueKey('orbit-self-layeredCore'),
+        width: 48,
+        height: 48,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0x8A718590)),
+              ),
+            ),
+            SizedBox(width: 42, height: 42, child: ClipOval(child: avatar)),
+          ],
+        ),
+      ),
+      OrbitalQuietSelfTreatment.chartAnchor => Container(
+        key: const ValueKey('orbit-self-chartAnchor'),
+        width: 48,
+        height: 48,
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0x99748791), width: 1.5),
+        ),
+        child: ClipOval(child: avatar),
+      ),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -124,6 +193,12 @@ class OrbitalVisualization extends StatelessWidget {
   ) {
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
+    final visualScope = OrbitVisualScope.maybeOf(context);
+    final treatment = visualScope?.treatment ?? OrbitVisualTreatment.current;
+    final focusedIndices = visualScope?.focusedIndices ?? const <int>{};
+    final v2Options = visualScope?.v2Options ?? const OrbitalQuietV2Options();
+    final quiet = treatment != OrbitVisualTreatment.current;
+    final v2 = treatment == OrbitVisualTreatment.orbitalQuietV2;
     final innerBorderColor = readableColors.border.withValues(alpha: 0.20);
     final outerBorderColor = readableColors.border.withValues(alpha: 0.14);
     final showSignalNodeHalo = readableColors.isLightSurface;
@@ -140,6 +215,28 @@ class OrbitalVisualization extends StatelessWidget {
       geometry: geometry,
       mirrored: mirrored,
     );
+
+    final relationshipArcs = <OrbitRelationshipArc>[];
+    final showRelationshipArcs =
+        treatment == OrbitVisualTreatment.orbitalQuiet ||
+        (v2 && v2Options.stateGrammar == OrbitalQuietStateGrammar.arc);
+    if (showRelationshipArcs) {
+      for (final seat in layout.seats) {
+        if (!focusedIndices.contains(seat.index)) continue;
+        final item = items[seat.index];
+        relationshipArcs.add(
+          OrbitRelationshipArc(
+            radius: math.sqrt(seat.dx * seat.dx + seat.dy * seat.dy),
+            centerAngle: math.atan2(seat.dy, seat.dx),
+            color: RingAvatarGenerator.accentColorForPeerId(
+              _relationshipId(item),
+            ),
+            focused: true,
+            quiet: v2,
+          ),
+        );
+      }
+    }
 
     // When expanded the arcs poke above the box; the circle slides down by the
     // overhang so the topmost arc clears the top margin (the host scroll view
@@ -189,6 +286,7 @@ class OrbitalVisualization extends StatelessWidget {
       }
     }
 
+    final selfPeerId = userPeerId;
     final children = <Widget>[
       Positioned.fill(
         child: Opacity(
@@ -209,12 +307,13 @@ class OrbitalVisualization extends StatelessWidget {
                 ring1Color: readableColors.ring1,
                 ring2Color: readableColors.ring2,
                 glowColor: readableColors.ringGlow,
+                relationshipArcs: relationshipArcs,
               ),
             ),
           ),
         ),
       ),
-      if (userPeerId != null)
+      if (selfPeerId != null)
         Positioned(
           // Geometry lock (INV-206-3): same anchor + 48px box as pre-206, so the
           // sculpt/arcs center-avatar position sentinels stay green.
@@ -227,10 +326,11 @@ class OrbitalVisualization extends StatelessWidget {
                   haloDiameter: 48,
                   glowColor: readableColors.nodeSelfGlow,
                   showHalo: showSignalNodeHalo,
-                  child: UserAvatar(
-                    peerId: userPeerId,
-                    avatarBytes: userAvatarBytes,
-                    size: 48,
+                  child: _buildSelfAvatar(
+                    selfPeerId,
+                    userAvatarBytes,
+                    treatment,
+                    v2Options,
                   ),
                 )
               : Semantics(
@@ -249,10 +349,11 @@ class OrbitalVisualization extends StatelessWidget {
                       haloDiameter: 48,
                       glowColor: readableColors.nodeSelfGlow,
                       showHalo: showSignalNodeHalo,
-                      child: UserAvatar(
-                        peerId: userPeerId,
-                        avatarBytes: userAvatarBytes,
-                        size: 48,
+                      child: _buildSelfAvatar(
+                        selfPeerId,
+                        userAvatarBytes,
+                        treatment,
+                        v2Options,
                       ),
                     ),
                   ),
@@ -265,12 +366,28 @@ class OrbitalVisualization extends StatelessWidget {
       final isArc = seat.kind == OrbitSeatKind.arc;
       if (isArc && !overflowExpanded) continue;
       final item = items[seat.index];
-      final tapTargetSize = _tapTargetSize(seat.avatarSize, item);
-      final (borderWidth, borderColor) = switch (seat.kind) {
+      final focused = focusedIndices.contains(seat.index);
+      final relationshipAccent = RingAvatarGenerator.accentColorForPeerId(
+        _relationshipId(item),
+      );
+      final densityScale = v2 && v2Options.densityScale
+          ? orbitalQuietV2ScaleForCount(items.length)
+          : 1.0;
+      final avatarSize = seat.avatarSize * densityScale;
+      final tapTargetSize = _tapTargetSize(avatarSize, item);
+      var (borderWidth, borderColor) = switch (seat.kind) {
         OrbitSeatKind.ring1 => (1.5, innerBorderColor),
         OrbitSeatKind.ring2 => (1.0, outerBorderColor),
         OrbitSeatKind.arc => (1.0, outerBorderColor),
       };
+      if (quiet) {
+        borderColor = relationshipAccent;
+        if (v2) {
+          borderWidth = _unreadCount(item) > 0 ? 2.45 : 1.35;
+        } else if (focused) {
+          borderWidth = 2.2;
+        }
+      }
       children.add(
         Positioned(
           // 201 INV-201-2: a stable slot key on the node Positioned so a label
@@ -293,10 +410,10 @@ class OrbitalVisualization extends StatelessWidget {
                 boxSize: tapTargetSize,
                 haloDiameter: seat.avatarSize,
                 glowColor: readableColors.nodeContactGlow,
-                showHalo: showSignalNodeHalo,
+                showHalo: showSignalNodeHalo && !v2,
                 child: _buildNode(
                   item,
-                  avatarSize: seat.avatarSize,
+                  avatarSize: avatarSize,
                   globalIndex: seat.index,
                   borderWidth: borderWidth,
                   borderColor: borderColor,
@@ -309,6 +426,18 @@ class OrbitalVisualization extends StatelessWidget {
                   // pre-201 `: true` hard-code animated rings even under
                   // reduce-motion (documented by the arcs_test ":196 drain").
                   entranceMotionEnabled: motionEnabled,
+                  focused: focused,
+                  quietEntrance: quiet,
+                  unreadAccent: quiet ? relationshipAccent : null,
+                  focusTreatment:
+                      v2 &&
+                          focused &&
+                          v2Options.stateGrammar ==
+                              OrbitalQuietStateGrammar.halo
+                      ? OrbitalAvatarFocusTreatment.halo
+                      : OrbitalAvatarFocusTreatment.none,
+                  avatarGlowEnabled: !v2 && quiet && focused,
+                  unreadCountBadge: v2,
                 ),
               ),
             ),
@@ -372,6 +501,13 @@ class OrbitalVisualization extends StatelessWidget {
     required bool unreadMotionEnabled,
     int? entranceDelayMs,
     bool entranceMotionEnabled = true,
+    bool focused = false,
+    bool quietEntrance = false,
+    Color? unreadAccent,
+    OrbitalAvatarFocusTreatment focusTreatment =
+        OrbitalAvatarFocusTreatment.none,
+    bool avatarGlowEnabled = false,
+    bool unreadCountBadge = false,
   }) {
     switch (item) {
       case OrbitFriendItem(:final friend):
@@ -392,6 +528,12 @@ class OrbitalVisualization extends StatelessWidget {
           unreadMotionEnabled: unreadMotionEnabled,
           entranceDelayMs: entranceDelayMs,
           motionEnabled: entranceMotionEnabled,
+          focused: focused,
+          quietEntrance: quietEntrance,
+          unreadAccent: unreadAccent,
+          focusTreatment: focusTreatment,
+          avatarGlowEnabled: avatarGlowEnabled,
+          unreadCountBadge: unreadCountBadge,
         );
       case OrbitGroupItem(:final group):
         return OrbitalAvatar(
@@ -408,6 +550,12 @@ class OrbitalVisualization extends StatelessWidget {
           unreadMotionEnabled: unreadMotionEnabled,
           entranceDelayMs: entranceDelayMs,
           motionEnabled: entranceMotionEnabled,
+          focused: focused,
+          quietEntrance: quietEntrance,
+          unreadAccent: unreadAccent,
+          focusTreatment: focusTreatment,
+          avatarGlowEnabled: avatarGlowEnabled,
+          unreadCountBadge: unreadCountBadge,
           child: GroupAvatar(
             groupId: group.groupId,
             name: group.name,

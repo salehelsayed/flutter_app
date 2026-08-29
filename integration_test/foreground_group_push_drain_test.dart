@@ -23,7 +23,8 @@ import '../test/shared/fakes/fake_notification_service.dart';
 import '../test/shared/fakes/group_test_user.dart';
 
 const _downloadedBytesHash =
-    '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a';
+    'fc16d7dcee9cae83ef3923222a81ccd8fe96c9d25fdb7f504d66f1011e0cd870';
+const _downloadedBytes = <int>[0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
 
 class _CursorInboxBridge extends FakeBridge {
   final Map<String, _InboxPage> pages = {};
@@ -73,9 +74,13 @@ class _CursorInboxBridge extends FakeBridge {
       final outputPath = payload['outputPath'] as String;
       final file = File(outputPath);
       await file.parent.create(recursive: true);
-      await file.writeAsBytes(<int>[1, 2, 3, 4]);
+      await file.writeAsBytes(_downloadedBytes);
 
-      return jsonEncode({'ok': true, 'id': payload['id'], 'size': 4});
+      return jsonEncode({
+        'ok': true,
+        'id': payload['id'],
+        'size': _downloadedBytes.length,
+      });
     }
 
     return super.send(message);
@@ -283,7 +288,7 @@ void main() {
               {
                 'id': 'blob-foreground-image',
                 'mime': 'image/jpeg',
-                'size': 4,
+                'size': _downloadedBytes.length,
                 'mediaType': 'image',
                 'width': 640,
                 'height': 480,
@@ -316,7 +321,10 @@ void main() {
         expect(messages.single.text, isEmpty);
 
         final attachments = await harness.member.mediaAttachmentRepo
-            .getAttachmentsForMessage('group-media-msg-1', owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              'group-media-msg-1',
+              owner: MediaOwnerLane.group,
+            );
         expect(attachments, hasLength(1));
         final image = attachments.single;
         expect(image.id, 'blob-foreground-image');
@@ -365,7 +373,7 @@ void main() {
               {
                 'id': 'blob-foreground-tampered',
                 'mime': 'image/jpeg',
-                'size': 4,
+                'size': _downloadedBytes.length,
                 'mediaType': 'image',
                 'downloadStatus': 'pending',
                 'contentHash':
@@ -393,7 +401,10 @@ void main() {
         expect(messages.single.id, 'group-media-tampered-msg');
 
         final attachments = await harness.member.mediaAttachmentRepo
-            .getAttachmentsForMessage('group-media-tampered-msg', owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              'group-media-tampered-msg',
+              owner: MediaOwnerLane.group,
+            );
         expect(attachments, hasLength(1));
         expect(
           attachments.single.downloadStatus,

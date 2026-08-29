@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -17,6 +18,7 @@ import 'package:flutter_app/features/conversation/application/upload_media_use_c
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
@@ -49,6 +51,39 @@ enum _JourneyFixtureKind { png, gif }
 
 const _fixtureEncryptionKeyBase64 = 'fixture-group-media-key';
 const _fixtureEncryptionNonce = 'fixture-group-media-nonce';
+
+class _StrictJourneyP2PService extends journey_p2p.FakeP2PService
+    implements MediaExpiryBoundedInboxStore {
+  _StrictJourneyP2PService({
+    required super.peerId,
+    required super.network,
+  });
+
+  @override
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) async {
+    final outcome = await storeInInboxDetailed(
+      toPeerId,
+      message,
+      timeoutMs: timeoutMs,
+    );
+    if (!outcome.accepted) return outcome;
+    return InboxStoreOutcome(
+      status: outcome.status,
+      errorCode: outcome.errorCode,
+      errorMessage: outcome.errorMessage,
+      storeStatus: outcome.storeStatus,
+      expiresAtMs: custodyExpiresAtOrBeforeMs,
+      occupancy: outcome.occupancy,
+      capacity: outcome.capacity,
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
+  }
+}
 
 class _TrackingDurableMediaFileManager extends FakeMediaFileManager {
   _TrackingDurableMediaFileManager(this.rootDir);
@@ -250,8 +285,9 @@ class _JourneyChatUser {
     final identityRepo = FakeIdentityRepository()..seed(identity);
     final messageRepo = InMemoryMessageRepository();
     final contactRepo = InMemoryContactRepository();
-    final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
-    final p2pService = journey_p2p.FakeP2PService(
+    final mediaAttachmentRepo = InMemoryMediaAttachmentRepository()
+      ..enableDirectMediaInboxCustodyForTest(messageRepo);
+    final p2pService = _StrictJourneyP2PService(
       peerId: peerId,
       network: network,
     );
@@ -1046,6 +1082,14 @@ void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   group('Media message journey E2E', () {
+    setUp(() {
+      setGroupExitIntentAccessSinks(
+        forGroup: (_) async => null,
+        all: () async => const [],
+      );
+    });
+    tearDown(setGroupExitIntentAccessSinks);
+
     testWidgets(
       'real compose journeys render media for sender and receiver in 1:1 and group threads',
       (tester) async {

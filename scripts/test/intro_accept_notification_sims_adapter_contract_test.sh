@@ -38,9 +38,25 @@ end = source.index('Future<void> _collectIdentities()', start)
 launch = source[start:end]
 assert "'am'" in launch and "'start'" in launch and "'-W'" in launch
 assert "'-n'" in launch and "'$_appPackage/.MainActivity'" in launch
-assert 'final output = await _adbShell' in launch
-assert 'isAndroidActivityStartAccepted(' in launch
+assert 'runAndroidActivityLaunchWithSingleProcessRecovery(' in launch
+assert 'propagateTimeout: true' in launch
+assert 'on IntroCommandTimedOut catch (error)' in launch
+assert "['pidof', _appPackage]" in launch
+assert 'maximumAttempts:' not in launch
 assert 'monkey' not in launch
+
+start = source.index(
+    'Future<bool> runAndroidActivityLaunchWithSingleProcessRecovery('
+)
+end = source.index('final class IntroCampaignDeadline', start)
+launch_recovery = source[start:end]
+assert 'await launch(true)' in launch_recovery
+assert 'await readProcessId()' in launch_recovery
+assert 'await launch(false)' in launch_recovery
+assert launch_recovery.count('await launch(false)') == 1
+assert 'while (' not in launch_recovery and 'for (' not in launch_recovery
+assert 'on IntroCommandTimedOut catch (error)' in launch_recovery
+assert 'isAndroidActivityStartProvisionallyAccepted(' in launch_recovery
 
 # The launch-acceptance rule itself moved to a top-level helper, so pin the
 # exact regex where it now lives. Slicing only _launchAll() would let a widened
@@ -50,6 +66,12 @@ end = source.index('final class IntroCampaignDeadline', start)
 launch_acceptance = source[start:end]
 assert r"r'^Status:[ \t]+(?:ok|timeout)[ \t]*\r?$'" in launch_acceptance
 assert 'multiLine: true' in launch_acceptance
+
+start = source.index('bool isAndroidActivityStartProvisionallyAccepted(')
+end = source.index('final class IntroCampaignDeadline', start)
+provisional_acceptance = source[start:end]
+assert 'RegExp.escape(packageName)' in provisional_acceptance
+assert r"r'\.MainActivity \}[ \t]*\r?\n?$'" in provisional_acceptance
 
 start = source.index('Future<void> _installPreparedArtifactIfPresent(')
 end = source.index('// ---- Phase 1:', start)

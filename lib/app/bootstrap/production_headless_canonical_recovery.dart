@@ -6,6 +6,7 @@ import 'package:flutter_app/app/bootstrap/production_canonical_inbox_projection_
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
+import 'package:flutter_app/core/database/legacy_push_transport_repair.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/database/migrations/107_direct_notification_durability.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
@@ -1249,6 +1250,7 @@ final class AndroidProductionHeadlessCanonicalRecoveryBackend
       onOpened: onOpened,
     );
     await repairDirectNotificationDurabilityDeleteTriggers(database);
+    await repairLegacyPushMessageTransports(database);
     await migrateSecretsToSecureStorage(
       db: database,
       secureKeyStore: _secureKeyStore,

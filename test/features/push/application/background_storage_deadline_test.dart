@@ -190,6 +190,47 @@ void main() {
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
+  test('only the E2E debug build widens the storage deadlines', () {
+    expect(
+      backgroundStorageAggregateDeadlineForBuild(
+        e2eTestMode: true,
+        releaseMode: false,
+        profileMode: false,
+      ),
+      const Duration(seconds: 20),
+    );
+    expect(
+      backgroundStoragePhaseDeadlineForBuild(
+        e2eTestMode: true,
+        releaseMode: false,
+        profileMode: false,
+      ),
+      const Duration(seconds: 5),
+    );
+    for (final build in <({bool e2e, bool release, bool profile})>[
+      (e2e: false, release: false, profile: false),
+      (e2e: true, release: true, profile: false),
+      (e2e: true, release: false, profile: true),
+    ]) {
+      expect(
+        backgroundStorageAggregateDeadlineForBuild(
+          e2eTestMode: build.e2e,
+          releaseMode: build.release,
+          profileMode: build.profile,
+        ),
+        const Duration(seconds: 8),
+      );
+      expect(
+        backgroundStoragePhaseDeadlineForBuild(
+          e2eTestMode: build.e2e,
+          releaseMode: build.release,
+          profileMode: build.profile,
+        ),
+        const Duration(seconds: 2),
+      );
+    }
+  });
+
   test(
     'TC-393-05 display eligibility reserves measured native-entry tail without policy bypass',
     () async {

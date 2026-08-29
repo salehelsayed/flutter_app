@@ -151,8 +151,9 @@ const String _channelMasterSwitchResourceId = 'android:id/switch_widget';
 Future<AndroidNotificationCampaignResult> runAndroidNotificationPayloadCampaign(
   AndroidNotificationCampaignOptions options,
 ) async {
+  final campaign = _AndroidNotificationCampaign(options);
   try {
-    return await _AndroidNotificationCampaign(options).run();
+    return await campaign.run();
   } on _Blocked catch (error) {
     return _blocked(
       blocker: error.blocker,
@@ -177,8 +178,9 @@ Future<AndroidNotificationCampaignResult> runAndroidNotificationPayloadCampaign(
     if (options.verbose) stderr.writeln(stackTrace);
     return _failed(
       'Android notification campaign stopped without a verdict: '
-      '${error.runtimeType}.',
-      assertionsAttempted: 0,
+      '${error.runtimeType} during ${campaign.phase} at '
+      '${_firstStackFrame(stackTrace)}.',
+      assertionsAttempted: campaign.assertionsAttempted,
     );
   }
 }
@@ -213,6 +215,7 @@ final class _AndroidNotificationCampaign {
   bool _tokenRotationInFlight = false;
   DateTime? _lastCardObservedAt;
   int _assertionsAttempted = 0;
+  String _phase = 'construction';
   Process? _deviceLogProcess;
   File? _deviceLogFile;
   String? _deviceLogFailure;
@@ -226,8 +229,14 @@ final class _AndroidNotificationCampaign {
   String? _g24LegLocalAppOpMode;
   String? _g24AppOpModeAfterRecovery;
   String? _g24AppOpModeAfterCampaignRestore;
+  int _notificationTapInvocation = 0;
+
+  int get assertionsAttempted => _assertionsAttempted;
+
+  String get phase => _phase;
 
   Future<AndroidNotificationCampaignResult> run() async {
+    _phase = 'preflight';
     await _preflight();
     await proofDirectory.create(recursive: true);
     await _removeScenarioArtifacts();
@@ -235,6 +244,7 @@ final class _AndroidNotificationCampaign {
 
     final captured = <Map<String, Object?>>[];
     Map<String, Object?>? permissionAppOpDivergence;
+    String? permissionAppOpDivergenceNotApplicableReason;
     AndroidAppStateGuard? appStateGuard;
     var proofCompleted = false;
     // A throw from the finally REPLACES an in-flight exception, so a leg
@@ -243,6 +253,7 @@ final class _AndroidNotificationCampaign {
     // failure so both are reported.
     Object? legFailure;
     try {
+      _phase = 'state-capture-and-setup';
       appStateGuard = await AndroidAppStateGuard.capture(
         devices: <String>[physical, emulator],
         packageName: packageName,
@@ -265,31 +276,51 @@ final class _AndroidNotificationCampaign {
       );
       await _requireNoAppNotification();
 
+      _phase = 'tc_a6_replay_before_ack_custody';
       final a6 = await _runA6();
       captured.add(await _writeScenarioArtifact(a6));
 
+      _phase = 'tc_b11_b12_warm_payload';
       final warm = await _runWarmPayloadLeg();
       captured
         ..add(await _writeScenarioArtifact(warm.b11))
         ..add(await _writeScenarioArtifact(warm.b12));
 
+      _phase = 'tc_b12_cold_kill';
       final cold = await _runColdPayloadLegClassified();
       captured.add(await _writeScenarioArtifact(cold));
 
+      _phase = 'tc_b13_dual_path_single_alert';
       final dualPath = await _runB13DualPathLeg();
       captured.add(await _writeScenarioArtifact(dualPath));
 
+      _phase = 'tc_g7_permission_denied';
       final permissionDenied = await _runPermissionDeniedLeg();
       captured.add(await _writeScenarioArtifact(permissionDenied));
 
-      permissionAppOpDivergence = await _runPermissionAppOpDivergenceLeg();
+      _phase = 'tc_g24_permission_appop_divergence';
+      try {
+        permissionAppOpDivergence = await _runPermissionAppOpDivergenceLeg();
+      } on _G24NotApplicable catch (error) {
+        // API 33+ can expose POST_NOTIFICATION through appops while refusing
+        // the UID override because the operation is runtime-permission-backed.
+        // That target cannot express G24. Restore the attempted mutation now
+        // so every remaining, runnable campaign leg still executes.
+        if (_g24AppOpMutated) {
+          await _restoreLegLocalNotificationAppOp();
+        }
+        permissionAppOpDivergenceNotApplicableReason = error.reason;
+      }
 
+      _phase = 'tc_g7_token_refresh_mid_session';
       final tokenRefresh = await _runTokenRefreshLeg();
       captured.add(await _writeScenarioArtifact(tokenRefresh));
 
+      _phase = 'tc_g7_channel_disabled';
       final channelDisabled = await _runChannelDisabledLeg();
       captured.add(await _writeScenarioArtifact(channelDisabled));
 
+      _phase = 'tc_g7_doze_delivery';
       final dozeDelivery = await _runDozeDeliveryLeg();
       captured.add(await _writeScenarioArtifact(dozeDelivery));
       proofCompleted = true;
@@ -375,7 +406,7 @@ final class _AndroidNotificationCampaign {
       }
     }
 
-    final g24 = permissionAppOpDivergence;
+    _phase = 'final-artifact';
     if (_g24AppOpModeAfterCampaignRestore == null) {
       await _removeScenarioArtifacts();
       throw _Failure(
@@ -383,15 +414,26 @@ final class _AndroidNotificationCampaign {
         assertionsAttempted: 10,
       );
     }
-    final g24Evidence = _object(g24['evidence']);
-    g24Evidence['appOpModeAfterCampaignRestore'] =
-        _g24AppOpModeAfterCampaignRestore;
-    g24['evidence'] = g24Evidence;
-    try {
-      captured.insert(6, await _writeScenarioArtifact(g24));
-    } on Object {
+    final g24 = permissionAppOpDivergence;
+    final g24NotApplicableReason = permissionAppOpDivergenceNotApplicableReason;
+    if (g24 == null && g24NotApplicableReason == null) {
       await _removeScenarioArtifacts();
-      rethrow;
+      throw _Failure(
+        'G24 produced neither graded evidence nor a target-unavailable N/A.',
+        assertionsAttempted: 10,
+      );
+    }
+    if (g24 != null) {
+      final g24Evidence = _object(g24['evidence']);
+      g24Evidence['appOpModeAfterCampaignRestore'] =
+          _g24AppOpModeAfterCampaignRestore;
+      g24['evidence'] = g24Evidence;
+      try {
+        captured.insert(6, await _writeScenarioArtifact(g24));
+      } on Object {
+        await _removeScenarioArtifacts();
+        rethrow;
+      }
     }
 
     if (!_isRegularFile(apk) ||
@@ -405,6 +447,13 @@ final class _AndroidNotificationCampaign {
     final preparedArtifactSha256After = sha256
         .convert(apk.readAsBytesSync())
         .toString();
+    final notApplicableScenarioIds = <String>[];
+    final notApplicableReasons = <String, String>{};
+    if (g24NotApplicableReason != null) {
+      const scenario = 'tc_g24_permission_appop_divergence';
+      notApplicableScenarioIds.add(scenario);
+      notApplicableReasons[scenario] = g24NotApplicableReason;
+    }
 
     final evidence = writeSimsArtifactEvidenceSync(
       directory: proofDirectory,
@@ -415,6 +464,8 @@ final class _AndroidNotificationCampaign {
         'scenarioIds': captured
             .map((item) => item['scenario'])
             .toList(growable: false),
+        'notApplicableScenarioIds': notApplicableScenarioIds,
+        'notApplicableReasons': notApplicableReasons,
         'targetIds': <String>[physical, emulator],
         'targetKinds': const <String>['physical', 'emulator'],
         'preparedArtifactPath': apk.resolveSymbolicLinksSync(),
@@ -444,16 +495,20 @@ final class _AndroidNotificationCampaign {
         assertionsAttempted: 10,
       );
     }
+    final assertionsAttempted = g24 == null ? 9 : 10;
+    final g24Disposition = g24 == null
+        ? 'permission/app-op divergence N/A (target unavailable by project policy)'
+        : 'permission/app-op divergence passed';
     return AndroidNotificationCampaignResult(0, <String, Object?>{
       'status': 'PASS',
-      'assertionsAttempted': 10,
+      'assertionsAttempted': assertionsAttempted,
       'artifactPresent': true,
       'printOnly': false,
       'exitCode': 0,
       'detail':
           'A6, B11, Android B12 warm/cold with measured audible-channel '
           'evidence, B13 dual-path single alert, and the PRD 13 Android '
-          'matrix legs (permission denied, permission/app-op divergence, '
+          'matrix legs (permission denied, $g24Disposition, '
           'mid-session token refresh, channel disabled, Doze) passed with one centrally '
           'prepared production-FCM APK, zero child builds, and exact target '
           'state restoration.',
@@ -788,7 +843,7 @@ final class _AndroidNotificationCampaign {
         assertionsAttempted: _assertionsAttempted,
       );
     }
-    await _tapNotification(marker);
+    await _tapNotification(warmObservation.card);
     final observed = await _waitForActionResult(
       emulator,
       observer,
@@ -936,7 +991,8 @@ final class _AndroidNotificationCampaign {
     // silent same-ID reconcile that makes a later dump unsafe elsewhere
     // (`_waitForNotificationObservation`) needs a live receiver to perform
     // it, and the process is already proven dead two statements above.
-    final coldAlertChannel = await _observeAudibleChannel(marker, 'B12 cold');
+    final coldObservation = await _observeAudibleCard(marker, 'B12 cold');
+    final coldAlertChannel = coldObservation.channel;
     final observer = _actionConfig(
       action: androidNotificationPostTapObserveAction,
       runId: runId,
@@ -947,7 +1003,7 @@ final class _AndroidNotificationCampaign {
       requireStagedBeforeTap: false,
     );
     await _stageConfig(emulator, observer);
-    await _tapNotification(marker);
+    await _tapNotification(coldObservation.card);
     await _waitFor(
       'cold notification launch PID',
       const Duration(seconds: 30),
@@ -1045,15 +1101,29 @@ final class _AndroidNotificationCampaign {
     _campaignNotificationBodies.add(marker);
     await _requireNoAppNotification();
 
+    // The preceding cold-kill leg deliberately perturbs process and network
+    // state. Prove the receiver is live-path capable before grading a race;
+    // otherwise a single provider card is merely non-dual evidence.
+    await _launch(emulator);
+    await _identity(emulator);
+    await _runAction(
+      emulator,
+      action: androidNotificationTransportReadyAction,
+      runId: '$runId-ready',
+      timeout: const Duration(minutes: 2),
+    );
     await _adb(emulator, const <String>[
       'shell',
       'input',
       'keyevent',
       'KEYCODE_HOME',
     ]);
-    final logcatCursor = await _deviceLogcatCursor();
-
+    await Future<void>.delayed(const Duration(milliseconds: 750));
+    // Pay the preceding leg's alert-spacing debt before opening the evidence
+    // window. Otherwise a late B12 FCM receipt can be paired with B13's live
+    // marker and make a single-path delivery look dual-path.
     final toneGap = await _awaitToneWindow();
+    final logcatCursor = await _deviceLogcatCursor();
     final sentAt = DateTime.now().toUtc();
     final sent = await _sendText(
       marker,
@@ -1095,7 +1165,10 @@ final class _AndroidNotificationCampaign {
     final deadline = DateTime.now().add(const Duration(minutes: 2));
     while (DateTime.now().isBefore(deadline)) {
       final window = await _logcatSince(logcatCursor);
-      if (notificationWindowProvesDualPathAttempt(window)) {
+      if (notificationWindowProvesDualPathAttempt(
+        window,
+        messageId: sent.messageId,
+      )) {
         dualPathLog = window;
         break;
       }
@@ -1221,15 +1294,34 @@ final class _AndroidNotificationCampaign {
   /// `ActiveNotificationCard` carries no channel field and plan 378
   /// deliberately does not add one to that shared parser, so the channel is
   /// read from the marker's own `NotificationRecord` block.
-  Future<String> _observeAudibleChannel(String marker, String leg) async =>
-      _requireAudibleChannel(
+  Future<({ActiveNotificationCard card, String channel})> _observeAudibleCard(
+    String marker,
+    String leg,
+  ) async {
+    final dump = await _notificationDump();
+    final matching = extractActiveNotificationCards(
+      dump,
+      packageName: packageName,
+    ).where((card) => card.body == marker).toList(growable: false);
+    if (matching.length != 1) {
+      throw _Failure(
+        '$leg produced ${matching.length} cards for one message; exactly one '
+        'was required.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    return (
+      card: matching.single,
+      channel: _requireAudibleChannel(
         androidNotificationChannelsForBody(
-          await _notificationDump(),
+          dump,
           packageName: packageName,
           body: marker,
         ),
         leg,
-      );
+      ),
+    );
+  }
 
   /// Asserts an already-measured channel list is a single audible card.
   ///
@@ -1338,7 +1430,7 @@ final class _AndroidNotificationCampaign {
   /// produce an artifact that validates. A parser regression that matched
   /// nothing cannot hide here either — every leg that calls this also runs a
   /// positive control through the SAME parser afterwards
-  /// (`_observeAudibleChannel` on the recovery card).
+  /// (`_observeAudibleCard` on the recovery card).
   Future<int> _requireNoCardForMarker(String marker, String leg) async {
     // Custody confirmation proves the handler ran, not that it finished its
     // post decision, so a single sample could read "no card" microseconds
@@ -1715,11 +1807,10 @@ final class _AndroidNotificationCampaign {
       ])).trim(),
     );
     if (sdk == null || sdk < 33) {
-      throw const _Blocked(
-        'targetUnavailable',
+      throw const _G24NotApplicable(
         'G24 requires an API 33+ Android emulator receiver; this row is N/A '
-            'under the availability-bounded device policy and no aggregate '
-            'G24 PASS is claimed.',
+        'under the availability-bounded device policy and no aggregate '
+        'G24 PASS is claimed.',
       );
     }
 
@@ -1761,11 +1852,10 @@ final class _AndroidNotificationCampaign {
       if (androidNotificationUidAppOpMutationBlocked(
         await _logcatSince(appOpMutationCursor),
       )) {
-        throw const _Blocked(
-          'targetUnavailable',
+        throw const _G24NotApplicable(
           'G24 is N/A (target unavailable by project policy): the configured '
-              'emulator blocks a UID POST_NOTIFICATION override for its '
-              'runtime-backed notification permission.',
+          'emulator blocks a UID POST_NOTIFICATION override for its '
+          'runtime-backed notification permission.',
         );
       }
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -2904,7 +2994,7 @@ final class _AndroidNotificationCampaign {
         // real audible publication (NOTIFICATION_SHOWN silent=false), so the
         // next audible-asserting send owes it the full window.
         _lastCardObservedAt = DateTime.now();
-        await _tapNotification(marker);
+        await _tapNotification(matching.single);
         await _waitFor(
           'campaign notification dismissal',
           const Duration(seconds: 15),
@@ -3087,7 +3177,9 @@ final class _AndroidNotificationCampaign {
     return records;
   }
 
-  Future<void> _tapNotification(String marker) async {
+  Future<void> _tapNotification(ActiveNotificationCard card) async {
+    _notificationTapInvocation++;
+    final attemptDumps = <String>[];
     await _adb(emulator, const <String>[
       'shell',
       'cmd',
@@ -3096,8 +3188,46 @@ final class _AndroidNotificationCampaign {
     ]);
     await Future<void>.delayed(const Duration(milliseconds: 750));
     for (var attempt = 0; attempt < 6; attempt++) {
-      final center = findSemanticNodeCenter(await _uiDump(), marker);
-      if (center != null) {
+      final xml = await _uiDump();
+      attemptDumps.add(xml);
+      final anrWait = findAndroidAnrWaitCenter(xml);
+      if (anrWait != null) {
+        await _adb(emulator, <String>[
+          'shell',
+          'input',
+          'tap',
+          '${anrWait.$1}',
+          '${anrWait.$2}',
+        ]);
+        await Future<void>.delayed(const Duration(seconds: 2));
+        await _adb(emulator, const <String>[
+          'shell',
+          'cmd',
+          'statusbar',
+          'expand-notifications',
+        ]);
+        await Future<void>.delayed(const Duration(milliseconds: 750));
+        continue;
+      }
+      final target = findAndroidNotificationCardTapTarget(
+        xml,
+        title: card.title,
+        body: card.body,
+      );
+      if (target != null) {
+        final expand = target.collapsedGroupExpandCenter;
+        if (expand != null) {
+          await _adb(emulator, <String>[
+            'shell',
+            'input',
+            'tap',
+            '${expand.$1}',
+            '${expand.$2}',
+          ]);
+          await Future<void>.delayed(const Duration(milliseconds: 750));
+          continue;
+        }
+        final center = target.cardCenter;
         await _adb(emulator, <String>[
           'shell',
           'input',
@@ -3106,6 +3236,34 @@ final class _AndroidNotificationCampaign {
           '${center.$2}',
         ]);
         return;
+      }
+      final collapsedExpand = findAndroidCollapsedNotificationExpandCenter(
+        xml,
+        title: card.title,
+      );
+      if (collapsedExpand != null) {
+        await _adb(emulator, <String>[
+          'shell',
+          'input',
+          'tap',
+          '${collapsedExpand.$1}',
+          '${collapsedExpand.$2}',
+        ]);
+        await Future<void>.delayed(const Duration(milliseconds: 750));
+        continue;
+      }
+      final shadeHierarchyVisible = xml.contains(
+        'package="com.android.systemui"',
+      );
+      if (!shadeHierarchyVisible) {
+        await _adb(emulator, const <String>[
+          'shell',
+          'cmd',
+          'statusbar',
+          'expand-notifications',
+        ]);
+        await Future<void>.delayed(const Duration(milliseconds: 750));
+        continue;
       }
       if (attempt < 5) {
         await _adb(emulator, const <String>[
@@ -3120,10 +3278,84 @@ final class _AndroidNotificationCampaign {
         ], allowFailure: true);
       }
     }
+    var diagnosticDetail = ' Diagnostic capture failed.';
+    try {
+      final diagnostic = await _writeNotificationTapFailureDiagnostics(
+        card: card,
+        attemptDumps: attemptDumps,
+      );
+      diagnosticDetail =
+          ' Diagnostic: ${diagnostic.path} sha256=${diagnostic.sha256}.';
+    } on Object {
+      // A diagnostic write must never replace the exact tap failure.
+    }
     throw _Failure(
-      'UIAutomator could not find the exact notification body; refusing a '
-      'fixed-coordinate tap.',
+      'UIAutomator could not find the exact notification card; refusing a '
+      'fixed-coordinate tap.$diagnosticDetail',
       assertionsAttempted: _assertionsAttempted,
+    );
+  }
+
+  Future<({String path, String sha256})>
+  _writeNotificationTapFailureDiagnostics({
+    required ActiveNotificationCard card,
+    required List<String> attemptDumps,
+  }) async {
+    final captureId =
+        'notification-tap-failure-'
+        '${DateTime.now().microsecondsSinceEpoch}-'
+        '$_notificationTapInvocation';
+    final attempts = <Map<String, Object?>>[];
+    for (var index = 0; index < attemptDumps.length; index++) {
+      final xml = attemptDumps[index];
+      final file = File(
+        '${proofDirectory.path}${Platform.pathSeparator}'
+        '$captureId-attempt-${index + 1}.xml',
+      );
+      await file.writeAsString(xml, flush: true);
+      attempts.add(<String, Object?>{
+        'attempt': index + 1,
+        'path': file.resolveSymbolicLinksSync(),
+        'sha256': sha256.convert(file.readAsBytesSync()).toString(),
+        'systemUiVisible': xml.contains('package="com.android.systemui"'),
+        'notificationRowCount': RegExp(
+          r':id/expandableNotificationRow',
+        ).allMatches(xml).length,
+        'exactCardMatched':
+            findAndroidNotificationCardTapTarget(
+              xml,
+              title: card.title,
+              body: card.body,
+            ) !=
+            null,
+        'collapsedExpandMatched':
+            findAndroidCollapsedNotificationExpandCenter(
+              xml,
+              title: card.title,
+            ) !=
+            null,
+      });
+    }
+    final manifest = File(
+      '${proofDirectory.path}${Platform.pathSeparator}$captureId.json',
+    );
+    await manifest.writeAsString(
+      jsonEncode(<String, Object?>{
+        'schema': 'mknoon.notification-tap-failure-diagnostic.v1',
+        'status': 'diagnostic_only',
+        'targetId': emulator,
+        'card': <String, Object?>{
+          'id': card.id,
+          'title': card.title,
+          'body': card.body,
+        },
+        'attempts': attempts,
+      }),
+      flush: true,
+    );
+    return (
+      path: manifest.resolveSymbolicLinksSync(),
+      sha256: sha256.convert(manifest.readAsBytesSync()).toString(),
     );
   }
 
@@ -3629,6 +3861,12 @@ final class _Blocked implements Exception {
   final bool artifactPresent;
 }
 
+final class _G24NotApplicable implements Exception {
+  const _G24NotApplicable(this.reason);
+
+  final String reason;
+}
+
 final class _Failure implements Exception {
   const _Failure(this.detail, {required this.assertionsAttempted});
 
@@ -3671,6 +3909,23 @@ String _describeFailure(Object error) => switch (error) {
   AndroidAppStateFailure(:final detail) => detail,
   _ => error.runtimeType.toString(),
 };
+
+/// One finite code location for an unexpected host-harness exception.
+///
+/// Arbitrary exception text is deliberately excluded from sims verdicts: it
+/// may contain command output. The phase, attempted-assertion count, and first
+/// stack frame retain enough causal context to diagnose a recurrence without
+/// expanding the report's data boundary.
+String _firstStackFrame(StackTrace stackTrace) {
+  final frame = stackTrace
+      .toString()
+      .split('\n')
+      .map((line) => line.trim())
+      .firstWhere((line) => line.isNotEmpty, orElse: () => 'stack unavailable');
+  const maximumLength = 240;
+  if (frame.length <= maximumLength) return frame;
+  return '${frame.substring(0, maximumLength - 3)}...';
+}
 
 Map<String, Object?> _object(Object? value) {
   if (value is! Map) throw const FormatException('expected JSON object');

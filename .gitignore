@@ -216,3 +216,6 @@ codex-memory/config.local.json
 /lib/features/orbit/presentation/prototype/
 /lib/orbital_quiet_prototype_main.dart
 /test/features/orbit/presentation/prototype/
+
+# Per-run device telemetry from fresh_three_phones_with_resign.sh
+docker-ws/deploy-captures/

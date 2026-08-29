@@ -238,7 +238,7 @@ void main() {
       final message = replayedReactions.single;
       expect(message.from, 'peer-alice');
       expect(message.to, 'local-peer');
-      expect(message.transport, 'push');
+      expect(message.transport, 'inbox');
       final envelope = ReactionPayload.parseEncryptedEnvelope(message.content);
       expect(envelope, isNotNull);
       expect(envelope!['eventId'], 'reaction-event-1');
@@ -279,7 +279,7 @@ void main() {
         expect(replayed, hasLength(2));
         expect(replayed.first.from, 'peer-alice');
         expect(replayed.first.to, 'local-peer');
-        expect(replayed.first.transport, 'push');
+        expect(replayed.first.transport, 'inbox');
         expect(replayed.first.content, contains('"version":"2"'));
         expect(suppressions, [true, true]);
         expect(stagedIds, ['nonce-a', 'nonce-b']);

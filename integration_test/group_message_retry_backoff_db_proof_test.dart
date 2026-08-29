@@ -12,6 +12,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
 import 'package:flutter_app/core/database/migrations/087_group_message_retry_backoff_columns.dart';
 
 void main() {
@@ -29,6 +30,7 @@ void main() {
       await databaseFactory.deleteDatabase(path);
       db = await openDatabase(path, password: 'proof-key');
       await runGroupMessagesTablesMigration(db);
+      await runGroupMessageReliabilityColumnsMigration(db);
       await runGroupMessageRetryBackoffColumnsMigration(db);
     });
 
@@ -42,6 +44,8 @@ void main() {
       String status = 'failed',
       int isIncoming = 0,
       int? nextEligibleAt,
+      String? wireEnvelope,
+      String? inboxRetryPayload,
     }) async {
       await db.insert('group_messages', {
         'id': id,
@@ -53,6 +57,8 @@ void main() {
         'is_incoming': isIncoming,
         'created_at': '2026-06-17T12:00:00.000Z',
         'next_eligible_at': nextEligibleAt,
+        'wire_envelope': wireEnvelope,
+        'inbox_retry_payload': inboxRetryPayload,
       });
     }
 
@@ -120,7 +126,12 @@ void main() {
     testWidgets('resetRetryStateForManualRetry re-arms a terminal row only', (
       t,
     ) async {
-      await insertFailed('terminal', status: 'send_failed', nextEligibleAt: 5000);
+      await insertFailed(
+        'terminal',
+        status: 'send_failed',
+        nextEligibleAt: 5000,
+        wireEnvelope: '{"kind":"group_message_retry"}',
+      );
       await db.rawUpdate(
         'UPDATE group_messages SET retry_attempt_count = 12 WHERE id = ?',
         ['terminal'],

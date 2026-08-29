@@ -170,6 +170,34 @@ void main() {
   );
 
   test(
+    'trailing staged replay reaches a local fixed point before ack',
+    () async {
+      gateway.pending = 18;
+      var directCalls = 0;
+      final coordinator = buildCoordinator(
+        drainDirect: () async {
+          directCalls += 1;
+          if (directCalls == 1) {
+            return const DirectInboxDrainOutcome(
+              isSuccessful: false,
+              hasMore: true,
+              failureReason: 'staged_replay_pending',
+            );
+          }
+          return _directSuccess;
+        },
+      );
+
+      final result = await coordinator.recoverIfPending();
+
+      expect(result.disposition, DroppedPushRecoveryDisposition.recovered);
+      expect(directCalls, 2);
+      expect(gateway.acknowledgeAttempts, <int>[18]);
+      expect(gateway.pending, isNull);
+    },
+  );
+
+  test(
     'group failure retains a successful direct recovery generation',
     () async {
       gateway.pending = 9;

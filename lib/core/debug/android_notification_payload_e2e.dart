@@ -46,10 +46,10 @@ Future<Map<String, dynamic>> runAndroidNotificationPayloadE2EAction({
 
   switch (request.action) {
     case androidNotificationUnregisterPushAction:
-      final response = await callP2PInboxUnregisterToken(bridge);
-      if (response['ok'] != true || response['unregistered'] != true) {
-        throw StateError('production relay push unregistration failed');
-      }
+      await _unregisterPushTokenWithinDeadline(
+        request: request,
+        bridge: bridge,
+      );
       return receipt(<String, Object?>{
         'status': 'complete',
         'success': true,
@@ -77,6 +77,13 @@ Future<Map<String, dynamic>> runAndroidNotificationPayloadE2EAction({
         'success': true,
         'registered': true,
       });
+
+    case androidNotificationTransportReadyAction:
+      return _awaitNotificationTransportReady(
+        request: request,
+        p2pService: p2pService,
+        receipt: receipt,
+      );
 
     case androidNotificationClearStagingAction:
     case androidNotificationStopNodeAndClearStagingAction:
@@ -135,6 +142,79 @@ Future<Map<String, dynamic>> runAndroidNotificationPayloadE2EAction({
   }
 
   throw StateError('unreachable Android notification action');
+}
+
+Future<Map<String, dynamic>> _awaitNotificationTransportReady({
+  required AndroidNotificationPayloadE2ERequest request,
+  required P2PService p2pService,
+  required Map<String, dynamic> Function(Map<String, Object?>) receipt,
+}) async {
+  const timeoutMessage = 'notification transport readiness timed out';
+  final deadline = DateTime.now().add(request.timeout);
+  var consecutiveReadySamples = 0;
+
+  while (DateTime.now().isBefore(deadline)) {
+    try {
+      await _runWithinDeadline<void>(
+        deadline,
+        (_) => p2pService.performImmediateHealthCheck(),
+        timeoutMessage,
+        maxRequestDuration: const Duration(seconds: 10),
+      );
+    } catch (_) {
+      consecutiveReadySamples = 0;
+    }
+
+    final state = p2pService.currentState;
+    final ready = state.isStarted && state.usabilityReady && state.relayReady;
+    consecutiveReadySamples = ready ? consecutiveReadySamples + 1 : 0;
+    if (consecutiveReadySamples >= 2) {
+      return receipt(<String, Object?>{
+        'status': 'complete',
+        'success': true,
+        'transportReady': true,
+        'nodeStarted': state.isStarted,
+        'sendCapabilityReady': state.sendCapabilityReady,
+        'inboxCapabilityReady': state.inboxCapabilityReady,
+        'relayReady': state.relayReady,
+      });
+    }
+
+    await _delayWithinDeadline(deadline, timeoutMessage);
+  }
+
+  throw TimeoutException(timeoutMessage);
+}
+
+Future<void> _unregisterPushTokenWithinDeadline({
+  required AndroidNotificationPayloadE2ERequest request,
+  required Bridge bridge,
+}) async {
+  const timeoutMessage = 'production relay push unregistration timed out';
+  final deadline = DateTime.now().add(request.timeout);
+
+  while (DateTime.now().isBefore(deadline)) {
+    try {
+      final response = await _runWithinDeadline<Map<String, dynamic>>(
+        deadline,
+        (_) => callP2PInboxUnregisterToken(bridge),
+        timeoutMessage,
+        maxRequestDuration: const Duration(seconds: 10),
+      );
+      if (response['ok'] == true && response['unregistered'] == true) {
+        return;
+      }
+    } on Object {
+      // A newly relaunched receiver can observe the relay between local node
+      // startup and route readiness. Unregister is idempotent, so retry the
+      // production command inside the request's existing bounded budget.
+    }
+
+    if (!DateTime.now().isBefore(deadline)) break;
+    await _delayWithinDeadline(deadline, timeoutMessage);
+  }
+
+  throw TimeoutException(timeoutMessage);
 }
 
 /// Deletes the installed app's FCM token and waits for the provider to mint a

@@ -60,7 +60,7 @@ class _FakeMessageRepository
 
   /// 184 TC-184-22: emit a FULL message-change (status + transport) on
   /// messageChanges, mirroring MessageRepositoryImpl.saveMessage's stream emit,
-  /// so a test can drive the sending → inboxed(2-tick) → delivered(transport)
+  /// so a test can drive the sending → inboxed/inbox → delivered/inbox
   /// progression where the terminal carries a real transport label.
   void emitMessageChange(ConversationMessage updated) {
     store[updated.id] = updated;
@@ -520,12 +520,10 @@ void main() {
       },
     );
 
-    // 184 TC-184-22 — the full honest progression on the 1:1 surface:
-    // sending (1 tick) → inboxed custody (2 ticks, ~110 ms) → delivered live
-    // (transport glyph). RED on HEAD: 'inboxed' renders the single-check
-    // fallback, not done_all. Pins the mid-send re-render (TC-184-11) too.
+    // The 1:1 inbox transport glyph is stable across the persisted status
+    // transition: sending (1 tick) → inboxed/inbox → delivered/inbox.
     testWidgets(
-      'sending → inboxed (two ticks) → delivered (transport glyph) progression',
+      'sending → inboxed/inbox → delivered/inbox keeps the inbox glyph',
       (tester) async {
         final messageRepo = _FakeMessageRepository();
         final sendingMessage = _makeSendingMessage();
@@ -546,28 +544,32 @@ void main() {
         expect(find.byIcon(Icons.done_rounded), findsOneWidget);
         expect(find.byIcon(Icons.done_all_rounded), findsNothing);
 
-        // ~110 ms custody ACK → 'inboxed' → two ticks (done_all).
-        messageRepo.emitStatusChange('msg-sending-001', 'inboxed');
+        // Relay custody persists both the status and canonical transport.
+        final inboxedMessage = sendingMessage.copyWith(
+          status: 'inboxed',
+          transport: 'inbox',
+        );
+        messageRepo.emitMessageChange(inboxedMessage);
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
         expect(
-          find.byIcon(Icons.done_all_rounded),
+          find.byIcon(Icons.inbox),
           findsOneWidget,
-          reason:
-              'custody (inboxed) must render the two-tick on the 1:1 surface',
+          reason: 'inboxed/inbox must render the inbox transport glyph',
         );
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
         expect(find.byIcon(Icons.done_rounded), findsNothing);
 
-        // Live delivery → the transport glyph (device_hub for 'direct'),
-        // upgrading off the two-tick.
+        // Receiver persistence changes the status, not the inbox transport or
+        // its icon.
         messageRepo.emitMessageChange(
-          sendingMessage.copyWith(status: 'delivered', transport: 'direct'),
+          inboxedMessage.copyWith(status: 'delivered'),
         );
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
-        expect(find.byIcon(Icons.device_hub), findsOneWidget);
+        expect(find.byIcon(Icons.inbox), findsOneWidget);
         expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       },
     );

@@ -67,6 +67,7 @@ void main() {
       expect(rendered, hasLength(1));
       expect(rendered.single.from, 'peer-alice');
       expect(rendered.single.to, 'local-peer');
+      expect(rendered.single.transport, 'inbox');
       expect(drain.isCompleted, isFalse);
     },
   );

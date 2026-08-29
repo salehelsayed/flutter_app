@@ -966,7 +966,7 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		// Give the faster foreground path a short chance to win first, then keep
 		// the existing long wait budget as fallback safety behavior.
 		waitStart := time.Now()
-		if ok := n.waitForCircuitAddress(ForegroundCircuitAddressWaitTimeout); ok {
+		if ok := n.waitForCircuitAddressOnHost(h, ForegroundCircuitAddressWaitTimeout); ok {
 			log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained ✓")
 			foregroundRecoveryPath = "foreground_success"
 			refreshErr = nil
@@ -975,7 +975,7 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 			if remainingWait < 0 {
 				remainingWait = 0
 			}
-			if remainingWait > 0 && n.waitForCircuitAddress(remainingWait) {
+			if remainingWait > 0 && n.waitForCircuitAddressOnHost(h, remainingWait) {
 				log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained via fallback ✓")
 				refreshErr = nil
 			} else if reserveSucceeded {
@@ -2125,14 +2125,26 @@ func (n *Node) waitForCircuitAddress(timeout time.Duration) bool {
 		return n.waitForCircuitAddressHook(timeout)
 	}
 
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+	return n.waitForCircuitAddressOnHost(h, timeout)
+}
+
+// waitForCircuitAddressOnHost keeps an in-place recovery's bounded wait
+// independent from later writers of Node.mu. The recovery owner already
+// captured the host under the mutex; reacquiring the node-wide lock on every
+// poll can otherwise turn a finite circuit-address wait into an unbounded one.
+func (n *Node) waitForCircuitAddressOnHost(h host.Host, timeout time.Duration) bool {
+	if n.waitForCircuitAddressHook != nil {
+		return n.waitForCircuitAddressHook(timeout)
+	}
+
 	start := time.Now()
 	pollCount := 0
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		pollCount++
-		n.mu.RLock()
-		h := n.host
-		n.mu.RUnlock()
 		if h == nil {
 			return false
 		}

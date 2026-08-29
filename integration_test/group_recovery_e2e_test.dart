@@ -13,6 +13,7 @@ import 'package:flutter_app/features/conversation/application/upload_media_use_c
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
     as group_dissolve;
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
@@ -268,7 +269,13 @@ void main() {
 
     setUp(() {
       network = FakeGroupPubSubNetwork();
+      setGroupExitIntentAccessSinks(
+        forGroup: (_) async => null,
+        all: () async => const [],
+      );
     });
+
+    tearDown(setGroupExitIntentAccessSinks);
 
     testWidgets(
       'open group screen reflects local outgoing status without listener echo',

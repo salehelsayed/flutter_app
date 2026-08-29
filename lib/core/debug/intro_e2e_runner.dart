@@ -289,6 +289,78 @@ typedef RunGroupMediaIosBackgroundE2EFn =
 Timer? _introE2EPoller;
 bool _introE2ERunInFlight = false;
 
+@visibleForTesting
+Future<bool> awaitIntroE2EDrainWithin({
+  required Future<void> Function() drain,
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  try {
+    await drain().timeout(timeout);
+    return true;
+  } on TimeoutException {
+    return false;
+  }
+}
+
+/// Prevents a coalesced background recovery from consuming an entire host
+/// fixture phase.
+///
+/// The generic intro command already waits for a usable transport before this
+/// best-effort reprime. If a lifecycle-triggered recovery is still in flight,
+/// [P2PService.performImmediateHealthCheck] waits on that shared completer and
+/// otherwise has no caller-side bound. The command must continue to its
+/// causally graded send/receive action after this small bounded opportunity.
+@visibleForTesting
+Future<bool> awaitIntroE2EHealthCheckWithin({
+  required Future<void> Function() healthCheck,
+  Duration timeout = const Duration(seconds: 15),
+}) async {
+  try {
+    await healthCheck().timeout(timeout);
+    return true;
+  } on TimeoutException {
+    return false;
+  }
+}
+
+@visibleForTesting
+bool hasUnactedIntroE2EIntroduction({
+  required Iterable<String> pendingIntroductionIds,
+  required Iterable<String> actedOnIntroductionIds,
+}) {
+  final actedOn = actedOnIntroductionIds.toSet();
+  return pendingIntroductionIds.any((id) => !actedOn.contains(id));
+}
+
+Future<void> _drainOfflineInboxForIntroE2E(
+  P2PService p2pService, {
+  required String phase,
+}) async {
+  final completed = await awaitIntroE2EDrainWithin(
+    drain: () => p2pService.drainOfflineInbox(),
+  );
+  if (completed) return;
+  emitFlowEvent(
+    layer: 'E2E',
+    event: 'INTRO_E2E_INBOX_DRAIN_TIMEOUT',
+    details: <String, Object?>{'phase': phase, 'timeoutMs': 5000},
+  );
+}
+
+Future<void> _performImmediateHealthCheckForIntroE2E(
+  P2PService p2pService,
+) async {
+  final completed = await awaitIntroE2EHealthCheckWithin(
+    healthCheck: p2pService.performImmediateHealthCheck,
+  );
+  if (completed) return;
+  emitFlowEvent(
+    layer: 'E2E',
+    event: 'INTRO_E2E_HEALTH_CHECK_TIMEOUT',
+    details: const <String, Object?>{'timeoutMs': 15000},
+  );
+}
+
 Future<bool> runDirectTextRelayTokenProofIfPresent({
   Future<String?> Function()? getToken,
   DateTime Function()? now,
@@ -468,6 +540,7 @@ Future<void> writeGroupReactionNotificationIosSetupReadinessReceipt({
 
 Future<bool> prePopulateContactsFromIntroE2EConfig({
   required ContactRepository contactRepo,
+  Map<String, dynamic>? configOverride,
 }) async {
   final allowsPlan397SetupActions =
       allowsGroupReactionNotificationIosSetupActions(
@@ -480,7 +553,7 @@ Future<bool> prePopulateContactsFromIntroE2EConfig({
     return false;
   }
 
-  final config = await _loadConfig();
+  final config = configOverride ?? await _loadConfig();
   if (config == null) return false;
   final contacts = config['add_contacts'];
   if (contacts is! List<dynamic> || contacts.isEmpty) {
@@ -523,6 +596,11 @@ Future<void> runIntroE2EActions({
   final config = await _loadConfig();
   if (config == null) return;
 
+  // Consume the command before publishing even the running receipt. The host
+  // may stage the next command as soon as it observes a terminal receipt; a
+  // trailing path-based cleanup would then be able to delete that new command.
+  await _deleteConfigIfPresent();
+
   final resultFile = await _resultFile();
   await resultFile.writeAsString(
     jsonEncode({'stepId': config['stepId'], 'status': 'running'}),
@@ -530,14 +608,17 @@ Future<void> runIntroE2EActions({
 
   try {
     await _waitForP2PReady(p2pService);
-    await p2pService.performImmediateHealthCheck();
-    await p2pService.drainOfflineInbox();
+    await _performImmediateHealthCheckForIntroE2E(p2pService);
+    await _drainOfflineInboxForIntroE2E(p2pService, phase: 'generic_preamble');
 
     // Main-app device campaigns learn peer QR payloads only after both app
     // processes have launched. Make the existing `add_contacts` contract work
     // for those live configs as well as configs staged before startup. The add
     // use case is idempotent, so pre-populated simulator contacts remain safe.
-    await prePopulateContactsFromIntroE2EConfig(contactRepo: contactRepo);
+    await prePopulateContactsFromIntroE2EConfig(
+      contactRepo: contactRepo,
+      configOverride: config,
+    );
 
     if (config['send_contact_requests_for_added_contacts'] == true) {
       await _sendContactRequestsForAddedContacts(
@@ -657,13 +738,15 @@ Future<void> runIntroE2EActions({
       openConversationByPeerId: openConversationByPeerId,
     );
 
-    final snapshot = await _collectSnapshot(
-      identityRepo: identityRepo,
-      contactRepo: contactRepo,
-      contactRequestRepo: contactRequestRepo,
-      introRepo: introRepo,
-      messageRepo: messageRepo,
-    );
+    final snapshot = config['skip_snapshot'] == true
+        ? <String, dynamic>{'skipped': true}
+        : await _collectSnapshot(
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            contactRequestRepo: contactRequestRepo,
+            introRepo: introRepo,
+            messageRepo: messageRepo,
+          );
     await resultFile.writeAsString(
       jsonEncode({
         'stepId': config['stepId'],
@@ -679,13 +762,15 @@ Future<void> runIntroE2EActions({
       }),
     );
   } catch (e, stackTrace) {
-    final snapshot = await _collectSnapshot(
-      identityRepo: identityRepo,
-      contactRepo: contactRepo,
-      contactRequestRepo: contactRequestRepo,
-      introRepo: introRepo,
-      messageRepo: messageRepo,
-    );
+    final snapshot = config['skip_snapshot'] == true
+        ? <String, dynamic>{'skipped': true}
+        : await _collectSnapshot(
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            contactRequestRepo: contactRequestRepo,
+            introRepo: introRepo,
+            messageRepo: messageRepo,
+          );
     await resultFile.writeAsString(
       jsonEncode({
         'stepId': config['stepId'],
@@ -696,8 +781,6 @@ Future<void> runIntroE2EActions({
         'snapshot': snapshot,
       }),
     );
-  } finally {
-    await _deleteConfigIfPresent();
   }
 }
 
@@ -1445,7 +1528,13 @@ Future<void> _sendContactRequestsForAddedContacts({
   final contacts = config['add_contacts'];
   if (contacts is! List<dynamic>) return;
 
-  for (final contactData in contacts.cast<Map<String, dynamic>>()) {
+  final contactRows = contacts.cast<Map<String, dynamic>>();
+  for (
+    var contactIndex = 0;
+    contactIndex < contactRows.length;
+    contactIndex++
+  ) {
+    final contactData = contactRows[contactIndex];
     final qrJson = contactData['qrPayload'] as String;
     final qrMap = jsonDecode(qrJson) as Map<String, dynamic>;
     final peerId = qrMap['ns'] as String;
@@ -1470,9 +1559,22 @@ Future<void> _sendContactRequestsForAddedContacts({
         'Contact request to $peerId failed in intro E2E: $result',
       );
     }
-    await Future<void>.delayed(const Duration(milliseconds: 500));
+    // Spacing protects the next send from racing the prior acknowledgement.
+    // There is nothing to settle after the final acknowledged request, and a
+    // trailing timer can be throttled while the device is under campaign load.
+    if (shouldDelayBetweenIntroE2EContactRequests(
+      contactIndex: contactIndex,
+      contactCount: contactRows.length,
+    )) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
   }
 }
+
+bool shouldDelayBetweenIntroE2EContactRequests({
+  required int contactIndex,
+  required int contactCount,
+}) => contactIndex + 1 < contactCount;
 
 Future<void> _runContactRequestAction({
   required String action,
@@ -1488,7 +1590,10 @@ Future<void> _runContactRequestAction({
   var sawAny = false;
   var idleAfterSeen = 0;
   for (var tick = 0; tick < 25; tick++) {
-    await p2pService.drainOfflineInbox();
+    await _drainOfflineInboxForIntroE2E(
+      p2pService,
+      phase: 'contact_request_poll',
+    );
     final pendingRequests = await contactRequestRepo.getPendingRequests();
     if (pendingRequests.isNotEmpty) {
       sawAny = true;
@@ -1604,6 +1709,14 @@ Future<Map<String, dynamic>> _runIntroductionAction({
   required int pollIntervalMs,
   required int idleCyclesAfterSeen,
 }) async {
+  if (action == 'none') {
+    return <String, dynamic>{
+      'action': action,
+      'actedOn': <String>[],
+      'dropped': 0,
+    };
+  }
+
   final identity = await identityRepo.loadIdentity();
   if (identity == null) {
     throw StateError('Identity missing for intro E2E action');
@@ -1630,11 +1743,15 @@ Future<Map<String, dynamic>> _runIntroductionAction({
   var sawAny = false;
   var idleAfterSeen = 0;
   for (var tick = 0; tick < pollCycles; tick++) {
-    await p2pService.drainOfflineInbox();
+    await _drainOfflineInboxForIntroE2E(p2pService, phase: 'introduction_poll');
     final pending = await introRepo.getPendingIntroductionsForUser(
       identity.peerId,
     );
-    if (pending.isNotEmpty) {
+    final hasUnacted = hasUnactedIntroE2EIntroduction(
+      pendingIntroductionIds: pending.map((intro) => intro.id),
+      actedOnIntroductionIds: actedOn,
+    );
+    if (hasUnacted) {
       sawAny = true;
       idleAfterSeen = 0;
     } else if (sawAny) {
@@ -1819,7 +1936,10 @@ Future<Map<String, dynamic>> _runFoldedIntroductionAction({
   var idleAfterSeen = 0;
 
   for (var tick = 0; tick < pollCycles; tick++) {
-    await p2pService.drainOfflineInbox();
+    await _drainOfflineInboxForIntroE2E(
+      p2pService,
+      phase: 'folded_introduction_poll',
+    );
     final pending = await introRepo.getPendingIntroductionsForUser(
       identityPeerId,
     );
@@ -1965,7 +2085,10 @@ Future<Map<String, dynamic>?> _waitForExpectedChatMessages({
       (config['chat_poll_interval_ms'] as num?)?.toInt() ?? 500;
 
   for (var tick = 0; tick < pollCycles; tick++) {
-    await p2pService.drainOfflineInbox();
+    await _drainOfflineInboxForIntroE2E(
+      p2pService,
+      phase: 'chat_expectation_poll',
+    );
 
     for (var i = pending.length - 1; i >= 0; i--) {
       final expectation = pending[i];

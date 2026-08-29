@@ -2075,6 +2075,10 @@ class _ConversationWiredState extends State<ConversationWired>
 
   bool _drainReloadInFlight = false;
   bool _drainReloadPending = false;
+  static const _notificationTapLateRefetchAttempts = 8;
+  static const _notificationTapLateRefetchInterval = Duration(
+    milliseconds: 250,
+  );
   // 145: view-facing mirror of an in-flight drain — drives the "catching up…"
   // affordance. Mutated via setState (unlike the coalescing flags above).
   bool _isSyncingNewMessages = false;
@@ -2119,6 +2123,16 @@ class _ConversationWiredState extends State<ConversationWired>
             addedIncoming = await _reloadLatestPageForRecovery(
               scrollToLiveEdge: first && scrollToLiveEdge,
             );
+            // A background isolate can finish persisting the staged push just
+            // after drainOfflineInbox and the first DB refetch return. Its
+            // in-memory repository change stream is not shared with this UI
+            // isolate, so poll the local DB briefly instead of leaving the
+            // tapped conversation stale until it is reopened.
+            if (trigger == 'notif_tap' && first && !addedIncoming) {
+              addedIncoming = await _pollForLateNotificationTapPersistence(
+                scrollToLiveEdge: scrollToLiveEdge,
+              );
+            }
           }
         } catch (e) {
           emitFlowEvent(
@@ -2168,6 +2182,42 @@ class _ConversationWiredState extends State<ConversationWired>
       // previously-stuck ones) — refresh the couldn't-display count either way.
       unawaited(_refreshUndeliveredAttentionCount());
     }
+  }
+
+  Future<bool> _pollForLateNotificationTapPersistence({
+    required bool scrollToLiveEdge,
+  }) async {
+    for (
+      var attempt = 1;
+      attempt <= _notificationTapLateRefetchAttempts;
+      attempt++
+    ) {
+      if (_drainReloadPending) return false;
+      await Future<void>.delayed(_notificationTapLateRefetchInterval);
+      if (!mounted || _drainReloadPending) return false;
+
+      final addedIncoming = await _reloadLatestPageForRecovery(
+        scrollToLiveEdge: scrollToLiveEdge,
+      );
+      if (addedIncoming) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONV_FL_NOTIF_LATE_REFETCH',
+          details: {'attempt': attempt, 'addedIncoming': true},
+        );
+        return true;
+      }
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONV_FL_NOTIF_LATE_REFETCH',
+      details: {
+        'attempt': _notificationTapLateRefetchAttempts,
+        'addedIncoming': false,
+      },
+    );
+    return false;
   }
 
   /// 172 (INV-2): reads the kept-but-undisplayed staged-entry count off the

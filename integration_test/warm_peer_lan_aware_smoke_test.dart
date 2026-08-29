@@ -1,10 +1,9 @@
 // FDC-04 — LAN-aware eager warm: warm-then-send transport smoke (TC-04-15).
 //
-// HOST-FAKE smoke (no device): proves the warm→send LABEL wiring — a same-WiFi
-// peer that also has a warmed DIRECT connection still takes the `local` leg
-// instead of reusing the warmed conn. Host-green proves delivery + label
-// wiring ONLY (a messageId dedup can mask a dead LAN leg), so the real LAN win
-// is device-proof (deferred-not-waived). Registered in TRANSPORT_TESTS +
+// HOST-FAKE smoke (no device): proves the warm→send authority wiring — a
+// same-WiFi peer with a warmed authenticated DIRECT connection reuses that
+// stream instead of letting an unauthenticated LAN write settle delivery.
+// Registered in TRANSPORT_TESTS +
 // the reliability discovery classifier.
 //
 //   flutter test integration_test/warm_peer_lan_aware_smoke_test.dart
@@ -24,52 +23,44 @@ import '../test/shared/fakes/in_memory_message_repository.dart';
 
 void main() {
   group('FDC-04 warm-then-LAN-send smoke (TC-04-15, host-fake)', () {
-    // Mutation: revert the `&& !isLocalPeer` reuse gate in
-    // send_chat_message_use_case.dart → the warmed direct conn is reused and
-    // the label flips to `direct` → re-red.
-    test(
-      'TC-04-15: warm then LAN send takes `local` — a warmed direct conn does '
-      'not bypass it',
-      () async {
-        final network = FakeP2PNetwork();
-        // The target is registered on the network (so the LAN leg actually
-        // delivers) AND seeded as same-WiFi on the sender AND already has a
-        // warmed DIRECT connection. Without the isLocalPeer reuse gate the
-        // warmed direct conn would be reused (label `direct`); with it, the
-        // rank-aware race lets the `local` leg win.
-        FakeP2PService(peerId: 'target-peer', network: network);
-        final sender = FakeP2PService(peerId: 'sender-peer', network: network)
-          ..localPeers.add('target-peer') // same-WiFi (LAN-visible)
-          ..testConnections.add(
-            const p2p.ConnectionState(
-              peerId: 'target-peer',
-              multiaddrs: ['/ip4/192.168.1.20/tcp/4001'], // a warmed DIRECT conn
-              direction: 'outbound',
-              status: 'connected',
-            ),
-          );
-        final messageRepo = InMemoryMessageRepository();
-
-        // Eager warm overlaps connection setup with reading/typing.
-        await sender.warmPeer('target-peer');
-
-        final (result, message) = await sendChatMessage(
-          p2pService: sender,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'warm then lan',
-          senderPeerId: 'sender-peer',
-          senderUsername: 'Sender',
-          bridge: PassthroughCryptoBridge(),
-          recipientMlKemPublicKey: 'recipient-mlkem-public-key',
+    test('TC-04-15: warm then LAN-visible send reuses the authenticated direct '
+        'connection', () async {
+      final network = FakeP2PNetwork();
+      // The target is registered on the network (so the LAN leg actually
+      // delivers) AND seeded as same-WiFi on the sender AND already has a
+      // warmed DIRECT connection. Authenticated reuse is authoritative and
+      // completes before the LAN race is constructed.
+      FakeP2PService(peerId: 'target-peer', network: network);
+      final sender = FakeP2PService(peerId: 'sender-peer', network: network)
+        ..localPeers.add('target-peer') // same-WiFi (LAN-visible)
+        ..testConnections.add(
+          const p2p.ConnectionState(
+            peerId: 'target-peer',
+            multiaddrs: ['/ip4/192.168.1.20/tcp/4001'], // a warmed DIRECT conn
+            direction: 'outbound',
+            status: 'connected',
+          ),
         );
+      final messageRepo = InMemoryMessageRepository();
 
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
-        // The warmed DIRECT conn did NOT bypass the LAN leg.
-        expect(message!.transport, 'local');
-        expect(sender.localSendCallCount, greaterThanOrEqualTo(1));
-      },
-    );
+      // Eager warm overlaps connection setup with reading/typing.
+      await sender.warmPeer('target-peer');
+
+      final (result, message) = await sendChatMessage(
+        p2pService: sender,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'warm then lan',
+        senderPeerId: 'sender-peer',
+        senderUsername: 'Sender',
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: 'recipient-mlkem-public-key',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.transport, 'direct');
+      expect(sender.localSendCallCount, 0);
+    });
   });
 }

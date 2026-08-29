@@ -62,7 +62,10 @@ class _P2PInboxPort {
 }
 
 class _P2PInboxCoordinator {
-  static bool _sameProtectedRelayEntry(
+  static const _confirmedVisibleDuplicateReasonCode =
+      'duplicate_confirmed_visible';
+
+  static bool _sameRelayEntry(
     InboxStagingEntry left,
     InboxStagingEntry right,
   ) =>
@@ -1460,11 +1463,20 @@ class _P2PInboxCoordinator {
         );
         return false;
       case RecoveredInboxChatDisposition.rejected:
-        await repo.markRejected(
-          entry.entryId,
-          reasonCode: outcome.reasonCode,
-          reasonDetail: outcome.reasonDetail,
-        );
+        if (outcome.reasonCode == _confirmedVisibleDuplicateReasonCode) {
+          // This reason is emitted only after the message repository verifies
+          // that the prior copy is durably persisted and visible. Retaining a
+          // terminal staging row here can strand the matching relay copy: a
+          // later relay drain correctly refuses to claim an already-present
+          // row, so it would otherwise never replay or ACK that entry.
+          await repo.deleteEntry(entry.entryId);
+        } else {
+          await repo.markRejected(
+            entry.entryId,
+            reasonCode: outcome.reasonCode,
+            reasonDetail: outcome.reasonDetail,
+          );
+        }
         emitFlowEvent(
           layer: 'FL',
           event: rejectedEvent,
@@ -1644,17 +1656,35 @@ class _P2PInboxCoordinator {
 
     final ackableEntryIds = (await repo.stageEntries(entries)).toList();
     final protectedRelayAckableEntryIds = <String>{};
+    final confirmedDuplicateRelayAckableEntryIds = <String>{};
     for (final entry in entries) {
-      if (ackableEntryIds.contains(entry.entryId) ||
-          !_isProtectedGroupEnvelopeType(entry.messageType)) {
-        continue;
-      }
+      if (ackableEntryIds.contains(entry.entryId)) continue;
       final existing = await repo.getEntry(entry.entryId);
-      if (existing != null &&
-          existing.status == 'protected_ack_pending' &&
-          _sameProtectedRelayEntry(existing, entry)) {
+      if (existing == null || !_sameRelayEntry(existing, entry)) continue;
+      if (_isProtectedGroupEnvelopeType(entry.messageType) &&
+          existing.status == 'protected_ack_pending') {
         ackableEntryIds.add(entry.entryId);
         protectedRelayAckableEntryIds.add(entry.entryId);
+        continue;
+      }
+      if (entry.messageType == 'chat_message' &&
+          existing.status == 'rejected' &&
+          existing.rejectReasonCode == _confirmedVisibleDuplicateReasonCode) {
+        // Older builds retained this terminal row after the direct copy had
+        // already proved the message durable. Exact byte equality prevents an
+        // entry-id collision from inheriting that proof. Reclaim only the ACK;
+        // replaying the already-visible message is unnecessary.
+        ackableEntryIds.add(entry.entryId);
+        confirmedDuplicateRelayAckableEntryIds.add(entry.entryId);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_CONFIRMED_DUPLICATE_ACK_RECLAIMED',
+          details: {
+            'entryId': entry.entryId.length > 8
+                ? entry.entryId.substring(0, 8)
+                : entry.entryId,
+          },
+        );
       }
     }
     if (ackableEntryIds.isNotEmpty &&
@@ -1747,7 +1777,10 @@ class _P2PInboxCoordinator {
     }
 
     if (ackFailureReason == null && relayAckableEntryIds.isNotEmpty) {
-      for (final entryId in protectedRelayAckableEntryIds) {
+      for (final entryId in <String>{
+        ...protectedRelayAckableEntryIds,
+        ...confirmedDuplicateRelayAckableEntryIds,
+      }) {
         if (relayAckableEntryIds.contains(entryId)) {
           await repo.deleteEntry(entryId);
         }

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';

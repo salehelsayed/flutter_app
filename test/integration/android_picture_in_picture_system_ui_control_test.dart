@@ -155,6 +155,26 @@ void main() {
     expect((selection.centerX, selection.centerY), (846, 2066));
   });
 
+  test('accepts the reviewed larger API 36 WMShell PiP geometry', () {
+    final probe = _loadPixel6Probe();
+    const largerBounds = AndroidPictureInPictureBounds(
+      left: 350,
+      top: 1980,
+      right: 948,
+      bottom: 2316,
+    );
+
+    final selection = selectPixel6Api36PictureInPictureSystemUiGeometry(
+      screenshot: probe.screenshot,
+      action: AndroidPictureInPictureSystemUiAction.expand,
+      pictureInPictureBounds: largerBounds,
+      environment: probe.environment,
+    );
+
+    expect((selection.centerX, selection.centerY), (649, 2148));
+    expect(selection.evidence, contains('pip598x336'));
+  });
+
   test('geometry fallback fails closed when the expand glyph is absent', () {
     final probe = _loadPixel6Probe();
     _fillRegion(

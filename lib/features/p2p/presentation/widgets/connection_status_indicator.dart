@@ -22,6 +22,8 @@ enum ConnectionHealth {
   offline,
 }
 
+enum ConnectionStatusIndicatorStyle { capsule, plain }
+
 /// Derives relay-only [ConnectionHealth] from a [NodeState].
 ConnectionHealth healthFromState(NodeState state) {
   if (!state.isStarted) return ConnectionHealth.offline;
@@ -83,9 +85,26 @@ String _semanticsLabelForBadgeState(BadgeReadinessState state) {
 /// - "Online." (also relay-reserved)
 /// - "Online ✦" (FDC-14: also directly reachable)
 class ConnectionStatusIndicator extends StatefulWidget {
-  final P2PService p2pService;
+  final P2PService? p2pService;
+  final BadgeReadinessState? previewState;
+  final int previewConnectionCount;
+  final ConnectionStatusIndicatorStyle style;
 
-  const ConnectionStatusIndicator({super.key, required this.p2pService});
+  const ConnectionStatusIndicator({
+    super.key,
+    required P2PService this.p2pService,
+    this.style = ConnectionStatusIndicatorStyle.capsule,
+  }) : previewState = null,
+       previewConnectionCount = 0;
+
+  const ConnectionStatusIndicator.preview({
+    super.key,
+    required BadgeReadinessState state,
+    int connectionCount = 0,
+    this.style = ConnectionStatusIndicatorStyle.capsule,
+  }) : p2pService = null,
+       previewState = state,
+       previewConnectionCount = connectionCount;
 
   @override
   State<ConnectionStatusIndicator> createState() =>
@@ -100,11 +119,34 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
   @override
   void initState() {
     super.initState();
-    final initial = widget.p2pService.currentState;
+    _bindWidget();
+  }
+
+  void _bindWidget() {
+    final previewState = widget.previewState;
+    if (previewState != null) {
+      _displayedBadgeState = previewState;
+      _connectionCount = widget.previewConnectionCount;
+      return;
+    }
+    final service = widget.p2pService!;
+    final initial = service.currentState;
     _displayedBadgeState = initial.badgeReadinessState;
     _connectionCount = initial.connections.length;
+    _sub = service.stateStream.listen(_onState);
+  }
 
-    _sub = widget.p2pService.stateStream.listen(_onState);
+  @override
+  void didUpdateWidget(covariant ConnectionStatusIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.p2pService == widget.p2pService &&
+        oldWidget.previewState == widget.previewState &&
+        oldWidget.previewConnectionCount == widget.previewConnectionCount) {
+      return;
+    }
+    _sub?.cancel();
+    _sub = null;
+    _bindWidget();
   }
 
   void _onState(NodeState state) {
@@ -175,60 +217,81 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
             ? readableColors.textMuted
             : Colors.grey[400]!;
     }
-    final label = _labelForBadgeState(badgeState);
+    final plain = widget.style == ConnectionStatusIndicatorStyle.plain;
+    final label = plain && _isReadyBadgeState(badgeState)
+        ? 'Online'
+        : _labelForBadgeState(badgeState);
     final semanticsLabel = _semanticsLabelForBadgeState(badgeState);
+
+    final contents = Row(
+      key: plain ? const ValueKey('connection-status-plain') : null,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: plain ? 6 : 8,
+          height: plain ? 6 : 8,
+          decoration: BoxDecoration(color: baseColor, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            color: textColor,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        if (plain && _isReadyBadgeState(badgeState) && connectionCount > 0) ...[
+          const SizedBox(width: 4),
+          Text(
+            '· $connectionCount',
+            style: TextStyle(color: textColor, fontSize: 11),
+          ),
+        ] else if (kDebugMode &&
+            _isReadyBadgeState(badgeState) &&
+            connectionCount > 0) ...[
+          const SizedBox(width: 4),
+          Text(
+            '($connectionCount)',
+            style: TextStyle(
+              // 248 (TC-29) — full semantic opacity: the old 0.7 alpha
+              // faded #236143 to ~2.43:1 on the rendered light pill.
+              color: textColor,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ],
+    );
 
     return Semantics(
       container: true,
       label: semanticsLabel,
       child: ExcludeSemantics(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: baseColor.withValues(alpha: isLightSurface ? 0.12 : 0.2),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: baseColor.withValues(alpha: isLightSurface ? 0.32 : 0.4),
-              width: 1,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
+        child: plain
+            ? Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+                child: contents,
+              )
+            : Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
                 decoration: BoxDecoration(
-                  color: baseColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              if (kDebugMode &&
-                  _isReadyBadgeState(badgeState) &&
-                  connectionCount > 0) ...[
-                const SizedBox(width: 4),
-                Text(
-                  '($connectionCount)',
-                  style: TextStyle(
-                    // 248 (TC-29) — full semantic opacity: the old 0.7 alpha
-                    // faded #236143 to ~2.43:1 on the rendered light pill.
-                    color: textColor,
-                    fontSize: 11,
+                  color: baseColor.withValues(
+                    alpha: isLightSurface ? 0.12 : 0.2,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: baseColor.withValues(
+                      alpha: isLightSurface ? 0.32 : 0.4,
+                    ),
+                    width: 1,
                   ),
                 ),
-              ],
-            ],
-          ),
-        ),
+                child: contents,
+              ),
       ),
     );
   }

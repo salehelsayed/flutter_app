@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -3583,6 +3584,122 @@ void main() {
           'entry-delayed-ack',
         ]);
 
+        service.dispose();
+      },
+    );
+
+    test(
+      'legacy confirmed-visible duplicate staging row is ACKed without replay',
+      () async {
+        final bridge = _FakeBridge();
+        final repo = InMemoryInboxStagingRepository();
+        final pending = _pendingInboxRow(
+          entryId: 'entry-confirmed-duplicate',
+          from: 'remote-peer',
+          messageId: 'msg-confirmed-duplicate',
+        );
+        repo.seed(
+          InboxStagingEntry(
+            entryId: pending['id']! as String,
+            ownerPeerId: 'self-peer',
+            senderPeerId: pending['from']! as String,
+            messageType: 'chat_message',
+            relayTimestamp: pending['timestamp']! as String,
+            envelope: pending['message']! as String,
+            status: 'rejected',
+            stagedAt: '2026-04-01T00:00:01.000Z',
+            rejectReasonCode: 'duplicate_confirmed_visible',
+          ),
+        );
+        var replayCount = 0;
+        bridge.whenCommand('inbox:retrieve_pending', (payload) {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+          return jsonEncode({
+            'ok': true,
+            'custodyContract': custodyContract,
+            'messages': [pending],
+            'hasMore': false,
+          });
+        });
+        bridge.whenCommand('inbox:ack', (payload) {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+          return jsonEncode({
+            'ok': true,
+            'acked': 1,
+            'custodyContract': custodyContract,
+          });
+        });
+
+        final service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
+            replayCount++;
+            return _committed();
+          },
+        );
+        await _start(service, bridge);
+
+        await service.drainOfflineInbox();
+
+        expect(
+          replayCount,
+          0,
+          reason: 'historic durable proof is not replayed',
+        );
+        expect(bridge.payloadsFor('inbox:ack').single?['entryIds'], [
+          'entry-confirmed-duplicate',
+        ]);
+        expect(repo.entry('entry-confirmed-duplicate'), isNull);
+        service.dispose();
+      },
+    );
+
+    test(
+      'legacy confirmed duplicate with different relay bytes is not ACKed',
+      () async {
+        final bridge = _FakeBridge();
+        final repo = InMemoryInboxStagingRepository();
+        final pending = _pendingInboxRow(
+          entryId: 'entry-colliding-duplicate',
+          from: 'remote-peer',
+          messageId: 'msg-current-relay-bytes',
+        );
+        repo.seed(
+          InboxStagingEntry(
+            entryId: pending['id']! as String,
+            ownerPeerId: 'self-peer',
+            senderPeerId: pending['from']! as String,
+            messageType: 'chat_message',
+            relayTimestamp: pending['timestamp']! as String,
+            envelope: jsonEncode({'different': 'historic relay bytes'}),
+            status: 'rejected',
+            stagedAt: '2026-04-01T00:00:01.000Z',
+            rejectReasonCode: 'duplicate_confirmed_visible',
+          ),
+        );
+        bridge.whenCommand('inbox:retrieve_pending', (payload) {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+          return jsonEncode({
+            'ok': true,
+            'custodyContract': custodyContract,
+            'messages': [pending],
+            'hasMore': false,
+          });
+        });
+
+        final service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async =>
+              _committed(),
+        );
+        await _start(service, bridge);
+
+        await service.drainOfflineInbox();
+
+        expect(bridge.payloadsFor('inbox:ack'), isEmpty);
+        expect(repo.entry('entry-colliding-duplicate'), isNotNull);
         service.dispose();
       },
     );

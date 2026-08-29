@@ -928,6 +928,89 @@ void main() {
     );
   });
 
+  test(
+    'fixed-wake proof permits idempotent settlement replay but one OS show',
+    () {
+      final source = _collapsedSource(
+        'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+      );
+      final methodStart = source.indexOf(
+        'Future<_FixedWakeCompletion> _waitForFixedWakeCompletion(',
+      );
+      final methodEnd = source.indexOf(
+        'Future<void> _killBarrierHeldWorker(',
+        methodStart,
+      );
+
+      expect(methodStart, greaterThan(0));
+      expect(methodEnd, greaterThan(methodStart));
+      final method = source.substring(methodStart, methodEnd);
+      expect(
+        method,
+        contains('if (acknowledgements.length > 1 || directShows.length > 1)'),
+      );
+      expect(method, isNot(contains('settlements.length > 1')));
+      expect(
+        method,
+        contains('final exactSettlement = settlements.isNotEmpty;'),
+      );
+      expect(method, contains("(settlements.first['details']! as Map)"));
+    },
+  );
+
+  test('fixed-wake route-absence proof stop-fences push re-registration', () {
+    final source = _collapsedSource(
+      'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+    );
+    final recoveryStart = source.indexOf(
+      'Future<void> _captureFixedWakeRecovery(',
+    );
+    final recoveryEnd = source.indexOf(
+      'Future<_FixedWakeWindow> _captureFixedWakeWindow(',
+      recoveryStart,
+    );
+    expect(recoveryStart, greaterThan(0));
+    expect(recoveryEnd, greaterThan(recoveryStart));
+    final recovery = source.substring(recoveryStart, recoveryEnd);
+    expect(
+      recovery,
+      contains(
+        "await _runNotificationPayloadAction( 'notification_unregister_push', );",
+      ),
+    );
+    final stopFence = recovery.indexOf(
+      'await _stopRecipientAfterRouteUnregister();',
+    );
+    final seed = recovery.indexOf(
+      'await _sendUiMessageFromSender(routeAbsenceMarker);',
+    );
+    expect(stopFence, greaterThan(0));
+    expect(seed, greaterThan(stopFence));
+
+    final helperStart = source.indexOf(
+      'Future<void> _stopRecipientAfterRouteUnregister() async',
+    );
+    final helperEnd = source.indexOf(
+      'Future<void> _terminateRecipient() async',
+      helperStart,
+    );
+    expect(helperStart, greaterThan(0));
+    expect(helperEnd, greaterThan(helperStart));
+    final helper = source.substring(helperStart, helperEnd);
+    expect(
+      RegExp(
+        r"await _adbShell\(recipientId, \[\s*'cmd',\s*'activity',\s*'stop-app',\s*appPackage,?\s*\]\);",
+      ).hasMatch(helper),
+      isTrue,
+    );
+    expect(
+      helper,
+      contains('await _waitForProcessAndActivityAbsent(recipientId);'),
+    );
+    expect(helper, isNot(contains("'kill'")));
+    expect(helper, isNot(contains('force-stop')));
+  });
+
   test('typed smoke measures recipient absence immediately before the reaction '
       'drive', () {
     // Plan 391 TC-391-03. The window is load-bearing: absence at KILL time
@@ -1018,8 +1101,15 @@ void main() {
     expect(method, contains('androidRelayPushRegistrationAccepted('));
     expect(
       method,
-      contains("_adb(recipientId, ['logcat'"),
+      allOf(contains('recipientId'), contains("'logcat', '-d', '-v', 'brief'")),
       reason: 'the evidence must come from the recipient device own log',
+    );
+    expect(
+      method,
+      contains('allowFail: true'),
+      reason:
+          'one transient adb snapshot failure must remain inside the bounded '
+          'registration poll instead of aborting the campaign',
     );
   });
 
@@ -1150,11 +1240,35 @@ void main() {
     expect(methodStart, greaterThan(0));
     expect(methodEnd, greaterThan(methodStart));
     final method = source.substring(methodStart, methodEnd);
-    expect(method, contains('findSemanticNodeCenter(xml, card.title)'));
-    expect(method, contains('findSemanticNodeCenter(xml, card.body)'));
+    expect(method, contains('findAndroidNotificationCardTapTarget('));
+    expect(method, contains('title: card.title'));
+    expect(method, contains('body: card.body'));
+    expect(method, contains('target.collapsedGroupExpandCenter'));
     expect(method, contains("'swipe'"));
     expect(method, contains("'1900'"));
     expect(method, contains("'700'"));
+  });
+
+  test('Plan 256 notification snapshots retry transient adb exits', () {
+    final source = _collapsedSource(
+      'integration_test/scripts/capture_1to1_reaction_head_provenance.dart',
+    );
+    final methodStart = source.indexOf(
+      'Future<String> _notificationDump(String deviceId)',
+    );
+    final methodEnd = source.indexOf(
+      'Future<void> _longPressText',
+      methodStart,
+    );
+
+    expect(methodStart, greaterThan(0));
+    expect(methodEnd, greaterThan(methodStart));
+    final method = source.substring(methodStart, methodEnd);
+    expect(method, contains('for (var attempt = 0; attempt < 12;'));
+    expect(method, contains('allowFail: true'));
+    expect(method, contains('if (result.exitCode == 0) return result.stdout'));
+    expect(method, contains('Duration(milliseconds: 500)'));
+    expect(method, contains('adb notification snapshot failed'));
   });
 
   test('Plan 257 notification tap reaches a card below the visible shade', () {
@@ -1177,11 +1291,110 @@ void main() {
       method,
       contains('Future<(int, int)> _waitForNotificationCardInShade()'),
     );
-    expect(method, contains('findSemanticNodeCenter(xml, _groupName)'));
+    expect(
+      method,
+      contains('Future<(int, int)> _waitForExactNotificationCardInShade('),
+    );
+    expect(method, contains('findAndroidNotificationCardTapTarget('));
+    expect(method, contains('title: card.title'));
+    expect(method, contains('body: card.body'));
+    expect(method, contains('exactCard.collapsedGroupExpandCenter'));
     expect(method, contains("'swipe'"));
     expect(method, contains("'1900'"));
     expect(method, contains("'700'"));
     expect(method, contains('await _waitForNotificationCardInShade()'));
+    expect(source, contains('_tapNotificationCard(secondCard.\$2)'));
+    expect(source, contains('_tapNotificationCard(replacementCard.\$2)'));
+  });
+
+  test('Plan 386 device log archive survives host ADB transport loss', () {
+    final source = _collapsedSource(
+      'integration_test/scripts/capture_group_reaction_notification_device.dart',
+    );
+
+    expect(source, contains('logcat -T 1 -v threadtime -f'));
+    expect(source, contains('device-local logcat'));
+    expect(source, contains('/system/bin/nohup /system/bin/setsid -d sh -c'));
+    expect(source, contains('_deviceLogRemotePidPaths'));
+    expect(source, contains("'/proc/\$remotePid/cmdline'"));
+    expect(source, contains("'exec-out', 'tail', '-c'"));
+    expect(source, contains('_deviceLogRemotePids'));
+    expect(source, contains('filterAndroidThreadtimeLogByProcessId'));
+    expect(source, contains('maximumAttempts: 12'));
+    expect(source, contains('Duration(milliseconds: 500)'));
+    expect(source, contains('bounded reconnect retries'));
+    expect(source, isNot(contains("'logcat', '-d'")));
+  });
+
+  group('Plan 386 device log archive ownership', () {
+    const archive =
+        '/data/local/tmp/'
+        'mknoon_device_log_73488_1787943129879632_emulator-5554.log';
+
+    test('accepts only the exact recorder pid-path namespace', () {
+      expect(androidDeviceLogArchivePathFromPidPath('$archive.pid'), archive);
+      expect(
+        androidDeviceLogArchivePathFromPidPath(
+          '/data/local/tmp/mknoon_device_log_bad-shape.log.pid',
+        ),
+        isNull,
+      );
+      expect(
+        androidDeviceLogArchivePathFromPidPath('/data/local/tmp/other.log.pid'),
+        isNull,
+      );
+      expect(
+        androidDeviceLogArchivePathFromPidPath('$archive.pid\n/etc/passwd'),
+        isNull,
+      );
+    });
+
+    test('binds a proc command line to the exact owned archive', () {
+      expect(
+        androidDeviceLogCommandLineOwnsArchive(
+          'logcat\u0000-T\u00001\u0000-v\u0000threadtime\u0000-f\u0000'
+          '$archive\u0000',
+          archive,
+        ),
+        isTrue,
+      );
+      expect(
+        androidDeviceLogCommandLineOwnsArchive(
+          'logcat\u0000-T\u00001\u0000-v\u0000threadtime\u0000-f\u0000'
+          '$archive.stale\u0000',
+          archive,
+        ),
+        isFalse,
+      );
+      expect(
+        androidDeviceLogCommandLineOwnsArchive(
+          'sh\u0000-c\u0000cat $archive\u0000',
+          archive,
+        ),
+        isFalse,
+      );
+    });
+
+    test('capture reaps verified stale recorders before launching a new one', () {
+      final source = _collapsedSource(
+        'integration_test/scripts/capture_group_reaction_notification_device.dart',
+      );
+      final start = source.indexOf(
+        'Future<void> _startDeviceLogStream(String deviceId)',
+      );
+      final launch = source.indexOf('final remoteToken =', start);
+      final reap = source.indexOf(
+        'await _reapStaleDeviceLogStreams(deviceId);',
+        start,
+      );
+
+      expect(start, greaterThan(0));
+      expect(reap, greaterThan(start));
+      expect(reap, lessThan(launch));
+      expect(source, contains("const <int>[2, 15, 9]"));
+      expect(source, contains('androidDeviceLogCommandLineOwnsArchive('));
+      expect(source, contains('device_log_stream_still_alive_on_'));
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -1475,6 +1688,20 @@ void main() {
     expect(method, contains('outcome.hasRequiredInboxCustody('));
     expect(method, contains('findNodeBoundsByClassContainingText('));
     expect(method, isNot(contains('_waitForUiText(deviceId, marker')));
+
+    final mintStart = method.indexOf('Future<void> _mintGroupSendBreadcrumb');
+    final cursor = method.indexOf(
+      'final breadcrumbCursor = await _deviceLogcatCursor(deviceId)',
+      mintStart,
+    );
+    final write = method.indexOf("'log',", cursor);
+    final boundedRead = method.indexOf('_deviceLogSince(', write);
+    final boundedCursor = method.indexOf('breadcrumbCursor', boundedRead);
+    expect(mintStart, greaterThan(0));
+    expect(cursor, greaterThan(mintStart));
+    expect(write, greaterThan(cursor));
+    expect(boundedRead, greaterThan(write));
+    expect(boundedCursor, greaterThan(boundedRead));
   });
 
   test(
@@ -1745,6 +1972,32 @@ void main() {
     expect(
       source,
       contains("'send_contact_requests_for_added_contacts': true"),
+    );
+  });
+
+  test('Plan 256 UI-seeded messages focus-fence compose input', () {
+    final source = File(
+      'integration_test/scripts/'
+      'capture_1to1_reaction_head_provenance.dart',
+    ).readAsStringSync();
+    final methodStart = source.indexOf(
+      'Future<String> _seedIncomingMessage(String marker)',
+    );
+    final methodEnd = source.indexOf(
+      'Future<void> _prepopulateContactAtStartup',
+      methodStart,
+    );
+
+    expect(methodStart, greaterThan(0));
+    expect(methodEnd, greaterThan(methodStart));
+    final method = source.substring(methodStart, methodEnd);
+    expect(method, contains('enterGroupComposeMarkerOnce('));
+    expect(method, contains('GroupComposeMarkerEntryOutcome.accepted'));
+    expect(method, contains('maximumFocusPolls: 40'));
+    expect(method, contains('maximumAcceptancePolls: 40'));
+    expect(
+      method,
+      isNot(contains("_adbShell(recipientId, ['input', 'text', marker])")),
     );
   });
 
@@ -2301,6 +2554,179 @@ Ranking Config:
 
       expect(findSemanticNodeCenter(dump, 'TC256-unique-marker'), isNull);
     });
+
+    test('finds the reaction picker above the long-pressed message', () {
+      const dump = '''
+<hierarchy>
+  <node text="" content-desc="👍" bounds="[0,1840][1080,1964]" />
+  <node text="👍" content-desc="" bounds="[150,1500][238,1588]" />
+</hierarchy>
+''';
+
+      expect(findSemanticNodeCenterAbove(dump, '👍', yExclusive: 1840), (
+        194,
+        1544,
+      ));
+    });
+
+    test('does not mistake the existing reaction badge for the picker', () {
+      const dump = '''
+<hierarchy>
+  <node text="" content-desc="👍" bounds="[0,1840][1080,1964]" />
+</hierarchy>
+''';
+
+      expect(findSemanticNodeCenterAbove(dump, '👍', yExclusive: 1840), isNull);
+    });
+  });
+
+  group('findAndroidNotificationCardRowCenter', () {
+    test('finds only the safe Wait action on a blocking system ANR', () {
+      const dump = '''
+<hierarchy>
+  <node resource-id="android:id/parentPanel" package="android" bounds="[70,1057][1010,1479]">
+    <node text="Process system isn't responding" resource-id="android:id/alertTitle" package="android" bounds="[133,1104][947,1167]" />
+    <node text="Close app" resource-id="android:id/aerr_close" package="android" clickable="true" enabled="true" bounds="[70,1206][1010,1332]" />
+    <node text="Wait" resource-id="android:id/aerr_wait" package="android" clickable="true" enabled="true" bounds="[70,1332][1010,1458]" />
+  </node>
+</hierarchy>
+''';
+
+      expect(findAndroidAnrWaitCenter(dump), (540, 1395));
+      expect(
+        findAndroidAnrWaitCenter(
+          dump.replaceFirst("Process system isn't responding", 'Notice'),
+        ),
+        isNull,
+      );
+    });
+
+    test('finds the collapsed group expander before the body is exposed', () {
+      const dump = '''
+<hierarchy>
+  <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,1959][1038,2316]">
+    <node text="TC257Group123" bounds="[231,2001][586,2051]" />
+    <node resource-id="android:id/expand_button" content-desc="Expand" bounds="[874,1959][1038,2091]" />
+    <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,2059][1038,2109]">
+      <node text="TC257Group123" bounds="[231,2059][586,2109]" />
+    </node>
+  </node>
+</hierarchy>
+''';
+
+      expect(
+        findAndroidNotificationCardTapTarget(
+          dump,
+          title: 'TC257Group123',
+          body: 'Alice reacted to your message',
+        ),
+        isNull,
+      );
+      expect(
+        findAndroidCollapsedNotificationExpandCenter(
+          dump,
+          title: 'TC257Group123',
+        ),
+        (956, 2025),
+      );
+    });
+
+    test('taps the nested grouped row center outside the expand overlay', () {
+      const dump = '''
+<hierarchy>
+  <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,1959][1038,2316]">
+    <node text="TC257Group123" bounds="[231,2001][586,2051]" />
+    <node resource-id="android:id/expand_button" content-desc="Expand" bounds="[874,1959][1038,2091]" />
+    <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,2059][1038,2109]">
+      <node text="TC257Group123" bounds="[231,2059][586,2109]" />
+      <node text="Alice reacted to your message" bounds="[796,2059][1006,2109]" />
+      <node resource-id="android:id/expand_button_touch_container" bounds="[886,2059][1038,2109]" />
+    </node>
+    <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,2130][1038,2180]">
+      <node text="TC257Group123" bounds="[231,2130][586,2180]" />
+      <node text="warm-up" bounds="[586,2130][1006,2180]" />
+    </node>
+  </node>
+</hierarchy>
+''';
+
+      expect(findSemanticNodeCenter(dump, 'Alice reacted to your message'), (
+        901,
+        2084,
+      ));
+      expect(
+        findAndroidNotificationCardRowCenter(
+          dump,
+          title: 'TC257Group123',
+          body: 'Alice reacted to your message',
+        ),
+        (540, 2084),
+      );
+      final target = findAndroidNotificationCardTapTarget(
+        dump,
+        title: 'TC257Group123',
+        body: 'Alice reacted to your message',
+      );
+      expect(target?.cardCenter, (540, 2084));
+      expect(target?.collapsedGroupExpandCenter, (956, 2025));
+    });
+
+    test('does not re-expand an already expanded ancestor group', () {
+      const dump = '''
+<hierarchy>
+  <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,1500][1038,2200]">
+    <node resource-id="android:id/expand_button" content-desc="Collapse" bounds="[874,1500][1038,1632]" />
+    <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,1700][1038,1900]">
+      <node text="TC257Group123" bounds="[231,1720][586,1770]" />
+      <node text="Alice reacted to your message" bounds="[231,1780][900,1840]" />
+    </node>
+  </node>
+</hierarchy>
+''';
+
+      final target = findAndroidNotificationCardTapTarget(
+        dump,
+        title: 'TC257Group123',
+        body: 'Alice reacted to your message',
+      );
+      expect(target?.cardCenter, (540, 1800));
+      expect(target?.collapsedGroupExpandCenter, isNull);
+    });
+
+    test('requires title and body to belong to the same row', () {
+      const dump = '''
+<hierarchy>
+  <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,600][1038,760]">
+    <node text="Target title" bounds="[231,620][586,670]" />
+    <node text="other body" bounds="[586,670][1006,720]" />
+  </node>
+  <node resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[42,780][1038,940]">
+    <node text="Other title" bounds="[231,800][586,850]" />
+    <node text="Target body" bounds="[586,850][1006,900]" />
+  </node>
+</hierarchy>
+''';
+
+      expect(
+        findAndroidNotificationCardRowCenter(
+          dump,
+          title: 'Target title',
+          body: 'Target body',
+        ),
+        isNull,
+      );
+    });
+
+    test('treats a malformed hierarchy as a retryable miss', () {
+      expect(
+        findAndroidNotificationCardRowCenter(
+          '<hierarchy><node>',
+          title: 'title',
+          body: 'body',
+        ),
+        isNull,
+      );
+    });
   });
 
   group('isAcceptedGroupSurface', () {
@@ -2432,6 +2858,148 @@ Ranking Config:
           'TC257First123',
         ),
         isNull,
+      );
+    });
+  });
+
+  group('readCompleteAndroidUiHierarchyWithRetry', () {
+    test(
+      'retains the last complete hierarchy for the device whose read failed',
+      () {
+        final history = AndroidUiHierarchyHistory();
+        const sender = '<hierarchy><node text="sender" /></hierarchy>';
+        const recipient = '<hierarchy><node text="recipient" /></hierarchy>';
+
+        history.recordAttempt(deviceId: 'emulator-5554', xml: sender);
+        history.recordAttempt(deviceId: 'physical', xml: recipient);
+        history.recordAttempt(deviceId: 'emulator-5554', xml: '');
+
+        expect(history.lastCompleteForLastAttemptedDevice, (
+          deviceId: 'emulator-5554',
+          xml: sender,
+        ));
+      },
+    );
+
+    test('does not retain incomplete hierarchy output', () {
+      final history = AndroidUiHierarchyHistory();
+
+      history.recordAttempt(deviceId: 'emulator-5554', xml: '<hierarchy>');
+
+      expect(history.lastCompleteForLastAttemptedDevice, isNull);
+    });
+
+    test('rejects an empty hierarchy device id', () {
+      final history = AndroidUiHierarchyHistory();
+
+      expect(
+        () => history.recordAttempt(
+          deviceId: '  ',
+          xml: '<hierarchy></hierarchy>',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('live group and direct captures use the bounded hierarchy reader', () {
+      for (final path in <String>[
+        'integration_test/scripts/'
+            'capture_group_reaction_notification_device.dart',
+        'integration_test/scripts/'
+            'capture_1to1_reaction_head_provenance.dart',
+      ]) {
+        final source = File(path).readAsStringSync();
+        expect(
+          source,
+          contains('readCompleteAndroidUiHierarchyWithRetry('),
+          reason: '$path must reject incomplete uiautomator output',
+        );
+      }
+    });
+
+    test(
+      'retries incomplete reads and returns the first complete hierarchy',
+      () async {
+        const complete = '<hierarchy><node /></hierarchy>';
+        final reads = <String>['', '<hierarchy>', complete];
+        var attempts = 0;
+
+        final result = await readCompleteAndroidUiHierarchyWithRetry(
+          readAttempt: (attempt) async {
+            attempts = attempt;
+            return reads.removeAt(0);
+          },
+          retryInterval: Duration.zero,
+        );
+
+        expect(result, complete);
+        expect(attempts, 3);
+      },
+    );
+
+    test('returns a complete first read without retrying', () async {
+      const complete = '<hierarchy rotation="0"></hierarchy>\n';
+      var attempts = 0;
+
+      final result = await readCompleteAndroidUiHierarchyWithRetry(
+        readAttempt: (attempt) async {
+          attempts = attempt;
+          return complete;
+        },
+        retryInterval: Duration.zero,
+      );
+
+      expect(result, complete);
+      expect(attempts, 1);
+    });
+
+    test('fails closed after the bounded attempts are exhausted', () async {
+      var attempts = 0;
+
+      final result = await readCompleteAndroidUiHierarchyWithRetry(
+        readAttempt: (attempt) async {
+          attempts = attempt;
+          return attempt.isOdd ? '' : '<hierarchy>';
+        },
+        maximumAttempts: 4,
+        retryInterval: Duration.zero,
+      );
+
+      expect(result, isEmpty);
+      expect(attempts, 4);
+    });
+
+    test('rejects a non-positive attempt bound', () async {
+      await expectLater(
+        () => readCompleteAndroidUiHierarchyWithRetry(
+          readAttempt: (_) async => '<hierarchy></hierarchy>',
+          maximumAttempts: 0,
+        ),
+        throwsArgumentError,
+      );
+    });
+  });
+
+  group('filterAndroidThreadtimeLogByProcessId', () {
+    test('keeps only rows from the exact current process', () {
+      const log = '''
+08-28 02:28:42.890 18314 18314 I flutter : current marker
+08-28 02:28:42.891 18315 18315 I flutter : foreign marker
+08-28 02:28:42.892 18314 18345 D EGL_emulation: current render
+unstructured continuation text
+''';
+
+      expect(
+        filterAndroidThreadtimeLogByProcessId(log, 18314),
+        '''08-28 02:28:42.890 18314 18314 I flutter : current marker
+08-28 02:28:42.892 18314 18345 D EGL_emulation: current render''',
+      );
+    });
+
+    test('rejects a non-positive process id', () {
+      expect(
+        () => filterAndroidThreadtimeLogByProcessId('', 0),
+        throwsArgumentError,
       );
     });
   });
@@ -2643,6 +3211,35 @@ Ranking Config:
         findBottommostNodeCenterByClass(
           '<hierarchy><node class="android.view.View" /></hierarchy>',
           'android.widget.EditText',
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group('findNodeBoundsByClassWithExactText', () {
+    test('requires an exact value on the requested Android class', () {
+      const dump = '''
+<hierarchy>
+  <node class="android.view.View" text="TC257Group123" bounds="[0,0][20,20]" />
+  <node class="android.widget.EditText" text="TTC257Group123" bounds="[42,317][1038,443]" />
+  <node class="android.widget.EditText" text="TC257Group123" bounds="[42,2009][1038,2135]" />
+</hierarchy>
+''';
+
+      expect(
+        findNodeBoundsByClassWithExactText(
+          dump,
+          'android.widget.EditText',
+          'TC257Group123',
+        ),
+        (42, 2009, 1038, 2135),
+      );
+      expect(
+        findNodeBoundsByClassWithExactText(
+          dump,
+          'android.widget.EditText',
+          'TC257Group12',
         ),
         isNull,
       );

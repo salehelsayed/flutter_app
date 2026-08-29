@@ -90,6 +90,11 @@ class DroppedPushRecoveryCoordinator {
   final DirectDroppedPushDrain _drainDirectInboxFully;
   final GroupDroppedPushDrain _drainGroupInboxFully;
 
+  static const int _maxDirectLocalConvergencePasses = 10;
+  static const Duration _directLocalConvergenceDelay = Duration(
+    milliseconds: 250,
+  );
+
   Future<DroppedPushRecoveryResult>? _inFlight;
 
   Future<bool> hasPendingRecovery() async {
@@ -164,6 +169,20 @@ class DroppedPushRecoveryCoordinator {
       DirectInboxDrainOutcome directOutcome;
       try {
         directOutcome = await _drainDirectInboxFully();
+        for (
+          var pass = 1;
+          pass < _maxDirectLocalConvergencePasses &&
+              _isTrailingStagedReplayPending(directOutcome);
+          pass++
+        ) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'DROPPED_PUSH_RECOVERY_DIRECT_REPOLL',
+            details: {'generation': generation, 'pass': pass + 1},
+          );
+          await Future<void>.delayed(_directLocalConvergenceDelay);
+          directOutcome = await _drainDirectInboxFully();
+        }
       } catch (error) {
         directOutcome = DirectInboxDrainOutcome(
           isSuccessful: false,
@@ -243,6 +262,11 @@ class DroppedPushRecoveryCoordinator {
       return _retained(generation, 'recovery_exception:${error.runtimeType}');
     }
   }
+
+  bool _isTrailingStagedReplayPending(DirectInboxDrainOutcome outcome) =>
+      !outcome.isSuccessful &&
+      outcome.hasMore &&
+      outcome.failureReason == 'staged_replay_pending';
 
   DroppedPushRecoveryResult _retained(int generation, String reason) {
     emitFlowEvent(

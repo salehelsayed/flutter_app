@@ -640,6 +640,45 @@ func TestAutoRegister_WaitsForDiscoverableCircuitRecordNotMereRelaySocket(t *tes
 	}
 }
 
+func TestWaitForCircuitAddressOnHostDoesNotReacquireNodeMutex(t *testing.T) {
+	hexKey := generateTestKey(t)
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+	if h == nil {
+		t.Fatal("started node has no host")
+	}
+
+	n.mu.Lock()
+	result := make(chan bool, 1)
+	go func() {
+		result <- n.waitForCircuitAddressOnHost(h, 20*time.Millisecond)
+	}()
+
+	select {
+	case got := <-result:
+		n.mu.Unlock()
+		if got {
+			t.Fatal("unexpected circuit address without a relay")
+		}
+	case <-time.After(250 * time.Millisecond):
+		n.mu.Unlock()
+		<-result
+		t.Fatal("captured-host circuit wait blocked on the node mutex")
+	}
+}
+
 func TestAutoRegister_DoesNotWaitForSlowSecondaryWarmAttempt(t *testing.T) {
 	hexKey := generateTestKey(t)
 

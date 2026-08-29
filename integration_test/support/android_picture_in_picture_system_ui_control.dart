@@ -120,14 +120,28 @@ selectPixel6Api36PictureInPictureSystemUiGeometry({
       'Post-reveal screenshot dimensions did not match the live display.',
     );
   }
-  if (pictureInPictureBounds.right - pictureInPictureBounds.left != 521 ||
-      pictureInPictureBounds.bottom - pictureInPictureBounds.top != 293 ||
+  final pictureInPictureWidth =
+      pictureInPictureBounds.right - pictureInPictureBounds.left;
+  final pictureInPictureHeight =
+      pictureInPictureBounds.bottom - pictureInPictureBounds.top;
+  final reviewedGeometry = switch ((
+    pictureInPictureWidth,
+    pictureInPictureHeight,
+  )) {
+    (521, 293) => 'pip521x293',
+    // Captured on the same Pixel 6 / API 36 / 420dpi environment after the
+    // WMShell menu-size update. The glyph probe below remains mandatory, so
+    // exact bounds alone can never authorize a tap.
+    (598, 336) => 'pip598x336',
+    _ => null,
+  };
+  if (reviewedGeometry == null ||
       pictureInPictureBounds.left < 0 ||
       pictureInPictureBounds.top < 0 ||
       pictureInPictureBounds.right > screenshot.width ||
       pictureInPictureBounds.bottom > screenshot.height) {
     throw const AndroidPictureInPictureSystemUiSelectionException(
-      'Live PiP bounds did not match the reviewed 521x293 Pixel geometry.',
+      'Live PiP bounds did not match a reviewed Pixel geometry.',
     );
   }
 
@@ -193,7 +207,7 @@ selectPixel6Api36PictureInPictureSystemUiGeometry({
         ? centerY
         : pictureInPictureBounds.top + 64,
     evidence:
-        'pixel6-api36-1080x2400-420dpi-rotation0-pip521x293-expand-glyph-v1',
+        'pixel6-api36-1080x2400-420dpi-rotation0-$reviewedGeometry-expand-glyph-v1',
   );
 }
 

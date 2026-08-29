@@ -3197,6 +3197,68 @@ void main() {
     });
 
     test(
+      'direct chat clears staging after a confirmed-visible duplicate',
+      () async {
+        final repo = InMemoryInboxStagingRepository();
+        final replayed = Completer<void>();
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayLiveDirectChatMessage: (_, {String? stagedEntryId}) async {
+            if (!replayed.isCompleted) replayed.complete();
+            return (
+              disposition: RecoveredInboxChatDisposition.rejected,
+              reasonCode: 'duplicate_confirmed_visible',
+              reasonDetail: 'the prior copy is durably visible',
+            );
+          },
+          replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
+            fail(
+              'live direct duplicate must not route through the recovery '
+              'callback',
+            );
+          },
+        );
+
+        bridge.whenCommand(
+          'message:confirm',
+          (_) => jsonEncode({'ok': true, 'confirmed': true}),
+        );
+
+        bridge.onMessageReceived?.call(
+          ChatMessage(
+            from: 'remote-peer',
+            to: 'self-peer',
+            content: _chatEnvelope(
+              id: 'msg-direct-dupe',
+              text: 'already persisted',
+              senderPeerId: 'remote-peer',
+            ),
+            timestamp: '2026-04-01T00:00:00.000Z',
+            isIncoming: true,
+            transport: 'direct',
+            confirmNonce: 'nonce-direct-dupe',
+          ),
+        );
+
+        await replayed.future.timeout(const Duration(seconds: 5));
+        await _waitForCondition(
+          () => bridge.payloadsFor('message:confirm').isNotEmpty,
+          reason: 'direct duplicate confirmation',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(
+          repo.entry('direct:nonce-direct-dupe'),
+          isNull,
+          reason:
+              'a confirmed-visible duplicate already has durable custody and '
+              'must not strand a terminal staging row',
+        );
+      },
+    );
+
+    test(
       'reaction stage failure uses shared notify-capable fallback exactly once',
       () async {
         final replayed = <ChatMessage>[];

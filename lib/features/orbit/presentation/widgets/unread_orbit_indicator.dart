@@ -27,11 +27,21 @@ class UnreadOrbitIndicator extends StatefulWidget {
   /// with the widget's own reduce-motion read — either disables motion.
   final bool motionEnabled;
 
+  /// Opt-in relationship colour used by the Orbital Quiet prototype.
+  final Color accent;
+
+  /// V2 replaces the revolving satellites with one restrained numeric badge.
+  final bool showSatellites;
+  final bool showCountBadge;
+
   const UnreadOrbitIndicator({
     super.key,
     required this.unreadCount,
     this.diameter = 38,
     this.motionEnabled = true,
+    this.accent = kUnreadAccent,
+    this.showSatellites = true,
+    this.showCountBadge = false,
   });
 
   /// The app's green unread accent (the `#1DB954` family shared with
@@ -121,20 +131,28 @@ class _UnreadOrbitIndicatorState extends State<UnreadOrbitIndicator>
         Positioned.fill(
           child: CustomPaint(
             painter: UnreadOrbitRingPainter(
-              accent: UnreadOrbitIndicator.kUnreadAccent,
+              accent: widget.accent,
               ringRadius: ringRadius,
             ),
           ),
         ),
-        for (var i = 0; i < _satelliteCount; i++)
-          _satellite(
-            index: i,
-            center: center,
-            ringRadius: ringRadius,
-            coreRadius: coreRadius,
-            haloReach: haloReach,
-          ),
+        if (widget.showSatellites)
+          for (var i = 0; i < _satelliteCount; i++)
+            _satellite(
+              index: i,
+              center: center,
+              ringRadius: ringRadius,
+              coreRadius: coreRadius,
+              haloReach: haloReach,
+            ),
       ],
+    );
+
+    final rotatingField = AnimatedBuilder(
+      animation: _controller,
+      child: field,
+      builder: (context, child) =>
+          Transform.rotate(angle: _controller.value * 2 * pi, child: child),
     );
 
     return SizedBox(
@@ -143,11 +161,35 @@ class _UnreadOrbitIndicatorState extends State<UnreadOrbitIndicator>
       // The rotating field is passed as the AnimatedBuilder child so only the
       // Transform rebuilds each frame — the ring/satellites (and, in the host,
       // the avatar) are not rebuilt per tick (TC-194-36).
-      child: AnimatedBuilder(
-        animation: _controller,
-        child: field,
-        builder: (context, child) =>
-            Transform.rotate(angle: _controller.value * 2 * pi, child: child),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(child: rotatingField),
+          if (widget.showCountBadge)
+            Positioned(
+              key: const ValueKey('orbit-unread-count-badge'),
+              right: 0,
+              top: 0,
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: widget.accent,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '${widget.unreadCount}',
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -176,12 +218,10 @@ class _UnreadOrbitIndicatorState extends State<UnreadOrbitIndicator>
             height: coreRadius * 2,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: UnreadOrbitIndicator.kUnreadAccent,
+              color: widget.accent,
               boxShadow: [
                 BoxShadow(
-                  color: UnreadOrbitIndicator.kUnreadAccent.withValues(
-                    alpha: 0.16,
-                  ),
+                  color: widget.accent.withValues(alpha: 0.16),
                   blurRadius: coreRadius * 1.6,
                   spreadRadius: coreRadius * 1.6,
                 ),

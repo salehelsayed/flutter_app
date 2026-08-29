@@ -178,6 +178,23 @@ internal interface HeadlessCanonicalRecoveryEngineRunner {
 }
 
 /**
+ * Gives an already-running application owner first refusal on an immediate
+ * recovery retry. The durable marker and WorkManager retry remain in place;
+ * only the competing headless engine launch is skipped for this attempt.
+ */
+internal fun signalWarmRecoveryOwnerIfRegistered(
+    authority: HeadlessCanonicalRecoveryAuthority,
+    inputData: Data,
+    signal: (Long) -> Boolean = DroppedPushRecoveryProcessSignalRegistry::signal,
+): Boolean {
+    val marker = HeadlessCanonicalRecoveryExecution
+        .resolveStartSnapshot(authority, inputData)
+        ?.pendingRecovery
+        ?: return false
+    return signal(marker.generation)
+}
+
+/**
  * Truthful, testable WorkManager execution policy. Work input is only a wake
  * signal; authority is resnapshotted both before engine creation and after the
  * Dart runtime reports completion.
@@ -453,11 +470,15 @@ internal class HeadlessCanonicalRecoveryWorker(
         }
     }
 
+    private val authority by lazy {
+        StoreHeadlessCanonicalRecoveryAuthority(
+            DroppedPushRecoveryStore(applicationContext),
+        )
+    }
+
     private val execution by lazy {
         HeadlessCanonicalRecoveryExecution(
-            authority = StoreHeadlessCanonicalRecoveryAuthority(
-                DroppedPushRecoveryStore(applicationContext),
-            ),
+            authority = authority,
             runnerFactory = {
                 FlutterHeadlessCanonicalRecoveryEngineRunner(applicationContext)
             },
@@ -471,6 +492,11 @@ internal class HeadlessCanonicalRecoveryWorker(
 
     override fun doWork(): Result = runBlocking {
         emitPlan374Diagnostic("start")
+        if (signalWarmRecoveryOwnerIfRegistered(authority, inputData)) {
+            emitPlan374Diagnostic("warm_owner_signalled")
+            emitPlan374Diagnostic("completion", "RETRY")
+            return@runBlocking Result.retry()
+        }
         val barrierConsumed = Plan374ProcessDeathBarrier.consumeAndAwaitProcessDeath(
             context = applicationContext,
             reason = inputData.getString(

@@ -45,8 +45,16 @@ const _navErrorEvents = [
   'INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR',
 ];
 const Duration introAcceptanceCampaignBudget = Duration(minutes: 24);
+const Duration introAppDocumentReadCommandCeiling = Duration(seconds: 5);
+const int introAppDocumentReadTimeoutAttempts = 12;
 
 typedef IntroDeadlineClock = DateTime Function();
+
+String introStepReceiptFailureDetail({
+  required String stepId,
+  required String partyRole,
+  required String detail,
+}) => 'step $stepId on $partyRole did not produce a receipt: $detail';
 
 List<({int left, int top, int right, int bottom})>
 exactNotificationTitleNodeBounds(String xml, String title) {
@@ -84,6 +92,70 @@ bool isAndroidActivityStartAccepted(String output) {
     r'^Status:[ \t]+(?:ok|timeout)[ \t]*\r?$',
     multiLine: true,
   ).hasMatch(output);
+}
+
+/// Accepts only the exact intent handoff emitted before a host-side
+/// `am start -W` process timeout.
+///
+/// The timed-out host process is terminated. The caller then checks whether
+/// Android kept the app process alive before deciding whether one bounded
+/// recovery handoff is required. The following identity-export phase remains
+/// authoritative: if ActivityManager did not launch this exact component, no
+/// fresh identity can appear and the bootstrap phase still fails closed.
+bool isAndroidActivityStartProvisionallyAccepted(
+  String output, {
+  required String packageName,
+}) {
+  return RegExp(
+    '^Starting: Intent \\{ cmp=${RegExp.escape(packageName)}/'
+    r'\.MainActivity \}[ \t]*\r?\n?$',
+  ).hasMatch(output);
+}
+
+/// Launches one Android activity and recovers once only when ActivityManager
+/// accepted the exact component but subsequently left no app process alive.
+///
+/// `am start -W` can outlive Android's own process-attach deadline. In that
+/// case the command emits the exact component handoff, Android logs a start
+/// timeout, kills the unattached process, and the host command remains stuck.
+/// A non-empty pid means startup is still progressing and identity export is
+/// the next proof. An empty pid permits one non-waiting component handoff; a
+/// second command timeout or a non-matching response fails closed and is never
+/// retried here.
+Future<bool> runAndroidActivityLaunchWithSingleProcessRecovery({
+  required Future<String> Function(bool waitForLaunch) launch,
+  required Future<String> Function() readProcessId,
+  required String packageName,
+  void Function(String message)? onDiagnostic,
+}) async {
+  try {
+    return isAndroidActivityStartAccepted(await launch(true));
+  } on IntroCommandTimedOut catch (error) {
+    if (!isAndroidActivityStartProvisionallyAccepted(
+      error.stdout,
+      packageName: packageName,
+    )) {
+      rethrow;
+    }
+    final processId = (await readProcessId()).trim();
+    if (processId.isNotEmpty) {
+      onDiagnostic?.call(
+        'provisional ActivityManager handoff has live pid=$processId; '
+        'identity export remains required',
+      );
+      return true;
+    }
+    onDiagnostic?.call(
+      'provisional ActivityManager handoff left no app process; issuing one '
+      'non-waiting recovery handoff',
+    );
+    final recoveryOutput = await launch(false);
+    return isAndroidActivityStartProvisionallyAccepted(
+          recoveryOutput,
+          packageName: packageName,
+        ) ||
+        isAndroidActivityStartAccepted(recoveryOutput);
+  }
 }
 
 /// One absolute campaign deadline with phase allocations underneath it.
@@ -177,6 +249,41 @@ final class _CommandResult {
   final int exitCode;
   final String stdout;
   final String stderr;
+}
+
+final class IntroCommandTimedOut implements Exception {
+  const IntroCommandTimedOut(this.detail, {this.stdout = '', this.stderr = ''});
+
+  final String detail;
+  final String stdout;
+  final String stderr;
+
+  @override
+  String toString() => detail;
+}
+
+Future<T> runIntroIdempotentCommandWithRetries<T>({
+  required Future<T> Function() command,
+  int maximumAttempts = 3,
+  Duration retryDelay = const Duration(milliseconds: 250),
+}) async {
+  if (maximumAttempts < 1 || retryDelay.isNegative) {
+    throw ArgumentError(
+      'Intro command retries require a positive attempt bound and a '
+      'non-negative delay.',
+    );
+  }
+  for (var attempt = 1; attempt <= maximumAttempts; attempt++) {
+    try {
+      return await command();
+    } on IntroCommandTimedOut {
+      if (attempt == maximumAttempts) rethrow;
+      if (retryDelay > Duration.zero) {
+        await Future<void>.delayed(retryDelay);
+      }
+    }
+  }
+  throw StateError('unreachable intro command retry state');
 }
 
 class _Scenario {
@@ -328,7 +435,8 @@ class _Campaign {
   static const Duration _preflightBudget = Duration(minutes: 2);
   static const Duration _installBudget = Duration(minutes: 4);
   static const Duration _bootstrapBudget = Duration(minutes: 5);
-  static const Duration _fixtureBudget = Duration(minutes: 7);
+  static const Duration _contactFixtureBudget = Duration(minutes: 7);
+  static const Duration _introductionFixtureBudget = Duration(minutes: 4);
   static const Duration _acceptanceBudget = Duration(minutes: 6);
   static const Duration _finalizationBudget = Duration(minutes: 2);
 
@@ -397,10 +505,16 @@ class _Campaign {
         await _launchAll();
         await _collectIdentities();
       });
-      await _runPhase('fixture', _fixtureBudget, () async {
-        await _setupContacts();
-        await _sendIntroduction();
-      });
+      await _runPhase(
+        'fixture_contacts',
+        _contactFixtureBudget,
+        _setupContacts,
+      );
+      await _runPhase(
+        'fixture_introduction',
+        _introductionFixtureBudget,
+        _sendIntroduction,
+      );
 
       // Leg 1: B accepts while A is terminated.
       await _runPhase(
@@ -582,17 +696,32 @@ class _Campaign {
 
   Future<void> _launchAll() async {
     for (final party in <_Party>[a, b, if (!c.isIos) c]) {
-      final output = await _adbShell(party.deviceId, [
-        'am',
-        'start',
-        '-W',
-        '-n',
-        '$_appPackage/.MainActivity',
-      ]);
-      if (!isAndroidActivityStartAccepted(output)) {
-        throw _CampaignFailure(
-          'Parent-prepared APK did not launch on ${party.deviceId}.',
-        );
+      try {
+        final launched =
+            await runAndroidActivityLaunchWithSingleProcessRecovery(
+              launch: (waitForLaunch) => _adbShell(party.deviceId, [
+                'am',
+                'start',
+                if (waitForLaunch) '-W',
+                '-n',
+                '$_appPackage/.MainActivity',
+              ], propagateTimeout: true),
+              readProcessId: () => _adbShell(
+                party.deviceId,
+                ['pidof', _appPackage],
+                allowFail: true,
+                commandCeiling: const Duration(seconds: 5),
+              ),
+              packageName: _appPackage,
+              onDiagnostic: (message) => _log('$message on ${party.deviceId}'),
+            );
+        if (!launched) {
+          throw _CampaignFailure(
+            'Parent-prepared APK did not launch on ${party.deviceId}.',
+          );
+        }
+      } on IntroCommandTimedOut catch (error) {
+        throw _CampaignFailure(error.detail);
       }
     }
     if (c.isIos) {
@@ -654,7 +783,9 @@ class _Campaign {
       'stepId': '252-${scenario.id}-a-contacts',
       'add_contacts': [_contactEntry(b), _contactEntry(c)],
       'send_contact_requests_for_added_contacts': true,
-      'contact_settle_delay_ms': 2000,
+      // Both downstream accept commands prove delivery. Avoid an unrelated
+      // full-database snapshot on this setup-only command.
+      'skip_snapshot': true,
     });
     await _writeConfigAndAwait(b, {
       'stepId': '252-${scenario.id}-b-accept-contacts',
@@ -699,6 +830,7 @@ class _Campaign {
       'introduction_action': 'accept_all',
       'poll_cycles': 40,
       'poll_interval_ms': 1000,
+      'idle_cycles_after_seen': 1,
       'require_introducer_acceptance_custody': true,
       'introducer_acceptance_custody_timeout_ms': 150000,
     });
@@ -841,15 +973,7 @@ class _Campaign {
     final titles = RegExp(
       r'android\.title=(?:String\s*\()?([^)\n]+)',
     ).allMatches(dump).map((match) => match.group(1)!.trim()).toList();
-    if (titles.isNotEmpty) {
-      return titles;
-    }
-    // Fall back to UIAutomator content text when dumpsys redacts.
-    final xml = await _uiautomatorDump();
-    return [
-      for (final match in RegExp(r'text="([^"]+)"').allMatches(xml))
-        match.group(1)!,
-    ];
+    return titles;
   }
 
   Future<({String title, String body})> _extractAcceptanceCopy() async {
@@ -1000,8 +1124,18 @@ class _Campaign {
 
   Future<String> _uiautomatorDump() async {
     const remotePath = '/sdcard/252_ui_dump.xml';
-    await _adbShell(a.deviceId, ['uiautomator', 'dump', remotePath]);
-    final xml = await _adbShell(a.deviceId, ['cat', remotePath]);
+    await _adbShell(
+      a.deviceId,
+      ['uiautomator', 'dump', remotePath],
+      commandCeiling: const Duration(seconds: 15),
+      timeoutAttempts: 3,
+    );
+    final xml = await _adbShell(
+      a.deviceId,
+      ['cat', remotePath],
+      commandCeiling: const Duration(seconds: 15),
+      timeoutAttempts: 3,
+    );
     await _adbShell(a.deviceId, ['rm', '-f', remotePath], allowFail: true);
     return xml;
   }
@@ -1028,7 +1162,7 @@ class _Campaign {
   Future<({String finalPeer, String statusContext})> _waitForRedirectMarker(
     String sinceMark,
   ) async {
-    final waitBudget = deadline.remaining(ceiling: const Duration(seconds: 60));
+    final waitBudget = deadline.remaining();
     if (waitBudget <= Duration.zero) {
       throw _CampaignFailure(
         'timed out waiting for $_redirectEvent during ${deadline.phaseName}',
@@ -1067,8 +1201,9 @@ class _Campaign {
       );
     }
     throw _CampaignFailure(
-      'timed out waiting for $_redirectEvent marker after tap; the tap did '
-      'not reach the introducer-accept conversation redirect',
+      'timed out waiting for $_redirectEvent marker after the UI-derived tap; '
+      'the cold-start route did not complete within the bounded '
+      '${deadline.phaseName} phase',
     );
   }
 
@@ -1184,39 +1319,50 @@ class _Campaign {
     final requiresAcceptance =
         config['introduction_action'] == 'accept_all' &&
         config['require_introducer_acceptance_custody'] == true;
-    _log('writing config $stepId to ${party.role}');
-    await _writeAppDocumentsFile(
-      party,
-      'intro_e2e_config.json',
-      jsonEncode(config),
-    );
-    final raw = await _waitForValue(
-      'result for $stepId',
-      deadline.remaining(),
-      () async {
-        final result = await _readAppDocumentsFile(
-          party,
-          'intro_e2e_result.json',
-        );
-        if (result == null) {
-          return null;
-        }
-        final decoded = jsonDecode(result) as Map<String, dynamic>;
-        if (decoded['stepId'] != stepId || decoded['status'] == 'running') {
-          return null;
-        }
-        if (decoded['success'] == true &&
-            requiresAcceptance &&
-            !isIntroAcceptanceResult(decoded, stepId: stepId)) {
-          _log(
-            'ignoring non-acceptance completion for $stepId while awaiting '
-            'explicit acceptance custody',
+    late final String raw;
+    try {
+      _log('writing config $stepId to ${party.role}');
+      await _writeAppDocumentsFile(
+        party,
+        'intro_e2e_config.json',
+        jsonEncode(config),
+      );
+      raw = await _waitForValue(
+        'result for $stepId',
+        deadline.remaining(),
+        () async {
+          final result = await _readAppDocumentsFile(
+            party,
+            'intro_e2e_result.json',
           );
-          return null;
-        }
-        return result;
-      },
-    );
+          if (result == null) {
+            return null;
+          }
+          final decoded = jsonDecode(result) as Map<String, dynamic>;
+          if (decoded['stepId'] != stepId || decoded['status'] == 'running') {
+            return null;
+          }
+          if (decoded['success'] == true &&
+              requiresAcceptance &&
+              !isIntroAcceptanceResult(decoded, stepId: stepId)) {
+            _log(
+              'ignoring non-acceptance completion for $stepId while awaiting '
+              'explicit acceptance custody',
+            );
+            return null;
+          }
+          return result;
+        },
+      );
+    } on _CampaignFailure catch (failure) {
+      throw _CampaignFailure(
+        introStepReceiptFailureDetail(
+          stepId: stepId,
+          partyRole: party.role,
+          detail: failure.message,
+        ),
+      );
+    }
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
     if (decoded['success'] != true) {
       throw _CampaignFailure(
@@ -1242,15 +1388,24 @@ class _Campaign {
       }
       return file.readAsStringSync();
     }
-    final out = await _run('adb', [
-      '-s',
-      party.deviceId,
-      'shell',
-      'run-as',
-      _appPackage,
-      'cat',
-      'app_flutter/$name',
-    ], allowFail: true);
+    final out = await _run(
+      'adb',
+      [
+        '-s',
+        party.deviceId,
+        'shell',
+        'run-as',
+        _appPackage,
+        'cat',
+        'app_flutter/$name',
+      ],
+      allowFail: true,
+      // This is an idempotent, tiny private-file read. Retry quickly enough to
+      // span a transient adbd replacement instead of letting three long-lived
+      // host `adb` clients consume the whole recovery window.
+      commandCeiling: introAppDocumentReadCommandCeiling,
+      timeoutAttempts: introAppDocumentReadTimeoutAttempts,
+    );
     if (out.contains('No such file') || out.trim().isEmpty) {
       return null;
     }
@@ -1350,34 +1505,50 @@ class _Campaign {
     String deviceId,
     List<String> command, {
     bool allowFail = false,
+    Duration commandCeiling = const Duration(seconds: 45),
+    int timeoutAttempts = 1,
+    bool propagateTimeout = false,
   }) {
-    return _run('adb', [
-      '-s',
-      deviceId,
-      'shell',
-      ...command,
-    ], allowFail: allowFail);
+    return _run(
+      'adb',
+      ['-s', deviceId, 'shell', ...command],
+      allowFail: allowFail,
+      commandCeiling: commandCeiling,
+      timeoutAttempts: timeoutAttempts,
+      propagateTimeout: propagateTimeout,
+    );
   }
 
   Future<String> _run(
     String executable,
     List<String> args, {
     bool allowFail = false,
+    Duration commandCeiling = const Duration(seconds: 45),
+    int timeoutAttempts = 1,
+    bool propagateTimeout = false,
   }) async {
     _log('\$ $executable ${args.join(' ')}');
-    final commandBudget = deadline.remaining(
-      ceiling: const Duration(seconds: 45),
-    );
-    if (commandBudget <= Duration.zero) {
-      throw _CampaignFailure(
-        'intro campaign deadline expired during ${deadline.phaseName}',
-      );
+    if (commandCeiling <= Duration.zero || timeoutAttempts < 1) {
+      throw _CampaignFailure('intro command retry policy is invalid');
     }
-    final result = await _runBoundedProcess(
-      executable,
-      args,
-      timeout: commandBudget,
-    );
+    late final _CommandResult result;
+    try {
+      result = await runIntroIdempotentCommandWithRetries<_CommandResult>(
+        command: () {
+          final commandBudget = deadline.remaining(ceiling: commandCeiling);
+          if (commandBudget <= Duration.zero) {
+            throw _CampaignFailure(
+              'intro campaign deadline expired during ${deadline.phaseName}',
+            );
+          }
+          return _runBoundedProcess(executable, args, timeout: commandBudget);
+        },
+        maximumAttempts: timeoutAttempts,
+      );
+    } on IntroCommandTimedOut catch (error) {
+      if (propagateTimeout) rethrow;
+      throw _CampaignFailure(error.detail);
+    }
     if (result.exitCode != 0 && !allowFail) {
       throw _CampaignFailure(
         '$executable ${args.join(' ')} failed (${result.exitCode}): '
@@ -1420,9 +1591,11 @@ class _Campaign {
         const Duration(seconds: 3),
         onTimeout: () => '',
       );
-      throw _CampaignFailure(
+      throw IntroCommandTimedOut(
         '$executable ${args.join(' ')} exceeded its shared phase deadline '
         '(stdout=$commandStdout, stderr=$commandStderr)',
+        stdout: commandStdout,
+        stderr: commandStderr,
       );
     }
     final commandStdout = await stdoutFuture;

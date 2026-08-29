@@ -93,11 +93,59 @@ const bool _backgroundStorageG21MeasurementBuild = bool.fromEnvironment(
 const bool _compiledPlan393G30Diagnostics = bool.fromEnvironment(
   'E2E_TEST_MODE',
 );
+
+/// Selects storage deadlines for the compiled runtime shape.
+///
+/// The production eight-second bound was measured in profile AOT. The
+/// debuggable E2E APK deliberately retains VM service, assertions, and the
+/// file-command harness; its background isolate can spend more than eight
+/// seconds in plugin/SQLCipher startup before reaching a sub-200 ms durable
+/// effect. Give only that proof build a bounded 2.5x scale-up (20 seconds
+/// aggregate, five seconds per phase) so device tests exercise the same policy
+/// instead of failing on debug startup cost. The aggregate remains the hard
+/// upper bound. Release, profile, and ordinary debug builds keep production
+/// bounds.
+Duration backgroundStorageAggregateDeadlineForBuild({
+  required bool e2eTestMode,
+  required bool releaseMode,
+  required bool profileMode,
+}) {
+  if (e2eTestMode && !releaseMode && !profileMode) {
+    return const Duration(seconds: 20);
+  }
+  return _productionBackgroundStorageAggregateDeadline;
+}
+
+Duration backgroundStoragePhaseDeadlineForBuild({
+  required bool e2eTestMode,
+  required bool releaseMode,
+  required bool profileMode,
+}) {
+  if (e2eTestMode && !releaseMode && !profileMode) {
+    return const Duration(seconds: 5);
+  }
+  return _productionBackgroundStoragePhaseDeadline;
+}
+
+Duration get _compiledBackgroundStorageAggregateDeadline =>
+    backgroundStorageAggregateDeadlineForBuild(
+      e2eTestMode: _compiledPlan393G30Diagnostics,
+      releaseMode: kReleaseMode,
+      profileMode: kProfileMode,
+    );
+
+Duration get _compiledBackgroundStoragePhaseDeadline =>
+    backgroundStoragePhaseDeadlineForBuild(
+      e2eTestMode: _compiledPlan393G30Diagnostics,
+      releaseMode: kReleaseMode,
+      profileMode: kProfileMode,
+    );
+
 bool _plan393G30DiagnosticsEnabled = _compiledPlan393G30Diagnostics;
 Duration _backgroundStorageAggregateDeadline =
-    _productionBackgroundStorageAggregateDeadline;
+    _compiledBackgroundStorageAggregateDeadline;
 Duration _backgroundStoragePhaseDeadline =
-    _productionBackgroundStoragePhaseDeadline;
+    _compiledBackgroundStoragePhaseDeadline;
 Duration _backgroundStorageDisplayEligibilityReserve =
     _productionBackgroundStorageDisplayEligibilityReserve;
 BackgroundStorageLivenessJournal _backgroundStorageLivenessJournal =
@@ -289,8 +337,8 @@ void debugSetBackgroundStorageDeadlineDurations({
 @visibleForTesting
 void debugResetBackgroundStorageDeadlineDurations() {
   _backgroundStorageAggregateDeadline =
-      _productionBackgroundStorageAggregateDeadline;
-  _backgroundStoragePhaseDeadline = _productionBackgroundStoragePhaseDeadline;
+      _compiledBackgroundStorageAggregateDeadline;
+  _backgroundStoragePhaseDeadline = _compiledBackgroundStoragePhaseDeadline;
   _backgroundStorageDisplayEligibilityReserve =
       _productionBackgroundStorageDisplayEligibilityReserve;
 }
@@ -769,11 +817,18 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     }
   }
 
+  final notificationMessageId = remoteNotificationMessageIdFromData(
+    message.data,
+  );
   emitFlowEvent(
     layer: 'FL',
     event: 'PUSH_BACKGROUND_MESSAGE_RECEIVED',
     details: {
       'messageId': message.messageId,
+      if (notificationMessageId != null)
+        'messageIdPrefix': notificationMessageId.length > 8
+            ? notificationMessageId.substring(0, 8)
+            : notificationMessageId,
       'dataKeys': message.data.keys.toList(),
       'note':
           'local notification shown if routable; inbox drain on next resume',

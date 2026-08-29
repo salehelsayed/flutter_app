@@ -6,10 +6,12 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
-const int _defaultMaximumPrivateBackupBytes = 256 * 1024 * 1024;
+const int _defaultMaximumPrivateBackupBytes = 512 * 1024 * 1024;
 const int _maximumPrivateRestoreMemberListBytes = 8 * 1024 * 1024;
 const Duration _defaultHostCommandTimeout = Duration(minutes: 2);
 const Duration _defaultProcessTerminationGrace = Duration(seconds: 2);
+const int _adbReconnectMaximumAttempts = 12;
+const Duration _adbReconnectRetryDelay = Duration(milliseconds: 500);
 const String _recoveryManifestName = 'recovery-manifest.json';
 const String _recoveryManifestDigestName = 'recovery-manifest.sha256';
 const String _recoveryManifestSchema = 'mknoon.android-app-state-recovery.v1';
@@ -287,6 +289,33 @@ final class AndroidAppStateBlocked implements Exception {
 
   @override
   String toString() => detail;
+}
+
+/// A short-lived failure of the binary `adb exec-out` archive transport.
+///
+/// Policy failures such as the byte bound and process timeout remain ordinary
+/// [AndroidAppStateBlocked] results and are never replayed. This private type
+/// marks only a stream that may safely be recaptured from the still-untouched
+/// package tree after adbd replaces its host transport.
+final class _RetryablePrivateArchiveStreamFailure implements Exception {
+  const _RetryablePrivateArchiveStreamFailure(this.detail);
+
+  final String detail;
+}
+
+bool _isTransientAdbTransportFailure(ProcessResult result) {
+  if (result.exitCode == 0) return false;
+  final diagnostic = '${result.stderr}\n${result.stdout}'.toLowerCase();
+  return const <String>[
+    'device offline',
+    'device not found',
+    'no devices/emulators found',
+    'transport is closing',
+    'transport error',
+    'error: closed',
+    'connection reset',
+    'protocol fault',
+  ].any(diagnostic.contains);
 }
 
 /// A mutation/restoration failure. The backup path is retained for recovery.
@@ -839,6 +868,51 @@ final class AndroidAppStateGuard {
     List<String> entries,
     File destination,
   ) async {
+    var structuralAttempts = 0;
+    var transportAttempts = 0;
+    while (true) {
+      try {
+        final digest = await _capturePrivateArchiveOnce(
+          device,
+          entries,
+          destination,
+        );
+        // A host ADB transport can occasionally exit successfully after
+        // yielding only a prefix of the device tar stream. Hashing that prefix
+        // proves only that the prefix stayed stable. Parse every member before
+        // accepting the backup so capture and post-restore verification both
+        // retry the exact observed partial-member failure while the source
+        // private tree is still available.
+        await canonicalPrivateArchiveDigest(destination);
+        return digest;
+      } on FormatException {
+        structuralAttempts += 1;
+        if (destination.existsSync()) destination.deleteSync();
+        if (structuralAttempts == 3) {
+          throw AndroidAppStateBlocked(
+            'Private app-data backup remained structurally incomplete on '
+            '$device after three bounded attempts.',
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      } on _RetryablePrivateArchiveStreamFailure catch (error) {
+        transportAttempts += 1;
+        if (destination.existsSync()) destination.deleteSync();
+        if (transportAttempts == _adbReconnectMaximumAttempts) {
+          throw AndroidAppStateBlocked(
+            '${error.detail} on $device after bounded ADB reconnect retries.',
+          );
+        }
+        await Future<void>.delayed(_adbReconnectRetryDelay);
+      }
+    }
+  }
+
+  Future<String> _capturePrivateArchiveOnce(
+    String device,
+    List<String> entries,
+    File destination,
+  ) async {
     final injectedCapturer = _privateArchiveCapturer;
     if (injectedCapturer != null) {
       try {
@@ -850,8 +924,8 @@ final class AndroidAppStateGuard {
         );
       } on Object {
         if (destination.existsSync()) destination.deleteSync();
-        throw AndroidAppStateBlocked(
-          'Private app-data backup failed on $device.',
+        throw const _RetryablePrivateArchiveStreamFailure(
+          'Private app-data backup stream failed',
         );
       }
       if (!destination.existsSync() ||
@@ -883,8 +957,8 @@ final class AndroidAppStateGuard {
           ? await Process.start('adb', arguments, runInShell: false)
           : await starter('adb', List<String>.unmodifiable(arguments));
     } on Object {
-      throw const AndroidAppStateBlocked(
-        'ADB could not start the private app-data backup stream.',
+      throw const _RetryablePrivateArchiveStreamFailure(
+        'ADB could not start the private app-data backup stream',
       );
     }
 
@@ -1024,10 +1098,19 @@ final class AndroidAppStateGuard {
         !destination.existsSync() ||
         destination.lengthSync() == 0) {
       if (destination.existsSync()) destination.deleteSync();
-      throw AndroidAppStateBlocked(
-        outcome == _BoundedProcessOutcome.timedOut
-            ? 'Private app-data backup timed out on $device.'
-            : 'Private app-data backup failed on $device.',
+      if (outcome == _BoundedProcessOutcome.timedOut) {
+        throw AndroidAppStateBlocked(
+          'Private app-data backup timed out on $device.',
+        );
+      }
+      if (overflow) {
+        throw AndroidAppStateBlocked(
+          'Private app data on $device exceeds the bounded '
+          '${_maximumPrivateBackupBytes ~/ (1024 * 1024)} MiB backup policy.',
+        );
+      }
+      throw const _RetryablePrivateArchiveStreamFailure(
+        'Private app-data backup stream failed',
       );
     }
     return _hostFileSha256(destination);
@@ -1200,7 +1283,7 @@ final class AndroidAppStateGuard {
         throw StateError('private app-data archive did not restore exactly');
       }
     } finally {
-      await _adb(device, <String>[
+      final privateCleanup = await _adb(device, <String>[
         'shell',
         'run-as',
         packageName,
@@ -1209,7 +1292,7 @@ final class AndroidAppStateGuard {
         privateArchive,
         privateMembers,
       ], allowFailure: true);
-      await _adb(device, <String>[
+      final remoteCleanup = await _adb(device, <String>[
         'shell',
         'rm',
         '-f',
@@ -1218,6 +1301,9 @@ final class AndroidAppStateGuard {
       ], allowFailure: true);
       if (hostMembers?.existsSync() ?? false) {
         hostMembers!.deleteSync();
+      }
+      if (privateCleanup.exitCode != 0 || remoteCleanup.exitCode != 0) {
+        throw StateError('private recovery staging cleanup failed on $device');
       }
     }
   }
@@ -1787,12 +1873,12 @@ final class AndroidAppStateGuard {
   }
 
   Future<void> _forceStop(String device) async {
-    final result = await _adb(device, <String>[
-      'shell',
-      'am',
-      'force-stop',
-      packageName,
-    ], allowFailure: true);
+    final result = await _adb(
+      device,
+      <String>['shell', 'am', 'force-stop', packageName],
+      allowFailure: true,
+      retryAnyNonzero: true,
+    );
     if (result.exitCode != 0) {
       throw StateError('app process could not be stopped on $device');
     }
@@ -1814,18 +1900,28 @@ final class AndroidAppStateGuard {
     String device,
     List<String> arguments, {
     bool allowFailure = false,
+    bool retryAnyNonzero = false,
   }) async {
-    late final ProcessResult result;
-    try {
-      result = await _runner.run('adb', <String>['-s', device, ...arguments]);
-    } on ProcessException {
-      if (allowFailure) return ProcessResult(0, 127, '', '');
-      throw const AndroidAppStateBlocked('ADB could not start.');
+    for (var attempt = 1; attempt <= _adbReconnectMaximumAttempts; attempt++) {
+      late final ProcessResult result;
+      try {
+        result = await _runner.run('adb', <String>['-s', device, ...arguments]);
+      } on ProcessException {
+        if (allowFailure) return ProcessResult(0, 127, '', '');
+        throw const AndroidAppStateBlocked('ADB could not start.');
+      }
+      if (result.exitCode != 0 &&
+          (retryAnyNonzero || _isTransientAdbTransportFailure(result)) &&
+          attempt < _adbReconnectMaximumAttempts) {
+        await Future<void>.delayed(_adbReconnectRetryDelay);
+        continue;
+      }
+      if (!allowFailure && result.exitCode != 0) {
+        throw StateError('ADB state-guard operation failed');
+      }
+      return result;
     }
-    if (!allowFailure && result.exitCode != 0) {
-      throw StateError('ADB state-guard operation failed');
-    }
-    return result;
+    throw StateError('unreachable ADB reconnect retry state');
   }
 
   Future<void> _waitFor(Duration timeout, Future<bool> Function() check) async {
@@ -2234,7 +2330,9 @@ Future<String> canonicalPrivateArchiveDigest(File archive) async {
       preludeSpan = null;
       var remaining = paddedSize;
       while (remaining > 0) {
-        final chunk = input.readSync(min(remaining, _canonicalPayloadChunkBytes));
+        final chunk = input.readSync(
+          min(remaining, _canonicalPayloadChunkBytes),
+        );
         if (chunk.isEmpty) {
           throw const FormatException('private archive has a partial member');
         }

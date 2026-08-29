@@ -219,7 +219,38 @@ void main() {
   );
 
   test(
-    'Plan 330 Inner Circle recovery retries one intercepted toggle',
+    'Plan 330 group lookup falls back to All Chats when Inner Circle omits it',
+    () async {
+      var surface = 0;
+      final taps = <(int, int)>[];
+
+      final center = await fixture_driver
+          .findPlan330OrbitGroupWithInnerCircleRecovery(
+            groupName: 'Plan330A-fixture',
+            readUiDump: () async => switch (surface) {
+              0 =>
+                _node(contentDescription: 'Show inner circle') +
+                    _node(contentDescription: 'Open group Plan330A-fixture'),
+              1 => _node(contentDescription: 'Show all chats'),
+              _ =>
+                _node(contentDescription: 'Show inner circle') +
+                    _node(contentDescription: 'Open group Plan330A-fixture'),
+            },
+            tapSemanticNode: (value) async {
+              taps.add(value);
+              surface += 1;
+            },
+            maximumInnerCirclePolls: 1,
+            retryDelay: Duration.zero,
+          );
+
+      expect(center, (50, 50));
+      expect(taps, [(50, 50), (50, 50)]);
+    },
+  );
+
+  test(
+    'Plan 330 Inner Circle recovery retries two intercepted toggles',
     () async {
       var dump = _node(contentDescription: 'Show inner circle');
       var taps = 0;
@@ -230,7 +261,7 @@ void main() {
             readUiDump: () async => dump,
             tapSemanticNode: (_) async {
               taps += 1;
-              if (taps == 2) {
+              if (taps == 3) {
                 dump =
                     _node(contentDescription: 'Show all chats') +
                     _node(contentDescription: 'Open group Plan330A-fixture');
@@ -240,7 +271,7 @@ void main() {
           );
 
       expect(center, (50, 50));
-      expect(taps, 2);
+      expect(taps, 3);
     },
   );
 

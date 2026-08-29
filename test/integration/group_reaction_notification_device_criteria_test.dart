@@ -96,6 +96,118 @@ void main() {
     expect(recoveries, 1);
   });
 
+  test('Orbit recovery navigation matches every exact localized label', () {
+    for (final label in const <String>['Orbit', 'Kreis', 'الدائرة']) {
+      expect(
+        fixture_driver.findOrbitNavigationCenter(
+          _uiNode(
+            contentDescription: label,
+            clickable: true,
+            bounds: '[800,1700][1000,1800]',
+          ),
+        ),
+        (900, 1750),
+        reason: 'missing exact navigation label $label',
+      );
+    }
+    expect(
+      fixture_driver.findOrbitNavigationCenter(
+        _uiNode(
+          contentDescription: 'Open Orbit settings',
+          clickable: true,
+          bounds: '[800,1700][1000,1800]',
+        ),
+      ),
+      isNull,
+    );
+  });
+
+  test(
+    'Orbit recovery selects navigation before bounded back fallback',
+    () async {
+      final dumps = <String>[
+        _uiNode(
+          contentDescription: 'Orbit',
+          clickable: true,
+          bounds: '[800,1700][1000,1800]',
+        ),
+        _uiNode(
+          contentDescription: fixture_driver.orbitCreateGroupFabSemanticId,
+          clickable: true,
+          bounds: '[900,100][1000,200]',
+        ),
+      ];
+      var resumes = 0;
+      var reads = 0;
+      var backs = 0;
+      final taps = <(int, int)>[];
+
+      final ready = await fixture_driver.reestablishOrbitWithBoundedNavigation(
+        resumeApp: () async => resumes += 1,
+        readUiDump: () async => dumps[reads++],
+        isOrbitReady: (dump) =>
+            fixture_driver.findOrbitCreateGroupFabCenter(dump) != null,
+        tapNavigation: (center) async => taps.add(center),
+        pressBack: () async => backs += 1,
+        maximumAttempts: 3,
+        retryDelay: Duration.zero,
+      );
+
+      expect(ready, isTrue);
+      expect(resumes, 1);
+      expect(reads, 2);
+      expect(taps, <(int, int)>[(900, 1750)]);
+      expect(backs, 0);
+    },
+  );
+
+  test('Orbit recovery safely waits through an exact platform ANR', () async {
+    const anrDump = '''
+<hierarchy>
+  <node resource-id="android:id/parentPanel" package="android" bounds="[70,1057][1010,1479]">
+    <node text="Process system isn't responding" resource-id="android:id/alertTitle" package="android" bounds="[133,1104][947,1167]" />
+    <node text="Close app" resource-id="android:id/aerr_close" package="android" clickable="true" enabled="true" bounds="[70,1206][1010,1332]" />
+    <node text="Wait" resource-id="android:id/aerr_wait" package="android" clickable="true" enabled="true" bounds="[70,1332][1010,1458]" />
+  </node>
+</hierarchy>
+''';
+    final dumps = <String>[
+      anrDump,
+      _uiNode(
+        contentDescription: 'Orbit',
+        clickable: true,
+        bounds: '[800,1700][1000,1800]',
+      ),
+      _uiNode(
+        contentDescription: fixture_driver.orbitCreateGroupFabSemanticId,
+        clickable: true,
+        bounds: '[900,100][1000,200]',
+      ),
+    ];
+    var reads = 0;
+    var backs = 0;
+    final blockingTaps = <(int, int)>[];
+    final navigationTaps = <(int, int)>[];
+
+    final ready = await fixture_driver.reestablishOrbitWithBoundedNavigation(
+      resumeApp: () async {},
+      readUiDump: () async => dumps[reads++],
+      isOrbitReady: (dump) =>
+          fixture_driver.findOrbitCreateGroupFabCenter(dump) != null,
+      findBlockingAction: findAndroidAnrWaitCenter,
+      tapBlockingAction: (center) async => blockingTaps.add(center),
+      tapNavigation: (center) async => navigationTaps.add(center),
+      pressBack: () async => backs += 1,
+      maximumAttempts: 3,
+      retryDelay: Duration.zero,
+    );
+
+    expect(ready, isTrue);
+    expect(blockingTaps, <(int, int)>[(540, 1395)]);
+    expect(navigationTaps, <(int, int)>[(900, 1750)]);
+    expect(backs, 0);
+  });
+
   test('group fixture uses exact FAB semantics without force-stop recovery', () {
     final source = File(
       'integration_test/scripts/capture_group_reaction_notification_device.dart',
@@ -106,7 +218,29 @@ void main() {
     expect(orbitSource, contains("fabSemanticLabel: 'orbit_create_group_fab'"));
     expect(source, contains('findOrbitCreateGroupFabWithRecovery('));
     expect(source, contains('_reestablishOrbitWithoutForceStop'));
+    expect(source, contains('findBlockingAction: findAndroidAnrWaitCenter'));
     expect(source, isNot(contains('findTopRightClickableNodeCenter(')));
+  });
+
+  test('capture failures retain the last complete Android UI hierarchy', () {
+    final source = File(
+      'integration_test/scripts/capture_group_reaction_notification_device.dart',
+    ).readAsStringSync();
+
+    expect(source, contains('AndroidUiHierarchyHistory _uiHierarchyHistory'));
+    expect(
+      source,
+      contains(
+        '_uiHierarchyHistory.recordAttempt(deviceId: deviceId, xml: xml);',
+      ),
+    );
+    expect(source, contains('.lastCompleteForLastAttemptedDevice'));
+    expect(source, contains("'\${scenario.id}_last_ui.xml'"));
+    expect(source, contains("'lastUiDump': lastUiDumpEvidence"));
+    expect(
+      source,
+      contains("'sha256': sha256.convert(utf8.encode(lastUiDump.xml))"),
+    );
   });
 
   group('Plan 257 device scenario catalog', () {
@@ -487,6 +621,50 @@ void main() {
 
         expect(result.ok, isFalse);
         expect(result.detail, contains('process termination'));
+      },
+    );
+
+    test(
+      'background-connected timing admits picker retries but stays bounded',
+      () async {
+        const scenario = groupReactionBackgroundConnectedScenarioId;
+        final measured = await _writeArtifactFixture(
+          Directory('${tempDirectory.path}/measured-picker-latency')
+            ..createSync(recursive: true),
+          scenario,
+        );
+        _rewriteBackgroundConnectedTiming(
+          measured,
+          homeToReactMs: 18178,
+          reactionToNotificationMs: 10017,
+        );
+
+        final accepted = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: measured,
+        );
+        expect(accepted.ok, isTrue, reason: accepted.detail);
+
+        final stale = await _writeArtifactFixture(
+          Directory('${tempDirectory.path}/stale-picker-latency')
+            ..createSync(recursive: true),
+          scenario,
+        );
+        _rewriteBackgroundConnectedTiming(
+          stale,
+          homeToReactMs:
+              groupReactionBackgroundConnectedHomeToReactDelayMs +
+              groupReactionBackgroundConnectedHomeToReactAutomationWindowMs +
+              1,
+          reactionToNotificationMs: 1000,
+        );
+
+        final rejected = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: stale,
+        );
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('timing proof mismatched'));
       },
     );
 
@@ -4385,6 +4563,52 @@ void _rewriteEvidence(File artifact, String kind, String contents) {
   file.writeAsStringSync(contents, flush: true);
   _updateEvidenceDigest(record, file);
   _writeArtifact(artifact, decoded);
+}
+
+void _rewriteBackgroundConnectedTiming(
+  File artifact, {
+  required int homeToReactMs,
+  required int reactionToNotificationMs,
+}) {
+  final decoded = _readArtifact(artifact);
+  final record = (decoded['evidence'] as List<dynamic>)
+      .cast<Map<String, dynamic>>()
+      .firstWhere((entry) => entry['kind'] == 'recipient_app');
+  final file = File(
+    '${artifact.parent.path}${Platform.pathSeparator}${record['path']}',
+  );
+  final homeAt = DateTime.utc(2026, 7, 12, 12);
+  final reactionAt = homeAt.add(Duration(milliseconds: homeToReactMs));
+  final notificationAt = reactionAt.add(
+    Duration(milliseconds: reactionToNotificationMs),
+  );
+  final rewritten = file
+      .readAsLinesSync()
+      .map((line) {
+        if (!line.startsWith(
+          groupReactionBackgroundConnectedObservationPrefix,
+        )) {
+          return line;
+        }
+        final observed = Map<String, dynamic>.from(
+          jsonDecode(
+                line.substring(
+                  groupReactionBackgroundConnectedObservationPrefix.length,
+                ),
+              )
+              as Map,
+        );
+        observed
+          ..['homeAt'] = homeAt.toIso8601String()
+          ..['reactionAt'] = reactionAt.toIso8601String()
+          ..['notificationAt'] = notificationAt.toIso8601String()
+          ..['homeToReactDelayMs'] = homeToReactMs
+          ..['reactionToNotificationMs'] = reactionToNotificationMs;
+        return '$groupReactionBackgroundConnectedObservationPrefix'
+            '${jsonEncode(observed)}';
+      })
+      .join('\n');
+  _rewriteEvidence(artifact, 'recipient_app', '$rewritten\n');
 }
 
 String _plan397FixtureDigest(String value) =>

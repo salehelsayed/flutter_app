@@ -1429,6 +1429,32 @@ class DrainPersistsP2PService extends FakeP2PService {
   }
 }
 
+/// Mirrors background-isolate custody: the drain returns, then the staged
+/// message becomes queryable without emitting this isolate's repo-change
+/// stream.
+class LatePersistsAfterDrainP2PService extends FakeP2PService {
+  final FakeMessageRepository repo;
+  final ConversationMessage message;
+  final Duration delay;
+  int drainCallCount = 0;
+
+  LatePersistsAfterDrainP2PService({
+    required this.repo,
+    required this.message,
+    required this.delay,
+  });
+
+  @override
+  Future<void> drainOfflineInbox() async {
+    drainCallCount++;
+    unawaited(
+      Future<void>.delayed(delay, () {
+        repo.store[message.id] = message;
+      }),
+    );
+  }
+}
+
 /// 131: like [DrainPersistsP2PService] but the FIRST drain blocks on [gate], so
 /// a second recovery trigger (resume) can arrive while the first is in-flight.
 class GatedDrainP2PService extends FakeP2PService {
@@ -8215,6 +8241,67 @@ void main() {
       },
     );
 
+    testWidgets(
+      'notification-tap entry re-fetches when background persistence lands '
+      'just after the drain returns',
+      (tester) async {
+        final captured = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(captured.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final fresh = makeMsg(
+          id: 'late-background-persist-1',
+          text: 'persisted after the first refetch',
+          isIncoming: true,
+          ts: '2026-05-04T14:05:00.000Z',
+        );
+        final p2p = LatePersistsAfterDrainP2PService(
+          repo: messageRepo,
+          message: fresh,
+          delay: const Duration(milliseconds: 300),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
+        );
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((message) => message.id == fresh.id),
+          maxPumps: 30,
+        );
+
+        expect(
+          p2p.drainCallCount,
+          1,
+          reason: 'late persistence recovery must not perform a relay re-drain',
+        );
+        expect(
+          captured.where(
+            (event) =>
+                event['event'] == 'CONV_FL_NOTIF_LATE_REFETCH' &&
+                (event['details'] as Map)['addedIncoming'] == true,
+          ),
+          isNotEmpty,
+        );
+      },
+    );
+
     testWidgets('plain (orbit) entry does NOT auto-drain on open', (
       tester,
     ) async {
@@ -11435,7 +11522,7 @@ void main() {
       final startRecording = screen.onRecordStart! as Future<void> Function();
       await startRecording();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
       final recordingScreen = tester.widget<ConversationScreen>(
         find.byType(ConversationScreen),
       );
@@ -13245,12 +13332,11 @@ void main() {
       );
 
       expect(messageRepo.store['failed-media-msg']?.status, 'inboxed');
-      // 184: on 1:1, relay CUSTODY ('inboxed') now renders the two-tick done_all
-      // (the honest "the system has it" milestone), not the inbox transport
-      // glyph. The relay-inbox re-store still stamps transport 'inbox' in the row.
+      // Relay custody is represented by the canonical inbox transport glyph;
+      // a later delivery receipt must not be required to reveal it.
       expect(messageRepo.store['failed-media-msg']?.transport, 'inbox');
-      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.inbox), findsNothing);
+      expect(find.byIcon(Icons.inbox), findsOneWidget);
+      expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       expect(find.text('Could not retry media message.'), findsNothing);
     });
 

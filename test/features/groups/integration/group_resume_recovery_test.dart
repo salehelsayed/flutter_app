@@ -1565,7 +1565,7 @@ Future<void> _section10WidgetVoiceLifecycleProof(
       await (screen.onRecordStart! as Future<void> Function())();
       await _pumpUntil(
         tester,
-        () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
       );
 
       final recordingScreen = tester.widget<GroupConversationScreen>(

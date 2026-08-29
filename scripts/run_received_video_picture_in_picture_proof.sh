@@ -230,6 +230,9 @@ if [[ "$scenario" == "interruption" && -z "$aapt_bin" ]]; then
 fi
 
 mkdir -p "$output_dir"
+python_cache_dir="$output_dir/python-cache-${$}"
+mkdir -p "$python_cache_dir"
+export PYTHONPYCACHEPREFIX="$python_cache_dir"
 flutter_log="$output_dir/flutter-test.log"
 host_log="$output_dir/host.log"
 remote_tmp="/data/local/tmp/mknoon-pip-proof-${$}.mp4"

@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -48,7 +49,47 @@ import '../test/shared/fakes/in_memory_message_repository.dart';
 const _fixtureEncryptionKeyBase64 = 'fixture-media-stable-id-key';
 const _fixtureEncryptionNonce = 'fixture-media-stable-id-nonce';
 
-class _StableLocalVoiceP2PService extends core_fake_p2p.FakeP2PService {
+class _StrictDirectMediaP2PService extends core_fake_p2p.FakeP2PService
+    implements AckOrExpiryInboxStore, MediaExpiryBoundedInboxStore {
+  _StrictDirectMediaP2PService({
+    required NodeState initialState,
+    SendMessageResult sendMessageWithReplyResult = const SendMessageResult(
+      sent: true,
+      reply: 'ack',
+    ),
+  }) : super(
+         initialState: initialState,
+         sendMessageWithReplyResult: sendMessageWithReplyResult,
+       );
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async => const InboxStoreOutcome(
+    status: InboxStoreStatus.stored,
+    storeStatus: 'stored',
+    expiresAtMs: 4102444800000,
+    custodyContract: ackOrExpiryInboxCustodyContract,
+  );
+
+  @override
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) async => InboxStoreOutcome(
+    status: InboxStoreStatus.stored,
+    storeStatus: 'stored',
+    expiresAtMs: custodyExpiresAtOrBeforeMs,
+    custodyContract: ackOrExpiryInboxCustodyContract,
+  );
+}
+
+class _StableLocalVoiceP2PService extends _StrictDirectMediaP2PService {
   _StableLocalVoiceP2PService({
     required this.targetPeerId,
     required this.mediaAttachmentRepo,
@@ -477,11 +518,13 @@ void main() {
 
         final identityRepo = FakeIdentityRepository()..seed(identity);
         final messageRepo = InMemoryMessageRepository();
-        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository()
+          ..enableDirectMediaInboxCustodyForTest(messageRepo);
         final contactRepo = InMemoryContactRepository()
           ..addTestContact(contact);
         final bridge = FakeBridge();
-        final p2pService = core_fake_p2p.FakeP2PService(
+        final mediaFileManager = _TrackingDurableMediaFileManager(tempDir);
+        final p2pService = _StrictDirectMediaP2PService(
           initialState: NodeState(isStarted: true, peerId: identity.peerId),
           sendMessageWithReplyResult: const SendMessageResult(
             sent: true,
@@ -513,6 +556,7 @@ void main() {
               bridge: bridge,
               contactRepo: contactRepo,
               mediaAttachmentRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
               sendChatMessageFn: sendChatMessage,
               uploadMediaFn:
                   ({
@@ -656,12 +700,13 @@ void main() {
 
         final identityRepo = FakeIdentityRepository()..seed(identity);
         final messageRepo = InMemoryMessageRepository();
-        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository()
+          ..enableDirectMediaInboxCustodyForTest(messageRepo);
         final contactRepo = InMemoryContactRepository()
           ..addTestContact(contact);
         final bridge = FakeBridge();
         final mediaFileManager = _TrackingDurableMediaFileManager(tempDir);
-        final p2pService = core_fake_p2p.FakeP2PService(
+        final p2pService = _StrictDirectMediaP2PService(
           initialState: NodeState(isStarted: true, peerId: identity.peerId),
           sendMessageWithReplyResult: const SendMessageResult(
             sent: true,
@@ -1015,10 +1060,12 @@ void main() {
 
         final identityRepo = FakeIdentityRepository()..seed(identity);
         final messageRepo = InMemoryMessageRepository();
-        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository()
+          ..enableDirectMediaInboxCustodyForTest(messageRepo);
         final contactRepo = InMemoryContactRepository()
           ..addTestContact(contact);
         final bridge = FakeBridge();
+        final mediaFileManager = _TrackingDurableMediaFileManager(tempDir);
         final p2pService = _StableLocalVoiceP2PService(
           targetPeerId: contact.peerId,
           mediaAttachmentRepo: mediaAttachmentRepo,
@@ -1026,6 +1073,7 @@ void main() {
         );
         final recorder = FakeAudioRecorderService()
           ..fakeDurationMs = 1200
+          ..fakeSizeBytes = audioFile.lengthSync()
           ..fakeOutputPath = audioFile.path;
         addTearDown(recorder.dispose);
         final chatListener = ChatMessageListener(
@@ -1050,6 +1098,7 @@ void main() {
               bridge: bridge,
               contactRepo: contactRepo,
               mediaAttachmentRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
               sendChatMessageFn: sendChatMessage,
               audioRecorderService: recorder,
               micPermissionGateway: FakeMicPermissionGateway(),

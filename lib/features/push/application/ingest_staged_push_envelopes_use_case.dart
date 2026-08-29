@@ -240,7 +240,9 @@ class IngestStagedPushEnvelopesUseCase {
       content: content,
       timestamp: timestamp,
       isIncoming: true,
-      transport: 'push',
+      // Rich push is emitted only after relay inbox custody. Push is the
+      // notification ingress, not a persisted conversation transport.
+      transport: 'inbox',
     );
   }
 

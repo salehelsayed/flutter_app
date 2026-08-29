@@ -2444,23 +2444,35 @@ void main() {
       expect(find.byIcon(Icons.wifi), findsOneWidget);
     });
 
-    // TC-04 / 184 TC-184-02 — a 1:1 'inboxed' (relay custody) now renders TWO
-    // ticks (done_all), the honest "the system has it" milestone, NOT the inbox
-    // glyph. The glyph is a pure function of the persisted status, so a reloaded
-    // 'inboxed' row reconstructs the two-tick on reopen (durability).
-    testWidgets(
-      'TC-184-02 outgoing inboxed (custody) → two ticks done_all (never the '
-      'inbox glyph, schedule, or inbox_rounded)',
-      (tester) async {
+    // A 1:1 row persisted by the relay inbox keeps the established inbox
+    // transport glyph across the custody -> receiver-persisted transition. The
+    // status change must not make the icon pop from two ticks to an inbox.
+    testWidgets('outgoing inboxed/delivered via inbox → stable inbox glyph and '
+        'transport semantics, never done_all', (tester) async {
+      for (final status in const ['inboxed', 'delivered']) {
         await tester.pumpWidget(
-          buildTransportGlyph(status: 'inboxed', transport: 'inbox'),
+          buildTransportGlyph(status: status, transport: 'inbox'),
         );
-        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
-        expect(find.byIcon(Icons.inbox), findsNothing);
+        expect(
+          find.byIcon(Icons.inbox),
+          findsOneWidget,
+          reason: "status '$status' must show the 1:1 inbox transport glyph",
+        );
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
         expect(find.byIcon(Icons.schedule_rounded), findsNothing);
         expect(find.byIcon(Icons.inbox_rounded), findsNothing);
-      },
-    );
+        expect(
+          find.bySemanticsLabel(RegExp('Sent to inbox')),
+          findsWidgets,
+          reason: "status '$status' must preserve inbox transport semantics",
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('delivered to inbox')),
+          findsNothing,
+          reason: '1:1 keeps transport semantics, not the legacy status label',
+        );
+      }
+    });
 
     // TC-05
     testWidgets(
@@ -2527,44 +2539,33 @@ void main() {
       },
     );
 
-    // 184 TC-184-21 — the two-tick done_all contract for the 1:1 path: it is the
-    // EXPECTED glyph ONLY for 'inboxed' (relay custody) and must be ABSENT for
-    // every other outgoing status (in-flight, reached-live, failed). The legacy
-    // path (flag false) never renders done_all — locked by the 155 TC-04 sweep.
-    testWidgets(
-      'TC-184-21 done_all renders ONLY for 1:1 inboxed, never for other '
-      'outgoing statuses',
-      (tester) async {
+    // The two-tick icon has no 1:1 message-state meaning. Relay custody is
+    // represented by the inbox transport glyph instead.
+    testWidgets('done_all never renders for any 1:1 outgoing status', (
+      tester,
+    ) async {
+      const states = <(String, String?)>[
+        ('sending', 'relay'),
+        ('sent', 'direct'),
+        ('inboxed', 'inbox'),
+        ('delivered', 'wifi'),
+        ('delivered', 'direct'),
+        ('delivered', 'inbox'),
+        ('delivered', null),
+        ('failed', 'relay'),
+        ('send_failed', 'relay'),
+      ];
+      for (final (status, transport) in states) {
         await tester.pumpWidget(
-          buildTransportGlyph(status: 'inboxed', transport: 'inbox'),
+          buildTransportGlyph(status: status, transport: transport),
         );
         expect(
           find.byIcon(Icons.done_all_rounded),
-          findsOneWidget,
-          reason: '1:1 inboxed (custody) IS the two-tick',
+          findsNothing,
+          reason: "done_all must NOT render for 1:1 status '$status'",
         );
-
-        const others = <(String, String?)>[
-          ('sending', 'relay'),
-          ('sent', 'direct'),
-          ('delivered', 'wifi'),
-          ('delivered', 'direct'),
-          ('delivered', null),
-          ('failed', 'relay'),
-          ('send_failed', 'relay'),
-        ];
-        for (final (status, transport) in others) {
-          await tester.pumpWidget(
-            buildTransportGlyph(status: status, transport: transport),
-          );
-          expect(
-            find.byIcon(Icons.done_all_rounded),
-            findsNothing,
-            reason: "done_all must NOT render for 1:1 status '$status'",
-          );
-        }
-      },
-    );
+      }
+    });
 
     // ---- INCOMING (transportStatusGlyph: true, status null) ---------------
 
@@ -2743,6 +2744,24 @@ void main() {
         );
         expect(find.byIcon(Icons.inbox_rounded), findsOneWidget);
         expect(find.byIcon(Icons.cell_tower), findsNothing);
+
+        // An inboxed group/legacy row stays on the status glyph and status
+        // semantics; the 1:1 transport icon contract must not bleed into it.
+        await tester.pumpWidget(
+          buildTransportGlyph(
+            isIncoming: false,
+            status: 'inboxed',
+            transport: 'inbox',
+            transportStatusGlyph: false,
+          ),
+        );
+        expect(find.byIcon(Icons.inbox_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.inbox), findsNothing);
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+        expect(
+          find.bySemanticsLabel(RegExp('Message status: delivered to inbox')),
+          findsWidgets,
+        );
 
         // Incoming with transport, flag FALSE → no transport glyph at all.
         await tester.pumpWidget(

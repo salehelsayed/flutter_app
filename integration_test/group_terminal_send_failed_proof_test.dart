@@ -20,7 +20,8 @@
 ///   * Delete stays hit-testable in the real viewport while read-only and fires.
 ///   * Arabic reason renders right-to-left under real iOS bidi.
 ///   * A retry-exhausted `send_failed` in a still-writable group shows NO
-///     terminal reason / Delete and keeps the composer (separation, INV-4).
+///     terminal reason / Retry, keeps Delete for cleanup, and keeps the
+///     composer (separation, INV-4).
 @Tags(['device'])
 library;
 
@@ -237,7 +238,7 @@ void main() {
 
     testWidgets(
       'retry-exhausted send_failed in a writable group: no terminal reason / '
-      'Delete, composer kept (separation)',
+      'Retry, Delete cleanup and composer kept (separation)',
       (tester) async {
         await tester.pumpWidget(
           conversationApp(
@@ -259,6 +260,10 @@ void main() {
         );
         expect(
           find.byKey(const ValueKey('failed-message-delete-sf-rx')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('failed-message-retry-sf-rx')),
           findsNothing,
         );
         // Composer stays writable; no read-only banner.

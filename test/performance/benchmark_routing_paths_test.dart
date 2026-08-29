@@ -21,41 +21,50 @@ void main() {
   });
 
   group('Benchmark: Routing Paths (1:1 Send — All Paths)', () {
-    test('R1: WiFi local send — timing when peer is on LAN', () async {
-      final alice = TestUser.create(
-        peerId: 'alice-peer',
-        username: 'Alice',
-        network: network,
-      );
-      final bob = TestUser.create(
-        peerId: 'bob-peer',
-        username: 'Bob',
-        network: network,
-      );
-      alice.addContact(bob);
-      bob.addContact(alice);
-      alice.start();
-      bob.start();
+    test(
+      'R1: LAN write is attempted but authenticated direct proof settles',
+      () async {
+        final alice = TestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = TestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        alice.addContact(bob);
+        bob.addContact(alice);
+        alice.start();
+        bob.start();
 
-      // Mark bob as local peer (on LAN) — fast WiFi delivery
-      alice.p2pService.localPeers.add(bob.peerId);
-      // Slow down direct path so WiFi wins the race
-      alice.p2pService.discoverDelay = const Duration(milliseconds: 200);
+        // Mark bob as local peer (on LAN) — fast WiFi delivery
+        alice.p2pService.localPeers.add(bob.peerId);
+        // Slow the authenticated path so the LAN write lands first. A LAN
+        // committed ACK is intentionally written-only evidence; it cannot settle
+        // delivery ahead of the target Peer ID's authenticated stream.
+        alice.p2pService.discoverDelay = const Duration(milliseconds: 200);
 
-      final events = await harness.captureFlowEvents(() async {
-        await alice.sendMessage(bob.peerId, 'WiFi hello');
-      });
+        final events = await harness.captureFlowEvents(() async {
+          await alice.sendMessage(bob.peerId, 'WiFi hello');
+        });
 
-      final timings = harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING');
-      expect(timings, isNotEmpty, reason: 'Should emit CHAT_MSG_SEND_TIMING');
+        final timings = harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING');
+        expect(timings, isNotEmpty, reason: 'Should emit CHAT_MSG_SEND_TIMING');
 
-      final details = timings.first['details'] as Map<String, dynamic>;
-      expect(details['sendPath'], 'local');
-      expect(details['outcome'], 'success');
+        final details = timings.first['details'] as Map<String, dynamic>;
+        expect(alice.p2pService.localSendCallCount, 1);
+        expect(details['sendPath'], 'direct');
+        expect(details['outcome'], 'success');
 
-      // ignore: avoid_print
-      print('[BENCHMARK] routing_wifi_local_ms = ${details['elapsedMs']}');
-    });
+        // ignore: avoid_print
+        print(
+          '[BENCHMARK] routing_lan_written_direct_proven_ms = '
+          '${details['elapsedMs']}',
+        );
+      },
+    );
 
     test('R2: Direct P2P wins race — peer discoverable, no WiFi', () async {
       final bridge = TimingTestBridge(
@@ -95,46 +104,49 @@ void main() {
       print('[BENCHMARK] routing_direct_cold_ms = ${details['elapsedMs']}');
     });
 
-    test('R3: WiFi vs Direct race — WiFi wins', () async {
-      final alice = TestUser.create(
-        peerId: 'alice-peer',
-        username: 'Alice',
-        network: network,
-      );
-      final bob = TestUser.create(
-        peerId: 'bob-peer',
-        username: 'Bob',
-        network: network,
-      );
-      alice.addContact(bob);
-      bob.addContact(alice);
-      alice.start();
-      bob.start();
+    test(
+      'R3: fast LAN write cannot outrank slow authenticated direct proof',
+      () async {
+        final alice = TestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = TestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        alice.addContact(bob);
+        bob.addContact(alice);
+        alice.start();
+        bob.start();
 
-      // WiFi path: fast (30ms)
-      alice.p2pService.localPeers.add(bob.peerId);
-      alice.p2pService.localAckDelay = const Duration(milliseconds: 30);
-      // Direct path: slow (discover takes 500ms)
-      alice.p2pService.discoverDelay = const Duration(milliseconds: 500);
+        // WiFi path: fast (30ms)
+        alice.p2pService.localPeers.add(bob.peerId);
+        alice.p2pService.localAckDelay = const Duration(milliseconds: 30);
+        // Direct path: slow (discover takes 500ms)
+        alice.p2pService.discoverDelay = const Duration(milliseconds: 500);
 
-      final events = await harness.captureFlowEvents(() async {
-        await alice.sendMessage(bob.peerId, 'Race message');
-      });
+        final events = await harness.captureFlowEvents(() async {
+          await alice.sendMessage(bob.peerId, 'Race message');
+        });
 
-      final timings = harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING');
-      expect(timings, isNotEmpty);
+        final timings = harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING');
+        expect(timings, isNotEmpty);
 
-      final details = timings.first['details'] as Map<String, dynamic>;
-      expect(
-        details['sendPath'],
-        'local',
-        reason: 'WiFi should win the race against slow direct',
-      );
-      expect(details['outcome'], 'success');
+        final details = timings.first['details'] as Map<String, dynamic>;
+        expect(alice.p2pService.localSendCallCount, 1);
+        expect(details['sendPath'], 'direct');
+        expect(details['outcome'], 'success');
 
-      // ignore: avoid_print
-      print('[BENCHMARK] routing_race_wifi_wins_ms = ${details['elapsedMs']}');
-    });
+        // ignore: avoid_print
+        print(
+          '[BENCHMARK] routing_fast_lan_written_direct_proven_ms = '
+          '${details['elapsedMs']}',
+        );
+      },
+    );
 
     test('R4: WiFi vs Direct race — Direct wins', () async {
       final alice = TestUser.create(

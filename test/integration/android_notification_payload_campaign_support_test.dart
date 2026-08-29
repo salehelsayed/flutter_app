@@ -63,6 +63,20 @@ void main() {
     expect(leg, contains('alertSilent != false'));
     expect(leg, contains('channels.single != _audibleNotificationChannelId'));
     expect(leg, isNot(contains('_requireAudibleChannel(')));
+
+    final readiness = leg.indexOf(
+      'action: androidNotificationTransportReadyAction',
+    );
+    final background = leg.indexOf("'KEYCODE_HOME'");
+    final cursor = leg.indexOf(
+      'final logcatCursor = await _deviceLogcatCursor',
+    );
+    final toneGap = leg.indexOf('final toneGap = await _awaitToneWindow()');
+    expect(readiness, greaterThanOrEqualTo(0));
+    expect(background, greaterThan(readiness));
+    expect(toneGap, greaterThan(background));
+    expect(cursor, greaterThan(toneGap));
+    expect(leg, contains('messageId: sent.messageId'));
   });
 
   test('log windows come from a live stream, never a post-hoc dump', () {
@@ -101,6 +115,76 @@ void main() {
     expect(source, isNot(contains("'logcat', '-c'")));
     expect(source, isNot(contains("'-c',\n      '-t',")));
   });
+
+  test('unexpected campaign failures retain bounded causal diagnostics', () {
+    final source = File(
+      'integration_test/scripts/notification_android_payload_campaign.dart',
+    ).readAsStringSync();
+
+    expect(
+      source,
+      contains('final campaign = _AndroidNotificationCampaign(options);'),
+    );
+    expect(source, contains(r'${error.runtimeType} during ${campaign.phase}'));
+    expect(source, contains(r'${_firstStackFrame(stackTrace)}.'));
+    expect(
+      source,
+      contains('assertionsAttempted: campaign.assertionsAttempted'),
+    );
+    expect(source, contains('const maximumLength = 240;'));
+    expect(source, isNot(contains(r'${error.toString()}')));
+  });
+
+  test(
+    'notification taps bind the exact card and recover grouped shade UI',
+    () {
+      final source = File(
+        'integration_test/scripts/notification_android_payload_campaign.dart',
+      ).readAsStringSync();
+      final methodStart = source.indexOf(
+        'Future<void> _tapNotification(ActiveNotificationCard card)',
+      );
+      final methodEnd = source.indexOf(
+        'Future<void> _waitForUiText(',
+        methodStart,
+      );
+
+      expect(methodStart, isNonNegative);
+      expect(methodEnd, greaterThan(methodStart));
+      final method = source.substring(methodStart, methodEnd);
+      expect(method, contains('findAndroidNotificationCardTapTarget('));
+      expect(method, contains('title: card.title'));
+      expect(method, contains('body: card.body'));
+      expect(method, contains('target.collapsedGroupExpandCenter'));
+      expect(method, contains('target.cardCenter'));
+      expect(method, contains('findAndroidCollapsedNotificationExpandCenter('));
+      expect(method, contains('title: card.title'));
+      expect(method, contains('collapsedExpand'));
+      expect(method, contains('findAndroidAnrWaitCenter(xml)'));
+      expect(method, contains('anrWait'));
+      expect(
+        method.indexOf('target.collapsedGroupExpandCenter'),
+        lessThan(method.indexOf('target.cardCenter')),
+      );
+      expect(
+        method.indexOf('findAndroidCollapsedNotificationExpandCenter('),
+        greaterThan(method.indexOf('target.cardCenter')),
+      );
+      expect(method, contains('package="com.android.systemui"'));
+      expect(method, contains('attemptDumps.add(xml)'));
+      expect(method, contains('_writeNotificationTapFailureDiagnostics('));
+      expect(method, contains('diagnostic.path'));
+      expect(
+        RegExp(r"'expand-notifications'").allMatches(method).length,
+        greaterThanOrEqualTo(2),
+        reason: 'a lost shade must be reopened before any retry scroll',
+      );
+
+      expect(source, contains('_tapNotification(warmObservation.card)'));
+      expect(source, contains('_tapNotification(coldObservation.card)'));
+      expect(source, contains('_tapNotification(matching.single)'));
+    },
+  );
 
   test('permission-denied leg separates an OS precondition from a defect', () {
     final source = File(
@@ -224,6 +308,13 @@ void main() {
       expect(runStart, greaterThanOrEqualTo(0));
       expect(runEnd, greaterThan(runStart));
       final run = source.substring(runStart, runEnd);
+      expect(run, contains('on _G24NotApplicable catch (error)'));
+      expect(
+        run,
+        contains('permissionAppOpDivergenceNotApplicableReason = error.reason'),
+      );
+      expect(run, contains("'notApplicableScenarioIds'"));
+      expect(run, contains("'notApplicableReasons'"));
 
       final guardCapture = run.indexOf('AndroidAppStateGuard.capture(');
       final entryCapture = run.indexOf(
@@ -258,6 +349,7 @@ void main() {
       expect(leg, contains('_notificationPermissionGranted()'));
       expect(leg, contains("_readNotificationAppOpMode()"));
       expect(leg, contains("_setNotificationAppOpMode('ignore')"));
+      expect(leg, contains('_G24NotApplicable('));
       expect(leg, isNot(contains("'pm',\n      'revoke'")));
 
       final appOpReadStart = source.indexOf(
@@ -1002,6 +1094,95 @@ Ranking Config:
       sup('PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED', 'recent_remote_push'),
       isNull,
       reason: 'the FCM path has its own reason set',
+    );
+  });
+
+  test('dual-path proof binds both attempts to the exact sent message', () {
+    const messageId = 'd797dac5-0000-4000-8000-000000000001';
+    const targetLive =
+        'I/flutter: [FLOW] {"event":"CHAT_LISTENER_NEW_MESSAGE",'
+        '"details":{"id":"d797dac5"}}';
+    const staleFcm =
+        'I/flutter: [FLOW] {"event":"PUSH_BACKGROUND_MESSAGE_RECEIVED",'
+        '"details":{"messageIdPrefix":"e313b556"}}';
+    const targetFcm =
+        'I/flutter: [FLOW] {"event":"PUSH_BACKGROUND_MESSAGE_RECEIVED",'
+        '"details":{"messageIdPrefix":"d797dac5"}}';
+
+    expect(
+      notificationWindowProvesDualPathAttempt(
+        '$staleFcm\n$targetLive',
+        messageId: messageId,
+      ),
+      isFalse,
+      reason: 'a late receipt from the preceding leg cannot prove this race',
+    );
+    expect(
+      notificationWindowProvesDualPathAttempt(
+        '$staleFcm\n$targetLive\n$targetFcm',
+        messageId: messageId,
+      ),
+      isTrue,
+    );
+    expect(
+      notificationWindowProvesDualPathAttempt(
+        '$targetLive\n$targetFcm',
+        messageId: '',
+      ),
+      isFalse,
+    );
+  });
+
+  test('notification channel census counts distinct native keys only', () {
+    String record({required int id, required String channel}) =>
+        'NotificationRecord(0x1: pkg=com.mknoon.app user=UserHandle{0} '
+        'id=$id tag=null importance=4 '
+        'key=0|com.mknoon.app|$id|null|10256: '
+        'Notification(channel=$channel shortcut=null))\n'
+        '  extras={\n'
+        '    android.text=String (target body)\n'
+        '  }';
+    String dump(Iterable<String> records) =>
+        'Current Notification Manager state:\n'
+        '  Notification List:\n'
+        '${records.join('\n    ')}\n'
+        '  Ranking Config:';
+
+    expect(
+      androidNotificationChannelsForBody(
+        dump(<String>[
+          record(id: 42, channel: 'mknoon_messages'),
+          record(id: 42, channel: 'mknoon_messages'),
+        ]),
+        packageName: 'com.mknoon.app',
+        body: 'target body',
+      ),
+      <String>['mknoon_messages'],
+      reason: 'repeated dumpsys views of one native key are one active card',
+    );
+    expect(
+      androidNotificationChannelsForBody(
+        dump(<String>[
+          record(id: 42, channel: 'mknoon_messages'),
+          record(id: 43, channel: 'mknoon_messages'),
+        ]),
+        packageName: 'com.mknoon.app',
+        body: 'target body',
+      ),
+      <String>['mknoon_messages', 'mknoon_messages'],
+      reason: 'two native IDs remain a real duplicate-card failure',
+    );
+    expect(
+      androidNotificationChannelsForBody(
+        dump(<String>[
+          record(id: 42, channel: 'mknoon_messages'),
+          record(id: 42, channel: 'mknoon_messages_silent'),
+        ]),
+        packageName: 'com.mknoon.app',
+        body: 'target body',
+      ),
+      <String>['mknoon_messages', 'mknoon_messages_silent'],
+      reason: 'a conflicting representation cannot be silently collapsed',
     );
   });
 

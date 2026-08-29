@@ -992,7 +992,7 @@ void main() {
       await (screen.onRecordStart! as Future<void> Function())();
       await pumpUntil(
         tester,
-        () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
       );
 
       final recordingScreen = tester.widget<GroupConversationScreen>(
@@ -1190,7 +1190,7 @@ void main() {
         await (screen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
 
         final recordingScreen = tester.widget<GroupConversationScreen>(

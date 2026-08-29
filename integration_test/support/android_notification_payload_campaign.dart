@@ -496,13 +496,30 @@ const Set<String> androidNotificationFcmPathLosingReasons = <String>{
   'message_event_already_claimed',
 };
 
-/// True only when BOTH delivery legs demonstrably ATTEMPTED inside the window.
+/// True only when BOTH delivery legs demonstrably ATTEMPTED [messageId].
 ///
 /// Without this, a run in which only one path ever fired would satisfy
 /// "exactly one card" and pass as a dual-path proof.
-bool notificationWindowProvesDualPathAttempt(String logcat) =>
-    logcat.contains(androidNotificationLivePathAttemptEvent) &&
-    logcat.contains(androidNotificationFcmPathAttemptEvent);
+bool notificationWindowProvesDualPathAttempt(
+  String logcat, {
+  required String messageId,
+}) {
+  if (messageId.isEmpty) return false;
+  final messageIdPrefix = safeNotificationIdPrefix(messageId);
+  var livePathAttempted = false;
+  var fcmPathAttempted = false;
+  for (final record in androidNotificationFlowRecords(logcat)) {
+    if (record.event == androidNotificationLivePathAttemptEvent &&
+        record.details['id'] == messageIdPrefix) {
+      livePathAttempted = true;
+    }
+    if (record.event == androidNotificationFcmPathAttemptEvent &&
+        record.details['messageIdPrefix'] == messageIdPrefix) {
+      fcmPathAttempted = true;
+    }
+  }
+  return livePathAttempted && fcmPathAttempted;
+}
 
 /// The typed suppression the LOSING delivery path emitted, as
 /// `'<EVENT>:<reason>'`, or null when the window carries no such record.
@@ -585,13 +602,17 @@ bool? androidNotificationFirstPostAttemptSilent(String logcat) {
   return null;
 }
 
-/// Per-record `Notification(channel=…)` for the app's active cards whose
+/// Per-native-key `Notification(channel=…)` for the app's active cards whose
 /// `android.text` equals [body].
 ///
 /// Reads the raw dumpsys slice directly: `ActiveNotificationCard` carries no
 /// channel field, and plan 378 deliberately does NOT add one to that shared
 /// parser. Mirrors the extraction in
 /// `integration_test/scripts/run_notification_sound_smoke.dart:308-341`.
+/// Android may repeat one `NotificationRecord` in multiple diagnostic views;
+/// those representations share the same native `key=` and are one card. A
+/// conflicting channel for one key remains a separate result so an unstable
+/// or mid-update dump cannot accidentally satisfy an exact-one assertion.
 List<String> androidNotificationChannelsForBody(
   String dump, {
   required String packageName,
@@ -605,19 +626,31 @@ List<String> androidNotificationChannelsForBody(
         r'\)?\s*$',
     multiLine: true,
   );
-  return RegExp(r'NotificationRecord\([\s\S]*?(?=\n\s*NotificationRecord\(|$)')
-      .allMatches(activeSection)
-      .map((match) => match.group(0)!)
-      .where(packagePattern.hasMatch)
-      .where(bodyPattern.hasMatch)
-      .map(
-        (record) =>
-            RegExp(
-              r'Notification\(channel=([^\s\)]+)',
-            ).firstMatch(record)?.group(1) ??
-            '',
-      )
-      .toList(growable: false);
+  final channelsByNativeKey = <String, String>{};
+  final records = RegExp(
+    r'NotificationRecord\([\s\S]*?(?=\n\s*NotificationRecord\(|$)',
+  ).allMatches(activeSection);
+  for (final match in records) {
+    final record = match.group(0)!;
+    if (!packagePattern.hasMatch(record) || !bodyPattern.hasMatch(record)) {
+      continue;
+    }
+    final channel =
+        RegExp(
+          r'Notification\(channel=([^\s\)]+)',
+        ).firstMatch(record)?.group(1) ??
+        '';
+    final nativeKey =
+        RegExp(r'\bkey=(.*?): Notification\(').firstMatch(record)?.group(1) ??
+        'unkeyed-record-${match.start}';
+    final previousChannel = channelsByNativeKey[nativeKey];
+    if (previousChannel == null) {
+      channelsByNativeKey[nativeKey] = channel;
+    } else if (previousChannel != channel) {
+      channelsByNativeKey['$nativeKey#conflict-${match.start}'] = channel;
+    }
+  }
+  return channelsByNativeKey.values.toList(growable: false);
 }
 
 /// One `[FLOW] {…}` diagnostic record recovered from a logcat window.

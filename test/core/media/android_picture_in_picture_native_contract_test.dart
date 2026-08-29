@@ -610,6 +610,8 @@ void main() {
         runner,
         contains('validate_android_picture_in_picture_interruption_cleanup.py'),
       );
+      expect(runner, contains('PYTHONPYCACHEPREFIX'));
+      expect(runner, contains(r'python-cache-${$}'));
       expect(runner, contains('interruption-cleanup-audio.txt'));
       expect(runner, contains(r'cat "$cleanup_focus_result"'));
       final cleanupValidator = File(
@@ -1005,5 +1007,21 @@ void main() {
       expect(matching, hasLength(1), reason: entry.key);
       expect(matching.single, startsWith('${entry.value}\t${entry.key}\t'));
     }
+  });
+
+  test('full regression PiP retries preserve prior proof artifacts', () {
+    final fullRegressionRunner = File(
+      'scripts/run_flutter_full_regression.sh',
+    ).readAsStringSync();
+
+    expect(fullRegressionRunner, contains('local attempt_id'));
+    expect(
+      fullRegressionRunner,
+      contains(r'pip-$scenario-$attempt_id'),
+    );
+    expect(
+      fullRegressionRunner,
+      isNot(contains(r'--output "$run_dir/aux/pip-$scenario"')),
+    );
   });
 }

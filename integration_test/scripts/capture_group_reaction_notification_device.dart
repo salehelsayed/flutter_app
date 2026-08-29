@@ -82,6 +82,36 @@ const _plan398ExistingStateTraceClaimFileName =
 /// This is intentionally not localized: the host driver uses it as an exact
 /// automation identifier while the expanded actions retain localized labels.
 const String orbitCreateGroupFabSemanticId = 'orbit_create_group_fab';
+const List<String> orbitNavigationSemanticLabels = <String>[
+  'Orbit',
+  'Kreis',
+  'الدائرة',
+];
+
+/// Returns the exact center of the persistent Orbit navigation destination.
+///
+/// The app localizes this label, so recovery must recognize every shipped
+/// locale without accepting a longer, unrelated Orbit action.
+(int, int)? findOrbitNavigationCenter(String xml) {
+  for (final node in RegExp(r'<node\b[^>]*>').allMatches(xml)) {
+    final raw = node.group(0)!;
+    final text = _fixtureXmlAttribute(raw, 'text');
+    final description = _fixtureXmlAttribute(raw, 'content-desc');
+    if (!orbitNavigationSemanticLabels.contains(text) &&
+        !orbitNavigationSemanticLabels.contains(description)) {
+      continue;
+    }
+    final bounds = RegExp(
+      r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+    ).firstMatch(raw);
+    if (bounds == null) continue;
+    return (
+      (int.parse(bounds.group(1)!) + int.parse(bounds.group(3)!)) ~/ 2,
+      (int.parse(bounds.group(2)!) + int.parse(bounds.group(4)!)) ~/ 2,
+    );
+  }
+  return null;
+}
 
 /// Returns the exact semantics-node center for Orbit's create-group FAB.
 ///
@@ -135,20 +165,77 @@ Future<(int, int)?> findOrbitCreateGroupFabWithRecovery({
   return probe(probesAfterRecovery);
 }
 
-/// Finds one of Plan 330's exact group nodes on a canonical Inner Circle.
+/// Re-establishes Orbit with one bounded sequence of explicit navigation and
+/// Back actions. A process restart can restore Feed as the active destination;
+/// Back alone cannot switch the persistent home tab in that state.
+Future<bool> reestablishOrbitWithBoundedNavigation({
+  required Future<void> Function() resumeApp,
+  required Future<String> Function() readUiDump,
+  required bool Function(String dump) isOrbitReady,
+  (int, int)? Function(String dump)? findBlockingAction,
+  Future<void> Function((int, int) center)? tapBlockingAction,
+  required Future<void> Function((int, int) center) tapNavigation,
+  required Future<void> Function() pressBack,
+  int maximumAttempts = 6,
+  int maximumNavigationAttempts = 2,
+  Duration retryDelay = const Duration(milliseconds: 500),
+}) async {
+  if (maximumAttempts <= 0) {
+    throw ArgumentError.value(maximumAttempts, 'maximumAttempts');
+  }
+  if (maximumNavigationAttempts <= 0) {
+    throw ArgumentError.value(
+      maximumNavigationAttempts,
+      'maximumNavigationAttempts',
+    );
+  }
+  if ((findBlockingAction == null) != (tapBlockingAction == null)) {
+    throw ArgumentError(
+      'blocking Orbit recovery requires both a finder and a tap action',
+    );
+  }
+
+  await resumeApp();
+  var navigationAttempts = 0;
+  for (var attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    final dump = await readUiDump();
+    if (isOrbitReady(dump)) return true;
+
+    final blockingCenter = findBlockingAction?.call(dump);
+    final navigationCenter = blockingCenter == null
+        ? findOrbitNavigationCenter(dump)
+        : null;
+    if (blockingCenter != null) {
+      await tapBlockingAction!(blockingCenter);
+    } else if (navigationCenter != null &&
+        navigationAttempts < maximumNavigationAttempts) {
+      navigationAttempts += 1;
+      await tapNavigation(navigationCenter);
+    } else {
+      await pressBack();
+    }
+    if (attempt + 1 < maximumAttempts && retryDelay > Duration.zero) {
+      await Future<void>.delayed(retryDelay);
+    }
+  }
+  return false;
+}
+
+/// Finds one of Plan 330's exact group nodes, preferring Inner Circle.
 ///
 /// Accepting a group invite opens Orbit's all-chats `Intros` filter. The
 /// create-group FAB remains mounted there, but active group nodes are excluded
-/// from that filter. Plan 330 owns only one contact and two groups, so all
-/// three active nodes fit inside Inner Circle's thirteen seats. Canonicalizing
-/// to Inner Circle is therefore deterministic and avoids mistaking a mounted
-/// FAB for an active-group projection.
+/// from that filter. Inner Circle is checked first, but its ranking is not a
+/// membership oracle: a valid group can be absent from its finite seat set.
+/// After a bounded miss window the lookup falls back to All Chats and accepts
+/// only the exact group semantic there.
 Future<(int, int)?> findPlan330OrbitGroupWithInnerCircleRecovery({
   required String groupName,
   required Future<String> Function() readUiDump,
   required Future<void> Function((int, int) center) tapSemanticNode,
   int maximumPolls = 30,
-  int maximumToggleAttempts = 2,
+  int maximumToggleAttempts = 4,
+  int maximumInnerCirclePolls = 4,
   Duration retryDelay = const Duration(milliseconds: 700),
 }) async {
   if (maximumPolls <= 0) {
@@ -157,18 +244,47 @@ Future<(int, int)?> findPlan330OrbitGroupWithInnerCircleRecovery({
   if (maximumToggleAttempts <= 0) {
     throw ArgumentError.value(maximumToggleAttempts, 'maximumToggleAttempts');
   }
+  if (maximumInnerCirclePolls <= 0) {
+    throw ArgumentError.value(
+      maximumInnerCirclePolls,
+      'maximumInnerCirclePolls',
+    );
+  }
 
-  var toggleAttempts = 0;
+  var innerCircleRequested = false;
+  var allChatsFallbackRequested = false;
+  var enterToggleAttempts = 0;
+  var exitToggleAttempts = 0;
+  var innerCirclePolls = 0;
   for (var poll = 0; poll < maximumPolls; poll += 1) {
     final dump = await readUiDump();
+    final group = findSemanticNodeCenter(dump, 'Open group $groupName');
     final showInnerCircle = findSemanticNodeCenter(dump, 'Show inner circle');
-    if (showInnerCircle != null && toggleAttempts < maximumToggleAttempts) {
-      toggleAttempts += 1;
-      await tapSemanticNode(showInnerCircle);
-    } else if (findSemanticNodeCenter(dump, 'Show all chats') != null) {
-      final group = findSemanticNodeCenter(dump, 'Open group $groupName');
+    final showAllChats = findSemanticNodeCenter(dump, 'Show all chats');
+
+    if (showAllChats != null) {
+      innerCircleRequested = true;
       if (group != null) return group;
-    } else if (toggleAttempts == 0) {
+      innerCirclePolls += 1;
+      if (innerCirclePolls >= maximumInnerCirclePolls &&
+          exitToggleAttempts < maximumToggleAttempts) {
+        allChatsFallbackRequested = true;
+        exitToggleAttempts += 1;
+        await tapSemanticNode(showAllChats);
+      }
+    } else if (showInnerCircle != null) {
+      if (allChatsFallbackRequested) {
+        if (group != null) return group;
+      } else if (enterToggleAttempts < maximumToggleAttempts) {
+        innerCircleRequested = true;
+        enterToggleAttempts += 1;
+        await tapSemanticNode(showInnerCircle);
+      } else if (group != null) {
+        // A persistently intercepted filter toggle must not hide an exact node
+        // that is already available on the exhaustive surface.
+        return group;
+      }
+    } else if (!innerCircleRequested) {
       return null;
     }
 
@@ -659,6 +775,8 @@ class _CommandOutput {
   String get combined => '$stdout\n$stderr';
 }
 
+enum _RemoteDeviceLogProcessState { owned, notOwned, unavailable }
+
 class _Party {
   _Party({required this.role, required this.deviceId, required this.username});
 
@@ -776,6 +894,8 @@ class _Plan257Capture {
   late _RelayObservation _relay;
   _AndroidBuilds? _androidBuilds;
   DateTime? _captureWindowStart;
+  final AndroidUiHierarchyHistory _uiHierarchyHistory =
+      AndroidUiHierarchyHistory();
   String _groupName = '';
   String _plan330GroupAName = '';
   String _plan330GroupBName = '';
@@ -2203,6 +2323,20 @@ class _Plan257Capture {
       return;
     }
     await _flushCommandJournal();
+    Map<String, Object?>? lastUiDumpEvidence;
+    final lastUiDump = _uiHierarchyHistory.lastCompleteForLastAttemptedDevice;
+    if (lastUiDump != null) {
+      final lastUiDumpFile = File(
+        '${artifactDirectory.path}${Platform.pathSeparator}'
+        '${scenario.id}_last_ui.xml',
+      );
+      await lastUiDumpFile.writeAsString(lastUiDump.xml, flush: true);
+      lastUiDumpEvidence = <String, Object?>{
+        'deviceId': lastUiDump.deviceId,
+        'path': lastUiDumpFile.uri.pathSegments.last,
+        'sha256': sha256.convert(utf8.encode(lastUiDump.xml)).toString(),
+      };
+    }
     await writeGroupReactionNotificationVerdict(
       outputDirectory: artifactDirectory,
       scenario: scenario.id,
@@ -2222,6 +2356,7 @@ class _Plan257Capture {
         'status': failure.status,
         'stage': failure.stage,
         'detail': failure.message,
+        'lastUiDump': lastUiDumpEvidence,
         'recordedAt': DateTime.now().toUtc().toIso8601String(),
         'stackType': stackTrace.runtimeType.toString(),
         'completedStages': _commandJournal
@@ -3010,8 +3145,7 @@ class _Plan257Capture {
           'GROUP_REACTION_SEND_QUEUED',
         );
         await _openGroup(senderId);
-        await _longPressText(senderId, _targetMarker);
-        await _tapText(senderId, _reactionEmoji);
+        await _tapReactionForMessage(senderId, _targetMarker);
         await _waitForSenderEventCount(
           'GROUP_REACTION_SEND_QUEUED',
           queuedBefore + 1,
@@ -5010,13 +5144,11 @@ class _Plan257Capture {
     await _openGroup(senderId);
     final firstWindow = DateTime.now().toUtc();
     await _captureRelayMetricsBaseline();
-    await _longPressText(senderId, _targetMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, _targetMarker);
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 1);
     await _waitForRelayWakeAttempts(_relayMetricsBaseline, 1);
 
-    await _longPressText(senderId, _targetMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, _targetMarker);
     await _waitForSenderEventCount('GROUP_REACTION_REMOVE_QUEUED', 1);
     await Future<void>.delayed(const Duration(seconds: 8));
     if (await _relayWakeAttemptsSince(_relayMetricsBaseline) != 1) {
@@ -5026,8 +5158,7 @@ class _Plan257Capture {
       );
     }
 
-    await _longPressText(senderId, _targetMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, _targetMarker);
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 2);
     await _waitForRelayWakeAttempts(_relayMetricsBaseline, 2);
     await Future<void>.delayed(const Duration(seconds: 10));
@@ -5383,24 +5514,76 @@ class _Plan257Capture {
   }
 
   Future<void> _prepopulateContact(_Party owner, _Party contact) async {
-    await _writeAppFile(
-      owner.deviceId,
-      'intro_e2e_config.json',
-      jsonEncode(<String, Object?>{
-        'stepId':
-            '257-${scenario.id}-${owner.username}-'
-            '${DateTime.now().microsecondsSinceEpoch}',
-        'add_contacts': <Object?>[
-          <String, Object?>{
-            'qrPayload': contact.qrPayload,
-            'mlKemPublicKey': contact.mlKemPublicKey,
-          },
-        ],
-      }),
-    );
-    await _launchAndroid(owner.deviceId);
+    final stepId =
+        '257-${scenario.id}-${owner.username}-'
+        '${DateTime.now().microsecondsSinceEpoch}';
+    // Stop the existing poller before staging the command. If the config is
+    // copied first, a slow physical-device force-stop can leave enough time
+    // for the old process to consume and delete it, then die before publishing
+    // even the running receipt. Stage only while the app is stopped and start
+    // the cold process without a second force-stop.
+    await _adbShell(owner.deviceId, <String>[
+      'am',
+      'force-stop',
+      appPackage,
+    ], environmentFailure: true);
     await _deleteAppFile(owner.deviceId, 'intro_e2e_config.json');
     await _deleteAppFile(owner.deviceId, 'intro_e2e_result.json');
+    try {
+      await _writeAppFile(
+        owner.deviceId,
+        'intro_e2e_config.json',
+        jsonEncode(<String, Object?>{
+          'stepId': stepId,
+          'add_contacts': <Object?>[
+            <String, Object?>{
+              'qrPayload': contact.qrPayload,
+              'mlKemPublicKey': contact.mlKemPublicKey,
+            },
+          ],
+        }),
+      );
+      await _startAndroid(owner.deviceId);
+      await _waitForValue<Map<String, dynamic>>(
+        'contact prepopulation receipt for ${owner.role} on ${owner.deviceId}',
+        const Duration(minutes: 3),
+        () async {
+          final raw = await _readAppFile(
+            owner.deviceId,
+            'intro_e2e_result.json',
+          );
+          if (raw == null) return null;
+          Object? decoded;
+          try {
+            decoded = jsonDecode(raw);
+          } on FormatException {
+            return null;
+          }
+          if (decoded is! Map) return null;
+          final result = Map<String, dynamic>.from(decoded);
+          if (result['stepId'] != stepId) return null;
+          if (result['status'] == 'failed') {
+            throw _CaptureFailure.capture(
+              stage,
+              'contact_prepopulation_failed_for_${owner.role}_on_'
+              '${owner.deviceId}',
+            );
+          }
+          if (result['status'] != 'complete') return null;
+          if (result['success'] != true) {
+            throw _CaptureFailure.capture(
+              stage,
+              'contact_prepopulation_unsuccessful_for_${owner.role}_on_'
+              '${owner.deviceId}',
+            );
+          }
+          return result;
+        },
+      );
+    } finally {
+      await _deleteAppFile(owner.deviceId, 'intro_e2e_config.json');
+      await _deleteAppFile(owner.deviceId, 'intro_e2e_result.json');
+    }
     await _launchAndroid(owner.deviceId);
   }
 
@@ -5522,9 +5705,28 @@ class _Plan257Capture {
     ], environmentFailure: true);
     await _adbShell(creator.deviceId, <String>[
       'input',
+      'keyevent',
+      'KEYCODE_MOVE_END',
+      ...List<String>.filled(64, 'KEYCODE_DEL'),
+    ], environmentFailure: true);
+    await _adbShell(creator.deviceId, <String>[
+      'input',
       'text',
       _groupName,
     ], environmentFailure: true);
+    await _waitForValue<bool>(
+      'exact group name field $_groupName on ${creator.deviceId}',
+      const Duration(seconds: 30),
+      () async =>
+          findNodeBoundsByClassWithExactText(
+                await _uiDump(creator.deviceId),
+                'android.widget.EditText',
+                _groupName,
+              ) !=
+              null
+          ? true
+          : null,
+    );
     await _waitForCreatorGroupRecoveryQuiescentWindow(creator.deviceId);
     await _tapText(creator.deviceId, 'Start group chat');
     await _waitForUiText(
@@ -5569,14 +5771,11 @@ class _Plan257Capture {
 
     final ready = await waitForCreatorSendableReadiness(
       readCurrentProcessLog: () async {
-        final output = await _adb(deviceId, <String>[
-          'logcat',
-          '-d',
-          '--pid=$pid',
-          '-v',
-          'brief',
-        ], allowFail: true);
-        return output.stdout;
+        final output = await _readAndroidLogcat(deviceId);
+        return filterAndroidThreadtimeLogByProcessId(
+          output.stdout,
+          int.parse(pid),
+        );
       },
     );
     if (!ready) {
@@ -5604,14 +5803,11 @@ class _Plan257Capture {
 
     final ready = await waitForCreatorGroupRecoveryQuiescentWindow(
       readCurrentProcessLog: () async {
-        final output = await _adb(deviceId, <String>[
-          'logcat',
-          '-d',
-          '--pid=$pid',
-          '-v',
-          'brief',
-        ], allowFail: true);
-        return output.stdout;
+        final output = await _readAndroidLogcat(deviceId);
+        return filterAndroidThreadtimeLogByProcessId(
+          output.stdout,
+          int.parse(pid),
+        );
       },
     );
     if (!ready) {
@@ -5650,7 +5846,7 @@ class _Plan257Capture {
     _notificationSnapshots.add(
       await _writeNotificationSnapshot('message_second', secondCard.$2),
     );
-    await _tapNotificationCard();
+    await _tapNotificationCard(secondCard.$2);
     await _waitForUiText(
       recipientId,
       _firstMarker,
@@ -6109,8 +6305,7 @@ class _Plan257Capture {
     if (!keepRecipientProcessAlive) {
       await _openGradedGroup(senderId);
     }
-    await _longPressText(senderId, _targetMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, _targetMarker);
     if (keepRecipientProcessAlive) {
       _backgroundConnectedReactionAt = DateTime.now().toUtc();
     }
@@ -6124,8 +6319,7 @@ class _Plan257Capture {
       await _writeNotificationSnapshot('reaction_first', firstCard.$2),
     );
 
-    await _longPressText(senderId, _targetMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, _targetMarker);
     await _waitForSenderEventCount('GROUP_REACTION_REMOVE_QUEUED', 1);
     await Future<void>.delayed(const Duration(seconds: 8));
     // A REMOVE must not wake anybody. On v1.8.0 the relay declines it at
@@ -6143,8 +6337,7 @@ class _Plan257Capture {
       );
     }
 
-    await _longPressText(senderId, _targetMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, _targetMarker);
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 2);
     await _waitForRelayWakeAttempts(_relayMetricsBaseline, 2);
     final replacementCard = await _waitForGradedGroupNotificationCard();
@@ -6176,7 +6369,7 @@ class _Plan257Capture {
 
     await _redriveExactStoredAdd();
 
-    await _tapNotificationCard();
+    await _tapNotificationCard(replacementCard.$2);
     await _waitForUiText(
       recipientId,
       _targetMarker,
@@ -6537,27 +6730,48 @@ class _Plan257Capture {
   }
 
   Future<void> _reestablishOrbitWithoutForceStop(String deviceId) async {
-    // Resuming and bounded back navigation are sufficient to recover Orbit.
+    // Resume, explicitly select the persistent Orbit destination when it is
+    // mounted, then fall back to bounded Back navigation for nested routes.
     // Repeated force-stop/start cycles can reset relay readiness while fixture
     // setup is trying to prove it, so recovery deliberately never calls
     // _launchAndroid.
-    await _startAndroid(deviceId);
-    for (var attempt = 0; attempt < 3; attempt++) {
-      final dump = await _uiDump(deviceId);
-      if (findOrbitCreateGroupFabCenter(dump) != null ||
+    await reestablishOrbitWithBoundedNavigation(
+      resumeApp: () async {
+        await _startAndroid(deviceId);
+      },
+      readUiDump: () => _uiDump(deviceId),
+      isOrbitReady: (dump) =>
+          findOrbitCreateGroupFabCenter(dump) != null ||
           _fixtureSemanticValues(dump).contains('Pending Group Invites') ||
           _fixtureSemanticValues(
             dump,
-          ).any((value) => value.startsWith('Open introductions review'))) {
-        return;
-      }
-      await _adbShell(deviceId, const <String>[
-        'input',
-        'keyevent',
-        'KEYCODE_BACK',
-      ], allowFail: true);
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-    }
+          ).any((value) => value.startsWith('Open introductions review')),
+      findBlockingAction: findAndroidAnrWaitCenter,
+      tapBlockingAction: (center) async {
+        await _adbShell(deviceId, <String>[
+          'input',
+          'tap',
+          '${center.$1}',
+          '${center.$2}',
+        ], environmentFailure: true);
+        await Future<void>.delayed(const Duration(seconds: 2));
+      },
+      tapNavigation: (center) async {
+        await _adbShell(deviceId, <String>[
+          'input',
+          'tap',
+          '${center.$1}',
+          '${center.$2}',
+        ], environmentFailure: true);
+      },
+      pressBack: () async {
+        await _adbShell(deviceId, const <String>[
+          'input',
+          'keyevent',
+          'KEYCODE_BACK',
+        ], allowFail: true);
+      },
+    );
   }
 
   Future<(int, int)?> _retryUiCenter(
@@ -7247,12 +7461,10 @@ class _Plan257Capture {
     // 6. In ONE backgrounded window: react in the muted group and in the
     //    unmuted control group.
     await _openPlan330Group(senderId, _mutedGroupName);
-    await _longPressText(senderId, _mutedUnderTestMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, _mutedUnderTestMarker);
     await _waitForBackgroundPushWakes(2);
     await _openPlan330Group(senderId, _mutedControlGroupName);
-    await _longPressText(senderId, _mutedControlMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, _mutedControlMarker);
 
     // 7. Pipeline health: the control REACTION must surface through the
     //    background path. Android replaces a conversation's card in place, so
@@ -7354,8 +7566,7 @@ class _Plan257Capture {
     );
 
     await _openPlan330Group(senderId, _mutedControlGroupName);
-    await _longPressText(senderId, targetMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, targetMarker);
     // The transition has to be PUBLISHED before its absence of a wake means
     // anything: a reaction that never left the device would show the same two
     // counter deltas.
@@ -7573,8 +7784,7 @@ class _Plan257Capture {
     await _terminateAndroidRecipient();
     final reactionCursor = await _deviceLogcatCursor(recipientId);
     await _openGradedGroup(senderId);
-    await _longPressText(senderId, _strictTargetMarker);
-    await _tapText(senderId, _reactionEmoji);
+    await _tapReactionForMessage(senderId, _strictTargetMarker);
     await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 1);
     final reactionMetrics = await _waitForStrictAttemptedDelta(
       family: relayGroupReactionWakeCounter,
@@ -8307,7 +8517,11 @@ class _Plan257Capture {
   /// visible to the live reader without any extra channel. It is written once
   /// per send ATTEMPT — `_sendGroupText` re-taps after a group-recovery-pending
   /// outcome — so the last breadcrumb for a marker is the attempt under test.
+  /// The pre-write byte cursor is mandatory because retries intentionally use
+  /// the same marker; an earlier breadcrumb must never satisfy this attempt's
+  /// durability wait while the device-local writer is awaiting its next flush.
   Future<void> _mintGroupSendBreadcrumb(String deviceId, String marker) async {
+    final breadcrumbCursor = await _deviceLogcatCursor(deviceId);
     await _adbShell(deviceId, <String>[
       'log',
       '-p',
@@ -8321,8 +8535,9 @@ class _Plan257Capture {
     await _waitFor(
       'group send breadcrumb for $marker on $deviceId',
       const Duration(seconds: 15),
-      () async => (await _deviceLogWindow(
+      () async => (await _deviceLogSince(
         deviceId,
+        breadcrumbCursor,
       )).contains('$groupSendMarkerBreadcrumbPrefix$marker'),
     );
   }
@@ -8446,13 +8661,13 @@ class _Plan257Capture {
     );
   }
 
-  Future<void> _tapNotificationCard() async {
+  Future<void> _tapNotificationCard(ActiveNotificationCard card) async {
     await _adbShell(recipientId, const <String>[
       'cmd',
       'statusbar',
       'expand-notifications',
     ], environmentFailure: true);
-    final center = await _waitForNotificationCardInShade();
+    final center = await _waitForExactNotificationCardInShade(card);
     await _adbShell(recipientId, <String>[
       'input',
       'tap',
@@ -8461,12 +8676,43 @@ class _Plan257Capture {
     ], environmentFailure: true);
   }
 
-  Future<(int, int)> _waitForNotificationCardInShade() async {
+  Future<(int, int)> _waitForNotificationCardInShade() {
+    return _waitForNotificationCardInShadeMatching();
+  }
+
+  Future<(int, int)> _waitForExactNotificationCardInShade(
+    ActiveNotificationCard card,
+  ) {
+    return _waitForNotificationCardInShadeMatching(card: card);
+  }
+
+  Future<(int, int)> _waitForNotificationCardInShadeMatching({
+    ActiveNotificationCard? card,
+  }) async {
     await Future<void>.delayed(const Duration(milliseconds: 750));
     for (var attempt = 0; attempt < 6; attempt++) {
       final xml = await _uiDump(recipientId);
-      final title = findSemanticNodeCenter(xml, _groupName);
-      if (title != null) return title;
+      final title = findSemanticNodeCenter(xml, card?.title ?? _groupName);
+      if (card == null && title != null) return title;
+      final exactCard = card == null
+          ? null
+          : findAndroidNotificationCardTapTarget(
+              xml,
+              title: card.title,
+              body: card.body,
+            );
+      if (exactCard != null) {
+        final expand = exactCard.collapsedGroupExpandCenter;
+        if (expand == null) return exactCard.cardCenter;
+        await _adbShell(recipientId, <String>[
+          'input',
+          'tap',
+          '${expand.$1}',
+          '${expand.$2}',
+        ], environmentFailure: true);
+        await Future<void>.delayed(const Duration(milliseconds: 750));
+        continue;
+      }
       if (attempt < 5) {
         await _adbShell(recipientId, const <String>[
           'input',
@@ -8482,7 +8728,9 @@ class _Plan257Capture {
     }
     throw _CaptureFailure.capture(
       stage,
-      'active_group_notification_not_reachable_in_bounded_shade_scroll',
+      card == null
+          ? 'active_group_notification_not_reachable_in_bounded_shade_scroll'
+          : 'validated_group_notification_not_reachable_in_bounded_shade_scroll',
     );
   }
 
@@ -8593,7 +8841,8 @@ class _Plan257Capture {
         .inMilliseconds;
     if (homeToReactMs < groupReactionBackgroundConnectedHomeToReactDelayMs ||
         homeToReactMs >
-            groupReactionBackgroundConnectedHomeToReactDelayMs + 15000 ||
+            groupReactionBackgroundConnectedHomeToReactDelayMs +
+                groupReactionBackgroundConnectedHomeToReactAutomationWindowMs ||
         reactionToNotificationMs < 0 ||
         reactionToNotificationMs >
             groupReactionBackgroundConnectedObservationWindowMs) {
@@ -10135,7 +10384,7 @@ class _Plan257Capture {
     ], allowFail: true);
   }
 
-  Future<void> _longPressText(String deviceId, String text) async {
+  Future<(int, int)> _longPressText(String deviceId, String text) async {
     final center = await _waitForBounds(
       deviceId,
       text,
@@ -10150,6 +10399,41 @@ class _Plan257Capture {
       '${center.$2}',
       '900',
     ], environmentFailure: true);
+    return center;
+  }
+
+  Future<void> _tapReactionForMessage(String deviceId, String text) async {
+    const maximumLongPressAttempts = 3;
+    const maximumPickerPolls = 4;
+    for (var attempt = 0; attempt < maximumLongPressAttempts; attempt += 1) {
+      final anchor = await _longPressText(deviceId, text);
+      for (var poll = 0; poll < maximumPickerPolls; poll += 1) {
+        final picker = findSemanticNodeCenterAbove(
+          await _uiDump(deviceId),
+          _reactionEmoji,
+          yExclusive: anchor.$2,
+        );
+        if (picker != null) {
+          await _adbShell(deviceId, <String>[
+            'input',
+            'tap',
+            '${picker.$1}',
+            '${picker.$2}',
+          ], environmentFailure: true);
+          return;
+        }
+        if (poll + 1 < maximumPickerPolls) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+        }
+      }
+      if (attempt + 1 < maximumLongPressAttempts) {
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+      }
+    }
+    throw _CaptureFailure.capture(
+      stage,
+      'reaction_picker_not_visible_above_target_on_$deviceId',
+    );
   }
 
   Future<void> _tapText(String deviceId, String text) async {
@@ -10228,20 +10512,26 @@ class _Plan257Capture {
 
   Future<String> _uiDump(String deviceId) async {
     const remote = '/data/local/tmp/plan257_ui.xml';
-    await _adbShell(deviceId, const <String>[
-      'uiautomator',
-      'dump',
-      remote,
-    ], allowFail: true);
-    final xml = await _adbShell(deviceId, const <String>[
-      'cat',
-      remote,
-    ], allowFail: true);
-    await _adbShell(deviceId, const <String>[
-      'rm',
-      '-f',
-      remote,
-    ], allowFail: true);
+    final xml = await readCompleteAndroidUiHierarchyWithRetry(
+      readAttempt: (_) async {
+        await _adbShell(deviceId, const <String>[
+          'uiautomator',
+          'dump',
+          remote,
+        ], allowFail: true);
+        final xml = await _adbShell(deviceId, const <String>[
+          'cat',
+          remote,
+        ], allowFail: true);
+        await _adbShell(deviceId, const <String>[
+          'rm',
+          '-f',
+          remote,
+        ], allowFail: true);
+        return xml;
+      },
+    );
+    _uiHierarchyHistory.recordAttempt(deviceId: deviceId, xml: xml);
     return xml;
   }
 
@@ -10345,11 +10635,14 @@ class _Plan257Capture {
     // intent — "forget everything before this point" — by raising the stream
     // FLOOR instead. Intercepting here rather than at each of the eight clear
     // sites is deliberate: a new clear can never be added without its floor.
-    if (args.length >= 2 &&
+    if (output.exitCode == 0 &&
+        args.length >= 2 &&
         args[0] == 'logcat' &&
         args[1] == '-c' &&
         _deviceLogFiles.containsKey(deviceId)) {
-      _deviceLogFloors[deviceId] = await _deviceLogFiles[deviceId]!.length();
+      _deviceLogFloors[deviceId] = await (await _requireDeviceLogStream(
+        deviceId,
+      )).length();
       _resetFlowAccumulator(deviceId);
     }
     return output;
@@ -10379,110 +10672,435 @@ class _Plan257Capture {
   // -------------------------------------------------------------------------
 
   final Map<String, File> _deviceLogFiles = <String, File>{};
-  final Map<String, Process> _deviceLogProcesses = <String, Process>{};
+  final Map<String, int> _deviceLogRemotePids = <String, int>{};
+  final Map<String, String> _deviceLogRemotePaths = <String, String>{};
+  final Map<String, String> _deviceLogRemoteErrorPaths = <String, String>{};
+  final Map<String, String> _deviceLogRemotePidPaths = <String, String>{};
   final Map<String, String> _deviceLogFailures = <String, String>{};
   final Map<String, int> _deviceLogFloors = <String, int>{};
+  final Set<String> _deviceLogStaleScanCompleted = <String>{};
 
   String _deviceLogSlug(String deviceId) =>
       deviceId.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '_');
 
   Future<void> _startDeviceLogStream(String deviceId) async {
-    if (_deviceLogProcesses.containsKey(deviceId)) return;
+    if (_deviceLogRemotePids.containsKey(deviceId)) return;
     final file = File(
       '${artifactDirectory.path}${Platform.pathSeparator}'
       'device_logcat_${_deviceLogSlug(deviceId)}.log',
     );
-    if (traceOnlyExistingState) {
-      await file.parent.create(recursive: true);
-      final type = await FileSystemEntity.type(file.path, followLinks: false);
-      if (type == FileSystemEntityType.notFound) {
-        await file.create(exclusive: true);
-      } else if (type != FileSystemEntityType.file) {
-        throw _CaptureFailure.configuration(
-          stage,
-          'plan398_device_log_no_follow_shape_rejected_on_$deviceId',
-        );
-      }
-      final chmod = await Process.run('chmod', <String>['600', file.path]);
-      final metadata = await file.stat();
-      if (chmod.exitCode != 0 || (metadata.mode & 0x1ff) != 0x180) {
-        throw _CaptureFailure.configuration(
-          stage,
-          'plan398_device_log_private_mode_rejected_on_$deviceId',
-        );
-      }
-      final handle = await file.open(mode: FileMode.write);
-      try {
-        await handle.flush();
-      } finally {
-        await handle.close();
-      }
-      await fsyncPlan398Directory(file.parent);
-    } else if (await file.exists()) {
-      await file.delete();
+    await file.parent.create(recursive: true);
+    final type = await FileSystemEntity.type(file.path, followLinks: false);
+    if (type == FileSystemEntityType.notFound) {
+      await file.create(exclusive: true);
+    } else if (type != FileSystemEntityType.file) {
+      throw _CaptureFailure.configuration(
+        stage,
+        '${traceOnlyExistingState ? 'plan398' : 'device'}_device_log_'
+        'no_follow_shape_rejected_on_$deviceId',
+      );
     }
-    // `adb` writes the file itself through a shell redirect, so Dart never owns
-    // the byte stream. Piping `process.stdout` into an `IOSink` is the obvious
-    // implementation and is WRONG under load: `IOSink.flush` sets `_isBound`,
-    // so every cursor read races the stdout listener and throws
-    // `Bad state: StreamSink is bound to a stream`.
-    //
-    // Positional parameters, never interpolation: the device id and path go in
-    // as argv, so nothing here is shell-quoted or injectable.
-    final process = await Process.start('/bin/sh', <String>[
-      '-c',
-      'exec adb -s "\$1" logcat -T 1 -v threadtime >"\$2"',
-      'plan386-device-log',
-      deviceId,
-      file.path,
-    ]);
-    _deviceLogFiles[deviceId] = file;
-    _deviceLogProcesses[deviceId] = process;
-    _deviceLogFloors[deviceId] = 0;
-    unawaited(process.stderr.drain<void>());
-    unawaited(
-      process.exitCode.then((code) {
-        // Only an exit we did not ask for is a failure; the stop helper clears
-        // the handle before killing.
-        if (_deviceLogProcesses[deviceId] != null) {
-          _deviceLogFailures[deviceId] = 'adb logcat exited with code $code';
+    final chmod = await Process.run('chmod', <String>['600', file.path]);
+    final metadata = await file.stat();
+    if (chmod.exitCode != 0 || (metadata.mode & 0x1ff) != 0x180) {
+      throw _CaptureFailure.configuration(
+        stage,
+        '${traceOnlyExistingState ? 'plan398' : 'device'}_device_log_'
+        'private_mode_rejected_on_$deviceId',
+      );
+    }
+    final handle = await file.open(mode: FileMode.write);
+    try {
+      await handle.flush();
+    } finally {
+      await handle.close();
+    }
+    if (traceOnlyExistingState) await fsyncPlan398Directory(file.parent);
+
+    // A prior capture can lose ADB before its teardown reaches this detached
+    // recorder. Reap only this harness's strict path namespace when the same
+    // device is reachable again, before starting another lossless writer.
+    if (!_deviceLogStaleScanCompleted.contains(deviceId)) {
+      await _reapStaleDeviceLogStreams(deviceId);
+      _deviceLogStaleScanCompleted.add(deviceId);
+    }
+
+    // Keep the lossless reader on the DEVICE, parented by Android init. A host
+    // `adb logcat` process dies whenever its transport blips (exit 255), even
+    // though the emulator and its ring remain healthy. The device-local
+    // recorder survives host reconnects and `logcat -c`; bounded `exec-out`
+    // snapshots merely mirror newly appended bytes into the private artifact.
+    final remoteToken =
+        '${pid}_${DateTime.now().toUtc().microsecondsSinceEpoch}_'
+        '${_deviceLogSlug(deviceId)}';
+    final remotePath = '/data/local/tmp/mknoon_device_log_$remoteToken.log';
+    final remoteErrorPath = '$remotePath.stderr';
+    final remotePidPath = '$remotePath.pid';
+    await _adb(deviceId, <String>[
+      'shell',
+      'rm',
+      '-f',
+      remotePath,
+      remoteErrorPath,
+      remotePidPath,
+    ], allowFail: true);
+
+    // `&` alone leaves the recorder in adbd's session. A transport write
+    // failure can then hang up that session and kill the otherwise device-local
+    // process. Ignore SIGHUP, create a fresh session, and have the final shell
+    // write its own PID before `exec` preserves that identity as logcat.
+    final detachedCommand =
+        'echo \$\$ > ${_shellQuote(remotePidPath)}; '
+        'exec logcat -T 1 -v threadtime -f ${_shellQuote(remotePath)}';
+    final command =
+        '/system/bin/nohup /system/bin/setsid -d sh -c '
+        '${_shellQuote(detachedCommand)} </dev/null >/dev/null '
+        '2>${_shellQuote(remoteErrorPath)} &';
+    final launch = await _adb(deviceId, <String>[
+      'shell',
+      command,
+    ], allowFail: true);
+    int? remotePid;
+    if (launch.exitCode == 0) {
+      for (var attempt = 0; attempt < 40; attempt += 1) {
+        final pidResult = await _adb(deviceId, <String>[
+          'shell',
+          'cat',
+          remotePidPath,
+        ], allowFail: true);
+        final parsed = int.tryParse(pidResult.stdout.trim());
+        if (pidResult.exitCode == 0 && parsed != null && parsed > 0) {
+          remotePid = parsed;
+          break;
         }
-      }),
-    );
+        if (attempt < 39) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      }
+    }
+    if (launch.exitCode != 0 || remotePid == null || remotePid <= 0) {
+      final detail = await _adb(deviceId, <String>[
+        'shell',
+        'cat',
+        remoteErrorPath,
+      ], allowFail: true);
+      throw _CaptureFailure.environment(
+        stage,
+        'device_log_stream_launch_failed_on_$deviceId: '
+        '${_lastLine('${launch.combined}\n${detail.stdout}')}',
+      );
+    }
+    _deviceLogFiles[deviceId] = file;
+    _deviceLogRemotePids[deviceId] = remotePid;
+    _deviceLogRemotePaths[deviceId] = remotePath;
+    _deviceLogRemoteErrorPaths[deviceId] = remoteErrorPath;
+    _deviceLogRemotePidPaths[deviceId] = remotePidPath;
+    _deviceLogFailures.remove(deviceId);
+    _deviceLogFloors[deviceId] = 0;
+
     // `-T 1` emits immediately and an installed, running app is never silent
-    // for long, so a stream that produces nothing is broken rather than merely
-    // quiet. Failing here is the whole point: every window read afterwards
-    // would otherwise be vacuous.
+    // for long. Require both a live remote process and mirrored bytes so every
+    // later cursor is grounded in an actual lossless stream.
     final started = await retryBoundedFixtureRead<bool>(
-      attempt: () async =>
-          await file.exists() &&
-          await file.length() > 0 &&
-          _deviceLogFailures[deviceId] == null,
+      attempt: () => _deviceLogSnapshotHealthyOnce(deviceId),
       succeeded: (value) => value,
       maximumAttempts: 120,
       retryDelay: const Duration(milliseconds: 250),
     );
     if (!started) {
+      final detail = await _readRemoteDeviceLogError(deviceId);
       throw _CaptureFailure.environment(
         stage,
         'device_log_stream_produced_no_output_on_$deviceId'
-        '${_deviceLogFailures[deviceId] == null ? '' : ': ${_deviceLogFailures[deviceId]}'}',
+        '${detail.isEmpty ? '' : ': $detail'}',
       );
     }
   }
 
-  Future<void> _stopDeviceLogStreams() async {
-    for (final deviceId in _deviceLogProcesses.keys.toList(growable: false)) {
-      final process = _deviceLogProcesses.remove(deviceId);
-      if (process != null) {
-        process.kill();
-        await process.exitCode.timeout(
-          const Duration(seconds: 10),
-          onTimeout: () {
-            process.kill(ProcessSignal.sigkill);
-            return -1;
-          },
+  Future<_RemoteDeviceLogProcessState> _remoteDeviceLogProcessStateAt(
+    String deviceId,
+    int remotePid,
+    String remotePath,
+  ) async {
+    final result = await _adb(deviceId, <String>[
+      'shell',
+      'cat',
+      '/proc/$remotePid/cmdline',
+    ], allowFail: true);
+    if (result.exitCode == 0) {
+      return androidDeviceLogCommandLineOwnsArchive(result.stdout, remotePath)
+          ? _RemoteDeviceLogProcessState.owned
+          : _RemoteDeviceLogProcessState.notOwned;
+    }
+    final reachable = await _adb(deviceId, <String>[
+      'shell',
+      'true',
+    ], allowFail: true);
+    return reachable.exitCode == 0
+        ? _RemoteDeviceLogProcessState.notOwned
+        : _RemoteDeviceLogProcessState.unavailable;
+  }
+
+  Future<bool> _remoteDeviceLogProcessAlive(String deviceId) async {
+    final remotePid = _deviceLogRemotePids[deviceId];
+    final remotePath = _deviceLogRemotePaths[deviceId];
+    if (remotePid == null || remotePath == null) return false;
+    return await _remoteDeviceLogProcessStateAt(
+          deviceId,
+          remotePid,
+          remotePath,
+        ) ==
+        _RemoteDeviceLogProcessState.owned;
+  }
+
+  Future<bool> _stopVerifiedRemoteDeviceLogProcess(
+    String deviceId,
+    int remotePid,
+    String remotePath,
+  ) async {
+    for (final signal in const <int>[2, 15, 9]) {
+      final state = await _remoteDeviceLogProcessStateAt(
+        deviceId,
+        remotePid,
+        remotePath,
+      );
+      if (state == _RemoteDeviceLogProcessState.notOwned) return true;
+      if (state == _RemoteDeviceLogProcessState.unavailable) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        continue;
+      }
+
+      // The state check binds this numeric PID to the exact `logcat -f` path.
+      // Recheck before every stronger signal so PID reuse is never targeted.
+      final result = await _adb(deviceId, <String>[
+        'shell',
+        'kill',
+        '-$signal',
+        '$remotePid',
+      ], allowFail: true);
+      if (result.exitCode != 0) continue;
+      final stopped = await retryBoundedFixtureRead<bool>(
+        attempt: () async {
+          final observed = await _remoteDeviceLogProcessStateAt(
+            deviceId,
+            remotePid,
+            remotePath,
+          );
+          return observed == _RemoteDeviceLogProcessState.notOwned;
+        },
+        succeeded: (value) => value,
+        maximumAttempts: 8,
+        retryDelay: const Duration(milliseconds: 125),
+      );
+      if (stopped) return true;
+    }
+    return await _remoteDeviceLogProcessStateAt(
+          deviceId,
+          remotePid,
+          remotePath,
+        ) ==
+        _RemoteDeviceLogProcessState.notOwned;
+  }
+
+  Future<void> _reapStaleDeviceLogStreams(String deviceId) async {
+    final listed = await _adb(deviceId, <String>[
+      'shell',
+      'find /data/local/tmp -maxdepth 1 -type f -name '
+          "'mknoon_device_log_*.log.pid' -print",
+    ], allowFail: true);
+    if (listed.exitCode != 0) {
+      throw _CaptureFailure.environment(
+        stage,
+        'stale_device_log_scan_failed_on_$deviceId',
+      );
+    }
+    for (final rawPidPath in const LineSplitter().convert(listed.stdout)) {
+      final pidPath = rawPidPath.trim();
+      final archivePath = androidDeviceLogArchivePathFromPidPath(pidPath);
+      if (archivePath == null) continue;
+      final pidResult = await _adb(deviceId, <String>[
+        'shell',
+        'cat',
+        pidPath,
+      ], allowFail: true);
+      final remotePid = int.tryParse(pidResult.stdout.trim());
+      if (pidResult.exitCode != 0 || remotePid == null || remotePid <= 0) {
+        throw _CaptureFailure.environment(
+          stage,
+          'stale_device_log_pid_invalid_on_$deviceId',
         );
+      }
+      final stopped = await _stopVerifiedRemoteDeviceLogProcess(
+        deviceId,
+        remotePid,
+        archivePath,
+      );
+      if (!stopped) {
+        throw _CaptureFailure.environment(
+          stage,
+          'device_log_stream_still_alive_on_$deviceId',
+        );
+      }
+      final removed = await _adb(deviceId, <String>[
+        'shell',
+        'rm',
+        '-f',
+        archivePath,
+        '$archivePath.stderr',
+        pidPath,
+      ], allowFail: true);
+      if (removed.exitCode != 0) {
+        throw _CaptureFailure.environment(
+          stage,
+          'stale_device_log_cleanup_failed_on_$deviceId',
+        );
+      }
+    }
+  }
+
+  Future<({int exitCode, List<int> stdout, String stderr})> _adbBytes(
+    String deviceId,
+    List<String> args,
+  ) async {
+    if (verbose) stdout.writeln('RUN: adb -s $deviceId ${args.join(' ')}');
+    final result = await Process.run('adb', <String>[
+      '-s',
+      deviceId,
+      ...args,
+    ], stdoutEncoding: null);
+    _recordCommand('adb', <String>['-s', deviceId, ...args], result.exitCode);
+    final raw = result.stdout;
+    return (
+      exitCode: result.exitCode,
+      stdout: raw is List<int> ? raw : utf8.encode('$raw'),
+      stderr: '${result.stderr}',
+    );
+  }
+
+  Future<bool> _appendRemoteDeviceLogBytes(String deviceId) async {
+    final file = _deviceLogFiles[deviceId];
+    final remotePath = _deviceLogRemotePaths[deviceId];
+    if (file == null || remotePath == null) return false;
+    final offset = await file.length();
+    final sizeResult = await _adb(deviceId, <String>[
+      'shell',
+      'stat',
+      '-c',
+      '%s',
+      remotePath,
+    ], allowFail: true);
+    final remoteLength = int.tryParse(sizeResult.stdout.trim());
+    if (sizeResult.exitCode != 0 || remoteLength == null) return false;
+    if (remoteLength < offset) {
+      _deviceLogFailures[deviceId] =
+          'device-local log archive shrank from $offset to $remoteLength bytes';
+      return false;
+    }
+    if (remoteLength == offset) return true;
+
+    final snapshot = await _adbBytes(deviceId, <String>[
+      'exec-out',
+      'tail',
+      '-c',
+      '+${offset + 1}',
+      remotePath,
+    ]);
+    if (snapshot.exitCode != 0 ||
+        snapshot.stdout.length < remoteLength - offset) {
+      return false;
+    }
+    final sink = await file.open(mode: FileMode.append);
+    try {
+      await sink.writeFrom(snapshot.stdout);
+      await sink.flush();
+    } finally {
+      await sink.close();
+    }
+    return true;
+  }
+
+  Future<bool> _deviceLogSnapshotHealthyOnce(String deviceId) async {
+    if (!await _remoteDeviceLogProcessAlive(deviceId)) return false;
+    if (!await _appendRemoteDeviceLogBytes(deviceId)) return false;
+    return _remoteDeviceLogProcessAlive(deviceId);
+  }
+
+  Future<bool> _refreshDeviceLogSnapshot(String deviceId) {
+    return retryBoundedFixtureRead<bool>(
+      attempt: () => _deviceLogSnapshotHealthyOnce(deviceId),
+      succeeded: (value) => value,
+      // A transport replacement can reject several consecutive shell calls
+      // even while the init-parented recorder continues writing. The failed
+      // campaign at 02:58:28 recovered the exact same PID and archive after
+      // roughly 1.5 seconds, so the previous sub-second window classified a
+      // healthy recorder as dead. Keep this bounded, but cover a real adbd
+      // reconnect rather than only a single-command wobble.
+      maximumAttempts: 12,
+      retryDelay: const Duration(milliseconds: 500),
+    );
+  }
+
+  Future<String> _readRemoteDeviceLogError(String deviceId) async {
+    final remoteErrorPath = _deviceLogRemoteErrorPaths[deviceId];
+    if (remoteErrorPath == null) return '';
+    final result = await _adb(deviceId, <String>[
+      'shell',
+      'cat',
+      remoteErrorPath,
+    ], allowFail: true);
+    return result.exitCode == 0 ? _lastLine(result.stdout) : '';
+  }
+
+  Future<void> _stopDeviceLogStreams() async {
+    String? firstFailure;
+    for (final deviceId in _deviceLogRemotePids.keys.toList(growable: false)) {
+      await retryBoundedFixtureRead<bool>(
+        attempt: () => _appendRemoteDeviceLogBytes(deviceId),
+        succeeded: (value) => value,
+        maximumAttempts: 3,
+        retryDelay: const Duration(milliseconds: 250),
+      );
+      final remotePid = _deviceLogRemotePids[deviceId]!;
+      final remotePath = _deviceLogRemotePaths[deviceId];
+      final stopped =
+          remotePath != null &&
+          await _stopVerifiedRemoteDeviceLogProcess(
+            deviceId,
+            remotePid,
+            remotePath,
+          );
+      if (!stopped) {
+        firstFailure ??= 'device_log_stream_still_alive_on_$deviceId';
+      } else {
+        await retryBoundedFixtureRead<bool>(
+          attempt: () => _appendRemoteDeviceLogBytes(deviceId),
+          succeeded: (value) => value,
+          maximumAttempts: 3,
+          retryDelay: const Duration(milliseconds: 250),
+        );
+      }
+      final remoteErrorPath = _deviceLogRemoteErrorPaths[deviceId];
+      final remotePidPath = _deviceLogRemotePidPaths[deviceId];
+      if (stopped && remoteErrorPath != null && remotePidPath != null) {
+        final removed = await retryBoundedFixtureRead<bool>(
+          attempt: () async {
+            final result = await _adb(deviceId, <String>[
+              'shell',
+              'rm',
+              '-f',
+              remotePath,
+              remoteErrorPath,
+              remotePidPath,
+            ], allowFail: true);
+            return result.exitCode == 0;
+          },
+          succeeded: (value) => value,
+          maximumAttempts: 3,
+          retryDelay: const Duration(milliseconds: 250),
+        );
+        if (!removed) {
+          firstFailure ??= 'device_log_stream_cleanup_failed_on_$deviceId';
+        }
       }
       final file = _deviceLogFiles[deviceId];
       if (file != null && await file.exists()) {
@@ -10493,6 +11111,13 @@ class _Plan257Capture {
           await handle.close();
         }
       }
+      _deviceLogRemotePids.remove(deviceId);
+      _deviceLogRemotePaths.remove(deviceId);
+      _deviceLogRemoteErrorPaths.remove(deviceId);
+      _deviceLogRemotePidPaths.remove(deviceId);
+    }
+    if (firstFailure != null) {
+      throw _CaptureFailure.environment(stage, firstFailure);
     }
   }
 
@@ -10506,10 +11131,24 @@ class _Plan257Capture {
       );
     }
     final file = _deviceLogFiles[deviceId];
-    if (file == null) {
+    if (file == null || _deviceLogRemotePids[deviceId] == null) {
       throw _CaptureFailure.capture(
         stage,
         'device_log_stream_never_started_on_$deviceId',
+      );
+    }
+    if (!await _refreshDeviceLogSnapshot(deviceId)) {
+      final remoteError = await _readRemoteDeviceLogError(deviceId);
+      final failure =
+          _deviceLogFailures[deviceId] ??
+          'device-local logcat or its ADB snapshot was unavailable after '
+              'bounded reconnect retries'
+              '${remoteError.isEmpty ? '' : ': $remoteError'}';
+      _deviceLogFailures[deviceId] = failure;
+      throw _CaptureFailure.environment(
+        stage,
+        'device_log_stream_stopped_mid_run_on_$deviceId: $failure; every log '
+        'window from here on would be silently truncated',
       );
     }
     return file;

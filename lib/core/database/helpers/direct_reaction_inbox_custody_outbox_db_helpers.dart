@@ -493,9 +493,18 @@ dbStageOutgoingDirectReactionInboxCustody(
       custodyRow,
       conflictAlgorithm: ConflictAlgorithm.abort,
     );
+    final committedCustody = await txn.query(
+      _table,
+      where: 'recipient_peer_id = ? AND event_id = ?',
+      whereArgs: <Object?>[recipientPeerId, eventId],
+      limit: 1,
+    );
+    if (committedCustody.length != 1) {
+      throw StateError('direct reaction custody lost its exact event');
+    }
     return DbDirectReactionCustodyStageResult(
       outcome: DirectReactionCustodyStageOutcome.applied,
-      custodyRow: custodyRow,
+      custodyRow: Map<String, Object?>.from(committedCustody.single),
     );
   });
 }

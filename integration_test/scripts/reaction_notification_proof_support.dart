@@ -6,6 +6,46 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/notifications/conversation_notification_content_kind.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
+import 'package:xml/xml.dart';
+
+final RegExp _androidDeviceLogPidPathPattern = RegExp(
+  r'^/data/local/tmp/mknoon_device_log_[1-9][0-9]*_'
+  r'[1-9][0-9]*_[A-Za-z0-9_.-]+\.log\.pid$',
+);
+
+/// Resolves only the PID-file namespace created by the device-log recorder.
+///
+/// The strict shape is a safety boundary for stale-process cleanup: arbitrary
+/// paths returned by a compromised or malformed device shell are never used as
+/// removal targets.
+String? androidDeviceLogArchivePathFromPidPath(String pidPath) {
+  if (!_androidDeviceLogPidPathPattern.hasMatch(pidPath)) return null;
+  return pidPath.substring(0, pidPath.length - '.pid'.length);
+}
+
+/// Whether an Android `/proc/<pid>/cmdline` belongs to the exact log archive.
+///
+/// Seeing `logcat` or the path somewhere in a shell command is insufficient;
+/// the process executable must be logcat and the archive must be the exact
+/// argument following `-f`.
+bool androidDeviceLogCommandLineOwnsArchive(
+  String commandLine,
+  String archivePath,
+) {
+  final arguments = commandLine
+      .split('\u0000')
+      .where((argument) => argument.isNotEmpty)
+      .toList(growable: false);
+  if (arguments.isEmpty || arguments.first.split('/').last != 'logcat') {
+    return false;
+  }
+  for (var index = 0; index + 1 < arguments.length; index += 1) {
+    if (arguments[index] == '-f' && arguments[index + 1] == archivePath) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const String plan256ArtifactSchema = 'mknoon.plan256.device-proof.v1';
 const String backgroundCryptoPreflightBundleSchema =
@@ -6114,6 +6154,299 @@ List<String> validateOrdinaryMessageNotificationCard(
   return containingMatch;
 }
 
+/// Finds [target] only above a caller-owned vertical anchor.
+///
+/// A reacted message exposes the same emoji in its persistent reaction badge
+/// and in the transient long-press picker. The badge is at or below the
+/// message, while the picker is positioned above it. Filtering by the message
+/// anchor prevents automation from treating the badge as a successful picker
+/// open when a long press was intercepted.
+(int, int)? findSemanticNodeCenterAbove(
+  String xml,
+  String target, {
+  required int yExclusive,
+}) {
+  (int, int)? containingMatch;
+  for (final node in RegExp(r'<node\b[^>]*>').allMatches(xml)) {
+    final raw = node.group(0)!;
+    final text = _xmlAttribute(raw, 'text');
+    final description = _xmlAttribute(raw, 'content-desc');
+    final isExact = text == target || description == target;
+    final containsTarget =
+        text.contains(target) || description.contains(target);
+    if (!isExact && !containsTarget) continue;
+
+    final bounds = RegExp(
+      r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+    ).firstMatch(raw);
+    if (bounds == null) continue;
+    final center = (
+      (int.parse(bounds.group(1)!) + int.parse(bounds.group(3)!)) ~/ 2,
+      (int.parse(bounds.group(2)!) + int.parse(bounds.group(4)!)) ~/ 2,
+    );
+    if (center.$2 >= yExclusive) continue;
+    if (isExact) return center;
+    containingMatch ??= center;
+  }
+  return containingMatch;
+}
+
+final class AndroidNotificationCardTapTarget {
+  const AndroidNotificationCardTapTarget({
+    required this.cardCenter,
+    required this.collapsedGroupExpandCenter,
+  });
+
+  final (int, int) cardCenter;
+  final (int, int)? collapsedGroupExpandCenter;
+}
+
+/// Finds the safe `Wait` action on Android's blocking application-not-responding
+/// dialog. The title and button must belong to the same platform-owned panel;
+/// a generic `Wait` button elsewhere is never accepted.
+(int, int)? findAndroidAnrWaitCenter(String xml) {
+  late final XmlDocument document;
+  try {
+    document = XmlDocument.parse(xml);
+  } on XmlException {
+    return null;
+  }
+
+  for (final title in document.descendants.whereType<XmlElement>()) {
+    final resourceId = title.getAttribute('resource-id') ?? '';
+    final text = title.getAttribute('text') ?? '';
+    final description = title.getAttribute('content-desc') ?? '';
+    if (title.getAttribute('package') != 'android' ||
+        !resourceId.endsWith(':id/alertTitle') ||
+        (!text.contains("isn't responding") &&
+            !description.contains("isn't responding"))) {
+      continue;
+    }
+
+    XmlElement? panel;
+    for (final ancestor in title.ancestors.whereType<XmlElement>()) {
+      if (ancestor.getAttribute('package') == 'android' &&
+          (ancestor.getAttribute('resource-id') ?? '').endsWith(
+            ':id/parentPanel',
+          )) {
+        panel = ancestor;
+        break;
+      }
+    }
+    if (panel == null) continue;
+    for (final button in panel.descendants.whereType<XmlElement>()) {
+      final buttonText = button.getAttribute('text') ?? '';
+      final buttonDescription = button.getAttribute('content-desc') ?? '';
+      if (button.getAttribute('package') != 'android' ||
+          !(button.getAttribute('resource-id') ?? '').endsWith(
+            ':id/aerr_wait',
+          ) ||
+          button.getAttribute('clickable') != 'true' ||
+          button.getAttribute('enabled') != 'true' ||
+          (buttonText != 'Wait' && buttonDescription != 'Wait')) {
+        continue;
+      }
+      final bounds = _nodeBounds(button.toXmlString(pretty: false));
+      if (bounds == null || bounds.$3 <= bounds.$1 || bounds.$4 <= bounds.$2) {
+        continue;
+      }
+      return ((bounds.$1 + bounds.$3) ~/ 2, (bounds.$2 + bounds.$4) ~/ 2);
+    }
+  }
+  return null;
+}
+
+/// Finds the concrete SystemUI notification row whose semantic subtree
+/// contains both [title] and [body], plus a collapsed ancestor-group expander
+/// when Android has nested that row under an auto-group summary.
+///
+/// Android nests auto-grouped child notifications inside a summary row. The
+/// child's body text can occupy the right-edge expand-button hit region even
+/// though it visually belongs to the child. Tapping that text center expands
+/// the group instead of firing the child's content intent, while tapping the
+/// compact child row before expansion can fire the summary's payload-free
+/// launcher intent. Selecting the deepest matching `expandableNotificationRow`
+/// binds both semantic values to one card. Callers must expand a returned
+/// ancestor first, re-dump, and only then tap [AndroidNotificationCardTapTarget.cardCenter].
+AndroidNotificationCardTapTarget? findAndroidNotificationCardTapTarget(
+  String xml, {
+  required String title,
+  required String body,
+}) {
+  late final XmlDocument document;
+  try {
+    document = XmlDocument.parse(xml);
+  } on XmlException {
+    return null;
+  }
+
+  final candidates =
+      <({XmlElement element, int x, int y, int depth, int area})>[];
+  for (final element in document.descendants.whereType<XmlElement>()) {
+    if (!_isAndroidNotificationRow(element) ||
+        !_xmlSubtreeContainsSemanticTarget(element, title) ||
+        !_xmlSubtreeContainsSemanticTarget(element, body)) {
+      continue;
+    }
+    final bounds = _nodeBounds(element.toXmlString(pretty: false));
+    if (bounds == null) continue;
+    final width = bounds.$3 - bounds.$1;
+    final height = bounds.$4 - bounds.$2;
+    if (width <= 0 || height <= 0) continue;
+    candidates.add((
+      element: element,
+      x: (bounds.$1 + bounds.$3) ~/ 2,
+      y: (bounds.$2 + bounds.$4) ~/ 2,
+      depth: element.ancestors.whereType<XmlElement>().length,
+      area: width * height,
+    ));
+  }
+  if (candidates.isEmpty) return null;
+  candidates.sort((left, right) {
+    final depth = right.depth.compareTo(left.depth);
+    if (depth != 0) return depth;
+    final area = left.area.compareTo(right.area);
+    if (area != 0) return area;
+    return left.y.compareTo(right.y);
+  });
+  final selected = candidates.first;
+  return AndroidNotificationCardTapTarget(
+    cardCenter: (selected.x, selected.y),
+    collapsedGroupExpandCenter: _findCollapsedAncestorGroupExpandCenter(
+      selected.element,
+    ),
+  );
+}
+
+/// Finds a collapsed SystemUI row or ancestor group whose semantic subtree
+/// already exposes [title], even when Android has not exposed the matching
+/// notification body yet.
+///
+/// This helper is only an expansion target. Callers must re-dump the shade and
+/// still require [findAndroidNotificationCardTapTarget] to bind both title and
+/// body before tapping a notification content intent.
+(int, int)? findAndroidCollapsedNotificationExpandCenter(
+  String xml, {
+  required String title,
+}) {
+  late final XmlDocument document;
+  try {
+    document = XmlDocument.parse(xml);
+  } on XmlException {
+    return null;
+  }
+
+  final candidates = <({int x, int y, int rowDepth, int rowArea})>[];
+  for (final row in document.descendants.whereType<XmlElement>()) {
+    if (!_isAndroidNotificationRow(row) ||
+        !_xmlSubtreeContainsSemanticTarget(row, title)) {
+      continue;
+    }
+    final rowBounds = _nodeBounds(row.toXmlString(pretty: false));
+    if (rowBounds == null) continue;
+    final rowWidth = rowBounds.$3 - rowBounds.$1;
+    final rowHeight = rowBounds.$4 - rowBounds.$2;
+    if (rowWidth <= 0 || rowHeight <= 0) continue;
+    final expand = _findCollapsedNotificationExpandCenter(row);
+    if (expand == null) continue;
+    candidates.add((
+      x: expand.$1,
+      y: expand.$2,
+      rowDepth: row.ancestors.whereType<XmlElement>().length,
+      rowArea: rowWidth * rowHeight,
+    ));
+  }
+  if (candidates.isEmpty) return null;
+  candidates.sort((left, right) {
+    final depth = right.rowDepth.compareTo(left.rowDepth);
+    if (depth != 0) return depth;
+    final area = left.rowArea.compareTo(right.rowArea);
+    if (area != 0) return area;
+    return left.y.compareTo(right.y);
+  });
+  return (candidates.first.x, candidates.first.y);
+}
+
+(int, int)? findAndroidNotificationCardRowCenter(
+  String xml, {
+  required String title,
+  required String body,
+}) => findAndroidNotificationCardTapTarget(
+  xml,
+  title: title,
+  body: body,
+)?.cardCenter;
+
+bool _isAndroidNotificationRow(XmlElement element) =>
+    element.name.local == 'node' &&
+    (element.getAttribute('resource-id') ?? '').endsWith(
+      ':id/expandableNotificationRow',
+    );
+
+(int, int)? _findCollapsedAncestorGroupExpandCenter(XmlElement selectedRow) {
+  for (final ancestor in selectedRow.ancestors.whereType<XmlElement>()) {
+    if (!_isAndroidNotificationRow(ancestor)) continue;
+    final center = _findDirectCollapsedNotificationExpandCenter(ancestor);
+    if (center != null) return center;
+  }
+  return null;
+}
+
+(int, int)? _findCollapsedNotificationExpandCenter(XmlElement selectedRow) {
+  for (final row in <XmlElement>[
+    selectedRow,
+    ...selectedRow.ancestors.whereType<XmlElement>().where(
+      _isAndroidNotificationRow,
+    ),
+  ]) {
+    final center = _findDirectCollapsedNotificationExpandCenter(row);
+    if (center != null) return center;
+  }
+  return null;
+}
+
+(int, int)? _findDirectCollapsedNotificationExpandCenter(XmlElement row) {
+  for (final element in row.descendants.whereType<XmlElement>()) {
+    if (!(element.getAttribute('resource-id') ?? '').endsWith(
+          ':id/expand_button',
+        ) ||
+        element.getAttribute('content-desc') != 'Expand' ||
+        !identical(_nearestAndroidNotificationRow(element), row)) {
+      continue;
+    }
+    final bounds = _nodeBounds(element.toXmlString(pretty: false));
+    if (bounds == null || bounds.$3 <= bounds.$1 || bounds.$4 <= bounds.$2) {
+      continue;
+    }
+    return ((bounds.$1 + bounds.$3) ~/ 2, (bounds.$2 + bounds.$4) ~/ 2);
+  }
+  return null;
+}
+
+XmlElement? _nearestAndroidNotificationRow(XmlElement element) {
+  for (final ancestor in element.ancestors.whereType<XmlElement>()) {
+    if (_isAndroidNotificationRow(ancestor)) return ancestor;
+  }
+  return null;
+}
+
+bool _xmlSubtreeContainsSemanticTarget(XmlElement root, String target) {
+  for (final element in <XmlElement>[
+    root,
+    ...root.descendants.whereType<XmlElement>(),
+  ]) {
+    final text = element.getAttribute('text') ?? '';
+    final description = element.getAttribute('content-desc') ?? '';
+    if (text == target ||
+        description == target ||
+        text.contains(target) ||
+        description.contains(target)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool isAcceptedGroupSurface(String xml, String groupName) {
   return findSemanticNodeCenter(xml, 'Accept') == null &&
       isGroupConversationSurface(xml, groupName);
@@ -6288,6 +6621,83 @@ Future<GroupComposeMarkerEntryOutcome> enterGroupComposeMarkerOnce({
   return GroupComposeMarkerEntryOutcome.markerNotObserved;
 }
 
+/// Retains the most recent complete Android UI hierarchy independently for
+/// every device while remembering which device was attempted most recently.
+///
+/// A failed hierarchy read must not overwrite the diagnostic evidence from an
+/// earlier complete read. Keeping the histories per device also prevents a
+/// healthy peer's later dump from hiding the last useful screen on the peer
+/// whose automation boundary failed.
+final class AndroidUiHierarchyHistory {
+  final Map<String, String> _lastCompleteByDevice = <String, String>{};
+  String? _lastAttemptedDeviceId;
+
+  void recordAttempt({required String deviceId, required String xml}) {
+    if (deviceId.trim().isEmpty) {
+      throw ArgumentError.value(deviceId, 'deviceId');
+    }
+    _lastAttemptedDeviceId = deviceId;
+    if (_isCompleteAndroidUiHierarchy(xml)) {
+      _lastCompleteByDevice[deviceId] = xml;
+    }
+  }
+
+  ({String deviceId, String xml})? get lastCompleteForLastAttemptedDevice {
+    final deviceId = _lastAttemptedDeviceId;
+    if (deviceId == null) return null;
+    final xml = _lastCompleteByDevice[deviceId];
+    if (xml == null) return null;
+    return (deviceId: deviceId, xml: xml);
+  }
+}
+
+bool _isCompleteAndroidUiHierarchy(String xml) =>
+    xml.contains('<hierarchy') && xml.contains('</hierarchy>');
+
+/// Reads an Android UI hierarchy until one complete XML document is available.
+///
+/// `uiautomator dump` can occasionally exit before its output file is readable.
+/// Only structurally complete hierarchy output is accepted; exhausted attempts
+/// return an empty string so callers continue to fail closed.
+Future<String> readCompleteAndroidUiHierarchyWithRetry({
+  required Future<String> Function(int attempt) readAttempt,
+  int maximumAttempts = 3,
+  Duration retryInterval = const Duration(milliseconds: 150),
+}) async {
+  if (maximumAttempts <= 0) {
+    throw ArgumentError.value(maximumAttempts, 'maximumAttempts');
+  }
+
+  for (var attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    final xml = await readAttempt(attempt);
+    if (_isCompleteAndroidUiHierarchy(xml)) {
+      return xml;
+    }
+    if (attempt < maximumAttempts && retryInterval > Duration.zero) {
+      await Future<void>.delayed(retryInterval);
+    }
+  }
+  return '';
+}
+
+/// Keeps only Android `threadtime` logcat rows emitted by [processId].
+///
+/// Device-proof readers use one lossless whole-device stream so they do not
+/// compete for host ADB transports. Setup predicates that are intentionally
+/// scoped to the current app process can still preserve that boundary by
+/// filtering the archived stream before evaluating their markers.
+String filterAndroidThreadtimeLogByProcessId(String log, int processId) {
+  if (processId <= 0) {
+    throw ArgumentError.value(processId, 'processId');
+  }
+  final row = RegExp(
+    r'^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}\s+'
+    '${RegExp.escape('$processId')}'
+    r'\s+\d+\s+[A-Z]\s+',
+  );
+  return log.split('\n').where(row.hasMatch).join('\n');
+}
+
 /// Finds a node only when both its Android class and semantic text match.
 ///
 /// This is intentionally class-scoped so a message bubble containing [text]
@@ -6303,6 +6713,28 @@ Future<GroupComposeMarkerEntryOutcome> enterGroupComposeMarkerOnce({
     final nodeText = _xmlAttribute(raw, 'text');
     final description = _xmlAttribute(raw, 'content-desc');
     if (!nodeText.contains(text) && !description.contains(text)) continue;
+    final bounds = _nodeBounds(raw);
+    if (bounds != null) return bounds;
+  }
+  return null;
+}
+
+/// Finds a node only when both its Android class and complete semantic value
+/// match.
+///
+/// Unlike [findNodeBoundsByClassContainingText], this never treats a prefixed
+/// or suffixed field value as proof that automation entered [text] exactly.
+(int, int, int, int)? findNodeBoundsByClassWithExactText(
+  String xml,
+  String className,
+  String text,
+) {
+  for (final node in RegExp(r'<node\b[^>]*>').allMatches(xml)) {
+    final raw = node.group(0)!;
+    if (_xmlAttribute(raw, 'class') != className) continue;
+    final nodeText = _xmlAttribute(raw, 'text');
+    final description = _xmlAttribute(raw, 'content-desc');
+    if (nodeText != text && description != text) continue;
     final bounds = _nodeBounds(raw);
     if (bounds != null) return bounds;
   }

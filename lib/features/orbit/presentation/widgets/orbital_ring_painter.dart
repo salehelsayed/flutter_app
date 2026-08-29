@@ -26,6 +26,39 @@ class OrbitArcRing {
   int get hashCode => Object.hash(radius, phiMax, arcIndex);
 }
 
+/// A short, relationship-coloured arc local to one Orbit node.
+///
+/// These arcs are presentation-only evidence for the isolated Orbital Quiet
+/// treatment. They never participate in seat geometry or hit testing.
+@immutable
+class OrbitRelationshipArc {
+  final double radius;
+  final double centerAngle;
+  final Color color;
+  final bool focused;
+  final bool quiet;
+
+  const OrbitRelationshipArc({
+    required this.radius,
+    required this.centerAngle,
+    required this.color,
+    required this.focused,
+    this.quiet = false,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is OrbitRelationshipArc &&
+      other.radius == radius &&
+      other.centerAngle == centerAngle &&
+      other.color == color &&
+      other.focused == focused &&
+      other.quiet == quiet;
+
+  @override
+  int get hashCode => Object.hash(radius, centerAngle, color, focused, quiet);
+}
+
 /// Draws the two dashed concentric rings and (198) any expanded overflow arcs.
 ///
 /// Ring radii are knob-scaled and passed in from a single source of truth
@@ -41,6 +74,7 @@ class OrbitalRingPainter extends CustomPainter {
   final Color ring1Color;
   final Color ring2Color;
   final Color glowColor;
+  final List<OrbitRelationshipArc> relationshipArcs;
 
   static const Color _tealDash = Color(0x4081E6D9); // rgba(129,230,217,0.25)
   static const Color _purpleDash = Color(0x33A78BFA); // rgba(167,139,250,0.20)
@@ -54,6 +88,7 @@ class OrbitalRingPainter extends CustomPainter {
     this.ring1Color = _tealDash,
     this.ring2Color = _purpleDash,
     this.glowColor = _tealGlow,
+    this.relationshipArcs = const [],
   });
 
   @override
@@ -70,6 +105,22 @@ class OrbitalRingPainter extends CustomPainter {
       final sweep = 2 * arc.phiMax;
       final color = arc.arcIndex.isEven ? ring1Color : ring2Color;
       _drawDashedArc(canvas, c, arc.radius, start, sweep, color);
+    }
+
+    for (final arc in relationshipArcs) {
+      final sweep = arc.quiet ? 0.34 : 0.48;
+      final paint = Paint()
+        ..color = arc.color.withValues(alpha: arc.quiet ? 0.72 : 0.92)
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = arc.focused ? (arc.quiet ? 1.8 : 2.4) : 1.4;
+      canvas.drawArc(
+        Rect.fromCircle(center: c, radius: arc.radius),
+        arc.centerAngle - sweep / 2,
+        sweep,
+        false,
+        paint,
+      );
     }
   }
 
@@ -118,9 +169,10 @@ class OrbitalRingPainter extends CustomPainter {
       oldDelegate.ring1Color != ring1Color ||
       oldDelegate.ring2Color != ring2Color ||
       oldDelegate.glowColor != glowColor ||
-      !_listEquals(oldDelegate.arcs, arcs);
+      !_listEquals(oldDelegate.arcs, arcs) ||
+      !_listEquals(oldDelegate.relationshipArcs, relationshipArcs);
 
-  static bool _listEquals(List<OrbitArcRing> a, List<OrbitArcRing> b) {
+  static bool _listEquals<T>(List<T> a, List<T> b) {
     if (a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {
       if (a[i] != b[i]) return false;

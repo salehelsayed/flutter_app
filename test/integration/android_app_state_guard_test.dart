@@ -188,6 +188,159 @@ Future<void> main(List<String> arguments) async {
     );
   });
 
+  test('state guard retries a bounded transient adb offline window', () async {
+    final state = _FakeAdbState.installed(
+      apkBytes: <List<int>>[
+        <int>[1, 2, 3, 4],
+      ],
+      permissions: const <String, bool>{},
+    );
+    final adb = _TransientOfflineAdbRunner(
+      delegate: state,
+      commandFragment: 'shell am force-stop $_packageName',
+      failuresRemaining: 2,
+    );
+
+    final guard = await AndroidAppStateGuard.capture(
+      devices: const <String>['physical-1'],
+      packageName: _packageName,
+      backupLabel: 'adb-offline-retry-test',
+      runner: adb,
+    );
+    addTearDown(() async {
+      if (guard.backupDirectory.existsSync()) {
+        await guard.backupDirectory.delete(recursive: true);
+      }
+    });
+
+    expect(adb.injectedFailures, 2);
+    await guard.restoreAll();
+    expect(guard.restored, isTrue);
+  });
+
+  test(
+    'state guard retries an idempotent generic force-stop failure',
+    () async {
+      final state = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 2, 3, 4],
+        ],
+        permissions: const <String, bool>{},
+      );
+      final adb = _TransientOfflineAdbRunner(
+        delegate: state,
+        commandFragment: 'shell am force-stop $_packageName',
+        failuresRemaining: 2,
+        diagnostic: 'activity manager temporarily unavailable',
+      );
+
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'generic-force-stop-retry-test',
+        runner: adb,
+      );
+      addTearDown(() async {
+        if (guard.backupDirectory.existsSync()) {
+          await guard.backupDirectory.delete(recursive: true);
+        }
+      });
+
+      expect(adb.injectedFailures, 2);
+      await guard.restoreAll();
+      expect(guard.restored, isTrue);
+    },
+  );
+
+  test('default backup policy admits a bounded 300 MiB private tree', () async {
+    final adb = _FakeAdbState.installed(
+      apkBytes: <List<int>>[
+        <int>[1, 2, 3, 4],
+      ],
+      permissions: const <String, bool>{},
+      privateEntries: const <String>{'files'},
+      privateSizeKb: 300 * 1024,
+    );
+    final guard = await AndroidAppStateGuard.capture(
+      devices: const <String>['physical-1'],
+      packageName: _packageName,
+      backupLabel: 'bounded-large-private-tree-test',
+      runner: adb,
+      privateArchiveCapturer: (_, _, entries, destination) async {
+        _writePrivateTarFixture(destination, entries);
+      },
+    );
+    addTearDown(() async {
+      if (guard.backupDirectory.existsSync()) {
+        await guard.backupDirectory.delete(recursive: true);
+      }
+    });
+
+    await guard.restoreAll();
+    expect(guard.restored, isTrue);
+  });
+
+  test(
+    'default backup policy still rejects a private tree above 512 MiB',
+    () async {
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 2, 3, 4],
+        ],
+        permissions: const <String, bool>{},
+        privateEntries: const <String>{'files'},
+        privateSizeKb: 512 * 1024 + 1,
+      );
+
+      await expectLater(
+        AndroidAppStateGuard.capture(
+          devices: const <String>['physical-1'],
+          packageName: _packageName,
+          backupLabel: 'bounded-private-tree-rejection-test',
+          runner: adb,
+        ),
+        throwsA(
+          isA<AndroidAppStateBlocked>().having(
+            (error) => error.detail,
+            'detail',
+            contains('512 MiB backup policy'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test('private archive recaptures after a transient stream loss', () async {
+    final adb = _FakeAdbState.installed(
+      apkBytes: <List<int>>[
+        <int>[1, 2, 3, 4],
+      ],
+      permissions: const <String, bool>{},
+      privateEntries: const <String>{'files'},
+    );
+    var attempts = 0;
+    final guard = await AndroidAppStateGuard.capture(
+      devices: const <String>['physical-1'],
+      packageName: _packageName,
+      backupLabel: 'archive-stream-retry-test',
+      runner: adb,
+      privateArchiveCapturer: (_, _, entries, destination) async {
+        attempts += 1;
+        if (attempts <= 2) throw StateError('simulated transport loss');
+        _writePrivateTarFixture(destination, entries);
+      },
+    );
+    addTearDown(() async {
+      if (guard.backupDirectory.existsSync()) {
+        await guard.backupDirectory.delete(recursive: true);
+      }
+    });
+
+    expect(attempts, 3);
+    await guard.restoreAll();
+    expect(guard.restored, isTrue);
+  });
+
   test(
     'prepared APK identity is proven before capture mutates process',
     () async {
@@ -302,6 +455,46 @@ Future<void> main(List<String> arguments) async {
           )
           .toList(growable: false);
       expect(survivors, isEmpty);
+    },
+  );
+
+  test(
+    'structurally partial private archive is retried before capture returns',
+    () async {
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 2, 3, 4],
+        ],
+        permissions: const <String, bool>{},
+        privateEntries: const <String>{'files'},
+      );
+      var attempts = 0;
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'partial-archive-retry-test',
+        runner: adb,
+        privateArchiveCapturer: (_, _, entries, destination) async {
+          attempts += 1;
+          if (attempts == 1) {
+            destination.writeAsBytesSync(
+              List<int>.filled(100, 0x50),
+              flush: true,
+            );
+            return;
+          }
+          _writePrivateTarFixture(destination, entries);
+        },
+      );
+      addTearDown(() async {
+        if (guard.backupDirectory.existsSync()) {
+          await guard.backupDirectory.delete(recursive: true);
+        }
+      });
+
+      expect(attempts, 2);
+      await guard.restoreAll();
+      expect(guard.restored, isTrue);
     },
   );
 
@@ -1977,6 +2170,36 @@ List<int> _tarHeader(
   return header;
 }
 
+final class _TransientOfflineAdbRunner implements AndroidHostProcessRunner {
+  _TransientOfflineAdbRunner({
+    required this.delegate,
+    required this.commandFragment,
+    required this.failuresRemaining,
+    this.diagnostic = 'adb: device offline',
+  });
+
+  final AndroidHostProcessRunner delegate;
+  final String commandFragment;
+  final String diagnostic;
+  int failuresRemaining;
+  int injectedFailures = 0;
+  var _pid = 9000;
+
+  @override
+  Future<ProcessResult> run(String executable, List<String> arguments) {
+    if (failuresRemaining > 0 &&
+        executable == 'adb' &&
+        arguments.join(' ').contains(commandFragment)) {
+      failuresRemaining -= 1;
+      injectedFailures += 1;
+      return Future<ProcessResult>.value(
+        ProcessResult(_pid++, 1, '', diagnostic),
+      );
+    }
+    return delegate.run(executable, arguments);
+  }
+}
+
 final class _FakeAdbState implements AndroidHostProcessRunner {
   _FakeAdbState.absent()
     : installed = false,
@@ -1988,6 +2211,7 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
       centralInstallExtraPackage = null,
       directPrivateRestoreExact = false,
       privateRestoreMismatchesRemaining = 0,
+      privateSizeKb = 0,
       codeCacheNonEmpty = false,
       _capturedCodeCacheNonEmpty = false,
       _capturedPrivateEntries = <String>{};
@@ -1998,6 +2222,7 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     Set<String> privateEntries = const <String>{},
     this.directPrivateRestoreExact = false,
     this.privateRestoreMismatchesRemaining = 0,
+    this.privateSizeKb = 0,
     this.codeCacheNonEmpty = false,
     this.running = false,
     this.foreground = false,
@@ -2025,6 +2250,7 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
   // Legacy on-device digest mismatch knob, repurposed by the canonical-verify
   // tests as a one-shot drift counter consumed by their verify capturers.
   int privateRestoreMismatchesRemaining;
+  final int privateSizeKb;
   bool codeCacheNonEmpty;
   final bool _capturedCodeCacheNonEmpty;
   Set<String> privateEntries;
@@ -2218,7 +2444,11 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
       return _result(0, codeCacheNonEmpty ? 'shader-cache' : '', '');
     }
     if (_starts(shell, <String>['run-as', _packageName, 'du', '-sk', '.'])) {
-      return _result(0, '${privateEntries.isEmpty ? 0 : 1} .', '');
+      return _result(
+        0,
+        '${privateSizeKb == 0 ? (privateEntries.isEmpty ? 0 : 1) : privateSizeKb} .',
+        '',
+      );
     }
     if (_starts(shell, <String>['run-as', _packageName, 'cp'])) {
       return _result(0, '', '');

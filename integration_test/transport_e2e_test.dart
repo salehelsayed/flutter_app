@@ -266,6 +266,8 @@ Future<_TestStack> _setupStack() async {
     dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
     dbLoadDirectInboxCustodyOutbox: custodyDb.load,
     dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+    dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+        custodyDb.loadOwnerForMessageId,
     dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
     dbCompleteAcceptedDirectInboxCustodyIfExact:
         custodyDb.completeAcceptedIfExact,

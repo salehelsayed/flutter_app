@@ -323,6 +323,49 @@ class HeadlessCanonicalRecoveryWorkerTest {
         }
 
     @Test
+    fun `immediate retry re-signals the warm owner with the authoritative generation`() {
+        val authority = FakeHeadlessRecoveryAuthority(
+            pending = DroppedPushRecoveryStore.PendingRecovery(
+                generation = 12L,
+                binding = TEST_BINDING,
+                triggerKind = DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE,
+                genericMayHaveAlerted = false,
+            ),
+        )
+        val signalled = mutableListOf<Long>()
+
+        assertTrue(
+            signalWarmRecoveryOwnerIfRegistered(
+                authority,
+                fixedWake(generation = 3L),
+            ) { generation ->
+                signalled += generation
+                true
+            },
+        )
+        assertEquals(listOf(12L), signalled)
+
+        assertFalse(
+            signalWarmRecoveryOwnerIfRegistered(authority, periodicWake()) {
+                signalled += it
+                true
+            },
+        )
+        assertEquals(listOf(12L), signalled)
+
+        assertFalse(
+            signalWarmRecoveryOwnerIfRegistered(
+                authority,
+                fixedWake(generation = 3L),
+            ) {
+                signalled += it
+                false
+            },
+        )
+        assertEquals(listOf(12L, 12L), signalled)
+    }
+
+    @Test
     fun `completion protocol rejects forged and late run identities exactly once`() {
         val identity = HeadlessCanonicalRecoveryRunIdentity(
             nonce = "nonce-a",
@@ -441,6 +484,8 @@ class HeadlessCanonicalRecoveryWorkerTest {
         assertTrue(source.contains("nativeLeaseState"))
         assertTrue(source.contains("nativeGoState"))
         assertTrue(source.contains("failureReason"))
+        assertTrue(source.contains("signalWarmRecoveryOwnerIfRegistered"))
+        assertTrue(source.contains("warm_owner_signalled"))
         assertTrue(
             source.indexOf("process_death_barrier_consumed") <
                 source.indexOf("execution.execute(inputData)"),

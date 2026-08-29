@@ -341,7 +341,7 @@ leg_line() {
 scan_at="$(leg_line 'await _coldWakeDeferralsSince(logcatCursor);' || true)"
 throw_at="$(leg_line '$_coldWakeDeferralFailure' || true)"
 latch_at="$(leg_line '_coldWakeWindowScannedClean = true;' || true)"
-tap_at="$(leg_line '_tapNotification(marker)' || true)"
+tap_at="$(leg_line '_tapNotification(coldObservation.card)' || true)"
 prerestore_at="$(leg_line 'preRestoreLog = await _logcatSince' || true)"
 for probe in "$scan_at" "$throw_at" "$latch_at" "$tap_at" "$prerestore_at"; do
   [ -n "$probe" ] ||

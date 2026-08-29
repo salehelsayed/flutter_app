@@ -7,6 +7,9 @@ class GlowFab extends StatelessWidget {
   final double size;
   final Color backgroundColor;
   final Color ringColor;
+  final bool glowEnabled;
+  final double ringWidth;
+  final bool refinedNeutral;
 
   const GlowFab({
     super.key,
@@ -15,6 +18,9 @@ class GlowFab extends StatelessWidget {
     this.size = 56,
     this.backgroundColor = const Color(0xFF1A1A2E),
     this.ringColor = const Color(0xFF64B5F6),
+    this.glowEnabled = true,
+    this.ringWidth = 2,
+    this.refinedNeutral = false,
   });
 
   @override
@@ -27,10 +33,10 @@ class GlowFab extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: backgroundColor,
-          border: Border.all(color: ringColor, width: 2),
-          boxShadow: [
-            BoxShadow(color: ringColor, blurRadius: 12, spreadRadius: 1),
-          ],
+          border: Border.all(color: ringColor, width: ringWidth),
+          boxShadow: glowEnabled
+              ? [BoxShadow(color: ringColor, blurRadius: 12, spreadRadius: 1)]
+              : null,
         ),
         child: Center(child: icon),
       ),

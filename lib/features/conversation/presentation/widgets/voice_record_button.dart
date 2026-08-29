@@ -120,7 +120,7 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
               ),
               child: Center(
                 child: Icon(
-                  isRecording ? Icons.stop_rounded : Icons.mic_rounded,
+                  isRecording ? Icons.arrow_upward_rounded : Icons.mic_rounded,
                   size: 20,
                   color: iconColor,
                 ),

@@ -9171,7 +9171,7 @@ class _FakeGroupInviteListener extends GroupInviteListener {
     required Stream<GroupModel> joinedStream,
     required Stream<PendingGroupInvite> pendingStream,
     required InMemoryPendingGroupInviteRepository pendingInviteRepo,
-    ScheduleGroupInviteRetirement? scheduleGroupInviteRetirement,
+    super.scheduleGroupInviteRetirement,
   }) : _joinedStream = joinedStream,
        _pendingStream = pendingStream,
        super(
@@ -9181,7 +9181,6 @@ class _FakeGroupInviteListener extends GroupInviteListener {
          contactRepo: FakeContactRepository(),
          bridge: FakeBridge(),
          getOwnMlKemSecretKey: () async => null,
-         scheduleGroupInviteRetirement: scheduleGroupInviteRetirement,
        );
 
   @override

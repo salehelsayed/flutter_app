@@ -2167,7 +2167,7 @@ void main() {
         await (voiceScreen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
         voiceRecorder.emitAmplitude(0.2);
         voiceRecorder.emitAmplitude(0.6);
@@ -2490,7 +2490,7 @@ void main() {
         await (screen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
         recorder.emitAmplitude(0.15);
         recorder.emitAmplitude(0.60);
@@ -9977,7 +9977,7 @@ void main() {
         await startRecording();
         await tester.pump();
 
-        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
         expect(find.text('Cancel'), findsOneWidget);
 
         final stopScreen = tester.widget<GroupConversationScreen>(
@@ -12496,7 +12496,7 @@ void main() {
         await staleOnRecordStart();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
 
         final readOnlyGroup = makeAnnouncementGroup(role: GroupRole.member);
@@ -16827,7 +16827,7 @@ void main() {
         await (screen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
 
         recorder.emitAmplitude(0.15);
@@ -16970,7 +16970,7 @@ void main() {
         await (screen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
         recorder.emitAmplitude(0.15);
         recorder.emitAmplitude(0.55);
@@ -17092,7 +17092,7 @@ void main() {
         await (screen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
         final recordingScreen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
@@ -17234,7 +17234,7 @@ void main() {
         await (screen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
         final recordingScreen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
@@ -17340,7 +17340,7 @@ void main() {
           await (screen.onRecordStart! as Future<void> Function())();
           await pumpUntil(
             tester,
-            () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+            () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
           );
           final recordingScreen = tester.widget<GroupConversationScreen>(
             find.byType(GroupConversationScreen),
@@ -17496,7 +17496,7 @@ void main() {
         await (screen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
         recorder.emitAmplitude(0.1);
         recorder.emitAmplitude(0.4);
@@ -17665,7 +17665,7 @@ void main() {
         await tester.tap(find.byIcon(Icons.mic_rounded));
         await tester.pump();
 
-        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
 
         final recordingScreen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
@@ -17788,7 +17788,7 @@ void main() {
         await startRecording();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
 
         final recordingScreen = tester.widget<GroupConversationScreen>(
@@ -17903,7 +17903,7 @@ void main() {
         await startRecording();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
 
         final recordingScreen = tester.widget<GroupConversationScreen>(
@@ -18052,7 +18052,7 @@ void main() {
         await (screen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
 
         final recordingScreen = tester.widget<GroupConversationScreen>(
@@ -18145,7 +18145,7 @@ void main() {
         await (screen.onRecordStart! as Future<void> Function())();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
         );
 
         final recordingScreen = tester.widget<GroupConversationScreen>(
@@ -18243,7 +18243,7 @@ void main() {
       await startRecording();
       await pumpUntil(
         tester,
-        () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
       );
 
       final recordingScreen = tester.widget<GroupConversationScreen>(
@@ -18360,7 +18360,7 @@ void main() {
       await startRecording();
       await pumpUntil(
         tester,
-        () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        () => find.byIcon(Icons.arrow_upward_rounded).evaluate().isNotEmpty,
       );
 
       final recordingScreen = tester.widget<GroupConversationScreen>(
@@ -18423,7 +18423,7 @@ void main() {
 
       // Recording overlay should appear
       expect(find.text('Cancel'), findsOneWidget);
-      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
     });
 
     // -----------------------------------------------------------------------

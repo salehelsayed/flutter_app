@@ -18,6 +18,8 @@ const String androidNotificationPostTapObserveAction =
     'notification_post_tap_observe';
 const String androidNotificationDrainObserveAction =
     'notification_drain_observe';
+const String androidNotificationTransportReadyAction =
+    'notification_transport_ready';
 
 /// Rotates the installed app's FCM registration token in place: delete it,
 /// then poll until the provider hands back a DIFFERENT one. Deleting alone is
@@ -33,6 +35,7 @@ const Set<String> _actions = <String>{
   androidNotificationA6ObserveAction,
   androidNotificationPostTapObserveAction,
   androidNotificationDrainObserveAction,
+  androidNotificationTransportReadyAction,
   androidNotificationDeletePushTokenAction,
 };
 

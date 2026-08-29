@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
@@ -387,7 +388,11 @@ class LifecycleBridge implements Bridge {
     if (inboxRetrieveFails) {
       return {'ok': false, 'errorMessage': 'inbox unavailable'};
     }
-    return {'ok': true, 'messages': <dynamic>[]};
+    return {
+      'ok': true,
+      'messages': <dynamic>[],
+      'custodyContract': ackOrExpiryInboxCustodyContract,
+    };
   }
 
   Map<String, dynamic> _messageSendResponse() {

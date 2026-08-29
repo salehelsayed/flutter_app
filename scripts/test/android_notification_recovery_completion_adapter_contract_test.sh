@@ -5,13 +5,14 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 RUNNER="$ROOT/integration_test/scripts/run_android_notification_recovery_completion.dart"
 WRAPPER_ENTRYPOINT=integration_test/scripts/run_android_notification_recovery_completion_sims.dart
 WRAPPER="$ROOT/$WRAPPER_ENTRYPOINT"
+FULL_REGRESSION_RUNNER="$ROOT/scripts/run_flutter_full_regression.sh"
 CAPTURE="$ROOT/integration_test/scripts/capture_1to1_reaction_head_provenance.dart"
 CRITERIA="$ROOT/integration_test/scripts/android_notification_recovery_completion_criteria.dart"
 FIXTURE="$ROOT/go-relay-server/direct_media_blob_custody_device_fixture_test.go"
 RECEIVER="$ROOT/android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessagingReceiver.kt"
 MANIFEST="$ROOT/android/app/src/main/AndroidManifest.xml"
 
-for file in "$RUNNER" "$WRAPPER" "$CAPTURE" "$CRITERIA" "$FIXTURE" "$RECEIVER" "$MANIFEST"; do
+for file in "$RUNNER" "$WRAPPER" "$FULL_REGRESSION_RUNNER" "$CAPTURE" "$CRITERIA" "$FIXTURE" "$RECEIVER" "$MANIFEST"; do
   [[ -f "$file" ]] || {
     echo "missing recovery source: $file" >&2
     exit 1
@@ -96,6 +97,25 @@ rg -q "#HeadlessCanonicalRecoveryWorker#" "$CRITERIA"
 rg -q 'android:name="\.MknoonFirebaseMessagingReceiver"' "$MANIFEST"
 rg -q 'io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver' "$MANIFEST"
 
+FULL_REGRESSION_SOURCE="$FULL_REGRESSION_RUNNER" python3 - <<'PY'
+import os
+from pathlib import Path
+
+source = Path(os.environ["FULL_REGRESSION_SOURCE"]).read_text()
+function_start = source.index("run_android_notification_recovery_completion() {")
+function_end = source.index("\n}\n", function_start)
+function = source[function_start:function_end]
+assert "run_android_notification_recovery_completion_sims.dart" in function
+assert "--mode major" in function
+assert "--scenario notifications.android_recovery_completion" in function
+
+route_start = source.index("android_notification_recovery_completion_proof_test.dart)")
+route_end = source.index(";;", route_start)
+route = source[route_start:route_end]
+assert "run_android_notification_recovery_completion" in route
+assert "run_sims_capability" not in route
+PY
+
 if rg -q "block\.contains\('mknoon-canonical-recovery'\)" "$CAPTURE" "$CRITERIA"; then
   echo "recovery JobScheduler parser depends on an unrendered WorkManager name" >&2
   exit 1
@@ -122,6 +142,9 @@ seed = source.index("await _sendUiMessageFromSender(routeAbsenceMarker);", fresh
 probe = source.index("await _captureRouteAbsenceProbe(routeAbsenceMarker);", seed)
 assert unregister < fresh_marker < seed < probe
 assert "_captureRouteAbsenceProbe(secondMarker)" not in source
+assert "decoded['status'] == 'failed'" in source
+assert "if (receipt['status'] != 'complete')" in source
+assert "Authenticated notification action $action reported" in source
 PY
 
 if rg -q "21071FDF600CSC|emulator-5554" "$RUNNER" "$CRITERIA" || \

@@ -93,6 +93,7 @@ void main() {
           ...textCustody,
           'media_blob_expires_at_ms': null,
           'media_blob_manifest_hash': null,
+          'contact_account_peer_id': null,
         };
         expect(
           await db.query('direct_inbox_custody_outbox'),

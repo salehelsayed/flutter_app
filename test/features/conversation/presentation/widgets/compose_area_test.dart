@@ -666,8 +666,8 @@ void main() {
 
       expect(find.text('0:03'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
-      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.arrow_upward_rounded), findsNothing);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.stop_rounded), findsNothing);
     });
 
     testWidgets('recording overlay disappears when isRecording is false', (

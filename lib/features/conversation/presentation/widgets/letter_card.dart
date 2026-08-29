@@ -1215,13 +1215,12 @@ class LetterCard extends StatelessWidget {
     return status;
   }
 
-  /// 155/184: the inline status glyph for OUTGOING messages. When
+  /// The inline status glyph for OUTGOING messages. When
   /// [transportStatusGlyph] is set (1:1 only): in-flight shows a single tick,
-  /// failed shows the error glyph, a relay-CUSTODY ('inboxed') message shows the
-  /// two-tick done_all (184: the honest mid-send custody milestone), and any
-  /// other reached message shows the TRANSPORT it travelled (`_transportIcon`),
-  /// falling back to the single check when no transport is known. Group/legacy
-  /// (flag false) keeps the v1 [_statusIcon] inbox glyph — done_all is 1:1 only.
+  /// failed shows the error glyph, and any reached message shows the TRANSPORT
+  /// it travelled (`_transportIcon`), falling back to the single check when no
+  /// transport is known. Group/legacy (flag false) keeps the v1 [_statusIcon]
+  /// status glyph.
   IconData _resolvedStatusIcon(String status) {
     if (!transportStatusGlyph) return _statusIcon(status);
     if (status == 'failed' || status == 'send_failed') {
@@ -1230,15 +1229,9 @@ class LetterCard extends StatelessWidget {
     if (status == 'pending' || status == 'sending') {
       return Icons.done_rounded; // (Changed) single tick instead of the clock
     }
-    // 184: relay custody confirmed → two ticks (done_all). The honest "the
-    // system has it" milestone (~110 ms inbox ACK), distinct from the optimistic
-    // single tick; an offline peer rests here instead of spinning. 1:1 ONLY
-    // (this path) — group/legacy keeps the v1 inbox glyph. NOT a read receipt:
-    // two ticks = relay custody, not recipient-device receipt.
-    if (status == 'inboxed') {
-      return Icons.done_all_rounded;
-    }
-    // Reached live (sent/delivered/queued): show how it travelled.
+    // Reached (sent/inboxed/delivered/queued): show how it travelled. In
+    // particular, relay custody is persisted as inboxed/inbox and must render
+    // the same inbox glyph before and after the delivery receipt.
     final t = transport;
     if (t != null) return _transportIcon(t);
     return Icons.done_rounded;

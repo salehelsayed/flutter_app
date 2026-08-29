@@ -69,6 +69,10 @@ const String plan398IosGroupObservationDiagnosticSchema =
 const String groupStrictNotificationScenarioId =
     'android_strict_group_notification_closure';
 const int groupReactionBackgroundConnectedHomeToReactDelayMs = 3000;
+// The picker driver is independently bounded to three long-press attempts and
+// four UI-hierarchy polls per attempt. This anti-stale ceiling must contain
+// that bounded automation; it is not the notification-delivery SLA below.
+const int groupReactionBackgroundConnectedHomeToReactAutomationWindowMs = 60000;
 const int groupReactionBackgroundConnectedObservationWindowMs = 60000;
 const String groupReactionBackgroundConnectedObservationPrefix =
     'MKNOON_315_BACKGROUND_CONNECTED_OBSERVATION ';
@@ -7135,7 +7139,8 @@ void _validateBackgroundConnectedObservation(
       homeToReaction is! int ||
       homeToReaction < groupReactionBackgroundConnectedHomeToReactDelayMs ||
       homeToReaction >
-          groupReactionBackgroundConnectedHomeToReactDelayMs + 15000 ||
+          groupReactionBackgroundConnectedHomeToReactDelayMs +
+              groupReactionBackgroundConnectedHomeToReactAutomationWindowMs ||
       reactionToNotification is! int ||
       reactionToNotification < 0 ||
       reactionToNotification >
