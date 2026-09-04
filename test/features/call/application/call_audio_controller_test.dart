@@ -4,6 +4,7 @@ import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/call_route_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
+import 'package:flutter_app/features/call/infrastructure/call_audio_route_adapter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -534,6 +535,39 @@ void main() {
     });
 
     test(
+      'route reset failure at cleanup stays best-effort and does not poison retry',
+      () async {
+        final harness = _Harness();
+        await harness.start();
+        await harness.controller.selectOutputRoute(
+          CallAudioOutputRoute.speaker,
+        );
+        harness.engine.failSystemRoute = true;
+
+        await harness.controller.close();
+
+        expect(harness.controller.state.failure, CallAudioFailure.none);
+        expect(harness.controller.state.active, isFalse);
+        expect(harness.controller.cleanupFailureStage, isNull);
+        expect(harness.controller.routeResetFailedAtCleanup, isTrue);
+        expect(
+          harness.engine.calls,
+          contains('engine.route.request:systemDefault'),
+        );
+        expect(harness.engine.closeCalls, 1);
+        expect(harness.session.deactivateCalls, 1);
+        expect(harness.conflicts.lease.releaseCalls, 1);
+
+        final callsBeforeRetry = List<String>.of(harness.calls);
+        await harness.controller.close();
+
+        expect(harness.calls, callsBeforeRetry);
+        expect(harness.engine.closeCalls, 1);
+        expect(harness.controller.state.failure, CallAudioFailure.none);
+      },
+    );
+
+    test(
       'cleanup starts microphone close before a route reset can settle',
       () async {
         final harness = _Harness();
@@ -804,6 +838,7 @@ final class _FakeCallEngine
   bool failSupportedRoutes = false;
   bool failSnapshot = false;
   bool failClose = false;
+  bool failSystemRoute = false;
   bool yieldDuringControls = false;
   bool controlsOverlapped = false;
   bool _controlInFlight = false;
@@ -917,6 +952,12 @@ final class _FakeCallEngine
     calls.add('engine.route:${route.name}');
     if (route == CallAudioOutputRoute.systemDefault) {
       await systemRouteGate?.future;
+      if (failSystemRoute) {
+        _endControl();
+        throw const CallAudioRouteException(
+          CallAudioRouteErrorCode.selectionFailed,
+        );
+      }
     }
     outputRoute = route;
     _endControl();

@@ -356,6 +356,45 @@ void main() {
     },
   );
 
+  test(
+    'authority rejection is retried on the next publish instead of latching invalid',
+    () async {
+      final native = _TokenNative()
+        ..current = _snapshot(token: _tokenA, refreshEpoch: 31);
+      final authority = _Authority()
+        ..publishFailures.add(
+          const CallAuthorityException(CallAuthorityErrorCode.bridgeFailure),
+        );
+      final coordinator = _coordinator(native, authority);
+      final invalidations = <void>[];
+      final subscription = coordinator.authorityInvalidations.listen(
+        invalidations.add,
+      );
+
+      // The relay refused the registration: nothing is held for this epoch,
+      // so nothing is revoked and the coordinator stays retryable.
+      expect(await coordinator.publishForAuthenticatedGraph(), isFalse);
+      await _settle();
+      expect(authority.publications, hasLength(1));
+      expect(invalidations, hasLength(1));
+      expect(authority.revocations, isEmpty);
+
+      expect(await coordinator.publishForAuthenticatedGraph(), isTrue);
+      expect(authority.publications, hasLength(2));
+      expect(authority.publications.last.refreshEpoch, 31);
+      expect(invalidations, hasLength(1));
+      expect(authority.revocations, isEmpty);
+
+      await coordinator.close();
+      await subscription.cancel();
+      await native.events.close();
+      // The accepted registration is still withdrawn exactly once on close.
+      expect(authority.revocations, <({CallTokenKind kind, int? epoch})>[
+        (kind: CallTokenKind.iosVoip, epoch: 31),
+      ]);
+    },
+  );
+
   test('close releases a hung initial native read', () async {
     final readCurrent = Completer<Object?>();
     final timeout = Completer<void>();
@@ -673,10 +712,12 @@ final class _Authority implements CallAuthorityClient {
       <({CallTokenKind kind, int? epoch})>[];
   final Map<int, int> _generations = <int, int>{};
   final List<bool> revokeResults = <bool>[];
+  final List<Object> publishFailures = <Object>[];
 
   @override
   Future<CallTokenPublication> publishToken(CallTokenRecord record) async {
     publications.add(record);
+    if (publishFailures.isNotEmpty) throw publishFailures.removeAt(0);
     final epoch = record.refreshEpoch!;
     final generation = _generations.putIfAbsent(
       epoch,

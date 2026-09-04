@@ -1,0 +1,9 @@
+simulator: 674DFFF6-5F38-4235-93F6-AF7FBF86AE65
+Test Suite 'MknoonVoipPushRegistryTests' passed at 2026-09-05 01:19:29.943.
+	 Executed 25 tests, with 0 failures (0 unexpected) in 0.161 (0.169) seconds
+Test Suite 'RunnerTests.xctest' passed at 2026-09-05 01:19:29.943.
+	 Executed 25 tests, with 0 failures (0 unexpected) in 0.161 (0.169) seconds
+Test Suite 'Selected tests' passed at 2026-09-05 01:19:29.943.
+	 Executed 25 tests, with 0 failures (0 unexpected) in 0.161 (0.169) seconds
+** TEST SUCCEEDED **
+exit=0

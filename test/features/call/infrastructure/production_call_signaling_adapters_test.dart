@@ -10,6 +10,7 @@ import 'package:flutter_app/features/call/application/call_history_projector.dar
 import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
 import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
@@ -41,6 +42,7 @@ void main() {
       ]);
       final adapter = ProductionCallControlSignalingAdapter(
         signalingService: harness.service,
+        contextStore: CallSignalingContextStore(),
         resolveCurrentEndpoint: authority.resolve,
         loadSenderSigningPrivateKey: _loadSigningKey,
         callHandleSource: ids.next,
@@ -78,6 +80,7 @@ void main() {
         final authority = _EndpointAuthority(_endpoint());
         final adapter = ProductionCallControlSignalingAdapter(
           signalingService: harness.service,
+          contextStore: CallSignalingContextStore(),
           resolveCurrentEndpoint: authority.resolve,
           loadSenderSigningPrivateKey: _loadSigningKey,
           callHandleSource: _Ids(<String>[
@@ -112,6 +115,213 @@ void main() {
     );
 
     test(
+      'send uses the pinned endpoint when the directory record is gone',
+      () async {
+        final harness = _ServiceHarness();
+        addTearDown(harness.dispose);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final authority = _EndpointAuthority(_endpoint());
+        final contextStore = CallSignalingContextStore();
+        final adapter = ProductionCallControlSignalingAdapter(
+          signalingService: harness.service,
+          contextStore: contextStore,
+          resolveCurrentEndpoint: authority.resolve,
+          loadSenderSigningPrivateKey: _loadSigningKey,
+          callHandleSource: _Ids(<String>[
+            '33333333-3333-4333-8333-333333333333',
+          ]).next,
+          clock: () => _now,
+        );
+        final prepared = await adapter.prepareOutgoingInvite(
+          _outgoingPreparing(),
+        );
+        await adapter.send(
+          signal: _controlSignal(),
+          callHandle: prepared.callHandle,
+        );
+        expect(harness.direct.calls, 1);
+        expect(
+          contextStore.pinnedEndpoint(_callId)?.devicePeerId,
+          'remote-device',
+        );
+
+        // The callee's directory record vanishes mid-call.
+        authority.error = const CallEndpointResolutionException(
+          CallEndpointResolutionCode.unavailable,
+        );
+        final result = await adapter.send(
+          signal: _controlSignal(
+            event: CallSignalType.terminate,
+            senderSequence: 2,
+            messageId: '70000000-0000-4000-8000-000000000002',
+          ),
+          callHandle: prepared.callHandle,
+        );
+
+        expect(result.directAccepted, isTrue);
+        expect(authority.calls, 3);
+        expect(harness.direct.calls, 2);
+        expect(harness.direct.recipients.last, 'remote-device');
+        expect(harness.crypto.recipientKeys.last, 'secret-remote-mlkem-key');
+        final fallbacks = events
+            .where((event) => event['event'] == 'CALL_ENDPOINT_PINNED_FALLBACK')
+            .toList(growable: false);
+        expect(fallbacks, hasLength(1));
+        expect(fallbacks.single['details'], <String, Object?>{
+          'reason': 'unavailable',
+          'adapter': 'control',
+        });
+        _expectRedacted(jsonEncode(fallbacks));
+      },
+    );
+
+    test(
+      'invite and blocked resolutions never use the pinned endpoint',
+      () async {
+        final harness = _ServiceHarness();
+        addTearDown(harness.dispose);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final authority = _EndpointAuthority(_endpoint());
+        final contextStore = CallSignalingContextStore();
+        final adapter = ProductionCallControlSignalingAdapter(
+          signalingService: harness.service,
+          contextStore: contextStore,
+          resolveCurrentEndpoint: authority.resolve,
+          loadSenderSigningPrivateKey: _loadSigningKey,
+          callHandleSource: _Ids(<String>[
+            '33333333-3333-4333-8333-333333333333',
+          ]).next,
+          clock: () => _now,
+        );
+        final prepared = await adapter.prepareOutgoingInvite(
+          _outgoingPreparing(),
+        );
+        await adapter.send(
+          signal: _controlSignal(),
+          callHandle: prepared.callHandle,
+        );
+        expect(harness.direct.calls, 1);
+        expect(contextStore.pinnedEndpoint(_callId), isNotNull);
+
+        final mismatch = isA<CallControlSignalingPortException>().having(
+          (error) => error.code,
+          'code',
+          CallControlSignalingPortErrorCode.endpointMismatch,
+        );
+        // (1) invite never rides a pin: a fresh record is the callee's consent.
+        authority.error = const CallEndpointResolutionException(
+          CallEndpointResolutionCode.unavailable,
+        );
+        await expectLater(
+          adapter.send(
+            signal: _controlSignal(
+              senderSequence: 2,
+              messageId: '70000000-0000-4000-8000-000000000002',
+            ),
+            callHandle: prepared.callHandle,
+          ),
+          throwsA(mismatch),
+        );
+        // (2) blocked always fails closed, pin or not.
+        authority.error = const CallEndpointResolutionException(
+          CallEndpointResolutionCode.blocked,
+        );
+        await expectLater(
+          adapter.send(
+            signal: _controlSignal(
+              event: CallSignalType.terminate,
+              senderSequence: 3,
+              messageId: '70000000-0000-4000-8000-000000000003',
+            ),
+            callHandle: prepared.callHandle,
+          ),
+          throwsA(mismatch),
+        );
+
+        expect(harness.direct.calls, 1);
+        expect(harness.mailbox.stores, 1);
+        expect(
+          events.where(
+            (event) => event['event'] == 'CALL_ENDPOINT_PINNED_FALLBACK',
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test('pinned endpoint is purged at terminal cleanup', () async {
+      final harness = _ServiceHarness();
+      addTearDown(harness.dispose);
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final authority = _EndpointAuthority(_endpoint());
+      final contextStore = CallSignalingContextStore();
+      final adapter = ProductionCallControlSignalingAdapter(
+        signalingService: harness.service,
+        contextStore: contextStore,
+        resolveCurrentEndpoint: authority.resolve,
+        loadSenderSigningPrivateKey: _loadSigningKey,
+        callHandleSource: _Ids(<String>[
+          '33333333-3333-4333-8333-333333333333',
+        ]).next,
+        clock: () => _now,
+      );
+      final prepared = await adapter.prepareOutgoingInvite(
+        _outgoingPreparing(),
+      );
+      await adapter.send(
+        signal: _controlSignal(),
+        callHandle: prepared.callHandle,
+      );
+      authority.error = const CallEndpointResolutionException(
+        CallEndpointResolutionCode.unavailable,
+      );
+      await adapter.send(
+        signal: _controlSignal(
+          event: CallSignalType.terminate,
+          senderSequence: 2,
+          messageId: '70000000-0000-4000-8000-000000000002',
+        ),
+        callHandle: prepared.callHandle,
+      );
+      expect(harness.direct.calls, 2);
+
+      // The call_signaling_context cleanup step purges the call.
+      contextStore.purge(_callId);
+      expect(contextStore.pinnedEndpoint(_callId), isNull);
+
+      await expectLater(
+        adapter.send(
+          signal: _controlSignal(
+            event: CallSignalType.terminate,
+            senderSequence: 3,
+            messageId: '70000000-0000-4000-8000-000000000003',
+          ),
+          callHandle: prepared.callHandle,
+        ),
+        throwsA(
+          isA<CallControlSignalingPortException>().having(
+            (error) => error.code,
+            'code',
+            CallControlSignalingPortErrorCode.endpointMismatch,
+          ),
+        ),
+      );
+      expect(harness.direct.calls, 2);
+      expect(
+        events.where(
+          (event) => event['event'] == 'CALL_ENDPOINT_PINNED_FALLBACK',
+        ),
+        hasLength(1),
+      );
+    });
+
+    test(
       'maps transmit receipts without recursively dispatching coordinator events',
       () async {
         final harness = _ServiceHarness(
@@ -129,6 +339,7 @@ void main() {
         final authority = _EndpointAuthority(_endpoint());
         final adapter = ProductionCallControlSignalingAdapter(
           signalingService: harness.service,
+          contextStore: CallSignalingContextStore(),
           resolveCurrentEndpoint: authority.resolve,
           loadSenderSigningPrivateKey: _loadSigningKey,
         );
@@ -158,6 +369,7 @@ void main() {
       addTearDown(harness.dispose);
       final adapter = ProductionCallControlSignalingAdapter(
         signalingService: harness.service,
+        contextStore: CallSignalingContextStore(),
         resolveCurrentEndpoint: _EndpointAuthority(_endpoint()).resolve,
         loadSenderSigningPrivateKey: _loadSigningKey,
       );
@@ -190,6 +402,7 @@ void main() {
         );
       final adapter = ProductionCallControlSignalingAdapter(
         signalingService: harness.service,
+        contextStore: CallSignalingContextStore(),
         resolveCurrentEndpoint: authority.resolve,
         loadSenderSigningPrivateKey: _loadSigningKey,
       );
@@ -337,6 +550,121 @@ void main() {
       },
     );
 
+    test('negotiation send fails closed after rotation', () async {
+      final harness = _ServiceHarness();
+      addTearDown(harness.dispose);
+      final contextStore = _outgoingContext();
+      final authority = _EndpointAuthority(_endpoint());
+      final adapter = ProductionCallNegotiationSignalingAdapter(
+        signalingService: harness.service,
+        contextStore: contextStore,
+        resolveCurrentEndpoint: authority.resolve,
+        loadSenderSigningPrivateKey: _loadSigningKey,
+        clock: () => _now,
+        messageIdSource: _Ids(<String>[
+          '50000000-0000-4000-8000-000000000011',
+          '50000000-0000-4000-8000-000000000012',
+        ]).next,
+      );
+      await adapter.sendDescription(
+        callId: _callId,
+        description: const CallSessionDescription(
+          type: CallSessionDescriptionType.offer,
+          value: 'secret-offer-sdp',
+          fingerprint: 'secret-offer-fingerprint',
+        ),
+        iceGeneration: 0,
+      );
+      expect(harness.direct.calls, 1);
+
+      authority.current = _endpoint(devicePeerId: 'rotated-device');
+      await expectLater(
+        adapter.sendDescription(
+          callId: _callId,
+          description: const CallSessionDescription(
+            type: CallSessionDescriptionType.answer,
+            value: 'secret-answer-sdp',
+            fingerprint: 'secret-answer-fingerprint',
+          ),
+          iceGeneration: 0,
+        ),
+        throwsA(
+          isA<CallNegotiationPortException>().having(
+            (error) => error.code,
+            'code',
+            CallNegotiationPortErrorCode.signalingUnavailable,
+          ),
+        ),
+      );
+      expect(authority.calls, 2);
+      expect(harness.direct.calls, 1);
+    });
+
+    test(
+      'sendDescription uses the pinned endpoint when the directory record is gone',
+      () async {
+        final harness = _ServiceHarness();
+        addTearDown(harness.dispose);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final contextStore = _outgoingContext();
+        final authority = _EndpointAuthority(_endpoint());
+        final adapter = ProductionCallNegotiationSignalingAdapter(
+          signalingService: harness.service,
+          contextStore: contextStore,
+          resolveCurrentEndpoint: authority.resolve,
+          loadSenderSigningPrivateKey: _loadSigningKey,
+          clock: () => _now,
+          messageIdSource: _Ids(<String>[
+            '50000000-0000-4000-8000-000000000021',
+            '50000000-0000-4000-8000-000000000022',
+          ]).next,
+        );
+        await adapter.sendDescription(
+          callId: _callId,
+          description: const CallSessionDescription(
+            type: CallSessionDescriptionType.offer,
+            value: 'secret-offer-sdp',
+            fingerprint: 'secret-offer-fingerprint',
+          ),
+          iceGeneration: 0,
+        );
+        expect(harness.direct.calls, 1);
+        expect(
+          contextStore.pinnedEndpoint(_callId)?.devicePeerId,
+          'remote-device',
+        );
+
+        authority.error = const CallEndpointResolutionException(
+          CallEndpointResolutionCode.unavailable,
+        );
+        await adapter.sendDescription(
+          callId: _callId,
+          description: const CallSessionDescription(
+            type: CallSessionDescriptionType.offer,
+            value: 'secret-restart-offer-sdp',
+            fingerprint: 'secret-restart-fingerprint',
+          ),
+          iceGeneration: 1,
+        );
+
+        expect(authority.calls, 2);
+        expect(harness.direct.calls, 2);
+        expect(harness.direct.recipients.last, 'remote-device');
+        expect(harness.crypto.recipientKeys.last, 'secret-remote-mlkem-key');
+        final fallbacks = events
+            .where((event) => event['event'] == 'CALL_ENDPOINT_PINNED_FALLBACK')
+            .toList(growable: false);
+        expect(fallbacks, hasLength(1));
+        expect(fallbacks.single['details'], <String, Object?>{
+          'reason': 'unavailable',
+          'adapter': 'negotiation',
+        });
+        _expectRedacted(jsonEncode(fallbacks));
+      },
+    );
+
     test('validates explicit signal lifetime overrides', () {
       final harness = _ServiceHarness();
       addTearDown(harness.dispose);
@@ -476,20 +804,27 @@ CallSessionSnapshot _outgoingPreparing() => CallSessionSnapshot.active(
   observedAt: _now,
 );
 
-CallSignal _controlSignal({String recipientDevicePeerId = 'remote-device'}) =>
-    CallSignal.create(
-      callId: _callId,
-      messageId: '70000000-0000-4000-8000-000000000001',
-      event: CallSignalType.invite,
-      senderAccountPeerId: 'local-account',
-      senderDevicePeerId: 'local-device',
-      recipientAccountPeerId: 'remote-account',
-      recipientDevicePeerId: recipientDevicePeerId,
-      senderSequence: 1,
-      iceGeneration: 0,
-      createdAtMs: _nowMs,
-      expiresAtMs: _nowMs + 45_000,
-    );
+CallSignal _controlSignal({
+  String recipientDevicePeerId = 'remote-device',
+  CallSignalType event = CallSignalType.invite,
+  int senderSequence = 1,
+  String messageId = '70000000-0000-4000-8000-000000000001',
+}) => CallSignal.create(
+  callId: _callId,
+  messageId: messageId,
+  event: event,
+  senderAccountPeerId: 'local-account',
+  senderDevicePeerId: 'local-device',
+  recipientAccountPeerId: 'remote-account',
+  recipientDevicePeerId: recipientDevicePeerId,
+  senderSequence: senderSequence,
+  iceGeneration: 0,
+  createdAtMs: _nowMs,
+  expiresAtMs: _nowMs + 45_000,
+  payload: event == CallSignalType.terminate
+      ? const <String, Object?>{'reason': 'local_hangup'}
+      : const <String, Object?>{},
+);
 
 CallSignal _incomingInvite() => CallSignal.create(
   callId: _callId,
@@ -640,6 +975,7 @@ final class _ServiceHarness {
 
 final class _CaptureCrypto implements CallEnvelopeCrypto {
   final List<String> plaintexts = <String>[];
+  final List<String> recipientKeys = <String>[];
 
   @override
   Future<CallCiphertext> encrypt({
@@ -647,6 +983,7 @@ final class _CaptureCrypto implements CallEnvelopeCrypto {
     required String plaintext,
   }) async {
     plaintexts.add(plaintext);
+    recipientKeys.add(recipientMlKemPublicKey);
     return CallCiphertext(
       kem: base64Encode(utf8.encode('kem')),
       ciphertext: base64Encode(utf8.encode(plaintext)),
@@ -678,6 +1015,7 @@ final class _Direct implements CallDirectTransport {
   _Direct(this.result);
 
   final CallDirectSendResult result;
+  final List<String> recipients = <String>[];
   int calls = 0;
 
   @override
@@ -686,6 +1024,7 @@ final class _Direct implements CallDirectTransport {
     required String envelopeJson,
   }) async {
     calls++;
+    recipients.add(recipientDevicePeerId);
     return result;
   }
 }

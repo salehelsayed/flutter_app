@@ -99,6 +99,7 @@ final class ProductionCallSignalingGraph
         ForegroundCallCapability,
         ForegroundCallBackgroundLifecycle,
         CallSignalingCallabilityInvalidations,
+        CallSignalingDeferredAdvertisementRetries,
         CallWakeHandleDistributionLifecycle {
   ProductionCallSignalingGraph({
     required this.runtime,
@@ -186,7 +187,12 @@ final class ProductionCallSignalingGraph
   Future<CallConnectionSnapshot> Function()? _activeConnectionSnapshotReader;
   int _audioGeneration = 0;
   bool _shuttingDown = false;
-  Future<void>? _iosCallabilityRollback;
+  Future<void>? _iosNativeRollback;
+  Future<void>? _iosTokenRollback;
+  Future<void>? _iosEndpointRollback;
+  bool _advertisementDeferredForLiveCall = false;
+  final StreamController<void> _deferredAdvertisementRetries =
+      StreamController<void>.broadcast(sync: true);
 
   NativeCallLifecycleAdapter? get _nativeCallLifecycleAdapter =>
       androidCallLifecycleAdapter ?? iosCallLifecycleAdapter;
@@ -199,6 +205,14 @@ final class ProductionCallSignalingGraph
 
   @override
   Stream<void> get callabilityInvalidations => _callabilityInvalidations.stream;
+
+  @override
+  Stream<void> get deferredAdvertisementRetries =>
+      _deferredAdvertisementRetries.stream;
+
+  /// A live (non-terminal) session must never be torn down over relay
+  /// capability authority; a terminal-but-still-present session counts as idle.
+  bool get _hasLiveSession => coordinator.activeSession?.isTerminal == false;
 
   /// Returns only the coarse engine snapshot for the exact active call.
   ///
@@ -516,6 +530,7 @@ final class ProductionCallSignalingGraph
       } else {
         _publishForeground(null);
       }
+      if (!_shuttingDown && session.isTerminal) _retryDeferredAdvertisement();
       return;
     }
     final callId = session.callId!;
@@ -673,14 +688,34 @@ final class ProductionCallSignalingGraph
       _emitCapabilityAdvertisementResult(stage: 'ready', outcome: 'ready');
       return true;
     } catch (_) {
-      _emitCapabilityAdvertisementResult(stage: stage, outcome: 'error');
-      return _failIosAdvertisement();
+      return _failCapabilityAdvertisement(stage: stage, outcome: 'error');
     }
   }
 
-  Future<bool> _failCapabilityAdvertisement({required String stage}) {
-    _emitCapabilityAdvertisementResult(stage: stage, outcome: 'unavailable');
+  Future<bool> _failCapabilityAdvertisement({
+    required String stage,
+    String outcome = 'unavailable',
+  }) {
+    if (_hasLiveSession) {
+      // A failed re-advertisement during a live call defers: nothing is
+      // revoked and no native call ends. The terminal snapshot retries once.
+      _advertisementDeferredForLiveCall = true;
+      _emitCapabilityAdvertisementResult(
+        stage: stage,
+        outcome: 'deferred_live_call',
+      );
+      return Future<bool>.value(false);
+    }
+    _emitCapabilityAdvertisementResult(stage: stage, outcome: outcome);
     return _failIosAdvertisement();
+  }
+
+  void _retryDeferredAdvertisement() {
+    if (!_advertisementDeferredForLiveCall) return;
+    _advertisementDeferredForLiveCall = false;
+    if (!_deferredAdvertisementRetries.isClosed) {
+      _deferredAdvertisementRetries.add(null);
+    }
   }
 
   void _emitCapabilityAdvertisementResult({
@@ -698,10 +733,13 @@ final class ProductionCallSignalingGraph
     }
   }
 
+  /// Idle advertisement failure: a transient rollback that withdraws the
+  /// endpoint and fails the native adapter closed but keeps the VoIP token
+  /// registration (only graph close revokes it).
   Future<bool> _failIosAdvertisement() async {
     if (iosCallLifecycleAdapter != null || iosVoipTokenCoordinator != null) {
       try {
-        await _rollbackIosCallability();
+        await _rollbackIosCallability(terminal: false);
       } catch (_) {
         // Returning false withdraws the graph; shutdown retries exact cleanup.
       }
@@ -750,7 +788,10 @@ final class ProductionCallSignalingGraph
     if (iosCallLifecycleAdapter != null || iosVoipTokenCoordinator != null) {
       // Native iOS presentation, token authority, and endpoint authority are
       // withdrawn as one ordered unit before either native channel detaches.
-      await attempt(_rollbackIosCallability);
+      await attempt(() => _rollbackIosCallability(terminal: true));
+    }
+    if (!_deferredAdvertisementRetries.isClosed) {
+      await attempt(_deferredAdvertisementRetries.close);
     }
     final nativeLifecycle = _nativeCallLifecycleAdapter;
     if (nativeLifecycle != null) {
@@ -787,10 +828,12 @@ final class ProductionCallSignalingGraph
     }
   }
 
-  Future<void> _rollbackIosCallability() =>
-      _iosCallabilityRollback ??= _rollbackIosCallabilityOnce();
-
-  Future<void> _rollbackIosCallabilityOnce() async {
+  /// Each leg runs at most once per graph. A transient rollback (idle
+  /// advertisement failure) withdraws native presentation and the endpoint;
+  /// the terminal rollback (graph close, applied token invalidation) also
+  /// revokes the VoIP token. Leg order for a pure terminal rollback stays
+  /// native → token → endpoint.
+  Future<void> _rollbackIosCallability({required bool terminal}) async {
     Object? firstError;
     StackTrace? firstStack;
 
@@ -803,29 +846,54 @@ final class ProductionCallSignalingGraph
       }
     }
 
-    final native = iosCallLifecycleAdapter;
-    if (native != null) {
-      // Stop new PushKit delivery before ending any current CallKit
-      // presentation. Each cleanup leg remains independent so a durability or
-      // native-handler failure cannot strand relay authority or the current UI.
-      await attempt(native.disableCapability);
-      await attempt(native.failClosed);
+    await attempt(() => _iosNativeRollback ??= _rollbackIosNativeOnce());
+    if (terminal) {
+      await attempt(() => _iosTokenRollback ??= _revokeIosTokenOnce());
     }
-    final token = iosVoipTokenCoordinator;
-    if (token != null) await attempt(token.revokeForCallabilityRollback);
-    final preferenceEpoch = _advertisedPreferenceEpoch;
-    if (preferenceEpoch != null) {
-      await attempt(() async {
-        await authorityClient.revokeEndpoint(
-          accountPeerId: localIdentity.peerId,
-          preferenceEpoch: preferenceEpoch,
-        );
-        _advertisedPreferenceEpoch = null;
-      });
-    }
+    await attempt(() => _iosEndpointRollback ??= _revokeIosEndpointOnce());
     if (firstError != null) {
       Error.throwWithStackTrace(firstError!, firstStack!);
     }
+  }
+
+  Future<void> _rollbackIosNativeOnce() async {
+    final native = iosCallLifecycleAdapter;
+    if (native == null) return;
+    Object? firstError;
+    StackTrace? firstStack;
+    // Stop new PushKit delivery before ending any current CallKit
+    // presentation. Each cleanup leg remains independent so a durability or
+    // native-handler failure cannot strand relay authority or the current UI.
+    try {
+      await native.disableCapability();
+    } catch (error, stackTrace) {
+      firstError ??= error;
+      firstStack ??= stackTrace;
+    }
+    try {
+      await native.failClosed();
+    } catch (error, stackTrace) {
+      firstError ??= error;
+      firstStack ??= stackTrace;
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStack!);
+    }
+  }
+
+  Future<void> _revokeIosTokenOnce() async {
+    final token = iosVoipTokenCoordinator;
+    if (token != null) await token.revokeForCallabilityRollback();
+  }
+
+  Future<void> _revokeIosEndpointOnce() async {
+    final preferenceEpoch = _advertisedPreferenceEpoch;
+    if (preferenceEpoch == null) return;
+    await authorityClient.revokeEndpoint(
+      accountPeerId: localIdentity.peerId,
+      preferenceEpoch: preferenceEpoch,
+    );
+    _advertisedPreferenceEpoch = null;
   }
 
   /// A native lifecycle adapter that failed closed never recovers on its
@@ -839,13 +907,21 @@ final class ProductionCallSignalingGraph
   }
 
   Future<void> _handleIosTokenInvalidation() async {
+    if (_hasLiveSession) {
+      // Token authority is applied only at the terminal snapshot: the retry
+      // re-publishes the token; a failed retry then performs the idle rollback
+      // and withdraws the graph. A native-lifecycle invalidation is never
+      // deferred (that call is already dead).
+      _advertisementDeferredForLiveCall = true;
+      return;
+    }
     // Withdraw composition/outgoing entry synchronously. Graph shutdown then
-    // joins the same memoized rollback before detaching either iOS channel.
+    // joins the same memoized rollback legs before detaching either channel.
     if (!_callabilityInvalidations.isClosed) {
       _callabilityInvalidations.add(null);
     }
     try {
-      await _rollbackIosCallability();
+      await _rollbackIosCallability(terminal: true);
     } catch (_) {
       // Shutdown propagates the fixed-shape cleanup failure after all attempts.
     }
@@ -1096,6 +1172,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
         networkEffectsAllowed: networkEffectsAllowed,
       );
       final controlAdapter = ProductionCallControlSignalingAdapter(
+        contextStore: signalingContextStore,
+        clock: callClock,
         signalingService: signalingService,
         resolveCurrentEndpoint: resolveCurrentEndpoint,
         loadSenderSigningPrivateKey: loadSenderSigningPrivateKey,
@@ -1683,31 +1761,82 @@ Future<void> _closeCallMediaBundle({
   required CallAudioInterruptionCoordinator interruptionCoordinator,
   required CallAudioController audioController,
   required CallNegotiationEffectExecutor negotiationExecutor,
+}) => _closeCallMediaBundleSteps(
+  closeInterruptionCoordinator: interruptionCoordinator.close,
+  closeAudioController: audioController.close,
+  audioCleanupFailed: () =>
+      audioController.state.failure == CallAudioFailure.cleanupFailed ||
+      audioController.state.active,
+  closeNegotiationExecutor: negotiationExecutor.close,
+);
+
+/// Test seam for the per-call media bundle close ordering and its
+/// fixed-cardinality failure-stage diagnostics (mirrors the production
+/// `close` closure of [CallScopedMediaBundle]).
+@visibleForTesting
+Future<void> debugCloseCallMediaBundle({
+  required Future<void> Function() closeInterruptionCoordinator,
+  required Future<void> Function() closeAudioController,
+  required bool Function() audioCleanupFailed,
+  required Future<void> Function() closeNegotiationExecutor,
+}) => _closeCallMediaBundleSteps(
+  closeInterruptionCoordinator: closeInterruptionCoordinator,
+  closeAudioController: closeAudioController,
+  audioCleanupFailed: audioCleanupFailed,
+  closeNegotiationExecutor: closeNegotiationExecutor,
+);
+
+Future<void> _closeCallMediaBundleSteps({
+  required Future<void> Function() closeInterruptionCoordinator,
+  required Future<void> Function() closeAudioController,
+  required bool Function() audioCleanupFailed,
+  required Future<void> Function() closeNegotiationExecutor,
 }) async {
   Object? firstError;
   StackTrace? firstStack;
 
-  Future<void> attempt(Future<void> Function() action) async {
+  Future<bool> attempt(Future<void> Function() action) async {
     try {
       await action();
+      return true;
     } catch (error, stackTrace) {
       firstError ??= error;
       firstStack ??= stackTrace;
+      return false;
     }
   }
 
-  await attempt(interruptionCoordinator.close);
-  await attempt(audioController.close);
-  if (audioController.state.failure == CallAudioFailure.cleanupFailed ||
-      audioController.state.active) {
+  if (!await attempt(closeInterruptionCoordinator)) {
+    _emitMediaCloseFailureStage('interruption_release');
+  }
+  await attempt(closeAudioController);
+  if (audioCleanupFailed()) {
+    _emitMediaCloseFailureStage('audio_cleanup');
     firstError ??= const AndroidCallLifecycleException(
       AndroidCallLifecycleErrorCode.nativeFailure,
     );
     firstStack ??= StackTrace.current;
   }
-  await attempt(negotiationExecutor.close);
+  if (!await attempt(closeNegotiationExecutor)) {
+    _emitMediaCloseFailureStage('engine_release');
+  }
   if (firstError != null) {
     Error.throwWithStackTrace(firstError!, firstStack!);
+  }
+}
+
+/// Names the media-bundle close leg that failed so a blocked `call_media`
+/// terminal cleanup is attributable from device logs. Fixed vocabulary only:
+/// `interruption_release`, `audio_cleanup`, `engine_release`.
+void _emitMediaCloseFailureStage(String stage) {
+  try {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CALL_MEDIA_CLOSE_FAILURE_STAGE',
+      details: <String, Object?>{'stage': stage},
+    );
+  } catch (_) {
+    // Diagnostics never change cleanup authority.
   }
 }
 

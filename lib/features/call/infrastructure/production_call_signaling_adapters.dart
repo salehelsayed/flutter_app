@@ -6,6 +6,7 @@ import '../application/call_endpoint_resolver.dart';
 import '../application/call_negotiation_effect_executor.dart';
 import '../application/call_signaling_context_store.dart';
 import '../application/call_signaling_service.dart';
+import 'call_authority_client.dart';
 import '../domain/call_engine.dart';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
@@ -28,13 +29,17 @@ final class ProductionCallControlSignalingAdapter
     implements CallControlSignalingPort {
   ProductionCallControlSignalingAdapter({
     required CallSignalingService signalingService,
+    required CallSignalingContextStore contextStore,
     required ResolveCurrentCallEndpoint resolveCurrentEndpoint,
     required LoadCallSenderSigningPrivateKey loadSenderSigningPrivateKey,
     CallId Function()? callHandleSource,
+    DateTime Function()? clock,
   }) : _signalingService = signalingService,
+       _contextStore = contextStore,
        _resolveCurrentEndpoint = resolveCurrentEndpoint,
        _loadSenderSigningPrivateKey = loadSenderSigningPrivateKey,
-       _callHandleSource = callHandleSource ?? _newOpaqueId;
+       _callHandleSource = callHandleSource ?? _newOpaqueId,
+       _clock = clock ?? DateTime.now;
 
   static const Map<String, Object?> _audioOnlyInvitePayload = <String, Object?>{
     'capabilities': <Object?>['audio'],
@@ -42,9 +47,11 @@ final class ProductionCallControlSignalingAdapter
   };
 
   final CallSignalingService _signalingService;
+  final CallSignalingContextStore _contextStore;
   final ResolveCurrentCallEndpoint _resolveCurrentEndpoint;
   final LoadCallSenderSigningPrivateKey _loadSenderSigningPrivateKey;
   final CallId Function() _callHandleSource;
+  final DateTime Function() _clock;
 
   int _preparationCount = 0;
   int _sendCount = 0;
@@ -122,6 +129,8 @@ final class ProductionCallControlSignalingAdapter
         );
       }
       final endpoint = await _resolveExactEndpoint(
+        callId: signal.callId,
+        event: signal.event,
         accountPeerId: signal.recipientAccountPeerId,
         devicePeerId: signal.recipientDevicePeerId,
       );
@@ -163,7 +172,13 @@ final class ProductionCallControlSignalingAdapter
     }
   }
 
+  /// Re-resolves the exact accepted endpoint for every control write and
+  /// pins it per call. A signal other than `invite` may fall back to that
+  /// pin only when the directory record is transiently gone
+  /// (`unavailable`) or the bridge failed; every other refusal fails closed.
   Future<ResolvedCallEndpoint> _resolveExactEndpoint({
+    required CallId callId,
+    required CallSignalType event,
     required String accountPeerId,
     required String devicePeerId,
   }) async {
@@ -176,6 +191,39 @@ final class ProductionCallControlSignalingAdapter
         event: 'CALL_ENDPOINT_RESOLUTION_FAILED',
         details: <String, Object?>{'code': error.code.name},
       );
+      final pinned = _pinnedEndpointFallback(
+        pinned: _contextStore.pinnedEndpoint(callId),
+        event: event,
+        accountPeerId: accountPeerId,
+        devicePeerId: devicePeerId,
+        reason: error.code == CallEndpointResolutionCode.unavailable
+            ? _PinnedFallbackReason.unavailable
+            : null,
+        nowMs: _clock().toUtc().millisecondsSinceEpoch,
+        adapter: 'control',
+      );
+      if (pinned != null) return pinned;
+      throw const CallControlSignalingPortException(
+        CallControlSignalingPortErrorCode.endpointMismatch,
+      );
+    } on CallAuthorityException catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_ENDPOINT_RESOLUTION_FAILED',
+        details: const <String, Object?>{'code': 'unexpected'},
+      );
+      final pinned = _pinnedEndpointFallback(
+        pinned: _contextStore.pinnedEndpoint(callId),
+        event: event,
+        accountPeerId: accountPeerId,
+        devicePeerId: devicePeerId,
+        reason: error.code == CallAuthorityErrorCode.bridgeFailure
+            ? _PinnedFallbackReason.bridgeFailure
+            : null,
+        nowMs: _clock().toUtc().millisecondsSinceEpoch,
+        adapter: 'control',
+      );
+      if (pinned != null) return pinned;
       throw const CallControlSignalingPortException(
         CallControlSignalingPortErrorCode.endpointMismatch,
       );
@@ -195,6 +243,7 @@ final class ProductionCallControlSignalingAdapter
         CallControlSignalingPortErrorCode.endpointMismatch,
       );
     }
+    _contextStore.pinEndpoint(callId, endpoint);
     return endpoint;
   }
 
@@ -361,7 +410,7 @@ final class ProductionCallNegotiationSignalingAdapter
       );
     }
 
-    final endpoint = await _resolveExactEndpoint(initial);
+    final endpoint = await _resolveExactEndpoint(initial, event: event);
     final signingPrivateKey = await _loadSigningKey();
     final current = _contextStore.read(callId);
     if (current == null || !_sameBinding(initial, current)) {
@@ -396,16 +445,56 @@ final class ProductionCallNegotiationSignalingAdapter
     );
   }
 
+  /// Re-resolves the exact accepted endpoint for every negotiation write and
+  /// pins it per call; offer/answer/ICE/restart may fall back to the pin only
+  /// when the directory record is transiently gone or the bridge failed.
   Future<ResolvedCallEndpoint> _resolveExactEndpoint(
-    CallSignalingContext context,
-  ) async {
-    final endpoint = await _resolveCurrentEndpoint(context.remoteAccountPeerId);
+    CallSignalingContext context, {
+    required CallSignalType event,
+  }) async {
+    late final ResolvedCallEndpoint endpoint;
+    try {
+      endpoint = await _resolveCurrentEndpoint(context.remoteAccountPeerId);
+    } on CallEndpointResolutionException catch (error) {
+      final pinned = _pinnedEndpointFallback(
+        pinned: _contextStore.pinnedEndpoint(context.callId),
+        event: event,
+        accountPeerId: context.remoteAccountPeerId,
+        devicePeerId: context.remoteDevicePeerId,
+        reason: error.code == CallEndpointResolutionCode.unavailable
+            ? _PinnedFallbackReason.unavailable
+            : null,
+        nowMs: _clock().toUtc().millisecondsSinceEpoch,
+        adapter: 'negotiation',
+      );
+      if (pinned != null) return pinned;
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
+    } on CallAuthorityException catch (error) {
+      final pinned = _pinnedEndpointFallback(
+        pinned: _contextStore.pinnedEndpoint(context.callId),
+        event: event,
+        accountPeerId: context.remoteAccountPeerId,
+        devicePeerId: context.remoteDevicePeerId,
+        reason: error.code == CallAuthorityErrorCode.bridgeFailure
+            ? _PinnedFallbackReason.bridgeFailure
+            : null,
+        nowMs: _clock().toUtc().millisecondsSinceEpoch,
+        adapter: 'negotiation',
+      );
+      if (pinned != null) return pinned;
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.signalingUnavailable,
+      );
+    }
     if (endpoint.accountPeerId != context.remoteAccountPeerId ||
         endpoint.devicePeerId != context.remoteDevicePeerId) {
       throw const CallNegotiationPortException(
         CallNegotiationPortErrorCode.signalingUnavailable,
       );
     }
+    _contextStore.pinEndpoint(context.callId, endpoint);
     return endpoint;
   }
 
@@ -447,6 +536,41 @@ final class ProductionCallNegotiationSignalingAdapter
 }
 
 CallId _newOpaqueId() => CallId.parse(const Uuid().v4());
+
+enum _PinnedFallbackReason { unavailable, bridgeFailure }
+
+/// Returns the call's pinned accepted endpoint when a resolution failure is
+/// eligible for the fallback: never for `invite` (a fresh directory record is
+/// the callee's consent to be woken), only for a transiently absent record or
+/// a bridge failure, only for the exact expected device, and only while the
+/// pinned record is unexpired. Emits one identifier-free diagnostic per use.
+ResolvedCallEndpoint? _pinnedEndpointFallback({
+  required ResolvedCallEndpoint? pinned,
+  required CallSignalType event,
+  required String accountPeerId,
+  required String devicePeerId,
+  required _PinnedFallbackReason? reason,
+  required int nowMs,
+  required String adapter,
+}) {
+  if (reason == null || event == CallSignalType.invite) return null;
+  if (pinned == null ||
+      pinned.accountPeerId != accountPeerId ||
+      pinned.devicePeerId != devicePeerId ||
+      pinned.expiresAtMs <= nowMs) {
+    return null;
+  }
+  try {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CALL_ENDPOINT_PINNED_FALLBACK',
+      details: <String, Object?>{'reason': reason.name, 'adapter': adapter},
+    );
+  } catch (_) {
+    // Diagnostics never change signaling authority.
+  }
+  return pinned;
+}
 
 bool _validIdentity(String? value) =>
     value != null &&

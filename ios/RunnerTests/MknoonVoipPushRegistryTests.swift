@@ -680,6 +680,78 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
     XCTAssertTrue(registry.responds(to: selector))
   }
 
+  func testEntitlementProviderPrefersEmbeddedProfileApsEnvironment() {
+    let development = Self.embeddedProfile(apsEnvironment: "development")
+    XCTAssertEqual(
+      EntitlementVoipEnvironmentProvider(
+        infoPlistValue: { "production" }, embeddedProfile: { development }
+      ).environment(),
+      "development"
+    )
+    let production = Self.embeddedProfile(apsEnvironment: "production")
+    XCTAssertEqual(
+      EntitlementVoipEnvironmentProvider(
+        infoPlistValue: { "development" }, embeddedProfile: { production }
+      ).environment(),
+      "production"
+    )
+    XCTAssertEqual(EntitlementVoipEnvironmentProvider.embeddedProfileFileName, "embedded.mobileprovision")
+  }
+
+  func testEntitlementProviderFallsBackToInfoPlistWithoutEmbeddedProfile() {
+    XCTAssertEqual(
+      EntitlementVoipEnvironmentProvider(
+        infoPlistValue: { "production" }, embeddedProfile: { nil }
+      ).environment(),
+      "production"
+    )
+    XCTAssertEqual(
+      EntitlementVoipEnvironmentProvider(
+        infoPlistValue: { "development" }, embeddedProfile: { Data("not a profile".utf8) }
+      ).environment(),
+      "development"
+    )
+    let unknown = Self.embeddedProfile(apsEnvironment: "staging")
+    XCTAssertEqual(
+      EntitlementVoipEnvironmentProvider(
+        infoPlistValue: { "production" }, embeddedProfile: { unknown }
+      ).environment(),
+      "production"
+    )
+    XCTAssertNil(
+      EntitlementVoipEnvironmentProvider(
+        infoPlistValue: { "staging" }, embeddedProfile: { nil }
+      ).environment()
+    )
+    XCTAssertNil(
+      EntitlementVoipEnvironmentProvider(
+        infoPlistValue: { nil }, embeddedProfile: { Data("<plist".utf8) }
+      ).environment()
+    )
+  }
+
+  private static func embeddedProfile(apsEnvironment: String) -> Data {
+    let plist = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+        <key>Entitlements</key>
+        <dict>
+          <key>aps-environment</key>
+          <string>\(apsEnvironment)</string>
+        </dict>
+        <key>Name</key>
+        <string>fixture profile</string>
+      </dict>
+      </plist>
+      """
+    var data = Data([0x30, 0x82, 0x01, 0x02, 0x06, 0x09])
+    data.append(Data(plist.utf8))
+    data.append(Data([0x00, 0xff, 0x10]))
+    return data
+  }
+
   func testPersistedKillSwitchControlsRegistrationInvalidationAndDelivery() throws {
     let reporter = DeferredIncomingReporter()
     let authority = MknoonVoipTokenAuthority(backend: MemoryVoipTokenBackend())

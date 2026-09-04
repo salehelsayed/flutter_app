@@ -236,8 +236,10 @@ final class AndroidForegroundWebRtcCanonicalEndpoint {
 
     final productionControlAdapter = ProductionCallControlSignalingAdapter(
       signalingService: signalingService,
+      contextStore: signalingContextStore,
       resolveCurrentEndpoint: resolveCurrentEndpoint,
       loadSenderSigningPrivateKey: () async => localIdentity.signingLabel,
+      clock: clock.now,
     );
     final observingControlAdapter = _ObservingCallControlSignalingPort(
       delegate: productionControlAdapter,

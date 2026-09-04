@@ -90,6 +90,11 @@ readonly ONE_TO_ONE_TESTS=(
   # token publication, rotation and refresh-epoch-scoped invalidation.
   "test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart"
   "test/features/call/infrastructure/ios_voip_token_coordinator_test.dart"
+  # Plan 400: voice-call app-side hardening — Android ended-handle audio
+  # release, media-close failure stage, iOS live-call advertisement deferral.
+  "test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart"
+  "test/core/bootstrap/production_call_signaling_graph_diagnostics_test.dart"
+  "test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart"
   # 375: one live Android paired-capability readiness epoch gates the
   # producer, drainer and registration for both messaging families.
   "test/core/notifications/android_opaque_wake_readiness_test.dart"

@@ -1,0 +1,14 @@
+02:39 +4163 ~11: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: failed-media delete available protected failed-media intent has truthful row/file/parent/key effects
+02:41 +4164 ~11: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart: Plan 354 private canonical deferred and terminal handoff TC-354-02c private canonical deferred and terminal handoff preserve incumbent transport
+02:41 +4165 ~11: All tests passed!
+No devices are connected. Ensure that `flutter doctor` shows at least one connected device
+Checking for wireless devices...
+
+More than one device connected; please specify a device with the '-d <deviceId>' flag, or use '-d all' to act on all devices.
+
+Pixel 6 (mobile) • 21071FDF600CSC • android-arm64  • Android 16 (API 36)
+macOS (desktop)  • macos          • darwin-arm64   • macOS 26.6.2 25G83 darwin-arm64
+Chrome (web)     • chrome         • web-javascript • Google Chrome 152.0.7977.76
+exit=1
+
+--- summary: Flutter leg 4165 passed / 11 skipped; trailing integration_test device leg not run (3 devices attached, no FLUTTER_DEVICE_ID) → lane exit 1

@@ -3523,6 +3523,152 @@ void main() {
       await native.events.close();
     },
   );
+
+  test(
+    'system-default route reset after the native call ended is a no-op success',
+    () async {
+      late AndroidCallLifecycleAdapter adapter;
+      final native = _NativeHarness()
+        ..attachResult = _emptyBatch()
+        ..results['requestRoute'] = false
+        ..results['deactivateAudio'] = false
+        ..audioState = <String, Object?>{
+          'version': 1,
+          'active': true,
+          'muted': false,
+          'route': 'system_default',
+          'availableRoutes': <Object?>['system_default', 'speaker'],
+        };
+      final routeReset = Completer<Object?>();
+      final speakerAfterEnd = Completer<Object?>();
+      final deactivateAfterEnd = Completer<Object?>();
+      var routeRequestsAfterReset = -1;
+      final cleanup = CallCleanupCoordinator(<CallCleanupStep>[
+        CallCleanupStep('call_media', (_) async {
+          // The adapter's own terminal path must have ended the native handle
+          // before media cleanup resets the route (TC-400-01 fixture rule).
+          await _until(() => native.callsOf('end').length == 1);
+          try {
+            await adapter.selectOutputRoute(CallAudioOutputRoute.systemDefault);
+            routeReset.complete(null);
+          } catch (error) {
+            routeReset.complete(error);
+          }
+          routeRequestsAfterReset = native.callsOf('requestRoute').length;
+          try {
+            await adapter.requestRoute(CallAudioOutputRoute.speaker);
+            speakerAfterEnd.complete(null);
+          } catch (error) {
+            speakerAfterEnd.complete(error);
+          }
+          try {
+            await adapter.deactivate();
+            deactivateAfterEnd.complete(null);
+          } catch (error) {
+            deactivateAfterEnd.complete(error);
+          }
+        }, requiredForTerminalAck: true),
+      ], stepTimeout: const Duration(seconds: 2));
+      final coordinator = _coordinator(cleanupCoordinator: cleanup);
+      adapter = _adapter(native, coordinator, <CallId, String>{
+        _callId: _callHandle,
+      });
+
+      await adapter.start();
+      await _prepareIncoming(coordinator);
+      expect(await adapter.present(_presentation()), isTrue);
+      await adapter.activateAudio();
+      expect(adapter.ownsSession, isTrue);
+
+      // Dart-originated terminal: the adapter ends the native handle itself
+      // and the committed terminal replay carries no terminal event yet.
+      await coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.remoteTerminate,
+          eventId: 'remote-terminate-before-route-reset',
+          occurredAt: _now,
+          callId: _callId,
+          contactPeerId: 'remote-account',
+        ),
+      );
+
+      expect(await routeReset.future, isNull);
+      expect(native.callsOf('end'), hasLength(1));
+      expect(routeRequestsAfterReset, 0);
+      expect(
+        await speakerAfterEnd.future,
+        isA<CallAudioRouteException>().having(
+          (error) => error.code,
+          'code',
+          CallAudioRouteErrorCode.selectionFailed,
+        ),
+      );
+      expect(native.callsOf('requestRoute'), hasLength(1));
+      expect(await deactivateAfterEnd.future, isNull);
+      expect(native.callsOf('deactivateAudio'), isEmpty);
+      expect(adapter.ownsSession, isFalse);
+      await _until(() => coordinator.terminalCleanupAckReady(_callId));
+
+      await adapter.close();
+      await coordinator.dispose();
+      await native.events.close();
+    },
+  );
+
+  test('system-default route reset after a native terminal event is released '
+      'without a native call', () async {
+    late AndroidCallLifecycleAdapter adapter;
+    final native = _NativeHarness()
+      ..attachResult = _emptyBatch()
+      ..results['requestRoute'] = false
+      ..audioState = <String, Object?>{
+        'version': 1,
+        'active': true,
+        'muted': false,
+        'route': 'system_default',
+        'availableRoutes': <Object?>['system_default', 'speaker'],
+      };
+    final routeReset = Completer<Object?>();
+    final cleanup = CallCleanupCoordinator(<CallCleanupStep>[
+      CallCleanupStep('call_media', (_) async {
+        try {
+          await adapter.selectOutputRoute(CallAudioOutputRoute.systemDefault);
+          routeReset.complete(null);
+        } catch (error) {
+          routeReset.complete(error);
+        }
+      }, requiredForTerminalAck: true),
+    ], stepTimeout: const Duration(seconds: 2));
+    final coordinator = _coordinator(cleanupCoordinator: cleanup);
+    adapter = _adapter(native, coordinator, <CallId, String>{
+      _callId: _callHandle,
+    });
+
+    await adapter.start();
+    await _prepareIncoming(coordinator);
+    expect(await adapter.present(_presentation()), isTrue);
+    await adapter.activateAudio();
+    expect(adapter.ownsSession, isTrue);
+
+    // Native-originated terminal: the retained terminal short-circuit owns
+    // the release, so no route request reaches the ended native call.
+    native.events.add(
+      _batch(<Map<String, Object?>>[
+        _event(1, 'native-terminal-presented', 'presented'),
+        _event(2, 'native-terminal-ended', 'remoteCancelled'),
+      ]),
+    );
+
+    expect(await routeReset.future, isNull);
+    expect(native.callsOf('requestRoute'), isEmpty);
+    expect(adapter.ownsSession, isFalse);
+    expect(adapter.selectedRoute, CallAudioOutputRoute.systemDefault);
+    await _until(() => coordinator.terminalCleanupAckReady(_callId));
+
+    await adapter.close();
+    await coordinator.dispose();
+    await native.events.close();
+  });
 }
 
 AndroidCallLifecycleAdapter _adapter(

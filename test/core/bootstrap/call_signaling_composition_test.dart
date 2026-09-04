@@ -1725,6 +1725,42 @@ void main() {
     ]);
   });
 
+  test('contact reconciliation during a live call defers withdrawal', () async {
+    final events = <String>[];
+    final flowEvents = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(flowEvents.add);
+    addTearDown(() => debugSetFlowEventSink(null));
+    late _Graph graph;
+    final composition = CallSignalingComposition(
+      featureFlags: _enabledFlags(),
+      platform: CallEndpointPlatform.android,
+      awaitReadiness: () async => events.add('readiness'),
+      buildGraph: () async => graph = _Graph(
+        events,
+        advertisementResults: const <bool>[true, false],
+      ),
+    );
+    await composition.start();
+    expect(composition.isStarted, isTrue);
+    graph.emitForeground(_projection(state: CallState.connected));
+
+    await composition.onContactEligibilityChanged();
+
+    expect(composition.isStarted, isTrue);
+    expect(events, isNot(contains('call_shutdown')));
+    expect(events.where((event) => event == 'advertise'), hasLength(2));
+    final reconcile = flowEvents
+        .where((event) => event['event'] == 'CALL_SIGNALING_RECONCILE_RESULT')
+        .toList(growable: false);
+    expect(reconcile, hasLength(1));
+    expect(
+      reconcile.single['details'],
+      containsPair('outcome', 'advertisement_deferred'),
+    );
+
+    await composition.shutdown();
+  });
+
   test('failed resume refresh withdraws the active call graph', () async {
     final events = <String>[];
     final composition = CallSignalingComposition(
@@ -2179,13 +2215,16 @@ void main() {
       );
 
       expect(fixture.composition.isStarted, isFalse);
+      // Plan 400 B: the idle advertisement failure withdraws the endpoint
+      // first (transient rollback keeps the VoIP token); graph close then
+      // revokes the token, still before the native channel detaches.
       expect(
         fixture.bridge.commands,
         containsAllInOrder(<String>[
           'call_token_set_v1',
           'call_endpoint_set_v1',
-          'call_token_revoke_v1',
           'call_endpoint_revoke_v1',
+          'call_token_revoke_v1',
         ]),
       );
       expect(
@@ -2226,7 +2265,9 @@ void main() {
 
       expect(fixture.composition.isStarted, isFalse);
       expect(fixture.bridge.commands, contains('call_token_set_v1'));
-      expect(fixture.bridge.commands, contains('call_token_revoke_v1'));
+      // Plan 400 B: the relay refused this epoch, so nothing is revoked (a
+      // CAS revoke would poison the refresh-epoch high-water).
+      expect(fixture.bridge.commands, isNot(contains('call_token_revoke_v1')));
       expect(fixture.bridge.commands, isNot(contains('call_endpoint_set_v1')));
       expect(
         fixture.lifecycleMethods,

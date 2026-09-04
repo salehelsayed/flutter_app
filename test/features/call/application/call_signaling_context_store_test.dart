@@ -1,5 +1,7 @@
+import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -185,4 +187,38 @@ void main() {
       expect(store.read(_callA)?.remoteSenderSequence, 3);
     },
   );
+
+  test('pinned endpoints are per call, bounded, and purged with the call', () {
+    final store = CallSignalingContextStore(maxContexts: 2);
+    ResolvedCallEndpoint endpoint(String device) => ResolvedCallEndpoint(
+      accountPeerId: 'remote-account',
+      devicePeerId: device,
+      signingPublicKey: 'remote-signing-key',
+      mlKemPublicKey: 'remote-mlkem-key',
+      deviceKeyEpoch: 1,
+      preferenceEpoch: 1,
+      platform: CallEndpointPlatform.android,
+      expiresAtMs: 10_000,
+      routingHandle: '0123456789abcdef0123456789abcdef',
+      wakeHandle: 'fedcba9876543210fedcba9876543210',
+    );
+    final callC = CallId.parse('33333333-3333-4333-8333-333333333333');
+
+    expect(store.pinnedEndpoint(_callA), isNull);
+    store.pinEndpoint(_callA, endpoint('device-a'));
+    store.pinEndpoint(_callA, endpoint('device-a2'));
+    store.pinEndpoint(_callB, endpoint('device-b'));
+    expect(store.pinnedEndpoint(_callA)?.devicePeerId, 'device-a2');
+    expect(store.pinnedEndpoint(_callB)?.devicePeerId, 'device-b');
+    expect(store.toDiagnosticMap()['pinnedEndpointCount'], 2);
+
+    store.pinEndpoint(callC, endpoint('device-c'));
+    expect(store.pinnedEndpoint(_callA), isNull);
+    expect(store.pinnedEndpoint(callC)?.devicePeerId, 'device-c');
+
+    store.purge(_callB);
+    expect(store.pinnedEndpoint(_callB), isNull);
+    expect(store.toDiagnosticMap()['pinnedEndpointCount'], 1);
+    expect('$store', isNot(contains('device-')));
+  });
 }

@@ -3,6 +3,7 @@ import 'dart:collection';
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
+import 'call_endpoint_resolver.dart';
 
 enum CallSignalingContextErrorCode {
   capacityExceeded,
@@ -111,8 +112,24 @@ final class CallSignalingContextStore
   final LinkedHashMap<CallId, _StoredCallSignalingContext> _contexts =
       LinkedHashMap<CallId, _StoredCallSignalingContext>();
   final ListQueue<CallId> _pendingIncomingInviteIds = ListQueue<CallId>();
+  final LinkedHashMap<CallId, ResolvedCallEndpoint> _pinnedEndpoints =
+      LinkedHashMap<CallId, ResolvedCallEndpoint>();
 
   int get length => _contexts.length;
+
+  /// Remembers the most recent exactly-resolved endpoint of one call so a
+  /// later signal can still reach the accepted device when the directory
+  /// record is transiently gone. Bounded like contexts; [purge] clears it.
+  void pinEndpoint(CallId callId, ResolvedCallEndpoint endpoint) {
+    _pinnedEndpoints.remove(callId);
+    while (_pinnedEndpoints.length >= maxContexts) {
+      _pinnedEndpoints.remove(_pinnedEndpoints.keys.first);
+    }
+    _pinnedEndpoints[callId] = endpoint;
+  }
+
+  ResolvedCallEndpoint? pinnedEndpoint(CallId callId) =>
+      _pinnedEndpoints[callId];
 
   void storeOutgoing({
     required CallId callId,
@@ -315,11 +332,13 @@ final class CallSignalingContextStore
   @override
   void purge(CallId callId) {
     _contexts.remove(callId);
+    _pinnedEndpoints.remove(callId);
     _pendingIncomingInviteIds.removeWhere((candidate) => candidate == callId);
   }
 
   Map<String, Object?> toDiagnosticMap() => <String, Object?>{
     'contextCount': _contexts.length,
+    'pinnedEndpointCount': _pinnedEndpoints.length,
     'pendingIncomingInviteCount': _pendingIncomingInviteIds.length,
     'maxContexts': maxContexts,
   };

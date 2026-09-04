@@ -66,6 +66,15 @@ abstract interface class CallSignalingCallabilityInvalidations {
   Stream<void> get callabilityInvalidations;
 }
 
+/// Optional graph signal: a capability advertisement that was deferred
+/// because a call was live can be retried now (the call reached a terminal
+/// snapshot). The composition owns the retry so it stays serialized with
+/// contact reconciliation and withdraws the graph only when the retry fails
+/// while idle.
+abstract interface class CallSignalingDeferredAdvertisementRetries {
+  Stream<void> get deferredAdvertisementRetries;
+}
+
 /// Optional graph boundary used by encrypted contact-request distribution.
 /// The stable composition prevents retained UI owners from holding a graph-
 /// lifetime coordinator after callability has been withdrawn.
@@ -134,6 +143,7 @@ final class CallSignalingComposition
   ForegroundCallCapability? _foregroundGraph;
   StreamSubscription<ForegroundCallProjection?>? _foregroundSubscription;
   StreamSubscription<void>? _callabilityInvalidationSubscription;
+  StreamSubscription<void>? _deferredAdvertisementRetrySubscription;
   final StreamController<ForegroundCallProjection?> _foregroundChanges =
       StreamController<ForegroundCallProjection?>.broadcast(sync: true);
   final StreamController<bool> _outgoingCallAvailabilityChanges =
@@ -174,6 +184,7 @@ final class CallSignalingComposition
     final session = _foregroundGraph?.current?.session;
     return session != null && session.callId != null && !session.isTerminal;
   }
+
   bool get isShutdown => _terminal;
 
   @override
@@ -341,16 +352,37 @@ final class CallSignalingComposition
   Future<void> _reconcileContactEligibility() async {
     final graph = _graph;
     if (!isEnabled || _terminal || !_started || graph == null) return;
+    var outcome = 'failed';
     try {
       if (!await graph.advertiseCapability()) {
+        if (_hasLiveForegroundCall) {
+          // Never tear down a live call over a failed advertisement; the
+          // graph retries it at the terminal snapshot (or the next resume).
+          _publishOutgoingCallAvailability();
+          outcome = 'advertisement_deferred';
+          return;
+        }
         await _withdrawGraph(graph);
+        outcome = 'advertisement_unavailable';
         return;
       }
       if (!_terminal && identical(_graph, graph)) {
         _publishOutgoingCallAvailability();
+        outcome = 'ready';
+        return;
       }
+      outcome = _terminal ? 'terminal' : 'graph_replaced';
     } catch (_) {
+      if (_hasLiveForegroundCall) {
+        outcome = 'reconcile_failed_live_call_retained';
+        return;
+      }
       await _withdrawGraph(graph);
+    } finally {
+      _emitLifecycleResult(
+        event: 'CALL_SIGNALING_RECONCILE_RESULT',
+        outcome: outcome,
+      );
     }
   }
 
@@ -632,8 +664,10 @@ final class CallSignalingComposition
   Future<void> _bindForegroundGraph(CallSignalingGraphLifecycle graph) async {
     await _foregroundSubscription?.cancel();
     await _callabilityInvalidationSubscription?.cancel();
+    await _deferredAdvertisementRetrySubscription?.cancel();
     _foregroundSubscription = null;
     _callabilityInvalidationSubscription = null;
+    _deferredAdvertisementRetrySubscription = null;
     _boundGraph = graph;
     _foregroundGeneration++;
     final generation = _foregroundGeneration;
@@ -651,6 +685,16 @@ final class CallSignalingComposition
         .listen((_) {
           if (identical(_graph, graph)) {
             unawaited(_withdrawGraph(graph));
+          }
+        });
+    final deferredRetries = graph is CallSignalingDeferredAdvertisementRetries
+        ? graph as CallSignalingDeferredAdvertisementRetries
+        : null;
+    _deferredAdvertisementRetrySubscription = deferredRetries
+        ?.deferredAdvertisementRetries
+        .listen((_) {
+          if (identical(_graph, graph)) {
+            unawaited(onContactEligibilityChanged());
           }
         });
     if (foreground == null) return;
@@ -677,10 +721,13 @@ final class CallSignalingComposition
     _foregroundSubscription = null;
     final callabilitySubscription = _callabilityInvalidationSubscription;
     _callabilityInvalidationSubscription = null;
+    final retrySubscription = _deferredAdvertisementRetrySubscription;
+    _deferredAdvertisementRetrySubscription = null;
     _publishForeground(null);
     await Future.wait<void>(<Future<void>>[
       if (subscription != null) subscription.cancel(),
       if (callabilitySubscription != null) callabilitySubscription.cancel(),
+      if (retrySubscription != null) retrySubscription.cancel(),
     ]);
   }
 

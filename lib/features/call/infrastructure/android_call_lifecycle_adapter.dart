@@ -229,9 +229,8 @@ final class AndroidCallLifecycleAdapter
 
   final StreamController<CallAudioSessionInterruption> _interruptions =
       StreamController<CallAudioSessionInterruption>.broadcast(sync: true);
-  final StreamController<void> _invalidations = StreamController<void>.broadcast(
-    sync: true,
-  );
+  final StreamController<void> _invalidations =
+      StreamController<void>.broadcast(sync: true);
   final StreamController<bool> _muteChanges = StreamController<bool>.broadcast(
     sync: true,
   );
@@ -888,6 +887,7 @@ final class AndroidCallLifecycleAdapter
     await _schedule<void>(() async {
       if (_releaseRetainedTerminalAudio(route: route)) return;
       final handle = _requireBoundHandle();
+      if (_releaseEndedHandleAudio(handle, route: route)) return;
       if (!_availableRoutes.contains(route)) {
         await _readAudioStateNow(handle);
       }
@@ -948,6 +948,7 @@ final class AndroidCallLifecycleAdapter
     if (_releaseRetainedTerminalAudio()) return;
     final handle = _boundHandle;
     if (handle == null) return;
+    if (_releaseEndedHandleAudio(handle)) return;
     await _scheduleExactHandleAudioCommand(
       method: 'deactivateAudio',
       handle: handle,
@@ -967,6 +968,25 @@ final class AndroidCallLifecycleAdapter
         _boundCallId == null ||
         _boundHandle == null ||
         _pendingTerminal == null ||
+        (route != null && route != CallAudioOutputRoute.systemDefault)) {
+      return false;
+    }
+    _ownsSession = false;
+    _selectedRoute = CallAudioOutputRoute.systemDefault;
+    return true;
+  }
+
+  /// This adapter already ended [handle] through its own terminal path
+  /// (`_endCanonicalTerminal`), but the committed native terminal may not be
+  /// attached yet, so [_releaseRetainedTerminalAudio] cannot release. The
+  /// native controller refuses every audio command once its lifecycle ended
+  /// and Telecom already tore the audio down with the call, so a
+  /// system-default reset or a deactivate is a successful no-op here. Any
+  /// other route on an ended handle still fails closed natively.
+  bool _releaseEndedHandleAudio(String handle, {CallAudioOutputRoute? route}) {
+    if (_closed ||
+        _invalid ||
+        !_endedHandles.contains(handle) ||
         (route != null && route != CallAudioOutputRoute.systemDefault)) {
       return false;
     }

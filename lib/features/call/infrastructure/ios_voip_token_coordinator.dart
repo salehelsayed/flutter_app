@@ -228,6 +228,7 @@ final class IosVoipTokenCoordinator {
   IosVoipTokenSnapshot? _snapshot;
   IosVoipTokenSnapshot? _publishedSnapshot;
   final Set<int> _revokedEpochs = <int>{};
+  final Set<int> _relayRejectedEpochs = <int>{};
   final List<Object?> _initialNativeValues = <Object?>[];
   final Completer<_IosVoipInitialStartOutcome> _initialStartSignal =
       Completer<_IosVoipInitialStartOutcome>();
@@ -421,11 +422,13 @@ final class IosVoipTokenCoordinator {
         if (_closed || _invalid) return;
         try {
           _acceptSnapshot(IosVoipTokenSnapshot.parse(value));
-          if (_authorityReady && _initialSnapshotWaiters == 0) {
-            await _reconcileAuthority();
-          }
         } catch (_) {
-          await _failClosedAuthority();
+          // A malformed native snapshot is a native failure: latch closed.
+          await _failClosedNative();
+          return;
+        }
+        if (_authorityReady && _initialSnapshotWaiters == 0) {
+          await _reconcileAuthority();
         }
       }),
     );
@@ -510,6 +513,7 @@ final class IosVoipTokenCoordinator {
       }
       _publishedSnapshot = snapshot;
       _revokedEpochs.remove(snapshot.refreshEpoch);
+      _relayRejectedEpochs.remove(snapshot.refreshEpoch);
       _invalidationPublished = false;
       if (prior != null && prior.refreshEpoch != snapshot.refreshEpoch) {
         // Set is authoritative first; the stale-epoch CAS can only remove the
@@ -518,7 +522,7 @@ final class IosVoipTokenCoordinator {
       }
       return true;
     } catch (_) {
-      await _failClosedAuthority();
+      await _failClosedAuthority(rejectedEpoch: snapshot.refreshEpoch);
       return false;
     }
   }
@@ -554,10 +558,20 @@ final class IosVoipTokenCoordinator {
     await _revokeAndPublishInvalidation();
   }
 
-  Future<void> _failClosedAuthority() async {
-    _invalid = true;
+  /// A relay rejection (or an unreachable relay) holds nothing for the
+  /// attempted registration, so nothing is revoked and the coordinator stays
+  /// retryable: the next publish re-sets the token. A CAS revoke here is
+  /// what poisons the relay's refresh-epoch high-water and turns one rejected
+  /// re-set into a permanent `CALL_STALE_EPOCH` loop for this epoch.
+  Future<void> _failClosedAuthority({int? rejectedEpoch}) async {
+    if (rejectedEpoch != null) {
+      _relayRejectedEpochs.add(rejectedEpoch);
+      if (_publishedSnapshot?.refreshEpoch == rejectedEpoch) {
+        _publishedSnapshot = null;
+      }
+    }
     _signalInitialSnapshotChange();
-    await _revokeAndPublishInvalidation();
+    _publishInvalidation();
   }
 
   void _signalInitialSnapshotChange() {
@@ -583,7 +597,7 @@ final class IosVoipTokenCoordinator {
 
   Future<void> _revokeKnownEpoch() async {
     final epoch = _publishedSnapshot?.refreshEpoch ?? _snapshot?.refreshEpoch;
-    if (epoch != null) {
+    if (epoch != null && !_relayRejectedEpochs.contains(epoch)) {
       await _revokeEpoch(epoch);
     }
     _publishedSnapshot = null;

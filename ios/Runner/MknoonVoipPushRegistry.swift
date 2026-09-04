@@ -523,21 +523,68 @@ internal final class SystemVoipPushRegistrationDriver: MknoonVoipPushRegistratio
   }
 }
 
-/// The value is generated from the same build setting as `aps-environment` in
-/// Runner.entitlements. Invalid or absent values deliberately disable token
-/// publication instead of inferring an APNs environment from the build type.
+/// Resolves the APNs environment the PushKit token belongs to.
+///
+/// The signed `aps-environment` of the embedded provisioning profile wins: a
+/// dev-signed device build is re-signed with `aps-environment=development`
+/// while Info.plist still carries the Release build setting, and labelling
+/// that sandbox token `production` costs the relay one rejected APNs attempt
+/// per wake. App Store builds carry no embedded profile, so Info.plist (the
+/// same build setting as `aps-environment` in Runner.entitlements) is the
+/// fallback. Invalid or absent values deliberately disable token publication
+/// instead of inferring an APNs environment from the build type.
 internal struct EntitlementVoipEnvironmentProvider: MknoonVoipEnvironmentProviding {
-  private let bundle: Bundle
+  static let embeddedProfileFileName = "embedded.mobileprovision"
+
+  private let infoPlistValue: () -> Any?
+  private let embeddedProfile: () -> Data?
 
   init(bundle: Bundle = .main) {
-    self.bundle = bundle
+    self.init(
+      infoPlistValue: { bundle.object(forInfoDictionaryKey: "MknoonVoipEnvironment") },
+      embeddedProfile: {
+        let url = bundle.bundleURL.appendingPathComponent(Self.embeddedProfileFileName)
+        return FileManager.default.contents(atPath: url.path)
+      }
+    )
+  }
+
+  init(infoPlistValue: @escaping () -> Any?, embeddedProfile: @escaping () -> Data?) {
+    self.infoPlistValue = infoPlistValue
+    self.embeddedProfile = embeddedProfile
   }
 
   func environment() -> String? {
-    guard let raw = bundle.object(forInfoDictionaryKey: "MknoonVoipEnvironment") as? String,
-          raw == "development" || raw == "production"
-    else { return nil }
+    if let signed = Self.signedApsEnvironment(from: embeddedProfile()) {
+      return signed
+    }
+    guard let raw = infoPlistValue() as? String, Self.isValid(raw) else { return nil }
     return raw
+  }
+
+  /// Extracts `Entitlements["aps-environment"]` from the CMS-wrapped plist of
+  /// an embedded provisioning profile. Anything malformed yields nil.
+  static func signedApsEnvironment(from data: Data?) -> String? {
+    guard let data, !data.isEmpty,
+      let plistStart = data.range(of: Data("<plist".utf8)),
+      let plistEnd = data.range(
+        of: Data("</plist>".utf8), in: plistStart.lowerBound..<data.endIndex)
+    else { return nil }
+    let start = data.range(of: Data("<?xml".utf8), in: 0..<plistStart.lowerBound)?.lowerBound
+      ?? plistStart.lowerBound
+    let plistData = data.subdata(in: start..<plistEnd.upperBound)
+    guard
+      let plist = try? PropertyListSerialization.propertyList(
+        from: plistData, options: [], format: nil) as? [String: Any],
+      let entitlements = plist["Entitlements"] as? [String: Any],
+      let value = entitlements["aps-environment"] as? String,
+      isValid(value)
+    else { return nil }
+    return value
+  }
+
+  private static func isValid(_ value: String) -> Bool {
+    value == "development" || value == "production"
   }
 }
 

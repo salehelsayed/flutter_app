@@ -114,6 +114,20 @@ extension on CallAudioFailure {
 
 enum CallAudioInterruptionIntent { pausedReconnect, recover }
 
+/// Fixed-cardinality cleanup step that made [CallAudioController.close]
+/// report [CallAudioFailure.cleanupFailed]. The system-route reset is
+/// deliberately absent: it is best-effort and never fails cleanup by itself.
+enum CallAudioCleanupStage {
+  engineClose,
+  interruptionSubscriptionCancel,
+  routeSubscriptionCancel,
+  commandTail,
+  sessionDeactivate,
+  leaseRelease,
+  interruptionIntentsClose,
+  stateChangesClose,
+}
+
 /// Actual, coarse control state projected from [CallEngine.snapshot].
 final class CallAudioControlState {
   CallAudioControlState({
@@ -222,6 +236,8 @@ final class CallAudioController {
   Future<bool>? _cleanupFuture;
   CallMediaConflictLease? _conflictLease;
   CallAudioFailure? _failureBeforeCleanup;
+  CallAudioCleanupStage? _cleanupFailureStage;
+  bool _routeResetFailedAtCleanup = false;
   CallAudioControlState _state = CallAudioControlState.idle;
   bool _started = false;
   bool _closeRequested = false;
@@ -230,6 +246,14 @@ final class CallAudioController {
   bool _interrupted = false;
 
   CallAudioControlState get state => _state;
+
+  /// First fatal cleanup step that failed during the latest cleanup attempt,
+  /// or null when cleanup succeeded (or has not run).
+  CallAudioCleanupStage? get cleanupFailureStage => _cleanupFailureStage;
+
+  /// True when the best-effort system-route reset failed during cleanup.
+  /// The platform releases the route with the call; cleanup still succeeds.
+  bool get routeResetFailedAtCleanup => _routeResetFailedAtCleanup;
 
   /// Broadcasts engine-projected results and fixed-shape failure states.
   /// Consumers read [state] initially and must not invent optimistic controls.
@@ -485,13 +509,19 @@ final class CallAudioController {
 
   Future<bool> _cleanupOnce() async {
     var failed = false;
+    _cleanupFailureStage = null;
+    _routeResetFailedAtCleanup = false;
 
-    Future<bool> run(Future<void> Function() operation) async {
+    Future<bool> run(
+      CallAudioCleanupStage stage,
+      Future<void> Function() operation,
+    ) async {
       try {
         await operation();
         return true;
       } catch (_) {
         failed = true;
+        _cleanupFailureStage ??= stage;
         return false;
       }
     }
@@ -505,29 +535,55 @@ final class CallAudioController {
       await _beginEngineClose();
     } catch (_) {
       failed = true;
+      _cleanupFailureStage ??= CallAudioCleanupStage.engineClose;
       engineCloseSucceeded = false;
     }
     if (!_interruptionSubscriptionCancelled &&
-        await run(_interruptionSubscription.cancel)) {
+        await run(
+          CallAudioCleanupStage.interruptionSubscriptionCancel,
+          _interruptionSubscription.cancel,
+        )) {
       _interruptionSubscriptionCancelled = true;
     }
     final outputRouteSubscription = _outputRouteSubscription;
     if (outputRouteSubscription != null &&
-        await run(outputRouteSubscription.cancel)) {
+        await run(
+          CallAudioCleanupStage.routeSubscriptionCancel,
+          outputRouteSubscription.cancel,
+        )) {
       _outputRouteSubscription = null;
     }
-    if (routeReset != null) await run(() => routeReset);
-    if (!_cleanupInsideStart) await run(() => _commandTail);
+    if (routeReset != null) {
+      // Best-effort: the platform releases the output route together with
+      // the call (Telecom/CallKit end it before media cleanup runs), so a
+      // refused reset must not fail cleanup or poison its retry.
+      try {
+        await routeReset;
+      } catch (_) {
+        _routeResetFailedAtCleanup = true;
+      }
+    }
+    if (!_cleanupInsideStart) {
+      await run(CallAudioCleanupStage.commandTail, () => _commandTail);
+    }
     if (_audioSessionActivationAttempted &&
-        await run(_audioSession.deactivate)) {
+        await run(
+          CallAudioCleanupStage.sessionDeactivate,
+          _audioSession.deactivate,
+        )) {
       _audioSessionActivationAttempted = false;
     }
     final lease = _conflictLease;
-    if (lease != null && engineCloseSucceeded && await run(lease.release)) {
+    if (lease != null &&
+        engineCloseSucceeded &&
+        await run(CallAudioCleanupStage.leaseRelease, lease.release)) {
       _conflictLease = null;
     }
     if (!_interruptionIntents.isClosed) {
-      await run(_interruptionIntents.close);
+      await run(
+        CallAudioCleanupStage.interruptionIntentsClose,
+        _interruptionIntents.close,
+      );
     }
     if (!failed) _started = false;
     _updateState(
@@ -537,7 +593,9 @@ final class CallAudioController {
             : _failureBeforeCleanup ?? CallAudioFailure.none,
       ),
     );
-    if (!_stateChanges.isClosed) await run(_stateChanges.close);
+    if (!_stateChanges.isClosed) {
+      await run(CallAudioCleanupStage.stateChangesClose, _stateChanges.close);
+    }
     return failed;
   }
 

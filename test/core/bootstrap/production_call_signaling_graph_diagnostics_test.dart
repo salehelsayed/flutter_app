@@ -6,6 +6,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -323,4 +324,54 @@ void main() {
       expect(source, contains("'outcome': outcome"));
     },
   );
+
+  test('media bundle close failure names the failing stage', () async {
+    final events = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(events.add);
+    List<Map<String, dynamic>> stageEvents() => events
+        .where((event) => event['event'] == 'CALL_MEDIA_CLOSE_FAILURE_STAGE')
+        .toList(growable: false);
+    Future<void> noop() async {}
+
+    await expectLater(
+      debugCloseCallMediaBundle(
+        closeInterruptionCoordinator: noop,
+        closeAudioController: noop,
+        audioCleanupFailed: () => true,
+        closeNegotiationExecutor: noop,
+      ),
+      throwsA(isA<AndroidCallLifecycleException>()),
+    );
+    expect(stageEvents(), hasLength(1));
+    expect(stageEvents().single['details'], <String, Object?>{
+      'stage': 'audio_cleanup',
+    });
+
+    events.clear();
+    await expectLater(
+      debugCloseCallMediaBundle(
+        closeInterruptionCoordinator: noop,
+        closeAudioController: noop,
+        audioCleanupFailed: () => false,
+        closeNegotiationExecutor: () async {
+          throw StateError('private engine release failure');
+        },
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(stageEvents(), hasLength(1));
+    expect(stageEvents().single['details'], <String, Object?>{
+      'stage': 'engine_release',
+    });
+    expect(jsonEncode(events), isNot(contains('private engine release')));
+
+    events.clear();
+    await debugCloseCallMediaBundle(
+      closeInterruptionCoordinator: noop,
+      closeAudioController: noop,
+      audioCleanupFailed: () => false,
+      closeNegotiationExecutor: noop,
+    );
+    expect(stageEvents(), isEmpty);
+  });
 }
