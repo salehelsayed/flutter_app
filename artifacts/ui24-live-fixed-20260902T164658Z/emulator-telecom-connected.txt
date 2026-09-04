@@ -1,0 +1,277 @@
+Init Path: On mainline
+TelecomUI package: com.google.android.telecomui
+CallsManager: 
+  mCalls: 
+  mCallAudioManager:
+    All calls:
+    Active dialing, or connecting calls:
+    Ringing calls:
+    Holding calls:
+    Foreground call:
+    null
+    CallAudioModeStateMachine:
+      History:
+      2026-09-02T19:13:34.825455 - Enter UNFOCUSED
+      2026-09-02T19:20:53.955913 - Enter VOIP_CALL
+      2026-09-02T19:20:53.958768 - Mode MODE_IN_COMMUNICATION
+      2026-09-02T19:21:24.212284 - Enter UNFOCUSED
+      2026-09-02T19:21:24.212688 - Mode MODE_NORMAL
+      2026-09-02T19:22:02.513678 - Enter VOIP_CALL
+      2026-09-02T19:22:02.514088 - Mode MODE_IN_COMMUNICATION
+      2026-09-02T19:22:04.997133 - Enter UNFOCUSED
+      2026-09-02T19:22:04.997183 - Mode MODE_NORMAL
+      2026-09-02T19:43:45.911796 - Enter VOIP_CALL
+      2026-09-02T19:43:45.912493 - Mode MODE_IN_COMMUNICATION
+      2026-09-02T19:44:07.326142 - Enter UNFOCUSED
+      2026-09-02T19:44:07.327285 - Mode MODE_NORMAL
+      2026-09-02T19:54:09.659289 - Enter VOIP_CALL
+      2026-09-02T19:54:09.665111 - Mode MODE_IN_COMMUNICATION
+      2026-09-02T20:02:30.365995 - Enter UNFOCUSED
+      2026-09-02T20:02:30.366680 - Mode MODE_NORMAL
+      Pending Msg:
+      Looper (CallAudioModeStateMachine, tid 225) {d28640e}
+        (MessageQueue is using DeliQueue implementation)
+        (Total messages: 0, polling=true, quitting=false)
+    mCallAudioRouteAdapter:
+    BluetoothDeviceManager:
+      2026-09-02T19:13:35.320550 - Got BluetoothHearingAid: android.bluetooth.BluetoothHearingAid@678b126
+      2026-09-02T19:13:35.320656 - Got BluetoothHeadset: android.bluetooth.BluetoothHeadset@d296c81
+  mTtyManager:
+    mCurrentTtyMode: 0
+  mInCallController:
+    combinedInCallServiceMap (InCalls registered):
+    ServiceConnections (InCalls bound):
+    CarModeTracker:
+      Current car mode apps:
+      Car mode history:
+  mCallDiagnosticServiceController:
+    activeCallDiagnosticService: 
+    isConnected: false
+  mAudioModeTracker:
+    Audio Mode History:
+      2026-09-02T19:20:54.063141 - MODE_NORMAL -> MODE_IN_COMMUNICATION
+      2026-09-02T19:21:24.288934 - MODE_IN_COMMUNICATION -> MODE_NORMAL
+      2026-09-02T19:22:02.620829 - MODE_NORMAL -> MODE_IN_COMMUNICATION
+      2026-09-02T19:22:05.096763 - MODE_IN_COMMUNICATION -> MODE_NORMAL
+      2026-09-02T19:43:46.011803 - MODE_NORMAL -> MODE_IN_COMMUNICATION
+      2026-09-02T19:44:07.386421 - MODE_IN_COMMUNICATION -> MODE_NORMAL
+      2026-09-02T19:54:09.762834 - MODE_NORMAL -> MODE_IN_COMMUNICATION
+      2026-09-02T20:02:30.528955 - MODE_IN_COMMUNICATION -> MODE_NORMAL
+      2026-09-02T20:02:31.054283 - MODE_NORMAL -> MODE_IN_COMMUNICATION
+      2026-09-02T20:02:37.047007 - MODE_IN_COMMUNICATION -> MODE_NORMAL
+  mLocalVoicemailController:
+    Current call: <none>
+    Service pkg: 
+    Bound: N
+    Local voicemail History:
+  mCallAnomalyWatchdog:
+    Anomaly log:
+    Pending timeouts: 
+    Pending destruction: 
+  mEmergencyCallDiagnosticLogger:
+      PERSISTED DIAGNOSTIC DATA FROM DROP BOX
+      END OF PERSISTED DIAGNOSTIC DATA FROM DROP BOX
+  mDefaultDialerCache:
+    System Dialer: ComponentInfo{com.google.android.dialer/com.android.incallui.InCallServiceImpl}
+    User 0: com.google.android.dialer
+  mConnectionServiceRepository:
+    mServiceCache:
+  mRoleManager:
+    DefaultCallRedirectionApp: null
+    DefaultCallScreeningApp: null
+    DefaultCallCompanionApps: 
+  mConnectionSvrFocusMgr:
+    Call Focus History:
+    2026-09-02T19:22:04.729162 - 3dd58149-d2c1-415e-8adb-6fd46c1dd3b4
+    2026-09-02T19:22:04.994658 - <none>
+    2026-09-02T19:44:07.116168 - 1a3869b8-93f8-4373-84d0-ee0770fb68eb
+    2026-09-02T19:44:07.324585 - <none>
+    2026-09-02T19:54:27.547561 - 22daed7c-738e-4a60-956a-e5b06d343feb
+    2026-09-02T20:02:30.362274 - <none>
+  CallAudioWatchdog:
+    Active Sessions:
+      CommSess{uid=10233, created=Sep 2, 2026 7:54:09 PM, attr=phac, comm, , callId=22daed7c-738e-4a60-956a-e5b06d343feb, duration=513}
+    Audio sessions Sessions:
+      2026-09-02T19:21:24.223790 - CommSess{uid=10233, created=Sep 2, 2026 7:20:53 PM, attr=phac, comm, , callId=3fe99d22-5e64-4559-8939-862d5bb037c6, duration=30}
+      2026-09-02T19:22:05.003268 - CommSess{uid=10233, created=Sep 2, 2026 7:22:02 PM, attr=phac, comm, , callId=3dd58149-d2c1-415e-8adb-6fd46c1dd3b4, duration=2}
+      2026-09-02T19:44:07.335033 - CommSess{uid=10233, created=Sep 2, 2026 7:43:45 PM, attr=phac, comm, , callId=1a3869b8-93f8-4373-84d0-ee0770fb68eb, duration=21}
+      2026-09-02T19:44:08.164423 - CommSess{uid=10233, created=Sep 2, 2026 7:44:07 PM, attr=phac, , callId=none, duration=0}
+PhoneAccountRegistrar: 
+  xmlVersion: 10
+  defaultOutgoing: ComponentInfo{com.android.phone/com.android.services.telephony.TelephonyConnectionService}, 1, UserHandle{0}
+  outgoingPhoneAccountForTelScheme: ComponentInfo{com.android.phone/com.android.services.telephony.TelephonyConnectionService}, 1, UserHandle{0}
+  defaultVoiceSubId: 1
+  simCallManager: null
+  phoneAccounts:
+    [[X] PhoneAccount: ComponentInfo{com.android.phone/com.android.services.telephony.TelephonyConnectionService}, 1, UserHandle{0} Capabilities: CallProvider MultiUser PlaceEmerg SimSub  Audio Routes: BESW Schemes: tel voicemail  Extras: Bundle[{android.telecom.extra.SUPPORTS_VIDEO_CALLING_FALLBACK=true}] GroupId: *** SC Restrictions: [ ]]
+    [[X] PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} Capabilities: SelfManaged TransactOps  Audio Routes: BESW Schemes: tel  Extras: Bundle[{isCoreTelecomAccount=true}] GroupId: *** SC Restrictions: [NONE]]
+    test emergency PhoneAccount filter: []
+  localVoicemailTimeouts:
+Flag Configurations (framework - com.android.server.telecom): 
+  	[✅]: addCallUriForMissedCalls                     add_call_uri_for_missed_calls
+  	[✅]: bulkStateUpdateCall                          bulk_state_update_call
+  	[✅]: businessCallComposer                         business_call_composer
+  	[✅]: callDetailsIdChanges                         call_details_id_changes
+  	[✅]: callSequencingCallResumeFailed               call_sequencing_call_resume_failed
+  	[❌]: callSequencingMetrics                        call_sequencing_metrics
+  	[✅]: conferenceModifyMergeFail                    conference_modify_merge_fail
+  	[✅]: ensureAudioModeUpdatesOnForegroundCallChange ensure_audio_mode_updates_on_foreground_call_change
+  	[✅]: filterVoipCallLogs                           filter_voip_call_logs
+  	[✅]: getRegisteredPhoneAccounts                   get_registered_phone_accounts
+  	[✅]: hdPlusCall                                   hd_plus_call
+  	[✅]: integratedCallLogs                           integrated_call_logs
+  	[✅]: preventIllegalAudioProcessingExit            prevent_illegal_audio_processing_exit
+  	[✅]: reuseOriginalConnRemoteConfApi               reuse_original_conn_remote_conf_api
+  	[✅]: revertDisconnectingDuringMerge               revert_disconnecting_during_merge
+  	[✅]: setMuteState                                 set_mute_state
+  	[✅]: supportDisplayNameCallLog                    support_display_name_call_log
+  	[❌]: telecomAppLabelProxyHsumAware                telecom_app_label_proxy_hsum_aware
+  	[✅]: telecomMainUserInBlockCheck                  telecom_main_user_in_block_check
+  	[✅]: telecomMainUserInGetRespondMessageApp        telecom_main_user_in_get_respond_message_app
+  	[✅]: telecomMainlineBlockedNumbersManager         telecom_mainline_blocked_numbers_manager
+  	[✅]: telecomResolveHiddenDependencies             telecom_resolve_hidden_dependencies
+  	[✅]: telephonyHasDefaultButTelecomDoesNot         telephony_has_default_but_telecom_does_not
+  	[✅]: transactionalCsVerifier                      transactional_cs_verifier
+  	[✅]: transactionalVideoState                      transactional_video_state
+  	[✅]: unregisterUnresolvableAccounts               unregister_unresolvable_accounts
+  	[❌]: vibrationAccountsForMainSetting              vibration_accounts_for_main_setting
+  	[✅]: voipAppActionsSupport                        voip_app_actions_support
+  	[❌]: voipDndFocus                                 voip_dnd_focus
+Flag Configurations (module API - android.telecom): 
+  	[✅]: callConnectedIndicatorPreference    call_connected_indicator_preference
+  	[✅]: callDetailsGetAssociatedUserApi2    call_details_get_associated_user_api2
+  	[✅]: callEndpointRequestedApi            call_endpoint_requested_api
+  	[✅]: changeRttToAudio                    change_rtt_to_audio
+  	[✅]: deprecateSelfManagedCs              deprecate_self_managed_cs
+  	[✅]: enableAudioProcessingUseCase        enable_audio_processing_use_case
+  	[✅]: explicitCallTransfer                explicit_call_transfer
+  	[✅]: filterVoipCallLogs                  filter_voip_call_logs
+  	[✅]: getLastKnownCellIdentity            get_last_known_cell_identity
+  	[✅]: integratedCallLogsStage2            integrated_call_logs_stage2
+  	[✅]: isInExternalCall                    is_in_external_call
+  	[✅]: isUsingCrs                          is_using_crs
+  	[✅]: isUsingUnidirectionalVideoService   is_using_unidirectional_video_service
+  	[✅]: isUsingVideoRingback                is_using_video_ringback
+  	[✅]: localVoicemail                      local_voicemail
+  	[✅]: multiPartyAnchorConf                multi_party_anchor_conf
+  	[❌]: optOutPremiumNetwork                opt_out_premium_network
+  	[✅]: placeCallToAlternateNumber          place_call_to_alternate_number
+  	[✅]: promoteExtraDoNotLogCallToSystemApi promote_extra_do_not_log_call_to_system_api
+  	[❌]: rejectAsMissedApi                   reject_as_missed_api
+  	[✅]: releaseIconAsApi                    release_icon_as_api
+  	[✅]: remotelyHostedProperty              remotely_hosted_property
+  	[✅]: sendOriginalNumberOnPlaceCall       send_original_number_on_place_call
+  	[✅]: telecomMainlineApi                  telecom_mainline_api
+  	[❌]: unhideCapabilityTransfer            unhide_capability_transfer
+Flag Configurations (module bugfix - com.android.internal.telecom): 
+  	[✅]: addEscapeHatchForStuckVoip           add_escape_hatch_for_stuck_voip
+  	[❌]: ashaRingerVibrateFix                 asha_ringer_vibrate_fix
+  	[❌]: callAudioActualRoute                 call_audio_actual_route
+  	[❌]: callAudioRouteRf                     call_audio_route_rf
+  	[❌]: cancelCallOnStopConfirmCallDialog    cancel_call_on_stop_confirm_call_dialog
+  	[❌]: checkHfpForBtAvailable               check_hfp_for_bt_available
+  	[✅]: cleanupCallsInSelectAccount          cleanup_calls_in_select_account
+  	[✅]: connectionServiceBal                 connection_service_bal
+  	[✅]: disconnectVoipOnHoldFail             disconnect_voip_on_hold_fail
+  	[❌]: disconnectedDuringHold               disconnected_during_hold
+TransactionManager: 
+  Pending Transactions:
+  Ongoing Transaction:
+  Completed Transactions:
+    [2026-09-02T19:20:53.957900] OutgoingCallTransactionSequencing: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+18] mS)
+    [2026-09-02T19:21:24.209476] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+3] mS)
+    [2026-09-02T19:22:02.505890] OutgoingCallTransactionSequencing: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+0] mS)
+    [2026-09-02T19:22:04.728653] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+1] mS)
+      [2026-09-02T19:22:04.728169] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+1] mS)
+    [2026-09-02T19:22:04.994075] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+3] mS)
+    [2026-09-02T19:43:45.908553] OutgoingCallTransactionSequencing: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+20] mS)
+    [2026-09-02T19:44:07.115150] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+2] mS)
+      [2026-09-02T19:44:07.114819] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+2] mS)
+    [2026-09-02T19:44:07.323964] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+3] mS)
+    [2026-09-02T19:54:09.665415] OutgoingCallTransactionSequencing: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+16] mS)
+    [2026-09-02T19:54:27.546786] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+2] mS)
+      [2026-09-02T19:54:27.546428] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+2] mS)
+    [2026-09-02T20:02:30.359663] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+7] mS)
+Historical Events:
+  SelfMgd Call3fe99d22-5e64-4559-8939-862d5bb037c6 [Sep 2, 2026 7:20:53 PM](MO - outgoing)(User=UserHandle{0})
+  	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (com.mknoon.app)
+  	To address: sip:****** Presentation: Allowed
+    19:20:53.921 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC(cma)@AI0
+    19:20:53.921 - CREATED (com.mknoon.app;requestedAcct:ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0}, selfMgd:true):TSI.aC(cma)@AI0
+    19:20:53.921 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC(cma)@AI0
+    19:20:53.921 - SET_VOIP_MODE (Y):TSI.aC(cma)@AI0
+    19:20:53.925 - SET_CONNECTING (ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0}):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP(cma)@AI0
+    19:20:53.953 - AUDIO_ATTR (phac, ):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP(cma)@AI0
+    19:20:53.955 - GAINED_FGS_DELEGATION
+    19:20:53.959 - SET_DIALING (dialing set explicitly):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CSC.aC->OutgoingCallTransactionSequencing@141858700.sT->OCT.pT(cma)@AI0
+    19:20:53.968 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_SPEAKER, Address=invalid, HA Pair Device=invalid] (active=false)):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CARC.pM_UPDATE_SYSTEM_AUDIO_ROUTE->CARC.pM_EXIT_PENDING_ROUTE(cma)@AI0
+    19:20:53.979 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CSC.aC->OutgoingCallTransactionSequencing@141858700.sT->OCT.pT->OutgoingCallTransactionSequencing@141858700.sT(cma)@AI0
+    19:20:53.986 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_SPEAKER, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2001->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@AI4
+    19:20:54.063 - AUDIO_ATTR (phac,  -> phac, comm, ):AMT.oMC@AJ8
+    19:20:58.959 - LOST_FGS_DELEGATION
+    19:21:24.210 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@169403894.sT@AKI
+    19:21:24.213 - DESTROYED:TSW.d->EndCallTransaction@169403894.sT->CM.pR@AKI
+    Timings (average for this call, milliseconds):
+  SelfMgd Call3dd58149-d2c1-415e-8adb-6fd46c1dd3b4 [Sep 2, 2026 7:22:02 PM](MO - outgoing)(User=UserHandle{0})
+  	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (com.mknoon.app)
+  	To address: sip:****** Presentation: Allowed
+    19:22:02.477 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC(cma)@ALA
+    19:22:02.478 - CREATED (com.mknoon.app;requestedAcct:ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0}, selfMgd:true):TSI.aC(cma)@ALA
+    19:22:02.478 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC(cma)@ALA
+    19:22:02.478 - SET_VOIP_MODE (Y):TSI.aC(cma)@ALA
+    19:22:02.480 - SET_CONNECTING (ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0}):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP(cma)@ALA
+    19:22:02.502 - AUDIO_ATTR (phac, ):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP(cma)@ALA
+    19:22:02.505 - GAINED_FGS_DELEGATION
+    19:22:02.506 - SET_DIALING (dialing set explicitly):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CSC.aC->OutgoingCallTransactionSequencing@229407201.sT->OCT.pT(cma)@ALA
+    19:22:02.506 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CSC.aC->OutgoingCallTransactionSequencing@229407201.sT->OCT.pT->OutgoingCallTransactionSequencing@229407201.sT(cma)@ALA
+    19:22:02.516 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_SPEAKER, Address=invalid, HA Pair Device=invalid] (active=false)):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CARC.pM_UPDATE_SYSTEM_AUDIO_ROUTE->CARC.pM_EXIT_PENDING_ROUTE(cma)@ALA
+    19:22:02.529 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_SPEAKER, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2001->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@ALI
+    19:22:02.620 - AUDIO_ATTR (phac,  -> phac, comm, ):AMT.oMC@AMI
+    19:22:04.729 - SET_ACTIVE (vCFC: pending action set state):TSW.sA->RequestNewActiveCallTransaction@34914218.sT->CSFM.rF@AMM
+    19:22:04.994 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@41112654.sT@AMQ
+    19:22:04.998 - DESTROYED:TSW.d->EndCallTransaction@41112654.sT->CM.pR@AMQ
+    19:22:05.005 - LOST_FGS_DELEGATION
+    Timings (average for this call, milliseconds):
+  SelfMgd Call1a3869b8-93f8-4373-84d0-ee0770fb68eb [Sep 2, 2026 7:43:45 PM](MO - outgoing)(User=UserHandle{0})
+  	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (com.mknoon.app)
+  	To address: sip:****** Presentation: Allowed
+    19:43:45.867 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC(cma)@AOA
+    19:43:45.867 - CREATED (com.mknoon.app;requestedAcct:ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0}, selfMgd:true):TSI.aC(cma)@AOA
+    19:43:45.867 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC(cma)@AOA
+    19:43:45.867 - SET_VOIP_MODE (Y):TSI.aC(cma)@AOA
+    19:43:45.870 - SET_CONNECTING (ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0}):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP(cma)@AOA
+    19:43:45.901 - AUDIO_ATTR (phac, ):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP(cma)@AOA
+    19:43:45.907 - GAINED_FGS_DELEGATION
+    19:43:45.916 - SET_DIALING (dialing set explicitly):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CSC.aC->OutgoingCallTransactionSequencing@111248811.sT->OCT.pT(cma)@AOA
+    19:43:45.918 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_SPEAKER, Address=invalid, HA Pair Device=invalid] (active=false)):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CARC.pM_UPDATE_SYSTEM_AUDIO_ROUTE->CARC.pM_EXIT_PENDING_ROUTE(cma)@AOA
+    19:43:45.929 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CSC.aC->OutgoingCallTransactionSequencing@111248811.sT->OCT.pT->OutgoingCallTransactionSequencing@111248811.sT(cma)@AOA
+    19:43:45.932 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_SPEAKER, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2001->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@AOM
+    19:43:46.011 - AUDIO_ATTR (phac,  -> phac, comm, ):AMT.oMC@APQ
+    19:43:50.916 - LOST_FGS_DELEGATION
+    19:44:07.116 - SET_ACTIVE (vCFC: pending action set state):TSW.sA->RequestNewActiveCallTransaction@249450143.sT->CSFM.rF->CSFM.oCSR@APU
+    19:44:07.324 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@240015388.sT@APY
+    19:44:07.329 - DESTROYED:TSW.d->EndCallTransaction@240015388.sT->CM.pR@APY
+    Timings (average for this call, milliseconds):
+  SelfMgd Call22daed7c-738e-4a60-956a-e5b06d343feb [Sep 2, 2026 7:54:09 PM](MO - outgoing)(User=UserHandle{0})
+  	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (com.mknoon.app)
+  	To address: sip:****** Presentation: Allowed
+    19:54:09.617 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC(cma)@AQY
+    19:54:09.618 - CREATED (com.mknoon.app;requestedAcct:ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0}, selfMgd:true):TSI.aC(cma)@AQY
+    19:54:09.618 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC(cma)@AQY
+    19:54:09.618 - SET_VOIP_MODE (Y):TSI.aC(cma)@AQY
+    19:54:09.619 - SET_CONNECTING (ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0}):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP(cma)@AQY
+    19:54:09.653 - AUDIO_ATTR (phac, ):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP(cma)@AQY
+    19:54:09.655 - GAINED_FGS_DELEGATION
+    19:54:09.662 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_SPEAKER, Address=invalid, HA Pair Device=invalid] (active=false)):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CARC.pM_UPDATE_SYSTEM_AUDIO_ROUTE->CARC.pM_EXIT_PENDING_ROUTE(cma)@AQY
+    19:54:09.671 - SET_DIALING (dialing set explicitly):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CSC.aC->OutgoingCallTransactionSequencing@139953370.sT->OCT.pT(cma)@AQY
+    19:54:09.674 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_SPEAKER, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2001->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@AQc
+    19:54:09.693 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL):TSI.aC->CM.fOCP->CM.sOCPA->CM.sOPA.iCA->CM.dSPA->CM.dMRFC->CM.mROC->CM.pASP->CSC.aC->OutgoingCallTransactionSequencing@139953370.sT->OCT.pT->OutgoingCallTransactionSequencing@139953370.sT(cma)@AQY
+    19:54:09.762 - AUDIO_ATTR (phac,  -> phac, comm, ):AMT.oMC@ARg
+    19:54:14.659 - LOST_FGS_DELEGATION
+    19:54:27.547 - SET_ACTIVE (vCFC: pending action set state):TSW.sA->RequestNewActiveCallTransaction@204857920.sT->CSFM.rF->CSFM.oCSR@ARk
+    19:54:27.797 - AUDIO_ATTR (phac, comm,  -> phac, ar, comm, )
+    19:54:28.965 - AUDIO_ATTR (phac, ar, comm,  -> phac, ap, ar, comm, )
+    20:02:30.360 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@101622194.sT@AR0
+    20:02:30.367 - DESTROYED:TSW.d->EndCallTransaction@101622194.sT->CM.pR@AR0
+    20:02:30.576 - AUDIO_ATTR (phac, ap, comm,  -> phac, comm, )
+    Timings (average for this call, milliseconds):

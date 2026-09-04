@@ -1069,7 +1069,7 @@ func SendMessage(paramsJSON string) (result string) {
 }
 
 // ConfirmDirectMessage resolves a pending deferred direct-ack nonce.
-// Input JSON: { "nonce": "...", "ok": true|false }
+// Input JSON: { "nonce": "...", "ok": true|false, "callWakeReceipt"?: "..." }
 // Returns JSON: { "ok": true }
 func ConfirmDirectMessage(paramsJSON string) (result string) {
 	defer func() {
@@ -1087,8 +1087,9 @@ func ConfirmDirectMessage(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		Nonce string `json:"nonce"`
-		Ok    bool   `json:"ok"`
+		Nonce           string `json:"nonce"`
+		Ok              bool   `json:"ok"`
+		CallWakeReceipt string `json:"callWakeReceipt"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1097,7 +1098,7 @@ func ConfirmDirectMessage(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing nonce")
 	}
 
-	n.ResolveDirectConfirm(params.Nonce, params.Ok)
+	n.ResolveDirectConfirmWithReceipt(params.Nonce, params.Ok, params.CallWakeReceipt)
 
 	return okJSON(map[string]interface{}{
 		"ok": true,

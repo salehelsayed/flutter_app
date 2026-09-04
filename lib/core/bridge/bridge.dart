@@ -4,6 +4,11 @@ import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 import '../utils/flow_event_emitter.dart';
 
+/// Authenticated, action-only TURN credential command. It deliberately has no
+/// payload because relay issuance binds to the native stream identity.
+const String turnCredentialsV1BridgeCommand = 'relay:turn_credentials_v1';
+const String turnCredentialsV1NativeMethod = 'relayTurnCredentialsV1';
+
 /// Abstract interface for bridge communication.
 /// Implementations handle the actual message passing to the native layer.
 abstract class Bridge {
@@ -47,6 +52,30 @@ abstract class Bridge {
   /// Event callback for incoming group reactions.
   void Function(Map<String, dynamic>)? onGroupReactionReceived;
 }
+
+/// A detail-free signal that the local/native bridge could not complete an
+/// operation. It deliberately carries no command, identity, or crypto value.
+final class BridgeOperationUnavailableException implements Exception {
+  const BridgeOperationUnavailableException();
+
+  @override
+  String toString() => 'BridgeOperationUnavailableException';
+}
+
+const Set<String> _bridgeUnavailableErrorCodes = <String>{
+  'BRIDGE_TIMEOUT',
+  'BRIDGE_UNAVAILABLE',
+  'BRIDGE_EXCEPTION',
+  'MISSING_PLUGIN',
+  'PLATFORM_ERROR',
+  'NULL_RESPONSE',
+  'MALFORMED_RESPONSE',
+  'UNKNOWN_COMMAND',
+  'NOT_INITIALIZED',
+};
+
+bool _isBridgeUnavailableErrorCode(Object? value) =>
+    value is String && _bridgeUnavailableErrorCodes.contains(value);
 
 final StreamController<Map<String, dynamic>> _mediaUploadProgressController =
     StreamController<Map<String, dynamic>>.broadcast(sync: true);
@@ -266,6 +295,7 @@ Future<bool> callVerifyPayload({
   required String data,
   required String signature,
   Duration timeout = const Duration(seconds: 10),
+  bool throwOnBridgeUnavailable = false,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -296,24 +326,43 @@ Future<bool> callVerifyPayload({
         'requestOk': requestOk,
         'signatureValid': signatureValid,
         if (!requestOk) 'errorCode': response['errorCode'],
-        if (!requestOk) 'errorMessage': response['errorMessage'],
+        if (!requestOk && !throwOnBridgeUnavailable)
+          'errorMessage': response['errorMessage'],
       },
     );
 
+    if (!requestOk &&
+        throwOnBridgeUnavailable &&
+        _isBridgeUnavailableErrorCode(response['errorCode'])) {
+      throw const BridgeOperationUnavailableException();
+    }
     return isValid;
+  } on BridgeOperationUnavailableException {
+    rethrow;
   } on TimeoutException {
     emitFlowEvent(
       layer: 'FL',
       event: 'QR_FL_BRIDGE_VERIFY_RESPONSE',
       details: {'valid': false, 'errorCode': 'BRIDGE_TIMEOUT'},
     );
+    if (throwOnBridgeUnavailable) {
+      throw const BridgeOperationUnavailableException();
+    }
     return false;
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',
       event: 'QR_FL_BRIDGE_VERIFY_RESPONSE',
-      details: {'valid': false, 'error': e.toString()},
+      details: throwOnBridgeUnavailable
+          ? const <String, Object?>{
+              'valid': false,
+              'errorCode': 'BRIDGE_UNAVAILABLE',
+            }
+          : <String, Object?>{'valid': false, 'error': e.toString()},
     );
+    if (throwOnBridgeUnavailable) {
+      throw const BridgeOperationUnavailableException();
+    }
     return false;
   }
 }
@@ -634,6 +683,7 @@ Future<Map<String, dynamic>> callDecryptMessage({
   required String ciphertext,
   required String nonce,
   Duration timeout = const Duration(seconds: 10),
+  bool throwOnBridgeUnavailable = false,
 }) async {
   final correlationId = DateTime.now().microsecondsSinceEpoch.toString();
 
@@ -665,7 +715,14 @@ Future<Map<String, dynamic>> callDecryptMessage({
       details: {'ok': response['ok'] ?? false, 'correlationId': correlationId},
     );
 
+    if (response['ok'] != true &&
+        throwOnBridgeUnavailable &&
+        _isBridgeUnavailableErrorCode(response['errorCode'])) {
+      throw const BridgeOperationUnavailableException();
+    }
     return response;
+  } on BridgeOperationUnavailableException {
+    rethrow;
   } on TimeoutException {
     emitFlowEvent(
       layer: 'FL',
@@ -677,11 +734,19 @@ Future<Map<String, dynamic>> callDecryptMessage({
       },
     );
 
+    if (throwOnBridgeUnavailable) {
+      throw const BridgeOperationUnavailableException();
+    }
     return {
       'ok': false,
       'errorCode': 'BRIDGE_TIMEOUT',
       'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
     };
+  } catch (_) {
+    if (throwOnBridgeUnavailable) {
+      throw const BridgeOperationUnavailableException();
+    }
+    rethrow;
   }
 }
 

@@ -141,7 +141,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(currentIdentityDatabaseVersion, 116);
+        expect(currentIdentityDatabaseVersion, 117);
         expect(await _userVersion(db), 103);
         expect(await _cipherVersion(db), isNotEmpty);
         final entry = productionUpgradeMigrations.singleWhere(
@@ -250,7 +250,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _cipherVersion(db), isNotEmpty);
         expect((await db.query('group_exit_intents')).single, queued);
         expect(await db.query('groups'), legacyGroups);

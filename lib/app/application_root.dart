@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
+import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
+import 'package:flutter_app/features/call/presentation/foreground_call_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
@@ -20,6 +24,7 @@ import 'package:flutter_app/features/contact_request/data/repositories/contact_r
 import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
@@ -385,6 +390,8 @@ class MyApp extends StatefulWidget {
   // FDC-09 §12 / CV-14 (217 §A1): once-per-cycle wake-token mint+register hook.
   final Future<bool> Function(List<String> contactPeerIds)?
   issueWakeTokensForContacts;
+  final ResolveCallWakeHandle? resolveCallWakeHandle;
+  final OnCallWakeHandleDistributed? onCallWakeHandleDistributed;
   final MessageRepositoryImpl messageRepository;
   final PostRepositoryImpl postRepository;
   final PostsPrivacySettingsRepositoryImpl postsPrivacySettingsRepository;
@@ -408,6 +415,13 @@ class MyApp extends StatefulWidget {
 
   /// 361: true while this process runs the restricted linked blob-free role.
   final bool Function()? isLinkedBlobFreeRuntime;
+
+  /// Stable foreground-call capability owned by the process composition.
+  final OutgoingCallCapability? outgoingCallCapability;
+
+  /// Stable root call-surface capability. It projects the canonical reducer
+  /// and actual audio state without changing the retained navigation stack.
+  final ForegroundCallCapability? foregroundCallCapability;
 
   /// 361: the restricted linked outbox drain (exact v113 rows only).
   final Future<int> Function()? drainDirectBlobFreeLinkedOutboxes;
@@ -563,6 +577,14 @@ class MyApp extends StatefulWidget {
   /// socket/relay reservation or DB lock.
   final Future<void> Function()? onAppDetached;
 
+  /// Call-only lifecycle seams. They own only the dedicated call subscription,
+  /// coordinator, and ephemeral mailbox drain; shared app transports remain
+  /// under the existing application lifecycle.
+  final Future<void> Function()? resumeCallSignaling;
+  final Future<void> Function()? pauseCallSignaling;
+  final Future<void> Function()? shutdownCallSignaling;
+  final VoidCallback? onForegroundCallPresentationReady;
+
   static final navigatorKey = GlobalKey<NavigatorState>();
 
   // 04-P0 / QW-2: app-level messenger so notification handlers (which run
@@ -577,6 +599,8 @@ class MyApp extends StatefulWidget {
     required this.contactRequestListener,
     required this.contactRequestPresentationGate,
     this.issueWakeTokensForContacts,
+    this.resolveCallWakeHandle,
+    this.onCallWakeHandleDistributed,
     required this.messageRepository,
     required this.postRepository,
     required this.postsPrivacySettingsRepository,
@@ -588,6 +612,8 @@ class MyApp extends StatefulWidget {
     this.directDeviceTrust,
     this.directEventFanoutResolver,
     this.isLinkedBlobFreeRuntime,
+    this.outgoingCallCapability,
+    this.foregroundCallCapability,
     this.drainDirectBlobFreeLinkedOutboxes,
     this.drainLinkedDirectMediaBlobCustody,
     this.drainLinkedGroupBootstrap,
@@ -694,6 +720,10 @@ class MyApp extends StatefulWidget {
     this.firebaseReadiness,
     this.mayArmPushListeners,
     this.onAppDetached,
+    this.resumeCallSignaling,
+    this.pauseCallSignaling,
+    this.shutdownCallSignaling,
+    this.onForegroundCallPresentationReady,
   });
 
   @override
@@ -714,6 +744,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         directEventFanoutResolver: widget.directEventFanoutResolver,
         directDeviceTrust: widget.directDeviceTrust,
         isLinkedBlobFreeRuntime: widget.isLinkedBlobFreeRuntime,
+        outgoingCallCapability: widget.outgoingCallCapability,
       );
 
   bool _isResuming = false;
@@ -788,6 +819,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onForegroundCallPresentationReady?.call();
+    });
     assert(
       (widget.appVisibilityAuthority == null) ==
           (widget.appVisibilityRouteRegistry == null),
@@ -886,6 +920,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           p2pService: widget.p2pService,
           bridge: widget.bridge,
           onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
+          resolveCallWakeHandle: widget.resolveCallWakeHandle,
+          onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
           presentPendingRequest:
               ({
                 required navigator,
@@ -1943,6 +1979,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       messageRepository: widget.messageRepository,
       builder: (feedUnreadCountListenable) => OrbitWired(
         directRouteAuthority: _directRouteAuthority,
+        resolveCallWakeHandle: widget.resolveCallWakeHandle,
+        onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
         groupMediaDeleteForMeCoordinator:
             widget.groupMediaDeleteForMeCoordinator,
         identityRepo: widget.repository,
@@ -2010,6 +2048,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           directDeviceTrust: _directRouteAuthority.directDeviceTrust,
           directEventFanout: _directRouteAuthority.directEventFanout,
           modalityGate: _directRouteAuthority.modalityGate,
+          outgoingCallCapability: _directRouteAuthority.outgoingCallCapability,
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
           uploadRetryProjectionRepo: widget.messageRepository,
@@ -2247,9 +2286,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.droppedPushRecoveryCoordinator?.dispose();
     widget.contactPresenceSnapshotRepository.dispose();
     widget.postRepository.dispose();
-    widget.messageRouter.dispose();
-    widget.p2pService.dispose();
-    widget.bridge.dispose();
+    unawaited(
+      shutdownCallSignalingBeforeSharedOwners(
+        shutdownCallSignaling: widget.shutdownCallSignaling,
+        disposeMessageRouter: () => widget.messageRouter.dispose(),
+        disposeP2PService: () => widget.p2pService.dispose(),
+        disposeBridge: () => widget.bridge.dispose(),
+      ),
+    );
     widget.audioRecorderService.dispose();
     _homeReadyFallbackTimer?.cancel();
     _deferredNotificationRouteRetryScheduler.cancelAll();
@@ -2309,6 +2353,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _onPaused() {
+    final pauseCallSignaling = widget.pauseCallSignaling;
+    if (pauseCallSignaling != null) {
+      unawaited(pauseCallSignaling());
+    }
     // 361: the restricted linked role owns a blob-free surface only. Pause
     // runs the local-only sweep without the media/group repositories and
     // without the FDC-06 pause flush; every generic pause owner stays zero.
@@ -2416,6 +2464,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _onResumed() async {
     await _synchronizeAppVisibility();
+    final resumeCallSignaling = widget.resumeCallSignaling;
+    if (resumeCallSignaling != null) {
+      unawaited(resumeCallSignaling());
+    }
     // 361: the restricted linked role resumes ONLY the exact direct blob-free
     // drains — no private-media recovery, no broad retry families, no group,
     // post, upload or push owners. 362 adds only the target-qualified
@@ -3304,7 +3356,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   onOpenNotificationSettings: _openPushNotificationSettings,
                   child: routedChild,
                 );
-          return widget.debugE2EOverlayBuilder?.call(appChild) ?? appChild;
+          final callSurface = ForegroundCallOverlay(
+            capability: widget.foregroundCallCapability,
+            loadContactDisplayName: (peerId) async =>
+                (await widget.contactRepository.getContact(peerId))?.username,
+            child: appChild,
+          );
+          return widget.debugE2EOverlayBuilder?.call(callSurface) ??
+              callSurface;
         },
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
@@ -3313,6 +3372,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         themeMode: themeMode,
         home: StartupRouter(
           directRouteAuthority: _directRouteAuthority,
+          resolveCallWakeHandle: widget.resolveCallWakeHandle,
+          onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
           repository: widget.repository,
           contactRepository: widget.contactRepository,
           contactRequestRepository: widget.contactRequestRepository,
@@ -3361,6 +3422,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           shareIntentService: widget.shareIntentService,
           initialShareIntentCapture: _initialShareIntentCapture,
           ensureRuntimeServicesReady: _ensureRuntimeServicesReady,
+          afterP2PNodeStarted: widget.resumeCallSignaling,
           startP2PNodeOverride: widget.debugE2EStartP2PNodeOverride,
           // FDC-07: start LAN mDNS discovery early on the cold-start branch. Bound
           // to the concrete impl method (off the P2PService interface to avoid

@@ -74,7 +74,10 @@ const _controllerTestPaths = <String>[
 // `ConversationWired` — `sendPrivateMediaFanoutChatMessageFn`, the separately
 // typed private-fanout Barrier-B dispatch seam. It defaults to the incumbent
 // sender and changes no controller owner or pure-screen handoff.
-const _expectedDirectApiFingerprint = 'd12d6951';
+// VC2-03: repinned for exactly one optional `ConversationWired` field,
+// `outgoingCallCapability`. It delegates to the process-owned call composition
+// and cannot manufacture availability when the capability is absent.
+const _expectedDirectApiFingerprint = '6370e861';
 const _expectedGroupApiFingerprint = '3ffab64f';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection
@@ -82,7 +85,11 @@ const _expectedGroupApiFingerprint = '3ffab64f';
 // 360: the `onAvatarTap` closure now forwards the linked-device trust
 // capability to `ContactProfileScreen.open`, which requires a non-null
 // capability. Nothing else in the handoff changed and no owner moved.
-const _expectedDirectHandoffFingerprint = '2d3651bf';
+// VC2-03: the direct handoff adds only `onCall`, `showCallAction`, and
+// `callActionEnabled`, all projected from the optional process-owned call
+// capability. The reviewed per-contact availability and duplicate-start guards
+// are part of those expressions; ConversationScreen remains presentation-only.
+const _expectedDirectHandoffFingerprint = 'ffd1f021';
 const _expectedGroupHandoffFingerprint = '74b2fe80';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();

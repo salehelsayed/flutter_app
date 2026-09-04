@@ -11,6 +11,7 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -35,6 +36,7 @@ class _FakeBridge extends Bridge {
     'nonce': 'nonceBase64',
   };
   Map<String, dynamic>? lastEncryptPayload;
+  Map<String, dynamic>? lastSignPayload;
   bool encryptCalled = false;
 
   @override
@@ -52,6 +54,7 @@ class _FakeBridge extends Bridge {
   Future<String> send(String message) async {
     final req = jsonDecode(message) as Map<String, dynamic>;
     if (req['cmd'] == 'payload.sign') {
+      lastSignPayload = req['payload'] as Map<String, dynamic>?;
       return jsonEncode(signResponse);
     }
     if (req['cmd'] == 'contactrequest.encrypt') {
@@ -75,6 +78,11 @@ class _FakeP2PService implements P2PService {
   bool localPeerResult = false;
   bool localSendResult = false;
   bool storeInInboxResult = false;
+  SendMessageResult Function(String peerId, String message)?
+  sendWithReplyHandler;
+  int sendWithReplyCalls = 0;
+  int localSendCalls = 0;
+  int storeInInboxCalls = 0;
 
   String? lastSentMessage;
   String? lastSentPeerId;
@@ -110,9 +118,10 @@ class _FakeP2PService implements P2PService {
     String msg, {
     int? timeoutMs,
   }) async {
+    sendWithReplyCalls += 1;
     lastSentPeerId = pid;
     lastSentMessage = msg;
-    return sendWithReplyResult;
+    return sendWithReplyHandler?.call(pid, msg) ?? sendWithReplyResult;
   }
 
   @override
@@ -127,8 +136,14 @@ class _FakeP2PService implements P2PService {
   }) async => dialResult;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async =>
-      storeInInboxResult;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    storeInInboxCalls += 1;
+    return storeInInboxResult;
+  }
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
@@ -163,8 +178,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
@@ -178,7 +192,10 @@ class _FakeP2PService implements P2PService {
     String msg,
     String from, {
     int? timeoutMs,
-  }) async => localSendResult;
+  }) async {
+    localSendCalls += 1;
+    return localSendResult;
+  }
 
   @override
   Future<bool> sendLocalMedia({
@@ -667,10 +684,7 @@ void main() {
         expect(v2, equals(SendContactRequestResult.success));
         final signedPlaintext =
             bridge.lastEncryptPayload!['plaintext'] as String;
-        expect(
-          signedPlaintext,
-          contains('"wt":"tok-for-targetPeer123456789"'),
-        );
+        expect(signedPlaintext, contains('"wt":"tok-for-targetPeer123456789"'));
         // Read once, per-send (not per-retry) — the resolver is a pure read.
         expect(resolverCalls, 1);
 
@@ -698,5 +712,389 @@ void main() {
         expect(resolverCalls, 0);
       },
     );
+  });
+
+  group('call-only wake-handle grant transport', () {
+    final grant = CallWakeHandleGrant(
+      handle: '0123456789abcdef0123456789abcdef',
+      // The handle targets the local issuer/callee endpoint; it is distributed
+      // to a different remote contact/caller.
+      recipientDevicePeerId: '12D3KooWLocalCallEndpoint1',
+      deviceKeyEpoch: 3,
+      generation: 5,
+      issuedAtMs: 1,
+      expiresAtMs: CallWakeHandleGrant.maxSafeInteger,
+    );
+
+    test(
+      'v2 signs cwh and receipt challenge; v1 never resolves or carries it',
+      () async {
+        var resolverCalls = 0;
+        final distributed = <({String peerId, CallWakeHandleGrant grant})>[];
+        p2pService.sendWithReplyHandler = (_, _) {
+          final signedData =
+              jsonDecode(bridge.lastSignPayload!['data'] as String)
+                  as Map<String, dynamic>;
+          return SendMessageResult(
+            sent: true,
+            acked: true,
+            reply: jsonEncode({'callWakeReceipt': signedData['cwr']}),
+          );
+        };
+
+        final v2 = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: 'targetPeer123456789',
+          recipientPublicKey: 'recipientPubKey',
+          resolveCallWakeHandle: (peerId) async {
+            resolverCalls += 1;
+            expect(peerId, 'targetPeer123456789');
+            return grant;
+          },
+          onCallWakeHandleDistributed: (peerId, value) async {
+            distributed.add((peerId: peerId, grant: value));
+          },
+        );
+
+        expect(v2, SendContactRequestResult.success);
+        final signedPlaintext =
+            jsonDecode(bridge.lastEncryptPayload!['plaintext'] as String)
+                as Map<String, dynamic>;
+        expect(signedPlaintext['cwh'], grant.toCanonicalMap());
+        final signedData =
+            jsonDecode(bridge.lastSignPayload!['data'] as String)
+                as Map<String, dynamic>;
+        expect(signedData['cwh'], grant.toCanonicalMap());
+        expect(signedData['cwr'], isA<String>());
+        expect(signedPlaintext['cwr'], signedData['cwr']);
+        expect(resolverCalls, 1);
+        expect(distributed, [(peerId: 'targetPeer123456789', grant: grant)]);
+
+        resolverCalls = 0;
+        distributed.clear();
+        final v1Bridge = _FakeBridge();
+        final v1P2p = _FakeP2PService()
+          ..discoveredPeer = DiscoveredPeer(
+            id: 'targetPeer123456789',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          );
+        final v1 = await sendContactRequest(
+          p2pService: v1P2p,
+          identityRepo: identityRepo,
+          bridge: v1Bridge,
+          targetPeerId: 'targetPeer123456789',
+          resolveCallWakeHandle: (_) async {
+            resolverCalls += 1;
+            return grant;
+          },
+          onCallWakeHandleDistributed: (peerId, value) async {
+            distributed.add((peerId: peerId, grant: value));
+          },
+        );
+
+        expect(v1, SendContactRequestResult.success);
+        final v1Envelope =
+            jsonDecode(v1P2p.lastSentMessage!) as Map<String, dynamic>;
+        expect((v1Envelope['payload'] as Map).containsKey('cwh'), isFalse);
+        expect(resolverCalls, 0);
+        expect(distributed, isEmpty);
+      },
+    );
+
+    test('distribution callback runs only after successful delivery', () async {
+      p2pService
+        ..sendWithReplyResult = const SendMessageResult(
+          sent: false,
+          acked: false,
+        )
+        ..storeInInboxResult = false;
+      var distributed = false;
+
+      final result = await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+        recipientPublicKey: 'recipientPubKey',
+        resolveCallWakeHandle: (_) async => grant,
+        onCallWakeHandleDistributed: (_, _) async => distributed = true,
+      );
+
+      expect(result, SendContactRequestResult.sendFailed);
+      expect(distributed, isFalse);
+    });
+
+    test(
+      'ordinary cwh send accepts generic ACK but keeps distribution pending',
+      () async {
+        p2pService
+          ..localPeerResult = true
+          ..localSendResult = true;
+        var distributed = false;
+
+        final result = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: 'targetPeer123456789',
+          recipientPublicKey: 'recipientPubKey',
+          resolveCallWakeHandle: (_) async => grant,
+          onCallWakeHandleDistributed: (_, _) async => distributed = true,
+        );
+
+        final signedData =
+            jsonDecode(bridge.lastSignPayload!['data'] as String)
+                as Map<String, dynamic>;
+        expect(result, SendContactRequestResult.success);
+        expect(signedData['cwh'], grant.toCanonicalMap());
+        expect(signedData['cwr'], isA<String>());
+        expect(distributed, isFalse);
+        expect(p2pService.localSendCalls, 0);
+        expect(p2pService.sendWithReplyCalls, 1);
+        expect(p2pService.storeInInboxCalls, 0);
+      },
+    );
+
+    test(
+      'ordinary cwh inbox fallback never marks receiver durability',
+      () async {
+        p2pService
+          ..localPeerResult = true
+          ..localSendResult = true
+          ..discoveredPeer = null
+          ..storeInInboxResult = true;
+        var distributed = false;
+
+        final result = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: 'targetPeer123456789',
+          recipientPublicKey: 'recipientPubKey',
+          resolveCallWakeHandle: (_) async => grant,
+          onCallWakeHandleDistributed: (_, _) async => distributed = true,
+        );
+
+        expect(result, SendContactRequestResult.success);
+        expect(distributed, isFalse);
+        expect(p2pService.localSendCalls, 0);
+        expect(p2pService.sendWithReplyCalls, 0);
+        expect(p2pService.storeInInboxCalls, 1);
+      },
+    );
+
+    group('exact call-wake receipt', () {
+      test(
+        'rejects an old generic ACK without local or inbox fallback',
+        () async {
+          p2pService
+            ..localPeerResult = true
+            ..localSendResult = true
+            ..storeInInboxResult = true
+            ..sendWithReplyResult = const SendMessageResult(
+              sent: true,
+              acked: true,
+              reply: 'ack',
+            );
+          var distributed = false;
+
+          final result = await sendContactRequest(
+            p2pService: p2pService,
+            identityRepo: identityRepo,
+            bridge: bridge,
+            targetPeerId: 'targetPeer123456789',
+            recipientPublicKey: 'recipientPubKey',
+            resolveCallWakeHandle: (_) async => grant,
+            onCallWakeHandleDistributed: (_, _) async => distributed = true,
+            requireExactCallWakeReceipt: true,
+          );
+
+          expect(result, SendContactRequestResult.sendFailed);
+          expect(distributed, isFalse);
+          expect(p2pService.localSendCalls, 0);
+          expect(p2pService.sendWithReplyCalls, 1);
+          expect(p2pService.storeInInboxCalls, 0);
+        },
+      );
+
+      test('accepts and marks only the exact encrypted signed receipt', () async {
+        p2pService.sendWithReplyHandler = (_, _) {
+          final signedData =
+              jsonDecode(bridge.lastSignPayload!['data'] as String)
+                  as Map<String, dynamic>;
+          return SendMessageResult(
+            sent: true,
+            acked: true,
+            reply: jsonEncode({'callWakeReceipt': signedData['cwr']}),
+          );
+        };
+        final distributed = <({String peerId, CallWakeHandleGrant grant})>[];
+
+        final result = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: 'targetPeer123456789',
+          recipientPublicKey: 'recipientPubKey',
+          resolveCallWakeHandle: (_) async => grant,
+          onCallWakeHandleDistributed: (peerId, value) async {
+            distributed.add((peerId: peerId, grant: value));
+          },
+          requireExactCallWakeReceipt: true,
+        );
+
+        expect(result, SendContactRequestResult.success);
+        final signedData =
+            jsonDecode(bridge.lastSignPayload!['data'] as String)
+                as Map<String, dynamic>;
+        final signedPlaintext =
+            jsonDecode(bridge.lastEncryptPayload!['plaintext'] as String)
+                as Map<String, dynamic>;
+        final challenge = signedData['cwr'];
+        expect(challenge, isA<String>());
+        expect(
+          RegExp(
+            r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+          ).hasMatch(challenge as String),
+          isTrue,
+        );
+        expect(signedPlaintext['cwr'], challenge);
+        expect(signedPlaintext['cwh'], grant.toCanonicalMap());
+        expect(p2pService.lastSentMessage, isNot(contains(challenge)));
+        expect(distributed, [(peerId: 'targetPeer123456789', grant: grant)]);
+      });
+
+      test(
+        'rejects a mismatched receipt without marking distribution',
+        () async {
+          p2pService
+            ..storeInInboxResult = true
+            ..sendWithReplyResult = SendMessageResult(
+              sent: true,
+              acked: true,
+              reply: jsonEncode({'callWakeReceipt': 'different-challenge'}),
+            );
+          var distributed = false;
+
+          final result = await sendContactRequest(
+            p2pService: p2pService,
+            identityRepo: identityRepo,
+            bridge: bridge,
+            targetPeerId: 'targetPeer123456789',
+            recipientPublicKey: 'recipientPubKey',
+            resolveCallWakeHandle: (_) async => grant,
+            onCallWakeHandleDistributed: (_, _) async => distributed = true,
+            requireExactCallWakeReceipt: true,
+          );
+
+          expect(result, SendContactRequestResult.sendFailed);
+          expect(distributed, isFalse);
+          expect(p2pService.storeInInboxCalls, 0);
+        },
+      );
+
+      test('rejects an ACK whose JSON receipt field is missing', () async {
+        p2pService
+          ..storeInInboxResult = true
+          ..sendWithReplyResult = SendMessageResult(
+            sent: true,
+            acked: true,
+            reply: jsonEncode({'status': 'ok'}),
+          );
+        var distributed = false;
+
+        final result = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: 'targetPeer123456789',
+          recipientPublicKey: 'recipientPubKey',
+          resolveCallWakeHandle: (_) async => grant,
+          onCallWakeHandleDistributed: (_, _) async => distributed = true,
+          requireExactCallWakeReceipt: true,
+        );
+
+        expect(result, SendContactRequestResult.sendFailed);
+        expect(distributed, isFalse);
+        expect(p2pService.storeInInboxCalls, 0);
+      });
+
+      test(
+        'direct failure and peer absence never use inbox fallback',
+        () async {
+          p2pService
+            ..storeInInboxResult = true
+            ..sendWithReplyResult = const SendMessageResult(
+              sent: false,
+              acked: false,
+            );
+
+          final directFailure = await sendContactRequest(
+            p2pService: p2pService,
+            identityRepo: identityRepo,
+            bridge: bridge,
+            targetPeerId: 'targetPeer123456789',
+            recipientPublicKey: 'recipientPubKey',
+            resolveCallWakeHandle: (_) async => grant,
+            requireExactCallWakeReceipt: true,
+          );
+
+          expect(directFailure, SendContactRequestResult.sendFailed);
+          expect(p2pService.storeInInboxCalls, 0);
+
+          p2pService
+            ..discoveredPeer = null
+            ..sendWithReplyCalls = 0;
+          final peerAbsent = await sendContactRequest(
+            p2pService: p2pService,
+            identityRepo: identityRepo,
+            bridge: bridge,
+            targetPeerId: 'targetPeer123456789',
+            recipientPublicKey: 'recipientPubKey',
+            resolveCallWakeHandle: (_) async => grant,
+            requireExactCallWakeReceipt: true,
+          );
+
+          expect(peerAbsent, SendContactRequestResult.sendFailed);
+          expect(p2pService.sendWithReplyCalls, 0);
+          expect(p2pService.storeInInboxCalls, 0);
+        },
+      );
+
+      test('requires encrypted v2 and a current call-wake grant', () async {
+        final noV2 = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: 'targetPeer123456789',
+          resolveCallWakeHandle: (_) async => grant,
+          requireExactCallWakeReceipt: true,
+        );
+        expect(noV2, SendContactRequestResult.sendFailed);
+
+        final expiredGrant = CallWakeHandleGrant(
+          handle: grant.handle,
+          recipientDevicePeerId: grant.recipientDevicePeerId,
+          deviceKeyEpoch: grant.deviceKeyEpoch,
+          generation: grant.generation,
+          issuedAtMs: 1,
+          expiresAtMs: 2,
+        );
+        final noCurrentGrant = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: 'targetPeer123456789',
+          recipientPublicKey: 'recipientPubKey',
+          resolveCallWakeHandle: (_) async => expiredGrant,
+          requireExactCallWakeReceipt: true,
+        );
+        expect(noCurrentGrant, SendContactRequestResult.sendFailed);
+        expect(p2pService.sendWithReplyCalls, 0);
+        expect(p2pService.storeInInboxCalls, 0);
+      });
+    });
   });
 }

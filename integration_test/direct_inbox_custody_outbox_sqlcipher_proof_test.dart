@@ -430,7 +430,7 @@ void main() {
         isTrue,
         reason: 'TC-342-11 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 116);
+      expect(currentIdentityDatabaseVersion, 117);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_inbox_custody_sqlcipher_',
@@ -476,7 +476,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
         expect(
@@ -690,7 +690,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _authoritySnapshot(db), beforeDowngradeRefusal);
       } catch (error, stackTrace) {
         fail('TC-342-11 failed at $proofStage: $error\n$stackTrace');
@@ -709,7 +709,7 @@ END
         isTrue,
         reason: 'TC-345-11 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 116);
+      expect(currentIdentityDatabaseVersion, 117);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_media_custody_sqlcipher_',
@@ -773,7 +773,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(
           (await db.query(
@@ -985,7 +985,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _tc345AuthoritySnapshot(db), beforeDowngradeRefusal);
       } catch (error, stackTrace) {
         fail('TC-345-11 failed at $proofStage: $error\n$stackTrace');
@@ -1004,7 +1004,7 @@ END
         isTrue,
         reason: 'TC-347-01 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 116);
+      expect(currentIdentityDatabaseVersion, 117);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_media_blob_custody_sqlcipher_',
@@ -1057,7 +1057,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         final historical = (await db.query(
           'direct_inbox_custody_outbox',
           where: 'message_id = ?',
@@ -1129,7 +1129,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(
           DirectMediaBlobCustodyRow.fromMap(
             (await db.query('direct_media_blob_custody')).single,
@@ -1188,7 +1188,7 @@ END
         isTrue,
         reason: 'TC-361-04a is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 116);
+      expect(currentIdentityDatabaseVersion, 117);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_event_fanout_sqlcipher_',
@@ -1256,7 +1256,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         final historicalText = (await db.query(
           'direct_inbox_custody_outbox',
         )).single;
@@ -1354,7 +1354,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _tc345AuthoritySnapshot(db), committedSnapshot);
         await db.close();
         db = null;
@@ -1383,7 +1383,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _tc345AuthoritySnapshot(db), committedSnapshot);
       } catch (error, stackTrace) {
         fail('TC-361-04a failed at $proofStage: $error\n$stackTrace');
@@ -1402,7 +1402,7 @@ END
         isTrue,
         reason: 'TC-362-05a is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 116);
+      expect(currentIdentityDatabaseVersion, 117);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_media_fanout_sqlcipher_',
@@ -1512,7 +1512,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         final upgraded = await custodySnapshot(db);
         expect(upgraded, hasLength(v113Legacy.length));
         for (var index = 0; index < upgraded.length; index++) {
@@ -1536,7 +1536,7 @@ END
         proofStage = 'idempotent-v114-migration';
         await runDirectLinkedDeviceMediaBlobFanoutMigration(db);
         await runDirectLinkedDeviceMediaBlobFanoutMigration(db);
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
 
         proofStage = 'persist-two-same-attachment-target-rows';
         await db.insert('messages', <String, Object?>{
@@ -1592,7 +1592,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await custodySnapshot(db), committedSnapshot);
 
         proofStage = 'rerun-v114-migration-preserves-fanout-rows';
@@ -1625,7 +1625,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await custodySnapshot(db), committedSnapshot);
       } catch (error, stackTrace) {
         fail('TC-362-05a failed at $proofStage: $error\n$stackTrace');
@@ -1644,7 +1644,7 @@ END
         isTrue,
         reason: 'TC-365-01a is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 116);
+      expect(currentIdentityDatabaseVersion, 117);
 
       final temp = await Directory.systemTemp.createTemp(
         'group_media_blob_custody_sqlcipher_',
@@ -1702,7 +1702,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _cipherVersion(db), isNotEmpty);
         final upgradedDirect = await db.query(
           kDirectMediaBlobCustodyTable,
@@ -1817,7 +1817,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _v115AuthoritySnapshot(db), committedSnapshot);
         await runGroupMediaBlobCustodyMigration(db);
         await runGroupMediaBlobCustodyMigration(db);
@@ -1849,7 +1849,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _v115AuthoritySnapshot(db), committedSnapshot);
       } catch (error, stackTrace) {
         fail('TC-365-01a failed at $proofStage: $error\n$stackTrace');

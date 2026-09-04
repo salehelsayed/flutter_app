@@ -30,6 +30,8 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
   // FDC-09 §12 / CV-14: read-only wake-token resolver threaded into the
   // reciprocal send (emission-gated OFF by default). Never mints/registers.
   Future<String?> Function(String peerId)? resolveWakeToken,
+  ResolveCallWakeHandle? resolveCallWakeHandle,
+  OnCallWakeHandleDistributed? onCallWakeHandleDistributed,
 }) async {
   // 1. Delegate local accept to existing use case
   final result = await acceptContactRequest(
@@ -85,6 +87,8 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
       targetPeerId: peerId,
       recipientPublicKey: recipientPublicKey,
       resolveWakeToken: resolveWakeToken,
+      resolveCallWakeHandle: resolveCallWakeHandle,
+      onCallWakeHandleDistributed: onCallWakeHandleDistributed,
     ).then((sendResult) {
       emitFlowEvent(
         layer: 'FL',

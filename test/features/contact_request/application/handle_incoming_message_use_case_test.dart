@@ -11,6 +11,11 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
+import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
+import 'package:flutter_app/features/call/infrastructure/received_call_wake_handle_store_impl.dart';
+
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 /// Minimal in-memory [ReceivedWakeTokenStore] for the A03/A04 receive tests.
 class _FakeReceivedWakeTokenStore implements ReceivedWakeTokenStore {
@@ -29,6 +34,40 @@ class _FakeReceivedWakeTokenStore implements ReceivedWakeTokenStore {
 
   @override
   Future<void> clear() async => tokens.clear();
+}
+
+class _FakeReceivedCallWakeHandleStore implements ReceivedCallWakeHandleStore {
+  final Map<String, CallWakeHandleGrant> grants =
+      <String, CallWakeHandleGrant>{};
+  int writes = 0;
+
+  @override
+  Future<CallWakeHandleGrant?> readForIssuer(
+    String issuerAccountPeerId,
+  ) async => grants[issuerAccountPeerId];
+
+  @override
+  Future<bool> storeIfStrictlyNewer({
+    required String issuerAccountPeerId,
+    required CallWakeHandleGrant grant,
+    required int nowMs,
+  }) async {
+    if (!grant.isValidAt(nowMs)) {
+      return false;
+    }
+    final prior = grants[issuerAccountPeerId];
+    if (prior != null && !grant.isStrictlyNewerThan(prior)) return false;
+    grants[issuerAccountPeerId] = grant;
+    writes += 1;
+    return true;
+  }
+
+  @override
+  Future<void> removeForIssuer(String issuerAccountPeerId) async =>
+      grants.remove(issuerAccountPeerId);
+
+  @override
+  Future<void> clear() async => grants.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -64,7 +103,8 @@ class _FakeBridge extends Bridge {
     final req = jsonDecode(message) as Map<String, dynamic>;
     if (req['cmd'] == 'payload.verify') {
       verifyCalled = true;
-      lastVerifyData = (req['payload'] as Map<String, dynamic>)['data'] as String?;
+      lastVerifyData =
+          (req['payload'] as Map<String, dynamic>)['data'] as String?;
       return jsonEncode({'ok': true, 'valid': verifyResult});
     }
     if (req['cmd'] == 'contactrequest.decrypt') {
@@ -381,7 +421,7 @@ void main() {
     final payload = _validPayload();
     final message = _makeChatMessage(_contactRequestMessage(payload));
 
-    final (result, _, _) = await handleIncomingMessage(
+    final (result, _, verifiedPeerId) = await handleIncomingMessage(
       message: message,
       bridge: bridge,
       requestRepo: requestRepo,
@@ -390,6 +430,7 @@ void main() {
     );
 
     expect(result, equals(HandleMessageResult.alreadyContact));
+    expect(verifiedPeerId, equals(_senderPeerId));
   });
 
   test('duplicateRequest: pending request already exists', () async {
@@ -532,26 +573,23 @@ void main() {
     },
   );
 
-  test(
-    'noMatch guard falls back to the normal contact request path',
-    () async {
-      final message = _makeChatMessage(_contactRequestMessage(_validPayload()));
+  test('noMatch guard falls back to the normal contact request path', () async {
+    final message = _makeChatMessage(_contactRequestMessage(_validPayload()));
 
-      final (result, request, peerId) = await handleIncomingMessage(
-        message: message,
-        bridge: bridge,
-        requestRepo: requestRepo,
-        contactRepo: contactRepo,
-        ownPeerId: _ownPeerId,
-        attemptSilentIntroRecovery: (_) async =>
-            const IntroContactRequestRecoveryResult.noMatch(),
-      );
+    final (result, request, peerId) = await handleIncomingMessage(
+      message: message,
+      bridge: bridge,
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      ownPeerId: _ownPeerId,
+      attemptSilentIntroRecovery: (_) async =>
+          const IntroContactRequestRecoveryResult.noMatch(),
+    );
 
-      expect(result, HandleMessageResult.contactRequest);
-      expect(request, isNotNull);
-      expect(peerId, isNull);
-    },
-  );
+    expect(result, HandleMessageResult.contactRequest);
+    expect(request, isNotNull);
+    expect(peerId, isNull);
+  });
 
   test(
     'unknown sender still allows verified silent recovery on the old no-intent path',
@@ -635,43 +673,40 @@ void main() {
     expect(updated!.mlKemPublicKey, equals('senderMlKemPub'));
   });
 
-  test(
-    'updates existing contact ML-KEM key when signed payload carries a '
-    'different key',
-    () async {
-      // P0-B: a restored peer re-announces a NEW key via the signed
-      // contact_request envelope; the receiver must rotate, not ignore.
-      contactRepo._contacts[_senderPeerId] = ContactModel(
-        peerId: _senderPeerId,
-        publicKey: 'senderPublicKey',
-        rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
-        username: 'Alice',
-        signature: 'sig',
-        scannedAt: '2026-01-01T00:00:00.000Z',
-        mlKemPublicKey: 'existingKey',
-      );
+  test('updates existing contact ML-KEM key when signed payload carries a '
+      'different key', () async {
+    // P0-B: a restored peer re-announces a NEW key via the signed
+    // contact_request envelope; the receiver must rotate, not ignore.
+    contactRepo._contacts[_senderPeerId] = ContactModel(
+      peerId: _senderPeerId,
+      publicKey: 'senderPublicKey',
+      rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+      username: 'Alice',
+      signature: 'sig',
+      scannedAt: '2026-01-01T00:00:00.000Z',
+      mlKemPublicKey: 'existingKey',
+    );
 
-      final payload = _validPayload();
-      payload['mlkem'] = 'rotatedKey';
-      final message = _makeChatMessage(_contactRequestMessage(payload));
+    final payload = _validPayload();
+    payload['mlkem'] = 'rotatedKey';
+    final message = _makeChatMessage(_contactRequestMessage(payload));
 
-      final (result, request, peerId) = await handleIncomingMessage(
-        message: message,
-        bridge: bridge,
-        requestRepo: requestRepo,
-        contactRepo: contactRepo,
-        ownPeerId: _ownPeerId,
-      );
+    final (result, request, peerId) = await handleIncomingMessage(
+      message: message,
+      bridge: bridge,
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      ownPeerId: _ownPeerId,
+    );
 
-      expect(result, equals(HandleMessageResult.contactKeyUpdated));
-      expect(request, isNull);
-      expect(peerId, equals(_senderPeerId));
+    expect(result, equals(HandleMessageResult.contactKeyUpdated));
+    expect(request, isNull);
+    expect(peerId, equals(_senderPeerId));
 
-      final updated = await contactRepo.getContact(_senderPeerId);
-      expect(updated!.mlKemPublicKey, equals('rotatedKey'));
-      expect(updated.mlKemKeyUpdatedTs, equals(payload['ts']));
-    },
-  );
+    final updated = await contactRepo.getContact(_senderPeerId);
+    expect(updated!.mlKemPublicKey, equals('rotatedKey'));
+    expect(updated.mlKemKeyUpdatedTs, equals(payload['ts']));
+  });
 
   test(
     'ignores key change when payload ts is not newer than last key update',
@@ -1298,121 +1333,481 @@ void main() {
       expect(result, isNot(equals(HandleMessageResult.invalidMessage)));
     });
 
-    test('a no-wt legacy request still verifies (PROD-CRITICAL preservation)',
-        () async {
-      final payload = _validPayload(); // no wt
-      final message = _makeChatMessage(_contactRequestMessage(payload));
+    test(
+      'a no-wt legacy request still verifies (PROD-CRITICAL preservation)',
+      () async {
+        final payload = _validPayload(); // no wt
+        final message = _makeChatMessage(_contactRequestMessage(payload));
+
+        final (result, _, _) = await handleIncomingMessage(
+          message: message,
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+        );
+
+        // Conditional inclusion preserves the old shape: no `wt` in the data,
+        // and the request still verifies (contact-add / key-rotation unbroken).
+        expect(bridge.lastVerifyData, isNot(contains('wt')));
+        expect(result, isNot(equals(HandleMessageResult.invalidMessage)));
+      },
+    );
+
+    test(
+      'stores wt for new, already-contact, AND silent-intro-recovered peers',
+      () async {
+        // (a) New-contact verified request → stored.
+        final storeNew = _FakeReceivedWakeTokenStore();
+        final pNew = _validPayload()..['wt'] = 'wt-new';
+        await handleIncomingMessage(
+          message: _makeChatMessage(_contactRequestMessage(pNew)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          receivedWakeTokenStore: storeNew,
+        );
+        expect((await storeNew.readTokenFor(_senderPeerId))?['tok'], 'wt-new');
+
+        // (b) Already-contact (key-rotation branch) → still stored.
+        contactRepo._contacts[_senderPeerId] = ContactModel(
+          peerId: _senderPeerId,
+          publicKey: 'senderPublicKey',
+          rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+          username: 'Alice',
+          signature: 'sig',
+          scannedAt: '2024-01-01T00:00:00.000Z',
+          mlKemPublicKey: 'oldKey',
+        );
+        final storeContact = _FakeReceivedWakeTokenStore();
+        final pRot = _validPayload()
+          ..['wt'] = 'wt-rot'
+          ..['mlkem'] = 'newKey';
+        await handleIncomingMessage(
+          message: _makeChatMessage(_contactRequestMessage(pRot)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          receivedWakeTokenStore: storeContact,
+        );
+        expect(
+          (await storeContact.readTokenFor(_senderPeerId))?['tok'],
+          'wt-rot',
+        );
+
+        // (c) Silent-intro-recovered → the function returns at the recovery block
+        // BEFORE the contact checks; the wt must already have been stored.
+        final storeIntro = _FakeReceivedWakeTokenStore();
+        final pIntro = _validPayload()..['wt'] = 'wt-intro';
+        final (result, _, _) = await handleIncomingMessage(
+          message: _makeChatMessage(_contactRequestMessage(pIntro)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          receivedWakeTokenStore: storeIntro,
+          attemptSilentIntroRecovery: (_) async =>
+              IntroContactRequestRecoveryResult.recovered(
+                introduction: _introModel(),
+              ),
+        );
+        expect(result, HandleMessageResult.silentIntroRecovered);
+        expect(
+          (await storeIntro.readTokenFor(_senderPeerId))?['tok'],
+          'wt-intro',
+        );
+      },
+    );
+
+    test(
+      'anti-rollback: an older-ts wt does not overwrite a newer stored token',
+      () async {
+        final store = _FakeReceivedWakeTokenStore();
+        // Stored: {tok-current, ts=T2}.
+        await store.writeTokenFor(
+          _senderPeerId,
+          'tok-current',
+          '2026-07-06T12:00:00.000Z',
+        );
+
+        // Inbound ts=T1 < T2 → unchanged.
+        final pOld = _validPayload()
+          ..['wt'] = 'tok-old'
+          ..['ts'] = '2026-07-06T10:00:00.000Z';
+        await handleIncomingMessage(
+          message: _makeChatMessage(_contactRequestMessage(pOld)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          receivedWakeTokenStore: store,
+        );
+        expect(
+          (await store.readTokenFor(_senderPeerId))?['tok'],
+          'tok-current',
+        );
+
+        // Inbound ts=T3 > T2 → overwrites.
+        final pNew = _validPayload()
+          ..['wt'] = 'tok-new'
+          ..['ts'] = '2026-07-06T14:00:00.000Z';
+        await handleIncomingMessage(
+          message: _makeChatMessage(_contactRequestMessage(pNew)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          receivedWakeTokenStore: store,
+        );
+        expect((await store.readTokenFor(_senderPeerId))?['tok'], 'tok-new');
+      },
+    );
+  });
+
+  group('call-only wake-handle grant receive', () {
+    CallWakeHandleGrant grant({int epoch = 4, int generation = 1}) {
+      final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+      return CallWakeHandleGrant(
+        handle: generation == 1
+            ? '0123456789abcdef0123456789abcdef'
+            : '11111111111111111111111111111111',
+        recipientDevicePeerId: '12D3KooWRemoteCalleeDevice1',
+        deviceKeyEpoch: epoch,
+        generation: generation,
+        issuedAtMs: nowMs - 60_000,
+        expiresAtMs: nowMs + 60_000,
+      );
+    }
+
+    String v2Message(Map<String, dynamic> payload) {
+      final ts = DateTime.now().toUtc().toIso8601String();
+      bridge.decryptResponse = <String, dynamic>{
+        'ok': true,
+        'plaintext': jsonEncode(payload),
+      };
+      return jsonEncode(<String, dynamic>{
+        'type': 'contact_request',
+        'version': '2',
+        'msgId': 'cwh-${DateTime.now().microsecondsSinceEpoch}',
+        'ts': ts,
+        'encrypted': <String, String>{
+          'ephemeralPublicKey': 'ephPubBase64',
+          'ciphertext': 'ctBase64',
+          'nonce': 'nonceBase64',
+        },
+      });
+    }
+
+    test('v2 reconstructs canonical cwh before verify and stores it', () async {
+      final store = _FakeReceivedCallWakeHandleStore();
+      final value = grant();
+      final payload = _validPayload()..['cwh'] = value.toCanonicalMap();
+      var refreshes = 0;
+      CallWakeHandleGrant? grantSeenByRefresh;
 
       final (result, _, _) = await handleIncomingMessage(
-        message: message,
+        message: _makeChatMessage(v2Message(payload)),
         bridge: bridge,
         requestRepo: requestRepo,
         contactRepo: contactRepo,
         ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivateKey',
+        receivedCallWakeHandleStore: store,
+        onCallWakeHandleStored: () async {
+          refreshes += 1;
+          grantSeenByRefresh = await store.readForIssuer(_senderPeerId);
+        },
       );
 
-      // Conditional inclusion preserves the old shape: no `wt` in the data,
-      // and the request still verifies (contact-add / key-rotation unbroken).
-      expect(bridge.lastVerifyData, isNot(contains('wt')));
-      expect(result, isNot(equals(HandleMessageResult.invalidMessage)));
+      expect(result, isNot(HandleMessageResult.invalidMessage));
+      final reconstructed =
+          jsonDecode(bridge.lastVerifyData!) as Map<String, dynamic>;
+      expect(reconstructed['cwh'], value.toCanonicalMap());
+      expect(await store.readForIssuer(_senderPeerId), value);
+      expect(store.writes, 1);
+      expect(refreshes, 1);
+      expect(grantSeenByRefresh, value);
     });
 
-    test('stores wt for new, already-contact, AND silent-intro-recovered peers',
-        () async {
-      // (a) New-contact verified request → stored.
-      final storeNew = _FakeReceivedWakeTokenStore();
-      final pNew = _validPayload()..['wt'] = 'wt-new';
+    test(
+      'signed wake receipt is released only after the exact grant is durable',
+      () async {
+        const challenge = '123e4567-e89b-42d3-a456-426614174000';
+        final store = _FakeReceivedCallWakeHandleStore();
+        final value = grant();
+        final payload = _validPayload()
+          ..['cwh'] = value.toCanonicalMap()
+          ..['cwr'] = challenge;
+        final evaluations = <(String, bool)>[];
+
+        final (result, _, _) = await handleIncomingMessage(
+          message: _makeChatMessage(v2Message(payload)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          ownPrivateKey: 'ownPrivateKey',
+          receivedCallWakeHandleStore: store,
+          onCallWakeHandleReceiptEvaluated: (value, exactCurrent) {
+            evaluations.add((value, exactCurrent));
+          },
+        );
+
+        expect(result, isNot(HandleMessageResult.invalidMessage));
+        expect(await store.readForIssuer(_senderPeerId), value);
+        expect(evaluations, <(String, bool)>[(challenge, true)]);
+        final reconstructed =
+            jsonDecode(bridge.lastVerifyData!) as Map<String, dynamic>;
+        expect(reconstructed['cwr'], challenge);
+      },
+    );
+
+    test(
+      'failed secure write emits no receipt and duplicate retry persists first',
+      () async {
+        const challenge = '123e4567-e89b-42d3-a456-426614174000';
+        final keyStore = _FailFirstReceivedGrantWriteStore();
+        final store = ReceivedCallWakeHandleStoreImpl(secureKeyStore: keyStore);
+        final value = grant();
+        final payload = _validPayload()
+          ..['cwh'] = value.toCanonicalMap()
+          ..['cwr'] = challenge;
+        final evaluations = <(String, bool)>[];
+
+        Future<void> receive() async {
+          await handleIncomingMessage(
+            message: _makeChatMessage(v2Message(payload)),
+            bridge: bridge,
+            requestRepo: requestRepo,
+            contactRepo: contactRepo,
+            ownPeerId: _ownPeerId,
+            ownPrivateKey: 'ownPrivateKey',
+            receivedCallWakeHandleStore: store,
+            onCallWakeHandleReceiptEvaluated: (receipt, exactCurrent) {
+              evaluations.add((receipt, exactCurrent));
+            },
+          );
+        }
+
+        await expectLater(receive(), throwsA(isA<StateError>()));
+        expect(evaluations, isEmpty);
+        expect(await store.readForIssuer(_senderPeerId), isNull);
+
+        await receive();
+        expect(evaluations, <(String, bool)>[(challenge, true)]);
+        final reloaded = ReceivedCallWakeHandleStoreImpl(
+          secureKeyStore: keyStore,
+        );
+        expect(await reloaded.readForIssuer(_senderPeerId), value);
+      },
+    );
+
+    test('duplicate exact grant still earns the signed wake receipt', () async {
+      const challenge = '123e4567-e89b-42d3-a456-426614174000';
+      final store = _FakeReceivedCallWakeHandleStore();
+      final value = grant();
+      store.grants[_senderPeerId] = value;
+      final payload = _validPayload()
+        ..['cwh'] = value.toCanonicalMap()
+        ..['cwr'] = challenge;
+      final evaluations = <(String, bool)>[];
+
       await handleIncomingMessage(
-        message: _makeChatMessage(_contactRequestMessage(pNew)),
+        message: _makeChatMessage(v2Message(payload)),
         bridge: bridge,
         requestRepo: requestRepo,
         contactRepo: contactRepo,
         ownPeerId: _ownPeerId,
-        receivedWakeTokenStore: storeNew,
+        ownPrivateKey: 'ownPrivateKey',
+        receivedCallWakeHandleStore: store,
+        onCallWakeHandleReceiptEvaluated: (value, exactCurrent) {
+          evaluations.add((value, exactCurrent));
+        },
       );
-      expect((await storeNew.readTokenFor(_senderPeerId))?['tok'], 'wt-new');
 
-      // (b) Already-contact (key-rotation branch) → still stored.
-      contactRepo._contacts[_senderPeerId] = ContactModel(
-        peerId: _senderPeerId,
-        publicKey: 'senderPublicKey',
-        rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
-        username: 'Alice',
-        signature: 'sig',
-        scannedAt: '2024-01-01T00:00:00.000Z',
-        mlKemPublicKey: 'oldKey',
-      );
-      final storeContact = _FakeReceivedWakeTokenStore();
-      final pRot = _validPayload()
-        ..['wt'] = 'wt-rot'
-        ..['mlkem'] = 'newKey';
+      expect(store.writes, 0);
+      expect(evaluations, <(String, bool)>[(challenge, true)]);
+    });
+
+    test('stale grant cannot earn an exact wake receipt', () async {
+      const challenge = '123e4567-e89b-42d3-a456-426614174000';
+      final store = _FakeReceivedCallWakeHandleStore();
+      final newer = grant(generation: 2);
+      final older = grant(generation: 1);
+      store.grants[_senderPeerId] = newer;
+      final payload = _validPayload()
+        ..['cwh'] = older.toCanonicalMap()
+        ..['cwr'] = challenge;
+      final evaluations = <(String, bool)>[];
+
       await handleIncomingMessage(
-        message: _makeChatMessage(_contactRequestMessage(pRot)),
+        message: _makeChatMessage(v2Message(payload)),
         bridge: bridge,
         requestRepo: requestRepo,
         contactRepo: contactRepo,
         ownPeerId: _ownPeerId,
-        receivedWakeTokenStore: storeContact,
+        ownPrivateKey: 'ownPrivateKey',
+        receivedCallWakeHandleStore: store,
+        onCallWakeHandleReceiptEvaluated: (value, exactCurrent) {
+          evaluations.add((value, exactCurrent));
+        },
       );
-      expect((await storeContact.readTokenFor(_senderPeerId))?['tok'], 'wt-rot');
 
-      // (c) Silent-intro-recovered → the function returns at the recovery block
-      // BEFORE the contact checks; the wt must already have been stored.
-      final storeIntro = _FakeReceivedWakeTokenStore();
-      final pIntro = _validPayload()..['wt'] = 'wt-intro';
+      expect(await store.readForIssuer(_senderPeerId), newer);
+      expect(evaluations, <(String, bool)>[(challenge, false)]);
+    });
+
+    test(
+      'malformed wake receipt challenge is rejected before verify',
+      () async {
+        final store = _FakeReceivedCallWakeHandleStore();
+        final payload = _validPayload()
+          ..['cwh'] = grant().toCanonicalMap()
+          ..['cwr'] = 'not-a-versioned-challenge';
+
+        final (result, _, _) = await handleIncomingMessage(
+          message: _makeChatMessage(v2Message(payload)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          ownPrivateKey: 'ownPrivateKey',
+          receivedCallWakeHandleStore: store,
+        );
+
+        expect(result, HandleMessageResult.invalidMessage);
+        expect(bridge.verifyCalled, isFalse);
+        expect(store.writes, 0);
+      },
+    );
+
+    test('callback failure does not invalidate an accepted grant', () async {
+      final store = _FakeReceivedCallWakeHandleStore();
+      final value = grant();
+      final payload = _validPayload()..['cwh'] = value.toCanonicalMap();
+
       final (result, _, _) = await handleIncomingMessage(
-        message: _makeChatMessage(_contactRequestMessage(pIntro)),
+        message: _makeChatMessage(v2Message(payload)),
         bridge: bridge,
         requestRepo: requestRepo,
         contactRepo: contactRepo,
         ownPeerId: _ownPeerId,
-        receivedWakeTokenStore: storeIntro,
-        attemptSilentIntroRecovery: (_) async =>
-            IntroContactRequestRecoveryResult.recovered(
-              introduction: _introModel(),
-            ),
+        ownPrivateKey: 'ownPrivateKey',
+        receivedCallWakeHandleStore: store,
+        onCallWakeHandleStored: () async => throw StateError('refresh failed'),
       );
-      expect(result, HandleMessageResult.silentIntroRecovered);
-      expect((await storeIntro.readTokenFor(_senderPeerId))?['tok'], 'wt-intro');
+
+      expect(result, isNot(HandleMessageResult.invalidMessage));
+      expect(await store.readForIssuer(_senderPeerId), value);
+      expect(store.writes, 1);
     });
 
-    test('anti-rollback: an older-ts wt does not overwrite a newer stored token',
-        () async {
-      final store = _FakeReceivedWakeTokenStore();
-      // Stored: {tok-current, ts=T2}.
-      await store.writeTokenFor(
-        _senderPeerId,
-        'tok-current',
-        '2026-07-06T12:00:00.000Z',
-      );
+    test('absent cwh never invokes the stored callback', () async {
+      var refreshes = 0;
 
-      // Inbound ts=T1 < T2 → unchanged.
-      final pOld = _validPayload()
-        ..['wt'] = 'tok-old'
-        ..['ts'] = '2026-07-06T10:00:00.000Z';
-      await handleIncomingMessage(
-        message: _makeChatMessage(_contactRequestMessage(pOld)),
+      final (result, _, _) = await handleIncomingMessage(
+        message: _makeChatMessage(v2Message(_validPayload())),
         bridge: bridge,
         requestRepo: requestRepo,
         contactRepo: contactRepo,
         ownPeerId: _ownPeerId,
-        receivedWakeTokenStore: store,
+        ownPrivateKey: 'ownPrivateKey',
+        receivedCallWakeHandleStore: _FakeReceivedCallWakeHandleStore(),
+        onCallWakeHandleStored: () async => refreshes += 1,
       );
-      expect((await store.readTokenFor(_senderPeerId))?['tok'], 'tok-current');
 
-      // Inbound ts=T3 > T2 → overwrites.
-      final pNew = _validPayload()
-        ..['wt'] = 'tok-new'
-        ..['ts'] = '2026-07-06T14:00:00.000Z';
-      await handleIncomingMessage(
-        message: _makeChatMessage(_contactRequestMessage(pNew)),
+      expect(result, isNot(HandleMessageResult.invalidMessage));
+      expect(refreshes, 0);
+    });
+
+    test(
+      'malformed cwh is rejected before signature verification with no write',
+      () async {
+        final store = _FakeReceivedCallWakeHandleStore();
+        var refreshes = 0;
+        final malformed = <String, Object>{
+          ...grant().toCanonicalMap(),
+          'handle': 'ABCDEFABCDEFABCDEFABCDEFABCDEFAB',
+        };
+        final payload = _validPayload()..['cwh'] = malformed;
+
+        final (result, _, _) = await handleIncomingMessage(
+          message: _makeChatMessage(v2Message(payload)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          ownPrivateKey: 'ownPrivateKey',
+          receivedCallWakeHandleStore: store,
+          onCallWakeHandleStored: () async => refreshes += 1,
+        );
+
+        expect(result, HandleMessageResult.invalidMessage);
+        expect(bridge.verifyCalled, isFalse);
+        expect(store.writes, 0);
+        expect(refreshes, 0);
+      },
+    );
+
+    test('v1 cwh is rejected and never written', () async {
+      final store = _FakeReceivedCallWakeHandleStore();
+      var refreshes = 0;
+      final payload = _validPayload()..['cwh'] = grant().toCanonicalMap();
+
+      final (result, _, _) = await handleIncomingMessage(
+        message: _makeChatMessage(_contactRequestMessage(payload)),
         bridge: bridge,
         requestRepo: requestRepo,
         contactRepo: contactRepo,
         ownPeerId: _ownPeerId,
-        receivedWakeTokenStore: store,
+        receivedCallWakeHandleStore: store,
+        onCallWakeHandleStored: () async => refreshes += 1,
       );
-      expect((await store.readTokenFor(_senderPeerId))?['tok'], 'tok-new');
+
+      expect(result, HandleMessageResult.invalidMessage);
+      expect(bridge.verifyCalled, isFalse);
+      expect(store.writes, 0);
+      expect(refreshes, 0);
+    });
+
+    test('signed older generation cannot roll back the stored grant', () async {
+      final store = _FakeReceivedCallWakeHandleStore();
+      final newer = grant(generation: 2);
+      final older = grant(generation: 1);
+      var refreshes = 0;
+
+      for (final value in <CallWakeHandleGrant>[newer, older]) {
+        final payload = _validPayload()..['cwh'] = value.toCanonicalMap();
+        await handleIncomingMessage(
+          message: _makeChatMessage(v2Message(payload)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          ownPrivateKey: 'ownPrivateKey',
+          receivedCallWakeHandleStore: store,
+          onCallWakeHandleStored: () async => refreshes += 1,
+        );
+      }
+
+      expect(await store.readForIssuer(_senderPeerId), newer);
+      expect(store.writes, 1);
+      expect(refreshes, 1);
     });
   });
+}
+
+final class _FailFirstReceivedGrantWriteStore extends FakeSecureKeyStore {
+  var _shouldFail = true;
+
+  @override
+  Future<void> write(String key, String value) async {
+    if (_shouldFail && key == receivedCallWakeHandlesSecureStorageKey) {
+      _shouldFail = false;
+      throw StateError('injected secure-storage write failure');
+    }
+    await super.write(key, value);
+  }
 }

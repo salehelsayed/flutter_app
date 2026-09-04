@@ -12,6 +12,7 @@
 library;
 
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_modality_gate.dart';
 import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
@@ -26,6 +27,7 @@ class DirectConversationRouteAuthority {
     this.directEventFanoutResolver,
     this.directDeviceTrust,
     this.isLinkedBlobFreeRuntime,
+    this.outgoingCallCapability,
   });
 
   /// Builds the shared blob-free fanout authoring owner for the CURRENT
@@ -39,6 +41,10 @@ class DirectConversationRouteAuthority {
 
   /// True while this process runs the restricted linked blob-free role.
   final bool Function()? isLinkedBlobFreeRuntime;
+
+  /// Stable composition-level capability. It resolves the current private
+  /// call graph at invocation time instead of capturing a process graph here.
+  final OutgoingCallCapability? outgoingCallCapability;
 
   /// Resolved at push time, never cached: the owner is identity-scoped.
   DirectEventFanoutAuthoring? get directEventFanout =>
@@ -69,6 +75,9 @@ extension DirectConversationRouteAuthorityResolution
 
   DirectContactDeviceTrustCapability? get resolvedDirectDeviceTrust =>
       this?.directDeviceTrust;
+
+  OutgoingCallCapability? get resolvedOutgoingCallCapability =>
+      this?.outgoingCallCapability;
 
   DirectConversationModalityGate get resolvedModalityGate =>
       this?.modalityGate ?? const DirectConversationModalityGate();

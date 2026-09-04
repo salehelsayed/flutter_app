@@ -5,10 +5,13 @@ import 'package:flutter_app/features/contact_request/application/mlkem_reannounc
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/push/application/wake_token_reissue_coalescer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
@@ -50,6 +53,15 @@ ContactModel _makeContact(
     archivedAt: isArchived ? '2024-01-01T00:00:00Z' : null,
   );
 }
+
+final _callWakeHandleGrant = CallWakeHandleGrant(
+  handle: 'fedcba9876543210fedcba9876543210',
+  recipientDevicePeerId: 'recipientdevice123',
+  deviceKeyEpoch: 7,
+  generation: 3,
+  issuedAtMs: 1,
+  expiresAtMs: CallWakeHandleGrant.maxSafeInteger,
+);
 
 void main() {
   late FakeP2PService p2pService;
@@ -299,73 +311,65 @@ void main() {
       expect(result, 1);
     });
 
-    test(
-      'sends keyExchangeRetry to contacts in re-announce marker even when '
-      'their key is non-null',
-      () async {
-        contactRepo.seed([
-          _makeContact('has-key-1234567890', mlKemPublicKey: 'their-key'),
-          _makeContact('other-key-1234567890', mlKemPublicKey: 'other-key'),
-        ]);
-        final secureKeyStore = FakeSecureKeyStore();
-        await writeMlKemReannounceMarker(secureKeyStore, [
-          'has-key-1234567890',
-        ]);
+    test('sends keyExchangeRetry to contacts in re-announce marker even when '
+        'their key is non-null', () async {
+      contactRepo.seed([
+        _makeContact('has-key-1234567890', mlKemPublicKey: 'their-key'),
+        _makeContact('other-key-1234567890', mlKemPublicKey: 'other-key'),
+      ]);
+      final secureKeyStore = FakeSecureKeyStore();
+      await writeMlKemReannounceMarker(secureKeyStore, ['has-key-1234567890']);
 
-        final result = await retryIncompleteKeyExchanges(
-          contactRepo: contactRepo,
-          identityRepo: identityRepo,
-          p2pService: p2pService,
-          bridge: bridge,
-          secureKeyStore: secureKeyStore,
-        );
+      final result = await retryIncompleteKeyExchanges(
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+        secureKeyStore: secureKeyStore,
+      );
 
-        // Only the marker contact is re-announced; the other keyed contact
-        // keeps the long-standing skip behavior.
-        expect(result, 1);
-      },
-    );
+      // Only the marker contact is re-announced; the other keyed contact
+      // keeps the long-standing skip behavior.
+      expect(result, 1);
+    });
 
-    test(
-      'removes peer from marker only after successful send; partial failure '
-      'retains remainder',
-      () async {
-        contactRepo.seed([
-          _makeContact('marker-a-1234567890', mlKemPublicKey: 'key-a'),
-          _makeContact('marker-b-1234567890', mlKemPublicKey: 'key-b'),
-        ]);
-        final secureKeyStore = FakeSecureKeyStore();
-        await writeMlKemReannounceMarker(secureKeyStore, [
-          'marker-a-1234567890',
-          'marker-b-1234567890',
-        ]);
+    test('removes peer from marker only after successful send; partial failure '
+        'retains remainder', () async {
+      contactRepo.seed([
+        _makeContact('marker-a-1234567890', mlKemPublicKey: 'key-a'),
+        _makeContact('marker-b-1234567890', mlKemPublicKey: 'key-b'),
+      ]);
+      final secureKeyStore = FakeSecureKeyStore();
+      await writeMlKemReannounceMarker(secureKeyStore, [
+        'marker-a-1234567890',
+        'marker-b-1234567890',
+      ]);
 
-        // First contact's sign call fails → its send fails; second succeeds.
-        final failingBridge = _FailOnNthBridge(failOnCall: 1);
-        failingBridge.responses['payload.sign'] = {
-          'ok': true,
-          'signature': 'test-sig',
-        };
-        failingBridge.responses['contactrequest.encrypt'] = {
-          'ok': true,
-          'ephemeralPublicKey': 'ephPub',
-          'ciphertext': 'ct',
-          'nonce': 'nonce',
-        };
+      // First contact's sign call fails → its send fails; second succeeds.
+      final failingBridge = _FailOnNthBridge(failOnCall: 1);
+      failingBridge.responses['payload.sign'] = {
+        'ok': true,
+        'signature': 'test-sig',
+      };
+      failingBridge.responses['contactrequest.encrypt'] = {
+        'ok': true,
+        'ephemeralPublicKey': 'ephPub',
+        'ciphertext': 'ct',
+        'nonce': 'nonce',
+      };
 
-        final result = await retryIncompleteKeyExchanges(
-          contactRepo: contactRepo,
-          identityRepo: identityRepo,
-          p2pService: p2pService,
-          bridge: failingBridge,
-          secureKeyStore: secureKeyStore,
-        );
+      final result = await retryIncompleteKeyExchanges(
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        bridge: failingBridge,
+        secureKeyStore: secureKeyStore,
+      );
 
-        expect(result, 1);
-        final remaining = await readMlKemReannounceMarker(secureKeyStore);
-        expect(remaining, ['marker-a-1234567890']);
-      },
-    );
+      expect(result, 1);
+      final remaining = await readMlKemReannounceMarker(secureKeyStore);
+      expect(remaining, ['marker-a-1234567890']);
+    });
 
     test('marker drained empty clears the secure-storage entry', () async {
       contactRepo.seed([
@@ -469,6 +473,90 @@ void main() {
         );
       },
     );
+  });
+
+  group('call-only wake-handle distribution retry', () {
+    test('pending provider unions an archived contact without reusing the '
+        'ordinary wake-token marker', () async {
+      const archivedPeerId = 'archived-call-peer-1234567890';
+      contactRepo.seed([
+        _makeContact(
+          archivedPeerId,
+          mlKemPublicKey: 'complete-key',
+          isArchived: true,
+        ),
+        _makeContact(
+          'active-complete-peer-1234567890',
+          mlKemPublicKey: 'complete-key',
+        ),
+      ]);
+      final secureKeyStore = FakeSecureKeyStore();
+      final distributed = <String>[];
+      p2pService
+        ..discoverPeerResult = const DiscoveredPeer(
+          id: archivedPeerId,
+          addresses: <String>['/ip4/127.0.0.1/tcp/4001'],
+        )
+        ..onSendMessageWithReply = (peerId, message, {timeoutMs}) async {
+          final signRequest = bridge.sentMessages
+              .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+              .lastWhere((request) => request['cmd'] == 'payload.sign');
+          final signPayload = signRequest['payload'] as Map<String, dynamic>;
+          final signedData =
+              jsonDecode(signPayload['data'] as String) as Map<String, dynamic>;
+          return SendMessageResult(
+            sent: true,
+            acked: true,
+            reply: jsonEncode({'callWakeReceipt': signedData['cwr']}),
+          );
+        };
+
+      final result = await retryIncompleteKeyExchanges(
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+        secureKeyStore: secureKeyStore,
+        loadPendingCallWakeHandleContactIds: () async => [archivedPeerId],
+        resolveCallWakeHandle: (peerId) async {
+          expect(peerId, archivedPeerId);
+          return _callWakeHandleGrant;
+        },
+        onCallWakeHandleDistributed: (peerId, grant) async {
+          expect(grant, _callWakeHandleGrant);
+          distributed.add(peerId);
+        },
+      );
+
+      expect(result, 1);
+      expect(distributed, [archivedPeerId]);
+      expect(await secureKeyStore.containsKey(kWakeTokenPendingKey), isFalse);
+    });
+
+    test('blocked pending contact remains ineligible', () async {
+      const blockedPeerId = 'blocked-call-peer-1234567890';
+      contactRepo.seed([
+        _makeContact(
+          blockedPeerId,
+          mlKemPublicKey: 'complete-key',
+          isBlocked: true,
+        ),
+      ]);
+
+      final result = await retryIncompleteKeyExchanges(
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+        loadPendingCallWakeHandleContactIds: () async => [blockedPeerId],
+        resolveCallWakeHandle: (_) async => _callWakeHandleGrant,
+        onCallWakeHandleDistributed: (_, _) async {
+          fail('blocked contact must not be distributed');
+        },
+      );
+
+      expect(result, 0);
+    });
   });
 }
 

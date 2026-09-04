@@ -9,6 +9,7 @@ import 'package:crypto/crypto.dart';
 const int _defaultMaximumPrivateBackupBytes = 512 * 1024 * 1024;
 const int _maximumPrivateRestoreMemberListBytes = 8 * 1024 * 1024;
 const Duration _defaultHostCommandTimeout = Duration(minutes: 2);
+const Duration _defaultLargeBackupOperationTimeout = Duration(minutes: 10);
 const Duration _defaultProcessTerminationGrace = Duration(seconds: 2);
 const int _adbReconnectMaximumAttempts = 12;
 const Duration _adbReconnectRetryDelay = Duration(milliseconds: 500);
@@ -40,6 +41,19 @@ abstract interface class AndroidHostProcessRunner {
   Future<ProcessResult> run(String executable, List<String> arguments);
 }
 
+/// Optional capability for one host operation that needs a distinct deadline.
+///
+/// Keeping this separate from [AndroidHostProcessRunner] preserves the default
+/// command bound for existing runners and every ordinary state-guard command.
+abstract interface class AndroidHostProcessRunnerWithTimeout
+    implements AndroidHostProcessRunner {
+  Future<ProcessResult> runWithTimeout(
+    String executable,
+    List<String> arguments, {
+    required Duration timeout,
+  });
+}
+
 /// Test seam for the binary `adb exec-out` private-data stream.
 ///
 /// Production campaigns leave this unset and use the bounded streaming
@@ -60,7 +74,8 @@ typedef AndroidPrivateArchiveCapturer =
 typedef AndroidPrivateArchiveProcessStarter =
     Future<Process> Function(String executable, List<String> arguments);
 
-final class SystemAndroidHostProcessRunner implements AndroidHostProcessRunner {
+final class SystemAndroidHostProcessRunner
+    implements AndroidHostProcessRunnerWithTimeout {
   const SystemAndroidHostProcessRunner({
     this.commandTimeout = _defaultHostCommandTimeout,
     this.terminationGrace = _defaultProcessTerminationGrace,
@@ -70,8 +85,22 @@ final class SystemAndroidHostProcessRunner implements AndroidHostProcessRunner {
   final Duration terminationGrace;
 
   @override
-  Future<ProcessResult> run(String executable, List<String> arguments) async {
-    _requirePositiveDuration(commandTimeout, 'commandTimeout');
+  Future<ProcessResult> run(String executable, List<String> arguments) =>
+      _run(executable, arguments, timeout: commandTimeout);
+
+  @override
+  Future<ProcessResult> runWithTimeout(
+    String executable,
+    List<String> arguments, {
+    required Duration timeout,
+  }) => _run(executable, arguments, timeout: timeout);
+
+  Future<ProcessResult> _run(
+    String executable,
+    List<String> arguments, {
+    required Duration timeout,
+  }) async {
+    _requirePositiveDuration(timeout, 'timeout');
     _requirePositiveDuration(terminationGrace, 'terminationGrace');
     final process = await Process.start(
       executable,
@@ -92,7 +121,7 @@ final class SystemAndroidHostProcessRunner implements AndroidHostProcessRunner {
     final outcome = await _waitForBoundedProcess(
       completed.then<void>((_) {}),
       neverAborted.future,
-      commandTimeout,
+      timeout,
     );
     if (outcome != _BoundedProcessOutcome.completed) {
       await _terminateAndReap(
@@ -369,7 +398,7 @@ final class AndroidAppStateGuard {
     AndroidPrivateArchiveCapturer? privateArchiveCapturer,
     AndroidPrivateArchiveProcessStarter? privateArchiveProcessStarter,
     int maximumPrivateBackupBytes = _defaultMaximumPrivateBackupBytes,
-    Duration privateArchiveTimeout = _defaultHostCommandTimeout,
+    Duration privateArchiveTimeout = _defaultLargeBackupOperationTimeout,
     Duration processTerminationGrace = _defaultProcessTerminationGrace,
   }) async {
     final safeDevice = RegExp(r'^[A-Za-z0-9._:-]{1,160}$');
@@ -468,7 +497,7 @@ final class AndroidAppStateGuard {
         privateArchiveCapturer: privateArchiveCapturer,
         privateArchiveProcessStarter: privateArchiveProcessStarter,
         maximumPrivateBackupBytes: maximumPrivateBackupBytes,
-        privateArchiveTimeout: _defaultHostCommandTimeout,
+        privateArchiveTimeout: _defaultLargeBackupOperationTimeout,
         processTerminationGrace: _defaultProcessTerminationGrace,
       );
       guard._snapshots.addAll(recovered.snapshots);
@@ -804,11 +833,12 @@ final class AndroidAppStateGuard {
         '${deviceDirectory.path}${Platform.pathSeparator}installed-$index.apk',
       );
       final deviceDigest = await _deviceFileSha256(device, source);
-      final pull = await _adb(device, <String>[
-        'pull',
-        source,
-        destination.path,
-      ], allowFailure: true);
+      final pull = await _adb(
+        device,
+        <String>['pull', source, destination.path],
+        allowFailure: true,
+        commandTimeout: _defaultLargeBackupOperationTimeout,
+      );
       if (pull.exitCode != 0 ||
           !destination.existsSync() ||
           destination.lengthSync() == 0) {
@@ -1173,9 +1203,17 @@ final class AndroidAppStateGuard {
     _PackageSnapshot snapshot,
   ) async {
     final arguments = snapshot.apkFiles.length == 1
-        ? <String>['install', '-r', '-d', '-t', snapshot.apkFiles.single.path]
+        ? <String>[
+            'install',
+            '--no-streaming',
+            '-r',
+            '-d',
+            '-t',
+            snapshot.apkFiles.single.path,
+          ]
         : <String>[
             'install-multiple',
+            '--no-streaming',
             '-r',
             '-d',
             '-t',
@@ -1901,11 +1939,22 @@ final class AndroidAppStateGuard {
     List<String> arguments, {
     bool allowFailure = false,
     bool retryAnyNonzero = false,
+    Duration? commandTimeout,
   }) async {
     for (var attempt = 1; attempt <= _adbReconnectMaximumAttempts; attempt++) {
       late final ProcessResult result;
       try {
-        result = await _runner.run('adb', <String>['-s', device, ...arguments]);
+        final command = <String>['-s', device, ...arguments];
+        final timeoutRunner = _runner;
+        result =
+            commandTimeout != null &&
+                timeoutRunner is AndroidHostProcessRunnerWithTimeout
+            ? await timeoutRunner.runWithTimeout(
+                'adb',
+                command,
+                timeout: commandTimeout,
+              )
+            : await _runner.run('adb', command);
       } on ProcessException {
         if (allowFailure) return ProcessResult(0, 127, '', '');
         throw const AndroidAppStateBlocked('ADB could not start.');

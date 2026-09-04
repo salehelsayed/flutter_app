@@ -265,6 +265,10 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onUnblock;
   final VoidCallback? onOverflow;
   final VoidCallback? onAvatarTap;
+  final VoidCallback? onCall;
+  final bool showCallAction;
+  final bool callActionEnabled;
+  final String callUnavailableMessage;
   final bool isLoadingMore;
   final bool hasMoreOlderMessages;
   final bool initialLoadDone;
@@ -377,6 +381,10 @@ class ConversationScreen extends StatefulWidget {
     this.onUnblock,
     this.onOverflow,
     this.onAvatarTap,
+    this.onCall,
+    this.showCallAction = false,
+    this.callActionEnabled = false,
+    this.callUnavailableMessage = 'Voice calling is unavailable right now',
     this.isLoadingMore = false,
     this.hasMoreOlderMessages = true,
     this.initialLoadDone = false,
@@ -736,6 +744,12 @@ class _ConversationScreenState extends State<ConversationScreen>
             onBack: widget.onBack,
             onOverflow: widget.onOverflow,
             onAvatarTap: widget.onAvatarTap,
+            onCall: widget.onCall,
+            showCallAction: widget.showCallAction,
+            callActionEnabled: widget.callActionEnabled,
+            callActionInFlight:
+                !widget.callActionEnabled && widget.onCall != null,
+            callUnavailableMessage: widget.callUnavailableMessage,
           ),
           // Intro banner above messages (when messages exist)
           AnimatedSwitcher(

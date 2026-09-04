@@ -21,6 +21,8 @@ excluded_path_count=0
 default_rendezvous_address="/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
 default_quic_relay_address="/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
 default_relay_addresses="${default_rendezvous_address},${default_quic_relay_address}"
+vc204_runner_path="scripts/run_vc204_android_call_lifecycle_e2e.sh"
+vc204_scenario="vc204_android_call_lifecycle"
 
 usage() {
   cat <<'EOF'
@@ -54,6 +56,8 @@ Environment:
                                     tier is a routine subset; full remains the
                                     nightly/release requirement.
   RELIABILITY_SINGLE_DEVICE_ID      Passed as -d to one-device Flutter tests/runners.
+                                    Also passed as --device-id to the VC2-04
+                                    Android Telecom lifecycle runner.
   RELIABILITY_MULTI_DEVICE_IDS      Comma-separated pair passed to two-device runners.
   FLUTTER_DEVICE_ID                 Fallback for one-device runs when it is not comma-separated.
   FLUTTER_MULTI_DEVICE_IDS          Fallback for two-device runners.
@@ -69,6 +73,10 @@ Environment:
   RELIABILITY_NOTIFICATION_SOUND_INTERACTIVE=1
                                     Do not force notification sound smoke into
                                     non-interactive mode.
+  RELIABILITY_VC204_ARTIFACT_DIR    Existing reusable VC2-04 build-only artifact
+                                    directory passed as --artifact-dir.
+  RELIABILITY_VC204_RESULT_DIR      New or empty VC2-04 result directory passed
+                                    as --result-dir.
   SIMS_MAX_PARALLEL                 Compatibility bound accepted by
                                     --simultaneous (default: 4; range: 1-64).
 EOF
@@ -330,6 +338,10 @@ EOF
 
 while IFS=$'\t' read -r kind path scenario; do
   [ -n "$kind" ] || continue
+  if [ "$path" = "$vc204_runner_path" ]; then
+    printf '%s\t%s\t%s\n' "$kind" "$path" "$vc204_scenario"
+    continue
+  fi
   if [ "$path" = "integration_test/group_lifecycle_simulator_harness.dart" ]; then
     while IFS= read -r expanded_scenario; do
       [ -n "$expanded_scenario" ] || continue
@@ -474,6 +486,14 @@ single_device_id() {
   fi
 }
 
+vc204_artifact_dir() {
+  printf '%s\n' "${RELIABILITY_VC204_ARTIFACT_DIR:-}"
+}
+
+vc204_result_dir() {
+  printf '%s\n' "${RELIABILITY_VC204_RESULT_DIR:-}"
+}
+
 multi_device_ids() {
   if [ -n "${RELIABILITY_MULTI_DEVICE_IDS:-}" ]; then
     printf '%s\n' "$RELIABILITY_MULTI_DEVICE_IDS"
@@ -616,7 +636,7 @@ print_device_arg_for_path() {
   fi
 }
 
-validate_required_device_args() {
+validate_required_runner_inputs() {
   local index
   local kind
   local path
@@ -624,6 +644,30 @@ validate_required_device_args() {
 
   while IFS=$'\t' read -r index kind path scenario; do
     [ -n "$path" ] || continue
+    if [ "$path" = "$vc204_runner_path" ]; then
+      if [ -z "$(single_device_id)" ]; then
+        printf 'Missing explicit Android device ID for %s.\n' "$path" >&2
+        printf 'Set RELIABILITY_SINGLE_DEVICE_ID=<discovered-android-id> ' >&2
+        printf '(fallback: single-valued FLUTTER_DEVICE_ID).\n' >&2
+        return 64
+      fi
+      if [ -z "$(vc204_artifact_dir)" ]; then
+        printf 'Missing explicit artifact directory for %s.\n' "$path" >&2
+        printf 'Set RELIABILITY_VC204_ARTIFACT_DIR=<existing-build-only-dir>.\n' >&2
+        return 64
+      fi
+      if [ -z "$(vc204_result_dir)" ]; then
+        printf 'Missing explicit result directory for %s.\n' "$path" >&2
+        printf 'Set RELIABILITY_VC204_RESULT_DIR=<new-or-empty-result-dir>.\n' >&2
+        return 64
+      fi
+      if [ "$scenario" != "$vc204_scenario" ]; then
+        printf 'Invalid VC2-04 scenario for %s: %s.\n' \
+          "$path" "${scenario:-<empty>}" >&2
+        return 64
+      fi
+      continue
+    fi
     if requires_explicit_single_device_id "$path" &&
        [ -z "$(single_device_id)" ]; then
       printf 'Missing explicit single-device ID for %s.\n' "$path" >&2
@@ -649,6 +693,8 @@ print_command_for_path() {
   local device_id
   local mode
   local platform
+  local artifact_dir
+  local result_dir
 
   print_relay_env_prefix
   case "$path" in
@@ -670,6 +716,20 @@ print_command_for_path() {
       if [ "${RELIABILITY_IOS_ONLY:-0}" = "1" ]; then
         printf ' --ios-only'
       fi
+      ;;
+    "$vc204_runner_path")
+      device_id="$(single_device_id)"
+      artifact_dir="$(vc204_artifact_dir)"
+      result_dir="$(vc204_result_dir)"
+      [ -n "$device_id" ] || device_id='<required:RELIABILITY_SINGLE_DEVICE_ID>'
+      [ -n "$artifact_dir" ] || artifact_dir='<required:RELIABILITY_VC204_ARTIFACT_DIR>'
+      [ -n "$result_dir" ] || result_dir='<required:RELIABILITY_VC204_RESULT_DIR>'
+      printf './%s --device-id %s --artifact-dir %s --result-dir %s --scenario %s' \
+        "$path" \
+        "$(quote_for_display "$device_id")" \
+        "$(quote_for_display "$artifact_dir")" \
+        "$(quote_for_display "$result_dir")" \
+        "$(quote_for_display "$scenario")"
       ;;
     scripts/*.sh)
       printf './%s' "$path"
@@ -719,6 +779,8 @@ run_path() {
   local device_id
   local mode
   local platform
+  local artifact_dir
+  local result_dir
 
   case "$path" in
     smoke_test_friends.sh)
@@ -740,6 +802,19 @@ run_path() {
       if [ "${RELIABILITY_IOS_ONLY:-0}" = "1" ]; then
         cmd+=(--ios-only)
       fi
+      MKNOON_RELAY_ADDRESSES="$(relay_addresses)" "${cmd[@]}"
+      ;;
+    "$vc204_runner_path")
+      device_id="$(single_device_id)"
+      artifact_dir="$(vc204_artifact_dir)"
+      result_dir="$(vc204_result_dir)"
+      cmd=(
+        "./$path"
+        --device-id "$device_id"
+        --artifact-dir "$artifact_dir"
+        --result-dir "$result_dir"
+        --scenario "$scenario"
+      )
       MKNOON_RELAY_ADDRESSES="$(relay_addresses)" "${cmd[@]}"
       ;;
     scripts/*.sh)
@@ -849,7 +924,7 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-validate_required_device_args
+validate_required_runner_inputs
 
 preflight_transport_census_processes() {
   local matches

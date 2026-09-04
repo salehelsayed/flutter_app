@@ -1,0 +1,29 @@
+
+=== relay v1.10.2 deploy started 20260904T214940Z ===
+--- pre-deploy state ---
+relay: active NRestarts=0
+live binary: 2894daf98fd384d349897bdb829410532d9382147f48f23afd950a7205ff68d9
+uploaded binary: ded40f82256b2ed31e669ae66d7f19dd22fe1b5c5350af7b41c4726d849c4f45
+relay_apns_voip_push_attempts_total{outcome="invalid_token"} 2
+relay_apns_voip_push_attempts_total{outcome="sent"} 0
+--- install ---
+backup: /usr/local/bin/relay-server.pre-1.10.2-20260904T214940Z
+installed: ded40f82256b2ed31e669ae66d7f19dd22fe1b5c5350af7b41c4726d849c4f45
+--- post-restart ---
+relay: active NRestarts=0
+Sep 04 21:49:41 ip-172-31-34-24 relay-server[1027863]: 2026/09/04 21:49:41 [APNS_VOIP] enabled=true environment=production routing=per-token-environment cross_environment_fallback=on (default off; APNS_VOIP_PUSH_ENABLED)
+Sep 04 21:49:41 ip-172-31-34-24 relay-server[1027863]: 2026/09/04 21:49:41 [INBOX] ack custody contract=ack_or_expiry_v1 admission_enabled=true backend=redis (default off; DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED)
+Sep 04 21:49:41 ip-172-31-34-24 relay-server[1027863]: 2026/09/04 21:49:41 Starting relay-server v1.10.2
+Sep 04 21:49:41 ip-172-31-34-24 relay-server[1027863]: 2026/09/04 21:49:41 Control-plane: backend=redis durable=true prefix=relay:
+relay_apns_voip_push_attempts_total{outcome="sent_cross_environment"} 0
+relay_apns_voip_push_enabled 1
+relay_backend_durable 1
+t+12s: active NRestarts=0
+t+40s: active NRestarts=0
+t+40s: active NRestarts=0
+=== done 20260904T215120Z ===
+=== reset iPhone 11 poisoned VoIP token epoch ===
+before: generation 2 refreshEpoch 2
+deleted: 1
+after exists: 0
+

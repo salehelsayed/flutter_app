@@ -1,0 +1,8 @@
+{
+  "schema": "mknoon.call_audio_oracle.coturn_lock.v1",
+  "image": "coturn/coturn:4.17.2-r0",
+  "digest": "sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e",
+  "source": "https://github.com/coturn/coturn",
+  "version": "4.17.2-r0",
+  "license": "BSD-3-Clause"
+}

@@ -9,6 +9,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import com.google.firebase.messaging.RemoteMessage
+import com.mknoon.app.call.CallPayloadParseResult
+import com.mknoon.app.call.CallPayloadParser
+import com.mknoon.app.call.CallWakePayload
+import com.mknoon.app.call.HeadlessCallAdmissionWorkScheduler
+import com.mknoon.app.call.MknoonCallForegroundService
 import io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService
 
 /** App-owned FlutterFire service that durably records deleted FCM batches. */
@@ -66,6 +71,19 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        if (message.data["w"] == "call") {
+            val parsed = CallPayloadParser(nowMs = ::callWakeNowMs).parse(
+                entries = message.data.entries.map { it.key to it.value },
+                hasNotification = message.notification != null,
+            )
+            if (parsed is CallPayloadParseResult.Accepted) {
+                dispatchValidatedCallWake(parsed.payload)
+            }
+            // `w=call` reserves this namespace even when the rest of the
+            // payload is malformed. It must never enter ordinary FlutterFire
+            // staging, fixed-wake recovery, or user-visible recovery cards.
+            return
+        }
         if (!isExactFixedOpaqueWake(message)) {
             delegateRichMessageToFlutterFire(message)
             return
@@ -118,6 +136,32 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
      */
     internal open fun delegateRichMessageToFlutterFire(message: RemoteMessage) {
         super.onMessageReceived(message)
+    }
+
+    internal open fun callWakeNowMs(): Long = System.currentTimeMillis()
+
+    internal open fun dispatchValidatedCallWake(payload: CallWakePayload) {
+        if (!HeadlessCallAdmissionWorkScheduler(applicationContext).enqueue(payload)) return
+        startCallAdmissionForeground(payload)
+    }
+
+    /**
+     * Enter the call foreground service now, inside the high-priority FCM
+     * start window. The headless admission that follows can outlast that
+     * window; upgrading an already-foreground service to ringing is always
+     * allowed, while starting one from the background then is not.
+     */
+    private fun startCallAdmissionForeground(payload: CallWakePayload) {
+        if (!BuildConfig.ENABLE_ANDROID_NATIVE_CALLS || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+        val intent = Intent(applicationContext, MknoonCallForegroundService::class.java)
+            .setAction(MknoonCallForegroundService.ACTION_START_ADMISSION)
+            .putExtra(
+                MknoonCallForegroundService.EXTRA_NATIVE_CALL_ID,
+                payload.nativeCallId.toString(),
+            )
+        runCatching { applicationContext.startForegroundService(intent) }
     }
 
     override fun onDeletedMessages() {

@@ -16,6 +16,12 @@ import io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver
  */
 open class MknoonFirebaseMessagingReceiver : FlutterFirebaseMessagingReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        val reservedCallWake = intent.extras?.let { extras ->
+            runCatching { RemoteMessage(extras).data["w"] == "call" }
+                .getOrDefault(false)
+        } ?: false
+        if (reservedCallWake) return
+
         val fixedWake = intent.extras?.let { extras ->
             runCatching {
                 MknoonFirebaseMessagingService.isExactFixedOpaqueWake(

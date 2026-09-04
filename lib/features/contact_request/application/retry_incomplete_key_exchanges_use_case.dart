@@ -10,6 +10,9 @@ import 'package:flutter_app/features/contact_request/application/wake_token_pend
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
+typedef LoadPendingCallWakeHandleContactIds =
+    Future<Iterable<String>> Function();
+
 /// Retries sending contact requests to all contacts missing their ML-KEM key,
 /// plus any contacts in the post-restore re-announce marker (P0-B).
 ///
@@ -31,6 +34,12 @@ Future<int> retryIncompleteKeyExchanges({
   // (emission-gated) send. This is a DISTRIBUTION path only — it never mints or
   // registers (that is once-per-cycle, INV-5).
   Future<String?> Function(String peerId)? resolveWakeToken,
+  // This provider is deliberately independent from the ordinary notification
+  // wake-token marker. Its IDs may include archived contacts because archiving
+  // does not revoke an already-issued call capability.
+  LoadPendingCallWakeHandleContactIds? loadPendingCallWakeHandleContactIds,
+  ResolveCallWakeHandle? resolveCallWakeHandle,
+  OnCallWakeHandleDistributed? onCallWakeHandleDistributed,
 }) async {
   // 1. Guard: own ML-KEM key must exist (resend would be pointless without it)
   final identity = await identityRepo.loadIdentity();
@@ -53,8 +62,16 @@ Future<int> retryIncompleteKeyExchanges({
     return 0;
   }
 
-  // 3. Get eligible contacts: missing ML-KEM key, OR pending re-announcement
-  final contacts = await contactRepo.getActiveContacts();
+  // 3. Get eligible contacts: missing ML-KEM key, pending re-announcement, or
+  // a call-only capability whose encrypted distribution is still pending.
+  final callWakeHandlePending = loadPendingCallWakeHandleContactIds == null
+      ? const <String>{}
+      : (await loadPendingCallWakeHandleContactIds())
+            .where((peerId) => peerId.isNotEmpty)
+            .toSet();
+  final contacts = callWakeHandlePending.isEmpty
+      ? await contactRepo.getActiveContacts()
+      : await contactRepo.getAllContacts();
   final markerStore = secureKeyStore;
   var reannouncePending = markerStore != null
       ? await readMlKemReannounceMarker(markerStore)
@@ -65,15 +82,18 @@ Future<int> retryIncompleteKeyExchanges({
   var wakeTokenPending = markerStore != null
       ? await readWakeTokenPendingMarker(markerStore)
       : const <String>[];
-  final eligible = contacts
-      .where(
-        (c) =>
-            !c.isBlocked &&
-            (c.mlKemPublicKey == null ||
-                reannouncePending.contains(c.peerId) ||
-                wakeTokenPending.contains(c.peerId)),
-      )
-      .toList();
+  final eligible = contacts.where((c) {
+    if (c.isBlocked) return false;
+    final callWakeDistributionPending = callWakeHandlePending.contains(
+      c.peerId,
+    );
+    final incumbentRetryPending =
+        !c.isArchived &&
+        (c.mlKemPublicKey == null ||
+            reannouncePending.contains(c.peerId) ||
+            wakeTokenPending.contains(c.peerId));
+    return incumbentRetryPending || callWakeDistributionPending;
+  }).toList();
 
   if (eligible.isEmpty) return 0;
 
@@ -97,6 +117,8 @@ Future<int> retryIncompleteKeyExchanges({
         recipientPublicKey: contact.publicKey,
         intent: ContactRequestSendIntent.keyExchangeRetry,
         resolveWakeToken: resolveWakeToken,
+        resolveCallWakeHandle: resolveCallWakeHandle,
+        onCallWakeHandleDistributed: onCallWakeHandleDistributed,
       );
 
       if (result == SendContactRequestResult.success) {

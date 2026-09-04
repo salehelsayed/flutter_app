@@ -14,6 +14,15 @@ class RecoveryStringResourcesSourceTest {
             "dropped_push_recovery_notification_title",
             "dropped_push_recovery_notification_body",
             "dropped_push_recovery_worker_body",
+            "call_notification_channel_name",
+            "call_notification_channel_description",
+            "call_notification_title",
+            "call_notification_person",
+            "call_notification_incoming",
+            "call_notification_ongoing",
+            "call_notification_answer",
+            "call_notification_decline",
+            "call_notification_end",
         )
 
         listOf("values", "values-de", "values-ar").forEach { directory ->

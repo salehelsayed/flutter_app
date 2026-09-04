@@ -1080,75 +1080,8 @@ final class SimsBuildOrchestrator {
     );
   }
 
-  List<String> _buildArguments(BuildProfileSpec profile) {
-    final defines = _effectiveCompileDefines(profile).entries.toList()
-      ..sort((left, right) => left.key.compareTo(right.key));
-    final defineArgs = <String>[
-      for (final entry in defines) '--dart-define=${entry.key}=${entry.value}',
-    ];
-    final iosDeviceConfiguration = _iosDeviceBuildConfiguration(profile.id);
-    if (iosDeviceConfiguration != null) {
-      final encodedDefines = defines
-          .map(
-            (entry) =>
-                base64.encode(utf8.encode('${entry.key}=${entry.value}')),
-          )
-          .join(',');
-      return <String>[
-        'build-for-testing',
-        '-workspace=ios/Runner.xcworkspace',
-        '-scheme=Runner',
-        '-configuration=Release',
-        if (iosDeviceConfiguration.allowProvisioningUpdates)
-          '-allowProvisioningUpdates',
-        'ENABLE_TESTABILITY=YES',
-        '-destination=generic/platform=iOS',
-        if (profile.id == _iosDeviceGroupMedia269ProfileId) ...<String>[
-          'SWIFT_ACTIVE_COMPILATION_CONDITIONS='
-              '${iosDeviceConfiguration.swiftCompilationConditions}',
-          ...iosDeviceConfiguration.buildSettings,
-        ],
-        'FLUTTER_TARGET=${environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile)}',
-        if (encodedDefines.isNotEmpty) 'DART_DEFINES=$encodedDefines',
-      ];
-    }
-    if (profile.platform == 'android') {
-      return <String>[
-        'build',
-        'apk',
-        '--debug',
-        '--target-platform=android-arm64',
-        '--android-project-arg=simsAndroidAbi=arm64-v8a',
-        if (profile.id == _androidGroupMedia269ProfileId) ...const <String>[
-          '--android-project-arg=disableGoogleServicesForDisposableProof=true',
-          '--android-project-arg=enableGroupMedia269DisposableProof=true',
-        ],
-        '--target=${environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile)}',
-        ...defineArgs,
-      ];
-    }
-    if (profile.id == 'ios.simulator.e2e') {
-      return <String>[
-        'build',
-        'ios',
-        '--simulator',
-        '--debug',
-        '--no-codesign',
-        '--target=${environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile)}',
-        ...defineArgs,
-      ];
-    }
-    if (profile.platform == 'ios') {
-      return <String>[
-        'build',
-        'ipa',
-        '--release',
-        '--target=${environment['SIMS_BUILD_ENTRYPOINT'] ?? _entrypointFor(profile)}',
-        ...defineArgs,
-      ];
-    }
-    return <String>['build', profile.artifactKind, ...defineArgs];
-  }
+  List<String> _buildArguments(BuildProfileSpec profile) =>
+      effectiveSimsBuildArguments(profile, environment: environment);
 
   String? _defaultArtifactPath(BuildProfileSpec profile) {
     if (profile.platform == 'android') {
@@ -1172,15 +1105,8 @@ final class SimsBuildOrchestrator {
     return null;
   }
 
-  String _entrypointFor(BuildProfileSpec profile) => switch (profile.id) {
-    'android.e2e.standard' => 'integration_test/sims_dispatcher.dart',
-    'android.e2e.main' => 'lib/main.dart',
-    'android.e2e.direct_media_custody' => 'lib/main.dart',
-    _androidGroupMedia269ProfileId => 'lib/main.dart',
-    'ios.simulator.e2e' =>
-      'integration_test/group_multi_party_device_real_harness.dart',
-    _ => 'lib/main.dart',
-  };
+  String _entrypointFor(BuildProfileSpec profile) =>
+      _defaultSimsBuildEntrypoint(profile);
 
   Map<String, String> _effectiveCompileDefines(BuildProfileSpec profile) =>
       effectiveSimsCompileDefines(profile, environment: environment);
@@ -1194,6 +1120,102 @@ final class SimsBuildOrchestrator {
     return result;
   }
 }
+
+/// Returns the exact deterministic arguments used by the central builder.
+///
+/// Keeping this pure makes the command itself part of the testable cache
+/// contract: [BuildProfileInput.buildOptions] fingerprints this complete list.
+List<String> effectiveSimsBuildArguments(
+  BuildProfileSpec profile, {
+  Map<String, String>? environment,
+}) {
+  final effectiveEnvironment = environment ?? Platform.environment;
+  final defines = effectiveSimsCompileDefines(
+    profile,
+    environment: effectiveEnvironment,
+  ).entries.toList()..sort((left, right) => left.key.compareTo(right.key));
+  final defineArgs = <String>[
+    for (final entry in defines) '--dart-define=${entry.key}=${entry.value}',
+  ];
+  final entrypoint =
+      effectiveEnvironment['SIMS_BUILD_ENTRYPOINT'] ??
+      _defaultSimsBuildEntrypoint(profile);
+  final iosDeviceConfiguration = _iosDeviceBuildConfiguration(profile.id);
+  if (iosDeviceConfiguration != null) {
+    final encodedDefines = defines
+        .map(
+          (entry) => base64.encode(utf8.encode('${entry.key}=${entry.value}')),
+        )
+        .join(',');
+    return <String>[
+      'build-for-testing',
+      '-workspace=ios/Runner.xcworkspace',
+      '-scheme=Runner',
+      '-configuration=Release',
+      if (iosDeviceConfiguration.allowProvisioningUpdates)
+        '-allowProvisioningUpdates',
+      'ENABLE_TESTABILITY=YES',
+      '-destination=generic/platform=iOS',
+      if (profile.id == _iosDeviceGroupMedia269ProfileId) ...<String>[
+        'SWIFT_ACTIVE_COMPILATION_CONDITIONS='
+            '${iosDeviceConfiguration.swiftCompilationConditions}',
+        ...iosDeviceConfiguration.buildSettings,
+      ],
+      'FLUTTER_TARGET=$entrypoint',
+      if (encodedDefines.isNotEmpty) 'DART_DEFINES=$encodedDefines',
+    ];
+  }
+  if (profile.platform == 'android') {
+    return <String>[
+      'build',
+      'apk',
+      '--debug',
+      '--target-platform=android-arm64',
+      '--android-project-arg=simsAndroidAbi=arm64-v8a',
+      if (profile.id == 'android.e2e.production_call_local')
+        '--android-project-arg=enableAndroidNativeCalls=true',
+      if (profile.id == _androidGroupMedia269ProfileId) ...const <String>[
+        '--android-project-arg=disableGoogleServicesForDisposableProof=true',
+        '--android-project-arg=enableGroupMedia269DisposableProof=true',
+      ],
+      '--target=$entrypoint',
+      ...defineArgs,
+    ];
+  }
+  if (profile.id == 'ios.simulator.e2e') {
+    return <String>[
+      'build',
+      'ios',
+      '--simulator',
+      '--debug',
+      '--no-codesign',
+      '--target=$entrypoint',
+      ...defineArgs,
+    ];
+  }
+  if (profile.platform == 'ios') {
+    return <String>[
+      'build',
+      'ipa',
+      '--release',
+      '--target=$entrypoint',
+      ...defineArgs,
+    ];
+  }
+  return <String>['build', profile.artifactKind, ...defineArgs];
+}
+
+String _defaultSimsBuildEntrypoint(BuildProfileSpec profile) =>
+    switch (profile.id) {
+      'android.e2e.standard' => 'integration_test/sims_dispatcher.dart',
+      'android.e2e.main' => 'lib/main.dart',
+      'android.e2e.production_call_local' => 'lib/main.dart',
+      'android.e2e.direct_media_custody' => 'lib/main.dart',
+      _androidGroupMedia269ProfileId => 'lib/main.dart',
+      'ios.simulator.e2e' =>
+        'integration_test/group_multi_party_device_real_harness.dart',
+      _ => 'lib/main.dart',
+    };
 
 /// Compile-time identity embedded in every centrally built app artifact.
 ///

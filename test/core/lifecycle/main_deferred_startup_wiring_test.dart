@@ -208,6 +208,21 @@ void main() {
         );
       }
 
+      expect(
+        startupBody,
+        isNot(contains('callSignalingComposition.start')),
+        reason:
+            'call signaling requires a live P2P node and must not start inside '
+            'the pre-node deferred runtime phase',
+      );
+      expect(
+        await File('lib/app/application_root.dart').readAsString(),
+        contains('afterP2PNodeStarted: widget.resumeCallSignaling'),
+        reason:
+            'the production call lifecycle must be handed to StartupRouter so '
+            'it runs only on the successful primary node-start branch',
+      );
+
       for (final entry in syncSteps.entries) {
         expect(
           "'${entry.key}'".allMatches(startupBody),

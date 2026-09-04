@@ -9,9 +9,13 @@ const String simsAndroidVoiceRecorderScenarioId =
 const String simsAndroidCriticalPerformanceScenarioId =
     'performance.device.critical';
 const String simsAndroidVoiceMessageScenarioId = 'android.voice_message_e2e';
+const String simsAndroidForegroundWebRtcAudioScenarioId =
+    'android.foreground_webrtc_audio';
 const String simsPrimaryRole = 'primary';
 const String simsVoiceMessageSenderRole = 'sender';
 const String simsVoiceMessageReceiverRole = 'receiver';
+const String simsForegroundWebRtcCallerRole = 'caller';
+const String simsForegroundWebRtcCalleeRole = 'callee';
 const String simsRuntimeDirectory = 'sims';
 const String simsRuntimeConfigFileName = 'runtime-config.json';
 const String simsRuntimeAckFileName = 'runtime-ack.json';

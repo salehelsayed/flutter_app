@@ -87,6 +87,58 @@ val enableGroupExitReleaseDiagnosticsProof =
             "enableGroupExitReleaseDiagnosticsProof must be exactly true or false."
         )
     }
+val enableAndroidNativeCalls =
+    when (
+        val raw = providers.gradleProperty(
+            "enableAndroidNativeCalls"
+        ).orNull
+    ) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw GradleException(
+            "enableAndroidNativeCalls must be exactly true or false."
+        )
+    }
+val enableVc204AndroidProof =
+    when (
+        val raw = providers.gradleProperty(
+            "enableVc204AndroidProof"
+        ).orNull
+    ) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw GradleException(
+            "enableVc204AndroidProof must be exactly true or false."
+        )
+    }
+if (
+    enableVc204AndroidProof &&
+    (
+        androidApplicationId != "com.mknoon.app.vc204proof" ||
+            !disableGoogleServicesForDisposableProof ||
+            !enableAndroidNativeCalls
+    )
+) {
+    throw GradleException(
+        "The VC2-04 Android proof requires application ID " +
+            "com.mknoon.app.vc204proof, Google services disabled, and " +
+            "enableAndroidNativeCalls=true."
+    )
+}
+if (
+    enableVc204AndroidProof &&
+    (
+        enableAppVisibility371Proof ||
+            enableGroupExitReleaseDiagnosticsProof ||
+            enablePictureInPictureInterruptionProof ||
+            enablePictureInPictureEngineDetachProof ||
+            enableGroupMedia269DisposableProof
+    )
+) {
+    throw GradleException(
+        "The VC2-04 Android proof must be built independently from other proof variants."
+    )
+}
 if (
     enableAppVisibility371Proof &&
     (
@@ -214,13 +266,22 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        if (enableGroupExitReleaseDiagnosticsProof || enableAppVisibility371Proof) {
+        if (
+            enableGroupExitReleaseDiagnosticsProof ||
+            enableAppVisibility371Proof ||
+            enableVc204AndroidProof
+        ) {
             testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         }
         buildConfigField(
             "boolean",
             "ENABLE_GROUP_EXIT_RELEASE_DIAGNOSTICS_PROOF",
             enableGroupExitReleaseDiagnosticsProof.toString()
+        )
+        buildConfigField(
+            "boolean",
+            "ENABLE_ANDROID_NATIVE_CALLS",
+            enableAndroidNativeCalls.toString()
         )
     }
 
@@ -256,6 +317,15 @@ android {
         if (enableAppVisibility371Proof) {
             getByName("androidTest") {
                 java.srcDir("src/appVisibility371AndroidTest/kotlin")
+            }
+        }
+        if (enableVc204AndroidProof) {
+            getByName("debug") {
+                java.srcDir("src/vc204Proof/kotlin")
+                manifest.srcFile("src/vc204Proof/AndroidManifest.xml")
+            }
+            getByName("androidTest") {
+                java.srcDir("src/vc204AndroidTest/kotlin")
             }
         }
         getByName("test") {
@@ -300,6 +370,7 @@ dependencies {
     // compile boundary, so declare the already-resolved SDK version directly.
     implementation("com.google.firebase:firebase-messaging:24.1.2")
     implementation("androidx.work:work-runtime-ktx:2.11.2")
+    implementation("androidx.core:core-telecom:1.1.0-beta01")
     implementation("com.google.guava:guava:33.3.1-android")
     // 180: pure-Java mDNS resolver. NsdManager intermittently never completes an
     // iOS `.local`-hostname _mknoon._tcp service; jmDNS binds to the WiFi
@@ -314,6 +385,10 @@ dependencies {
         androidTestImplementation("androidx.test:runner:1.2.0")
         androidTestImplementation("androidx.test:rules:1.2.0")
     }
+    if (enableVc204AndroidProof) {
+        androidTestImplementation("androidx.test:runner:1.6.2")
+        androidTestImplementation("androidx.test:rules:1.6.1")
+    }
     if (enableGroupExitReleaseDiagnosticsProof) {
         // `integration_test` is a dev plugin and Flutter intentionally omits
         // dev plugins from releaseApi. The proof property opts this one plugin
@@ -325,6 +400,19 @@ dependencies {
         androidTestImplementation("androidx.test:runner:1.6.2")
         androidTestImplementation("androidx.test:rules:1.6.1")
         androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    }
+}
+
+if (enableVc204AndroidProof) {
+    // Flutter's debug integration_test project requests the historical 1.2+
+    // prefix and Android's consistent-resolution link would otherwise pin the
+    // proof test APK to 1.2. Keep this override isolated to the disposable
+    // VC2-04 variant so its runner/rules pair stays on the compatible 1.6 line.
+    configurations.configureEach {
+        resolutionStrategy.force(
+            "androidx.test:runner:1.6.2",
+            "androidx.test:rules:1.6.1",
+        )
     }
 }
 

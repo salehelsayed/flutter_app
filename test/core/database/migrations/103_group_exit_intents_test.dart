@@ -104,16 +104,16 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 116);
-      expect(productionCreateMigrations.last.version, 116);
-      expect(productionUpgradeMigrations.last.version, 116);
+      expect(currentIdentityDatabaseVersion, 117);
+      expect(productionCreateMigrations.last.version, 117);
+      expect(productionUpgradeMigrations.last.version, 117);
       expect(
-        productionCreateMigrations[productionCreateMigrations.length - 5]
+        productionCreateMigrations[productionCreateMigrations.length - 6]
             .version,
         112,
       );
       expect(
-        productionUpgradeMigrations[productionUpgradeMigrations.length - 5]
+        productionUpgradeMigrations[productionUpgradeMigrations.length - 6]
             .version,
         112,
       );
@@ -129,10 +129,7 @@ void main() {
             .name,
         '104_group_exit_diagnostics',
       );
-      expect(
-        productionUpgradeMigrations.last.name,
-        '116_notification_completed_outcome_outbox',
-      );
+      expect(productionUpgradeMigrations.last.name, '117_call_history');
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);
       expect(

@@ -21,6 +21,8 @@ import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storag
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
+import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
+import 'package:flutter_app/features/call/infrastructure/received_call_wake_handle_store_impl.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -1084,9 +1086,28 @@ final class AndroidProductionHeadlessCanonicalRecoveryBackend
        _droppedPushRecoveryBridge =
            droppedPushRecoveryBridge ?? DroppedPushRecoveryBridge(),
        _leaseGateway =
-           leaseGateway ?? MethodChannelCanonicalRuntimeLeaseGateway(),
-       _buildComposition =
-           buildComposition ?? buildProductionCanonicalRecoveryComposition {
+           leaseGateway ?? MethodChannelCanonicalRuntimeLeaseGateway() {
+    _receivedCallWakeHandleStore = ReceivedCallWakeHandleStoreImpl(
+      secureKeyStore: _secureKeyStore,
+    );
+    _buildComposition =
+        buildComposition ??
+        ({
+          required database,
+          required secureKeyStore,
+          required identity,
+          required linkedAuthority,
+          required qualifiedIdentity,
+          required reason,
+        }) => buildProductionCanonicalRecoveryComposition(
+          database: database,
+          secureKeyStore: secureKeyStore,
+          receivedCallWakeHandleStore: _receivedCallWakeHandleStore,
+          identity: identity,
+          linkedAuthority: linkedAuthority,
+          qualifiedIdentity: qualifiedIdentity,
+          reason: reason,
+        );
     _bindingCoordinator = CanonicalRuntimeBindingCoordinator(
       secureKeyStore: _secureKeyStore,
     );
@@ -1120,7 +1141,8 @@ final class AndroidProductionHeadlessCanonicalRecoveryBackend
   final SecureKeyStore _secureKeyStore;
   final DroppedPushRecoveryBridge _droppedPushRecoveryBridge;
   final CanonicalRuntimeLeaseGateway _leaseGateway;
-  final ProductionCanonicalRecoveryCompositionBuilder _buildComposition;
+  late final ReceivedCallWakeHandleStore _receivedCallWakeHandleStore;
+  late final ProductionCanonicalRecoveryCompositionBuilder _buildComposition;
   late final CanonicalRuntimeBindingCoordinator _bindingCoordinator;
   late final LinkedInstallationAuthority _linkedAuthority;
   late final SecureKeyStoreAccountMigrationAuthorityRepository
@@ -1430,6 +1452,7 @@ Future<ProductionHeadlessRecoverySessionDelegates>
 buildProductionCanonicalRecoveryComposition({
   required Database database,
   required SecureKeyStore secureKeyStore,
+  required ReceivedCallWakeHandleStore receivedCallWakeHandleStore,
   required IdentityModel identity,
   required LinkedInstallationAuthoritySnapshot linkedAuthority,
   required ProductionHeadlessQualifiedIdentity qualifiedIdentity,
@@ -1438,6 +1461,7 @@ buildProductionCanonicalRecoveryComposition({
   return buildProductionCanonicalInboxProjectionComposition(
     database: database,
     secureKeyStore: secureKeyStore,
+    receivedCallWakeHandleStore: receivedCallWakeHandleStore,
     identity: identity,
     linkedAuthority: linkedAuthority,
     qualifiedIdentity: qualifiedIdentity,

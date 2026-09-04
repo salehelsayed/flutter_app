@@ -41,10 +41,11 @@ func backendStartupSummary(c backendConfig) string {
 }
 
 type controlPlaneStores struct {
-	Rendezvous *RendezvousStore
-	Inbox      *InboxStore
-	GroupInbox *GroupInboxStore
-	Push       *PushService
+	Rendezvous  *RendezvousStore
+	Inbox       *InboxStore
+	GroupInbox  *GroupInboxStore
+	Push        *PushService
+	CallControl *CallControlService
 
 	RendezvousBackend                    RendezvousBackend
 	InboxBackend                         InboxBackend
@@ -53,6 +54,9 @@ type controlPlaneStores struct {
 	GroupMessageDispatchAdmissionBackend groupMessageDispatchAdmissionBackend
 	WakeOutcomeBackend                   *redisWakeOutcomeStore
 	WakeOutcomeCoordinator               *wakeOutcomeCoordinator
+	CallControlBackend                   *redisCallControlStore
+	APNSVoIPPushEnabled                  bool
+	APNSVoIPEnvironment                  string
 
 	closeFn func() error
 }
@@ -85,6 +89,16 @@ func newControlPlaneStores(
 	limits ServerLimits,
 	serviceAccountPath string,
 ) (*controlPlaneStores, error) {
+	apnsVoIPConfig, err := loadAPNSVoIPConfigFromEnv()
+	if err != nil {
+		setAPNSVoIPPushEnabled(false)
+		return nil, fmt.Errorf("load APNs VoIP provider configuration: %w", err)
+	}
+	if apnsVoIPConfig.Enabled && !cfg.IsDurable() {
+		setAPNSVoIPPushEnabled(false)
+		return nil, fmt.Errorf("%s=true requires RELAY_BACKEND=redis", apnsVoIPPushEnabledEnv)
+	}
+	setAPNSVoIPPushEnabled(apnsVoIPConfig.Enabled)
 	if cfg.AckCustodyAdmissionEnabled && !cfg.IsDurable() {
 		return nil, fmt.Errorf(
 			"%s=true requires RELAY_BACKEND=redis",
@@ -171,6 +185,19 @@ func newControlPlaneStores(
 			time.Now,
 		)
 		wakeOutcomeCoordinator.sendGroup = push.sendGroupWakeOutcomeThroughGateway
+		callControlBackend := newRedisCallControlStore(client, cfg.RedisPrefix)
+		var iosCallWakeDispatcher CallWakeDispatcher
+		if apnsVoIPConfig.Enabled {
+			iosCallWakeDispatcher = newAPNSVoIPCallWakeDispatcher(apnsVoIPConfig)
+		}
+		callControl := NewCallControlService(
+			callControlBackend,
+			platformCallWakeDispatcher{
+				android: pushServiceCallWakeDispatcher{push: push},
+				ios:     iosCallWakeDispatcher,
+			},
+			time.Now,
+		)
 
 		stores := &controlPlaneStores{
 			Rendezvous: NewRendezvousStoreWithBackend(rzBackend),
@@ -188,6 +215,10 @@ func newControlPlaneStores(
 			GroupMessageDispatchAdmissionBackend: groupMessageDispatchAdmissionBackend,
 			WakeOutcomeBackend:                   wakeOutcomeBackend,
 			WakeOutcomeCoordinator:               wakeOutcomeCoordinator,
+			CallControl:                          callControl,
+			CallControlBackend:                   callControlBackend,
+			APNSVoIPPushEnabled:                  apnsVoIPConfig.Enabled,
+			APNSVoIPEnvironment:                  apnsVoIPConfig.Environment,
 			closeFn:                              client.Close,
 		}
 		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)

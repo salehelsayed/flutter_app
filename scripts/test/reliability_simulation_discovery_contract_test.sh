@@ -144,6 +144,11 @@ assert_not_executable "$registry"
 # a second device PASS row.
 support_paths=(
   integration_test/scripts/run_1to1_device_real.dart
+  integration_test/scripts/android_production_audio_call_campaign.dart
+  integration_test/scripts/production_audio_call_local_fixture.dart
+  integration_test/scripts/run_production_audio_call_sims.dart
+  integration_test/support/android_production_audio_call_evidence.dart
+  lib/core/debug/android_production_audio_call_e2e.dart
   integration_test/scripts/run_direct_media_blob_custody_sims.dart
   integration_test/scripts/run_android_notification_recovery_completion_sims.dart
   integration_test/scripts/android_direct_media_blob_custody_campaign.dart
@@ -188,6 +193,109 @@ support_paths=(
 for path in "${support_paths[@]}"; do
   assert_record_once support support "$path"
   assert_not_executable "$path"
+done
+
+production_call_scenarios="$(
+  dart integration_test/scripts/run_1to1_device_real.dart --list-scenarios
+)" || fail 'production-call typed dispatcher metadata listing failed'
+production_call_scenario_count="$(
+  printf '%s\n' "$production_call_scenarios" |
+    grep -Fxc 'android.production_1to1_audio_call' || true
+)"
+[ "$production_call_scenario_count" -eq 1 ] ||
+  fail "production-call typed dispatcher expected exactly one android.production_1to1_audio_call row, found $production_call_scenario_count"
+
+production_call_host_tests=(
+  test/features/call/infrastructure/call_stats_sampler_test.dart
+  test/core/debug/android_production_audio_call_e2e_test.dart
+  test/integration/android_production_audio_call_campaign_test.dart
+  test/integration/android_production_audio_call_evidence_test.dart
+  test/integration/production_audio_call_local_fixture_test.dart
+)
+for gate in scripts/run_host_test_gates.sh scripts/run_test_gates.sh; do
+  for path in "${production_call_host_tests[@]}"; do
+    count="$(grep -Fxc "  \"$path\"" "$gate" || true)"
+    [ "$count" -eq 1 ] ||
+      fail "$path expected exactly once in $gate 1:1 inventory, found $count"
+  done
+done
+
+jq -e '
+  [.capabilities[] | select(.id == "android.production_1to1_audio_call")] |
+  length == 1 and
+  .[0].owner == "call" and
+  .[0].proofBoundary == "android.two-peer.production-1to1-audio-call" and
+  .[0].assertions == [
+    "production_call.production_entrypoint",
+    "production_call.single_apk_reused",
+    "production_call.physical_emulator_topology",
+    "production_call.local_relay_only",
+    "production_call.fresh_identities_mutual_contacts",
+    "production_call.semantic_start_native_answer",
+    "production_call.both_surfaces_and_structural_media_ready",
+    "production_call.local_coturn_authority",
+    "production_call.pion_known_opus_bidirectional",
+    "production_call.caller_inbound_audio_rtp_observed",
+    "production_call.caller_outbound_audio_rtp_observed",
+    "production_call.callee_inbound_audio_rtp_observed",
+    "production_call.callee_outbound_audio_rtp_observed",
+    "production_call.mute_speaker_hangup",
+    "production_call.terminal_cleanup_restore",
+    "production_call.privacy_bounded_artifacts"
+  ] and
+  .[0].modes == ["major", "full"] and
+  .[0].families == ["1to1", "media", "transport"] and
+  .[0].required == true and
+  .[0].command == ["dart", "run", "integration_test/scripts/run_1to1_device_real.dart", "--scenario", "android.production_1to1_audio_call"] and
+  .[0].buildProfile == "android.e2e.production_call_local" and
+  .[0].dependencies == ["build.android.e2e.production_call_local"] and
+  .[0].resources == [
+    {"name": "build:android.e2e.production_call_local", "access": "read"},
+    {"name": "device:android-physical", "access": "exclusive"},
+    {"name": "device:android-emulator", "access": "exclusive"},
+    {"name": "relay-mutation:local-production-call-fixture", "access": "exclusive"},
+    {"name": "relay-mutation:local-production-call-coturn", "access": "exclusive"},
+    {"name": "relay-mutation:production-call-pion-known-opus-oracle", "access": "exclusive"},
+    {"name": "artifact:production-1to1-audio-call", "access": "write"}
+  ] and
+  .[0].targetCapabilities == ["android.physical", "android.emulator", "android.microphone", "host.docker", "host.go1.25"] and
+  .[0].allowedNaReason == "target_unavailable_by_project_policy" and
+  .[0].artifactRequired == true and
+  .[0].artifactValidator == "validateAndroidProductionAudioCallArtifact" and
+  .[0].automationReady == true and
+  .[0].active == true and
+  .[0].declaredBuildException == false
+' tool/sims/critical_features.json >/dev/null ||
+  fail 'Plan 399 production-call closure capability is incomplete or duplicated'
+
+grep -Fq $'support\tsupport\tintegration_test/scripts/run_production_audio_call_sims.dart\t399 external local-coturn/Pion staging wrapper around the manifest-owned production-main Android call scenario' \
+  "$records" || fail 'Plan 399 external staging wrapper is not registered as support'
+
+jq -e '
+  [.capabilities[] | select(.id == "android.production_1to1_audio_call") | .command] == [[
+    "dart", "run", "integration_test/scripts/run_1to1_device_real.dart",
+    "--scenario", "android.production_1to1_audio_call"
+  ]] and
+  all(.capabilities[].command;
+    index("integration_test/scripts/run_production_audio_call_sims.dart") == null)
+' tool/sims/critical_features.json >/dev/null ||
+  fail 'Plan 399 outer staging wrapper would recursively own its inner Sims row'
+
+jq -e '
+  [.capabilities[].resources[]? |
+    select(.name == "artifact:production-1to1-audio-call")] |
+  length == 1
+' tool/sims/critical_features.json >/dev/null ||
+  fail 'Plan 399 production-call artifact resource is not globally unique'
+
+for resource in \
+  relay-mutation:local-production-call-coturn \
+  relay-mutation:production-call-pion-known-opus-oracle; do
+  count="$(jq --arg resource "$resource" \
+    '[.capabilities[].resources[]? | select(.name == $resource)] | length' \
+    tool/sims/critical_features.json)"
+  [ "$count" -eq 1 ] ||
+    fail "Plan 399 resource $resource expected exactly once, found $count"
 done
 
 jq -e '
@@ -267,12 +375,16 @@ jq -e '
   fail 'Plan 379 muted-group capability is incomplete or duplicated'
 
 # The Plan 379 row stays at its ratcheted index because runtime-roots keyPaths
-# select capabilities by ARRAY INDEX. Plan 393 rows are append-only after it.
+# select capabilities by ARRAY INDEX. The call-proof and Plan 399 rows are
+# append-only after the Plan 393 suffix.
 jq -e '
   .capabilities[41].id == "groups.muted_notification_campaign" and
-  [.capabilities[-2].id, .capabilities[-1].id] == [
+  [.capabilities[-5].id, .capabilities[-4].id, .capabilities[-3].id, .capabilities[-2].id, .capabilities[-1].id] == [
     "notifications.android_typed_reaction_smoke",
-    "groups.strict_notification_closure"
+    "groups.strict_notification_closure",
+    "android.foreground_webrtc_audio",
+    "build.android.e2e.production_call_local",
+    "android.production_1to1_audio_call"
   ]
 ' \
   tool/sims/critical_features.json >/dev/null ||

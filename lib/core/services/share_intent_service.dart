@@ -23,6 +23,7 @@ class ShareIntentService {
   final GetInitialMediaFn _getInitialMedia;
   final GetMediaStreamFn _getMediaStream;
   final ResetShareIntentFn _resetShareIntent;
+  final Duration _initialIntentProbeTimeout;
 
   /// Whether the app has reached a "settled" state (FeedWired mounted
   /// after identity + contacts exist). Set to `true` by StartupRouter
@@ -35,13 +36,15 @@ class ShareIntentService {
     GetInitialMediaFn? getInitialMedia,
     GetMediaStreamFn? getMediaStream,
     ResetShareIntentFn? resetShareIntent,
+    Duration initialIntentProbeTimeout = const Duration(seconds: 5),
   }) : _getCacheDirectory = getCacheDirectory ?? getTemporaryDirectory,
        _getInitialMedia =
            getInitialMedia ?? ReceiveSharingIntent.instance.getInitialMedia,
        _getMediaStream =
            getMediaStream ?? ReceiveSharingIntent.instance.getMediaStream,
        _resetShareIntent =
-           resetShareIntent ?? ReceiveSharingIntent.instance.reset;
+           resetShareIntent ?? ReceiveSharingIntent.instance.reset,
+       _initialIntentProbeTimeout = initialIntentProbeTimeout;
 
   /// Stream of share intents from warm-start (app already running).
   Stream<ShareIntent> get intentStream {
@@ -59,7 +62,10 @@ class ShareIntentService {
 
   /// Captures and buffers the initial intent before app routing starts.
   Future<ShareIntent?> captureInitialIntent() async {
-    final intent = await getInitialIntent();
+    final intent = await getInitialIntent().timeout(
+      _initialIntentProbeTimeout,
+      onTimeout: () => null,
+    );
     if (intent != null) {
       await bufferIntent(intent);
     }

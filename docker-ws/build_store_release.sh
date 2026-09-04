@@ -35,7 +35,12 @@ fi
 # clear error if it is missing, so a debug-signed bundle can never reach Play.
 echo "== Building Android App Bundle (release)"
 AAB=build/app/outputs/bundle/release/app-release.aab
-if ! flutter build appbundle --release --target=lib/main.dart || [ ! -f "$AAB" ]; then
+# Voice-call gates: Dart defines from tool/build/voice_call_release_defines.json
+# plus the Gradle gate that compiles the Telecom lifecycle in.
+if ! flutter build appbundle --release --target=lib/main.dart \
+    --dart-define-from-file=tool/build/voice_call_release_defines.json \
+    --android-project-arg=enableAndroidNativeCalls=true \
+    || [ ! -f "$AAB" ]; then
   note "PLAY FAILED(build)"; AAB=""; FAILED=1
 elif [ ! "$AAB" -nt "$FRESH_MARK" ]; then
   note "PLAY FAILED(stale-artifact: $AAB predates this build run)"; AAB=""; FAILED=1

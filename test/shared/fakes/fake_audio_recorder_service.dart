@@ -17,6 +17,8 @@ class FakeAudioRecorderService implements AudioRecorderService {
   int startCallCount = 0;
   int stopCallCount = 0;
   int cancelCallCount = 0;
+  int requestPermissionCallCount = 0;
+  Completer<bool>? requestPermissionGate;
   Completer<void>? startGate;
   Completer<void>? stopGate;
 
@@ -39,7 +41,11 @@ class FakeAudioRecorderService implements AudioRecorderService {
   Future<bool> hasPermission() async => permissionGranted;
 
   @override
-  Future<bool> requestPermission() async => permissionGranted;
+  Future<bool> requestPermission() async {
+    requestPermissionCallCount++;
+    final gate = requestPermissionGate;
+    return gate == null ? permissionGranted : gate.future;
+  }
 
   @override
   Future<void> start({required String outputPath}) async {

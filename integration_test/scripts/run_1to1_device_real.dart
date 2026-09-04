@@ -47,6 +47,8 @@
 //   android.wake_token_directionality          Plan 258          automated Android pair
 //   android.voice_message_e2e                   Plan 258          automated Android pair
 //   android.direct_media_blob_custody           Plan 347          automated Android pair
+//   android.foreground_webrtc_audio              VC2-03            automated Android pair
+//   android.production_1to1_audio_call            Plan 399          automated Android pair
 //   vc02.dcutr_upgrade                          Future VC-02       inactive/BLOCKED
 //   vc02.dcutr_symmetric_cgnat_negative         Future VC-02       inactive/BLOCKED
 
@@ -63,10 +65,13 @@ import '../../tool/sims/device_criteria.dart';
 import '../support/android_app_state_guard.dart';
 import '../support/android_critical_performance_evidence.dart';
 import '../support/android_direct_media_blob_custody_evidence.dart';
+import '../support/android_production_audio_call_evidence.dart';
 import '../support/sims_runtime_protocol.dart';
 import '_android_app_package.dart';
 import 'android_direct_media_blob_custody_campaign.dart';
+import 'android_foreground_webrtc_audio_campaign.dart';
 import 'android_keepalive_drop_campaign.dart';
+import 'android_production_audio_call_campaign.dart';
 import 'android_voice_message_device_campaign.dart';
 import 'android_wake_token_directionality_campaign.dart';
 
@@ -74,6 +79,9 @@ const _voiceRecorderScenarioId = simsAndroidVoiceRecorderScenarioId;
 const _criticalPerformanceScenarioId = simsAndroidCriticalPerformanceScenarioId;
 const _keepaliveDropScenarioId = 'android.keepalive_drop_skip_direct';
 const _voiceMessageScenarioId = simsAndroidVoiceMessageScenarioId;
+const _foregroundWebRtcAudioScenarioId =
+    simsAndroidForegroundWebRtcAudioScenarioId;
+const _productionAudioCallScenarioId = androidProductionAudioCallScenarioId;
 const _directMediaBlobCustodyScenarioId =
     androidDirectMediaBlobCustodyScenarioId;
 const _wakeTokenDirectionalityScenarioId = 'android.wake_token_directionality';
@@ -261,6 +269,23 @@ const List<_Scenario> _scenarios = <_Scenario>[
         'an Android emulator receives, downloads, and plays the exact bytes',
   ),
   _Scenario(
+    _foregroundWebRtcAudioScenarioId,
+    'VC2-03',
+    'foreground WebRTC audio',
+    'automated-physical-android-plus-emulator',
+    'accepted audio-only callers reach structural readiness, directional RTP '
+        'deltas, mute, coarse routes, end, and deterministic cleanup',
+  ),
+  _Scenario(
+    _productionAudioCallScenarioId,
+    'Plan 399',
+    'production 1:1 audio call fast path',
+    'automated-physical-android-plus-emulator',
+    'one cached production APK drives the real call button, native Answer, '
+        'active surfaces, controls, terminal convergence, and cleanup through '
+        'an explicitly local relay/TURN fixture',
+  ),
+  _Scenario(
     _directMediaBlobCustodyScenarioId,
     'Plan 347',
     'TC-347-09',
@@ -387,6 +412,9 @@ Future<void> runOneToOneDeviceReal(
     _directMediaBlobCustodyScenarioId =>
       Platform.environment['SIMS_ARTIFACT_ANDROID_E2E_DIRECT_MEDIA_CUSTODY']
           ?.trim(),
+    _productionAudioCallScenarioId =>
+      Platform.environment['SIMS_ARTIFACT_ANDROID_E2E_PRODUCTION_CALL_LOCAL']
+          ?.trim(),
     _ => Platform.environment['SIMS_ARTIFACT_ANDROID_E2E_STANDARD']?.trim(),
   };
   final artifact = _parseArtifact(args) ?? environmentArtifact;
@@ -484,6 +512,51 @@ Future<void> runOneToOneDeviceReal(
               Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID']!.trim(),
           ];
     final result = await runAndroidVoiceMessageDeviceCampaign(
+      devices: pairDevices,
+      artifactPath: artifact,
+    );
+    stdout.writeln('SIMS_RESULT_JSON=${jsonEncode(result.json)}');
+    exitCode = result.processExitCode;
+    return;
+  }
+
+  if (toRun.length == 1 &&
+      toRun.single.id == _foregroundWebRtcAudioScenarioId) {
+    final pairDevices = cliDevices.isNotEmpty
+        ? cliDevices
+        : <String>[
+            if ((Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ?? '')
+                .trim()
+                .isNotEmpty)
+              Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']!.trim(),
+            if ((Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ?? '')
+                .trim()
+                .isNotEmpty)
+              Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID']!.trim(),
+          ];
+    final result = await runAndroidForegroundWebRtcAudioCampaign(
+      devices: pairDevices,
+      artifactPath: artifact,
+    );
+    stdout.writeln('SIMS_RESULT_JSON=${jsonEncode(result.json)}');
+    exitCode = result.processExitCode;
+    return;
+  }
+
+  if (toRun.length == 1 && toRun.single.id == _productionAudioCallScenarioId) {
+    final pairDevices = cliDevices.isNotEmpty
+        ? cliDevices
+        : <String>[
+            if ((Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ?? '')
+                .trim()
+                .isNotEmpty)
+              Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']!.trim(),
+            if ((Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ?? '')
+                .trim()
+                .isNotEmpty)
+              Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID']!.trim(),
+          ];
+    final result = await runAndroidProductionAudioCallCampaign(
       devices: pairDevices,
       artifactPath: artifact,
     );

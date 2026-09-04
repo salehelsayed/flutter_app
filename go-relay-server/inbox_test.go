@@ -113,7 +113,7 @@ func setupInboxStreamEnv(t *testing.T, inbox *InboxStore, groupInbox *GroupInbox
 
 	presence := NewPresenceStore()
 	server.SetStreamHandler(InboxProtocol, func(s network.Stream) {
-		HandleInboxStream(s, inbox, groupInbox, server, presence)
+		HandleInboxStream(s, inbox, groupInbox, server, presence, nil)
 	})
 
 	t.Cleanup(func() {

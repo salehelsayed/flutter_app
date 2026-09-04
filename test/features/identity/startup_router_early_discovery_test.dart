@@ -53,6 +53,7 @@ void main() {
 
   final order = <String>[];
   var earlyDiscoveryCallCount = 0;
+  var callSignalingStartCount = 0;
 
   final identity = IdentityModel(
     peerId: 'peer-self',
@@ -72,6 +73,7 @@ void main() {
 
     order.clear();
     earlyDiscoveryCallCount = 0;
+    callSignalingStartCount = 0;
 
     identityRepository = FakeIdentityRepository()..seed(identity);
     contactRepository = FakeContactRepository();
@@ -161,6 +163,15 @@ void main() {
         ensureRuntimeServicesReady: () async {
           order.add('ensure');
         },
+        afterP2PNodeStarted: () async {
+          expect(
+            p2pService.startNodeCallCount,
+            1,
+            reason: 'call signaling must not start before the P2P node',
+          );
+          order.add('call_signaling');
+          callSignalingStartCount++;
+        },
         startEarlyLocalDiscovery: () async {
           order.add('early_discovery');
           earlyDiscoveryCallCount++;
@@ -188,11 +199,22 @@ void main() {
       // ...AFTER the plan-164 ensureRuntimeServicesReady gate (INV-6: FDC-07
       // does not reorder node-start relative to that gate).
       expect(order.contains('ensure'), isTrue);
+      expect(callSignalingStartCount, 1);
+      expect(order.contains('call_signaling'), isTrue);
       expect(order.contains('early_discovery'), isTrue);
       expect(
         order.indexOf('ensure'),
+        lessThan(order.indexOf('call_signaling')),
+        reason:
+            'call signaling must start after runtime readiness '
+            '(order=$order)',
+      );
+      expect(
+        order.indexOf('call_signaling'),
         lessThan(order.indexOf('early_discovery')),
-        reason: 'early discovery must fire AFTER ensureRuntimeServicesReady '
+        reason:
+            'call signaling must start immediately after node success, '
+            'before optional post-start work '
             '(order=$order)',
       );
     },

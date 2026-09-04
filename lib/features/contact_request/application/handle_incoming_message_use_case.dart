@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
+import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -40,6 +42,13 @@ enum HandleMessageResult {
   invalidMessage,
 }
 
+typedef OnCallWakeHandleReceiptEvaluated =
+    void Function(String challenge, bool exactCurrent);
+
+final RegExp _callWakeReceiptChallengePattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
+
 /// Parses an incoming P2P message and handles contact requests.
 ///
 /// This function:
@@ -51,9 +60,11 @@ enum HandleMessageResult {
 /// 6. Checks no duplicate pending request
 /// 7. Stores in contact_requests table
 ///
-/// Returns a tuple of (result, request, peerId) where request is non-null
-/// when result == contactRequest, and peerId is non-null when result ==
-/// contactKeyUpdated (extracted from the decrypted payload).
+/// Returns a tuple of (result, request, verifiedPeerId) where request is
+/// non-null when result == contactRequest, and verifiedPeerId is non-null for
+/// existing-contact outcomes that may need authenticated follow-up
+/// (contactKeyUpdated or alreadyContact). The peer ID comes from the
+/// signature-verified payload, never from transport metadata.
 Future<(HandleMessageResult, ContactRequestModel?, String?)>
 handleIncomingMessage({
   required ChatMessage message,
@@ -68,6 +79,16 @@ handleIncomingMessage({
   // inside this signed contact_request is persisted here (keyed by the sender's
   // peerId), so our later `inbox:store` frames to that peer can present it.
   ReceivedWakeTokenStore? receivedWakeTokenStore,
+  // Call-only capability ledger. This is separate from `wt` storage and accepts
+  // only a verified, current, strictly newer v2 `cwh` grant.
+  ReceivedCallWakeHandleStore? receivedCallWakeHandleStore,
+  // Best-effort notification for UI owners that cache per-contact callability.
+  // It runs only after a verified `cwh` has been durably stored as newer.
+  Future<void> Function()? onCallWakeHandleStored,
+  // A versioned direct sender may require proof that its exact signed grant is
+  // current in the receiver's durable ledger. The listener turns a positive
+  // evaluation into an opaque deferred-ACK receipt; false withholds that ACK.
+  OnCallWakeHandleReceiptEvaluated? onCallWakeHandleReceiptEvaluated,
 }) async {
   // Safe prefix for logging (handles short strings like "unknown")
   String safePrefix(String s) => s.length > 10 ? s.substring(0, 10) : s;
@@ -241,6 +262,50 @@ handleIncomingMessage({
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
+  CallWakeHandleGrant? callWakeHandleGrant;
+  if (payload.containsKey('cwh')) {
+    // Call wake authority is recipient-private and must never ride the v1
+    // plaintext compatibility envelope.
+    if (version != '2') {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_CALL_WAKE_HANDLE_V1_REJECTED',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+    try {
+      callWakeHandleGrant = CallWakeHandleGrant.fromCanonicalMap(
+        payload['cwh'],
+      );
+    } on FormatException {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_CALL_WAKE_HANDLE_MALFORMED',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+  }
+  final rawCallWakeReceiptChallenge = payload['cwr'];
+  final callWakeReceiptChallenge = rawCallWakeReceiptChallenge is String
+      ? rawCallWakeReceiptChallenge
+      : null;
+  if (payload.containsKey('cwr') &&
+      (version != '2' ||
+          callWakeHandleGrant == null ||
+          callWakeReceiptChallenge == null ||
+          !_callWakeReceiptChallengePattern.hasMatch(
+            callWakeReceiptChallenge,
+          ))) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_CALL_WAKE_RECEIPT_MALFORMED',
+      details: {},
+    );
+    return (HandleMessageResult.invalidMessage, null, null);
+  }
+
   // 4. Validate required fields
   final requiredFields = ['pk', 'ns', 'rv', 'ts', 'sig'];
   for (final field in requiredFields) {
@@ -286,6 +351,9 @@ handleIncomingMessage({
     'rv': payload['rv'],
     'ts': payload['ts'],
     if (payload['un'] != null) 'un': payload['un'],
+    if (callWakeHandleGrant != null)
+      'cwh': callWakeHandleGrant.toCanonicalMap(),
+    'cwr': ?callWakeReceiptChallenge,
     // FDC-09 §12 / CV-14: `wt` is a conditionally-included SIGNED field (same
     // idiom as `mlkem`/`un`). It MUST be reconstructed here or a wt-carrying
     // request's signature fails to verify — after backfill that would drop every
@@ -308,6 +376,45 @@ handleIncomingMessage({
       details: {'peerId': peerIdPrefix},
     );
     return (HandleMessageResult.invalidMessage, null, null);
+  }
+
+  var exactCallWakeHandleIsDurable = false;
+  if (receivedCallWakeHandleStore != null && callWakeHandleGrant != null) {
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final stored = await receivedCallWakeHandleStore.storeIfStrictlyNewer(
+      issuerAccountPeerId: peerId,
+      grant: callWakeHandleGrant,
+      nowMs: nowMs,
+    );
+    final current = await receivedCallWakeHandleStore.readForIssuer(peerId);
+    exactCallWakeHandleIsDurable =
+        current == callWakeHandleGrant && callWakeHandleGrant.isValidAt(nowMs);
+    emitFlowEvent(
+      layer: 'FL',
+      event: stored
+          ? 'CALL_WAKE_HANDLE_RECEIVED_STORED'
+          : 'CALL_WAKE_HANDLE_RECEIVED_IGNORED',
+      details: {'peerId': peerIdPrefix},
+    );
+    if (stored && onCallWakeHandleStored != null) {
+      try {
+        await onCallWakeHandleStored();
+      } catch (_) {
+        // The verified grant is already durable. A presentation refresh must
+        // never turn an accepted contact request into a retry/failure.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CALL_WAKE_HANDLE_REFRESH_FAILED',
+          details: {'peerId': peerIdPrefix},
+        );
+      }
+    }
+  }
+  if (callWakeReceiptChallenge != null) {
+    onCallWakeHandleReceiptEvaluated?.call(
+      callWakeReceiptChallenge,
+      exactCallWakeHandleIsDurable,
+    );
   }
 
   // FDC-09 §12 / CV-14: extract + persist the recipient-issued `wt` NOW —
@@ -391,9 +498,7 @@ handleIncomingMessage({
         );
         emitFlowEvent(
           layer: 'FL',
-          event: hadKey
-              ? 'CONTACT_KEY_ROTATED'
-              : 'CONTACT_REQUEST_KEY_UPDATED',
+          event: hadKey ? 'CONTACT_KEY_ROTATED' : 'CONTACT_REQUEST_KEY_UPDATED',
           details: {'peerId': peerIdPrefix},
         );
         return (HandleMessageResult.contactKeyUpdated, null, peerId);
@@ -415,7 +520,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_ALREADY_CONTACT',
       details: {'peerId': peerIdPrefix},
     );
-    return (HandleMessageResult.alreadyContact, null, null);
+    return (HandleMessageResult.alreadyContact, null, peerId);
   }
 
   // 9. Check if request already pending

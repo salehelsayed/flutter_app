@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/libp2p/go-libp2p"
@@ -117,7 +119,7 @@ type Node struct {
 	personalRendezvousRegistering   atomic.Bool
 
 	pendingConfirmsMu            sync.Mutex
-	pendingDirectConfirms        map[string]chan bool
+	pendingDirectConfirms        map[string]chan directConfirmResult
 	directConfirmTimeoutOverride time.Duration // test seam
 
 	// NET-REL-02 Option A test seams (instrument-only).
@@ -235,7 +237,7 @@ func NewNode() *Node {
 		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
 		groupDialSem:          make(chan struct{}, GroupDiscoveryConcurrency),
 		pubsubRejectDiagLast:  make(map[string]time.Time),
-		pendingDirectConfirms: make(map[string]chan bool),
+		pendingDirectConfirms: make(map[string]chan directConfirmResult),
 		newHost:               defaultNewHost,
 	}
 }
@@ -251,7 +253,7 @@ func New(cb EventCallback) *Node {
 		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
 		groupDialSem:          make(chan struct{}, GroupDiscoveryConcurrency),
 		pubsubRejectDiagLast:  make(map[string]time.Time),
-		pendingDirectConfirms: make(map[string]chan bool),
+		pendingDirectConfirms: make(map[string]chan directConfirmResult),
 		newHost:               defaultNewHost,
 	}
 }
@@ -1983,18 +1985,59 @@ func (n *Node) directConfirmTimeout() time.Duration {
 	return DirectConfirmTimeout
 }
 
-func (n *Node) registerDirectConfirm(nonce string) chan bool {
-	ch := make(chan bool, 1)
+const directConfirmCallWakeReceiptMaxBytes = 512
+
+type directConfirmResult struct {
+	ok              bool
+	callWakeReceipt string
+}
+
+func validDirectConfirmCallWakeReceipt(value string) bool {
+	if value == "" || len(value) > directConfirmCallWakeReceiptMaxBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func directConfirmAckFrame(callWakeReceipt string) []byte {
+	if !validDirectConfirmCallWakeReceipt(callWakeReceipt) {
+		return []byte(`{"ack":true}`)
+	}
+
+	frame, err := json.Marshal(struct {
+		Ack             bool   `json:"ack"`
+		CallWakeReceipt string `json:"callWakeReceipt"`
+	}{
+		Ack:             true,
+		CallWakeReceipt: callWakeReceipt,
+	})
+	if err != nil {
+		return []byte(`{"ack":true}`)
+	}
+	return frame
+}
+
+func (n *Node) registerDirectConfirm(nonce string) chan directConfirmResult {
+	ch := make(chan directConfirmResult, 1)
 	n.pendingConfirmsMu.Lock()
 	if n.pendingDirectConfirms == nil {
-		n.pendingDirectConfirms = make(map[string]chan bool)
+		n.pendingDirectConfirms = make(map[string]chan directConfirmResult)
 	}
 	n.pendingDirectConfirms[nonce] = ch
 	n.pendingConfirmsMu.Unlock()
 	return ch
 }
 
-func (n *Node) waitForRegisteredDirectConfirm(nonce string, ch chan bool, timeout time.Duration) bool {
+func (n *Node) waitForRegisteredDirectConfirm(
+	nonce string,
+	ch chan directConfirmResult,
+	timeout time.Duration,
+) directConfirmResult {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	defer func() {
@@ -2004,21 +2047,33 @@ func (n *Node) waitForRegisteredDirectConfirm(nonce string, ch chan bool, timeou
 	}()
 
 	select {
-	case ok := <-ch:
-		return ok
+	case result := <-ch:
+		return result
 	case <-timer.C:
-		return false
+		return directConfirmResult{}
 	}
 }
 
 func (n *Node) waitForDirectConfirm(nonce string, timeout time.Duration) bool {
 	ch := n.registerDirectConfirm(nonce)
-	return n.waitForRegisteredDirectConfirm(nonce, ch, timeout)
+	return n.waitForRegisteredDirectConfirm(nonce, ch, timeout).ok
 }
 
+// ResolveDirectConfirm preserves the legacy deferred-confirm API. A successful
+// resolution writes the historical exact {"ack":true} frame.
 func (n *Node) ResolveDirectConfirm(nonce string, ok bool) {
+	n.ResolveDirectConfirmWithReceipt(nonce, ok, "")
+}
+
+// ResolveDirectConfirmWithReceipt optionally binds an opaque application
+// receipt to the deferred ACK. Invalid receipts are safely omitted, preserving
+// the legacy generic ACK for successful confirmations.
+func (n *Node) ResolveDirectConfirmWithReceipt(nonce string, ok bool, callWakeReceipt string) {
 	if nonce == "" {
 		return
+	}
+	if !ok || !validDirectConfirmCallWakeReceipt(callWakeReceipt) {
+		callWakeReceipt = ""
 	}
 
 	n.pendingConfirmsMu.Lock()
@@ -2029,7 +2084,7 @@ func (n *Node) ResolveDirectConfirm(nonce string, ok bool) {
 	}
 
 	select {
-	case ch <- ok:
+	case ch <- directConfirmResult{ok: ok, callWakeReceipt: callWakeReceipt}:
 	default:
 	}
 }
@@ -2077,10 +2132,10 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 		n.emitEvent("message:received", msgData)
 
 		waitStart := time.Now()
-		confirmed := n.waitForRegisteredDirectConfirm(nonce, confirmCh, n.directConfirmTimeout())
+		confirm := n.waitForRegisteredDirectConfirm(nonce, confirmCh, n.directConfirmTimeout())
 		waitMs := time.Since(waitStart).Milliseconds()
 
-		if !confirmed {
+		if !confirm.ok {
 			n.emitTimeoutFired("DirectConfirmTimeout", n.directConfirmTimeout(), waitStart)
 			n.emitEvent("message:direct_ack_timing", map[string]interface{}{
 				"waitMs":  waitMs,
@@ -2091,7 +2146,7 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 		}
 
 		ackWriteStart := time.Now()
-		ack := []byte(`{"ack":true}`)
+		ack := directConfirmAckFrame(confirm.callWakeReceipt)
 		if err := writeFrame(s, ack); err != nil {
 			log.Printf("[NODE] ACK write error for %s: %v", remotePeer[:min(20, len(remotePeer))], err)
 			return

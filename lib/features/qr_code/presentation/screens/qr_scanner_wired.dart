@@ -99,6 +99,8 @@ class QRScannerWired extends StatelessWidget {
   final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
   final FeedClearedRepository? feedClearedRepository;
   final TransportMetrics? transportMetrics;
+  final ResolveCallWakeHandle? resolveCallWakeHandle;
+  final OnCallWakeHandleDistributed? onCallWakeHandleDistributed;
   final MigrationQrScannedHandler? onMigrationQrScanned;
 
   /// 360: handler for the dedicated dual-signed linked-device document.
@@ -156,6 +158,8 @@ class QRScannerWired extends StatelessWidget {
     this.feedClearedRepository,
     this.postsPrivacySettingsRepository,
     this.transportMetrics,
+    this.resolveCallWakeHandle,
+    this.onCallWakeHandleDistributed,
     this.onMigrationQrScanned,
     this.onDirectLinkedDeviceQrScanned,
     this.accountMigrationRunTransfer,
@@ -342,6 +346,8 @@ class QRScannerWired extends StatelessWidget {
       bridge: bridge,
       targetPeerId: targetPeerId,
       recipientPublicKey: recipientPublicKey,
+      resolveCallWakeHandle: resolveCallWakeHandle,
+      onCallWakeHandleDistributed: onCallWakeHandleDistributed,
     );
 
     emitFlowEvent(

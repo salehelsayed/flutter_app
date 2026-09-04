@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -94,8 +95,7 @@ class FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -166,6 +166,18 @@ void main() {
   });
 
   group('IncomingMessageRouter', () {
+    test(
+      'router diagnostics never include transport identity or wire preview',
+      () {
+        final source = File(
+          'lib/core/services/incoming_message_router.dart',
+        ).readAsStringSync();
+
+        expect(source, isNot(contains("'from': message.from")));
+        expect(source, isNot(contains("'contentPreview':")));
+      },
+    );
+
     test('routes contact_request messages to contactRequestStream', () async {
       final received = router.contactRequestStream.first;
 
@@ -185,6 +197,34 @@ void main() {
       expect(msg.from, 'peer-a');
       expect(msg.content, contains('"type":"chat_message"'));
     });
+
+    test(
+      'routes call_signal to exactly one dedicated stream and nowhere else',
+      () async {
+        final calls = <ChatMessage>[];
+        final chats = <ChatMessage>[];
+        final contacts = <ChatMessage>[];
+        final groups = <ChatMessage>[];
+        final posts = <ChatMessage>[];
+        final unknown = <ChatMessage>[];
+        router.callSignalStream.listen(calls.add);
+        router.chatMessageStream.listen(chats.add);
+        router.contactRequestStream.listen(contacts.add);
+        router.groupInviteStream.listen(groups.add);
+        router.postCreateStream.listen(posts.add);
+        router.unknownMessageStream.listen(unknown.add);
+
+        p2pService.inject(_makeMessage('call_signal'));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(calls, hasLength(1));
+        expect(chats, isEmpty);
+        expect(contacts, isEmpty);
+        expect(groups, isEmpty);
+        expect(posts, isEmpty);
+        expect(unknown, isEmpty);
+      },
+    );
 
     test(
       'routes group_membership_update messages to groupMembershipUpdateStream',

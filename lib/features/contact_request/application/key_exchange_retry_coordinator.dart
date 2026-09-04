@@ -21,10 +21,13 @@ class KeyExchangeRetryCoordinator {
   final DateTime Function() _now;
 
   Future<int>? _inFlight;
+  Future<int>? _freshAfterInFlight;
   DateTime? _lastNonZeroRetryAt;
   int _lastNonZeroRetryCount = 0;
 
-  Future<int> retryNow({required String trigger}) {
+  Future<int> retryNow({required String trigger, bool requireFresh = false}) {
+    if (requireFresh) return _retryFresh(trigger);
+
     final inFlight = _inFlight;
     if (inFlight != null) {
       emitFlowEvent(
@@ -53,7 +56,46 @@ class KeyExchangeRetryCoordinator {
       }
     }
 
-    final future = _run(trigger);
+    return _startRun(trigger);
+  }
+
+  /// Starts after any attempt that was already running when this request was
+  /// made. Multiple fresh requests waiting on that same older attempt share
+  /// one follow-up run. Cooldown never suppresses the follow-up because the
+  /// caller has just durably created new repair work.
+  Future<int> _retryFresh(String trigger) {
+    final inFlight = _inFlight;
+    if (inFlight == null) return _startRun(trigger);
+
+    final queued = _freshAfterInFlight;
+    if (queued != null) return queued;
+
+    late final Future<int> followUp;
+    followUp = () async {
+      try {
+        await inFlight;
+      } catch (_) {
+        // A fresh repair still owns a post-failure attempt.
+      }
+      if (identical(_freshAfterInFlight, followUp)) {
+        _freshAfterInFlight = null;
+      }
+
+      final newerInFlight = _inFlight;
+      if (newerInFlight != null && !identical(newerInFlight, inFlight)) {
+        return newerInFlight;
+      }
+      return _startRun(trigger);
+    }();
+    _freshAfterInFlight = followUp;
+    return followUp;
+  }
+
+  Future<int> _startRun(String trigger) {
+    late final Future<int> future;
+    future = _run(trigger).whenComplete(() {
+      if (identical(_inFlight, future)) _inFlight = null;
+    });
     _inFlight = future;
     return future;
   }
@@ -84,8 +126,6 @@ class KeyExchangeRetryCoordinator {
         details: {'trigger': trigger, 'error': e.toString()},
       );
       rethrow;
-    } finally {
-      _inFlight = null;
     }
   }
 }

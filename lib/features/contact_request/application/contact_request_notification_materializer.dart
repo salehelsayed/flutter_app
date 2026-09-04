@@ -5,6 +5,7 @@ import 'package:flutter_app/features/contact_request/application/accept_and_reci
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/resolve_contact_request_notification_target_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -35,6 +36,8 @@ class ContactRequestNotificationMaterializer {
   final P2PService p2pService;
   final Bridge bridge;
   final void Function(ContactModel contact)? onProfileDownloaded;
+  final ResolveCallWakeHandle? resolveCallWakeHandle;
+  final OnCallWakeHandleDistributed? onCallWakeHandleDistributed;
   final PresentPendingContactRequestNotificationFn presentPendingRequest;
   final OpenContactConversationFromNotificationFn openConversation;
   final ShowContactRequestNotificationErrorFn showError;
@@ -48,6 +51,8 @@ class ContactRequestNotificationMaterializer {
     required this.presentPendingRequest,
     required this.openConversation,
     this.onProfileDownloaded,
+    this.resolveCallWakeHandle,
+    this.onCallWakeHandleDistributed,
     ShowContactRequestNotificationErrorFn? showError,
   }) : showError = showError ?? _defaultShowError;
 
@@ -91,6 +96,8 @@ class ContactRequestNotificationMaterializer {
       identityRepo: identityRepository,
       bridge: bridge,
       onProfileDownloaded: onProfileDownloaded,
+      resolveCallWakeHandle: resolveCallWakeHandle,
+      onCallWakeHandleDistributed: onCallWakeHandleDistributed,
     );
 
     if (result == AcceptContactRequestResult.success ||

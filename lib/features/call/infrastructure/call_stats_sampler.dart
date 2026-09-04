@@ -1,0 +1,187 @@
+import '../domain/call_engine.dart';
+
+/// A plugin-independent copy of one WebRTC statistics row.
+///
+/// Only fixed fields needed for readiness and coarse route classification are
+/// read. Addresses, identifiers, SDP, and counters are never retained in the
+/// returned sample.
+final class CallStatsRecord {
+  const CallStatsRecord({
+    required this.id,
+    required this.type,
+    required this.values,
+  });
+
+  final String id;
+  final String type;
+  final Map<Object?, Object?> values;
+}
+
+final class CallStatsSample {
+  const CallStatsSample({
+    required this.selectedPairSucceeded,
+    required this.selectedPairNominated,
+    required this.selectedRelayProtocol,
+    required this.dtlsReady,
+    required this.transport,
+    required this.inboundAudioRtpObserved,
+    required this.outboundAudioRtpObserved,
+  });
+
+  static const empty = CallStatsSample(
+    selectedPairSucceeded: false,
+    selectedPairNominated: false,
+    selectedRelayProtocol: CallRelayProtocol.unknown,
+    dtlsReady: false,
+    transport: CallTransportClass.unknown,
+    inboundAudioRtpObserved: false,
+    outboundAudioRtpObserved: false,
+  );
+
+  final bool selectedPairSucceeded;
+  final bool selectedPairNominated;
+  final CallRelayProtocol selectedRelayProtocol;
+  final bool dtlsReady;
+  final CallTransportClass transport;
+  final bool inboundAudioRtpObserved;
+  final bool outboundAudioRtpObserved;
+}
+
+/// Version-tolerant, privacy-safe selected-pair parser.
+final class CallStatsSampler {
+  const CallStatsSampler();
+
+  CallStatsSample sample(Iterable<CallStatsRecord> records) {
+    var inboundAudioRtpObserved = false;
+    var outboundAudioRtpObserved = false;
+    final byId = <String, CallStatsRecord>{
+      for (final record in records) record.id: record,
+    };
+    CallStatsRecord? transportRecord;
+    CallStatsRecord? selectedPair;
+
+    for (final record in records) {
+      if (_isAudioRtp(record)) {
+        if (record.type == 'inbound-rtp') {
+          inboundAudioRtpObserved |=
+              _positive(record.values['packetsReceived']) &&
+              _positive(record.values['bytesReceived']);
+        } else if (record.type == 'outbound-rtp') {
+          outboundAudioRtpObserved |=
+              _positive(record.values['packetsSent']) &&
+              _positive(record.values['bytesSent']);
+        }
+      }
+      if (record.type == 'transport') {
+        transportRecord ??= record;
+        final selectedId = _string(record.values['selectedCandidatePairId']);
+        if (selectedId != null) selectedPair = byId[selectedId];
+      }
+    }
+    if (selectedPair == null) {
+      for (final record in records) {
+        if (record.type != 'candidate-pair') continue;
+        if (_bool(record.values['selected']) ||
+            _bool(record.values['nominated'])) {
+          selectedPair = record;
+          break;
+        }
+      }
+    }
+
+    final pair = selectedPair;
+    if (pair == null) {
+      return CallStatsSample(
+        selectedPairSucceeded: false,
+        selectedPairNominated: false,
+        selectedRelayProtocol: CallRelayProtocol.unknown,
+        dtlsReady: _dtlsReady(transportRecord),
+        transport: CallTransportClass.unknown,
+        inboundAudioRtpObserved: inboundAudioRtpObserved,
+        outboundAudioRtpObserved: outboundAudioRtpObserved,
+      );
+    }
+
+    final state = _string(pair.values['state'])?.toLowerCase();
+    final succeeded = state == 'succeeded';
+    final selectedByTransport =
+        transportRecord != null &&
+        _string(transportRecord.values['selectedCandidatePairId']) == pair.id;
+    final nominated = _bool(pair.values['nominated']) || selectedByTransport;
+    final localId = _string(pair.values['localCandidateId']);
+    final local = localId == null ? null : byId[localId];
+
+    return CallStatsSample(
+      selectedPairSucceeded: succeeded,
+      selectedPairNominated: nominated,
+      selectedRelayProtocol: _selectedRelayProtocol(local),
+      dtlsReady: _dtlsReady(transportRecord),
+      transport: _transportClass(local),
+      inboundAudioRtpObserved: inboundAudioRtpObserved,
+      outboundAudioRtpObserved: outboundAudioRtpObserved,
+    );
+  }
+
+  static bool _isAudioRtp(CallStatsRecord record) {
+    if (record.type != 'inbound-rtp' && record.type != 'outbound-rtp') {
+      return false;
+    }
+    final kind = _string(
+      record.values['kind'] ?? record.values['mediaType'],
+    )?.toLowerCase();
+    return kind == 'audio';
+  }
+
+  static bool _dtlsReady(CallStatsRecord? transport) {
+    final value = _string(transport?.values['dtlsState'])?.toLowerCase();
+    return value == 'connected';
+  }
+
+  static CallTransportClass _transportClass(CallStatsRecord? candidate) {
+    if (candidate == null) return CallTransportClass.unknown;
+    final candidateType = _string(
+      candidate.values['candidateType'],
+    )?.toLowerCase();
+    if (candidateType == 'host' ||
+        candidateType == 'srflx' ||
+        candidateType == 'prflx') {
+      return CallTransportClass.direct;
+    }
+    if (candidateType != 'relay') return CallTransportClass.unknown;
+    final protocol =
+        _string(candidate.values['relayProtocol'])?.toLowerCase() ??
+        _string(candidate.values['protocol'])?.toLowerCase();
+    if (protocol == 'tcp' || protocol == 'tls') {
+      return CallTransportClass.turnTcpTls;
+    }
+    if (protocol == 'udp') return CallTransportClass.turnUdp;
+    return CallTransportClass.relay;
+  }
+
+  static CallRelayProtocol _selectedRelayProtocol(CallStatsRecord? candidate) {
+    if (candidate == null) return CallRelayProtocol.unknown;
+    final candidateType = _string(
+      candidate.values['candidateType'],
+    )?.toLowerCase();
+    if (candidateType == 'host' ||
+        candidateType == 'srflx' ||
+        candidateType == 'prflx') {
+      return CallRelayProtocol.notRelay;
+    }
+    if (candidateType != 'relay') return CallRelayProtocol.unknown;
+    return switch (_string(candidate.values['relayProtocol'])?.toLowerCase()) {
+      'udp' => CallRelayProtocol.udp,
+      'tcp' => CallRelayProtocol.tcp,
+      'tls' => CallRelayProtocol.tls,
+      null || _ => CallRelayProtocol.unknown,
+    };
+  }
+
+  static String? _string(Object? value) =>
+      value is String && value.isNotEmpty ? value : null;
+
+  static bool _bool(Object? value) => value == true || value == 1;
+
+  static bool _positive(Object? value) =>
+      value is num && value.isFinite && value > 0;
+}

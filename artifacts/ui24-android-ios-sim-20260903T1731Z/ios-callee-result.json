@@ -1,0 +1,37 @@
+{
+  "stepId": "ui24-ios-callee-contact",
+  "status": "complete",
+  "success": true,
+  "nodeAction": null,
+  "introAction": {
+    "action": "none",
+    "actedOn": [],
+    "dropped": 0
+  },
+  "introDeliveryCustody": null,
+  "chatAction": null,
+  "chatExpectations": null,
+  "uiNavigation": {
+    "requestedPeerId": "12D3KooWP3dYW5q8zCKsvPnqVf3xNm4G6mqgk26o78yvU7FRKoKQ",
+    "opened": true
+  },
+  "snapshot": {
+    "identity": {
+      "peerId": "12D3KooWHZBdGv2AaeiQ8rwWYoGmAH3yxdvHqWvEU1rV5iFejL64",
+      "username": "IosSimUI24"
+    },
+    "contacts": [
+      {
+        "peerId": "12D3KooWP3dYW5q8zCKsvPnqVf3xNm4G6mqgk26o78yvU7FRKoKQ",
+        "username": "pixel",
+        "introducedByPeerId": null
+      }
+    ],
+    "pendingContactRequests": [],
+    "introductions": [],
+    "foldedReviewItems": [],
+    "introOutboxDeliveries": [],
+    "systemMessages": [],
+    "chatMessages": []
+  }
+}

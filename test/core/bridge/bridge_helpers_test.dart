@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 /// A simple in-memory mock bridge that records calls and returns
 /// pre-configured responses.
@@ -9,6 +10,7 @@ class MockBridge extends Bridge {
   String? lastRawRequest;
   Map<String, dynamic>? lastParsedRequest;
   Map<String, dynamic> nextResponse = {'ok': true};
+  Object? nextError;
 
   @override
   bool get isInitialized => true;
@@ -29,6 +31,8 @@ class MockBridge extends Bridge {
   Future<String> send(String message) async {
     lastRawRequest = message;
     lastParsedRequest = jsonDecode(message) as Map<String, dynamic>;
+    final error = nextError;
+    if (error != null) throw error;
     return jsonEncode(nextResponse);
   }
 }
@@ -125,6 +129,60 @@ void main() {
 
       expect(result, isFalse);
     });
+
+    test('opt-in surfaces timeout as typed bridge unavailability', () async {
+      await expectLater(
+        callVerifyPayload(
+          bridge: _SlowBridge(),
+          publicKey: 'pk',
+          data: 'data',
+          signature: 'sig',
+          timeout: const Duration(milliseconds: 1),
+          throwOnBridgeUnavailable: true,
+        ),
+        throwsA(isA<BridgeOperationUnavailableException>()),
+      );
+    });
+
+    test(
+      'opt-in surfaces bridge unavailability without sensitive diagnostics',
+      () async {
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        bridge.nextResponse = <String, dynamic>{
+          'ok': false,
+          'errorCode': 'PLATFORM_ERROR',
+          'errorMessage': 'sensitive-native-detail',
+        };
+
+        await expectLater(
+          callVerifyPayload(
+            bridge: bridge,
+            publicKey: 'sensitive-public-key',
+            data: 'sensitive-canonical-data',
+            signature: 'sensitive-signature',
+            throwOnBridgeUnavailable: true,
+          ),
+          throwsA(isA<BridgeOperationUnavailableException>()),
+        );
+        expect(jsonEncode(events), isNot(contains('sensitive')));
+
+        events.clear();
+        bridge.nextError = StateError('sensitive-exception-detail');
+        await expectLater(
+          callVerifyPayload(
+            bridge: bridge,
+            publicKey: 'sensitive-public-key',
+            data: 'sensitive-canonical-data',
+            signature: 'sensitive-signature',
+            throwOnBridgeUnavailable: true,
+          ),
+          throwsA(isA<BridgeOperationUnavailableException>()),
+        );
+        expect(jsonEncode(events), isNot(contains('sensitive')));
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -210,6 +268,56 @@ void main() {
       expect(result['ok'], isFalse);
       expect(result['errorCode'], equals('BRIDGE_TIMEOUT'));
     });
+
+    test('opt-in surfaces timeout as typed bridge unavailability', () async {
+      await expectLater(
+        callDecryptMessage(
+          bridge: _SlowBridge(),
+          ownMlKemSecretKey: 'sk',
+          kem: 'k',
+          ciphertext: 'ct',
+          nonce: 'n',
+          timeout: const Duration(milliseconds: 1),
+          throwOnBridgeUnavailable: true,
+        ),
+        throwsA(isA<BridgeOperationUnavailableException>()),
+      );
+    });
+
+    test('opt-in distinguishes unavailability from crypto rejection', () async {
+      bridge.nextResponse = <String, dynamic>{
+        'ok': false,
+        'errorCode': 'PLATFORM_ERROR',
+        'errorMessage': 'native unavailable',
+      };
+      await expectLater(
+        callDecryptMessage(
+          bridge: bridge,
+          ownMlKemSecretKey: 'sk',
+          kem: 'k',
+          ciphertext: 'ct',
+          nonce: 'n',
+          throwOnBridgeUnavailable: true,
+        ),
+        throwsA(isA<BridgeOperationUnavailableException>()),
+      );
+
+      bridge.nextResponse = <String, dynamic>{
+        'ok': false,
+        'errorCode': 'DECRYPT_FAILED',
+        'errorMessage': 'ciphertext rejected',
+      };
+      final rejected = await callDecryptMessage(
+        bridge: bridge,
+        ownMlKemSecretKey: 'sk',
+        kem: 'k',
+        ciphertext: 'ct',
+        nonce: 'n',
+        throwOnBridgeUnavailable: true,
+      );
+      expect(rejected['ok'], isFalse);
+      expect(rejected['errorCode'], 'DECRYPT_FAILED');
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -256,7 +364,8 @@ void main() {
           'peerId': '12D3KooWTest',
           'publicKey': 'pk',
           'privateKey': 'sk',
-          'mnemonic12': 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+          'mnemonic12':
+              'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
           'createdAt': '2024-01-01T00:00:00Z',
           'updatedAt': '2024-01-01T00:00:00Z',
         },
@@ -277,7 +386,8 @@ void main() {
   // ---------------------------------------------------------------------------
   group('callIdentityRestore', () {
     test('sends identity.restore with mnemonic', () async {
-      const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+      const mnemonic =
+          'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
       bridge.nextResponse = {
         'ok': true,
         'identity': {

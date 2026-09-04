@@ -262,3 +262,267 @@ No full `host-all` is required until both enabled native platform plans reach th
 - Physical Android plus emulator automated matrix passes.
 - Existing ordinary FCM, notification recovery, app visibility, and native runtime tests remain green.
 - Android call feature remains separately kill-switchable.
+
+## 13. Execution and verification (2026-08-31)
+
+### Outcome and scope
+
+VC2-04 is implemented in the cumulative VC2-01 through VC2-03 worktree. The
+Android production boundary uses AndroidX Core-Telecom
+`androidx.core:core-telecom:1.1.0-beta01`, a real Telecom call, a CallStyle
+foreground notification, a non-exported internal action receiver, a bounded
+protected durable pre-start store, and a versioned platform bridge. The
+Android capability remains independently default-off through
+`ENABLE_ANDROID_NATIVE_CALLS`; the disposable proof enables it only with an
+explicit Gradle property and a distinct application ID.
+
+Dart `CallCoordinator` remains the canonical product-state owner after
+attachment. Native state is limited to one pre-start descriptor plus ordered
+idempotent events. Answer before attachment remains intent only; signaling,
+ICE, microphone capture, and media remain behind authenticated Dart adoption,
+permission, native audio activation, and the existing VC2-03 engine path.
+
+The host and emulator evidence below is green. Full VC2-04 acceptance is not
+claimed because the physical Android campaign could not complete after its
+secure keyguard became locked. VC2-05 and VC2-06 were not implemented or
+edited, and no commit or push was made.
+
+### Android host and manifest verification
+
+The exact VC2-04 JVM/Robolectric classes plus the required preservation
+classes were run with:
+
+```sh
+cd android
+./gradlew :app:testDebugUnitTest \
+  --tests com.mknoon.app.call.MknoonCallLifecycleControllerTest \
+  --tests com.mknoon.app.call.MknoonCallAndroidRuntimeTest \
+  --tests com.mknoon.app.call.MknoonCallForegroundServiceTest \
+  --tests com.mknoon.app.call.MknoonCallNotificationFactoryTest \
+  --tests com.mknoon.app.call.MknoonCallActionReceiverTest \
+  --tests com.mknoon.app.call.MknoonCallNativeBridgeTest \
+  --tests com.mknoon.app.call.MknoonCallManifestContractTest \
+  --tests com.mknoon.app.MknoonFirebaseMessagingServiceTest \
+  --tests com.mknoon.app.call.CallPayloadParserTest \
+  --tests com.mknoon.app.call.PendingNativeCallStoreTest \
+  --tests com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest \
+  --tests com.mknoon.app.MainActivityOnNewIntentTest \
+  --tests com.mknoon.app.MainActivityAppVisibilityTest \
+  --tests com.mknoon.app.AppVisibilitySnapshotStoreTest \
+  --tests com.mknoon.app.NativeRuntimeOwnershipSourceTest \
+  --console=plain
+```
+
+Result: 110/110 tests passed, with zero failures, errors, or skips. The ten
+VC2-04 classes contributed 85 tests; the five preservation classes contributed
+25. After the final build-harness hardening, the debug manifest/build contract
+was rerun separately and passed 4/4.
+
+Debug and release Kotlin compilation passed with:
+
+```sh
+cd android
+./gradlew :app:compileDebugKotlin :app:compileReleaseKotlin --console=plain
+```
+
+The ordinary release unit-test task reaches a pre-existing generated Flutter
+registrant error because the dev-only `integration_test` plugin is absent from
+the normal release classpath. The exact failure was
+`dev.flutter.plugins.integration_test.IntegrationTestPlugin` not found. The
+repository's existing disposable release-test configuration supplies that
+test-only dependency; the VC2-04 release contract passed 4/4 with:
+
+```sh
+cd android
+./gradlew :app:testReleaseUnitTest \
+  --tests com.mknoon.app.call.MknoonCallManifestContractTest \
+  -PenableGroupExitReleaseDiagnosticsProof=true \
+  -PandroidApplicationId=com.mknoon.app.pb266proof \
+  -PdisableGoogleServicesForDisposableProof=true \
+  -PallowDebugSigningInRelease=true \
+  --console=plain
+```
+
+The default manifests were then restored and regenerated with:
+
+```sh
+cd android
+./gradlew :app:processDebugManifest :app:processReleaseManifest --console=plain
+```
+
+Both merged manifests use `com.mknoon.app`, contain the uncapped
+`MANAGE_OWN_CALLS`, phone-call foreground-service, and microphone
+foreground-service permissions, declare the call service non-exported with
+`phoneCall|microphone`, declare the internal receiver non-exported, and exclude
+the disposable proof Activity.
+
+### Dart, Go, and curated host gates
+
+The complete call feature and VC2-03 foreground WebRTC preservation campaign
+passed 409/409:
+
+```sh
+flutter test --no-pub \
+  test/features/call \
+  test/integration/android_foreground_webrtc_audio_campaign_test.dart
+```
+
+The final adapter/composition/layering sentinel passed 58/58:
+
+```sh
+flutter test --no-pub \
+  test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart \
+  test/core/bootstrap/call_signaling_composition_test.dart \
+  test/unit/dtr18_layering_relocation_contract_test.dart
+```
+
+Focused analysis of the adapter, composition, coordinator, cleanup, and
+call-scoped media-owner production/test pairs reported no issues across ten
+files. Formatting checked 101 call/bootstrap/proof files with zero changes.
+
+The required curated lanes completed as follows:
+
+- `./scripts/run_host_test_gates.sh 1to1`: 182 paths, 2,956 passed, 3 skipped.
+- `./scripts/run_host_test_gates.sh feature-host-all`: 887 paths, 9,797 passed,
+  11 skipped. One earlier attempt exited nonzero at 9,796 passed and 11 skipped;
+  its exact failing assertion was not retained, and the complete rerun did not
+  reproduce the failure.
+- `./scripts/run_host_test_gates.sh core-host-all`: 436 Dart paths, 3,609
+  passed, plus the renderer and dropped-push manifest scripts passed. This lane
+  was justified because VC2-04 changes the shared Android FCM boundary.
+- `bash scripts/check_reliability_simulation_discovery.sh`: passed and
+  discovered the VC2-04 target-pinned lifecycle runner.
+
+The relay and bridge host suites passed:
+
+```sh
+cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -count=1
+cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./... -count=1
+```
+
+The relay sender contract verifies an opaque data-only Android call wake and
+the Android parser/FCM tests reject unknown, duplicate, oversized, malformed,
+or stale call payloads before presentation while preserving ordinary FCM and
+recovery routing.
+
+Full `host-all` was not run, in accordance with the wave-level cadence after
+both enabled native platform plans.
+
+### Live device matrix and disposable build boundary
+
+The matrix was re-resolved using all three required commands:
+
+```sh
+flutter devices --machine
+adb devices
+xcrun simctl list devices available
+```
+
+The Android targets used were:
+
+- physical Pixel 6, `21071FDF600CSC`, Android 16 / API 36;
+- Android emulator, `emulator-5554`, Android 17 / API 37.
+
+Available iOS devices and simulators were not used because no iOS-specific
+claim was required for VC2-04.
+
+The final disposable proof APK pair was built once from a new empty artifact
+directory with:
+
+```sh
+scripts/run_vc204_android_call_lifecycle_e2e.sh \
+  --build-only \
+  --artifact-dir /tmp/vc204-proof-final4.0URk2n
+```
+
+The proof build is isolated under a sentinel-protected
+`vc204-proof-gradle-build` leaf, rejects unsafe or nonempty build roots, removes
+the entire isolated Gradle build tree after copying and hashing the APKs, and
+does not share output state with the normal app. `apkanalyzer` confirmed the
+normal APK as `com.mknoon.app` and the proof APK as
+`com.mknoon.app.vc204proof`; the normal APK hash was unchanged across the proof
+build. A causal unsafe-root check and a nonempty-artifact refusal check both
+passed.
+
+### Emulator device campaign
+
+The final emulator command was:
+
+```sh
+scripts/run_vc204_android_call_lifecycle_e2e.sh \
+  --device-id emulator-5554 \
+  --artifact-dir /tmp/vc204-proof-final4.0URk2n \
+  --result-dir /tmp/vc204-proof-final4.0URk2n/results-emulator \
+  --scenario vc204_android_call_lifecycle
+```
+
+Result: 13/13 timed phases passed, zero instrumentation skips, and zero policy
+N/A cases. The campaign exercised actual Core-Telecom presentation and the
+CallStyle foreground service in foreground/background and locked states;
+duplicate and delayed ingress; pre-answer remote cancel; ringing and
+acknowledged-active process death/reconciliation; notification/full-screen
+denial; microphone deny/grant; speaker endpoint selection; a live network
+loss/restore transition; and repeated cleanup.
+
+On API 37, notification/full-screen denial produced the truthful
+`platform-rejected-clean` result: a durable `NATIVE_FAILURE`, no notification,
+no audio ownership, and terminal acknowledgement. Android's `am kill` was a
+no-op while Telecom protected the provider in both process-death legs, so the
+debuggable proof used the bounded same-UID `SIGKILL` fallback. Both deaths and
+reconciliations passed; neither is labeled force-stop. Android force-stop
+delivery remains `NOT_PROVEN_POLICY_LIMITATION` because the OS suppresses
+delivery until explicit relaunch.
+
+The harness restored captured screen/keyguard/network state, uninstalled both
+disposable packages, verified their absence across Android users, and retained
+only coarse state/timing artifacts. The final artifact privacy scan passed.
+Foreground task/HOME state is explicitly not captured or claimed.
+
+The normal Flutter integration APK was then exercised independently on the
+same explicit emulator:
+
+```sh
+flutter test --no-pub -d emulator-5554 \
+  integration_test/call_control_signaling_e2e_test.dart \
+  integration_test/audio_peer_connection_proof_test.dart
+```
+
+Result: 3/3 passed. An earlier run made after a shared proof build was discarded
+because the normal Flutter command reused the proof application ID. The final
+sentinel-protected isolated build eliminated that collision; no evidence from
+the discarded run is counted.
+
+### Physical Android evidence and open limitations
+
+The physical command used the pinned API 36 target:
+
+```sh
+scripts/run_vc204_android_call_lifecycle_e2e.sh \
+  --device-id 21071FDF600CSC \
+  --artifact-dir /tmp/vc204-proof.DTD3Ve \
+  --result-dir /tmp/vc204-proof.DTD3Ve/results23-physical \
+  --scenario vc204_android_call_lifecycle
+```
+
+Before the secure-keyguard restoration failure, the physical device passed five
+timed phases: foreground/background presentation, duplicate/delayed ingress and
+pre-answer cancel, ringing seed, ringing process-death reconciliation, and
+locked presentation. The ringing death required the same bounded same-UID
+`SIGKILL` fallback after `am kill` was a no-op. The remaining notification
+denial, microphone, route, network, acknowledged-active process-death, repeated
+cleanup, and normal Flutter integration phases were not executed on the
+physical device and are not claimed.
+
+Both disposable packages were subsequently removed and their absence was
+verified. A final read-only probe reported the physical device interactive but
+still securely keyguard-locked. The harness does not inspect, change, or bypass
+credentials; the phone must be unlocked normally before the complete physical
+campaign can be rerun. This is the remaining VC2-04 acceptance blocker.
+
+No connected Bluetooth endpoint was available, so speaker route selection is
+proven but Bluetooth connect/disconnect is N/A for the available matrix and is
+not claimed. Real network-delivered FCM transport was also not used by the
+device harness: adversarial wakes entered through the production runtime
+payload seam, while the data-only sender grammar and FCM separation are covered
+by Go/JVM contracts. Android/Play policy declarations for full-screen and
+foreground-call use remain a beta/release follow-up.

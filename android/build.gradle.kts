@@ -8,10 +8,41 @@ allprojects {
     }
 }
 
-val newBuildDir: Directory =
+val configuredVc204ProofBuildRoot =
+    providers.gradleProperty("vc204ProofBuildRoot").orNull
+val newBuildDir: Directory = if (configuredVc204ProofBuildRoot == null) {
     rootProject.layout.buildDirectory
         .dir("../../build")
         .get()
+} else {
+    val proofBuildDir = rootProject.file(configuredVc204ProofBuildRoot).canonicalFile
+    val proofMarker = proofBuildDir.parentFile.resolve(".vc204-proof-build-root")
+    val forbiddenRoots = listOf(
+        proofBuildDir.toPath().root.toFile().canonicalFile,
+        rootProject.projectDir.canonicalFile,
+        rootProject.projectDir.parentFile.canonicalFile,
+        rootProject.file(System.getProperty("user.home")).canonicalFile,
+    )
+    require(proofBuildDir.name == "vc204-proof-gradle-build") {
+        "vc204ProofBuildRoot must name the dedicated vc204-proof-gradle-build leaf"
+    }
+    require(
+        forbiddenRoots.none { forbidden ->
+            proofBuildDir == forbidden || forbidden.toPath().startsWith(proofBuildDir.toPath())
+        },
+    ) {
+        "vc204ProofBuildRoot must not be a filesystem, repository, workspace, or home root/ancestor"
+    }
+    require(
+        proofMarker.isFile &&
+            proofMarker.readText().trim() == "vc204-proof-build-root-v1",
+    ) {
+        "vc204ProofBuildRoot requires its VC2-04 proof sentinel"
+    }
+    rootProject.layout.dir(
+        providers.provider { proofBuildDir },
+    ).get()
+}
 rootProject.layout.buildDirectory.value(newBuildDir)
 
 subprojects {

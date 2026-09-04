@@ -188,6 +188,7 @@ graphify-arch/tdd-overlay.json
 # Local credential backups (APNs auth key, relay SSH key, upload keystore).
 # Secret-bearing — never commit.
 /backup/
+/APPLE/*.p8
 graphify-arch/graphify-out/20*/
 
 # Device log captures — large, session-local.
@@ -219,3 +220,8 @@ codex-memory/config.local.json
 
 # Per-run device telemetry from fresh_three_phones_with_resign.sh
 docker-ws/deploy-captures/
+
+# Raw iOS unified-log archives captured under artifacts/ — binary OS log
+# databases (hundreds of MB). Keep the filtered .log/.txt summaries only.
+artifacts/**/*.logarchive/
+artifacts/**/*-logarchive-*.tar

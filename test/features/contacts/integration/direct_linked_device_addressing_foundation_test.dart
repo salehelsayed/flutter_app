@@ -683,7 +683,14 @@ void main() {
 
   test('TC-360-03a direct-device trust owns exact admission revocation and '
       'legacy resolution', () async {
-    final trust = DatabaseDirectContactDeviceTrust(database: db, now: _clock);
+    final authorityChanges = <String>[];
+    final trust = DatabaseDirectContactDeviceTrust(
+      database: db,
+      now: _clock,
+      onAuthorityChanged: (contactAccountPeerId) async {
+        authorityChanges.add(contactAccountPeerId);
+      },
+    );
 
     // Before initialization, resolution is EXACTLY the unchanged legacy
     // ContactModel target.
@@ -792,6 +799,7 @@ void main() {
     expect(roster.activeBindings, hasLength(1));
     expect(roster.metadata.rosterInitialized, isTrue);
     expect(roster.metadata.legacyTargetRevoked, isFalse);
+    expect(authorityChanges, <String>[contactAccount.peerId]);
 
     // A racing second verify against the now-stale `pending` belief loses.
     expect(
@@ -847,6 +855,10 @@ void main() {
       ),
       isTrue,
     );
+    expect(authorityChanges, <String>[
+      contactAccount.peerId,
+      contactAccount.peerId,
+    ]);
     // A rejected device replays as idempotent rather than re-prompting.
     expect(
       await stage(rejectParsed),
@@ -880,6 +892,11 @@ void main() {
       ),
       isTrue,
     );
+    expect(authorityChanges, <String>[
+      contactAccount.peerId,
+      contactAccount.peerId,
+      contactAccount.peerId,
+    ]);
     targets = await dbResolveDirectContactDeviceTargets(
       db,
       contactAccountPeerId: contactAccount.peerId,
@@ -899,6 +916,12 @@ void main() {
       ),
       isTrue,
     );
+    expect(authorityChanges, <String>[
+      contactAccount.peerId,
+      contactAccount.peerId,
+      contactAccount.peerId,
+      contactAccount.peerId,
+    ]);
     expect(
       await dbResolveDirectContactDeviceTargets(
         db,

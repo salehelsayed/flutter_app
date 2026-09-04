@@ -1,0 +1,2477 @@
+CallsManager: 
+  mCalls: 
+  mCallAudioManager:
+    All calls:
+    Active dialing, or connecting calls:
+    Ringing calls:
+    Holding calls:
+    Foreground call:
+    null
+    CallAudioModeStateMachine:
+      History:
+      2026-09-02T19:21:24.986820 - Enter UNFOCUSED
+      2026-09-02T19:21:24.986977 - Mode MODE_NORMAL
+      2026-09-02T19:22:03.132295 - Enter RINGING
+      2026-09-02T19:22:03.145631 - Mode MODE_RINGTONE
+      2026-09-02T19:22:03.900656 - Enter VOIP_CALL
+      2026-09-02T19:22:03.901363 - Mode MODE_IN_COMMUNICATION
+      2026-09-02T19:22:06.196366 - Enter UNFOCUSED
+      2026-09-02T19:22:06.196579 - Mode MODE_NORMAL
+      2026-09-02T19:43:46.766986 - Enter RINGING
+      2026-09-02T19:43:46.782271 - Mode MODE_RINGTONE
+      2026-09-02T19:44:06.430544 - Enter VOIP_CALL
+      2026-09-02T19:44:06.433383 - Mode MODE_IN_COMMUNICATION
+      2026-09-02T19:44:36.692303 - Enter UNFOCUSED
+      2026-09-02T19:44:36.692606 - Mode MODE_NORMAL
+      2026-09-02T19:54:10.563724 - Enter RINGING
+      2026-09-02T19:54:10.586844 - Mode MODE_RINGTONE
+      2026-09-02T19:54:26.966958 - Enter VOIP_CALL
+      2026-09-02T19:54:26.975687 - Mode MODE_IN_COMMUNICATION
+      2026-09-02T20:02:29.602748 - Enter UNFOCUSED
+      2026-09-02T20:02:29.602907 - Mode MODE_NORMAL
+      Pending Msg:
+      Looper (CallAudioModeStateMachine, tid 228) {1297777}
+        (MessageQueue is using DeliQueue implementation)
+        (Total messages: 0, polling=true, quitting=false)
+    mCallAudioRouteAdapter:
+    BluetoothDeviceManager:
+      2026-08-31T02:04:31.780084 - Got BluetoothHeadset: android.bluetooth.BluetoothHeadset@c970cc2
+      2026-08-31T02:04:31.780318 - Got BluetoothHearingAid: android.bluetooth.BluetoothHearingAid@23fbad3
+      2026-08-31T09:30:28.854822 - Lost BluetoothHeadset service. Removing all tracked devices
+      2026-08-31T09:30:28.854991 - Lost BluetoothHearingAid service. Removing all tracked devices.
+      2026-08-31T09:30:30.481670 - Got BluetoothHearingAid: android.bluetooth.BluetoothHearingAid@23fbad3
+      2026-08-31T09:30:30.482457 - Got BluetoothHeadset: android.bluetooth.BluetoothHeadset@c970cc2
+  mTtyManager:
+    mCurrentTtyMode: 0
+  mInCallController:
+    combinedInCallServiceMap (InCalls registered):
+    ServiceConnections (InCalls bound):
+    CarModeTracker:
+      Current car mode apps:
+      Car mode history:
+  mCallDiagnosticServiceController:
+    activeCallDiagnosticService: com.google.android.apps.scone
+    isConnected: false
+  mAudioModeTracker:
+    Audio Mode History:
+      2026-09-02T19:22:04.141948 - MODE_RINGTONE -> MODE_IN_COMMUNICATION
+      2026-09-02T19:22:06.280362 - MODE_IN_COMMUNICATION -> MODE_NORMAL
+      2026-09-02T19:22:06.544234 - MODE_NORMAL -> MODE_IN_COMMUNICATION
+      2026-09-02T19:22:12.425073 - MODE_IN_COMMUNICATION -> MODE_NORMAL
+      2026-09-02T19:43:46.836579 - MODE_NORMAL -> MODE_RINGTONE
+      2026-09-02T19:44:06.679905 - MODE_RINGTONE -> MODE_IN_COMMUNICATION
+      2026-09-02T19:44:37.654463 - MODE_IN_COMMUNICATION -> MODE_NORMAL
+      2026-09-02T19:54:10.671248 - MODE_NORMAL -> MODE_RINGTONE
+      2026-09-02T19:54:27.224230 - MODE_RINGTONE -> MODE_IN_COMMUNICATION
+      2026-09-02T20:02:30.999916 - MODE_IN_COMMUNICATION -> MODE_NORMAL
+  mLocalVoicemailController:
+    Current call: <none>
+    Service pkg: 
+    Bound: N
+    Local voicemail History:
+  mCallAnomalyWatchdog:
+    Anomaly log:
+    Pending timeouts: 
+    Pending destruction: 
+  mEmergencyCallDiagnosticLogger:
+      PERSISTED DIAGNOSTIC DATA FROM DROP BOX
+      Exception was thrown while dumping diagnostic data from DropBox
+    mDefaultDialerCache:
+      System Dialer: ComponentInfo{com.google.android.dialer/com.android.incallui.InCallServiceImpl}
+      User 0: com.google.android.dialer
+    mConnectionServiceRepository:
+      mServiceCache:
+    mRoleManager:
+      DefaultCallRedirectionApp: null
+      DefaultCallScreeningApp: null
+      DefaultCallCompanionApps: 
+    mConnectionSvrFocusMgr:
+      Call Focus History:
+      2026-09-02T07:54:57.438929 - 8ce8d9ce-f061-48ca-9674-7048de0d5c27
+      2026-09-02T07:55:34.541412 - <none>
+      2026-09-02T08:31:47.063941 - 676b78b0-cbbe-4673-8d4f-00e24c247a7e
+      2026-09-02T08:33:30.342714 - <none>
+      2026-09-02T09:12:42.726707 - b3af95b1-7814-4fad-aaa3-60c72adf9f7a
+      2026-09-02T09:13:07.691471 - <none>
+      2026-09-02T13:44:44.461777 - afcb424a-cdab-4c7e-809f-16177461a58c
+      2026-09-02T13:45:03.864027 - <none>
+      2026-09-02T14:00:10.435622 - 36205ddb-5413-4e8e-b79c-0687c533c066
+      2026-09-02T14:00:11.623715 - <none>
+      2026-09-02T18:16:35.416584 - 49aafa31-7b90-47f1-b23b-fad57f1d9e3d
+      2026-09-02T18:17:22.445051 - <none>
+      2026-09-02T18:26:48.685756 - d67691df-8dbf-4ad6-a8b5-5342235586b9
+      2026-09-02T18:27:02.540996 - <none>
+      2026-09-02T19:22:03.883173 - 04eda1cc-e90d-433b-9f81-f5cafb3c5ac8
+      2026-09-02T19:22:06.193217 - <none>
+      2026-09-02T19:44:06.415398 - b8fc3a90-945f-49b2-a1e3-6fd3e2052230
+      2026-09-02T19:44:36.688406 - <none>
+      2026-09-02T19:54:26.958371 - 0f8ab67d-9c51-4ae3-a9fe-766837a229fc
+      2026-09-02T20:02:29.600571 - <none>
+    CallAudioWatchdog:
+      Active Sessions:
+        CommSess{uid=11217, created=Sep 2, 2026 7:43:46 PM, attr=phac, , callId=0f8ab67d-9c51-4ae3-a9fe-766837a229fc, duration=1136}
+      Audio sessions Sessions:
+        2026-09-02T10:15:17.245305 - CommSess{uid=11216, created=Sep 2, 2026 10:15:16 AM, attr=phac, , callId=f2d73299-8948-4d88-9ad4-203d7d780cc4, duration=0}
+        2026-09-02T12:18:39.631235 - CommSess{uid=11216, created=Sep 2, 2026 12:18:08 PM, attr=phac, , callId=0b0b7d82-3f41-4dca-822f-17eaad0c1d15, duration=31}
+        2026-09-02T12:24:27.740881 - CommSess{uid=11216, created=Sep 2, 2026 12:23:56 PM, attr=phac, , callId=af15aec2-a4dc-4851-b4a6-8f962cff1908, duration=31}
+        2026-09-02T12:29:23.044921 - CommSess{uid=11216, created=Sep 2, 2026 12:28:52 PM, attr=phac, , callId=a753453a-7f92-4ac2-b533-28c39daacfdb, duration=31}
+        2026-09-02T12:32:32.924831 - CommSess{uid=11216, created=Sep 2, 2026 12:32:01 PM, attr=phac, , callId=73271d42-ed20-4652-9bf9-5606dfcb10b7, duration=31}
+        2026-09-02T12:40:04.387129 - CommSess{uid=11216, created=Sep 2, 2026 12:39:33 PM, attr=phac, , callId=ce9a2304-37ef-4baa-b2be-a12608c88ac2, duration=31}
+        2026-09-02T12:49:17.671083 - CommSess{uid=11216, created=Sep 2, 2026 12:48:46 PM, attr=phac, , callId=eb7cfe09-4830-4f63-ad68-403287a31921, duration=30}
+        2026-09-02T12:50:58.613197 - CommSess{uid=11216, created=Sep 2, 2026 12:50:27 PM, attr=phac, , callId=b7d40630-a7fe-4c18-a815-d72cee82bcf3, duration=30}
+        2026-09-02T12:52:37.608464 - CommSess{uid=11216, created=Sep 2, 2026 12:52:06 PM, attr=phac, , callId=0c7dac6f-c264-44ce-ba15-e31a93f870d6, duration=31}
+        2026-09-02T12:55:55.281198 - CommSess{uid=11216, created=Sep 2, 2026 12:55:23 PM, attr=phac, , callId=bb874ecf-0d25-408c-bfa5-7614512da287, duration=31}
+        2026-09-02T12:58:34.291118 - CommSess{uid=11216, created=Sep 2, 2026 12:58:02 PM, attr=phac, , callId=faac0492-c278-4091-8448-26365484c6b0, duration=31}
+        2026-09-02T12:59:54.811740 - CommSess{uid=11216, created=Sep 2, 2026 12:59:23 PM, attr=phac, , callId=489c5140-018b-4557-8fdd-5e0cd2df0d0c, duration=31}
+        2026-09-02T13:01:33.957690 - CommSess{uid=11216, created=Sep 2, 2026 1:01:02 PM, attr=phac, , callId=2a940ca9-9f1b-430f-8ded-7fd71afeb34c, duration=31}
+        2026-09-02T13:02:41.130525 - CommSess{uid=11216, created=Sep 2, 2026 1:02:39 PM, attr=phac, , callId=1bd3136d-3264-4aa7-b74e-4f56ecb497f4, duration=1}
+        2026-09-02T13:28:05.167320 - CommSess{uid=11216, created=Sep 2, 2026 1:27:34 PM, attr=phac, , callId=e9250256-9d3e-458d-a3f3-ab3497a47cfe, duration=31}
+        2026-09-02T13:41:27.772761 - CommSess{uid=11216, created=Sep 2, 2026 1:40:56 PM, attr=phac, , callId=a6fdb3ef-3a40-4fc8-9b2c-ae091f9f04bd, duration=31}
+        2026-09-02T14:00:11.641482 - CommSess{uid=11216, created=Sep 2, 2026 1:44:44 PM, attr=phac, , callId=36205ddb-5413-4e8e-b79c-0687c533c066, duration=927}
+        2026-09-02T14:27:50.433615 - CommSess{uid=11216, created=Sep 2, 2026 2:27:20 PM, attr=phac, , callId=none, duration=29}
+        2026-09-02T15:50:31.287314 - CommSess{uid=11216, created=Sep 2, 2026 3:50:01 PM, attr=phac, , callId=none, duration=29}
+        2026-09-02T16:07:26.668943 - CommSess{uid=11216, created=Sep 2, 2026 4:06:56 PM, attr=phac, , callId=none, duration=29}
+        2026-09-02T16:29:28.817358 - CommSess{uid=11216, created=Sep 2, 2026 4:29:17 PM, attr=phac, , callId=none, duration=10}
+        2026-09-02T16:44:08.091856 - CommSess{uid=11216, created=Sep 2, 2026 4:43:56 PM, attr=phac, , callId=none, duration=11}
+        2026-09-02T17:01:45.820200 - CommSess{uid=11216, created=Sep 2, 2026 5:01:22 PM, attr=phac, , callId=none, duration=23}
+        2026-09-02T17:04:25.427604 - CommSess{uid=11216, created=Sep 2, 2026 5:04:14 PM, attr=phac, , callId=none, duration=10}
+        2026-09-02T17:12:42.732571 - CommSess{uid=11216, created=Sep 2, 2026 5:12:32 PM, attr=phac, , callId=none, duration=10}
+        2026-09-02T17:14:28.955561 - CommSess{uid=11216, created=Sep 2, 2026 5:14:18 PM, attr=phac, , callId=none, duration=10}
+        2026-09-02T17:16:20.362136 - CommSess{uid=11216, created=Sep 2, 2026 5:16:08 PM, attr=phac, , callId=none, duration=11}
+        2026-09-02T18:27:02.557310 - CommSess{uid=11217, created=Sep 2, 2026 6:16:32 PM, attr=phac, , callId=d67691df-8dbf-4ad6-a8b5-5342235586b9, duration=630}
+        2026-09-02T19:21:24.991436 - CommSess{uid=11217, created=Sep 2, 2026 7:20:54 PM, attr=phac, , callId=ed53fd37-1d6f-4f95-8242-201586af3cc6, duration=30}
+        2026-09-02T19:22:06.209327 - CommSess{uid=11217, created=Sep 2, 2026 7:22:03 PM, attr=phac, , callId=04eda1cc-e90d-433b-9f81-f5cafb3c5ac8, duration=3}
+  PhoneAccountRegistrar: 
+    xmlVersion: 10
+    defaultOutgoing: ComponentInfo{com.android.phone/com.android.services.telephony.TelephonyConnectionService}, 1, UserHandle{0}
+    outgoingPhoneAccountForTelScheme: ComponentInfo{com.android.phone/com.android.services.telephony.TelephonyConnectionService}, 1, UserHandle{0}
+    defaultVoiceSubId: 1
+    simCallManager: null
+    phoneAccounts:
+      [[X] PhoneAccount: ComponentInfo{com.android.phone/com.android.services.telephony.TelephonyConnectionService}, 1, UserHandle{0} Capabilities: CallProvider MultiUser PlaceEmerg SimSub  Audio Routes: BESW Schemes: tel voicemail  Extras: Bundle[{android.telecom.extra.SUPPORTS_VIDEO_CALLING_FALLBACK=true}] GroupId: *** SC Restrictions: [ ]]
+      [[X] PhoneAccount: ComponentInfo{com.google.android.gm/com.google.android.gm}, ***, UserHandle{0} Capabilities: SelfManaged SuppVideo Video TransactOps  Audio Routes: BESW Schemes: tel  Extras: Bundle[{isCoreTelecomAccount=true}] GroupId: *** SC Restrictions: [NONE]]
+      [[X] PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} Capabilities: SelfManaged TransactOps  Audio Routes: BESW Schemes: tel  Extras: Bundle[{isCoreTelecomAccount=true}] GroupId: *** SC Restrictions: [NONE]]
+      [[X] PhoneAccount: ComponentInfo{com.google.android.apps.tachyon/com.google.android.apps.tachyon}, ***, UserHandle{0} Capabilities: SelfManaged SuppVideo Video TransactOps  Audio Routes: BESW Schemes: tel  Extras: Bundle[{isCoreTelecomAccount=true}] GroupId: *** SC Restrictions: [NONE]]
+      [[X] PhoneAccount: ComponentInfo{com.whatsapp/com.whatsapp.calling.telecom.SelfManagedConnectionService}, ***, UserHandle{0} Capabilities: SelfManaged SuppVideo Video  Audio Routes: BESW Schemes: tel  Extras: Bundle[{android.telecom.extra.LOG_SELF_MANAGED_CALLS=false}] GroupId: *** SC Restrictions: [NONE]]
+      test emergency PhoneAccount filter: []
+    localVoicemailTimeouts:
+  Analytics:
+    Call afcb424a-cdab-4c7e-809f-16177461a58c: {
+        startTime: 1788349484462
+        endTime: 1788349503863
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21668
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21674
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21674
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21675
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 1924f460-e9ff-4dae-abd3-454bf684650f: {
+        startTime: 0
+        endTime: 1788148287577
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2285
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 2302
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 2304
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 2304
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call f6703aca-f35a-43ab-9bde-6549a94780e7: {
+        startTime: 0
+        endTime: 1788151460844
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 02187979-f72f-4f62-9aba-64fb571f2fc9: {
+        startTime: 1788161433895
+        endTime: 1788161452529
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 2da01b24-2646-415a-ab8c-04ba440be64e: {
+        startTime: 0
+        endTime: 1788161455647
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2145
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 2143
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 2143
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 2143
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 83ce0710-025d-44cd-aaa4-dce5958fe949: {
+        startTime: 0
+        endTime: 1788148147180
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2292
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 2296
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 2297
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 2296
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call f2d73299-8948-4d88-9ad4-203d7d780cc4: {
+        startTime: 0
+        endTime: 1788336917226
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2378
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 2385
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 2385
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 2385
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 6c9a762e-c433-4bf7-b53a-78c1a3138c94: {
+        startTime: 0
+        endTime: 1788148631582
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2205
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call f90760db-9abb-47e0-9914-d839e68dc145: {
+        startTime: 1788320475683
+        endTime: 1788320493154
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21324
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21316
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21317
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21319
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 36205ddb-5413-4e8e-b79c-0687c533c066: {
+        startTime: 1788350410436
+        endTime: 1788350411623
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 3700
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 3706
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 3705
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 3705
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call d92eadad-37b2-4ea4-8afb-c96dec946b04: {
+        startTime: 1788314048883
+        endTime: 1788314066308
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21842
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21844
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21844
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21844
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 095e4535-74df-40a7-baa8-aa27aed11143: {
+        startTime: 1788311488887
+        endTime: 1788311506405
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21545
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21541
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21540
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21540
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 379b715a-954d-4d60-8265-3273346a33a7: {
+        startTime: 1788314307181
+        endTime: 1788314324508
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21839
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21837
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21838
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21837
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call b7d40630-a7fe-4c18-a815-d72cee82bcf3: {
+        startTime: 0
+        endTime: 1788346258588
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 32693
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 32699
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 32700
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 32699
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call b8fc3a90-945f-49b2-a1e3-6fd3e2052230: {
+        startTime: 1788371046415
+        endTime: 1788371076687
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 51953
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 51956
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 51957
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 51959
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 2df75b38-7305-48f0-8efb-b9a64a1afb7d: {
+        startTime: 0
+        endTime: 1788161092272
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 93c0f379-7b74-47e4-bf78-0937c485c1d3: {
+        startTime: 0
+        endTime: 1788325651540
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33167
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33180
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33180
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33180
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 676b78b0-cbbe-4673-8d4f-00e24c247a7e: {
+        startTime: 1788330707064
+        endTime: 1788330810341
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (UNKNOWN) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 108918
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 108912
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 108910
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 108908
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call ed53fd37-1d6f-4f95-8242-201586af3cc6: {
+        startTime: 0
+        endTime: 1788369684973
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 32211
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 32205
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 32206
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 32205
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 0bbc7fe2-6219-4a0a-98e2-ab02064616c0: {
+        startTime: 0
+        endTime: 1788161111550
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 2a940ca9-9f1b-430f-8ded-7fd71afeb34c: {
+        startTime: 0
+        endTime: 1788346893946
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33178
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33174
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33175
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33174
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 49aafa31-7b90-47f1-b23b-fad57f1d9e3d: {
+        startTime: 1788365795416
+        endTime: 1788365842444
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 52200
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 52203
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 52204
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 52204
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call c44eebcc-f171-4dc6-b5e8-24f5fe8f0e68: {
+        startTime: 0
+        endTime: 1788148486956
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 6345
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 6373
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 6374
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 6374
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call f2e38b47-7dcb-408e-88df-00fc91c16631: {
+        startTime: 1788161425942
+        endTime: 1788161426127
+        direction: OUTGOING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: [ self_mng]
+        callSource: UNSPECIFIED
+    }
+    
+    Call 0c7dac6f-c264-44ce-ba15-e31a93f870d6: {
+        startTime: 0
+        endTime: 1788346357591
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33170
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33153
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33152
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33152
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call cb87b4e4-8547-4b7e-9edb-42ef1a6e0c91: {
+        startTime: 0
+        endTime: 1788161112897
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call a6fdb3ef-3a40-4fc8-9b2c-ae091f9f04bd: {
+        startTime: 0
+        endTime: 1788349287752
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33203
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33206
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33207
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33207
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call f444ffd0-48e0-4cac-a454-b6997c05d415: {
+        startTime: 0
+        endTime: 1788151440612
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 386a6f87-157f-466b-bc15-68ca5eb03305: {
+        startTime: 0
+        endTime: 1788161415277
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 48de4a2f-338d-4d47-a037-8a40349b599c: {
+        startTime: 0
+        endTime: 1788325546237
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 32388
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 32401
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 32402
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 32401
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call f33e7364-709f-46d5-8bdb-b28993b1ef7e: {
+        startTime: 0
+        endTime: 1788311437636
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 32964
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 32974
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 32974
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 32974
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 711db669-74d4-4038-a9f6-f4030992534f: {
+        startTime: 0
+        endTime: 1788161393205
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 24431
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 27762
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 27762
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 27762
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 62479bb5-7c14-47b0-910e-2abfc6cc3a53: {
+        startTime: 1788325729796
+        endTime: 1788325789252
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (UNKNOWN) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 61718
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 61714
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 61711
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 61710
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call eb7cfe09-4830-4f63-ad68-403287a31921: {
+        startTime: 0
+        endTime: 1788346157648
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 32990
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 32995
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 32996
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 32996
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call a753453a-7f92-4ac2-b533-28c39daacfdb: {
+        startTime: 0
+        endTime: 1788344963037
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33049
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33042
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33043
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33043
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 3a424d28-17de-499d-9ca3-859715ee1e72: {
+        startTime: 1788161421468
+        endTime: 1788161421580
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 7790
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33210
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33209
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33210
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call ce9a2304-37ef-4baa-b2be-a12608c88ac2: {
+        startTime: 0
+        endTime: 1788345604364
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33137
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33141
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33142
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33141
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 42c67593-c40f-4f8b-895c-b8ffa1288965: {
+        startTime: 0
+        endTime: 1788148713147
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2282
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 6108
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 6108
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 6108
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call a4493580-03c1-4bbb-b183-8c5e4a905900: {
+        startTime: 0
+        endTime: 1788323076115
+        direction: OUTGOING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 37020
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 37004
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 37003
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 37003
+    ]
+        callProperties: [ self_mng]
+        callSource: UNSPECIFIED
+    }
+    
+    Call 12d7478c-0f76-4d2a-88a2-799438d81c35: {
+        startTime: 0
+        endTime: 1788161090154
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 23705
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 26873
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 26872
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 26871
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 4c6ee190-f71e-426c-8f64-0cbd5aa74432: {
+        startTime: 0
+        endTime: 1788148488986
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call a194ea13-223f-46b1-8566-9f9b19a05e67: {
+        startTime: 0
+        endTime: 1788161395347
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 04eda1cc-e90d-433b-9f81-f5cafb3c5ac8: {
+        startTime: 1788369723883
+        endTime: 1788369726192
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 5091
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 5093
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 5095
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 5096
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call ad419014-fd65-4e38-aa71-ffef49a1252f: {
+        startTime: 1788318158218
+        endTime: 1788318175639
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 23291
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 23294
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 23295
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 23295
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call bb874ecf-0d25-408c-bfa5-7614512da287: {
+        startTime: 0
+        endTime: 1788346555268
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33423
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33417
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33416
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33416
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 396486c0-4b4e-4375-bb41-cfe1ee710875: {
+        startTime: 1788161117792
+        endTime: 1788161117919
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 4792
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 4875
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 4876
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 4876
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 70f97d15-3918-4aab-9f58-68c46fcf0174: {
+        startTime: 1788322478267
+        endTime: 1788322527281
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 52856
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 52851
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 52852
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 52851
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 3a51d18a-1dea-4937-8a55-c5f9082fc2c0: {
+        startTime: 1788161428064
+        endTime: 1788161432613
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 0b0b7d82-3f41-4dca-822f-17eaad0c1d15: {
+        startTime: 0
+        endTime: 1788344319595
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33551
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33549
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33550
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33548
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call a76e068f-1130-4b30-8dd5-77ca3bbe1e34: {
+        startTime: 0
+        endTime: 1788151462248
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call b3af95b1-7814-4fad-aaa3-60c72adf9f7a: {
+        startTime: 1788333162727
+        endTime: 1788333187690
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 30130
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 30131
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 30131
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 30130
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 489c5140-018b-4557-8fdd-5e0cd2df0d0c: {
+        startTime: 0
+        endTime: 1788346794794
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33168
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33163
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33161
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33156
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call e9250256-9d3e-458d-a3f3-ab3497a47cfe: {
+        startTime: 0
+        endTime: 1788348485148
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33107
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33108
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33109
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33112
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call d6262b09-c88a-4f9e-a72f-f8d5ba134dc7: {
+        startTime: 0
+        endTime: 1788148793112
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 4331
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 6226
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 6224
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 6224
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 6835b67d-e545-4d9c-8212-8d7b7291e41b: {
+        startTime: 0
+        endTime: 1788151464857
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2162
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 2157
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 2157
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 2157
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 7f8fc2c2-3789-4213-beb4-ada2a775466d: {
+        startTime: 0
+        endTime: 1788310003020
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 32300
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 32301
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 32301
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 32299
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 504d264b-f2d7-4945-866b-f73d357b1b93: {
+        startTime: 1788161119731
+        endTime: 1788161120453
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 49ee9547-21af-423c-bd71-0c054a3b0bcb: {
+        startTime: 1788328041542
+        endTime: 1788328072624
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33327
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33327
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33333
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33333
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call a3c56904-a7af-4d58-bd49-98b8d9b5c652: {
+        startTime: 0
+        endTime: 1788335436601
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2760
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 2745
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 2747
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 2746
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call b0c937c3-f3b6-4d97-bafc-8a219d4dfa68: {
+        startTime: 0
+        endTime: 1788148716960
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2182
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 9b43a2c5-aa37-4d6b-8a2e-ee804e80f818: {
+        startTime: 0
+        endTime: 1788328394933
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33217
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33216
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33216
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33215
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call b5591f0c-a8db-4952-bf7d-01e9ced57c40: {
+        startTime: 0
+        endTime: 1788148715098
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call b85db21d-2deb-4924-a6d6-5ab42dd73c14: {
+        startTime: 0
+        endTime: 1788148797086
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call ebb72b63-e56a-4d01-b791-8f26c8c95c94: {
+        startTime: 1788313790883
+        endTime: 1788313808381
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21909
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21912
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21917
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21917
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 07f36efa-1a61-4763-8884-5af2a814ac8b: {
+        startTime: 0
+        endTime: 1788324563397
+        direction: OUTGOING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33406
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33406
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33407
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33408
+    ]
+        callProperties: [ self_mng]
+        callSource: UNSPECIFIED
+    }
+    
+    Call 4cdebf87-e7cd-45c6-aa34-21bc70ef210f: {
+        startTime: 0
+        endTime: 1788327530290
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 32105
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 32117
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 32120
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 32118
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 0f8ab67d-9c51-4ae3-a9fe-766837a229fc: {
+        startTime: 1788371666958
+        endTime: 1788372149599
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 501069
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 501073
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 501073
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 501072
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 10163d45-38f3-4a59-b818-debac5affc10: {
+        startTime: 0
+        endTime: 1788332015687
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33077
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33084
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33084
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33084
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 246c42c2-2d15-43f4-a333-c55b7f8cb188: {
+        startTime: 0
+        endTime: 1788148491021
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call cf4b2a80-2f68-4f6d-87e9-fc6812fa27ab: {
+        startTime: 1788319673541
+        endTime: 1788319697186
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 27429
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 27427
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 27427
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 27426
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 8ecdd3c9-c083-4959-bd1f-19945af810e1: {
+        startTime: 1788161423511
+        endTime: 1788161424096
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 73271d42-ed20-4652-9bf9-5606dfcb10b7: {
+        startTime: 0
+        endTime: 1788345152906
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33137
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33139
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33138
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33138
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call e47b7322-cf84-4f9c-b93c-44d3d75ede49: {
+        startTime: 1788322202177
+        endTime: 1788322409965
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 211624
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 211617
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 211617
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 211616
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 09ca1ae0-9930-4bdd-b974-be26f22db2aa: {
+        startTime: 0
+        endTime: 1788148627637
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2331
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 6285
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 6286
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 6286
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 0c8dd7f0-f328-410a-b296-4609f54445b1: {
+        startTime: 1788321135169
+        endTime: 1788321152532
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21210
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21211
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21214
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21214
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 1bd3136d-3264-4aa7-b74e-4f56ecb497f4: {
+        startTime: 0
+        endTime: 1788346961111
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 3700
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 3705
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 3708
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 3710
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call ae62413e-34d5-476d-ae0d-a013b6a5066a: {
+        startTime: 0
+        endTime: 1788161416692
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call b90cc3b8-a190-4e19-9612-5e14e1869b80: {
+        startTime: 0
+        endTime: 1788312394450
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33350
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33355
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33355
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33355
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call af15aec2-a4dc-4851-b4a6-8f962cff1908: {
+        startTime: 0
+        endTime: 1788344667700
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33001
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33009
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33009
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33009
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call faac0492-c278-4091-8448-26365484c6b0: {
+        startTime: 0
+        endTime: 1788346714275
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33317
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33317
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33317
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33317
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 357efcee-2539-497d-9149-fea98320873a: {
+        startTime: 0
+        endTime: 1788161114725
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2137
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 1cd33784-8589-4436-b56d-6ef157d73a22: {
+        startTime: 1788313141923
+        endTime: 1788313159291
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21868
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21871
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21874
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21876
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 295391bf-25e5-42c2-99e4-00390b13f66c: {
+        startTime: 0
+        endTime: 1788323285643
+        direction: OUTGOING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33133
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33128
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33128
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33127
+    ]
+        callProperties: [ self_mng]
+        callSource: UNSPECIFIED
+    }
+    
+    Call 3284f453-fd04-444f-acb5-a51a93ca8153: {
+        startTime: 0
+        endTime: 1788148795206
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 8ce8d9ce-f061-48ca-9674-7048de0d5c27: {
+        startTime: 1788328497439
+        endTime: 1788328534540
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (UNKNOWN) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 42616
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 42612
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 42612
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 42611
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 5a75b8ae-f114-4e7b-aa49-64d194ecaa3d: {
+        startTime: 1788326203483
+        endTime: 1788326248266
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (UNKNOWN) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 46975
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 46974
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 46974
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 46974
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 668dc79b-4c8f-4b38-bb33-9f46fcf14955: {
+        startTime: 1788321536955
+        endTime: 1788321554360
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21195
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21194
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21198
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21198
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 44be13cd-1a94-4a54-a90b-42d385218032: {
+        startTime: 0
+        endTime: 1788317831341
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 32256
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 32259
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 32259
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 32259
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call edb8adc0-9254-4917-a539-b7ac3e0cf909: {
+        startTime: 1788312561235
+        endTime: 1788312578733
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 21924
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 21932
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 21929
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 21928
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call d67691df-8dbf-4ad6-a8b5-5342235586b9: {
+        startTime: 1788366408688
+        endTime: 1788366422540
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 31430
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 31433
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 31433
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 31431
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 4653664b-2af1-47eb-be8b-85bd04ca5180: {
+        startTime: 0
+        endTime: 1788312508956
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 32991
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 32995
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 32995
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 32994
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 2b5ae344-7275-491e-8e34-6980796efdb5: {
+        startTime: 0
+        endTime: 1788335938073
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2374
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 2374
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 2373
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 2373
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call b1c283e8-6c4c-4836-ab68-d5a54ed79e20: {
+        startTime: 0
+        endTime: 1788148629615
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (ERROR) Label: () Description: () Reason: (process died) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 4e7730ae-f8c1-4e70-8298-91b915defe48: {
+        startTime: 0
+        endTime: 1788151438556
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 24601
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 26123
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 26123
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 26121
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Call 2b35d3e5-2f27-4192-ad24-00a14955415a: {
+        startTime: 0
+        endTime: 1788324854957
+        direction: OUTGOING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 33117
+        name: android/com.android.ecm.EnhancedConfirmationCallTrackerService type: 4 is crashed: false service last time in ms: 33123
+        name: android/.net.ConnectivityCallListenerService type: 4 is crashed: false service last time in ms: 33127
+        name: com.google.android.apps.scone/.connectivitymonitor.diagnostic.calltest.DiagnosticInCallService type: 4 is crashed: false service last time in ms: 33128
+    ]
+        callProperties: [ self_mng]
+        callSource: UNSPECIFIED
+    }
+    
+    Call 9b4a8af8-292d-4482-8149-fd0426d7281f: {
+        startTime: 0
+        endTime: 1788161418616
+        direction: INCOMING
+        isAdditionalCall: false
+        isInterrupted: false
+        isEmergency: false
+        callTechnologies: []
+        callTerminationReason: DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]
+        missedReason: []
+        connectionService: 
+        isVideoCall: false
+        inCallServices: [
+        name: com.google.android.bluetooth/com.android.bluetooth.telephony.BluetoothInCallService type: 6 is crashed: false service last time in ms: 2136
+    ]
+        callProperties: []
+        callSource: UNSPECIFIED
+    }
+    
+    Hardware Version: MP1.0
+    Past analytics dumps: 
+  Flag Configurations (framework - com.android.server.telecom): 
+    	[✅]: addCallUriForMissedCalls                     add_call_uri_for_missed_calls
+    	[✅]: allowSystemAppsResolveVoipCalls              allow_system_apps_resolve_voip_calls
+    	[✅]: autoUnholdOnCallFail                         auto_unhold_on_call_fail
+    	[✅]: avoidLoggingMoreThanOnce                     avoid_logging_more_than_once
+    	[❌]: bulkStateUpdateCall                          bulk_state_update_call
+    	[✅]: busDeviceIsASpeaker                          bus_device_is_aspeaker
+    	[✅]: businessCallComposer                         business_call_composer
+    	[✅]: callDetailsIdChanges                         call_details_id_changes
+    	[✅]: callSequencingCallResumeFailed               call_sequencing_call_resume_failed
+    	[❌]: callSequencingMetrics                        call_sequencing_metrics
+    	[✅]: checkDeviceTypeOnRouteChange                 check_device_type_on_route_change
+    	[✅]: cleanupVerifyCallState                       cleanup_verify_call_state
+    	[❌]: conferenceModifyMergeFail                    conference_modify_merge_fail
+    	[✅]: cswServiceInterfaceIsNull                    csw_service_interface_is_null
+    	[✅]: doNotSendCallToNullIcs                       do_not_send_call_to_null_ics
+    	[✅]: dontNotifyMissedCallsWhenNoDialer            dont_notify_missed_calls_when_no_dialer
+    	[✅]: earlyBindingToIncallService                  early_binding_to_incall_service
+    	[✅]: enableCallExceptionAnomReports               enable_call_exception_anom_reports
+    	[✅]: enableIncallServiceClassCheck                enable_incall_service_class_check
+    	[✅]: enforceTransactionalExclusivity              enforce_transactional_exclusivity
+    	[✅]: ensureAudioModeUpdatesOnForegroundCallChange ensure_audio_mode_updates_on_foreground_call_change
+    	[❌]: filterVoipCallLogs                           filter_voip_call_logs
+    	[✅]: getRegisteredPhoneAccounts                   get_registered_phone_accounts
+    	[❌]: hdPlusCall                                   hd_plus_call
+    	[✅]: hearingAidPairFix                            hearing_aid_pair_fix
+    	[✅]: integratedCallLogs                           integrated_call_logs
+    	[✅]: keepBluetoothDevicesCacheUpdated             keep_bluetooth_devices_cache_updated
+    	[✅]: maybeRerouteAudioOnVideoStateChange          maybe_reroute_audio_on_video_state_change
+    	[❌]: notifyAvailableEndpointsOnIcsConnected       notify_available_endpoints_on_ics_connected
+    	[✅]: postponeRegisterToLeaudio                    postpone_register_to_leaudio
+    	[❌]: preventIllegalAudioProcessingExit            prevent_illegal_audio_processing_exit
+    	[✅]: reuseOriginalConnRemoteConfApi               reuse_original_conn_remote_conf_api
+    	[✅]: revertDisconnectingDuringMerge               revert_disconnecting_during_merge
+    	[✅]: selectPhoneAccountBeforeMakingRoom           select_phone_account_before_making_room
+    	[✅]: setMuteState                                 set_mute_state
+    	[✅]: skipFilterPhoneAccountPerformDndFilter       skip_filter_phone_account_perform_dnd_filter
+    	[❌]: supportDisplayNameCallLog                    support_display_name_call_log
+    	[✅]: synchronizeConnState                         synchronize_conn_state
+    	[❌]: telecomAppLabelProxyHsumAware                telecom_app_label_proxy_hsum_aware
+    	[✅]: telecomMainUserInBlockCheck                  telecom_main_user_in_block_check
+    	[✅]: telecomMainUserInGetRespondMessageApp        telecom_main_user_in_get_respond_message_app
+    	[❌]: telecomMainlineBlockedNumbersManager         telecom_mainline_blocked_numbers_manager
+    	[✅]: telecomMetricsSupport                        telecom_metrics_support
+    	[✅]: telecomResolveHiddenDependencies             telecom_resolve_hidden_dependencies
+    	[✅]: telephonyHasDefaultButTelecomDoesNot         telephony_has_default_but_telecom_does_not
+    	[✅]: transactionalCsVerifier                      transactional_cs_verifier
+    	[✅]: transactionalVideoState                      transactional_video_state
+    	[✅]: unregisterUnresolvableAccounts               unregister_unresolvable_accounts
+    	[✅]: useDeviceProvidedSerializedRingerVibration   use_device_provided_serialized_ringer_vibration
+    	[❌]: vibrationAccountsForMainSetting              vibration_accounts_for_main_setting
+    	[✅]: voipAppActionsSupport                        voip_app_actions_support
+    	[❌]: voipDndFocus                                 voip_dnd_focus
+  Flag Configurations (module API - android.telecom): 
+    	[✅]: callConnectedIndicatorPreference    call_connected_indicator_preference
+    	[✅]: callDetailsGetAssociatedUserApi2    call_details_get_associated_user_api2
+    	[✅]: callEndpointRequestedApi            call_endpoint_requested_api
+    	[✅]: changeRttToAudio                    change_rtt_to_audio
+    	[✅]: deprecateSelfManagedCs              deprecate_self_managed_cs
+    	[✅]: enableAudioProcessingUseCase        enable_audio_processing_use_case
+    	[✅]: explicitCallTransfer                explicit_call_transfer
+    	[✅]: getLastKnownCellIdentity            get_last_known_cell_identity
+    	[✅]: integratedCallLogsStage2            integrated_call_logs_stage2
+    	[✅]: isInExternalCall                    is_in_external_call
+    	[✅]: isUsingCrs                          is_using_crs
+    	[✅]: isUsingUnidirectionalVideoService   is_using_unidirectional_video_service
+    	[✅]: isUsingVideoRingback                is_using_video_ringback
+    	[✅]: localVoicemail                      local_voicemail
+    	[❌]: moveGetTtyModeToTelephonyManager    move_get_tty_mode_to_telephony_manager
+    	[✅]: multiPartyAnchorConf                multi_party_anchor_conf
+    	[✅]: phoneAccountChanged                 phone_account_changed
+    	[✅]: placeCallToAlternateNumber          place_call_to_alternate_number
+    	[✅]: promoteExtraDoNotLogCallToSystemApi promote_extra_do_not_log_call_to_system_api
+    	[✅]: releaseIconAsApi                    release_icon_as_api
+    	[✅]: remotelyHostedProperty              remotely_hosted_property
+    	[✅]: sendOriginalNumberOnPlaceCall       send_original_number_on_place_call
+    	[✅]: telecomMainlineApi                  telecom_mainline_api
+  Flag Configurations (module bugfix - com.android.internal.telecom): 
+    [ERROR]
+  TransactionManager: 
+    Pending Transactions:
+    Ongoing Transaction:
+    Completed Transactions:
+      [2026-09-02T18:16:35.415740] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+14] mS)
+        [2026-09-02T18:16:35.415308] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+14] mS)
+      [2026-09-02T18:17:22.443493] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+15] mS)
+      [2026-09-02T18:26:33.102511] IncomingCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+40] mS)
+      [2026-09-02T18:26:48.681781] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+19] mS)
+        [2026-09-02T18:26:48.681439] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+19] mS)
+      [2026-09-02T18:27:02.539346] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+15] mS)
+      [2026-09-02T19:20:54.752685] IncomingCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+57] mS)
+      [2026-09-02T19:21:24.972989] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+22] mS)
+      [2026-09-02T19:22:03.089815] IncomingCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+41] mS)
+      [2026-09-02T19:22:03.881799] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+96] mS)
+        [2026-09-02T19:22:03.881396] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+22] mS)
+        [2026-09-02T19:22:03.880115] CallEventCallbackAckTransaction: (result=[SUCCESS]), (created -> started : [+24] mS), (started -> completed : [+73] mS)
+      [2026-09-02T19:22:04.102314] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+0] mS)
+        [2026-09-02T19:22:04.102006] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+0] mS)
+      [2026-09-02T19:22:06.191761] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+11] mS)
+      [2026-09-02T19:43:46.726645] IncomingCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+64] mS)
+      [2026-09-02T19:44:06.414227] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+81] mS)
+        [2026-09-02T19:44:06.413916] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+16] mS)
+        [2026-09-02T19:44:06.412127] CallEventCallbackAckTransaction: (result=[SUCCESS]), (created -> started : [+18] mS), (started -> completed : [+64] mS)
+      [2026-09-02T19:44:06.662452] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+0] mS)
+        [2026-09-02T19:44:06.662105] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+0] mS)
+      [2026-09-02T19:44:36.686796] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+25] mS)
+      [2026-09-02T19:54:10.521397] IncomingCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+41] mS)
+      [2026-09-02T19:54:26.957434] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+93] mS)
+        [2026-09-02T19:54:26.956950] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+10] mS)
+        [2026-09-02T19:54:26.956059] CallEventCallbackAckTransaction: (result=[SUCCESS]), (created -> started : [+12] mS), (started -> completed : [+82] mS)
+      [2026-09-02T19:54:27.219515] SerialTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+1] mS)
+        [2026-09-02T19:54:27.219144] RequestNewActiveCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+1] mS)
+      [2026-09-02T19:59:52.489879] EndpointChangeTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+681] mS)
+      [2026-09-02T20:02:29.598678] EndCallTransaction: (result=[SUCCESS]), (created -> started : [+0] mS), (started -> completed : [+16] mS)
+  Historical Events:
+    SelfMgd Calle9250256-9d3e-458d-a3f3-ab3497a47cfe [Sep 2, 2026 1:27:34 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      13:27:34.027 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@227371141.sT(cma)@m38
+      13:27:34.027 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@227371141.sT(cma)@m38
+      13:27:34.028 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@227371141.sT(cma)@m38
+      13:27:34.028 - CREATED (null;null):TSI.aC->IncomingCallTransaction@227371141.sT(cma)@m38
+      13:27:34.039 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@227371141.sT(cma)@m38
+      13:27:34.078 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@227371141.sT(cma)@m38
+      13:27:34.089 - GAINED_FGS_DELEGATION
+      13:27:34.137 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@m4I
+      13:28:05.148 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@123361078.sT@m58
+      13:28:05.164 - DESTROYED:TSW.d->EndCallTransaction@123361078.sT->CM.pR@m58
+      13:28:05.169 - LOST_FGS_DELEGATION
+      Timings (average for this call, milliseconds):
+    SelfMgd Calla6fdb3ef-3a40-4fc8-9b2c-ae091f9f04bd [Sep 2, 2026 1:40:56 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      13:40:56.541 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@46509155.sT(cma)@nEU
+      13:40:56.542 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@46509155.sT(cma)@nEU
+      13:40:56.542 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@46509155.sT(cma)@nEU
+      13:40:56.542 - CREATED (null;null):TSI.aC->IncomingCallTransaction@46509155.sT(cma)@nEU
+      13:40:56.548 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@46509155.sT(cma)@nEU
+      13:40:56.575 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@46509155.sT(cma)@nEU
+      13:40:56.578 - GAINED_FGS_DELEGATION
+      13:40:56.636 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@nEY
+      13:41:27.752 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@255389644.sT@nGY
+      13:41:27.769 - DESTROYED:TSW.d->EndCallTransaction@255389644.sT->CM.pR@nGY
+      13:41:27.774 - LOST_FGS_DELEGATION
+      Timings (average for this call, milliseconds):
+    SelfMgd Callafcb424a-cdab-4c7e-809f-16177461a58c [Sep 2, 2026 1:44:44 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      13:44:44.189 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@240536608.sT(cma)@nJk
+      13:44:44.189 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@240536608.sT(cma)@nJk
+      13:44:44.190 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@240536608.sT(cma)@nJk
+      13:44:44.190 - CREATED (null;null):TSI.aC->IncomingCallTransaction@240536608.sT(cma)@nJk
+      13:44:44.196 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@240536608.sT(cma)@nJk
+      13:44:44.222 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@240536608.sT(cma)@nJk
+      13:44:44.227 - GAINED_FGS_DELEGATION
+      13:44:44.252 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@nJo
+      13:44:44.462 - SET_ACTIVE (vCFC: pending action set state):TSW.a->RequestNewActiveCallTransaction@214910651.sT->CSFM.rF->CSFM.oCSR@nKk
+      13:44:44.477 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL):TSW.a->RequestNewActiveCallTransaction@214910651.sT->CSFM.rF->CSFM.oCSR->RequestNewActiveCallTransaction@214910651.sT->SerialTransaction@191907800.sT->SerialTransaction@191907800.sT@nKk
+      13:44:47.875 - AUDIO_ATTR (phac,  -> phac, ap, )
+      13:44:47.967 - AUDIO_ATTR (phac, ap,  -> phac, ap, ar, )
+      13:45:03.863 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@27093053.sT@nMQ
+      13:45:03.881 - DESTROYED:TSW.d->EndCallTransaction@27093053.sT->CM.pR@nMQ
+      13:45:03.887 - LOST_FGS_DELEGATION
+      13:45:04.199 - AUDIO_ATTR (phac, ap,  -> phac, )
+      Timings (average for this call, milliseconds):
+    SelfMgd Call36205ddb-5413-4e8e-b79c-0687c533c066 [Sep 2, 2026 2:00:09 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      14:00:09.913 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@181726744.sT(cma)@neQ
+      14:00:09.914 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@181726744.sT(cma)@neQ
+      14:00:09.915 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@181726744.sT(cma)@neQ
+      14:00:09.915 - CREATED (null;null):TSI.aC->IncomingCallTransaction@181726744.sT(cma)@neQ
+      14:00:09.921 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@181726744.sT(cma)@neQ
+      14:00:09.959 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@181726744.sT(cma)@neQ
+      14:00:09.960 - GAINED_FGS_DELEGATION
+      14:00:09.979 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@neU
+      14:00:10.436 - SET_ACTIVE (vCFC: pending action set state):TSW.a->RequestNewActiveCallTransaction@201075418.sT->CSFM.rF->CSFM.oCSR@nfo
+      14:00:10.448 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL):TSW.a->RequestNewActiveCallTransaction@201075418.sT->CSFM.rF->CSFM.oCSR->RequestNewActiveCallTransaction@201075418.sT->SerialTransaction@235461387.sT->SerialTransaction@235461387.sT@nfo
+      14:00:11.623 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@191443774.sT@ngg
+      14:00:11.638 - DESTROYED:TSW.d->EndCallTransaction@191443774.sT->CM.pR@ngg
+      14:00:11.643 - LOST_FGS_DELEGATION
+      Timings (average for this call, milliseconds):
+    SelfMgd Call49aafa31-7b90-47f1-b23b-fad57f1d9e3d [Sep 2, 2026 6:16:32 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      18:16:32.234 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@256903515.sT(cma)@rJk
+      18:16:32.234 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@256903515.sT(cma)@rJk
+      18:16:32.234 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@256903515.sT(cma)@rJk
+      18:16:32.235 - CREATED (null;null):TSI.aC->IncomingCallTransaction@256903515.sT(cma)@rJk
+      18:16:32.247 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@256903515.sT(cma)@rJk
+      18:16:32.269 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@256903515.sT(cma)@rJk
+      18:16:32.277 - GAINED_FGS_DELEGATION
+      18:16:32.325 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@rJo
+      18:16:35.416 - SET_ACTIVE (vCFC: pending action set state):TSW.a->RequestNewActiveCallTransaction@70591711.sT->CSFM.rF->CSFM.oCSR@rLU
+      18:16:35.430 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL):TSW.a->RequestNewActiveCallTransaction@70591711.sT->CSFM.rF->CSFM.oCSR->RequestNewActiveCallTransaction@70591711.sT->SerialTransaction@257348908.sT->SerialTransaction@257348908.sT@rLU
+      18:16:39.501 - AUDIO_ATTR (phac,  -> phac, ap, )
+      18:16:39.589 - AUDIO_ATTR (phac, ap,  -> phac, ap, ar, )
+      18:17:22.444 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@209476163.sT@rM4
+      18:17:22.459 - DESTROYED:TSW.d->EndCallTransaction@209476163.sT->CM.pR@rM4
+      18:17:22.463 - LOST_FGS_DELEGATION
+      18:17:22.645 - AUDIO_ATTR (phac, ap,  -> phac, )
+      Timings (average for this call, milliseconds):
+    SelfMgd Calld67691df-8dbf-4ad6-a8b5-5342235586b9 [Sep 2, 2026 6:26:33 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      18:26:33.105 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@123595426.sT(cma)@rUw
+      18:26:33.105 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@123595426.sT(cma)@rUw
+      18:26:33.105 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@123595426.sT(cma)@rUw
+      18:26:33.105 - CREATED (null;null):TSI.aC->IncomingCallTransaction@123595426.sT(cma)@rUw
+      18:26:33.111 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@123595426.sT(cma)@rUw
+      18:26:33.140 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@123595426.sT(cma)@rUw
+      18:26:33.142 - GAINED_FGS_DELEGATION
+      18:26:33.177 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@rU0
+      18:26:48.688 - SET_ACTIVE (vCFC: pending action set state):TSW.a->RequestNewActiveCallTransaction@237906654.sT->CSFM.rF->CSFM.oCSR@rWs
+      18:26:48.701 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL):TSW.a->RequestNewActiveCallTransaction@237906654.sT->CSFM.rF->CSFM.oCSR->RequestNewActiveCallTransaction@237906654.sT->SerialTransaction@7083199.sT->SerialTransaction@7083199.sT@rWs
+      18:27:02.540 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@27502918.sT@rXg
+      18:27:02.555 - DESTROYED:TSW.d->EndCallTransaction@27502918.sT->CM.pR@rXg
+      18:27:02.558 - LOST_FGS_DELEGATION
+      Timings (average for this call, milliseconds):
+    SelfMgd Called53fd37-1d6f-4f95-8242-201586af3cc6 [Sep 2, 2026 7:20:54 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      19:20:54.755 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@147625977.sT(cma)@sLE
+      19:20:54.755 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@147625977.sT(cma)@sLE
+      19:20:54.756 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@147625977.sT(cma)@sLE
+      19:20:54.756 - CREATED (null;null):TSI.aC->IncomingCallTransaction@147625977.sT(cma)@sLE
+      19:20:54.762 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@147625977.sT(cma)@sLE
+      19:20:54.805 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@147625977.sT(cma)@sLE
+      19:20:54.811 - GAINED_FGS_DELEGATION
+      19:20:54.885 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@sLI
+      19:21:24.973 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (REJECTED) Label: () Description: () Reason: (overrode cause in EndCallTransaction) Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@207050920.sT@sNI
+      19:21:24.987 - DESTROYED:TSW.d->EndCallTransaction@207050920.sT->CM.pR@sNI
+      19:21:24.993 - LOST_FGS_DELEGATION
+      Timings (average for this call, milliseconds):
+    SelfMgd Call04eda1cc-e90d-433b-9f81-f5cafb3c5ac8 [Sep 2, 2026 7:22:03 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      19:22:03.092 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@112526837.sT(cma)@sOQ
+      19:22:03.092 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@112526837.sT(cma)@sOQ
+      19:22:03.092 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@112526837.sT(cma)@sOQ
+      19:22:03.093 - CREATED (null;null):TSI.aC->IncomingCallTransaction@112526837.sT(cma)@sOQ
+      19:22:03.100 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@112526837.sT(cma)@sOQ
+      19:22:03.127 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@112526837.sT(cma)@sOQ
+      19:22:03.128 - GAINED_FGS_DELEGATION
+      19:22:03.156 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@sOU
+      19:22:03.879 - REQUEST_ACCEPT:TSI.aRC(a)@sP0
+      19:22:03.883 - SET_ACTIVE (vCFC: pending action set state):TSI.aRC->TSW.oA->RequestNewActiveCallTransaction@178584724.sT->CSFM.rF->CSFM.oCSR(a)@sP0
+      19:22:03.978 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL)
+      19:22:06.192 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@180572741.sT@sQ0
+      19:22:06.205 - DESTROYED:TSW.d->EndCallTransaction@180572741.sT->CM.pR@sQ0
+      19:22:06.212 - LOST_FGS_DELEGATION
+      Timings (average for this call, milliseconds):
+        accept: 4.00
+    SelfMgd Callb8fc3a90-945f-49b2-a1e3-6fd3e2052230 [Sep 2, 2026 7:43:46 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      19:43:46.729 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@114572026.sT(cma)@snY
+      19:43:46.729 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@114572026.sT(cma)@snY
+      19:43:46.729 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@114572026.sT(cma)@snY
+      19:43:46.729 - CREATED (null;null):TSI.aC->IncomingCallTransaction@114572026.sT(cma)@snY
+      19:43:46.735 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@114572026.sT(cma)@snY
+      19:43:46.762 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@114572026.sT(cma)@snY
+      19:43:46.765 - GAINED_FGS_DELEGATION
+      19:43:46.793 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@snc
+      19:44:06.411 - REQUEST_ACCEPT:TSI.aRC(a)@spM
+      19:44:06.415 - SET_ACTIVE (vCFC: pending action set state):TSI.aRC->TSW.oA->RequestNewActiveCallTransaction@47825412.sT->CSFM.rF->CSFM.oCSR(a)@spM
+      19:44:06.495 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL)
+      19:44:08.560 - AUDIO_ATTR (phac,  -> phac, ap, )
+      19:44:08.644 - AUDIO_ATTR (phac, ap,  -> phac, ap, ar, )
+      19:44:36.687 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@67908597.sT@sqk
+      19:44:36.701 - DESTROYED:TSW.d->EndCallTransaction@67908597.sT->CM.pR@sqk
+      19:44:36.711 - LOST_FGS_DELEGATION
+      19:44:37.009 - AUDIO_ATTR (phac, ap,  -> phac, )
+      Timings (average for this call, milliseconds):
+        accept: 4.00
+    SelfMgd Call0f8ab67d-9c51-4ae3-a9fe-766837a229fc [Sep 2, 2026 7:54:10 PM](MT - incoming)(User=UserHandle{0})
+    	>>>Target PhoneAccount: ComponentInfo{com.mknoon.app/com.mknoon.app}, ***, UserHandle{0} (MKnoon)
+    	To address: sip:****** Verstat: not Presentation: Allowed
+      19:54:10.524 - PROPERTY_CHANGE (Current: [[ self_mng]], Removed [[]], Added [[ self_mng]]):TSI.aC->IncomingCallTransaction@193916587.sT(cma)@szE
+      19:54:10.524 - CAPABILITY_CHANGE (Current: [[ hld sup_hld]], Removed [[]], Added [[ hld sup_hld]]):TSI.aC->IncomingCallTransaction@193916587.sT(cma)@szE
+      19:54:10.524 - SET_VOIP_MODE (Y):TSI.aC->IncomingCallTransaction@193916587.sT(cma)@szE
+      19:54:10.525 - CREATED (null;null):TSI.aC->IncomingCallTransaction@193916587.sT(cma)@szE
+      19:54:10.529 - SET_RINGING (explicitly set new incoming to ringing):TSI.aC->IncomingCallTransaction@193916587.sT(cma)@szE
+      19:54:10.559 - AUDIO_ATTR (phac, ):TSI.aC->IncomingCallTransaction@193916587.sT(cma)@szE
+      19:54:10.562 - GAINED_FGS_DELEGATION
+      19:54:10.598 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_EARPIECE, Address=invalid, HA Pair Device=invalid] (active=true)):ICSBC.oSC->CAMSM.pM_2002->CARC.pM_SWITCH_FOCUS->CARC.pM_EXIT_PENDING_ROUTE(cgab)@szI
+      19:54:26.955 - REQUEST_ACCEPT:TSI.aRC(a)@s04
+      19:54:26.958 - SET_ACTIVE (vCFC: pending action set state):TSI.aRC->TSW.oA->RequestNewActiveCallTransaction@234482243.sT->CSFM.rF->CSFM.oCSR(a)@s04
+      19:54:27.051 - VIDEO_STATE_CHANGED (CallAttributes.AUDIO_CALL)
+      19:54:28.778 - AUDIO_ATTR (phac,  -> phac, ap, )
+      19:54:28.855 - AUDIO_ATTR (phac, ap,  -> phac, ap, ar, )
+      19:59:53.161 - AUDIO_ROUTE (Entering audio route: AudioRoute[Type=TYPE_SPEAKER, Address=invalid, HA Pair Device=invalid] (active=true)):CARC.oCDC->CARC.pM_SPEAKER_ON->CARC.pM_EXIT_PENDING_ROUTE@s6A
+      20:02:29.599 - SET_DISCONNECTED (disconnected set explicitly> DisconnectCause [ Code: (LOCAL) Label: () Description: () Reason: () Tone: (-1)  TelephonyCause: 36/65535 ImsReasonInfo: null]):TSW.d->EndCallTransaction@242147054.sT@s8k
+      20:02:29.616 - DESTROYED:TSW.d->EndCallTransaction@242147054.sT->CM.pR@s8k
+      20:02:29.620 - LOST_FGS_DELEGATION
+      Timings (average for this call, milliseconds):
+        accept: 3.00

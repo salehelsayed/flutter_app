@@ -366,6 +366,21 @@
       ]
     },
     {
+      "path": "integration_test/scripts/run_production_audio_call_sims.dart",
+      "owner": "call / Sims external fixture wrapper",
+      "reason": "Plan 399 prepares and tears down one local production relay/coturn fixture and runs the Pion known-Opus oracle before central build preparation and manifest execution.",
+      "condition": "Remove only with the production audio-call capability or an equivalent external-state-safe relay/coturn/oracle setup owner.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "command-argument",
+          "source": "scripts/test/production_audio_call_fixture_adapter_contract_test.sh",
+          "option": "dart",
+          "target": "integration_test/scripts/run_production_audio_call_sims.dart"
+        }
+      ]
+    },
+    {
       "path": "integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart",
       "owner": "QA / release",
       "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
@@ -616,6 +631,20 @@
   ],
   "declarations": [
     {
+      "path": "lib/core/database/helpers/call_history_db_helpers.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
       "path": "lib/core/debug/smoke_test_runner.dart",
       "rootKinds": [],
       "disposition": "retained-unresolved",
@@ -771,6 +800,412 @@
       "owner": "DTR program / owning feature",
       "reason": "Current source is reachable only from a computed convention test/integration origin.",
       "condition": "Revisit only in the owning downstream DTR plan with replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/app/bootstrap/call_signaling_composition.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/app/bootstrap/production_call_signaling_graph.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/application/call_cleanup_coordinator.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/application/call_coordinator.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/application/call_endpoint_resolver.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/application/call_signaling_service.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/application/call_history_projector.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/application/call_network_gate.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/application/call_route_diagnostics.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/application/voice_call_feature_flags.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/application/handle_incoming_call_signal.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/data/call_history_conversation_timeline_source.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/data/call_history_repository.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/data/call_history_repository_impl.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/domain/call_end_reason.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/domain/call_engine.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/domain/call_event.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/domain/call_id.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/domain/call_session_snapshot.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/domain/call_signal.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/domain/call_state.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/infrastructure/call_authority_client.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/infrastructure/call_mailbox_client.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/infrastructure/call_signaling_runtime.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/infrastructure/flutter_webrtc_call_engine.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/infrastructure/call_trusted_roster_provider.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/infrastructure/p2p_call_transport.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/infrastructure/secure_call_envelope_codec.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/features/call/infrastructure/webrtc_types.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "UI-24 Audio Call / VC2 rollout",
+      "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
+      "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
       "evidence": [
         {
           "kind": "computed-origin",
@@ -1229,6 +1664,10 @@
       "rootKind": "vm-callback"
     },
     {
+      "id": "callback.android.headless-call-admission",
+      "rootKind": "vm-callback"
+    },
+    {
       "id": "callback.flutter-test-config",
       "rootKind": "convention-callback"
     },
@@ -1274,6 +1713,10 @@
     },
     {
       "id": "tooling.android-fixed-wake-recovery-staging-wrapper",
+      "rootKind": "tooling"
+    },
+    {
+      "id": "tooling.android-production-audio-call-staging-wrapper",
       "rootKind": "tooling"
     },
     {
@@ -1350,6 +1793,22 @@
       ]
     },
     {
+      "id": "tooling.android-production-audio-call-staging-wrapper",
+      "path": "integration_test/scripts/run_production_audio_call_sims.dart",
+      "rootKind": "tooling",
+      "owner": "call / Sims external fixture wrapper",
+      "reason": "Plan 399 wraps the inner manifest row with one ephemeral local production relay/coturn fixture and a Pion known-Opus preflight.",
+      "condition": "Remove only with the production audio-call capability or an equivalent external-state-safe relay/coturn/oracle setup owner.",
+      "evidence": [
+        {
+          "kind": "command-argument",
+          "source": "scripts/test/production_audio_call_fixture_adapter_contract_test.sh",
+          "option": "dart",
+          "target": "integration_test/scripts/run_production_audio_call_sims.dart"
+        }
+      ]
+    },
+    {
       "id": "callback.android.canonical-runtime-h0-probe",
       "path": "lib/main.dart",
       "rootKind": "vm-callback",
@@ -1415,6 +1874,29 @@
           "source": "android/app/src/main/kotlin/com/mknoon/app/HeadlessCanonicalRecoveryWorker.kt",
           "callee": "DartExecutor.DartEntrypoint",
           "argument": "androidHeadlessCanonicalRecoveryMain"
+        }
+      ]
+    },
+    {
+      "id": "callback.android.headless-call-admission",
+      "path": "lib/main.dart",
+      "rootKind": "vm-callback",
+      "owner": "VC2-04 / Android call admission",
+      "reason": "The WorkManager call-admission engine launches this pragma-protected non-UI entrypoint by exact DartEntrypoint name.",
+      "condition": "Remove only with the Android headless call-admission worker and equivalent fail-closed authenticated presentation protocol.",
+      "evidence": [
+        {
+          "kind": "dart-annotation",
+          "source": "lib/main.dart",
+          "symbol": "androidHeadlessCallAdmissionMain",
+          "annotation": "pragma",
+          "value": "vm:entry-point"
+        },
+        {
+          "kind": "source-call-token",
+          "source": "android/app/src/main/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorker.kt",
+          "callee": "DartExecutor.DartEntrypoint",
+          "argument": "androidHeadlessCallAdmissionMain"
         }
       ]
     },

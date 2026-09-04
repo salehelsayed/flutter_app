@@ -1,0 +1,12 @@
+{
+  "stepId": "ui24-ios-callee-contact",
+  "add_contacts": [
+    {
+      "qrPayload": "{\"ns\":\"12D3KooWP3dYW5q8zCKsvPnqVf3xNm4G6mqgk26o78yvU7FRKoKQ\",\"pk\":\"xI3dgwdwm8CiJ0Vr2pVqEB9tihN+FR4AFx7745wMMbM=\",\"rv\":\"/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g\",\"sig\":\"QEjskCKnDiD4cMu8K1Dan9378spoNq25lnxevaHrh8BmXMe3rCdLlvskCrGs+wGW41X7ZNQA6K2PwVOPcuZnCg==\",\"ts\":\"2026-09-03T17:42:34.839977Z\",\"un\":\"pixel\"}",
+      "mlKemPublicKey": "yJcTfTBA4ns15qFnyktW4JkYSqqWICdyTvKnq9eDU8wXw+A2NaRHYsZkD5eiW7cIU+N0+jFHUIErUReTrZUKlbQwM0sMImIjBsOKnOsVlnxci4VNAqgem+twfpFswxU4eSVNkoSFgolE7boQHZHHFykvWnuzixh5oGHMimnCnOwzPEUwL6BLY5ArwLsPYoSsu5OvaIUTqYPOL9WSS5cBEeV7R+gJ1wg2dYvIF5WFf5PNvDWQOJMfvMk3EdlRkdirS1qKXTBxxRLBvWzEz9yXQAqQp+rPBsEKO9A1zmE4NiSaBYEApNy+w+mXM9mFc7cew9S+JKM6xbhQavFoldZongCIxIJ1MIcGpTYmkAte63suwVo2nTZD2bOk+INRgxDPE5qB3dYcpSGHcPhfmfFZxRoh4yY7QAc+a7YB4Itn3tEtU2pJ/BM5K1w5I/k2c0k9eDeZ2SYIhxYGdYAtbXqhZ6JmVwoaWsBenBW+DyfOVbR3CiU1+aZvy/wUtqMSjXwGvJFZZYAAuIfGC5aj9Wt7lig+XZuoPjOm8NUAkxqQsxil1UCuLymAr3xG4KiMX4kY9sibMiRQ2ldrdQRD+fsFZ8sBaftq6MhGbdN6nsBhGnyeUVEJk9KFfSTMHYlLfEu8hrCuYqFB3jy8KfZsS2x5Vdo6XOY71cee7BYMQQMyzFaN+ad1WOdQUQxOdkm64UEgXJqafOlq8NFT/IK6s+uRbwY9SlydC0HMPqTLpMiOaRG+NbhkkrRsGyFhZrXKwpBgI0QmLiWL0wMbTYWxlnds/VyxVsEJwpARx0oExEpJgwtaZ7M6sTdfE+S6W5Rj3jCJRTayuBF0Eje/+AQtdChJwyeTTRI5n3BqCoWYtgaRgqAb8ZsGYeF7Ladb3BMesPkce5rFf1tY4mJHH2an0WhI+PM3piOoWMYGp3dtCJmMZ9awjuF6F8M1oyE6XrmUi1yezoM6ukEjjOsZkqSv1JRNdsnGZnK7Y4JBR7K+8AqJFjVmetOfZhO4GdobuYQM9JNOgWkHnQKf6+IhCrydNzMF3nVSO1iHJroFlrlGBfsuEzU+Y1ya4+xHV0CRcjiWjCJvD/RyILyYrrJLQuOJ8XcIVzISYimNRdGPPzB23kgCdkiLqqtDZ/bNQ3QE1mG6FNcbRcyGceINR9EgwERf8CMG/xx+JGlICel4iqGZRSmEfVSDrlyRKxxtiCiS2lVGD3qUD/oG5pqsMpxERUrFqdlM0hqEVMEbNJu8KtCisWWiJcsHsro2fzmDgYIwubEVnAqRjTF8Blw2LXW4p0a1sDyt9jscNDFhx9NCSlcpscwiSzFNtsrCM8ajqqGATJoH5ahjVGKTueI9CEC+7Kqh0FGAOhmu74h0ROhSFqlp4vnMcBYdaexpIsQ2EhhvvXpgenBHYvZ8GgRPJugIQ8hKgnNhH8CbtAemXttYU0Wc4UxFv5lQhvKMagdW48x9jGyuc3lx28DPP1Gov/EtOVcIvuCxT5RqSRRcLkkQbOIfhRecmjxLy7JfgCN74RQxJgNvUEqFrWD2/x1hqXSN6ioCYYD1cVO6+gC1BGEcD3MaXs/A28o="
+    }
+  ],
+  "open_conversation_with_peer_id": "12D3KooWP3dYW5q8zCKsvPnqVf3xNm4G6mqgk26o78yvU7FRKoKQ",
+  "send_contact_requests_for_added_contacts": true,
+  "require_exact_call_wake_receipt": false
+}

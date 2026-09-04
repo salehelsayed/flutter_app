@@ -1022,7 +1022,7 @@ func TestRelayNotificationClosure_GroupMediaBlobCustody(t *testing.T) {
 	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
 	presence := NewPresenceStore()
 	mediaEnv.server.SetStreamHandler(InboxProtocol, func(stream network.Stream) {
-		HandleInboxStream(stream, inbox, groupInbox, mediaEnv.server, presence)
+		HandleInboxStream(stream, inbox, groupInbox, mediaEnv.server, presence, nil)
 	})
 	inboxEnv := &inboxStreamEnv{
 		server:    mediaEnv.server,

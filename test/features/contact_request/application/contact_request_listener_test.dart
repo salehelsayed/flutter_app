@@ -10,6 +10,8 @@ import 'package:flutter_app/features/contact_request/application/contact_auto_ad
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
+import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -91,6 +93,7 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
       existingRequest = null;
     }
   }
+
   /// Seedable durable pending rows for the replay-on-attach tests.
   List<ContactRequestModel> pendingRequests = [];
   bool throwOnGetPendingRequests = false;
@@ -105,6 +108,36 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
 
   @override
   Future<void> updateStatus(String peerId, ContactRequestStatus status) async {}
+}
+
+class _FakeReceivedCallWakeHandleStore implements ReceivedCallWakeHandleStore {
+  final Map<String, CallWakeHandleGrant> grants =
+      <String, CallWakeHandleGrant>{};
+
+  @override
+  Future<CallWakeHandleGrant?> readForIssuer(
+    String issuerAccountPeerId,
+  ) async => grants[issuerAccountPeerId];
+
+  @override
+  Future<bool> storeIfStrictlyNewer({
+    required String issuerAccountPeerId,
+    required CallWakeHandleGrant grant,
+    required int nowMs,
+  }) async {
+    if (!grant.isValidAt(nowMs)) return false;
+    final prior = grants[issuerAccountPeerId];
+    if (prior != null && !grant.isStrictlyNewerThan(prior)) return false;
+    grants[issuerAccountPeerId] = grant;
+    return true;
+  }
+
+  @override
+  Future<void> removeForIssuer(String issuerAccountPeerId) async =>
+      grants.remove(issuerAccountPeerId);
+
+  @override
+  Future<void> clear() async => grants.clear();
 }
 
 class _FakeContactRepository implements ContactRepository {
@@ -807,6 +840,7 @@ void main() {
       String? from,
       String? mlkem,
       String? msgId,
+      CallWakeHandleGrant? cwh,
     }) {
       final payload = SplayTreeMap<String, dynamic>.from({
         'mlkem': ?mlkem,
@@ -816,6 +850,7 @@ void main() {
         'sig': 'fakeSigBase64ForTesting',
         'ts': '2024-06-15T12:00:00Z',
         'un': 'TestUser',
+        if (cwh != null) 'cwh': cwh.toCanonicalMap(),
       });
 
       final id = msgId ?? 'v2-msg-${DateTime.now().microsecondsSinceEpoch}';
@@ -865,6 +900,42 @@ void main() {
       expect(requests.length, equals(1));
       expect(requests.first.peerId, equals(_testPeerId));
 
+      v2Listener.dispose();
+    });
+
+    test('passes verified v2 cwh into the received call-only store', () async {
+      final store = _FakeReceivedCallWakeHandleStore();
+      final refreshed = Completer<void>();
+      var refreshes = 0;
+      final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+      final grant = CallWakeHandleGrant(
+        handle: '0123456789abcdef0123456789abcdef',
+        recipientDevicePeerId: '12D3KooWRemoteCalleeDevice1',
+        deviceKeyEpoch: 2,
+        generation: 4,
+        issuedAtMs: nowMs - 60_000,
+        expiresAtMs: nowMs + 60_000,
+      );
+      final v2Listener = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+        receivedCallWakeHandleStore: store,
+        onCallWakeHandleStored: () async {
+          refreshes += 1;
+          refreshed.complete();
+        },
+      );
+      v2Listener.start();
+
+      streamController.add(makeV2Message(cwh: grant));
+      await refreshed.future.timeout(const Duration(seconds: 1));
+
+      expect(await store.readForIssuer(_testPeerId), grant);
+      expect(refreshes, 1);
       v2Listener.dispose();
     });
 
@@ -1100,7 +1171,10 @@ void main() {
 
         expect(requests, isEmpty);
         expect(recoveredIntros, hasLength(1));
-        expect(recoveredIntros.single.status, IntroductionOverallStatus.mutualAccepted);
+        expect(
+          recoveredIntros.single.status,
+          IntroductionOverallStatus.mutualAccepted,
+        );
         expect(updates, hasLength(1));
         expect(updates.single.peerId, _testPeerId);
         expect(updates.single.mlKemPublicKey, 'recovered-mlkem-key');
@@ -1249,10 +1323,28 @@ void main() {
   // 171: tap-free auto-add + deferred-ack confirm
   // -------------------------------------------------------------------------
   group('171 auto-add + confirm', () {
+    CallWakeHandleGrant wakeGrant({int generation = 1}) {
+      final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+      return CallWakeHandleGrant(
+        handle: generation == 1
+            ? '0123456789abcdef0123456789abcdef'
+            : '11111111111111111111111111111111',
+        recipientDevicePeerId: '12D3KooWRemoteCalleeDevice1',
+        deviceKeyEpoch: 2,
+        generation: generation,
+        issuedAtMs: nowMs - 60_000,
+        expiresAtMs: nowMs + 60_000,
+      );
+    }
+
     ChatMessage makeV2({
       String peerId = _testPeerId,
       String? msgId,
       String? confirmNonce,
+      String? from,
+      String intent = 'new_request',
+      CallWakeHandleGrant? callWakeHandle,
+      String? callWakeReceiptChallenge,
     }) {
       final payload = SplayTreeMap<String, dynamic>.from({
         'ns': peerId,
@@ -1261,14 +1353,17 @@ void main() {
         'sig': 'fakeSigBase64ForTesting',
         'ts': '2024-06-15T12:00:00Z',
         'un': 'TestUser',
+        if (callWakeHandle != null) 'cwh': callWakeHandle.toCanonicalMap(),
+        'cwr': ?callWakeReceiptChallenge,
       });
       bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
       return ChatMessage(
-        from: peerId,
+        from: from ?? peerId,
         to: _testOwnPeerId,
         content: jsonEncode({
           'type': 'contact_request',
           'version': '2',
+          'intent': intent,
           'msgId': msgId ?? 'v2-${DateTime.now().microsecondsSinceEpoch}',
           'ts': DateTime.now().toUtc().toIso8601String(),
           'encrypted': {
@@ -1286,6 +1381,8 @@ void main() {
     ContactRequestListener makeListener({
       Future<AcceptContactRequestResult> Function(String peerId)? autoAccept,
       ContactAutoAddRateLimiter? limiter,
+      ReceivedCallWakeHandleStore? receivedCallWakeHandleStore,
+      Future<void> Function(String peerId)? requestReciprocalCallWakeRecovery,
     }) {
       return ContactRequestListener(
         contactRequestStream: streamController.stream,
@@ -1296,23 +1393,288 @@ void main() {
         getOwnPrivateKey: () async => 'ownPrivKeyBase64',
         autoAcceptAndReciprocate: autoAccept,
         autoAddRateLimiter: limiter,
+        receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+        requestReciprocalCallWakeRecovery: requestReciprocalCallWakeRecovery,
       );
     }
 
     // TC-03: live deferred contact_request confirms ok:true after commit.
-    test('confirms deferred contact_request with ok:true after commit', () async {
-      final l = makeListener(
-        autoAccept: (_) async => AcceptContactRequestResult.success,
-      );
-      addTearDown(l.dispose);
+    test(
+      'confirms deferred contact_request with ok:true after commit',
+      () async {
+        final l = makeListener(
+          autoAccept: (_) async => AcceptContactRequestResult.success,
+        );
+        addTearDown(l.dispose);
 
-      await l.processIncomingMessage(makeV2(confirmNonce: 'nonce-abc'));
+        await l.processIncomingMessage(makeV2(confirmNonce: 'nonce-abc'));
 
-      final confirms = bridge.confirmRequests;
-      expect(confirms, hasLength(1));
-      expect(confirms.single['payload']['nonce'], equals('nonce-abc'));
-      expect(confirms.single['payload']['ok'], isTrue);
-    });
+        final confirms = bridge.confirmRequests;
+        expect(confirms, hasLength(1));
+        expect(confirms.single['payload']['nonce'], equals('nonce-abc'));
+        expect(confirms.single['payload']['ok'], isTrue);
+      },
+    );
+
+    test(
+      'confirms the exact durable wake grant with its versioned receipt',
+      () async {
+        const challenge = '123e4567-e89b-42d3-a456-426614174000';
+        final store = _FakeReceivedCallWakeHandleStore();
+        final grant = wakeGrant();
+        final l = makeListener(receivedCallWakeHandleStore: store);
+        addTearDown(l.dispose);
+
+        await l.processIncomingMessage(
+          makeV2(
+            confirmNonce: 'nonce-cwr',
+            callWakeHandle: grant,
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+
+        expect(await store.readForIssuer(_testPeerId), grant);
+        final confirms = bridge.confirmRequests;
+        expect(confirms, hasLength(1));
+        expect(confirms.single['payload'], <String, dynamic>{
+          'nonce': 'nonce-cwr',
+          'ok': true,
+          'callWakeReceipt': challenge,
+        });
+      },
+    );
+
+    test(
+      'withholds direct ACK when the signed wake grant is not exact',
+      () async {
+        const challenge = '123e4567-e89b-42d3-a456-426614174000';
+        final store = _FakeReceivedCallWakeHandleStore();
+        store.grants[_testPeerId] = wakeGrant(generation: 2);
+        final l = makeListener(receivedCallWakeHandleStore: store);
+        addTearDown(l.dispose);
+
+        await l.processIncomingMessage(
+          makeV2(
+            confirmNonce: 'nonce-stale-cwr',
+            callWakeHandle: wakeGrant(generation: 1),
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+
+        final confirms = bridge.confirmRequests;
+        expect(confirms, hasLength(1));
+        expect(confirms.single['payload'], <String, dynamic>{
+          'nonce': 'nonce-stale-cwr',
+          'ok': false,
+        });
+      },
+    );
+
+    test(
+      'ACKs verified key-exchange retry before requesting reciprocal wake recovery once',
+      () async {
+        const challenge = '123e4567-e89b-42d3-a456-426614174000';
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+          ),
+        );
+        final store = _FakeReceivedCallWakeHandleStore();
+        final order = <String>[];
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        bridge.onSend = (request) {
+          if (request['cmd'] == 'message:confirm') order.add('ack');
+        };
+        final l = makeListener(
+          receivedCallWakeHandleStore: store,
+          requestReciprocalCallWakeRecovery: (peerId) async {
+            order.add('recover:$peerId');
+          },
+        );
+        addTearDown(l.dispose);
+
+        final result = await l.processIncomingMessage(
+          makeV2(
+            confirmNonce: 'nonce-recovery',
+            from: 'unknown',
+            intent: 'key_exchange_retry',
+            callWakeHandle: wakeGrant(),
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+
+        expect(result, HandleMessageResult.alreadyContact);
+        expect(order, ['ack', 'recover:$_testPeerId']);
+        expect(bridge.confirmRequests, hasLength(1));
+        expect(bridge.confirmRequests.single['payload'], <String, dynamic>{
+          'nonce': 'nonce-recovery',
+          'ok': true,
+          'callWakeReceipt': challenge,
+        });
+        final recoveryEvents = events.where(
+          (event) => (event['event'] as String).startsWith(
+            'CALL_WAKE_RECIPROCAL_RECOVERY_',
+          ),
+        );
+        expect(recoveryEvents, hasLength(2));
+        expect(
+          recoveryEvents.every(
+            (event) => (event['details'] as Map<String, dynamic>).isEmpty,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'contains reciprocal wake recovery callback failures after ACK',
+      () async {
+        const challenge = '123e4567-e89b-42d3-a456-426614174000';
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+          ),
+        );
+        final l = makeListener(
+          receivedCallWakeHandleStore: _FakeReceivedCallWakeHandleStore(),
+          requestReciprocalCallWakeRecovery: (_) async {
+            throw StateError('recovery failed');
+          },
+        );
+        addTearDown(l.dispose);
+
+        final result = await l.processIncomingMessage(
+          makeV2(
+            confirmNonce: 'nonce-contained',
+            intent: 'key_exchange_retry',
+            callWakeHandle: wakeGrant(),
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+
+        expect(result, HandleMessageResult.alreadyContact);
+        expect(bridge.confirmRequests, hasLength(1));
+        expect(bridge.confirmRequests.single['payload']['ok'], isTrue);
+      },
+    );
+
+    test(
+      'does not reciprocate new, invalid, replayed, blocked, no-ACK, or no-receipt requests',
+      () async {
+        const challenge = '123e4567-e89b-42d3-a456-426614174000';
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+          ),
+        );
+        var recoveries = 0;
+        final grant = wakeGrant();
+        final l = makeListener(
+          receivedCallWakeHandleStore: _FakeReceivedCallWakeHandleStore(),
+          requestReciprocalCallWakeRecovery: (_) async {
+            recoveries += 1;
+          },
+        );
+        addTearDown(l.dispose);
+
+        await l.processIncomingMessage(
+          makeV2(
+            msgId: 'ordinary-new',
+            confirmNonce: 'nonce-new',
+            callWakeHandle: grant,
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+        await l.processIncomingMessage(
+          makeV2(
+            msgId: 'retry-no-receipt',
+            confirmNonce: 'nonce-no-receipt',
+            intent: 'key_exchange_retry',
+            callWakeHandle: grant,
+          ),
+        );
+        await l.processIncomingMessage(
+          makeV2(
+            msgId: 'retry-replay',
+            confirmNonce: 'nonce-replay-1',
+            intent: 'key_exchange_retry',
+            callWakeHandle: grant,
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+        await l.processIncomingMessage(
+          makeV2(
+            msgId: 'retry-replay',
+            confirmNonce: 'nonce-replay-2',
+            intent: 'key_exchange_retry',
+            callWakeHandle: grant,
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+        await l.processIncomingMessage(
+          makeV2(
+            msgId: 'retry-inbox-redelivery',
+            intent: 'key_exchange_retry',
+            callWakeHandle: grant,
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+
+        expect(recoveries, 1);
+
+        bridge.nextResponse = {'ok': true, 'valid': false};
+        await l.processIncomingMessage(
+          makeV2(
+            msgId: 'retry-invalid',
+            confirmNonce: 'nonce-invalid',
+            intent: 'key_exchange_retry',
+            callWakeHandle: grant,
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+        bridge.nextResponse = {'ok': true, 'valid': true};
+
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+            isBlocked: true,
+          ),
+        );
+        await l.processIncomingMessage(
+          makeV2(
+            msgId: 'retry-blocked',
+            confirmNonce: 'nonce-blocked',
+            intent: 'key_exchange_retry',
+            callWakeHandle: grant,
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+
+        expect(recoveries, 1);
+      },
+    );
 
     // TC-03: a message with no confirmNonce must NOT trigger a confirm.
     test('does not confirm when confirmNonce is null', () async {
@@ -1368,7 +1730,9 @@ void main() {
         debugSetFlowEventSink(events.add);
         addTearDown(() => debugSetFlowEventSink(null));
 
-        final result = await l.processIncomingMessage(makeV2(confirmNonce: 'n6'));
+        final result = await l.processIncomingMessage(
+          makeV2(confirmNonce: 'n6'),
+        );
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
         expect(result, equals(HandleMessageResult.contactAutoAdded));
@@ -1448,35 +1812,38 @@ void main() {
     // Review fix: if the local accept fails (e.g. a transient DB write error),
     // the request is NOT silently lost (committed-and-deleted with no contact)
     // — it falls back to the manual dialog (it is already durably pending).
-    test('auto-add accept failure falls back to dialog (no silent loss)', () async {
-      final dialogs = <ContactRequestModel>[];
-      final l = makeListener(
-        autoAccept: (_) async => AcceptContactRequestResult.addContactError,
-      );
-      addTearDown(l.dispose);
-      l.requestStream.listen(dialogs.add);
+    test(
+      'auto-add accept failure falls back to dialog (no silent loss)',
+      () async {
+        final dialogs = <ContactRequestModel>[];
+        final l = makeListener(
+          autoAccept: (_) async => AcceptContactRequestResult.addContactError,
+        );
+        addTearDown(l.dispose);
+        l.requestStream.listen(dialogs.add);
 
-      final events = <Map<String, dynamic>>[];
-      debugSetFlowEventSink(events.add);
-      addTearDown(() => debugSetFlowEventSink(null));
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
 
-      final result = await l.processIncomingMessage(makeV2());
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+        final result = await l.processIncomingMessage(makeV2());
+        await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      // Result is still contactAutoAdded (the use-case eligibility), but the
-      // listener surfaced it on the dialog rather than losing it.
-      expect(result, equals(HandleMessageResult.contactAutoAdded));
-      expect(dialogs, hasLength(1));
-      expect(
-        events
-            .where(
-              (e) =>
-                  e['event'] ==
-                  'CONTACT_AUTO_ADD_ACCEPT_FAILED_DIALOG_FALLBACK',
-            )
-            .length,
-        equals(1),
-      );
-    });
+        // Result is still contactAutoAdded (the use-case eligibility), but the
+        // listener surfaced it on the dialog rather than losing it.
+        expect(result, equals(HandleMessageResult.contactAutoAdded));
+        expect(dialogs, hasLength(1));
+        expect(
+          events
+              .where(
+                (e) =>
+                    e['event'] ==
+                    'CONTACT_AUTO_ADD_ACCEPT_FAILED_DIALOG_FALLBACK',
+              )
+              .length,
+          equals(1),
+        );
+      },
+    );
   });
 }

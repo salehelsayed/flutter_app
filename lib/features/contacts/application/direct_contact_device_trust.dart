@@ -2,8 +2,12 @@ import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/ios_nse_inbox_projection.dart';
 import 'package:flutter_app/core/utils/key_conversion.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
+
+typedef DirectContactAuthorityChanged =
+    Future<void> Function(String contactAccountPeerId);
 
 /// The exact linked-device trust authority the contact profile owns.
 ///
@@ -136,13 +140,16 @@ class DatabaseDirectContactDeviceTrust
   DatabaseDirectContactDeviceTrust({
     required Database database,
     DirectReactionNotificationProjection? notificationProjection,
+    DirectContactAuthorityChanged? onAuthorityChanged,
     DateTime Function()? now,
   }) : _database = database,
        _notificationProjection = notificationProjection,
+       _onAuthorityChanged = onAuthorityChanged,
        _now = now ?? DateTime.now;
 
   final Database _database;
   final DirectReactionNotificationProjection? _notificationProjection;
+  final DirectContactAuthorityChanged? _onAuthorityChanged;
   final DateTime Function() _now;
 
   String get _decidedAt => _now().toUtc().toIso8601String();
@@ -245,18 +252,43 @@ class DatabaseDirectContactDeviceTrust
     Future<bool> Function() mutation,
   ) async {
     final projection = _notificationProjection;
-    if (projection == null) return mutation();
-    await projection.retireContactTransportAuthority(contactAccountPeerId);
-    final committed = await mutation();
-    final transports = await loadDirectNotificationAuthorizedTransportPeerIds(
-      _database,
-      contactAccountPeerId,
-    );
-    await projection.replaceContactTransportAuthority(
-      peerId: contactAccountPeerId,
-      authorizedTransportPeerIds: transports,
-    );
-    return committed;
+    var committed = false;
+    try {
+      if (projection != null) {
+        await projection.retireContactTransportAuthority(contactAccountPeerId);
+      }
+      committed = await mutation();
+      if (projection != null) {
+        final transports =
+            await loadDirectNotificationAuthorizedTransportPeerIds(
+              _database,
+              contactAccountPeerId,
+            );
+        await projection.replaceContactTransportAuthority(
+          peerId: contactAccountPeerId,
+          authorizedTransportPeerIds: transports,
+        );
+      }
+      return committed;
+    } finally {
+      if (committed) await _notifyAuthorityChanged(contactAccountPeerId);
+    }
+  }
+
+  Future<void> _notifyAuthorityChanged(String contactAccountPeerId) async {
+    final callback = _onAuthorityChanged;
+    if (callback == null) return;
+    try {
+      await callback(contactAccountPeerId);
+    } catch (error) {
+      // The authority mutation is already durable. Resume reconciliation is
+      // the retry path; never make a committed device decision look undone.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DIRECT_CONTACT_AUTHORITY_CALLBACK_ERROR',
+        details: <String, Object?>{'errorType': error.runtimeType.toString()},
+      );
+    }
   }
 }
 

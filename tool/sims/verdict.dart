@@ -34,6 +34,7 @@ enum SimsBlockerKind {
   product,
   test,
   harness,
+  restoration,
   environment,
   flake,
 }

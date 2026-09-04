@@ -469,6 +469,129 @@ void main() {
     expect(profile.compileDefines, <String, String>{'PRODUCTION_APNS': 'true'});
   });
 
+  test('Plan 399 production-call build profile is exact and additive', () {
+    final standard = manifest.buildProfileById('android.e2e.standard')!;
+    final productionCall = manifest.buildProfileById(
+      'android.e2e.production_call_local',
+    )!;
+
+    expect(standard.compileDefines, <String, String>{'E2E_TEST_MODE': 'true'});
+    expect(productionCall.platform, 'android');
+    expect(productionCall.artifactKind, 'universal-debug-apk');
+    expect(productionCall.buildRequired, isTrue);
+    expect(productionCall.compileDefines, <String, String>{
+      'E2E_TEST_MODE': 'true',
+      'VOICE_CALL_CAPABILITY_V1': 'true',
+      'VOICE_CALL_OUTGOING_ENABLED': 'true',
+      'VOICE_CALL_INCOMING_ENABLED': 'true',
+      'VOICE_CALL_TURN_ENABLED': 'true',
+      'VOICE_CALL_ANDROID_NATIVE_ENABLED': 'true',
+      'VOICE_CALL_ALWAYS_RELAY_ENABLED': 'true',
+      'ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED': 'true',
+    });
+
+    final build = manifest.capabilityById(
+      'build.android.e2e.production_call_local',
+    )!;
+    expect(build.buildProfileId, productionCall.id);
+    expect(build.command, <String>[
+      '@prepare-build',
+      'android.e2e.production_call_local',
+    ]);
+    expect(build.dependencies, isEmpty);
+    expect(
+      build.resources.map(
+        (resource) => '${resource.name}:${resource.access.name}',
+      ),
+      <String>['build:android.e2e.production_call_local:write'],
+    );
+  });
+
+  test(
+    'TC-399-08 production audio closure registers inner proof and external wrapper safely',
+    () {
+      const capabilityId = 'android.production_1to1_audio_call';
+      const innerDispatcher =
+          'integration_test/scripts/run_1to1_device_real.dart';
+      const outerFixtureWrapper =
+          'integration_test/scripts/run_production_audio_call_sims.dart';
+      final matches = manifest.capabilities
+          .where((capability) => capability.id == capabilityId)
+          .toList(growable: false);
+
+      expect(matches, hasLength(1));
+      final capability = matches.single;
+      expect(capability.required, isTrue);
+      expect(capability.active, isTrue);
+      expect(capability.automationReady, isTrue);
+      expect(capability.modes, <SimsMode>{SimsMode.major, SimsMode.full});
+      expect(capability.families, <String>{'1to1', 'media', 'transport'});
+      expect(capability.buildProfileId, 'android.e2e.production_call_local');
+      expect(capability.dependencies, <String>[
+        'build.android.e2e.production_call_local',
+      ]);
+      expect(capability.command, <String>[
+        'dart',
+        'run',
+        innerDispatcher,
+        '--scenario',
+        capabilityId,
+      ]);
+      expect(
+        capability.command,
+        isNot(contains(outerFixtureWrapper)),
+        reason:
+            'the outer fixture wrapper re-enters Sims --only for this row; '
+            'registering it as the row command would recurse',
+      );
+      expect(capability.assertionIds, <String>[
+        'production_call.production_entrypoint',
+        'production_call.single_apk_reused',
+        'production_call.physical_emulator_topology',
+        'production_call.local_relay_only',
+        'production_call.fresh_identities_mutual_contacts',
+        'production_call.semantic_start_native_answer',
+        'production_call.both_surfaces_and_structural_media_ready',
+        'production_call.local_coturn_authority',
+        'production_call.pion_known_opus_bidirectional',
+        'production_call.caller_inbound_audio_rtp_observed',
+        'production_call.caller_outbound_audio_rtp_observed',
+        'production_call.callee_inbound_audio_rtp_observed',
+        'production_call.callee_outbound_audio_rtp_observed',
+        'production_call.mute_speaker_hangup',
+        'production_call.terminal_cleanup_restore',
+        'production_call.privacy_bounded_artifacts',
+      ]);
+      expect(
+        capability.resources.map(
+          (resource) => '${resource.name}:${resource.access.name}',
+        ),
+        <String>[
+          'build:android.e2e.production_call_local:read',
+          'device:android-physical:exclusive',
+          'device:android-emulator:exclusive',
+          'relay-mutation:local-production-call-fixture:exclusive',
+          'relay-mutation:local-production-call-coturn:exclusive',
+          'relay-mutation:production-call-pion-known-opus-oracle:exclusive',
+          'artifact:production-1to1-audio-call:write',
+        ],
+      );
+      expect(capability.targetCapabilities, <String>[
+        'android.physical',
+        'android.emulator',
+        'android.microphone',
+        'host.docker',
+        'host.go1.25',
+      ]);
+      expect(capability.allowedNaReason, targetUnavailableNaReason);
+      expect(capability.artifactRequired, isTrue);
+      expect(capability.artifactValidators, <String>[
+        'validateAndroidProductionAudioCallArtifact',
+      ]);
+      expect(capability.declaredBuildException, isFalse);
+    },
+  );
+
   test(
     'TC-347-09 owns one selector-only Android build and local fixture row',
     () {

@@ -51,6 +51,10 @@ const _sensitiveDiagnosticKeys = [
   'inviteContent',
   'plaintextMessage',
   'text',
+  'password',
+  'turnUsername',
+  'turnCredential',
+  'turnUrls',
 ];
 
 @visibleForTesting
@@ -133,6 +137,11 @@ bool _isSensitiveKey(String key) {
     'relayaddresses',
     'listenaddresses',
     'circuitaddresses',
+    'password',
+    'turnusername',
+    'turncredential',
+    'turnurls',
+    'iceserver',
   ];
   return sensitiveFragments.any(normalized.contains);
 }

@@ -6,6 +6,10 @@ import android.os.Handler
 import android.os.Looper
 import android.os.StatFs
 import android.util.Log
+import com.mknoon.app.call.MknoonCallActionReceiver
+import com.mknoon.app.call.MknoonCallNativeBridge
+import com.mknoon.app.call.MknoonCallRuntime
+import java.util.UUID
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -32,6 +36,7 @@ class MainActivity : FlutterActivity() {
     private var privateMediaProtectionEngine: FlutterEngine? = null
     private var pictureInPictureHandler: PictureInPictureHandler? = null
     private var droppedPushRecoveryBridge: DroppedPushRecoveryBridge? = null
+    private var callNativeBridge: MknoonCallNativeBridge? = null
     private var canonicalRuntimeLeaseBridge: CanonicalRuntimeLeaseBridge? = null
     private var canonicalRuntimeShutdownChannel: MethodChannel? = null
     private var pushNotificationSettingsChannel: MethodChannel? = null
@@ -51,6 +56,21 @@ class MainActivity : FlutterActivity() {
         visibilityLifecycleCoordinator().onLaunch()
         CanonicalRuntimeProbeDiagnostics.recordMainActivityLaunch()
         super.onCreate(savedInstanceState)
+        // A recreated activity (rotation, process restore) receives the
+        // original intent again; only a fresh launch may answer.
+        if (savedInstanceState == null) handleCallAnswerIntent(intent)
+    }
+
+    /**
+     * The incoming-call notification's Answer action is an activity intent so
+     * the app comes forward with the call. The answer itself still runs
+     * through the native runtime, exactly as the broadcast action does.
+     */
+    private fun handleCallAnswerIntent(intent: Intent?) {
+        if (intent?.action != MknoonCallActionReceiver.ACTION_ANSWER) return
+        val raw = intent.getStringExtra(MknoonCallActionReceiver.EXTRA_NATIVE_CALL_ID) ?: return
+        val nativeCallId = runCatching { UUID.fromString(raw) }.getOrNull() ?: return
+        runCatching { MknoonCallRuntime.get(this).controller.answer(nativeCallId) }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -105,6 +125,9 @@ class MainActivity : FlutterActivity() {
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
             registerProcessSignals = true,
+        )
+        callNativeBridge = MknoonCallRuntime.get(applicationContext).createBridge(
+            flutterEngine.dartExecutor.binaryMessenger,
         )
         canonicalRuntimeShutdownChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -240,6 +263,7 @@ class MainActivity : FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         droppedPushRecoveryBridge?.onWarmIntent(intent)
+        handleCallAnswerIntent(intent)
     }
 
     override fun onResume() {
@@ -271,6 +295,8 @@ class MainActivity : FlutterActivity() {
         pictureInPictureHandler = null
         droppedPushRecoveryBridge?.dispose()
         droppedPushRecoveryBridge = null
+        callNativeBridge?.dispose()
+        callNativeBridge = null
         val destroyEngineWithHost = super.shouldDestroyEngineWithHost()
         privateMediaProtectionRegistry.detach(
             engineIdentity = flutterEngine,
@@ -457,6 +483,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        callNativeBridge?.dispose()
+        callNativeBridge = null
         pictureInPictureHandler?.dispose("host_destroyed")
         pictureInPictureHandler = null
         val engine = privateMediaProtectionEngine

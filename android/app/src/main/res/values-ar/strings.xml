@@ -5,4 +5,15 @@
     <string name="dropped_push_recovery_notification_title">مكنون</string>
     <string name="dropped_push_recovery_notification_body">قد تكون هناك رسائل بانتظار الاسترداد</string>
     <string name="dropped_push_recovery_worker_body">جارٍ استرداد الرسائل</string>
+    <string name="call_notification_channel_name">المكالمات</string>
+    <string name="call_notification_channel_description">مكالمات مكنون الواردة والجارية</string>
+    <string name="call_notification_title">مكالمة مكنون</string>
+    <string name="call_notification_person">متصل مكنون</string>
+    <string name="call_notification_incoming">مكالمة واردة</string>
+    <string name="call_notification_admission">جارٍ التحقق من مكالمة واردة…</string>
+    <string name="call_admission_channel_name">تجهيز المكالمة</string>
+    <string name="call_notification_ongoing">مكالمة جارية</string>
+    <string name="call_notification_answer">رد</string>
+    <string name="call_notification_decline">رفض</string>
+    <string name="call_notification_end">إنهاء</string>
 </resources>

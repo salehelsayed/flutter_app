@@ -6,8 +6,10 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/app/bootstrap/android_production_audio_call_e2e_observer.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/debug/android_production_audio_call_e2e.dart';
 import 'package:flutter_app/core/debug/auto_setup_config.dart';
 import 'package:flutter_app/core/debug/group_media_disposable_transport_start.dart';
 import 'package:flutter_app/core/debug/group_media_ios_background_e2e.dart';
@@ -39,6 +41,7 @@ import 'package:flutter_app/debug/group_notification_projection_e2e_action.dart'
 import 'package:flutter_app/debug/group_strict_notification_e2e_action.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -83,6 +86,8 @@ typedef DebugE2EReliabilityControllerFactory =
     GroupMediaReliabilityE2EController Function(Directory stateDirectory);
 typedef DebugE2EIosBackgroundControllerFactory =
     GroupMediaIosBackgroundE2EController Function(Directory stateDirectory);
+typedef DebugE2EProductionCallObserverFactory =
+    AndroidProductionAudioCallE2EObserver Function();
 
 final class DebugE2EGroupMediaDownloadHooks {
   DebugE2EGroupMediaDownloadHooks._({
@@ -153,6 +158,9 @@ final class DebugE2EPollerDependencies {
     required this.transportMetrics,
     required this.allowsAccountRuntimeNetworkSideEffects,
     required this.wakeTokenResolver,
+    required this.outgoingCallCapability,
+    required this.resolveCallWakeHandle,
+    required this.onCallWakeHandleDistributed,
   });
 
   final Directory documentsDirectory;
@@ -195,6 +203,9 @@ final class DebugE2EPollerDependencies {
   final Future<bool> Function(String operation)
   allowsAccountRuntimeNetworkSideEffects;
   final ResolveWakeTokenForIntroE2EFn wakeTokenResolver;
+  final OutgoingCallCapability outgoingCallCapability;
+  final ResolveCallWakeHandleForIntroE2EFn resolveCallWakeHandle;
+  final OnCallWakeHandleDistributedForIntroE2EFn onCallWakeHandleDistributed;
 }
 
 /// Pure compile-time activation policy for the debug/E2E composition module.
@@ -209,12 +220,21 @@ final class DebugE2EActivation {
     required this.e2eTestMode,
     required this.directTextProofMode,
     required this.installedSimsProfile,
+    this.isAndroid = false,
+    this.androidProductionAudioCallE2EEnabled = false,
   });
 
   final bool isDebugMode;
   final bool e2eTestMode;
   final bool directTextProofMode;
   final String installedSimsProfile;
+  final bool isAndroid;
+  final bool androidProductionAudioCallE2EEnabled;
+
+  bool get constructsProductionAudioCallObserver =>
+      isAndroid &&
+      androidProductionAudioCallE2EEnabled &&
+      installedSimsProfile == androidProductionAudioCallE2EBuildProfile;
 
   bool get isAndroidDisposableProfile =>
       installedSimsProfile == groupMediaAndroidDisposableBuildProfile;
@@ -232,13 +252,15 @@ final class DebugE2EActivation {
       (isDebugMode && (e2eTestMode || directTextProofMode)) ||
       (e2eTestMode && isIosDisposableProfile) ||
       (e2eTestMode && isPlan397IosSetupProfile) ||
-      isIosProductionProofProfile;
+      isIosProductionProofProfile ||
+      constructsProductionAudioCallObserver;
 
   bool get constructsPrivateMediaController => constructsControllerRoot;
   bool get constructsWakeTokenObserver => constructsControllerRoot;
   bool get startsIntroPoller =>
       (isDebugMode && (e2eTestMode || directTextProofMode)) ||
-      (e2eTestMode && (isIosDisposableProfile || isPlan397IosSetupProfile));
+      (e2eTestMode && (isIosDisposableProfile || isPlan397IosSetupProfile)) ||
+      constructsProductionAudioCallObserver;
   bool get startsIosSenderProjection => isIosProductionProofProfile;
   bool get publishesIosReceiverBootstrap => isIosProductionProofProfile;
   bool get decoratesIosGroupMediaProof => isIosDisposableProfile;
@@ -258,17 +280,21 @@ final class DebugE2ECompositionRoot {
     groupMediaReliabilityE2EController,
     required GroupMediaIosBackgroundE2EController
     groupMediaIosBackgroundE2EController,
+    required AndroidProductionAudioCallE2EObserver? productionAudioCallObserver,
   }) : _groupMediaReliabilityE2EController = groupMediaReliabilityE2EController,
        _groupMediaIosBackgroundE2EController =
-           groupMediaIosBackgroundE2EController;
+           groupMediaIosBackgroundE2EController,
+       _productionAudioCallObserver = productionAudioCallObserver;
 
   final DebugE2EActivation activation;
   final GroupMediaReliabilityE2EController _groupMediaReliabilityE2EController;
   final GroupMediaIosBackgroundE2EController
   _groupMediaIosBackgroundE2EController;
+  final AndroidProductionAudioCallE2EObserver? _productionAudioCallObserver;
 
   PrivateMediaOutboxE2EController? _privateMediaOutboxE2EController;
   WakeTokenAcceptedAttachmentObserver? _wakeTokenAttachmentObserver;
+  Future<void>? _disposeFuture;
 
   static const bool isInstalledIosDisposableProfile =
       String.fromEnvironment('SIMS_BUILD_PROFILE_ID') ==
@@ -282,39 +308,82 @@ final class DebugE2ECompositionRoot {
 
   static DebugE2ECompositionRoot? tryCreate({
     required Directory stateDirectory,
-    DebugE2EActivation activation = const DebugE2EActivation(
-      isDebugMode: kDebugMode,
-      e2eTestMode: bool.fromEnvironment('E2E_TEST_MODE'),
-      directTextProofMode: bool.fromEnvironment(
-        'MKNOON_DIRECT_TEXT_RELAY_TOKEN_PROOF',
-      ),
-      installedSimsProfile: String.fromEnvironment('SIMS_BUILD_PROFILE_ID'),
-    ),
+    DebugE2EActivation? activation,
     DebugE2EReliabilityControllerFactory? reliabilityControllerFactory,
     DebugE2EIosBackgroundControllerFactory? iosBackgroundControllerFactory,
+    DebugE2EProductionCallObserverFactory? productionCallObserverFactory,
   }) {
-    if (!activation.constructsControllerRoot) return null;
+    final resolvedActivation =
+        activation ??
+        DebugE2EActivation(
+          isDebugMode: kDebugMode,
+          e2eTestMode: const bool.fromEnvironment('E2E_TEST_MODE'),
+          directTextProofMode: const bool.fromEnvironment(
+            'MKNOON_DIRECT_TEXT_RELAY_TOKEN_PROOF',
+          ),
+          installedSimsProfile: const String.fromEnvironment(
+            'SIMS_BUILD_PROFILE_ID',
+          ),
+          isAndroid: !kIsWeb && Platform.isAndroid,
+          androidProductionAudioCallE2EEnabled: const bool.fromEnvironment(
+            'ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED',
+          ),
+        );
+    if (!resolvedActivation.constructsControllerRoot) return null;
     final createReliabilityController =
         reliabilityControllerFactory ??
         (directory) => GroupMediaReliabilityE2EController.forInstalledProfile(
           stateDirectory: directory,
-          installedProfileId: activation.installedSimsProfile,
+          installedProfileId: resolvedActivation.installedSimsProfile,
         );
     final createIosBackgroundController =
         iosBackgroundControllerFactory ??
         (directory) => GroupMediaIosBackgroundE2EController.forInstalledProfile(
           stateDirectory: directory,
-          installedProfileId: activation.installedSimsProfile,
+          installedProfileId: resolvedActivation.installedSimsProfile,
         );
+    final createProductionCallObserver =
+        productionCallObserverFactory ??
+        () => AndroidProductionAudioCallE2EObserver.tryCreate(
+          enabled: resolvedActivation.androidProductionAudioCallE2EEnabled,
+          isAndroid: resolvedActivation.isAndroid,
+          installedProfileId: resolvedActivation.installedSimsProfile,
+        )!;
     return DebugE2ECompositionRoot._(
-      activation: activation,
+      activation: resolvedActivation,
       groupMediaReliabilityE2EController: createReliabilityController(
         stateDirectory,
       ),
       groupMediaIosBackgroundE2EController: createIosBackgroundController(
         stateDirectory,
       ),
+      productionAudioCallObserver:
+          resolvedActivation.constructsProductionAudioCallObserver
+          ? createProductionCallObserver()
+          : null,
     );
+  }
+
+  void bindAndroidProductionAudioCallObservationSource(
+    AndroidProductionAudioCallObservationSource source,
+  ) {
+    if (_disposeFuture != null) return;
+    try {
+      _productionAudioCallObserver?.bind(source);
+    } catch (_) {
+      // A debug-only observation callback must not control graph availability.
+    }
+  }
+
+  Future<void> dispose() => _disposeFuture ??= _dispose();
+
+  Future<void> _dispose() async {
+    try {
+      await stopIntroE2EPoller();
+    } catch (_) {}
+    try {
+      await _productionAudioCallObserver?.dispose();
+    } catch (_) {}
   }
 
   static Future<bool> runDisposableResetIfRequested() async {
@@ -811,6 +880,9 @@ final class DebugE2ECompositionRoot {
       detailedInboxStore: dependencies.p2pService,
       wakeTokenAttachmentObserver: wakeTokenAttachmentObserver,
       privateMediaOutboxE2EController: privateMediaOutboxE2EController,
+      runAndroidProductionAudioCallE2E: _productionAudioCallObserver?.run,
+      resolveCallWakeHandle: dependencies.resolveCallWakeHandle,
+      onCallWakeHandleDistributed: dependencies.onCallWakeHandleDistributed,
       runGroupStrictNotificationE2E: (config) =>
           runGroupStrictNotificationE2EAction(
             config: config,
@@ -1270,6 +1342,7 @@ final class DebugE2ECompositionRoot {
                         dependencies.groupConversationTracker,
                     appShellController: dependencies.appShellController,
                     transportMetrics: dependencies.transportMetrics,
+                    outgoingCallCapability: dependencies.outgoingCallCapability,
                     privateMediaOutboxE2EController:
                         privateMediaOutboxE2EController,
                   ),

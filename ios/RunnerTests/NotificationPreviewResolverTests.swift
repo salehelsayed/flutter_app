@@ -643,7 +643,10 @@ final class NotificationPreviewResolverTests: XCTestCase {
     )
     let resolver = NotificationPreviewResolver(
       keyReader: MemoryPushKeyReader(
-        try groupReactionProjectionValues(omitGroupKeyEpoch: true)
+        try groupReactionProjectionValues(
+          includeTarget: false,
+          omitGroupKeyEpoch: true
+        )
       ),
       decryptor: decryptor,
       dedupeStore: MemoryPushDedupeStore()
@@ -2000,7 +2003,8 @@ final class NotificationPreviewResolverTests: XCTestCase {
           blocked: false
         ),
         PushSharedKeyNames.directReactionAuthoredTargets: try reactionTargetsJSON(
-          targetMessageId: targetMessageId
+          targetMessageId: targetMessageId,
+          timestamp: "2026-07-12T07:00:00.000Z"
         ),
       ]),
       decryptor: MemoryPushDecryptor(
@@ -2081,7 +2085,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
           "localAccountPeerId": "peer-self",
           "contacts": [:],
         ]),
-        try reactionTargetsJSON(),
+        try reactionTargetsJSON(includeTarget: false),
         "reaction_unknown_contact"
       ),
       (
@@ -2098,7 +2102,22 @@ final class NotificationPreviewResolverTests: XCTestCase {
       ),
       (
         "not authored for reactor",
-        try reactionContactsJSON(username: "Alice", blocked: false),
+        try jsonString([
+          "version": 1,
+          "localAccountPeerId": "peer-self",
+          "contacts": [
+            "peer-alice": [
+              "username": "Alice",
+              "blocked": false,
+              "archived": false,
+            ],
+            "peer-other": [
+              "username": "Other",
+              "blocked": false,
+              "archived": false,
+            ],
+          ],
+        ]),
         try reactionTargetsJSON(peerId: "peer-other"),
         "reaction_target_not_locally_authored"
       ),
@@ -3614,18 +3633,19 @@ final class NotificationPreviewResolverTests: XCTestCase {
   private func reactionTargetsJSON(
     peerId: String = "peer-alice",
     targetMessageId: String = "target-message",
-    localAccountPeerId: String = "peer-self"
+    localAccountPeerId: String = "peer-self",
+    timestamp: String = "2026-07-12T09:00:00.000Z",
+    includeTarget: Bool = true
   ) throws -> String {
-    try jsonString([
+    let targets: [[String: Any]] = includeTarget ? [[
+      "id": targetMessageId,
+      "peerId": peerId,
+      "timestamp": timestamp,
+    ]] : []
+    return try jsonString([
       "version": 1,
       "localAccountPeerId": localAccountPeerId,
-      "targets": [
-        [
-          "id": targetMessageId,
-          "peerId": peerId,
-          "timestamp": "2026-07-12T09:00:00.000Z",
-        ],
-      ],
+      "targets": targets,
     ])
   }
 

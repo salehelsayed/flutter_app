@@ -23,6 +23,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
@@ -193,6 +194,8 @@ class OrbitWired extends StatefulWidget {
   final VoidCallback? debugOnHeaderBuild;
   final VoidCallback? debugOnListBuild;
   final TransportMetrics? transportMetrics;
+  final ResolveCallWakeHandle? resolveCallWakeHandle;
+  final OnCallWakeHandleDistributed? onCallWakeHandleDistributed;
 
   /// 229 — optional storage-management capability threaded into Settings'
   /// Media & storage sheet (totals/actions render only when both are set).
@@ -268,6 +271,8 @@ class OrbitWired extends StatefulWidget {
     this.debugOnHeaderBuild,
     this.debugOnListBuild,
     this.transportMetrics,
+    this.resolveCallWakeHandle,
+    this.onCallWakeHandleDistributed,
     this.mediaStorageManager,
     this.mediaStorageScopesProvider,
     this.accountMigrationRunTransfer,
@@ -2433,6 +2438,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       identityRepo: widget.identityRepo,
       bridge: widget.bridge,
       onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
+      resolveCallWakeHandle: widget.resolveCallWakeHandle,
+      onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
     );
     if (!mounted) return;
     if (result == AcceptContactRequestResult.success ||
@@ -2687,6 +2694,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             directDeviceTrust:
                 widget.directRouteAuthority.resolvedDirectDeviceTrust,
             modalityGate: widget.directRouteAuthority.resolvedModalityGate,
+            outgoingCallCapability:
+                widget.directRouteAuthority.resolvedOutgoingCallCapability,
             contact: contact,
             initialText: initialText,
             identityRepo: widget.identityRepo,
@@ -2877,6 +2886,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           buildConversationRoute(
             builder: (scannerContext) => QRScannerWired(
               directRouteAuthority: widget.directRouteAuthority,
+              resolveCallWakeHandle: widget.resolveCallWakeHandle,
+              onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
               // 360: the known-contact linked-device scan action. Supplying it
               // here is what makes the dedicated dual-signed document reach the
               // trust flow instead of being refused as invalid; the handler

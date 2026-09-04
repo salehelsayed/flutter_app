@@ -6,6 +6,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
+import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -77,6 +78,8 @@ class _FakeBridge extends Bridge {
 class _FakeP2PService implements P2PService {
   String? lastSentMessage;
   String? lastSentPeerId;
+  bool storeInInboxResult = false;
+  SendMessageResult Function()? sendWithReplyHandler;
 
   @override
   NodeState get currentState =>
@@ -103,7 +106,7 @@ class _FakeP2PService implements P2PService {
   }) async {
     lastSentPeerId = pid;
     lastSentMessage = msg;
-    return const SendMessageResult(sent: true);
+    return sendWithReplyHandler?.call() ?? const SendMessageResult(sent: true);
   }
 
   @override
@@ -116,7 +119,11 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async => true;
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => storeInInboxResult;
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
       [];
@@ -144,8 +151,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
@@ -183,6 +189,15 @@ class _FakeP2PService implements P2PService {
 // ---------------------------------------------------------------------------
 
 const _bobPeerId = '12D3KooWBobPeerIdxxx00000000001';
+
+final _callWakeHandleGrant = CallWakeHandleGrant(
+  handle: '0123456789abcdef0123456789abcdef',
+  recipientDevicePeerId: 'bobdevice123',
+  deviceKeyEpoch: 1,
+  generation: 1,
+  issuedAtMs: 1,
+  expiresAtMs: CallWakeHandleGrant.maxSafeInteger,
+);
 
 final _testIdentity = IdentityModel(
   peerId: '12D3KooWOwnPeerIdForTesting',
@@ -361,6 +376,48 @@ void main() {
     expect(sent['version'], equals('2'));
     expect(sent['encrypted'], isA<Map>());
     expect(sent.containsKey('payload'), isFalse);
+  });
+
+  test('success: reciprocal v2 send forwards the call-only resolver and '
+      'distribution callback', () async {
+    _seedPendingRequest(requestRepo);
+    p2pService.storeInInboxResult = true;
+    String? resolvedFor;
+    String? distributedFor;
+    CallWakeHandleGrant? distributedGrant;
+    p2pService.sendWithReplyHandler = () {
+      final signedPayload =
+          jsonDecode(bridge.lastEncryptPayload!['plaintext'] as String)
+              as Map<String, dynamic>;
+      return SendMessageResult(
+        sent: true,
+        acked: true,
+        reply: jsonEncode({'callWakeReceipt': signedPayload['cwr']}),
+      );
+    };
+
+    await acceptAndReciprocateContactRequest(
+      requestRepo: requestRepo,
+      contactRepo: contactRepo,
+      peerId: _bobPeerId,
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      resolveCallWakeHandle: (peerId) async {
+        resolvedFor = peerId;
+        return _callWakeHandleGrant;
+      },
+      onCallWakeHandleDistributed: (peerId, grant) async {
+        distributedFor = peerId;
+        distributedGrant = grant;
+      },
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    expect(resolvedFor, _bobPeerId);
+    expect(distributedFor, _bobPeerId);
+    expect(distributedGrant, _callWakeHandleGrant);
   });
 
   test('success: calls downloadProfilePictureFn after accepting', () async {

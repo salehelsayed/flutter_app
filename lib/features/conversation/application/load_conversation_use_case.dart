@@ -2,7 +2,9 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_call_timeline_source.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
@@ -34,6 +36,91 @@ Future<List<ConversationMessage>> loadConversation({
   );
 
   return _attachMedia(messages, mediaAttachmentRepo, mediaFileManager);
+}
+
+/// Loads a typed chronological timeline of chat messages and, when explicitly
+/// enabled, terminal call-history rows.
+///
+/// [includeCalls] defaults off. Existing chat loaders retain their original
+/// return type and ordering, and a missing/failing optional call source never
+/// prevents ordinary messages from rendering.
+Future<List<ConversationTimelineEntry>> loadConversationTimeline({
+  required MessageRepository messageRepo,
+  required String contactPeerId,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  MediaFileManager? mediaFileManager,
+  ConversationCallTimelineSource? callTimelineSource,
+  bool includeCalls = false,
+}) async {
+  final messages = await loadConversation(
+    messageRepo: messageRepo,
+    contactPeerId: contactPeerId,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    mediaFileManager: mediaFileManager,
+  );
+  final messageEntries = messages
+      .map(ConversationMessageTimelineEntry.new)
+      .toList(growable: false);
+  if (!includeCalls || callTimelineSource == null) {
+    return List<ConversationTimelineEntry>.unmodifiable(messageEntries);
+  }
+
+  List<ConversationCallTimelineEntry> callEntries;
+  try {
+    callEntries = await callTimelineSource.listCallsForContact(contactPeerId);
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_CALL_TIMELINE_LOAD_SKIPPED',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+    return List<ConversationTimelineEntry>.unmodifiable(messageEntries);
+  }
+
+  final sortable = <_SortableTimelineEntry>[
+    for (var index = 0; index < messageEntries.length; index++)
+      _SortableTimelineEntry(
+        entry: messageEntries[index],
+        originalMessageIndex: index,
+      ),
+    for (final call in callEntries)
+      if (call.contactPeerId == contactPeerId)
+        _SortableTimelineEntry(entry: call),
+  ]..sort(_compareTimelineEntries);
+  return List<ConversationTimelineEntry>.unmodifiable(
+    sortable.map((row) => row.entry),
+  );
+}
+
+final class _SortableTimelineEntry {
+  const _SortableTimelineEntry({
+    required this.entry,
+    this.originalMessageIndex,
+  });
+
+  final ConversationTimelineEntry entry;
+  final int? originalMessageIndex;
+}
+
+int _compareTimelineEntries(
+  _SortableTimelineEntry left,
+  _SortableTimelineEntry right,
+) {
+  final leftTime = DateTime.tryParse(left.entry.timestamp);
+  final rightTime = DateTime.tryParse(right.entry.timestamp);
+  final byTime = leftTime != null && rightTime != null
+      ? leftTime.compareTo(rightTime)
+      : left.entry.timestamp.compareTo(right.entry.timestamp);
+  if (byTime != 0) return byTime;
+
+  final leftMessageIndex = left.originalMessageIndex;
+  final rightMessageIndex = right.originalMessageIndex;
+  if (leftMessageIndex != null && rightMessageIndex != null) {
+    return leftMessageIndex.compareTo(rightMessageIndex);
+  }
+  if (leftMessageIndex != null) return -1;
+  if (rightMessageIndex != null) return 1;
+  return left.entry.stableId.compareTo(right.entry.stableId);
 }
 
 /// Loads a single page of messages for a conversation.

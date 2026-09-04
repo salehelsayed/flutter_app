@@ -178,6 +178,269 @@ Future<Map<String, dynamic>> callP2PRelayReconnect(Bridge bridge) async {
   return response;
 }
 
+/// Fetches one authenticated short-lived TURN bundle through the additive,
+/// no-payload `turn_credentials_v1` action. The native/Go boundary already
+/// validates the relay response; this second strict decode prevents malformed
+/// or stale native responses from entering WebRTC configuration. Failures are
+/// returned as privacy-safe typed maps and never include the raw response.
+Future<Map<String, dynamic>> callP2PTurnCredentialsV1(Bridge bridge) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_TURN_CREDENTIALS_V1_REQUEST',
+    details: const <String, dynamic>{},
+  );
+
+  try {
+    final responseJson = await bridge
+        .send(
+          jsonEncode(const <String, dynamic>{
+            'cmd': turnCredentialsV1BridgeCommand,
+          }),
+        )
+        .timeout(const Duration(seconds: 5));
+    final decoded = jsonDecode(responseJson);
+    if (decoded is! Map<String, dynamic>) {
+      return _invalidTurnCredentialsV1Result();
+    }
+
+    if (decoded['ok'] != true) {
+      final result = _turnCredentialsV1FailureResult(decoded);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_TURN_CREDENTIALS_V1_RESPONSE',
+        details: <String, dynamic>{
+          'ok': false,
+          'unsupported': result['unsupported'],
+          'errorCode': result['errorCode'],
+        },
+      );
+      return result;
+    }
+
+    final result = _validateTurnCredentialsV1Success(
+      decoded,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_TURN_CREDENTIALS_V1_RESPONSE',
+      details: <String, dynamic>{
+        'ok': result['ok'],
+        if (result['ok'] != true) 'errorCode': result['errorCode'],
+        if (result['ok'] == true) 'ttlSeconds': result['ttlSeconds'],
+      },
+    );
+    return result;
+  } catch (_) {
+    final result = _turnCredentialsV1UnavailableResult();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_TURN_CREDENTIALS_V1_RESPONSE',
+      details: const <String, dynamic>{
+        'ok': false,
+        'unsupported': false,
+        'errorCode': 'TURN_CREDENTIALS_UNAVAILABLE',
+      },
+    );
+    return result;
+  }
+}
+
+Map<String, dynamic> _validateTurnCredentialsV1Success(
+  Map<String, dynamic> response,
+  int nowMs,
+) {
+  const exactKeys = <String>{
+    'ok',
+    'schema',
+    'version',
+    'urls',
+    'username',
+    'password',
+    'ttlSeconds',
+    'expiresAtMs',
+    'serverTimeMs',
+  };
+  if (response.length != exactKeys.length ||
+      !response.keys.every(exactKeys.contains)) {
+    return _invalidTurnCredentialsV1Result();
+  }
+
+  final urlsValue = response['urls'];
+  final username = response['username'];
+  final password = response['password'];
+  final ttlSeconds = response['ttlSeconds'];
+  final expiresAtMs = response['expiresAtMs'];
+  final serverTimeMs = response['serverTimeMs'];
+  if (response['schema'] != 'turn_credentials' ||
+      response['version'] != 1 ||
+      urlsValue is! List ||
+      urlsValue.isEmpty ||
+      urlsValue.length > 16 ||
+      username is! String ||
+      !_validTurnCredentialText(username) ||
+      password is! String ||
+      !_validTurnCredentialText(password) ||
+      ttlSeconds is! int ||
+      ttlSeconds <= 0 ||
+      ttlSeconds > 3600 ||
+      expiresAtMs is! int ||
+      serverTimeMs is! int ||
+      serverTimeMs <= 0 ||
+      expiresAtMs <= nowMs ||
+      expiresAtMs - serverTimeMs != ttlSeconds * 1000 ||
+      (serverTimeMs - nowMs).abs() >
+          const Duration(minutes: 5).inMilliseconds) {
+    return _invalidTurnCredentialsV1Result();
+  }
+
+  final urls = <String>[];
+  for (final value in urlsValue) {
+    if (value is! String || !_validTurnCredentialUrl(value)) {
+      return _invalidTurnCredentialsV1Result();
+    }
+    urls.add(value);
+  }
+  return <String, dynamic>{
+    'ok': true,
+    'schema': 'turn_credentials',
+    'version': 1,
+    'urls': List<String>.unmodifiable(urls),
+    'username': username,
+    'password': password,
+    'ttlSeconds': ttlSeconds,
+    'expiresAtMs': expiresAtMs,
+    'serverTimeMs': serverTimeMs,
+  };
+}
+
+Map<String, dynamic> _turnCredentialsV1FailureResult(
+  Map<String, dynamic> response,
+) {
+  final code = response['errorCode'];
+  final exactOldRelay =
+      response['status'] == 'ERROR' &&
+      response['error'] == 'Unknown action: turn_credentials_v1';
+  final unsupported = code == 'TURN_CREDENTIALS_UNSUPPORTED' || exactOldRelay;
+  if (unsupported) {
+    return <String, dynamic>{
+      'ok': false,
+      'unsupported': true,
+      'errorCode': 'TURN_CREDENTIALS_UNSUPPORTED',
+      'errorMessage': 'Relay does not support credential action',
+    };
+  }
+  if (code == 'TURN_CREDENTIALS_INVALID_RESPONSE') {
+    return _invalidTurnCredentialsV1Result();
+  }
+  final retryAfterMs = response['retryAfterMs'];
+  return <String, dynamic>{
+    ..._turnCredentialsV1UnavailableResult(),
+    if (retryAfterMs is int &&
+        retryAfterMs >= 0 &&
+        retryAfterMs <= const Duration(minutes: 15).inMilliseconds)
+      'retryAfterMs': retryAfterMs,
+  };
+}
+
+Map<String, dynamic> _invalidTurnCredentialsV1Result() => <String, dynamic>{
+  'ok': false,
+  'unsupported': false,
+  'errorCode': 'TURN_CREDENTIALS_INVALID_RESPONSE',
+  'errorMessage': 'Relay returned an invalid credential response',
+};
+
+Map<String, dynamic> _turnCredentialsV1UnavailableResult() => <String, dynamic>{
+  'ok': false,
+  'unsupported': false,
+  'errorCode': 'TURN_CREDENTIALS_UNAVAILABLE',
+  'errorMessage': 'Credential mint temporarily unavailable',
+};
+
+bool _validTurnCredentialText(String value) =>
+    value.isNotEmpty &&
+    value.length <= 4096 &&
+    value.trim() == value &&
+    !value.contains('\n') &&
+    !value.contains('\r') &&
+    !value.contains('\u0000');
+
+bool _validTurnCredentialUrl(String value) {
+  if (!_validTurnCredentialText(value) ||
+      value.contains('@') ||
+      value.contains('%')) {
+    return false;
+  }
+  final uri = Uri.tryParse(value);
+  if (uri == null || uri.hasFragment) return false;
+  if (uri.scheme != 'turn' &&
+      uri.scheme != 'turns' &&
+      uri.scheme != 'stun' &&
+      uri.scheme != 'stuns') {
+    return false;
+  }
+  final prefixLength = uri.scheme.length + 1;
+  if (value.length <= prefixLength) return false;
+  final remainder = value.substring(prefixLength);
+  final queryIndex = remainder.indexOf('?');
+  final authority = queryIndex < 0
+      ? remainder
+      : remainder.substring(0, queryIndex);
+  if (!_validTurnCredentialAuthority(authority)) return false;
+  if (!uri.hasQuery) return true;
+  final query = uri.queryParametersAll;
+  final transport = query['transport'];
+  return query.length == 1 &&
+      transport != null &&
+      transport.length == 1 &&
+      (transport.single == 'udp' || transport.single == 'tcp');
+}
+
+bool _validTurnCredentialAuthority(String authority) {
+  if (authority.isEmpty ||
+      authority.startsWith('//') ||
+      authority.contains('/') ||
+      authority.contains('#')) {
+    return false;
+  }
+  String host;
+  String? portText;
+  if (authority.startsWith('[')) {
+    final closing = authority.indexOf(']');
+    if (closing <= 1) return false;
+    host = authority.substring(1, closing);
+    if (!host.contains(':') || !RegExp(r'^[0-9a-fA-F:.]+$').hasMatch(host)) {
+      return false;
+    }
+    final rest = authority.substring(closing + 1);
+    if (rest.isNotEmpty) {
+      if (!rest.startsWith(':') || rest.length == 1) return false;
+      portText = rest.substring(1);
+    }
+  } else {
+    if (':'.allMatches(authority).length > 1) return false;
+    final separator = authority.lastIndexOf(':');
+    host = separator < 0 ? authority : authority.substring(0, separator);
+    portText = separator < 0 ? null : authority.substring(separator + 1);
+    final labels = host.split('.');
+    if (host.isEmpty ||
+        host.length > 253 ||
+        labels.any(
+          (label) =>
+              label.isEmpty ||
+              label.length > 63 ||
+              !RegExp(
+                r'^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$',
+              ).hasMatch(label),
+        )) {
+      return false;
+    }
+  }
+  if (portText == null) return true;
+  final port = int.tryParse(portText);
+  return port != null && port > 0 && port <= 65535;
+}
+
 /// Calls the bridge to probe a peer via relay circuit.
 ///
 /// This is a fast check (~100ms for offline, ~500ms for online) that
@@ -1679,7 +1942,7 @@ Future<Map<String, dynamic>> callP2PMessageSend(
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_MESSAGE_SEND_REQUEST',
-    details: {'peerId': peerId, 'messageLength': message.length},
+    details: {'messageLength': message.length},
   );
 
   final request = {
@@ -1730,7 +1993,6 @@ Future<Map<String, dynamic>> callP2PMessageSend(
       'hasReply': response['reply'] != null,
       'transport': response['transport'],
       'errorCode': response['errorCode'],
-      'errorMessage': response['errorMessage'],
     },
   );
 
@@ -1743,16 +2005,21 @@ Future<Map<String, dynamic>> callP2PConfirmDirectMessage(
   Bridge bridge, {
   required String nonce,
   required bool ok,
+  String? callWakeReceipt,
 }) async {
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_DIRECT_CONFIRM_REQUEST',
-    details: {'nonce': nonce, 'ok': ok},
+    details: {
+      'nonce': nonce,
+      'ok': ok,
+      'hasCallWakeReceipt': callWakeReceipt != null,
+    },
   );
 
   final request = {
     'cmd': 'message:confirm',
-    'payload': {'nonce': nonce, 'ok': ok},
+    'payload': {'nonce': nonce, 'ok': ok, 'callWakeReceipt': ?callWakeReceipt},
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -1761,7 +2028,12 @@ Future<Map<String, dynamic>> callP2PConfirmDirectMessage(
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_DIRECT_CONFIRM_RESPONSE',
-    details: {'nonce': nonce, 'ok': response['ok'], 'confirmed': ok},
+    details: {
+      'nonce': nonce,
+      'ok': response['ok'],
+      'confirmed': ok,
+      'hasCallWakeReceipt': callWakeReceipt != null,
+    },
   );
 
   return response;

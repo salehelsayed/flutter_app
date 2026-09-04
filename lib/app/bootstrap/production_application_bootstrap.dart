@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/app/bootstrap/android_production_audio_call_e2e_observer.dart';
 import 'package:flutter_app/core/application/protected_group_content_runtime_quiescence.dart';
 import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/notifications/notification_completed_outcome_drainer.dart';
 import 'package:flutter_app/core/notifications/ios_mailbox_alert_silent_replay_context.dart';
@@ -11,10 +13,19 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
+import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
+import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
+import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
 import 'package:flutter_app/app/bootstrap/production_canonical_direct_replay_composition.dart';
 import 'package:flutter_app/app/bootstrap/production_canonical_direct_projection_composition.dart';
 import 'package:flutter_app/app/bootstrap/production_canonical_group_replay_composition.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
+import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
+import 'package:flutter_app/features/call/infrastructure/issued_call_wake_handle_store_impl.dart';
+import 'package:flutter_app/features/call/infrastructure/ios_call_lifecycle_adapter.dart';
+import 'package:flutter_app/features/call/infrastructure/received_call_wake_handle_store_impl.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/app/bootstrap/best_effort_startup_backfill.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
@@ -118,6 +129,7 @@ import 'package:flutter_app/features/contacts/data/repositories/contact_reposito
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_bundle_transfer.dart';
@@ -726,6 +738,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       await iosNseInboxTransportProjection.retireAndReadBack();
     }
     void Function()? notifyContactPushEligibilityChanged;
+    void Function()? notifyCallWakeEligibilityChanged;
     Future<void> Function(IdentityModel identity)?
     refreshIosNseTransportAfterIdentityCommit;
     // 229: install the process-wide auto-download policy so EVERY automatic
@@ -758,6 +771,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // FDC-09 §12 / CV-14 recipient leg: the {contact -> minted token} store this
     // node registers with the relay + distributes to contacts (send half).
     final wakeTokenStore = WakeTokenStoreImpl(secureKeyStore: secureKeyStore);
+    final issuedCallWakeHandleStore = IssuedCallWakeHandleStoreImpl(
+      secureKeyStore: secureKeyStore,
+    );
+    final receivedCallWakeHandleStore = ReceivedCallWakeHandleStoreImpl(
+      secureKeyStore: secureKeyStore,
+    );
     final accountMigrationAuthorityRepository =
         SecureKeyStoreAccountMigrationAuthorityRepository(
           secureKeyStore: secureKeyStore,
@@ -1030,8 +1049,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       directReactionProjection: directReactionNotificationProjection,
       loadDirectNotificationAuthorizedTransports: (peerId) =>
           loadDirectNotificationAuthorizedTransportPeerIds(db, peerId),
-      onPushEligibilityChanged: () =>
-          notifyContactPushEligibilityChanged?.call(),
+      onPushEligibilityChanged: () {
+        notifyContactPushEligibilityChanged?.call();
+        notifyCallWakeEligibilityChanged?.call();
+      },
     );
 
     // Create contact request repository
@@ -6089,6 +6110,140 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create message router — single subscription, routes by type
     final messageRouter = IncomingMessageRouter(p2pService: p2pService);
+    final callEndpointPlatform = kIsWeb || isDesktop
+        ? null
+        : Platform.isAndroid
+        ? CallEndpointPlatform.android
+        : Platform.isIOS
+        ? CallEndpointPlatform.ios
+        : null;
+    final voiceCallFeatureFlags = productionVoiceCallFeatureFlags();
+    await enforceAndroidCallCapabilityRollback(
+      isAndroid: callEndpointPlatform == CallEndpointPlatform.android,
+      capabilityEnabled: isAndroidNativeCallCapabilityAuthorized(
+        voiceCallFeatureFlags,
+      ),
+      invokeMethod: (method, arguments) => const MethodChannel(
+        AndroidCallLifecycleAdapter.methodChannelName,
+      ).invokeMethod<Object?>(method, arguments),
+    );
+    await enforceIosCallCapabilityRollback(
+      isIos: callEndpointPlatform == CallEndpointPlatform.ios,
+      capabilityEnabled: isIosNativeCallCapabilityAuthorized(
+        voiceCallFeatureFlags,
+      ),
+      invokeMethod: (method, arguments) => const MethodChannel(
+        IosCallLifecycleAdapter.methodChannelName,
+      ).invokeMethod<Object?>(method, arguments),
+    );
+    final foregroundCallPresentationReady = Completer<void>();
+    late final CallSignalingComposition callSignalingComposition;
+    final receivedCallWakeHandleRecovery =
+        ReceivedCallWakeHandleRecoveryCoordinator(
+          receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+          nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+          requestRecovery: ({required contactAccountPeerId}) async {
+            final contact = await contactRepository.getContact(
+              contactAccountPeerId,
+            );
+            if (contact == null || contact.isBlocked) return;
+            final result = await sendContactRequest(
+              p2pService: p2pService,
+              identityRepo: repository,
+              bridge: bridge,
+              targetPeerId: contactAccountPeerId,
+              recipientPublicKey: contact.publicKey,
+              intent: ContactRequestSendIntent.keyExchangeRetry,
+              resolveCallWakeHandle:
+                  callSignalingComposition.resolveCallWakeHandle,
+              onCallWakeHandleDistributed:
+                  callSignalingComposition.onCallWakeHandleDistributed,
+            );
+            if (result != SendContactRequestResult.success) {
+              throw StateError('call wake recovery request unavailable');
+            }
+          },
+        );
+    callSignalingComposition = createProductionCallSignalingComposition(
+      featureFlags: voiceCallFeatureFlags,
+      platform: callEndpointPlatform,
+      database: db,
+      bridge: bridge,
+      p2pService: p2pService,
+      messageRouter: messageRouter,
+      loadIdentity: repository.loadIdentity,
+      networkEffectsAllowed: () =>
+          allowsAccountRuntimeNetworkSideEffects('call_signaling'),
+      isVoiceNoteRecording: () => audioRecorderService.isRecording,
+      microphoneCaptureLeases: microphoneCaptureLeasesFor(audioRecorderService),
+      awaitForegroundPresentationReadiness: () =>
+          foregroundCallPresentationReady.future,
+      issuedCallWakeHandleStore: issuedCallWakeHandleStore,
+      receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+      ensureReceivedCallWakeHandle:
+          receivedCallWakeHandleRecovery.ensureCurrentGrantFor,
+      ensureOutgoingCallWakeAuthority: (contactAccountPeerId) =>
+          ensureOutgoingCallWakeAuthorityReady(
+            contactAccountPeerId: contactAccountPeerId,
+            issuedCallWakeHandleStore: issuedCallWakeHandleStore,
+            nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+            retryCallWakeDistribution:
+                ({required trigger, required requireFresh}) async {
+                  if (!requireFresh ||
+                      trigger != callWakeOutgoingPreflightTrigger) {
+                    return 0;
+                  }
+                  final contact = await contactRepository.getContact(
+                    contactAccountPeerId,
+                  );
+                  if (contact == null || contact.isBlocked) return 0;
+                  final result = await sendContactRequest(
+                    p2pService: p2pService,
+                    identityRepo: repository,
+                    bridge: bridge,
+                    targetPeerId: contactAccountPeerId,
+                    recipientPublicKey: contact.publicKey,
+                    intent: ContactRequestSendIntent.keyExchangeRetry,
+                    resolveCallWakeHandle:
+                        callSignalingComposition.resolveCallWakeHandle,
+                    onCallWakeHandleDistributed:
+                        callSignalingComposition.onCallWakeHandleDistributed,
+                    requireExactCallWakeReceipt: true,
+                  );
+                  return result == SendContactRequestResult.success ? 1 : 0;
+                },
+          ),
+      onGraphBuilt: (graph) {
+        try {
+          debugE2EComposition?.bindAndroidProductionAudioCallObservationSource(
+            AndroidProductionAudioCallObservationSource(
+              readCurrentSession: () => graph.coordinator.activeSession,
+              sessionChanges: graph.coordinator.snapshots,
+              readCurrentForeground: () => graph.current,
+              foregroundChanges: graph.changes,
+              readActiveConnectionSnapshot: graph.readActiveConnectionSnapshot,
+              readOutgoingCallWakeAuthorityReady:
+                  (contactAccountPeerId) async =>
+                      hasExactCurrentProductionCallWakeAuthority(
+                        record: await issuedCallWakeHandleStore.readForContact(
+                          contactAccountPeerId,
+                        ),
+                        contactAccountPeerId: contactAccountPeerId,
+                        expectedRecipientDevicePeerId:
+                            graph.localIdentity.peerId,
+                        expectedDeviceKeyEpoch: graph.localDeviceKeyEpoch,
+                        nowMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+                      ),
+            ),
+          );
+        } catch (_) {
+          // Debug observation must never control production graph availability.
+        }
+      },
+    );
+    notifyCallWakeEligibilityChanged = () {
+      unawaited(callSignalingComposition.onContactEligibilityChanged());
+    };
     final contactRequestPresentationGate = ContactRequestPresentationGate();
     if (kE2ETestMode) {
       contactRequestPresentationGate.suppressAll();
@@ -6118,6 +6273,30 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       // FDC-09 §12 / CV-14: persist a distributed `wt` on the receive leg (live +
       // inbox-replay both funnel through processIncomingMessage).
       receivedWakeTokenStore: receivedWakeTokenStore,
+      receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+      onCallWakeHandleStored:
+          callSignalingComposition.refreshOutgoingCallAvailability,
+      requestReciprocalCallWakeRecovery: (contactAccountPeerId) async {
+        final contact = await contactRepository.getContact(
+          contactAccountPeerId,
+        );
+        if (contact == null || contact.isBlocked) return;
+        final result = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: repository,
+          bridge: bridge,
+          targetPeerId: contactAccountPeerId,
+          recipientPublicKey: contact.publicKey,
+          intent: ContactRequestSendIntent.newRequest,
+          resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,
+          onCallWakeHandleDistributed:
+              callSignalingComposition.onCallWakeHandleDistributed,
+          requireExactCallWakeReceipt: true,
+        );
+        if (result != SendContactRequestResult.success) {
+          throw StateError('reciprocal call wake recovery unavailable');
+        }
+      },
       shouldSuppressPresentationForPeerId:
           contactRequestPresentationGate.shouldSuppress,
       // 171 follow-up (user decision): the scanned user is notified via the
@@ -8915,6 +9094,15 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       // FDC-09 §12 / CV-14: the backfill drain distributes wake-tokens (DARK until
       // the emission define flips) — read-only, never mints/registers.
       resolveWakeToken: wakeTokenResolver,
+      loadPendingCallWakeHandleContactIds: () async =>
+          (await issuedCallWakeHandleStore.readAll())
+              .where(
+                (record) => record.distributionPending && !record.revokePending,
+              )
+              .map((record) => record.contactAccountPeerId),
+      resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,
+      onCallWakeHandleDistributed:
+          callSignalingComposition.onCallWakeHandleDistributed,
     );
 
     final liveServiceStartupSteps = AccountMigrationRuntimeStartupSteps();
@@ -8994,6 +9182,38 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         () async {
           await notificationService.initialize();
           StartupTiming.instance.mark('notification_service_ready');
+        },
+      );
+
+      // Install this broadcast-stream forwarder before the listener. A
+      // reciprocal ML-KEM update can make a previously ineligible call-wake
+      // grant issuable, and that edge must not be lost during startup.
+      liveServiceStartupSteps.runSync(
+        'contact_key_update_forwarder_install',
+        () {
+          liveServiceForwardingSubscriptions.add(
+            contactRequestListener.contactKeyUpdatedStream.listen((contact) {
+              chatMessageListener.emitContactUpdate(contact);
+              // FDC-09 §12 / CV-14: a key rotation changed the recipient set —
+              // coalesce a single re-mint+register (INV-5).
+              wakeTokenReissueCoalescer.trigger();
+              // The compact QR intentionally omits ML-KEM. Once the verified
+              // reciprocal key lands, first reconcile the now-trusted call
+              // device, then immediately drain the newly pending grant.
+              unawaited(
+                backfillCallWakeAfterContactKeyUpdate(
+                  reconcileCallWakeEligibility:
+                      callSignalingComposition.onContactEligibilityChanged,
+                  hasPendingCallWakeDistribution: () async =>
+                      (await issuedCallWakeHandleStore.readAll()).any(
+                        (record) =>
+                            record.distributionPending && !record.revokePending,
+                      ),
+                  retryCallWakeDistribution: keyExchangeRetrier.retryNow,
+                ),
+              );
+            }),
+          );
         },
       );
 
@@ -9114,22 +9334,6 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           }),
         );
       });
-
-      // Forward ML-KEM key updates from reciprocal contact requests so
-      // ConversationWired/FeedWired pick up the new encryption key.
-      liveServiceStartupSteps.runSync(
-        'contact_key_update_forwarder_install',
-        () {
-          liveServiceForwardingSubscriptions.add(
-            contactRequestListener.contactKeyUpdatedStream.listen((contact) {
-              chatMessageListener.emitContactUpdate(contact);
-              // FDC-09 §12 / CV-14: a key rotation changed the recipient set —
-              // coalesce a single re-mint+register (INV-5).
-              wakeTokenReissueCoalescer.trigger();
-            }),
-          );
-        },
-      );
 
       // 171: a one-scan tap-free auto-add — refresh the UI so the new mutual
       // contact appears immediately (same path as a key update; feed/orbit
@@ -9451,7 +9655,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         directDeviceTrust: DatabaseDirectContactDeviceTrust(
           database: db,
           notificationProjection: directReactionNotificationProjection,
+          onAuthorityChanged: (_) =>
+              callSignalingComposition.onContactEligibilityChanged(),
         ),
+        outgoingCallCapability: callSignalingComposition,
+        foregroundCallCapability: callSignalingComposition,
+        resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,
+        onCallWakeHandleDistributed:
+            callSignalingComposition.onCallWakeHandleDistributed,
         contactRepository: contactRepository,
         contactRequestRepository: contactRequestRepository,
         contactRequestListener: contactRequestListener,
@@ -9978,26 +10189,48 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             _ => false,
           };
         },
+        resumeCallSignaling: () => resumeCallSignalingAndBackfillCallWake(
+          resumeCallSignaling: callSignalingComposition.onResume,
+          reconcileCallWakeEligibility:
+              callSignalingComposition.onContactEligibilityChanged,
+          hasPendingCallWakeDistribution: () async =>
+              (await issuedCallWakeHandleStore.readAll()).any(
+                (record) => record.distributionPending && !record.revokePending,
+              ),
+          retryCallWakeDistribution: keyExchangeRetrier.retryNow,
+        ),
+        pauseCallSignaling: callSignalingComposition.onBackgrounded,
+        shutdownCallSignaling: callSignalingComposition.shutdown,
+        onForegroundCallPresentationReady: () {
+          if (!foregroundCallPresentationReady.isCompleted) {
+            foregroundCallPresentationReady.complete();
+          }
+        },
         onAppDetached: () async {
-          if (canonicalWritableRuntimeSession != null) {
-            await shutdownCanonicalRuntime();
-            return;
-          }
+          try {
+            await callSignalingComposition.shutdown();
+            if (canonicalWritableRuntimeSession != null) {
+              await shutdownCanonicalRuntime();
+              return;
+            }
 
-          // Non-Android platforms retain their prior best-effort teardown.
-          try {
-            await p2pService.stopNode().timeout(const Duration(seconds: 2));
-          } catch (e) {
-            if (kDebugMode) {
-              debugPrint('[TEARDOWN] stopNode failed/timeout: $e');
+            // Non-Android platforms retain their prior best-effort teardown.
+            try {
+              await p2pService.stopNode().timeout(const Duration(seconds: 2));
+            } catch (e) {
+              if (kDebugMode) {
+                debugPrint('[TEARDOWN] stopNode failed/timeout: $e');
+              }
             }
-          }
-          try {
-            await db.close().timeout(const Duration(seconds: 2));
-          } catch (e) {
-            if (kDebugMode) {
-              debugPrint('[TEARDOWN] db.close failed/timeout: $e');
+            try {
+              await db.close().timeout(const Duration(seconds: 2));
+            } catch (e) {
+              if (kDebugMode) {
+                debugPrint('[TEARDOWN] db.close failed/timeout: $e');
+              }
             }
+          } finally {
+            await debugE2EComposition?.dispose();
           }
         },
       );
@@ -10102,6 +10335,11 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             allowsAccountRuntimeNetworkSideEffects:
                 allowsAccountRuntimeNetworkSideEffects,
             wakeTokenResolver: wakeTokenResolver,
+            outgoingCallCapability: callSignalingComposition,
+            resolveCallWakeHandle:
+                callSignalingComposition.resolveCallWakeHandle,
+            onCallWakeHandleDistributed:
+                callSignalingComposition.onCallWakeHandleDistributed,
           ),
         );
       }

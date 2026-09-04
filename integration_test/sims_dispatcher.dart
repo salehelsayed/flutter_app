@@ -16,6 +16,8 @@ import 'package:path_provider/path_provider.dart';
 
 import 'support/android_critical_performance_campaign.dart';
 import 'support/android_critical_performance_evidence.dart';
+import 'support/android_foreground_webrtc_audio_evidence.dart';
+import 'support/android_foreground_webrtc_audio_proof.dart';
 import 'support/android_voice_recorder_smoke.dart';
 import 'support/sims_runtime_protocol.dart';
 
@@ -60,6 +62,10 @@ void main() {
           encodedConfig: encodedConfig,
           installedProfileId: _installedProfileId,
           supportedRole: simsPrimaryRole,
+          additionalSupportedRoles: const <String>{
+            simsForegroundWebRtcCallerRole,
+            simsForegroundWebRtcCalleeRole,
+          },
           scenarioHandlers: <String, SimsRuntimeScenarioHandler>{
             simsAndroidVoiceRecorderScenarioId: (_) async {
               final proof = await runAndroidVoiceRecorderSmoke();
@@ -72,6 +78,39 @@ void main() {
               );
               await _writeJsonAtomically(resultFile, proof);
             },
+            simsAndroidForegroundWebRtcAudioScenarioId: (invocation) async {
+              try {
+                final proof = await runAndroidForegroundWebRtcAudioProof(
+                  invocation,
+                );
+                await _writeJsonAtomically(resultFile, proof);
+              } on AndroidForegroundWebRtcAudioProofExecutionFailure catch (
+                failure
+              ) {
+                // Publish only the already validated invocation binding. This
+                // lets the host fail promptly instead of waiting for a missing
+                // result file, while exception text and all media/signaling
+                // material remain confined to the ephemeral device process.
+                await _writeJsonAtomically(
+                  resultFile,
+                  failure.failedEndpoint(invocation),
+                );
+                rethrow;
+              } catch (_) {
+                await _writeJsonAtomically(
+                  resultFile,
+                  androidForegroundWebRtcAudioFailedEndpoint(
+                    invocation: invocation,
+                    stage: AndroidForegroundWebRtcAudioFailureStage.unexpected,
+                    state: 'none',
+                    endReason: 'none',
+                    effect: 'none',
+                    followUp: 'none',
+                  ),
+                );
+                rethrow;
+              }
+            },
           },
           scenarioValidators: <String, SimsRuntimeScenarioValidator>{
             simsAndroidVoiceRecorderScenarioId: (invocation) =>
@@ -82,6 +121,13 @@ void main() {
               final validation = validateAndroidCriticalPerformanceInvocation(
                 invocation,
               );
+              return validation.ok ? null : validation.detail;
+            },
+            simsAndroidForegroundWebRtcAudioScenarioId: (invocation) {
+              final validation =
+                  validateAndroidForegroundWebRtcAudioRuntimeInvocation(
+                    invocation,
+                  );
               return validation.ok ? null : validation.detail;
             },
           },

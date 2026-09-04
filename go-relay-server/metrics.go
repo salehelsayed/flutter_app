@@ -97,6 +97,100 @@ var activeStreams = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	Help: "Concurrent protocol stream handlers.",
 }, []string{"proto"})
 
+var turnCredentialIssuerEnabledGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_turn_credential_issuer_enabled",
+	Help: "1 when authenticated short-lived TURN credential issuance is explicitly enabled, otherwise 0.",
+})
+
+var turnCredentialRequestsCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_turn_credential_requests_total",
+	Help: "TURN credential requests by fixed privacy-safe outcome.",
+}, []string{"outcome"})
+
+func setTurnCredentialIssuerEnabled(enabled bool) {
+	if enabled {
+		turnCredentialIssuerEnabledGauge.Set(1)
+		return
+	}
+	turnCredentialIssuerEnabledGauge.Set(0)
+}
+
+func recordTurnCredentialOutcome(outcome string) {
+	turnCredentialRequestsCounter.WithLabelValues(outcome).Inc()
+}
+
+const (
+	apnsVoIPMetricSent                 = "sent"
+	apnsVoIPMetricSentCrossEnvironment = "sent_cross_environment"
+	apnsVoIPMetricNetwork              = "network"
+	apnsVoIPMetricRateLimited          = "rate_limited"
+	apnsVoIPMetricAuthError            = "auth_error"
+	apnsVoIPMetricServerError          = "server_error"
+	apnsVoIPMetricInvalidToken         = "invalid_token"
+	apnsVoIPMetricProviderError        = "provider_error"
+	apnsVoIPMetricRejectedRoute        = "rejected_route"
+	apnsVoIPMetricRejectedPayload      = "rejected_payload"
+	apnsVoIPMetricExpired              = "expired"
+	apnsVoIPMetricCanceled             = "canceled"
+)
+
+var apnsVoIPPushEnabledGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_apns_voip_push_enabled",
+	Help: "1 when direct APNs VoIP call-wake delivery is explicitly enabled, otherwise 0.",
+})
+
+var apnsVoIPPushCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_apns_voip_push_attempts_total",
+	Help: "Direct APNs VoIP push attempts and local rejections by fixed coarse outcome.",
+}, []string{"outcome"})
+
+func init() {
+	for _, outcome := range []string{
+		apnsVoIPMetricSent,
+		apnsVoIPMetricSentCrossEnvironment,
+		apnsVoIPMetricNetwork,
+		apnsVoIPMetricRateLimited,
+		apnsVoIPMetricAuthError,
+		apnsVoIPMetricServerError,
+		apnsVoIPMetricInvalidToken,
+		apnsVoIPMetricProviderError,
+		apnsVoIPMetricRejectedRoute,
+		apnsVoIPMetricRejectedPayload,
+		apnsVoIPMetricExpired,
+		apnsVoIPMetricCanceled,
+	} {
+		apnsVoIPPushCounter.WithLabelValues(outcome).Add(0)
+	}
+}
+
+func setAPNSVoIPPushEnabled(enabled bool) {
+	if enabled {
+		apnsVoIPPushEnabledGauge.Set(1)
+		return
+	}
+	apnsVoIPPushEnabledGauge.Set(0)
+}
+
+func recordAPNSVoIPPushOutcome(outcome string) {
+	switch outcome {
+	case apnsVoIPMetricSent,
+		apnsVoIPMetricSentCrossEnvironment,
+		apnsVoIPMetricNetwork,
+		apnsVoIPMetricRateLimited,
+		apnsVoIPMetricAuthError,
+		apnsVoIPMetricServerError,
+		apnsVoIPMetricInvalidToken,
+		apnsVoIPMetricProviderError,
+		apnsVoIPMetricRejectedRoute,
+		apnsVoIPMetricRejectedPayload,
+		apnsVoIPMetricExpired,
+		apnsVoIPMetricCanceled:
+	default:
+		outcome = apnsVoIPMetricProviderError
+	}
+	apnsVoIPPushCounter.WithLabelValues(outcome).Inc()
+}
+
 // --- Counters (lifetime totals) ---
 
 var connectionsCounter = promauto.NewCounter(prometheus.CounterOpts{

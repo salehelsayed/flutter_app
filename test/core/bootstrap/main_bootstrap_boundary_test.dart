@@ -11,6 +11,8 @@ const _productionPath =
     'lib/app/bootstrap/production_application_bootstrap.dart';
 const _productionHeadlessPath =
     'lib/app/bootstrap/production_headless_canonical_recovery.dart';
+const _productionHeadlessCallPath =
+    'lib/app/bootstrap/production_headless_call_admission.dart';
 const _rootPath = 'lib/app/application_root.dart';
 const _h0ProbePath = 'lib/core/debug/android_canonical_runtime_h0_probe.dart';
 const _plan374FixturePath =
@@ -95,9 +97,10 @@ void main() {
         'androidCanonicalRuntimeH0ProbeMain',
         'androidHeadlessRecovery374FixtureMain',
         'androidHeadlessCanonicalRecoveryMain',
+        'androidHeadlessCallAdmissionMain',
       ]),
       reason:
-          'main.dart may expose only main plus the three native AOT entrypoints',
+          'main.dart may expose only main plus the four native AOT entrypoints',
     );
     for (final nativeEntrypoint in functions.where(
       (declaration) => declaration.name.lexeme != 'main',
@@ -125,6 +128,7 @@ void main() {
         _runnerPath,
         _productionPath,
         _productionHeadlessPath,
+        _productionHeadlessCallPath,
         _h0ProbePath,
         _plan374FixturePath,
         _headlessRecoveryPath,

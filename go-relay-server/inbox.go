@@ -4189,7 +4189,15 @@ func fitRetrievePendingResponseForContract(
 // inherited switch (out of scope — see FDC-08 Scope Guard / named-handler rule).
 //
 //nolint:gocyclo,funlen // pre-existing dispatch size/complexity; FDC-08 adds one delegating case
-func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInboxStore, h host.Host, presence *PresenceStore) {
+func HandleInboxStream(
+	s network.Stream,
+	inbox *InboxStore,
+	groupInbox *GroupInboxStore,
+	h host.Host,
+	presence *PresenceStore,
+	turnCredentials TurnCredentialIssuer,
+	callControls ...*CallControlService,
+) {
 	start := time.Now()
 	activeStreams.WithLabelValues("inbox").Inc()
 	streamResult := "ok"
@@ -4201,13 +4209,12 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 	defer s.Close()
 
 	remotePeer := s.Conn().RemotePeer().String()
-	log.Printf("[INBOX] Incoming stream from %s", remotePeer[:min(20, len(remotePeer))])
 
 	requestBytes, err := readFrame(s)
 	if err != nil {
 		streamResult = "error"
 		streamErrorsCounter.WithLabelValues("inbox", "read").Inc()
-		log.Printf("[INBOX] Read error from %s: %v", remotePeer[:min(20, len(remotePeer))], err)
+		log.Printf("[INBOX] Read error: %v", err)
 		return
 	}
 
@@ -4219,10 +4226,23 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 		writeResponse(s, inboxResponse{Status: "ERROR", Error: "invalid JSON"})
 		return
 	}
+	log.Printf("[INBOX] Incoming stream")
+	if isCallControlAction(req.Action) {
+		var callControl *CallControlService
+		if len(callControls) > 0 {
+			callControl = callControls[0]
+		}
+		handleCallControlRequest(s, requestBytes, remotePeer, callControl)
+		return
+	}
 
 	var resp inboxResponse
 
 	switch req.Action {
+	case turnCredentialsAction:
+		handleTurnCredentialRequest(s, requestBytes, remotePeer, turnCredentials)
+		return
+
 	case "store":
 		if req.To == "" || req.Message == "" {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required fields: to, message"}
@@ -4593,7 +4613,7 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 	}
 
 	writeResponse(s, resp)
-	log.Printf("[INBOX] Stream closed for %s", remotePeer[:min(20, len(remotePeer))])
+	log.Printf("[INBOX] Stream closed")
 }
 
 // handlePresenceGet answers the additive `presence_get` inbox action: a cheap,

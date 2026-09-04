@@ -1,0 +1,17 @@
+{
+  "schema": "mknoon.call_audio_oracle.fixture.v1",
+  "file": "known_signal_48khz_mono.ogg",
+  "file_sha256": "429dc0349c60f06f5c062fd237a333c7941e6b98445f33272c0be5185425b9f5",
+  "license": "CC0-1.0",
+  "codec": "audio/opus",
+  "sample_rate_hz": 48000,
+  "channels": 1,
+  "frame_duration_ms": 20,
+  "rtp_payload_count": 33,
+  "rtp_payload_sequence_sha256": "be7d1839fb31844c2c23feaa0a1c3435b63c2ba29d404980ed6675a4c4e6f8a0",
+  "payload_hash_domain": "mknoon.known-opus-rtp-payload-sequence.v1",
+  "generation_formula": "x(t)=0.16*sin(2*pi*997*t)+0.08*sin(2*pi*1499*t), 0\u003c=t\u003c0.64s",
+  "generator": "FFmpeg/libopus",
+  "generator_version": "FFmpeg 8.0; libopus 1.5.2",
+  "generated_at_source_epoch_utc": "1970-01-01T00:06:39Z (SOURCE_DATE_EPOCH=399)"
+}

@@ -141,9 +141,20 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
       );
     }
 
+    MicrophoneCaptureLease captureLease;
+    try {
+      captureLease = microphoneCaptureLeasesFor(recorder).acquire();
+    } on MicrophoneCaptureLeaseRefused {
+      return ConversationVoiceCaptureStartResult(
+        status: ConversationVoiceCaptureStartStatus.busy,
+        scopeGeneration: _scopeGeneration,
+      );
+    }
+
     final session = _VoiceCaptureSession(
       generation: _scopeGeneration,
       recorder: recorder,
+      captureLease: captureLease,
       amplitudeWindowSize: amplitudeWindowSize,
     );
     session.autoStopHandler = (recording) {
@@ -350,8 +361,14 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
     _publish(ConversationVoiceCaptureViewState.idle);
     if (!session.startInFlight && ownsRecorder && !session.terminal) {
       session.terminal = true;
-      await session.recorder.cancel();
+      try {
+        await session.recorder.cancel();
+      } finally {
+        session.releaseCaptureLease();
+      }
+      return;
     }
+    if (!session.startInFlight) session.releaseCaptureLease();
   }
 
   @override
@@ -369,10 +386,23 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
       _detachSessionStreams(session);
       if (!session.startInFlight && ownsRecorder && !session.terminal) {
         session.terminal = true;
-        unawaited(session.recorder.cancel());
+        unawaited(_cancelRecorderAfterDispose(session));
+      } else if (!session.startInFlight) {
+        session.releaseCaptureLease();
       }
     }
     super.dispose();
+  }
+
+  Future<void> _cancelRecorderAfterDispose(_VoiceCaptureSession session) async {
+    try {
+      await session.recorder.cancel();
+    } catch (_) {
+      // Disposal remains best effort, but ownership is always released after
+      // the plugin cleanup attempt settles.
+    } finally {
+      session.releaseCaptureLease();
+    }
   }
 
   bool _canContinueArming(_VoiceCaptureSession session) =>
@@ -391,6 +421,7 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
 
   void _requestArmingAbort(_VoiceCaptureSession session) {
     session.abortRequested = true;
+    if (!session.startInFlight) session.releaseCaptureLease();
     _publish(
       ConversationVoiceCaptureViewState(
         phase: ConversationVoiceCapturePhase.stopping,
@@ -407,6 +438,7 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
     if (!_disposed && session.generation == _scopeGeneration) {
       _publish(ConversationVoiceCaptureViewState.idle);
     }
+    session.releaseCaptureLease();
   }
 
   Future<void> _cancelRecorderAfterCompletedStart(
@@ -460,6 +492,7 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
     if (!_disposed && session.generation == _scopeGeneration) {
       _publish(ConversationVoiceCaptureViewState.idle);
     }
+    session.releaseCaptureLease();
   }
 
   void _handleAutoStopped(
@@ -475,6 +508,7 @@ class ConversationVoiceCaptureController extends ChangeNotifier {
     if (identical(_activeSession, session)) {
       _activeSession = null;
     }
+    session.releaseCaptureLease();
 
     // The lane callback owns the final composer projection. Updating the
     // controller's snapshot without notifying avoids an intermediate terminal
@@ -500,8 +534,10 @@ class _VoiceCaptureSession {
   _VoiceCaptureSession({
     required this.generation,
     required this.recorder,
+    required MicrophoneCaptureLease captureLease,
     required int amplitudeWindowSize,
-  }) : amplitudeBuffer = AmplitudeBuffer(size: amplitudeWindowSize);
+  }) : _captureLease = captureLease,
+       amplitudeBuffer = AmplitudeBuffer(size: amplitudeWindowSize);
 
   final int generation;
   final AudioRecorderService recorder;
@@ -514,4 +550,12 @@ class _VoiceCaptureSession {
   bool abortRequested = false;
   bool startInFlight = false;
   bool terminal = false;
+
+  MicrophoneCaptureLease? _captureLease;
+
+  void releaseCaptureLease() {
+    final lease = _captureLease;
+    _captureLease = null;
+    lease?.release();
+  }
 }

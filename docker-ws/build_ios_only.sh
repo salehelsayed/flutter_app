@@ -10,6 +10,7 @@ if [ "${CLEAN:-0}" = "1" ]; then
 fi
 echo "== flutter build ios --release (stamp=$STAMP)"
 flutter build ios --release --target=lib/main.dart --dart-define=PRODUCTION_APNS=true \
+    --dart-define-from-file=tool/build/voice_call_release_defines.json \
   --build-name="1.0.0-iosprobe.t$STAMP" --build-number="$STAMP"
 rc=$?
 echo "== rc=$rc"

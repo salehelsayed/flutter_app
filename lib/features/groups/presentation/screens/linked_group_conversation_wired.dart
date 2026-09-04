@@ -389,6 +389,7 @@ final class LinkedGroupMediaVoiceActionOwner {
   bool _voiceTransitionInFlight = false;
   int _voiceGeneration = 0;
   String? _recordingGroupId;
+  MicrophoneCaptureLease? _microphoneCaptureLease;
   StreamSubscription<double>? _amplitudeSubscription;
   final List<double> _waveform = <double>[];
 
@@ -421,6 +422,11 @@ final class LinkedGroupMediaVoiceActionOwner {
         _voiceTransitionInFlight ||
         _recordingGroupId != null ||
         _sendInFlight) {
+      return false;
+    }
+    try {
+      _microphoneCaptureLease = microphoneCaptureLeasesFor(recorder).acquire();
+    } on MicrophoneCaptureLeaseRefused {
       return false;
     }
     _voiceTransitionInFlight = true;
@@ -462,6 +468,7 @@ final class LinkedGroupMediaVoiceActionOwner {
       return recorder.isRecording && _recordingGroupId == groupId;
     } finally {
       _voiceTransitionInFlight = false;
+      if (_recordingGroupId == null) _releaseMicrophoneCaptureLease();
     }
   }
 
@@ -554,7 +561,15 @@ final class LinkedGroupMediaVoiceActionOwner {
       await subscription?.cancel();
     } on Object {
       // A stale recorder stream has no authority after local state is cleared.
+    } finally {
+      _releaseMicrophoneCaptureLease();
     }
+  }
+
+  void _releaseMicrophoneCaptureLease() {
+    final lease = _microphoneCaptureLease;
+    _microphoneCaptureLease = null;
+    lease?.release();
   }
 
   Future<

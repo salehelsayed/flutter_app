@@ -25,6 +25,10 @@ fi
 printf 'Building App Store Connect IPA with %s\n' "$EXPORT_PLIST"
 (
   cd "$ROOT_DIR"
+  # 1:1 voice calling is compile-time gated. The release carries the gates
+  # from tool/build/voice_call_release_defines.json (see tool/build/README.md);
+  # without them the app has no call button and presents no incoming call.
+  set -- --dart-define-from-file="$ROOT_DIR/tool/build/voice_call_release_defines.json" "$@"
   flutter build ipa --release --export-options-plist="$EXPORT_PLIST" "$@"
 )
 

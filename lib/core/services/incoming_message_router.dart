@@ -15,6 +15,7 @@ class IncomingMessageRouter {
 
   final _contactRequestController = StreamController<ChatMessage>.broadcast();
   final _chatMessageController = StreamController<ChatMessage>.broadcast();
+  final _callSignalController = StreamController<ChatMessage>.broadcast();
   final _profileUpdateController = StreamController<ChatMessage>.broadcast();
   final _reactionController = StreamController<ChatMessage>.broadcast();
   final _messageDeletionController = StreamController<ChatMessage>.broadcast();
@@ -45,6 +46,12 @@ class IncomingMessageRouter {
 
   /// Stream of incoming chat_message messages.
   Stream<ChatMessage> get chatMessageStream => _chatMessageController.stream;
+
+  /// Dedicated stream for opaque encrypted call-control frames.
+  ///
+  /// Call listeners own this stream. Chat, outbox, notification, and generic
+  /// retry listeners never receive these messages.
+  Stream<ChatMessage> get callSignalStream => _callSignalController.stream;
 
   /// Stream of incoming profile_update messages.
   Stream<ChatMessage> get profileUpdateStream =>
@@ -123,7 +130,7 @@ class IncomingMessageRouter {
         emitFlowEvent(
           layer: 'FL',
           event: 'MESSAGE_ROUTER_STREAM_ERROR',
-          details: {'error': error.toString()},
+          details: {'errorType': error.runtimeType.toString()},
         );
       },
       onDone: () {
@@ -141,9 +148,6 @@ class IncomingMessageRouter {
       layer: 'FL',
       event: 'MESSAGE_ROUTER_RECEIVED',
       details: {
-        'from': message.from.length > 10
-            ? message.from.substring(0, 10)
-            : message.from,
         'isIncoming': message.isIncoming,
         'contentLength': message.content.length,
       },
@@ -159,13 +163,7 @@ class IncomingMessageRouter {
       emitFlowEvent(
         layer: 'FL',
         event: 'MESSAGE_ROUTER_ROUTING',
-        details: {
-          'type': type,
-          'version': version,
-          'from': message.from.length > 10
-              ? message.from.substring(0, 10)
-              : message.from,
-        },
+        details: {'type': type, 'version': version},
       );
 
       switch (type) {
@@ -173,6 +171,8 @@ class IncomingMessageRouter {
           _contactRequestController.add(message);
         case 'chat_message':
           _chatMessageController.add(message);
+        case 'call_signal':
+          _callSignalController.add(message);
         case 'profile_update':
           _profileUpdateController.add(message);
         case 'message_reaction':
@@ -183,36 +183,21 @@ class IncomingMessageRouter {
           emitFlowEvent(
             layer: 'FL',
             event: 'MESSAGE_ROUTER_GROUP_INVITE_DISPATCHED',
-            details: {
-              'from': message.from.length > 10
-                  ? message.from.substring(0, 10)
-                  : message.from,
-              'hasListeners': _groupInviteController.hasListener,
-            },
+            details: {'hasListeners': _groupInviteController.hasListener},
           );
           _groupInviteController.add(message);
         case 'group_invite_revocation':
           emitFlowEvent(
             layer: 'FL',
             event: 'MESSAGE_ROUTER_GROUP_INVITE_REVOCATION_DISPATCHED',
-            details: {
-              'from': message.from.length > 10
-                  ? message.from.substring(0, 10)
-                  : message.from,
-              'hasListeners': _groupInviteController.hasListener,
-            },
+            details: {'hasListeners': _groupInviteController.hasListener},
           );
           _groupInviteController.add(message);
         case 'group_invite_decline_ack':
           emitFlowEvent(
             layer: 'FL',
             event: 'MESSAGE_ROUTER_GROUP_INVITE_DECLINE_ACK_DISPATCHED',
-            details: {
-              'from': message.from.length > 10
-                  ? message.from.substring(0, 10)
-                  : message.from,
-              'hasListeners': _groupInviteController.hasListener,
-            },
+            details: {'hasListeners': _groupInviteController.hasListener},
           );
           _groupInviteController.add(message);
         case 'group_config_request':
@@ -225,9 +210,6 @@ class IncomingMessageRouter {
             event: 'MESSAGE_ROUTER_GROUP_CONFIG_RESYNC_DISPATCHED',
             details: {
               'type': type,
-              'from': message.from.length > 10
-                  ? message.from.substring(0, 10)
-                  : message.from,
               'hasListeners': _groupInviteController.hasListener,
             },
           );
@@ -274,11 +256,8 @@ class IncomingMessageRouter {
         layer: 'FL',
         event: 'MESSAGE_ROUTER_PARSE_ERROR',
         details: {
-          'from': message.from,
-          'error': e.toString(),
-          'contentPreview': message.content.length > 100
-              ? message.content.substring(0, 100)
-              : message.content,
+          'errorType': e.runtimeType.toString(),
+          'contentLength': message.content.length,
         },
       );
       _unknownController.add(message);
@@ -298,6 +277,7 @@ class IncomingMessageRouter {
     stop();
     _contactRequestController.close();
     _chatMessageController.close();
+    _callSignalController.close();
     _profileUpdateController.close();
     _reactionController.close();
     _messageDeletionController.close();

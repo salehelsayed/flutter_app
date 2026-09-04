@@ -1534,6 +1534,26 @@ func TestConfirmDirectMessage_Success(t *testing.T) {
 	assertOk(t, m)
 }
 
+func TestConfirmDirectMessage_AcceptsOptionalCallWakeReceipt(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	result := ConfirmDirectMessage(
+		`{"nonce":"nonce-1","ok":true,"callWakeReceipt":"commit-9f8e7d"}`,
+	)
+	m := parseJSON(t, result)
+	assertOk(t, m)
+}
+
+func TestConfirmDirectMessage_RejectsNonStringCallWakeReceipt(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	result := ConfirmDirectMessage(
+		`{"nonce":"nonce-1","ok":true,"callWakeReceipt":42}`,
+	)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
 func TestRelayReconnect_ReturnsRecoveryMode(t *testing.T) {
 	withFreshSingletonNode(t)
 

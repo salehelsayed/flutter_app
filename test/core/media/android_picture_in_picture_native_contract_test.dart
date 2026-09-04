@@ -989,6 +989,7 @@ void main() {
       'integration_test/scripts/'
               'select_android_picture_in_picture_system_ui_control.dart':
           'support\tsupport',
+      'scripts/run_vc204_android_call_lifecycle_e2e.sh': '1to1\trunner',
     };
     final result = await Process.run('bash', <String>[
       'scripts/check_reliability_simulation_discovery.sh',

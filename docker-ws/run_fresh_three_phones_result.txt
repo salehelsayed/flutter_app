@@ -1,4 +1,4 @@
-PROVENANCE tree=current-working-tree sha=39b45abd5 branch=protected-view dirty_files=1 build_name=1.0.0-39b45abd5.d1.t260829114633 ios_bundle_version=260829114633 date=2026-08-29 11:46:33
-00008030-001A6D2801BB802E FAILED(install)
-00008110-00184D622289801E FAILED(install)
-21071FDF600CSC OK 1.0.0-39b45abd5.d1.t260829114633 (verified)
+PROVENANCE tree=current-working-tree sha=67f218f6d branch=feat/audio-prd-implementation dirty_files=288 build_name=1.0.0-67f218f6d.d288.t260904224820 ios_bundle_version=260904224820 date=2026-09-04 22:48:20
+00008030-001A6D2801BB802E OK 1.0.0-67f218f6d.d288.t260904224820 bundleVersion=260904224820 (verified)
+00008110-00184D622289801E OK 1.0.0-67f218f6d.d288.t260904224820 bundleVersion=260904224820 (verified)
+21071FDF600CSC OK 1.0.0-67f218f6d.d288.t260904224820 (verified)

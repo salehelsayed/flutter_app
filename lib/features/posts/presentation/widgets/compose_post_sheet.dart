@@ -79,6 +79,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   bool _isAttaching = false;
   VoiceRecordingState _recordingState = VoiceRecordingState.idle;
   bool _pendingRecordingAbort = false;
+  bool _recorderStartInFlight = false;
+  MicrophoneCaptureLease? _microphoneCaptureLease;
   Duration _recordingDuration = Duration.zero;
   List<double> _recordingAmplitudes = const <double>[];
   List<PostMediaDraft> _mediaDrafts = const <PostMediaDraft>[];
@@ -169,13 +171,16 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     _textController.removeListener(_updateInputDirection);
     _cancelRecorderSubscriptions();
     if (_recordingState.isActive) {
+      _pendingRecordingAbort = true;
       final recorder = widget.audioRecorderService;
       // Only cancel a session this sheet still owns — the recording state
       // can be stale after another surface displaced the shared recorder.
       if (recorder != null &&
           recorder.onAutoStopped == _onRecorderAutoStopped) {
         recorder.onAutoStopped = null;
-        unawaited(recorder.cancel());
+        unawaited(_cancelRecorderAfterDispose(recorder));
+      } else if (!_recorderStartInFlight) {
+        _releaseMicrophoneCaptureLease();
       }
     }
     _textController.dispose();
@@ -230,6 +235,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     if (recorder == null) {
       return;
     }
+    try {
+      _microphoneCaptureLease = microphoneCaptureLeasesFor(recorder).acquire();
+    } on MicrophoneCaptureLeaseRefused {
+      return;
+    }
 
     _pendingRecordingAbort = false;
     setState(() {
@@ -238,11 +248,19 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       _recordingAmplitudes = const <double>[];
     });
 
-    final hasPermission = await recorder.requestPermission();
+    bool hasPermission;
+    try {
+      hasPermission = await recorder.requestPermission();
+    } on Object {
+      if (mounted) setState(_resetRecordingState);
+      _releaseMicrophoneCaptureLease();
+      return;
+    }
     if (!mounted || _pendingRecordingAbort) {
       if (mounted) {
         setState(_resetRecordingState);
       }
+      _releaseMicrophoneCaptureLease();
       return;
     }
 
@@ -250,21 +268,30 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       if (mounted) {
         setState(_resetRecordingState);
       }
+      _releaseMicrophoneCaptureLease();
       return;
     }
 
+    _recorderStartInFlight = true;
     try {
       await recorder.start(outputPath: '');
     } catch (_) {
       if (mounted) {
         setState(_resetRecordingState);
       }
+      _releaseMicrophoneCaptureLease();
       return;
+    } finally {
+      _recorderStartInFlight = false;
     }
     if (!mounted ||
         _pendingRecordingAbort ||
         _recordingState == VoiceRecordingState.stopping) {
-      await recorder.cancel();
+      try {
+        await recorder.cancel();
+      } finally {
+        _releaseMicrophoneCaptureLease();
+      }
       if (mounted) {
         setState(_resetRecordingState);
       }
@@ -307,19 +334,26 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     if (_recordingState == VoiceRecordingState.arming) {
       _pendingRecordingAbort = true;
       setState(() => _recordingState = VoiceRecordingState.stopping);
+      if (!_recorderStartInFlight) _releaseMicrophoneCaptureLease();
       return;
     }
 
     recorder.onAutoStopped = null;
     setState(() => _recordingState = VoiceRecordingState.stopping);
     final waveform = downsampleWaveform(_waveformSamples, 50);
-    final recording = await recorder.stop();
+    AudioRecording? recording;
+    try {
+      recording = await recorder.stop();
+    } finally {
+      _releaseMicrophoneCaptureLease();
+    }
     _cancelRecorderSubscriptions();
     if (!mounted) {
       return;
     }
 
-    if (recording == null) {
+    final completedRecording = recording;
+    if (completedRecording == null) {
       setState(_resetRecordingState);
       return;
     }
@@ -328,9 +362,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       _resetRecordingState();
       _mediaDrafts = <PostMediaDraft>[
         PostMediaDraft(
-          localFilePath: recording.filePath,
-          mime: recording.mime,
-          durationMs: recording.durationMs,
+          localFilePath: completedRecording.filePath,
+          mime: completedRecording.mime,
+          durationMs: completedRecording.durationMs,
           waveform: waveform,
         ),
       ];
@@ -345,12 +379,17 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     if (_recordingState == VoiceRecordingState.arming) {
       _pendingRecordingAbort = true;
       setState(() => _recordingState = VoiceRecordingState.stopping);
+      if (!_recorderStartInFlight) _releaseMicrophoneCaptureLease();
       return;
     }
     recorder.onAutoStopped = null;
     setState(() => _recordingState = VoiceRecordingState.stopping);
     _cancelRecorderSubscriptions();
-    await recorder.cancel();
+    try {
+      await recorder.cancel();
+    } finally {
+      _releaseMicrophoneCaptureLease();
+    }
     if (!mounted) {
       return;
     }
@@ -384,6 +423,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     // user gesture; reset the recording UI. The result is discarded — no
     // draft is attached.
     widget.audioRecorderService?.onAutoStopped = null;
+    _releaseMicrophoneCaptureLease();
     _cancelRecorderSubscriptions();
     if (mounted) {
       setState(_resetRecordingState);
@@ -393,6 +433,24 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       event: 'POST_COMPOSE_FL_RECORD_AUTO_STOPPED',
       details: {'tooShort': recording == null},
     );
+  }
+
+  Future<void> _cancelRecorderAfterDispose(
+    AudioRecorderService recorder,
+  ) async {
+    try {
+      await recorder.cancel();
+    } on Object {
+      // Disposal remains best effort.
+    } finally {
+      _releaseMicrophoneCaptureLease();
+    }
+  }
+
+  void _releaseMicrophoneCaptureLease() {
+    final lease = _microphoneCaptureLease;
+    _microphoneCaptureLease = null;
+    lease?.release();
   }
 
   void _clearDrafts() {

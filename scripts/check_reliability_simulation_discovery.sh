@@ -185,9 +185,28 @@ classify_path() {
       record "group" "$path" "runner" "Plan 371 app-visibility lifecycle scenario"
       return
       ;;
+    scripts/run_vc204_android_call_lifecycle_e2e.sh)
+      record "1to1" "$path" "runner" "VC2-04 target-pinned Android Telecom lifecycle scenario"
+      return
+      ;;
   esac
 
   case "$path" in
+    integration_test/scripts/run_production_audio_call_sims.dart)
+      record "support" "$path" "support" "399 external local-coturn/Pion staging wrapper around the manifest-owned production-main Android call scenario"
+      return
+      ;;
+    integration_test/scripts/android_production_audio_call_campaign.dart|\
+    integration_test/scripts/production_audio_call_local_fixture.dart|\
+    integration_test/support/android_production_audio_call_evidence.dart|\
+    lib/core/debug/android_production_audio_call_e2e.dart)
+      record "support" "$path" "support" "399 manifest-owned production-main Android call campaign, local fixture control, read-only observer, or privacy-bounded RTP evidence"
+      return
+      ;;
+    integration_test/scripts/android_foreground_webrtc_audio_campaign.dart)
+      record "support" "$path" "support" "VC2-03 manifest-owned prebuilt standard-profile physical-Android plus emulator foreground WebRTC audio campaign"
+      return
+      ;;
     integration_test/scripts/select_android_picture_in_picture_pixel6_api36_geometry.dart|\
     integration_test/scripts/select_android_picture_in_picture_system_ui_control.dart)
       record "support" "$path" "support" "243 Android received-video PiP SystemUI control selector"
@@ -665,6 +684,14 @@ classify_path() {
       record "1to1" "$path" "test" "1:1 transport/conversation simulator test"
       return
       ;;
+    integration_test/audio_peer_connection_proof_test.dart)
+      record "1to1" "$path" "test" "VC2-01 audio-only peer-connection adapter device proof"
+      return
+      ;;
+    integration_test/call_control_signaling_e2e_test.dart)
+      record "1to1" "$path" "test" "VC2-02 deterministic cross-layer call-control signaling simulator E2E"
+      return
+      ;;
     integration_test/voice_message_e2e_test.dart)
       record "1to1" "$path" "test" "Android native microphone recorder smoke; physical Android target required; permission/plugin failures are test failures"
       return
@@ -751,6 +778,8 @@ discover_candidates() {
       printf '%s\n' integration_test/support/android_direct_media_blob_custody_evidence.dart
     [ ! -f integration_test/support/android_direct_media_blob_custody_campaign_contract.dart ] ||
       printf '%s\n' integration_test/support/android_direct_media_blob_custody_campaign_contract.dart
+    [ ! -f integration_test/support/android_production_audio_call_evidence.dart ] ||
+      printf '%s\n' integration_test/support/android_production_audio_call_evidence.dart
     find scripts -maxdepth 1 -type f \( \
       -name '*simulator*.sh' -o \
       -name '*emulator*.sh' -o \
@@ -1206,6 +1235,11 @@ expand_record_to_checks() {
     scripts/run_app_visibility_android_e2e.sh)
       record_check "$category" "$path" "app_visibility_lifecycle" \
         "Plan 371 target-pinned Android lifecycle and durable-reopen scenario"
+      return
+      ;;
+    scripts/run_vc204_android_call_lifecycle_e2e.sh)
+      record_check "$category" "$path" "vc204_android_call_lifecycle" \
+        "VC2-04 target-pinned Android Telecom lifecycle scenario"
       return
       ;;
     integration_test/scripts/run_notification_sound_smoke.dart)

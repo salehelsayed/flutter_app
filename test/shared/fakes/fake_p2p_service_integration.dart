@@ -88,6 +88,15 @@ class FakeP2PService
   /// Artificial delay before [sendMessageWithReply] returns.
   Duration? sendDelay;
 
+  /// Optional authenticated reply seam for integration tests whose deferred
+  /// receiver ACK carries content derived from an encrypted request.
+  SendMessageResult Function(
+    String targetPeerId,
+    String message,
+    bool delivered,
+  )?
+  directReplyBuilder;
+
   /// Last explicit native budgets observed by the delayed bridge fakes.
   int? lastDiscoverTimeoutMs;
   int? lastDialTimeoutMs;
@@ -231,6 +240,10 @@ class FakeP2PService
       return const SendMessageResult(sent: false);
     }
     final delivered = await network.deliver(peerId, targetPeerId, message);
+    final replyBuilder = directReplyBuilder;
+    if (replyBuilder != null) {
+      return replyBuilder(targetPeerId, message, delivered);
+    }
     return SendMessageResult(
       sent: delivered,
       // A successful fake live delivery means the authenticated receiver

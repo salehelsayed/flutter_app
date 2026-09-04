@@ -375,5 +375,83 @@ void main() {
         expect(service.hasPendingIntent, isFalse);
       },
     );
+
+    test(
+      '1q: captureInitialIntent fails open when the plugin never completes',
+      () async {
+        final neverCompletes = Completer<List<SharedMediaFile>>();
+        final service = ShareIntentService(
+          getCacheDirectory: () async => tempDir,
+          getInitialMedia: () => neverCompletes.future,
+          getMediaStream: Stream<List<SharedMediaFile>>.empty,
+          resetShareIntent: () {},
+          initialIntentProbeTimeout: const Duration(milliseconds: 10),
+        );
+
+        final intent = await service.captureInitialIntent().timeout(
+          const Duration(seconds: 1),
+          onTimeout: () => throw TestFailure(
+            'captureInitialIntent did not honor its initial probe timeout',
+          ),
+        );
+
+        expect(intent, isNull);
+        expect(service.hasPendingIntent, isFalse);
+      },
+    );
+
+    test(
+      '1r: captureInitialIntent buffers a real share that arrives before the bound',
+      () async {
+        final initialMedia = Completer<List<SharedMediaFile>>();
+        final service = ShareIntentService(
+          getCacheDirectory: () async => tempDir,
+          getInitialMedia: () => initialMedia.future,
+          getMediaStream: Stream<List<SharedMediaFile>>.empty,
+          resetShareIntent: () {},
+          initialIntentProbeTimeout: const Duration(seconds: 1),
+        );
+
+        final capture = service.captureInitialIntent();
+        initialMedia.complete([
+          SharedMediaFile(
+            path: 'https://example.com/prompt-share',
+            type: SharedMediaType.url,
+          ),
+        ]);
+        final intent = await capture;
+
+        expect(intent?.text, 'https://example.com/prompt-share');
+        expect(service.hasPendingIntent, isTrue);
+        expect(
+          service.consumePendingIntent()?.text,
+          'https://example.com/prompt-share',
+        );
+      },
+    );
+
+    test('1s: captureInitialIntent preserves prompt plugin errors', () async {
+      final service = ShareIntentService(
+        getCacheDirectory: () async => tempDir,
+        getInitialMedia: () => Future<List<SharedMediaFile>>.error(
+          StateError('plugin unavailable'),
+        ),
+        getMediaStream: Stream<List<SharedMediaFile>>.empty,
+        resetShareIntent: () {},
+        initialIntentProbeTimeout: const Duration(seconds: 1),
+      );
+
+      await expectLater(
+        service.captureInitialIntent(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'plugin unavailable',
+          ),
+        ),
+      );
+      expect(service.hasPendingIntent, isFalse);
+    });
   });
 }

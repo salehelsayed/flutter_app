@@ -13,6 +13,11 @@ class ConversationHeader extends StatelessWidget {
   final String connectionDate;
   final VoidCallback onBack;
   final VoidCallback? onOverflow;
+  final VoidCallback? onCall;
+  final bool showCallAction;
+  final bool callActionEnabled;
+  final bool callActionInFlight;
+  final String callUnavailableMessage;
 
   /// Invoked when the avatar / name block is tapped (opens the contact profile).
   final VoidCallback? onAvatarTap;
@@ -25,6 +30,12 @@ class ConversationHeader extends StatelessWidget {
     required this.onBack,
     this.onOverflow,
     this.onAvatarTap,
+    this.onCall,
+    this.showCallAction = false,
+    this.callActionEnabled = false,
+    this.callActionInFlight = false,
+    this.callUnavailableMessage =
+        'Voice calling is unavailable for this device',
   });
 
   /// Stable route-level accessibility marker consumed by the iOS notification
@@ -125,6 +136,13 @@ class ConversationHeader extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (showCallAction)
+                  _ConversationCallAction(
+                    enabled: callActionEnabled && onCall != null,
+                    inFlight: callActionInFlight,
+                    unavailableMessage: callUnavailableMessage,
+                    onCall: onCall,
+                  ),
                 // Overflow button
                 GestureDetector(
                   onTap: onOverflow,
@@ -147,5 +165,69 @@ class ConversationHeader extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _ConversationCallAction extends StatelessWidget {
+  const _ConversationCallAction({
+    required this.enabled,
+    required this.inFlight,
+    required this.unavailableMessage,
+    required this.onCall,
+  });
+
+  final bool enabled;
+  final bool inFlight;
+  final String unavailableMessage;
+  final VoidCallback? onCall;
+
+  String get _truthfulUnavailableMessage {
+    final message = unavailableMessage.trim();
+    return message.isEmpty
+        ? 'Voice calling is unavailable for this device'
+        : message;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.backgroundReadableColors;
+    final tooltip = inFlight
+        ? 'Starting voice call'
+        : enabled
+        ? 'Start voice call'
+        : _truthfulUnavailableMessage;
+
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: enabled ? 'Start voice call' : tooltip,
+      onTap: enabled ? onCall : null,
+      excludeSemantics: true,
+      child: IconButton(
+        tooltip: tooltip,
+        onPressed: enabled
+            ? onCall
+            : inFlight
+            ? null
+            : () => _showUnavailable(context),
+        icon: const Icon(Icons.call_outlined),
+        iconSize: 22,
+        color: enabled ? colors.iconSecondary : colors.disabledForeground,
+        style: IconButton.styleFrom(
+          backgroundColor: enabled
+              ? Colors.transparent
+              : colors.disabledSurface,
+          fixedSize: const Size.square(44),
+        ),
+      ),
+    );
+  }
+
+  void _showUnavailable(BuildContext context) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(_truthfulUnavailableMessage)));
   }
 }

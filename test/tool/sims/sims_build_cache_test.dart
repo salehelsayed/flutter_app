@@ -13,15 +13,18 @@ BuildProfileInput _input({
   String toolchain = 'flutter-a',
   String runtimeScenario = 'scenario-a',
   String profile = 'android.e2e.standard',
+  String architecture = 'universal',
+  String entrypoint = 'integration_test/sims_dispatcher.dart',
   String appId = 'com.mknoon.app',
   Map<String, String> compileDefines = const <String, String>{
     'E2E_TEST_MODE': 'true',
   },
+  List<String> buildOptions = const <String>['--debug'],
 }) => BuildProfileInput(
   profileId: profile,
   platform: 'android',
-  architecture: 'universal',
-  entrypoint: 'integration_test/sims_dispatcher.dart',
+  architecture: architecture,
+  entrypoint: entrypoint,
   mode: 'debug',
   flavor: 'default',
   compileDefines: compileDefines,
@@ -33,7 +36,7 @@ BuildProfileInput _input({
     'pubspec.lock': utf8.encode('lock-a'),
   },
   toolchain: <String, String>{'flutter': toolchain},
-  buildOptions: const <String>['--debug'],
+  buildOptions: buildOptions,
   runtimeConfig: <String, Object?>{'scenario': runtimeScenario},
 );
 
@@ -106,6 +109,118 @@ void main() {
       reason: 'the reserved handshake cannot be overridden by the manifest',
     );
   });
+
+  test(
+    'production-call APK command and cache identity include every native option',
+    () {
+      final manifest = SimsManifest.loadSync(
+        File('tool/sims/critical_features.json'),
+      );
+      final profile = manifest.buildProfileById(
+        'android.e2e.production_call_local',
+      )!;
+      const relay = '/ip4/127.0.0.1/tcp/4005/p2p/12D3KooWProductionCallFixture';
+      const environment = <String, String>{'MKNOON_RELAY_ADDRESSES': relay};
+      final defines = effectiveSimsCompileDefines(
+        profile,
+        environment: environment,
+      );
+      final arguments = effectiveSimsBuildArguments(
+        profile,
+        environment: environment,
+      );
+
+      expect(arguments, contains('--target-platform=android-arm64'));
+      expect(
+        arguments,
+        contains('--android-project-arg=simsAndroidAbi=arm64-v8a'),
+      );
+      expect(
+        arguments,
+        contains('--android-project-arg=enableAndroidNativeCalls=true'),
+      );
+      expect(arguments, contains('--target=lib/main.dart'));
+      for (final define in defines.entries) {
+        expect(
+          arguments,
+          contains('--dart-define=${define.key}=${define.value}'),
+          reason: '${define.key} must affect the exact Flutter build command',
+        );
+      }
+
+      BuildProfileInput productionInput({
+        Map<String, String>? compileDefines,
+        List<String>? buildOptions,
+      }) => _input(
+        profile: profile.id,
+        architecture: 'android-arm64',
+        entrypoint: 'lib/main.dart',
+        compileDefines: compileDefines ?? defines,
+        buildOptions: buildOptions ?? arguments,
+      );
+
+      expect(productionInput().inputDigest, productionInput().inputDigest);
+      expect(
+        productionInput().inputDigest,
+        isNot(
+          productionInput(
+            compileDefines: <String, String>{
+              ...defines,
+              'VOICE_CALL_TURN_ENABLED': 'false',
+            },
+          ).inputDigest,
+        ),
+        reason: 'every effective dart-define belongs to cache identity',
+      );
+      expect(
+        productionInput().inputDigest,
+        isNot(
+          productionInput(
+            buildOptions: arguments
+                .where(
+                  (argument) =>
+                      argument !=
+                      '--android-project-arg=enableAndroidNativeCalls=true',
+                )
+                .toList(growable: false),
+          ).inputDigest,
+        ),
+        reason: 'the native Android project argument belongs to cache identity',
+      );
+      expect(
+        BuildRequestSet.fromProfileIds(<String>[
+          profile.id,
+          profile.id,
+        ]).profileIds,
+        <String>[profile.id],
+        reason: 'both peers reuse one centrally built arm64 APK',
+      );
+
+      for (final offProfileId in const <String>[
+        'android.e2e.standard',
+        'android.e2e.main',
+      ]) {
+        final offArguments = effectiveSimsBuildArguments(
+          manifest.buildProfileById(offProfileId)!,
+          environment: const <String, String>{},
+        );
+        expect(
+          offArguments,
+          isNot(
+            contains('--android-project-arg=enableAndroidNativeCalls=true'),
+          ),
+          reason: '$offProfileId must keep the native-call feature off',
+        );
+        expect(
+          offArguments.any(
+            (argument) => argument.contains('VOICE_CALL_CAPABILITY_V1'),
+          ),
+          isFalse,
+          reason: '$offProfileId must keep the call capability off',
+        );
+      }
+    },
+  );
 
   test('device E2E artifacts attest only a configured relay boundary', () {
     final manifest = SimsManifest.loadSync(

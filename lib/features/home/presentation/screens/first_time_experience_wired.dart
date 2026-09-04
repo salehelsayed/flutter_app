@@ -20,6 +20,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -108,6 +109,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
   final TransportMetrics? transportMetrics;
+  final ResolveCallWakeHandle? resolveCallWakeHandle;
+  final OnCallWakeHandleDistributed? onCallWakeHandleDistributed;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
@@ -155,6 +158,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
     this.transportMetrics,
+    this.resolveCallWakeHandle,
+    this.onCallWakeHandleDistributed,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
   });
@@ -245,6 +250,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       identityRepo: widget.repository,
       bridge: widget.bridge,
       onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
+      resolveCallWakeHandle: widget.resolveCallWakeHandle,
+      onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
     );
 
     if (!mounted) return;
@@ -268,6 +275,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         buildFeedSlideUpRoute(
           builder: (_) => FeedWired(
             directRouteAuthority: widget.directRouteAuthority,
+            resolveCallWakeHandle: widget.resolveCallWakeHandle,
+            onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
             repository: widget.repository,
             contactRepository: widget.contactRepository,
             contactRequestRepository: widget.contactRequestRepository,
@@ -329,6 +338,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             directDeviceTrust:
                 widget.directRouteAuthority.resolvedDirectDeviceTrust,
             modalityGate: widget.directRouteAuthority.resolvedModalityGate,
+            outgoingCallCapability:
+                widget.directRouteAuthority.resolvedOutgoingCallCapability,
             contact: contact,
             identityRepo: widget.repository,
             messageRepo: widget.messageRepository,
@@ -617,6 +628,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       MaterialPageRoute(
         builder: (scannerContext) => QRScannerWired(
           directRouteAuthority: widget.directRouteAuthority,
+          resolveCallWakeHandle: widget.resolveCallWakeHandle,
+          onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
           bridge: widget.bridge,
           contactRepository: widget.contactRepository,
           contactRequestRepository: widget.contactRequestRepository,

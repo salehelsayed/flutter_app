@@ -12,6 +12,7 @@ import android.os.LocaleList
 import com.google.firebase.messaging.RemoteMessage
 import com.google.firebase.messaging.remoteMessageFromBundleForTest
 import java.util.Locale
+import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -28,6 +29,7 @@ import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 class MknoonFirebaseMessagingServiceTest {
+    private val callNowMs = 1_800_000_000_000L
     private lateinit var context: Context
 
     @Before
@@ -138,6 +140,60 @@ class MknoonFirebaseMessagingServiceTest {
         assertTrue(deletedSchedules.isEmpty())
         assertEquals(listOf(1L), service.warmSignals)
         assertTrue(manager.activeNotifications.isEmpty())
+    }
+
+    @Test
+    @Config(sdk = [33])
+    fun `VC2-04 call wake has a separate strict ingress and never enters ordinary recovery`() {
+        val delegated = mutableListOf<RemoteMessage>()
+        val fixedSchedules = mutableListOf<DroppedPushRecoveryStore.PendingRecovery>()
+        val deletedSchedules = mutableListOf<DroppedPushRecoveryStore.PendingRecovery>()
+        val service = classifierService(delegated, fixedSchedules, deletedSchedules)
+        service.callNowMs = callNowMs
+        val valid = mapOf(
+            "v" to "1",
+            "w" to "call",
+            "c" to "00112233445566778899aabbccddeeff",
+            "h" to "10112233445566778899aabbccddeeff",
+            "e" to (callNowMs + 45_000L).toString(),
+        )
+
+        service.onMessageReceived(dataMessage(valid))
+
+        assertEquals(1, service.callDispatches.size)
+        assertEquals(
+            UUID.fromString("00112233-4455-6677-8899-aabbccddeeff"),
+            service.callDispatches.single().nativeCallId,
+        )
+        assertTrue(delegated.isEmpty())
+        assertTrue(fixedSchedules.isEmpty())
+        assertTrue(deletedSchedules.isEmpty())
+        assertNull(DroppedPushRecoveryStore(context).pendingGeneration())
+
+        val rejectedReservedShapes = listOf(
+            valid - "e",
+            valid + ("x" to "1"),
+            valid + ("e" to callNowMs.toString()),
+            valid + ("c" to "00112233445566778899AABBCCDDEEFF"),
+        )
+        for (shape in rejectedReservedShapes) {
+            service.onMessageReceived(dataMessage(shape))
+        }
+        service.onMessageReceived(notificationBearingMessage(valid))
+        assertEquals(1, service.callDispatches.size)
+        assertTrue(delegated.isEmpty())
+
+        service.onMessageReceived(dataMessage(mapOf("ordinary" to "value")))
+        assertEquals(1, delegated.size)
+
+        val receiver = RecordingFirebaseMessagingReceiver()
+        receiver.onReceive(context, messageIntent(valid))
+        for (shape in rejectedReservedShapes) {
+            receiver.onReceive(context, messageIntent(shape))
+        }
+        assertTrue(receiver.delegated.isEmpty())
+        receiver.onReceive(context, messageIntent(mapOf("ordinary" to "value")))
+        assertEquals(1, receiver.delegated.size)
     }
 
     @Test
@@ -370,6 +426,16 @@ private class RecordingFirebaseMessagingService : MknoonFirebaseMessagingService
     var observedFixed: MutableList<DroppedPushRecoveryStore.PendingRecovery> =
         mutableListOf()
     val warmSignals = mutableListOf<Long>()
+    var callNowMs = 0L
+    val callDispatches = mutableListOf<com.mknoon.app.call.CallWakePayload>()
+
+    override fun callWakeNowMs(): Long = callNowMs
+
+    override fun dispatchValidatedCallWake(
+        payload: com.mknoon.app.call.CallWakePayload,
+    ) {
+        callDispatches += payload
+    }
 
     override fun scheduleRecovery(snapshot: DroppedPushRecoveryStore.PendingRecovery) {
         check(snapshot == DroppedPushRecoveryStore(this).pendingRecovery())

@@ -54,6 +54,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
@@ -547,6 +548,11 @@ class ConversationWired extends StatefulWidget {
   /// incumbent single-target senders byte-identically.
   final DirectEventFanoutAuthoring? directEventFanout;
 
+  /// Foreground call access backed by the process-owned composition. A null
+  /// capability keeps the header action hidden; a present but unavailable
+  /// capability remains visible as a disabled, explanatory action.
+  final OutgoingCallCapability? outgoingCallCapability;
+
   const ConversationWired({
     super.key,
     required this.contact,
@@ -610,6 +616,7 @@ class ConversationWired extends StatefulWidget {
     this.directDeviceTrust,
     this.modalityGate = const DirectConversationModalityGate(),
     this.directEventFanout,
+    this.outgoingCallCapability,
   });
 
   @override
@@ -648,11 +655,15 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _coalesceNeedsFlush = false;
   bool _coalesceWantsMarkRead = false;
   bool _coalesceWantsIntroCheck = false;
+  bool _outgoingCallStartInFlight = false;
+  bool _outgoingCallContactAvailable = false;
+  int _outgoingCallAvailabilityGeneration = 0;
   final Set<String> _coalesceLiveEdgeCandidateIds = {};
 
   StreamSubscription<ConversationMessage>? _incomingSubscription;
   StreamSubscription<ConversationMessage>? _repoChangeSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
+  StreamSubscription<bool>? _outgoingCallAvailabilitySubscription;
   final _scrollController = ScrollController();
 
   bool _hasMoreOlderMessages = true;
@@ -1385,6 +1396,7 @@ class _ConversationWiredState extends State<ConversationWired>
     _appLifecycleState =
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached;
     _contact = widget.contact;
+    _bindOutgoingCallAvailability();
     _uploadActivityController =
         ConversationUploadActivityController<_DirectComposerSnapshot>(
           scopeId: widget.contact.peerId,
@@ -7756,6 +7768,8 @@ class _ConversationWiredState extends State<ConversationWired>
     _incomingSubscription?.cancel();
     _repoChangeSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
+    _outgoingCallAvailabilityGeneration++;
+    _outgoingCallAvailabilitySubscription?.cancel();
     _reactionSubscription?.cancel();
     _uploadActivityController.removeListener(_onControllerInvalidated);
     _reactionProjectionController.removeListener(_onControllerInvalidated);
@@ -7802,6 +7816,20 @@ class _ConversationWiredState extends State<ConversationWired>
     // the no-replay live stream. Re-fetch (without yanking the scroll position).
     if (state == AppLifecycleState.resumed) {
       unawaited(_recoverAndMarkReadAfterResume());
+      unawaited(_refreshOutgoingCallAvailability());
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ConversationWired oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(
+      oldWidget.outgoingCallCapability,
+      widget.outgoingCallCapability,
+    )) {
+      _bindOutgoingCallAvailability();
+    } else if (oldWidget.contact.peerId != widget.contact.peerId) {
+      unawaited(_refreshOutgoingCallAvailability());
     }
   }
 
@@ -7816,10 +7844,108 @@ class _ConversationWiredState extends State<ConversationWired>
     }
   }
 
+  Future<void> _startOutgoingCall(OutgoingCallCapability capability) async {
+    if (_outgoingCallStartInFlight || !capability.isOutgoingCallAvailable) {
+      return;
+    }
+    setState(() => _outgoingCallStartInFlight = true);
+    var shouldShowFailure = false;
+    var result = OutgoingCallStartResult.failed;
+    try {
+      final contactAvailable = await capability.isOutgoingCallAvailableFor(
+        _contact.peerId,
+      );
+      if (!mounted) return;
+      if (!contactAvailable || !capability.isOutgoingCallAvailable) {
+        if (_outgoingCallContactAvailable) {
+          setState(() => _outgoingCallContactAvailable = false);
+        }
+        return;
+      }
+      shouldShowFailure = true;
+      result = await capability.startOutgoingCall(_contact.peerId);
+    } catch (_) {
+      // Presentation receives no adapter, endpoint, or route failure detail.
+      if (!shouldShowFailure && mounted && _outgoingCallContactAvailable) {
+        setState(() => _outgoingCallContactAvailable = false);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _outgoingCallStartInFlight = false);
+      }
+    }
+    if (!mounted ||
+        !shouldShowFailure ||
+        result == OutgoingCallStartResult.started) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text("Couldn't start voice call. Please try again."),
+        ),
+      );
+  }
+
+  void _bindOutgoingCallAvailability() {
+    _outgoingCallAvailabilityGeneration++;
+    _outgoingCallContactAvailable = false;
+    final previous = _outgoingCallAvailabilitySubscription;
+    _outgoingCallAvailabilitySubscription = null;
+    if (previous != null) unawaited(previous.cancel());
+
+    final capability = widget.outgoingCallCapability;
+    if (capability != null) {
+      _outgoingCallAvailabilitySubscription = capability
+          .outgoingCallAvailabilityChanges
+          .listen(
+            (_) => unawaited(_refreshOutgoingCallAvailability()),
+            onError: (_, _) => _hideOutgoingCallAvailability(),
+            onDone: _hideOutgoingCallAvailability,
+          );
+    }
+    unawaited(_refreshOutgoingCallAvailability());
+  }
+
+  void _hideOutgoingCallAvailability() {
+    _outgoingCallAvailabilityGeneration++;
+    if (mounted && _outgoingCallContactAvailable) {
+      setState(() => _outgoingCallContactAvailable = false);
+    }
+  }
+
+  Future<void> _refreshOutgoingCallAvailability() async {
+    final generation = ++_outgoingCallAvailabilityGeneration;
+    final capability = widget.outgoingCallCapability;
+    final contactPeerId = _contact.peerId;
+    var available = false;
+    if (capability?.isOutgoingCallAvailable ?? false) {
+      try {
+        available = await capability!.isOutgoingCallAvailableFor(contactPeerId);
+      } catch (_) {}
+    }
+    if (!mounted ||
+        generation != _outgoingCallAvailabilityGeneration ||
+        contactPeerId != _contact.peerId ||
+        !identical(capability, widget.outgoingCallCapability)) {
+      return;
+    }
+    if (_outgoingCallContactAvailable != available) {
+      setState(() => _outgoingCallContactAvailable = available);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final (activeQuoteText, isActiveQuoteUnavailable) =
         _resolveActiveQuotePreview();
+    final outgoingCallCapability = widget.outgoingCallCapability;
+    final outgoingCallAvailable =
+        (outgoingCallCapability?.isOutgoingCallAvailable ?? false) &&
+        _outgoingCallContactAvailable;
 
     final child = PopScope(
       canPop: !_uploadActivityController.isTracking,
@@ -7847,6 +7973,12 @@ class _ConversationWiredState extends State<ConversationWired>
                 widget.directDeviceTrust ??
                 const UnavailableDirectContactDeviceTrust(),
           ),
+          onCall: outgoingCallAvailable && outgoingCallCapability != null
+              ? () => unawaited(_startOutgoingCall(outgoingCallCapability))
+              : null,
+          showCallAction: outgoingCallCapability != null,
+          callActionEnabled:
+              outgoingCallAvailable && !_outgoingCallStartInFlight,
           isLoadingMore: _isLoadingMore,
           hasMoreOlderMessages: _hasMoreOlderMessages,
           initialLoadDone: _initialLoadDone,

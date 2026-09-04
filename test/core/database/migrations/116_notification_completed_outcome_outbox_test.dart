@@ -61,8 +61,8 @@ void main() {
     await db.close();
 
     db = await _openCurrent(upgradePath);
-    expect(currentIdentityDatabaseVersion, 116);
-    expect(await _userVersion(db), 116);
+    expect(currentIdentityDatabaseVersion, 117);
+    expect(await _userVersion(db), 117);
     expect(
       await _tableExists(db, kNotificationCompletedOutcomeOutboxTable),
       isTrue,
@@ -106,10 +106,13 @@ void main() {
         entries.single.run,
         same(runNotificationCompletedOutcomeOutboxMigration),
       );
-      expect(registry.last, same(entries.single));
       expect(
         registry.indexOf(entries.single),
         registry.indexWhere((entry) => entry.version == 115) + 1,
+      );
+      expect(
+        registry.indexWhere((entry) => entry.version == 117),
+        registry.indexOf(entries.single) + 1,
       );
     }
 
@@ -194,7 +197,7 @@ void main() {
       throwsA(anything),
     );
     db = await _openCurrent(upgradePath);
-    expect(await _userVersion(db), 116);
+    expect(await _userVersion(db), 117);
     expect(
       await db.query(kNotificationCompletedOutcomeOutboxTable),
       hasLength(kNotificationCompletedOutcomeOutboxCapacity),
@@ -202,7 +205,7 @@ void main() {
     await db.close();
 
     db = await _openCurrent(freshPath);
-    expect(await _userVersion(db), 116);
+    expect(await _userVersion(db), 117);
     expect(await db.query(kNotificationCompletedOutcomeOutboxTable), isEmpty);
     expect(
       await _columnNames(db, kNotificationCompletedOutcomeOutboxTable),

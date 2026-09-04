@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -197,6 +198,77 @@ void main() {
       expect(recorder.onAutoStopped, isNull);
     },
   );
+
+  testWidgets(
+    'post voice arming owns the shared microphone lease through permission',
+    (tester) async {
+      final recorder = FakeAudioRecorderService()
+        ..permissionGranted = false
+        ..requestPermissionGate = Completer<bool>();
+      addTearDown(recorder.dispose);
+      final leases = microphoneCaptureLeasesFor(recorder);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: ComposePostSheet(
+              eligibleContacts: const <ContactModel>[],
+              audioRecorderService: recorder,
+              onSubmit: (_) async {},
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Voice'));
+      await tester.pump();
+
+      expect(recorder.requestPermissionCallCount, 1);
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(leases.acquire, throwsA(isA<MicrophoneCaptureLeaseRefused>()));
+
+      recorder.requestPermissionGate!.complete(false);
+      await tester.pumpAndSettle();
+      final callLease = leases.acquire();
+      callLease.release();
+      expect(recorder.startCallCount, 0);
+      expect(find.text('Cancel'), findsNothing);
+    },
+  );
+
+  testWidgets('call lease prevents post voice permission and arming', (
+    tester,
+  ) async {
+    final recorder = FakeAudioRecorderService();
+    addTearDown(recorder.dispose);
+    final callLease = microphoneCaptureLeasesFor(recorder).acquire();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ComposePostSheet(
+            eligibleContacts: const <ContactModel>[],
+            audioRecorderService: recorder,
+            onSubmit: (_) async {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Voice'));
+    await tester.pump();
+
+    expect(recorder.requestPermissionCallCount, 0);
+    expect(recorder.startCallCount, 0);
+    expect(find.text('Cancel'), findsNothing);
+    callLease.release();
+  });
 
   test(
     'fake recorder cancels a delayed voice start when stop is requested',

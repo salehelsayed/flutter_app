@@ -58,6 +58,15 @@ void main() {
       );
       expect(runner, isNot(contains('C617.1')));
       expect(service, isNot(contains('E174.1')));
+      for (final value in <String>[
+        'NSPrivacyCollectedDataTypeDeviceID',
+        'NSPrivacyCollectedDataTypeLinked',
+        'NSPrivacyCollectedDataTypeTracking',
+        'NSPrivacyCollectedDataTypePurposeAppFunctionality',
+      ]) {
+        expect(_occurrences(runner, value), 1, reason: value);
+        expect(service, isNot(contains(value)), reason: value);
+      }
 
       final pbx = project.readAsStringSync();
       expect(
@@ -79,6 +88,41 @@ void main() {
         contains('FileProtectionType.completeUntilFirstUserAuthentication'),
       );
       expect(swift, contains('isExcludedFromBackup = true'));
+    },
+  );
+
+  test(
+    'VC2-05 public privacy policies disclose separate PushKit token handling',
+    () {
+      final policies = <File>[
+        File('UI-Website/privacy-policy.html'),
+        File('Privacy-Policy/privacy-policy.html'),
+      ];
+
+      for (final policy in policies) {
+        expect(policy.existsSync(), isTrue, reason: policy.path);
+        final contents = policy.readAsStringSync();
+        for (final disclosure in <String>[
+          'Apple Push Notification service (APNs)',
+          'separate PushKit VoIP token',
+          'stored separately from the ordinary notification token',
+          'current incoming-call invitations',
+          'not used for tracking',
+          'Apple Privacy Policy',
+          'does not require real-world personal information',
+          'pseudonymous routing identifiers',
+        ]) {
+          expect(contents, contains(disclosure), reason: policy.path);
+        }
+        for (final staleClaim in <String>[
+          'only third-party service used is Firebase',
+          'We collect no personal information',
+          'Because MKnoon does not collect personal data',
+          'No personal identifiers stored on any server',
+        ]) {
+          expect(contents, isNot(contains(staleClaim)), reason: policy.path);
+        }
+      }
     },
   );
 }

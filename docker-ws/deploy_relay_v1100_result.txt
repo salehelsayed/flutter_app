@@ -1,0 +1,72 @@
+=== relay v1.10.0 deploy started 20260904T194616Z ===
+--- pre-deploy state ---
+relay: active NRestarts=0
+coturn: active
+live binary: 0ae5c7d7926d5e16bd43571f772f94ea4e4118d461878c2e71db0224d698b5ee
+uploaded binary: 977c3133f9efb6815db12528b9f93e4857b8849f3afa79737b8462ae9263b383
+relay_push_tokens_by_platform{platform="android"} 1039
+relay_push_tokens_by_platform{platform="ios"} 1270
+turnserver log dir:
+-rw-r--r--  1 turnserver turnserver     0 Sep  4 00:00 turnserver_2026-09-03.log
+-rw-r--r--  1 turnserver turnserver  4814 Sep  3 23:57 turnserver_2026-09-03.log.1.gz
+-rw-r--r--  1 turnserver turnserver 53811 Sep  4 19:43 turnserver_2026-09-04.log
+--- coturn: switch to REST credentials (use-auth-secret) ---
+coturn: active; listening: 6/udp 6/tcp sockets
+--- relay env: TURN credential minting ---
+env TURN keys: 3
+--- relay binary ---
+installed: 977c3133f9efb6815db12528b9f93e4857b8849f3afa79737b8462ae9263b383
+baseline NRestarts=0
+--- t+12s ---
+relay: active NRestarts=0
+Sep 04 19:46:21 ip-172-31-34-24 relay-server[1024078]: 2026/09/04 19:46:21 [APNS_VOIP] enabled=false environment= (default off; APNS_VOIP_PUSH_ENABLED)
+Sep 04 19:46:21 ip-172-31-34-24 relay-server[1024078]: 2026/09/04 19:46:21 [TURN_CREDENTIALS] enabled=true (default off)
+Sep 04 19:46:21 ip-172-31-34-24 relay-server[1024078]: 2026/09/04 19:46:21 Starting relay-server v1.10.0
+Sep 04 19:46:21 ip-172-31-34-24 relay-server[1024078]: 2026/09/04 19:46:21 Control-plane: backend=redis durable=true prefix=relay:
+--- t+52s ---
+relay: active NRestarts=0
+--- t+92s ---
+relay: active NRestarts=0
+panics/scheduled restarts in window: 0
+relay_backend_durable 1
+relay_push_tokens_by_platform{platform="android"} 1039
+relay_push_tokens_by_platform{platform="ios"} 1270
+relay_turn_credential_issuer_enabled 1
+post-deploy peer evidence:
+symbol probe mknoon.call_mailbox.v1: 1
+backups: /usr/local/bin/relay-server.pre-1.10.0-20260904T194616Z /etc/mknoon/relay-server.env.pre-call-20260904T194616Z /etc/turnserver.conf.pre-call-20260904T194616Z
+=== relay v1.10.0 deploy finished 2026-09-04T19:47:53Z ===
+--- exit 0 ---
+=== relay v1.10.1 deploy 20260904T200347Z (TURN validator fix) ===
+t+12s: relay=active NRestarts=0 (baseline 0)
+/09/04 20:03:48 [TURN_CREDENTIALS] enabled=true (default off)
+/09/04 20:03:48 Starting relay-server v1.10.1
+/09/04 20:03:48 Control-plane: backend=redis durable=true prefix=relay:
+t+52s: relay=active NRestarts=0 panics=0
+relay_backend_durable 1
+relay_turn_credential_issuer_enabled 1
+installed: 2894daf98fd384d349897bdb829410532d9382147f48f23afd950a7205ff68d9  backup: /usr/local/bin/relay-server.pre-1.10.1-20260904T200347Z
+--- exit 0 ---
+=== APNs VoIP enablement 20260904T203035Z ===
+-rw------- 1 root root 257 Sep  4 20:30 /etc/mknoon/apns_voip_M7T46H43B2.p8
+t+12s: relay=active NRestarts=0 (baseline 0)
+/09/04 20:30:35 [APNS_VOIP] enabled=true environment=production (default off; APNS_VOIP_PUSH_ENABLED)
+/09/04 20:30:35 [TURN_CREDENTIALS] enabled=true (default off)
+/09/04 20:30:35 Starting relay-server v1.10.1
+/09/04 20:30:35 Control-plane: backend=redis durable=true prefix=relay:
+t+52s: relay=active NRestarts=0 panics=0
+relay_apns_voip_push_attempts_total{outcome="auth_error"} 0
+relay_apns_voip_push_attempts_total{outcome="canceled"} 0
+relay_apns_voip_push_attempts_total{outcome="expired"} 0
+relay_apns_voip_push_attempts_total{outcome="invalid_token"} 0
+relay_apns_voip_push_attempts_total{outcome="network"} 0
+relay_apns_voip_push_attempts_total{outcome="provider_error"} 0
+relay_apns_voip_push_attempts_total{outcome="rate_limited"} 0
+relay_apns_voip_push_attempts_total{outcome="rejected_payload"} 0
+relay_apns_voip_push_attempts_total{outcome="rejected_route"} 0
+relay_apns_voip_push_attempts_total{outcome="sent"} 0
+relay_apns_voip_push_attempts_total{outcome="server_error"} 0
+relay_apns_voip_push_enabled 1
+relay_backend_durable 1
+relay_turn_credential_issuer_enabled 1
+--- exit 0 ---

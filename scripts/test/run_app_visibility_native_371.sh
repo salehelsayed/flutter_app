@@ -200,16 +200,33 @@ readonly BUILT_STANDALONE_NSE_PRIVACY="$nse_derived/Build/Products/Debug-iphones
 
 assert_privacy_manifest() {
   local manifest="$1"
-  local expected_first="$2"
-  local expected_second="$3"
+  local collection_expectation="$2"
+  local expected_first="$3"
+  local expected_second="$4"
   [[ -s "$manifest" ]] || fail "privacy manifest is missing or empty: $manifest"
+  case "$collection_expectation" in
+    runner-device-id|empty) ;;
+    *) fail "unknown privacy collection expectation: $collection_expectation" ;;
+  esac
   plutil -lint "$manifest"
   plutil -convert json -o - "$manifest" | jq -e \
+    --arg collection "$collection_expectation" \
     --arg first "$expected_first" \
     --arg second "$expected_second" '
       .NSPrivacyTracking == false and
       .NSPrivacyTrackingDomains == [] and
-      .NSPrivacyCollectedDataTypes == [] and
+      (
+        ($collection == "runner-device-id" and
+          .NSPrivacyCollectedDataTypes == [{
+            NSPrivacyCollectedDataType: "NSPrivacyCollectedDataTypeDeviceID",
+            NSPrivacyCollectedDataTypeLinked: true,
+            NSPrivacyCollectedDataTypeTracking: false,
+            NSPrivacyCollectedDataTypePurposes: [
+              "NSPrivacyCollectedDataTypePurposeAppFunctionality"
+            ]
+          }]) or
+        ($collection == "empty" and .NSPrivacyCollectedDataTypes == [])
+      ) and
       ([.NSPrivacyAccessedAPITypes[] |
         "\(.NSPrivacyAccessedAPIType):\(.NSPrivacyAccessedAPITypeReasons | sort | join(","))"
       ] | sort) == ([$first, $second] | sort)
@@ -220,22 +237,27 @@ readonly PRIVACY_LOG="$RESULT_DIR/privacy-manifests.log"
 {
   assert_privacy_manifest \
     "$RUNNER_PRIVACY" \
+    runner-device-id \
     'NSPrivacyAccessedAPICategorySystemBootTime:35F9.1' \
     'NSPrivacyAccessedAPICategoryDiskSpace:E174.1'
   assert_privacy_manifest \
     "$NSE_PRIVACY" \
+    empty \
     'NSPrivacyAccessedAPICategorySystemBootTime:35F9.1' \
     'NSPrivacyAccessedAPICategoryFileTimestamp:C617.1'
   assert_privacy_manifest \
     "$BUILT_RUNNER_PRIVACY" \
+    runner-device-id \
     'NSPrivacyAccessedAPICategorySystemBootTime:35F9.1' \
     'NSPrivacyAccessedAPICategoryDiskSpace:E174.1'
   assert_privacy_manifest \
     "$BUILT_EMBEDDED_NSE_PRIVACY" \
+    empty \
     'NSPrivacyAccessedAPICategorySystemBootTime:35F9.1' \
     'NSPrivacyAccessedAPICategoryFileTimestamp:C617.1'
   assert_privacy_manifest \
     "$BUILT_STANDALONE_NSE_PRIVACY" \
+    empty \
     'NSPrivacyAccessedAPICategorySystemBootTime:35F9.1' \
     'NSPrivacyAccessedAPICategoryFileTimestamp:C617.1'
   cmp "$RUNNER_PRIVACY" "$BUILT_RUNNER_PRIVACY"

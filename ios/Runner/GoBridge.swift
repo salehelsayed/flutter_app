@@ -271,11 +271,38 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeRelayReconnect() }, result: result)
         case "relayProbe":
             runOnBackground({ BridgeRelayProbe(args ?? "") }, method: "relayProbe", result: result)
+        case "relayTurnCredentialsV1":
+            runOnBackground({ BridgeTurnCredentialsV1() }, result: result)
         // Presence (FDC-08/09)
         case "relayPresenceGet":
             runOnBackground({ BridgePresenceGet(args ?? "") }, result: result)
         case "relayPresenceSet":
             runOnBackground({ BridgePresenceSet(args ?? "") }, result: result)
+
+        // Dedicated call-control relay and capability authority. These
+        // commands never traverse the durable chat inbox/outbox paths.
+        case "callStoreV1":
+            runOnBackground({ BridgeCallStoreV1(args ?? "") }, result: result)
+        case "callRetrieveV1":
+            runOnBackground({ BridgeCallRetrieveV1(args ?? "") }, result: result)
+        case "callAckV1":
+            runOnBackground({ BridgeCallAckV1(args ?? "") }, result: result)
+        case "callCancelV1":
+            runOnBackground({ BridgeCallCancelV1(args ?? "") }, result: result)
+        case "callEndpointSetV1":
+            runOnBackground({ BridgeCallEndpointSetV1(args ?? "") }, result: result)
+        case "callEndpointGetV1":
+            runOnBackground({ BridgeCallEndpointGetV1(args ?? "") }, result: result)
+        case "callEndpointRevokeV1":
+            runOnBackground({ BridgeCallEndpointRevokeV1(args ?? "") }, result: result)
+        case "callWakeHandleSetV1":
+            runOnBackground({ BridgeCallWakeHandleSetV1(args ?? "") }, result: result)
+        case "callWakeHandleRevokeV1":
+            runOnBackground({ BridgeCallWakeHandleRevokeV1(args ?? "") }, result: result)
+        case "callTokenSetV1":
+            runOnBackground({ BridgeCallTokenSetV1(args ?? "") }, result: result)
+        case "callTokenRevokeV1":
+            runOnBackground({ BridgeCallTokenRevokeV1(args ?? "") }, result: result)
 
         // Peer operations
         case "dialPeer":
@@ -494,7 +521,11 @@ extension GoBridge: BridgeEventCallbackProtocol {
         }
         pendingEvents.append(json)
         pendingEventsLock.unlock()
-        NSLog("[GoBridge] onEvent: BUFFERED (%@) event=%@", reason, String(json.prefix(80)))
+        NSLog(
+            "[GoBridge] onEvent: BUFFERED (%@) eventLength=%d",
+            reason,
+            json.utf8.count
+        )
     }
 
     private func flushPendingEvents() {

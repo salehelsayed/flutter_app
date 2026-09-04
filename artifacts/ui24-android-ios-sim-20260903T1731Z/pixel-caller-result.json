@@ -1,0 +1,98 @@
+{
+  "stepId": "ui24-pixel-caller-contact",
+  "status": "complete",
+  "success": true,
+  "nodeAction": null,
+  "introAction": {
+    "action": "none",
+    "actedOn": [],
+    "dropped": 0
+  },
+  "introDeliveryCustody": null,
+  "chatAction": null,
+  "chatExpectations": null,
+  "uiNavigation": {
+    "requestedPeerId": "12D3KooWHZBdGv2AaeiQ8rwWYoGmAH3yxdvHqWvEU1rV5iFejL64",
+    "opened": true
+  },
+  "snapshot": {
+    "identity": {
+      "peerId": "12D3KooWP3dYW5q8zCKsvPnqVf3xNm4G6mqgk26o78yvU7FRKoKQ",
+      "username": "pixel"
+    },
+    "contacts": [
+      {
+        "peerId": "12D3KooWHZBdGv2AaeiQ8rwWYoGmAH3yxdvHqWvEU1rV5iFejL64",
+        "username": "IosSimUI24",
+        "introducedByPeerId": null
+      },
+      {
+        "peerId": "12D3KooWQxM68yBiAAEneVMMV4ThpYQ26nTYCHhsg7k9rB94RRUA",
+        "username": "iPhone-13",
+        "introducedByPeerId": null
+      },
+      {
+        "peerId": "12D3KooWC6r4k4DoFauD26skhReYLXYfcJigFhcXqAZ8i88cpi4i",
+        "username": "emulator",
+        "introducedByPeerId": null
+      },
+      {
+        "peerId": "12D3KooWJ4Z2YKZDLVD8K3CTbeggEALWkP3ZfFRi5Mx5QbakFQav",
+        "username": "iphone",
+        "introducedByPeerId": null
+      }
+    ],
+    "pendingContactRequests": [
+      {
+        "peerId": "12D3KooWHZBdGv2AaeiQ8rwWYoGmAH3yxdvHqWvEU1rV5iFejL64",
+        "username": "IosSimUI24",
+        "status": "pending"
+      }
+    ],
+    "introductions": [],
+    "foldedReviewItems": [],
+    "introOutboxDeliveries": [],
+    "systemMessages": [],
+    "chatMessages": [
+      {
+        "contactPeerId": "12D3KooWC6r4k4DoFauD26skhReYLXYfcJigFhcXqAZ8i88cpi4i",
+        "messages": [
+          {
+            "id": "4b2a23b2-b755-4aef-8bcb-183e05bd6cd3",
+            "text": "a",
+            "timestamp": "2026-09-03T09:57:50.582825Z",
+            "isIncoming": true,
+            "status": "delivered",
+            "transport": "direct"
+          }
+        ]
+      },
+      {
+        "contactPeerId": "12D3KooWJ4Z2YKZDLVD8K3CTbeggEALWkP3ZfFRi5Mx5QbakFQav",
+        "messages": [
+          {
+            "id": "949d39dd-9361-4e69-b50c-4066e74bd165",
+            "text": "Hi",
+            "timestamp": "2026-09-02T16:16:17.651075Z",
+            "isIncoming": false,
+            "status": "delivered",
+            "transport": "direct"
+          }
+        ]
+      },
+      {
+        "contactPeerId": "12D3KooWQxM68yBiAAEneVMMV4ThpYQ26nTYCHhsg7k9rB94RRUA",
+        "messages": [
+          {
+            "id": "7e8c6799-72e9-4bdc-8f55-6a9da3a0f70d",
+            "text": "Hi",
+            "timestamp": "2026-09-03T09:58:40.859743Z",
+            "isIncoming": false,
+            "status": "delivered",
+            "transport": "direct"
+          }
+        ]
+      }
+    ]
+  }
+}

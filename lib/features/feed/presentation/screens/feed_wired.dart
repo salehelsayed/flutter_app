@@ -23,6 +23,7 @@ import 'package:flutter_app/features/settings/application/background_preference_
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
@@ -189,6 +190,8 @@ class FeedWired extends StatefulWidget {
   final DeleteMessageForMeFn deleteMessageForMeFn;
   final DeleteMessageForEveryoneFn deleteMessageForEveryoneFn;
   final TransportMetrics? transportMetrics;
+  final ResolveCallWakeHandle? resolveCallWakeHandle;
+  final OnCallWakeHandleDistributed? onCallWakeHandleDistributed;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
@@ -240,6 +243,8 @@ class FeedWired extends StatefulWidget {
     this.deleteMessageForMeFn = deleteMessageForMe,
     this.deleteMessageForEveryoneFn = deleteMessageForEveryone,
     this.transportMetrics,
+    this.resolveCallWakeHandle,
+    this.onCallWakeHandleDistributed,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
   });
@@ -1420,6 +1425,8 @@ class _FeedWiredState extends State<FeedWired>
       identityRepo: widget.repository,
       bridge: widget.bridge,
       onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
+      resolveCallWakeHandle: widget.resolveCallWakeHandle,
+      onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
     );
 
     if (!mounted) return;
@@ -1672,6 +1679,8 @@ class _FeedWiredState extends State<FeedWired>
           directDeviceTrust:
               widget.directRouteAuthority.resolvedDirectDeviceTrust,
           modalityGate: widget.directRouteAuthority.resolvedModalityGate,
+          outgoingCallCapability:
+              widget.directRouteAuthority.resolvedOutgoingCallCapability,
           contact: contact,
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
@@ -1718,6 +1727,8 @@ class _FeedWiredState extends State<FeedWired>
               directDeviceTrust:
                   widget.directRouteAuthority.resolvedDirectDeviceTrust,
               modalityGate: widget.directRouteAuthority.resolvedModalityGate,
+              outgoingCallCapability:
+                  widget.directRouteAuthority.resolvedOutgoingCallCapability,
               contact: contact,
               identityRepo: widget.repository,
               messageRepo: widget.messageRepository,
@@ -2947,6 +2958,8 @@ class _FeedWiredState extends State<FeedWired>
   Widget _buildOrbitHost() {
     return OrbitWired(
       directRouteAuthority: widget.directRouteAuthority,
+      resolveCallWakeHandle: widget.resolveCallWakeHandle,
+      onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
       identityRepo: widget.repository,
       contactRepo: widget.contactRepository,
       contactRequestRepo: widget.contactRequestRepository,

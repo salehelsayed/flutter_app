@@ -439,6 +439,37 @@ printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPrese
   };
 
   test(
+    'FAIL sentinel accepts restoration and rejects unknown blocker names',
+    () async {
+      Map<String, Object?> sentinel(String blocker) => <String, Object?>{
+        'status': 'FAIL',
+        'assertionsAttempted': 0,
+        'artifactPresent': false,
+        'printOnly': false,
+        'blocker': blocker,
+        'exitCode': 1,
+      };
+
+      final restoration = await executeStructuredSentinel(
+        sentinel('restoration'),
+        processExitCode: 1,
+      );
+      expect(restoration.verdict.blocker?.name, 'restoration');
+      expect(
+        restoration.verdict.detail,
+        isNot(contains('Invalid structured result')),
+      );
+
+      final unknown = await executeStructuredSentinel(
+        sentinel('futureFailurePhase'),
+        processExitCode: 1,
+      );
+      expect(unknown.verdict.blocker, SimsBlockerKind.harness);
+      expect(unknown.verdict.detail, contains('Invalid structured result'));
+    },
+  );
+
+  test(
     'PASS rejects blocker target-unavailable reason and zero proof',
     () async {
       final contradictory = <Map<String, Object?>>[

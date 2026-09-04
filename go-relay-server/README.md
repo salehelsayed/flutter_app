@@ -38,6 +38,40 @@
 
   Adjust the FIREBASE_SERVICE_ACCOUNT path to wherever your service account JSON lives on the EC2 instance.
 
+## Direct APNs VoIP calling
+
+The direct PushKit provider is separate from Firebase and is default-off. It
+requires the durable Redis backend so token rotation and APNs invalidation can
+use exact-generation compare-and-delete semantics.
+
+Configure the relay with:
+
+```text
+RELAY_BACKEND=redis
+APNS_VOIP_PUSH_ENABLED=true
+APNS_VOIP_ENVIRONMENT=sandbox
+APNS_VOIP_TOPIC=com.mknoon.app.voip
+APNS_VOIP_KEY_ID=<10-character Apple key ID>
+APNS_VOIP_TEAM_ID=<10-character Apple team ID>
+APNS_VOIP_PRIVATE_KEY_FILE=/etc/mknoon/apns-voip-auth-key.p8
+```
+
+`APNS_VOIP_ENVIRONMENT` is the environment named in the startup banner and
+health output; delivery itself is routed per token. Each iOS VoIP token is sent
+to the APNs environment the device registered it under (`sandbox` for
+development-signed builds, `production` for TestFlight/App Store builds). When
+Apple rejects the token there (`BadDeviceToken`, `DeviceTokenNotForTopic`,
+`Unregistered`), the relay makes one attempt at the other environment, counted
+as `sent_cross_environment`, and only revokes the token when both environments
+reject it. Keep the PKCS#8 P-256 APNs authentication key
+outside the repository, readable only by the relay service account, and never
+put its contents or a device token in logs or deployment artifacts. The topic
+must be the Runner bundle identifier with the `.voip` suffix. Roll out with
+`APNS_VOIP_PUSH_ENABLED=false`, verify the shared Redis configuration and APNs
+credentials on every relay, then enable the provider. Turning the flag off is
+the call-delivery kill switch and does not route calls through Firebase or the
+Notification Service Extension.
+
 ## Direct inbox ACK-or-expiry custody
 
 The protected direct-text/reaction inbox is an additive, Redis-only lane. It

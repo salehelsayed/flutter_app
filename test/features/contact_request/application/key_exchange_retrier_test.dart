@@ -258,6 +258,37 @@ void main() {
       });
     });
 
+    test('retryNow forwards the fresh-run requirement', () async {
+      var runCount = 0;
+      final coordinator = KeyExchangeRetryCoordinator(
+        performRetry: () async {
+          runCount += 1;
+          return runCount;
+        },
+        cooldown: const Duration(seconds: 10),
+        now: () => DateTime.utc(2026, 4, 12, 18),
+      );
+      retrier = KeyExchangeRetrier(
+        p2pService: p2pService,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        coordinator: coordinator,
+        accountMigrationNetworkGate:
+            ({String? peerId, required String operation}) async => true,
+      );
+
+      expect(await retrier.retryNow(trigger: 'online_transition'), 1);
+      expect(
+        await retrier.retryNow(
+          trigger: 'call_wake_resume_reconcile',
+          requireFresh: true,
+        ),
+        2,
+      );
+      expect(runCount, 2);
+    });
+
     test('dispose cancels subscription and timer', () {
       fakeAsync((fake) {
         retrier.start();

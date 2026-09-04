@@ -453,8 +453,8 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 116);
-        expect(manifest.databaseVersion, 116);
+        expect(currentIdentityDatabaseVersion, 117);
+        expect(manifest.databaseVersion, 117);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -548,8 +548,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 116);
-        expect(await _userVersion(productionStaged), 116);
+        expect(await _userVersion(productionActive), 117);
+        expect(await _userVersion(productionStaged), 117);
         final activeInventory =
             await MigrationDatabaseSchemaInventory.fromDatabase(
               productionActive,
@@ -589,7 +589,7 @@ CREATE TABLE identity (
           removeRow,
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 116);
+        expect(manifest.databaseVersion, 117);
         expect(manifest.schemaInventory.schemaHash, stagedInventory.schemaHash);
 
         await MigrationDatabaseActiveImporter(
@@ -674,8 +674,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 116);
-        expect(await _userVersion(productionStaged), 116);
+        expect(await _userVersion(productionActive), 117);
+        expect(await _userVersion(productionStaged), 117);
 
         const pendingMessageId = 'tc345-transfer-pending';
         const pendingAttachmentId = 'tc345-transfer-pending-media';
@@ -790,7 +790,7 @@ CREATE TABLE identity (
           orderBy: 'message_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 116);
+        expect(manifest.databaseVersion, 117);
 
         final result =
             await MigrationDatabaseActiveImporter(
@@ -904,8 +904,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 116);
-        expect(await _userVersion(productionStaged), 116);
+        expect(await _userVersion(productionActive), 117);
+        expect(await _userVersion(productionStaged), 117);
 
         const incarnation = '34734734734734734734734734734734';
         const manifestHash =
@@ -949,7 +949,7 @@ CREATE TABLE identity (
           orderBy: 'attachment_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 116);
+        expect(manifest.databaseVersion, 117);
         expect(
           manifest.schemaInventory.tables['direct_media_blob_custody'],
           isNotEmpty,
@@ -1044,8 +1044,8 @@ CREATE TABLE identity (
         if (productionStaged.isOpen) await productionStaged.close();
       });
 
-      expect(await _userVersion(productionActive), 116);
-      expect(await _userVersion(productionStaged), 116);
+      expect(await _userVersion(productionActive), 117);
+      expect(await _userVersion(productionStaged), 117);
 
       const contactPeerId =
           '12D3KooWP7CwQswqLKZbwvYd9wrEynnL9F2aKVP1X9huNASBTuqj';
@@ -1101,7 +1101,7 @@ CREATE TABLE identity (
       );
 
       final manifest = await _manifestFor(productionStaged);
-      expect(manifest.databaseVersion, 116);
+      expect(manifest.databaseVersion, 117);
       expect(
         manifest.schemaInventory.tables['direct_contact_device_bindings'],
         isNotEmpty,

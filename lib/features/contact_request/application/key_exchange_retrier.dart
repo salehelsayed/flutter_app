@@ -7,6 +7,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
@@ -39,6 +40,9 @@ class KeyExchangeRetrier {
     // FDC-09 §12 / CV-14: read-only wake-token resolver for the backfill drain
     // (emission-gated OFF by default). Never mints/registers.
     Future<String?> Function(String peerId)? resolveWakeToken,
+    LoadPendingCallWakeHandleContactIds? loadPendingCallWakeHandleContactIds,
+    ResolveCallWakeHandle? resolveCallWakeHandle,
+    OnCallWakeHandleDistributed? onCallWakeHandleDistributed,
   }) : _coordinator =
            coordinator ??
            KeyExchangeRetryCoordinator(
@@ -49,6 +53,10 @@ class KeyExchangeRetrier {
                bridge: bridge,
                secureKeyStore: secureKeyStore,
                resolveWakeToken: resolveWakeToken,
+               loadPendingCallWakeHandleContactIds:
+                   loadPendingCallWakeHandleContactIds,
+               resolveCallWakeHandle: resolveCallWakeHandle,
+               onCallWakeHandleDistributed: onCallWakeHandleDistributed,
              ),
            );
 
@@ -79,11 +87,14 @@ class KeyExchangeRetrier {
     return state.isStarted && (state.circuitAddresses as List).isNotEmpty;
   }
 
-  Future<int> retryNow({required String trigger}) async {
+  Future<int> retryNow({
+    required String trigger,
+    bool requireFresh = false,
+  }) async {
     if (!await _allowsKeyExchangeRetry(trigger)) {
       return 0;
     }
-    return _coordinator.retryNow(trigger: trigger);
+    return _coordinator.retryNow(trigger: trigger, requireFresh: requireFresh);
   }
 
   Future<bool> _allowsKeyExchangeRetry(String trigger) async {

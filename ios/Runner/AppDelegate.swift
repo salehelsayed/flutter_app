@@ -817,6 +817,23 @@ final class IosSetupReadinessEntryCoordinator {
 #if canImport(GoMknoon)
   private var goBridge: GoBridge?
 #endif
+  private lazy var iosNativeCallCapability = UserDefaultsNativeCallCapabilityStore()
+  private lazy var iosCallKitController = MknoonCallKitController.production(
+    capability: iosNativeCallCapability
+  )
+  private lazy var iosVoipTokenAuthority = MknoonVoipTokenAuthority.production()
+  private lazy var iosVoipPushRegistry = MknoonVoipPushRegistry(
+    controller: iosCallKitController,
+    tokenAuthority: iosVoipTokenAuthority,
+    capability: iosNativeCallCapability,
+    runtimeWake: { [weak self] in
+      DispatchQueue.main.async {
+        self?.configureIosNotificationOpenBridgeFromRootViewController()
+      }
+    }
+  )
+  private var iosCallNativeBridge: MknoonCallNativeBridge?
+  private var iosVoipTokenBridge: MknoonVoipTokenBridge?
   private let iosNotificationOpenChannelName = "mknoon/ios_notification_open"
   private var iosNotificationOpenChannel: FlutterMethodChannel?
   private let iosNotificationRecoveryChannelName =
@@ -874,6 +891,7 @@ final class IosSetupReadinessEntryCoordinator {
   private var fcmMessagingPluginDelegate: UNUserNotificationCenterDelegate?
 
   deinit {
+    iosCallNativeBridge?.dispose()
     iosAppVisibilityCoordinator?.stop()
     NotificationCenter.default.removeObserver(self)
   }
@@ -882,6 +900,9 @@ final class IosSetupReadinessEntryCoordinator {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    iosCallKitController.setCapabilityChangeHandler { [weak self] enabled in
+      self?.iosVoipPushRegistry.applyCapability(enabled) ?? false
+    }
     _ = iosSetupReadinessEntryCoordinator.armNativeLaunch(
       environment: ProcessInfo.processInfo.environment
     )
@@ -911,6 +932,7 @@ final class IosSetupReadinessEntryCoordinator {
     )
     logNotificationSettings(context: "didFinishLaunching")
     requestRemoteNotificationRegistration(reason: "didFinishLaunching")
+    _ = iosVoipPushRegistry.start()
     return didFinish
   }
 
@@ -1096,6 +1118,7 @@ final class IosSetupReadinessEntryCoordinator {
     setupAppGroupPathBridge(messenger: messenger)
     receivedMediaEgressCoordinator = ReceivedMediaEgressCoordinator(messenger: messenger)
     setupPrivateMediaProtectionBridge(messenger: messenger)
+    setupIosCallLifecycleBridges(messenger: messenger)
 
 #if canImport(GoMknoon)
     goBridge = GoBridge(messenger: messenger)
@@ -1798,6 +1821,21 @@ final class IosSetupReadinessEntryCoordinator {
     setupDiskSpaceBridge(messenger: controller.binaryMessenger)
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
     setupPrivateMediaProtectionBridge(messenger: controller.binaryMessenger)
+    setupIosCallLifecycleBridges(messenger: controller.binaryMessenger)
+  }
+
+  private func setupIosCallLifecycleBridges(
+    messenger: FlutterBinaryMessenger
+  ) {
+    guard iosCallNativeBridge == nil, iosVoipTokenBridge == nil else { return }
+    iosCallNativeBridge = MknoonCallNativeBridge(
+      controller: iosCallKitController,
+      messenger: messenger
+    )
+    iosVoipTokenBridge = MknoonVoipTokenBridge(
+      authority: iosVoipTokenAuthority,
+      messenger: messenger
+    )
   }
 
   private func setupIosSetupReadinessEntryBridge(

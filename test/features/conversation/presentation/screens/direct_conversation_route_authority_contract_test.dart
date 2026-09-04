@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
 import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -95,6 +97,7 @@ void main() {
           'directEventFanout:',
           'directDeviceTrust:',
           'modalityGate:',
+          'outgoingCallCapability:',
         ]) {
           if (!block.contains(required)) {
             offenders.add('$path is missing $required');
@@ -192,6 +195,7 @@ void main() {
     final firstFanout = _fanoutSentinel('peer-first');
     final secondFanout = _fanoutSentinel('peer-second');
     final trust = _TrustSentinel();
+    final outgoingCallCapability = _OutgoingCallCapabilitySentinel();
     var linkedBlobFreeRuntime = false;
     var fanoutResolutionCount = 0;
     final authority = DirectConversationRouteAuthority(
@@ -199,6 +203,7 @@ void main() {
           fanoutResolutionCount++ == 0 ? firstFanout : secondFanout,
       directDeviceTrust: trust,
       isLinkedBlobFreeRuntime: () => linkedBlobFreeRuntime,
+      outgoingCallCapability: outgoingCallCapability,
     );
 
     expect(authority.resolvedDirectEventFanout, same(firstFanout));
@@ -209,6 +214,10 @@ void main() {
       reason: 'identity-scoped authoring authority must not be cached',
     );
     expect(authority.resolvedDirectDeviceTrust, same(trust));
+    expect(
+      authority.resolvedOutgoingCallCapability,
+      same(outgoingCallCapability),
+    );
 
     final primaryGate = authority.resolvedModalityGate;
     expect(primaryGate.allowsMediaAuthoring, isTrue);
@@ -228,6 +237,7 @@ void main() {
     DirectConversationRouteAuthority? absent;
     expect(absent.resolvedDirectEventFanout, isNull);
     expect(absent.resolvedDirectDeviceTrust, isNull);
+    expect(absent.resolvedOutgoingCallCapability, isNull);
     expect(absent.resolvedModalityGate.allowsMediaAuthoring, isTrue);
   });
 
@@ -284,6 +294,24 @@ void main() {
           'routing the later ConversationWired push cannot authorize it',
     );
   });
+}
+
+final class _OutgoingCallCapabilitySentinel implements OutgoingCallCapability {
+  @override
+  bool get isOutgoingCallAvailable => true;
+
+  @override
+  Stream<bool> get outgoingCallAvailabilityChanges =>
+      const Stream<bool>.empty();
+
+  @override
+  Future<bool> isOutgoingCallAvailableFor(String contactAccountPeerId) async =>
+      true;
+
+  @override
+  Future<OutgoingCallStartResult> startOutgoingCall(
+    String contactAccountPeerId,
+  ) async => OutgoingCallStartResult.started;
 }
 
 DirectEventFanoutAuthoring _fanoutSentinel(String senderTransportPeerId) {

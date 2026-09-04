@@ -89,6 +89,16 @@ class FakeP2PService
   Future<bool> Function(String toPeerId, String message, {int? timeoutMs})?
   onStoreInInbox;
 
+  /// Optional dynamic direct-send result for tests whose authenticated reply
+  /// depends on content generated during the send (for example a signed
+  /// call-wake receipt challenge).
+  Future<SendMessageResult> Function(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  })?
+  onSendMessageWithReply;
+
   FakeP2PService({
     NodeState? initialState,
     this.startNodeResult = true,
@@ -188,6 +198,10 @@ class FakeP2PService
     sendMessageWithReplyCallCount++;
     lastSendMessagePeerId = peerId;
     lastSendMessageContent = message;
+    final handler = onSendMessageWithReply;
+    if (handler != null) {
+      return handler(peerId, message, timeoutMs: timeoutMs);
+    }
     return sendMessageWithReplyResult;
   }
 

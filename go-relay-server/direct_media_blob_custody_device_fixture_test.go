@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1" //nolint:gosec // coturn REST authentication mandates HMAC-SHA1.
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -27,7 +29,6 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
@@ -215,6 +216,154 @@ func TestDirectMediaBlobCustodyDeviceFixtureContract(t *testing.T) {
 	}
 }
 
+func TestDirectMediaBlobCustodyDeviceFixtureConfiguredTurnCredentialsUseProductionHandlers(t *testing.T) {
+	t.Setenv(ackCustodyAdmissionEnabledEnv, "true")
+	t.Setenv(mediaCustodyAdmissionEnabledEnv, "true")
+	t.Setenv(turnCredentialsEnabledEnv, "true")
+	staticSecret := []byte("plan399-local-turn-secret-marker")
+	t.Setenv(
+		turnCredentialsURLsEnv,
+		"turn:192.168.0.60:3478?transport=udp",
+	)
+	t.Setenv(
+		turnCredentialsPrimarySecretEnv,
+		base64.StdEncoding.EncodeToString(staticSecret),
+	)
+
+	root, err := os.MkdirTemp("", "mknoon-plan399-turn-fixture-")
+	if err != nil {
+		t.Fatalf("create fixture root: %v", err)
+	}
+	fixture, err := startDirectMediaDeviceFixture(
+		root,
+		"127.0.0.1",
+		directMediaDeviceFixtureOptions{},
+	)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		t.Fatalf("start fixture: %v", err)
+	}
+	defer func() {
+		if err := fixture.Close(); err != nil {
+			t.Errorf("fixture teardown: %v", err)
+		}
+	}()
+
+	response := requestDirectMediaFixtureTurnCredentials(t, fixture.ready.Multiaddr)
+	if response["status"] != "OK" ||
+		response["schema"] != turnCredentialSchema ||
+		response["version"] != float64(turnCredentialVersion) {
+		t.Fatal("configured fixture TURN response status/schema/version changed")
+	}
+	urls, ok := response["urls"].([]any)
+	if !ok || len(urls) != 1 || urls[0] != "turn:192.168.0.60:3478?transport=udp" {
+		t.Fatalf("configured fixture TURN URLs = %#v", response["urls"])
+	}
+	for _, forbidden := range []string{
+		"secret",
+		"sharedSecret",
+		"peerId",
+		"subject",
+		"callId",
+	} {
+		if _, exists := response[forbidden]; exists {
+			t.Fatalf("configured fixture disclosed forbidden %s", forbidden)
+		}
+	}
+	username, usernameOK := response["username"].(string)
+	password, passwordOK := response["password"].(string)
+	if !usernameOK || username == "" || !passwordOK || password == "" {
+		t.Fatal("configured fixture TURN response omitted ephemeral credentials")
+	}
+	mac := hmac.New(sha1.New, staticSecret)
+	_, _ = mac.Write([]byte(username))
+	expectedPassword := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(password), []byte(expectedPassword)) {
+		t.Fatal("fixture TURN response was not minted by the configured secret")
+	}
+	encodedResponse, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("encode configured fixture TURN response: %v", err)
+	}
+	captured := string(encodedResponse) + "\n" + fixture.logs.Since(time.Time{})
+	for _, forbidden := range []string{
+		string(staticSecret),
+		base64.StdEncoding.EncodeToString(staticSecret),
+	} {
+		if strings.Contains(captured, forbidden) {
+			t.Fatal("configured fixture disclosed static TURN credential material")
+		}
+	}
+}
+
+func TestDirectMediaBlobCustodyDeviceFixtureMissingTurnCredentialsFailFinite(t *testing.T) {
+	t.Setenv(ackCustodyAdmissionEnabledEnv, "true")
+	t.Setenv(mediaCustodyAdmissionEnabledEnv, "true")
+	t.Setenv(turnCredentialsEnabledEnv, "false")
+	t.Setenv(turnCredentialsURLsEnv, "")
+	t.Setenv(turnCredentialsPrimarySecretEnv, "")
+
+	root, err := os.MkdirTemp("", "mknoon-plan399-turn-unavailable-fixture-")
+	if err != nil {
+		t.Fatalf("create fixture root: %v", err)
+	}
+	fixture, err := startDirectMediaDeviceFixture(
+		root,
+		"127.0.0.1",
+		directMediaDeviceFixtureOptions{},
+	)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		t.Fatalf("start fixture without TURN credentials: %v", err)
+	}
+	defer func() {
+		if err := fixture.Close(); err != nil {
+			t.Errorf("fixture teardown: %v", err)
+		}
+	}()
+
+	response := requestDirectMediaFixtureTurnCredentials(t, fixture.ready.Multiaddr)
+	if response["status"] != "ERROR" || response["errorCode"] != turnCredentialErrorUnavailable {
+		t.Fatalf("missing fixture TURN credentials response = %#v", response)
+	}
+}
+
+func TestDirectMediaBlobCustodyDeviceFixtureCallControlUsesProductionHandlers(t *testing.T) {
+	t.Setenv(ackCustodyAdmissionEnabledEnv, "true")
+	t.Setenv(mediaCustodyAdmissionEnabledEnv, "true")
+	t.Setenv(turnCredentialsEnabledEnv, "false")
+
+	root, err := os.MkdirTemp("", "mknoon-plan399-call-control-fixture-")
+	if err != nil {
+		t.Fatalf("create fixture root: %v", err)
+	}
+	fixture, err := startDirectMediaDeviceFixture(
+		root,
+		"127.0.0.1",
+		directMediaDeviceFixtureOptions{},
+	)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		t.Fatalf("start fixture: %v", err)
+	}
+	defer func() {
+		if err := fixture.Close(); err != nil {
+			t.Errorf("fixture teardown: %v", err)
+		}
+	}()
+
+	response := requestDirectMediaFixtureCallControl(
+		t,
+		fixture.ready.Multiaddr,
+		map[string]any{"action": "call_retrieve_v1", "limit": 1},
+	)
+	if response["status"] != "OK" ||
+		response["schema"] != CallMailboxSchema ||
+		response["version"] != float64(CallControlVersion) {
+		t.Fatalf("configured fixture call-control response = %#v", response)
+	}
+}
+
 func runDirectMediaDeviceFixtureProcess(t *testing.T) {
 	t.Helper()
 	hostIP := os.Getenv(directMediaDeviceFixtureHostIP)
@@ -368,14 +517,19 @@ func startDirectMediaDeviceFixture(
 	}
 	fixture.host = h
 	biz = newBusinessMetrics()
-	h.SetStreamHandler(RendezvousProtocol, func(s network.Stream) {
-		HandleRendezvousStream(s, stores.Rendezvous)
-	})
-	h.SetStreamHandler(InboxProtocol, func(s network.Stream) {
-		HandleInboxStream(s, stores.Inbox, stores.GroupInbox, h, presence)
-	})
-	h.SetStreamHandler(MediaProtocol, func(s network.Stream) {
-		HandleMediaStream(s, media, profile)
+	turnCredentials, err := loadTurnCredentialIssuerFromEnv()
+	if err != nil {
+		return fail(fmt.Errorf("configure TURN credential issuer: %w", err))
+	}
+	registerRelayProtocolHandlers(h, relayProtocolDependencies{
+		Rendezvous:      stores.Rendezvous,
+		Inbox:           stores.Inbox,
+		GroupInbox:      stores.GroupInbox,
+		Presence:        presence,
+		TurnCredentials: turnCredentials,
+		CallControl:     stores.CallControl,
+		Media:           media,
+		Profile:         profile,
 	})
 
 	port, err := directMediaFixtureTCPPort(h)
@@ -798,6 +952,74 @@ func assertDirectMediaFixtureHandlersReachable(t *testing.T, rawAddress string) 
 		}
 		_ = stream.Reset()
 	}
+}
+
+func requestDirectMediaFixtureTurnCredentials(
+	t *testing.T,
+	rawAddress string,
+) map[string]any {
+	t.Helper()
+	return requestDirectMediaFixtureInbox(
+		t,
+		rawAddress,
+		map[string]any{"action": "turn_credentials_v1"},
+	)
+}
+
+func requestDirectMediaFixtureCallControl(
+	t *testing.T,
+	rawAddress string,
+	request map[string]any,
+) map[string]any {
+	t.Helper()
+	return requestDirectMediaFixtureInbox(t, rawAddress, request)
+}
+
+func requestDirectMediaFixtureInbox(
+	t *testing.T,
+	rawAddress string,
+	request map[string]any,
+) map[string]any {
+	t.Helper()
+	address, err := ma.NewMultiaddr(rawAddress)
+	if err != nil {
+		t.Fatalf("parse fixture address: %v", err)
+	}
+	info, err := peer.AddrInfoFromP2pAddr(address)
+	if err != nil {
+		t.Fatalf("fixture peer info: %v", err)
+	}
+	client, err := libp2p.New(libp2p.NoListenAddrs)
+	if err != nil {
+		t.Fatalf("start fixture TURN client: %v", err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx, *info); err != nil {
+		t.Fatalf("dial fixture: %v", err)
+	}
+	stream, err := client.NewStream(ctx, info.ID, InboxProtocol)
+	if err != nil {
+		t.Fatalf("open fixture TURN stream: %v", err)
+	}
+	defer stream.Close()
+	requestBytes, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("encode fixture inbox request: %v", err)
+	}
+	if err := writeFrame(stream, requestBytes); err != nil {
+		t.Fatalf("write fixture inbox request: %v", err)
+	}
+	encoded, err := readFrame(stream)
+	if err != nil {
+		t.Fatalf("read fixture inbox response: %v", err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(encoded, &response); err != nil {
+		t.Fatalf("decode fixture inbox response: %v", err)
+	}
+	return response
 }
 
 func (fixture *directMediaDeviceFixture) Close() error {

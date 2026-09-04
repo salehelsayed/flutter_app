@@ -1,6 +1,6 @@
 # VC2-02 — Call Control, Encrypted Signaling, and Ephemeral Mailbox TDD Plan
 
-**Status:** Proposed  
+**Status:** Complete (2026-08-30)
 **Depends on:** VC2-01  
 **Blocks:** VC2-03, VC2-04, VC2-05  
 **Primary outcome:** One deterministic Dart-owned call session converges across direct, Circuit Relay, ephemeral mailbox, and duplicate wake paths without real media.
@@ -326,3 +326,34 @@ No full `host-all` is required until Wave C closure.
 - One local history row is projected per terminal call.
 - Existing chat, inbox, push, identity, and migration behavior remains green.
 - Feature flags remain default off and no real microphone/native call UI is active.
+
+## 14. Completion evidence (2026-08-30)
+
+- The Dart-owned reducer, coordinator, secure envelope, direct/relay transport,
+  mailbox runtime, trusted-endpoint resolution, local history, and typed
+  conversation projection are implemented with the call feature flags still
+  default off. No real media, microphone, Telecom, CallKit, or PushKit delivery
+  surface is activated.
+- The Go relay owns the bounded Redis-backed call mailbox, endpoint authority,
+  opaque wake mapping, Android call capability, and separate iOS VoIP-token
+  records. Nil/unavailable Redis paths fail closed, and fresh service/client
+  restart proofs preserve PTTL, hard expiry, replay tombstones, endpoint/wake
+  state, and token separation. The host did not provide an external
+  `redis-server`; the restart proof therefore uses the Redis-protocol miniredis
+  server's close/restart support rather than an AOF/RDB daemon leg.
+- Focused Dart proof: the complete `test/features/call/**` suite passes 159
+  tests; migration/full-chain preservation passes 18 tests; bridge/privacy
+  preservation passes 136 tests; the deterministic signaling E2E passes 2/2
+  on the explicitly pinned `emulator-5554` target.
+- Concurrent curated proof: `1to1` passes 2,701 tests with 3 intentional skips
+  across 162 paths; `feature-host-all` passes 9,567 tests with 11 intentional
+  skips across 868 paths; `core-host-all` passes 3,595 tests across 436 paths,
+  followed by both required Android manifest contracts. No full `host-all` was
+  run, as required by the project cadence.
+- Both full Go module commands pass with `GOTOOLCHAIN=go1.25.0`, together with
+  the focused relay/node/bridge/NSE race-detector suites for the changed
+  mailbox, registry, wake, and token paths.
+- Focused Flutter analysis reports no issues, `git diff --check` passes, the
+  runtime-root inventory and DTR-18 architecture contracts pass, Graphify
+  affected analysis passes, and the architecture graph was refreshed
+  incrementally.

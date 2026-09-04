@@ -16,6 +16,64 @@ flutter_concurrency=""
 flutter_reporter=""
 
 readonly ONE_TO_ONE_HOST_TESTS=(
+  # VC2-01: plugin-independent call foundation, fakeable WebRTC adapter, and
+  # the additive short-lived TURN credential bridge contract.
+  "test/features/call/domain/call_engine_contract_test.dart"
+  "test/features/call/infrastructure/flutter_webrtc_build_contract_test.dart"
+  "test/core/bridge/p2p_bridge_client_turn_credentials_test.dart"
+  # VC2-02: canonical Dart call session, secure call-only signaling,
+  # trusted endpoint authority, dedicated mailbox/runtime, and local history.
+  "test/features/call/domain/call_signal_schema_test.dart"
+  "test/features/call/domain/call_state_machine_test.dart"
+  "test/features/call/application/call_cleanup_coordinator_test.dart"
+  "test/features/call/application/call_coordinator_test.dart"
+  "test/features/call/application/call_endpoint_resolver_test.dart"
+  "test/features/call/application/call_history_projector_test.dart"
+  "test/features/call/application/call_race_convergence_test.dart"
+  "test/features/call/application/call_signaling_service_test.dart"
+  "test/features/call/application/handle_incoming_call_signal_test.dart"
+  "test/features/call/data/call_history_repository_test.dart"
+  "test/features/call/infrastructure/call_authority_client_test.dart"
+  "test/features/call/infrastructure/call_mailbox_client_test.dart"
+  "test/features/call/infrastructure/call_native_bridge_privacy_contract_test.dart"
+  "test/features/call/infrastructure/call_signaling_runtime_test.dart"
+  "test/features/call/infrastructure/database_call_trusted_roster_provider_test.dart"
+  "test/features/call/infrastructure/p2p_call_transport_test.dart"
+  "test/features/call/infrastructure/secure_call_envelope_codec_test.dart"
+  "test/features/call/integration/call_conversation_timeline_projection_test.dart"
+  "test/features/call/integration/call_direct_mailbox_convergence_test.dart"
+  "test/core/bootstrap/call_signaling_composition_test.dart"
+  "test/core/database/migrations/117_call_history_test.dart"
+  # VC2-03: foreground-only WebRTC audio, canonical negotiation effects,
+  # audio ownership/controls, and root/conversation presentation.
+  "test/features/call/application/call_audio_controller_test.dart"
+  "test/features/call/application/call_audio_interruption_coordinator_test.dart"
+  "test/features/call/application/call_audio_negotiation_preparer_test.dart"
+  "test/features/call/application/call_control_effect_executor_test.dart"
+  "test/features/call/application/call_negotiation_effect_executor_test.dart"
+  "test/features/call/application/call_negotiation_test.dart"
+  "test/features/call/application/call_scoped_media_bundle_owner_test.dart"
+  "test/features/call/application/call_signaling_context_store_test.dart"
+  "test/features/call/infrastructure/bridge_call_ice_server_provider_test.dart"
+  "test/features/call/infrastructure/call_audio_adapters_test.dart"
+  "test/features/call/infrastructure/call_audio_route_adapter_test.dart"
+  "test/features/call/infrastructure/call_media_conflict_adapter_test.dart"
+  "test/features/call/infrastructure/call_stats_sampler_test.dart"
+  "test/features/call/infrastructure/flutter_webrtc_call_engine_test.dart"
+  "test/features/call/infrastructure/production_call_signaling_adapters_test.dart"
+  "test/features/call/presentation/call_screens_test.dart"
+  "test/features/call/presentation/foreground_call_overlay_test.dart"
+  "test/integration/android_foreground_webrtc_audio_campaign_test.dart"
+  # Plan 399: production-main Android call observer, campaign, local fixture,
+  # directional RTP booleans, and privacy-bounded evidence contract.
+  "test/core/debug/android_production_audio_call_e2e_test.dart"
+  "test/integration/android_production_audio_call_campaign_test.dart"
+  "test/integration/android_production_audio_call_evidence_test.dart"
+  "test/integration/production_audio_call_local_fixture_test.dart"
+  # VC2-05: iOS CallKit journal adoption/audio activation plus typed PushKit
+  # token publication, rotation and refresh-epoch-scoped invalidation.
+  "test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart"
+  "test/features/call/infrastructure/ios_voip_token_coordinator_test.dart"
   # 375: one live Android paired-capability readiness epoch gates the
   # producer, drainer and registration for both messaging families.
   "test/core/notifications/android_opaque_wake_readiness_test.dart"
@@ -96,6 +154,8 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/received_media_action_transport_boundary_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
   "test/features/conversation/presentation/screens/direct_conversation_route_authority_contract_test.dart"
+  "test/features/conversation/presentation/widgets/conversation_header_test.dart"
+  "test/features/conversation/presentation/navigation/conversation_route_transition_test.dart"
   # 294 DTR-15: shared compositional conversation-controller ownership,
   # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.
   "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"
@@ -449,7 +509,7 @@ fi
 
 if [ "$batch_flutter" -eq 1 ]; then
   case "$scope" in
-    host-all|feature-host-all|core-host-all|performance-host|move-feature)
+    1to1|host-all|feature-host-all|core-host-all|performance-host|move-feature)
       ;;
     *)
       printf 'Batch mode is not supported for host scope: %s\n' "$scope" >&2

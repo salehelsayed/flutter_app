@@ -78,6 +78,19 @@ const _directMediaBlobCustodySupport = <String, String>{
       '347 profile-gated direct-media custody endpoint and pure host protocol',
 };
 
+const _productionAudioCallSupport = <String, String>{
+  'integration_test/scripts/run_production_audio_call_sims.dart':
+      '399 external local-coturn/Pion staging wrapper around the manifest-owned production-main Android call scenario',
+  'integration_test/scripts/android_production_audio_call_campaign.dart':
+      '399 manifest-owned production-main Android call campaign, local fixture control, read-only observer, or privacy-bounded RTP evidence',
+  'integration_test/scripts/production_audio_call_local_fixture.dart':
+      '399 manifest-owned production-main Android call campaign, local fixture control, read-only observer, or privacy-bounded RTP evidence',
+  'integration_test/support/android_production_audio_call_evidence.dart':
+      '399 manifest-owned production-main Android call campaign, local fixture control, read-only observer, or privacy-bounded RTP evidence',
+  'lib/core/debug/android_production_audio_call_e2e.dart':
+      '399 manifest-owned production-main Android call campaign, local fixture control, read-only observer, or privacy-bounded RTP evidence',
+};
+
 void main() {
   late SimsManifest manifest;
   late List<_DiscoveryRecord> discovery;
@@ -721,6 +734,43 @@ void main() {
 
       final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
       expect(major.selectedIds, contains(capabilityId));
+      expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
+    },
+  );
+
+  test(
+    'TC-399-08 production audio wrapper is external support around one inner row',
+    () {
+      const capabilityId = 'android.production_1to1_audio_call';
+      const wrapper =
+          'integration_test/scripts/run_production_audio_call_sims.dart';
+      final capability = manifest.capabilityById(capabilityId);
+
+      expect(capability, isNotNull);
+      expect(capability!.command, <String>[
+        'dart',
+        'run',
+        'integration_test/scripts/run_1to1_device_real.dart',
+        '--scenario',
+        capabilityId,
+      ]);
+      expect(_commandReferences(capability.command, wrapper), isFalse);
+      for (final entry in _productionAudioCallSupport.entries) {
+        expect(
+          discovery.where(
+            (record) =>
+                record.path == entry.key &&
+                record.category == 'support' &&
+                record.kind == 'support' &&
+                record.note == entry.value,
+          ),
+          hasLength(1),
+          reason: '${entry.key} must remain one exact support-only record',
+        );
+        expect(_executableDiscoveryRecords(discovery, entry.key), isEmpty);
+      }
+
+      final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
       expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
     },
   );

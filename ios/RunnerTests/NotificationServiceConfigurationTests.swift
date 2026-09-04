@@ -1,15 +1,42 @@
 import XCTest
 
 final class NotificationServiceConfigurationTests: XCTestCase {
-  func testIosLocalNotificationFinalEffectRunnerImportIsDebugOnly() throws {
-    try assertRunnerTestImportIsDebugOnly(
+  func testIosLocalNotificationFinalEffectRunnerImportIsRunnerTestsOnly() throws {
+    try assertRunnerTestImportIsRunnerTestsOnly(
       in: "NotificationService/IosLocalNotificationFinalEffect.swift"
     )
   }
 
-  func testNseInboxCandidateAdapterRunnerImportIsDebugOnly() throws {
-    try assertRunnerTestImportIsDebugOnly(
+  func testNseInboxCandidateAdapterRunnerImportIsRunnerTestsOnly() throws {
+    try assertRunnerTestImportIsRunnerTestsOnly(
       in: "NotificationService/NseInboxCandidateAdapter.swift"
+    )
+  }
+
+  func testRunnerImportCompilationConditionIsRunnerTestsDebugOnly() throws {
+    let root = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    let project = try String(
+      contentsOf: root.appendingPathComponent(
+        "Runner.xcodeproj/project.pbxproj"
+      ),
+      encoding: .utf8
+    )
+    let markerSettings = project
+      .components(separatedBy: .newlines)
+      .filter {
+        $0.contains("SWIFT_ACTIVE_COMPILATION_CONDITIONS") &&
+          $0.contains("MKNOON_RUNNER_TESTS")
+      }
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    XCTAssertEqual(
+      markerSettings,
+      [
+        "SWIFT_ACTIVE_COMPILATION_CONDITIONS = \"DEBUG MKNOON_RUNNER_TESTS $(inherited)\";"
+      ],
+      "the Runner test import marker must exist only in RunnerTests Debug"
     )
   }
 
@@ -62,7 +89,7 @@ final class NotificationServiceConfigurationTests: XCTestCase {
     return try XCTUnwrap(object as? [String: Any])
   }
 
-  private func assertRunnerTestImportIsDebugOnly(
+  private func assertRunnerTestImportIsRunnerTestsOnly(
     in relativePath: String,
     file: StaticString = #filePath,
     line: UInt = #line
@@ -74,7 +101,7 @@ final class NotificationServiceConfigurationTests: XCTestCase {
       contentsOf: root.appendingPathComponent(relativePath),
       encoding: .utf8
     )
-    let expected = "#if DEBUG && canImport(Runner)\n  @testable import Runner\n#endif"
+    let expected = "#if DEBUG && MKNOON_RUNNER_TESTS && canImport(Runner)\n  @testable import Runner\n#endif"
 
     XCTAssertEqual(
       source.components(separatedBy: "@testable import Runner").count - 1,
@@ -85,7 +112,7 @@ final class NotificationServiceConfigurationTests: XCTestCase {
     )
     XCTAssertTrue(
       source.contains(expected),
-      "\(relativePath) must make the Runner test import unreachable outside DEBUG",
+      "\(relativePath) must make the Runner import unreachable outside Debug RunnerTests",
       file: file,
       line: line
     )

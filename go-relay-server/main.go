@@ -23,7 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const version = "1.9.0"
+const version = "1.10.2"
 
 func main() {
 	// Handle subcommands
@@ -107,6 +107,12 @@ func main() {
 	push := stores.Push
 	inbox := stores.Inbox
 	log.Printf(
+		"[APNS_VOIP] enabled=%v environment=%s routing=per-token-environment cross_environment_fallback=on (default off; %s)",
+		stores.APNSVoIPPushEnabled,
+		stores.APNSVoIPEnvironment,
+		apnsVoIPPushEnabledEnv,
+	)
+	log.Printf(
 		"[INBOX] ack custody contract=%s admission_enabled=%v backend=%s (default off; %s)",
 		ackCustodyContract,
 		inbox.AckCustodyAdmissionEnabled(),
@@ -155,21 +161,29 @@ func main() {
 	// read (and FDC-09's future `presence_set` write). Seeded by the
 	// connectedness handler below; read read-only by the presence_get action.
 	presence := NewPresenceStore()
+	turnCredentials, err := loadTurnCredentialIssuerFromEnv()
+	if err != nil {
+		log.Fatal("TURN credential configuration is invalid")
+	}
+	setTurnCredentialIssuerEnabled(turnCredentials != nil)
+	log.Printf("[TURN_CREDENTIALS] enabled=%v (default off)", turnCredentials != nil)
 
 	// Publish backend durability so ops can scrape/alert on a silently-memory
 	// relay (the live env is gitignored; a regressed RELAY_BACKEND is otherwise
 	// undetectable from outside the box).
 	setBackendDurabilityGauge(backendCfg)
 
-	// Register protocol handlers
-	h.SetStreamHandler(RendezvousProtocol, func(s network.Stream) {
-		HandleRendezvousStream(s, store)
-	})
-	h.SetStreamHandler(InboxProtocol, func(s network.Stream) {
-		HandleInboxStream(s, inbox, groupInbox, h, presence)
-	})
-	h.SetStreamHandler(MediaProtocol, func(s network.Stream) {
-		HandleMediaStream(s, media, profile)
+	// Register the production protocol graph through the same seam exercised by
+	// the host-wiring tests.
+	registerRelayProtocolHandlers(h, relayProtocolDependencies{
+		Rendezvous:      store,
+		Inbox:           inbox,
+		GroupInbox:      groupInbox,
+		Presence:        presence,
+		TurnCredentials: turnCredentials,
+		CallControl:     stores.CallControl,
+		Media:           media,
+		Profile:         profile,
 	})
 
 	// Start periodic group inbox prune (every 1 hour).

@@ -49,6 +49,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
+import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
@@ -178,6 +179,7 @@ Future<ProductionHeadlessRecoverySessionDelegates>
 buildProductionCanonicalInboxProjectionComposition({
   required Database database,
   required SecureKeyStore secureKeyStore,
+  required ReceivedCallWakeHandleStore receivedCallWakeHandleStore,
   required IdentityModel identity,
   required LinkedInstallationAuthoritySnapshot linkedAuthority,
   required ProductionHeadlessQualifiedIdentity qualifiedIdentity,
@@ -618,6 +620,7 @@ buildProductionCanonicalInboxProjectionComposition({
       ),
       emitRecoveredIntroductionStatus:
           introductionListener.emitIntroStatusChanged,
+      receivedCallWakeHandleStore: receivedCallWakeHandleStore,
       autoAcceptAndReciprocate: null,
     );
     contactRequestListenerForCleanup = contactRequestListener;

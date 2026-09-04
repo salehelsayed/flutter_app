@@ -5,4 +5,15 @@
     <string name="dropped_push_recovery_notification_title">MKnoon</string>
     <string name="dropped_push_recovery_notification_body">Möglicherweise warten Nachrichten</string>
     <string name="dropped_push_recovery_worker_body">Nachrichten werden wiederhergestellt</string>
+    <string name="call_notification_channel_name">Anrufe</string>
+    <string name="call_notification_channel_description">Eingehende und laufende MKnoon-Anrufe</string>
+    <string name="call_notification_title">MKnoon-Anruf</string>
+    <string name="call_notification_person">MKnoon-Anrufer</string>
+    <string name="call_notification_incoming">Eingehender Anruf</string>
+    <string name="call_notification_admission">Eingehender Anruf wird geprüft…</string>
+    <string name="call_admission_channel_name">Anrufaufbau</string>
+    <string name="call_notification_ongoing">Anruf läuft</string>
+    <string name="call_notification_answer">Annehmen</string>
+    <string name="call_notification_decline">Ablehnen</string>
+    <string name="call_notification_end">Beenden</string>
 </resources>

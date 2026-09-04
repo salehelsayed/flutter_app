@@ -194,8 +194,12 @@ const _privacySha256 =
 // The iOS foreground direct-read repair forwards exact visible-conversation
 // settlement through the existing recovery coordinator; it moves no resume
 // owner and adds no core shim.
+// VC2-03 adds the foreground call capability/overlay and call-only lifecycle
+// seams at the same application-owned boundary. VC2-05 extends that same
+// boundary with call-wake distribution, availability, and lifecycle wiring;
+// no DTR-18 owner moves.
 const _applicationRootNormalizedSha256 =
-    'ec1787d05923f35c5623af5690e5039f5eaf4a405fa9501764c2db1199e73ab9';
+    '886e78bafad90c2e82860288d4bb9820b512b9c590d70beabede49cb89976f61';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -266,7 +270,15 @@ const _productionBootstrapNormalizedSha256 =
     // The legacy push-transport repair runs after the existing writable
     // database open at this app-owned composition boundary; no adapter or
     // resume owner changes layer.
-    'd0f40053c8f43a09471dad58e6d697a10bcadd7fd22b5c13cf6493b13eff7dc5';
+    // VC2-04 adds the Android lifecycle rollback and Telecom composition at
+    // this existing app bootstrap; no DTR-18 owner changes layer.
+    // VC2-05 adds the native lifecycle rollback, call authority/signaling,
+    // reciprocal-key call-wake backfill, and bounded resume rearm at this same
+    // app-owned boundary. Its listener-ordering and exact receipt preflight
+    // repairs move no owner and add no core shim.
+    // UI-24 binds its default-off read-only observer and exact recipient/epoch
+    // wake readiness at this app-owned boundary; no DTR-18 owner changes.
+    '7e885d69d0c60b93cfab9d2e0d0e2f0b17951f31e4026e660e3fb3d2999a9325';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

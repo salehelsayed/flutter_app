@@ -72,5 +72,70 @@ void main() {
         expect(runCount, 2);
       },
     );
+
+    test(
+      'fresh requests queue one run after an older in-flight retry',
+      () async {
+        final olderCompleter = Completer<int>();
+        final freshCompleter = Completer<int>();
+        var runCount = 0;
+        final coordinator = KeyExchangeRetryCoordinator(
+          performRetry: () {
+            runCount += 1;
+            return runCount == 1
+                ? olderCompleter.future
+                : freshCompleter.future;
+          },
+        );
+
+        final older = coordinator.retryNow(trigger: 'online_transition');
+        final fresh = coordinator.retryNow(
+          trigger: 'call_wake_resume_reconcile',
+          requireFresh: true,
+        );
+        final joinedFresh = coordinator.retryNow(
+          trigger: 'call_wake_resume_reconcile',
+          requireFresh: true,
+        );
+
+        expect(identical(fresh, older), isFalse);
+        expect(identical(fresh, joinedFresh), isTrue);
+        expect(runCount, 1);
+
+        olderCompleter.complete(2);
+        expect(await older, 2);
+        await pumpEventQueue(times: 2);
+        expect(runCount, 2);
+
+        freshCompleter.complete(1);
+        expect(await fresh, 1);
+        expect(await joinedFresh, 1);
+      },
+    );
+
+    test('fresh request bypasses a recent non-zero retry cooldown', () async {
+      var now = DateTime.utc(2026, 4, 12, 18);
+      var runCount = 0;
+      final coordinator = KeyExchangeRetryCoordinator(
+        performRetry: () async {
+          runCount += 1;
+          return runCount;
+        },
+        cooldown: const Duration(seconds: 10),
+        now: () => now,
+      );
+
+      expect(await coordinator.retryNow(trigger: 'online_transition'), 1);
+      now = now.add(const Duration(seconds: 1));
+
+      expect(
+        await coordinator.retryNow(
+          trigger: 'call_wake_resume_reconcile',
+          requireFresh: true,
+        ),
+        2,
+      );
+      expect(runCount, 2);
+    });
   });
 }

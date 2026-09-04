@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart';
+import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
 import 'package:flutter_app/app/bootstrap/production_headless_canonical_recovery.dart';
 import 'package:flutter_app/core/debug/android_canonical_runtime_h0_probe.dart';
 import 'package:flutter_app/core/debug/android_headless_recovery_374_fixture.dart';
@@ -41,3 +42,10 @@ Future<void> androidHeadlessCanonicalRecoveryMain(List<String> arguments) =>
       runRecovery: runProductionHeadlessCanonicalRecovery,
       emergencyShutdown: cleanupProductionHeadlessCanonicalRecovery,
     );
+
+/// Dedicated admission-only Android call wake entrypoint. It authenticates
+/// one exact mailbox handle and tears down SQLCipher/Go ownership before
+/// native code may ask Telecom to present the call.
+@pragma('vm:entry-point')
+Future<void> androidHeadlessCallAdmissionMain(List<String> arguments) =>
+    runProductionAndroidHeadlessCallAdmission(arguments);

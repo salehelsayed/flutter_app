@@ -1,0 +1,25 @@
+
+=== coturn hairpin fix 20260904T220111Z ===
+before: active -rw-r----- root:turnserver
+backup: /etc/turnserver.conf.pre-hairpin-20260904T220111Z
+--- diff ---
+15a16,20
+> # The relay address itself is the one private peer that must be allowed: with
+> # external-ip mapping, a phone sending to another phone's relayed candidate
+> # (public IP) is delivered to 172.31.34.24, and denied-peer-ip below would
+> # otherwise block every relay-only call between two phones (2026-09-04).
+> allowed-peer-ip=172.31.34.24
+perms: -rw-r----- root:turnserver
+auth lines present: 3
+after: active NRestarts=0 since Fri 2026-09-04 22:01:11 UTC
+log: /var/log/turnserver/turnserver_2026-09-04.log
+0: : Default realm: mknoun.xyz
+0: : ===========Discovering listener addresses: =========
+0: : IO method (main listener thread): epoll (with changelist)
+0: : turn server id=0 created
+0: : turn server id=1 created
+0: : IO method (auth thread): epoll (with changelist)
+0: : IO method (auth thread): epoll (with changelist)
+udp 3478 listeners: 6
+=== done 20260904T220114Z ===
+

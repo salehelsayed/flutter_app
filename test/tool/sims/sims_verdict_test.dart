@@ -44,6 +44,36 @@ SimsPlan _plan(CapabilitySpec row) => SimsPlan(
 
 void main() {
   test(
+    'restoration blocker round trips and unknown blockers stay rejected',
+    () {
+      final verdict = SimsVerdict.fromJson(<String, Object?>{
+        'capabilityId': 'android.foreground_webrtc_audio',
+        'status': 'FAIL',
+        'assertionsAttempted': 0,
+        'exitCode': 1,
+        'artifactPresent': false,
+        'printOnly': false,
+        'blocker': 'restoration',
+      });
+
+      expect(verdict.blocker?.name, 'restoration');
+      expect(verdict.toJson()['blocker'], 'restoration');
+      expect(
+        () => SimsVerdict.fromJson(<String, Object?>{
+          'capabilityId': 'android.foreground_webrtc_audio',
+          'status': 'FAIL',
+          'assertionsAttempted': 0,
+          'exitCode': 1,
+          'artifactPresent': false,
+          'printOnly': false,
+          'blocker': 'futureFailurePhase',
+        }),
+        throwsArgumentError,
+      );
+    },
+  );
+
+  test(
     'mandatory skip blocked zero-attempt print-only and missing artifact never pass',
     () {
       final row = _row(artifactRequired: true);

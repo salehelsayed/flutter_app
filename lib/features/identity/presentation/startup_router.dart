@@ -32,6 +32,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_reaction_r
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
@@ -351,6 +352,12 @@ class StartupRouter extends StatefulWidget {
   final Future<void>? initialShareIntentCapture;
   final Future<void> Function()? ensureRuntimeServicesReady;
 
+  /// Starts node-dependent call signaling only after the primary P2P node has
+  /// reported successful startup. This is deliberately separate from
+  /// [ensureRuntimeServicesReady], whose bridge/listener phase runs before the
+  /// node exists.
+  final Future<void> Function()? afterP2PNodeStarted;
+
   /// Dedicated-profile seam for replacing only the P2P node-start operation.
   /// Normal application startup continues to use [startP2PNode].
   final Future<StartNodeResult> Function()? startP2PNodeOverride;
@@ -440,6 +447,8 @@ class StartupRouter extends StatefulWidget {
   /// exercise it. Returns the relay ack (false = graceful degrade, NET-REL-07).
   final Future<bool> Function(List<String> contactPeerIds)?
   issueWakeTokensForContacts;
+  final ResolveCallWakeHandle? resolveCallWakeHandle;
+  final OnCallWakeHandleDistributed? onCallWakeHandleDistributed;
 
   /// 362: linked-device authority threaded to every shell that can push a
   /// 1:1 conversation (FeedWired, and the first-time experience).
@@ -491,6 +500,7 @@ class StartupRouter extends StatefulWidget {
     this.shareIntentService,
     this.initialShareIntentCapture,
     this.ensureRuntimeServicesReady,
+    this.afterP2PNodeStarted,
     this.startP2PNodeOverride,
     this.linkedAuthorityOverride,
     this.startEarlyLocalDiscovery,
@@ -526,6 +536,8 @@ class StartupRouter extends StatefulWidget {
     this.onIosNotificationColdStartRecoveryStarted,
     this.onIosNotificationColdStartRecoverySettled,
     this.issueWakeTokensForContacts,
+    this.resolveCallWakeHandle,
+    this.onCallWakeHandleDistributed,
   });
 
   @override
@@ -683,6 +695,8 @@ class _StartupRouterState extends State<StartupRouter> {
           final navigator = Navigator.of(context);
           Widget buildFeed(BuildContext _) => FeedWired(
             directRouteAuthority: widget.directRouteAuthority,
+            resolveCallWakeHandle: widget.resolveCallWakeHandle,
+            onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
             repository: repository,
             contactRepository: contactRepository,
             contactRequestRepository: contactRequestRepository,
@@ -919,6 +933,9 @@ class _StartupRouterState extends State<StartupRouter> {
                         buildStartupReplacementRoute<void>(
                           builder: (_) => FirstTimeExperienceWired(
                             directRouteAuthority: widget.directRouteAuthority,
+                            resolveCallWakeHandle: widget.resolveCallWakeHandle,
+                            onCallWakeHandleDistributed:
+                                widget.onCallWakeHandleDistributed,
                             repository: repository,
                             contactRepository: contactRepository,
                             contactRequestRepository: contactRequestRepository,
@@ -1080,6 +1097,22 @@ class _StartupRouterState extends State<StartupRouter> {
           details: const {},
         );
         return;
+      }
+      final afterP2PNodeStarted = widget.afterP2PNodeStarted;
+      if (afterP2PNodeStarted != null) {
+        // Call-signaling resume performs relay round trips (endpoint publish,
+        // wake-handle reconcile, mailbox drain). It starts here, after the
+        // node, but must not hold LAN discovery, push registration or the
+        // wake-token mint behind those round trips.
+        unawaited(
+          afterP2PNodeStarted().catchError((Object error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'P2P_POST_START_CALL_SIGNALING_ERROR',
+              details: {'errorType': error.runtimeType.toString()},
+            );
+          }),
+        );
       }
       // FDC-07: trigger early LAN mDNS discovery on the cold-start branch — AFTER
       // the plan-164 ensureRuntimeServicesReady gate (above; node-start ordering
@@ -1721,6 +1754,8 @@ class _StartupRouterState extends State<StartupRouter> {
     await _pushStartupReplacement(
       builder: (_) => FirstTimeExperienceWired(
         directRouteAuthority: widget.directRouteAuthority,
+        resolveCallWakeHandle: widget.resolveCallWakeHandle,
+        onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
         repository: repository,
         contactRepository: contactRepository,
         contactRequestRepository: contactRequestRepository,
@@ -1845,6 +1880,8 @@ class _StartupRouterState extends State<StartupRouter> {
   StartupRouter _buildRestartedStartupRouter() {
     return StartupRouter(
       directRouteAuthority: widget.directRouteAuthority,
+      resolveCallWakeHandle: widget.resolveCallWakeHandle,
+      onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
       repository: widget.repository,
       contactRepository: widget.contactRepository,
       contactRequestRepository: widget.contactRequestRepository,
@@ -1889,6 +1926,7 @@ class _StartupRouterState extends State<StartupRouter> {
       shareIntentService: widget.shareIntentService,
       initialShareIntentCapture: widget.initialShareIntentCapture,
       ensureRuntimeServicesReady: widget.ensureRuntimeServicesReady,
+      afterP2PNodeStarted: widget.afterP2PNodeStarted,
       startP2PNodeOverride: widget.startP2PNodeOverride,
       startEarlyLocalDiscovery: widget.startEarlyLocalDiscovery,
       appShellController: widget.appShellController,

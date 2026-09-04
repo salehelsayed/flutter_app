@@ -122,6 +122,21 @@ class GoBridgeClient extends Bridge {
     // Relay
     'relay:reconnect': _CmdSpec('relayReconnect', false),
     'relay:probe': _CmdSpec('relayProbe', true),
+    turnCredentialsV1BridgeCommand: _CmdSpec(
+      turnCredentialsV1NativeMethod,
+      false,
+    ),
+    'call_store_v1': _CmdSpec('callStoreV1', true),
+    'call_retrieve_v1': _CmdSpec('callRetrieveV1', true),
+    'call_ack_v1': _CmdSpec('callAckV1', true),
+    'call_cancel_v1': _CmdSpec('callCancelV1', true),
+    'call_endpoint_set_v1': _CmdSpec('callEndpointSetV1', true),
+    'call_endpoint_get_v1': _CmdSpec('callEndpointGetV1', true),
+    'call_endpoint_revoke_v1': _CmdSpec('callEndpointRevokeV1', true),
+    'call_wake_handle_set_v1': _CmdSpec('callWakeHandleSetV1', true),
+    'call_wake_handle_revoke_v1': _CmdSpec('callWakeHandleRevokeV1', true),
+    'call_token_set_v1': _CmdSpec('callTokenSetV1', true),
+    'call_token_revoke_v1': _CmdSpec('callTokenRevokeV1', true),
     // FDC-08: cheap presence lookup (no circuit dial). Native MethodChannel
     // dispatch ('relayPresenceGet' -> Bridge PresenceGet) + gomobile framework
     // rebuild land with the S1 device/live-relay closure.

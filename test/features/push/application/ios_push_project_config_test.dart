@@ -42,14 +42,40 @@ void main() {
       },
     );
 
-    test('Runner.entitlements keeps production aps-environment', () async {
-      final entitlements = await File(
-        'ios/Runner/Runner.entitlements',
-      ).readAsString();
+    test(
+      'Runner aps-environment follows the signed build configuration',
+      () async {
+        final entitlements = await File(
+          'ios/Runner/Runner.entitlements',
+        ).readAsString();
+        final infoPlist = await File('ios/Runner/Info.plist').readAsString();
+        final pbxproj = await File(
+          'ios/Runner.xcodeproj/project.pbxproj',
+        ).readAsString();
 
-      expect(entitlements, contains('<key>aps-environment</key>'));
-      expect(entitlements, contains('<string>production</string>'));
-    });
+        expect(entitlements, contains('<key>aps-environment</key>'));
+        expect(
+          entitlements,
+          contains(r'<string>$(MKNOON_VOIP_ENVIRONMENT)</string>'),
+        );
+        expect(
+          infoPlist,
+          contains(r'<string>$(MKNOON_VOIP_ENVIRONMENT)</string>'),
+        );
+        expect(
+          RegExp(
+            r'MKNOON_VOIP_ENVIRONMENT = development;',
+          ).allMatches(pbxproj).length,
+          2,
+        );
+        expect(
+          RegExp(
+            r'MKNOON_VOIP_ENVIRONMENT = production;',
+          ).allMatches(pbxproj).length,
+          1,
+        );
+      },
+    );
 
     test(
       'project configurations import tracked Flutter build metadata',

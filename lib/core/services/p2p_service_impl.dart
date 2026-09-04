@@ -1303,7 +1303,7 @@ class P2PServiceImpl
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_SEND_MESSAGE_BEGIN',
-      details: {'peerId': peerId, 'messageLength': message.length},
+      details: {'messageLength': message.length},
     );
 
     try {
@@ -1323,11 +1323,7 @@ class P2PServiceImpl
           emitFlowEvent(
             layer: 'FL',
             event: 'P2P_SERVICE_SEND_MESSAGE_SUCCESS',
-            details: {
-              'peerId': peerId,
-              'acked': acked,
-              'hasReply': reply != null,
-            },
+            details: {'acked': acked, 'hasReply': reply != null},
           );
           return true;
         }
@@ -1335,18 +1331,14 @@ class P2PServiceImpl
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_SEND_MESSAGE_UNACKED',
-          details: {
-            'peerId': peerId,
-            'acked': acked,
-            'hasReply': reply != null,
-          },
+          details: {'acked': acked, 'hasReply': reply != null},
         );
         return false;
       } else {
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_SEND_MESSAGE_ERROR',
-          details: {'errorMessage': response['errorMessage']},
+          details: {'errorCode': response['errorCode']},
         );
         return false;
       }
@@ -1354,7 +1346,7 @@ class P2PServiceImpl
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_SEND_MESSAGE_EXCEPTION',
-        details: {'error': e.toString()},
+        details: {'errorType': e.runtimeType.toString()},
       );
       return false;
     }
@@ -1375,7 +1367,7 @@ class P2PServiceImpl
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_BEGIN',
-      details: {'peerId': peerId, 'messageLength': message.length},
+      details: {'messageLength': message.length},
     );
 
     try {
@@ -1397,7 +1389,6 @@ class P2PServiceImpl
           layer: 'FL',
           event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_SUCCESS',
           details: {
-            'peerId': peerId,
             'hasReply': reply != null,
             'acked': acked,
             'transport': transport,
@@ -1416,7 +1407,7 @@ class P2PServiceImpl
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_ERROR',
-          details: {'errorMessage': response['errorMessage']},
+          details: {'errorCode': response['errorCode']},
         );
         return const SendMessageResult(sent: false);
       }
@@ -1424,7 +1415,7 @@ class P2PServiceImpl
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_EXCEPTION',
-        details: {'error': e.toString()},
+        details: {'errorType': e.runtimeType.toString()},
       );
       return const SendMessageResult(sent: false);
     }

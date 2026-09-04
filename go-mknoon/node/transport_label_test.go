@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,9 +117,10 @@ func (s *stubTransportStream) Conn() network.Conn         { return s.conn }
 func (s *stubTransportStream) Scope() network.StreamScope { return nil }
 
 type directConfirmCallback struct {
-	node           *Node
-	confirmResults []bool
-	delay          time.Duration
+	node            *Node
+	confirmResults  []bool
+	callWakeReceipt string
+	delay           time.Duration
 }
 
 func (c *directConfirmCallback) OnEvent(jsonStr string) {
@@ -145,7 +147,11 @@ func (c *directConfirmCallback) OnEvent(jsonStr string) {
 		time.Sleep(c.delay)
 	}
 	for _, ok := range c.confirmResults {
-		c.node.ResolveDirectConfirm(nonce, ok)
+		if c.callWakeReceipt != "" {
+			c.node.ResolveDirectConfirmWithReceipt(nonce, ok, c.callWakeReceipt)
+		} else {
+			c.node.ResolveDirectConfirm(nonce, ok)
+		}
 	}
 }
 
@@ -353,8 +359,73 @@ func TestHandleIncomingMessage_DeferredDirectAck_WritesAckAfterConfirm(t *testin
 	}
 }
 
+func TestHandleIncomingMessage_DeferredDirectAck_WritesBoundCallWakeReceipt(t *testing.T) {
+	const receipt = "cwh-v1:epoch-3:generation-5:commit-9f8e7d"
+	cb := &directConfirmCallback{
+		confirmResults:  []bool{true},
+		callWakeReceipt: receipt,
+	}
+	n := newDeferredAckTestNode(t, cb, 50*time.Millisecond)
+	cb.node = n
+
+	stream := newStubTransportStream(
+		t,
+		chatEnvelopeForTest(t, "msg-call-wake-receipt"),
+		generatePeerIDStr(t),
+		"/ip4/192.168.1.55/tcp/4001",
+	)
+
+	n.handleIncomingMessage(stream)
+
+	got := ackPayloadFromStream(t, stream)
+	if got != `{"ack":true,"callWakeReceipt":"cwh-v1:epoch-3:generation-5:commit-9f8e7d"}` {
+		t.Fatalf("ACK did not preserve the exact call-wake receipt: %q", got)
+	}
+	if !isAffirmativeAckFrame([]byte(got)) {
+		t.Fatal("receipt-bearing ACK must remain affirmative for new and legacy senders")
+	}
+}
+
+func TestHandleIncomingMessage_DeferredDirectAck_OmitsInvalidCallWakeReceipt(t *testing.T) {
+	tests := []struct {
+		name    string
+		receipt string
+	}{
+		{name: "control character", receipt: "commit\nforged"},
+		{name: "oversized", receipt: strings.Repeat("a", directConfirmCallWakeReceiptMaxBytes+1)},
+		{name: "invalid UTF-8", receipt: string([]byte{0xff})},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cb := &directConfirmCallback{
+				confirmResults:  []bool{true},
+				callWakeReceipt: tc.receipt,
+			}
+			n := newDeferredAckTestNode(t, cb, 50*time.Millisecond)
+			cb.node = n
+
+			stream := newStubTransportStream(
+				t,
+				chatEnvelopeForTest(t, "msg-invalid-call-wake-receipt"),
+				generatePeerIDStr(t),
+				"/ip4/192.168.1.55/tcp/4001",
+			)
+
+			n.handleIncomingMessage(stream)
+
+			if got := ackPayloadFromStream(t, stream); got != `{"ack":true}` {
+				t.Fatalf("invalid receipt must preserve the generic ACK, got %q", got)
+			}
+		})
+	}
+}
+
 func TestHandleIncomingMessage_DeferredDirectAck_FalseConfirmDoesNotAck(t *testing.T) {
-	cb := &directConfirmCallback{confirmResults: []bool{false}}
+	cb := &directConfirmCallback{
+		confirmResults:  []bool{false},
+		callWakeReceipt: "commit-must-not-be-written",
+	}
 	n := newDeferredAckTestNode(t, cb, 50*time.Millisecond)
 	cb.node = n
 

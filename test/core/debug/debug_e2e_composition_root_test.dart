@@ -1,14 +1,117 @@
 import 'dart:io';
 
+import 'package:flutter_app/app/bootstrap/android_production_audio_call_e2e_observer.dart';
+import 'package:flutter_app/core/debug/android_production_audio_call_e2e.dart';
 import 'package:flutter_app/core/debug/group_media_ios_background_e2e.dart';
 import 'package:flutter_app/core/debug/group_media_reliability_e2e.dart';
 import 'package:flutter_app/debug/debug_e2e_composition_root.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'intro E2E conversation routing carries the process-owned outgoing call capability',
+    () {
+      final productionSource = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      final debugRootSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
+      final dependencyDeclaration = debugRootSource.substring(
+        debugRootSource.indexOf('final class DebugE2EPollerDependencies'),
+        debugRootSource.indexOf('/// Pure compile-time activation policy'),
+      );
+      final productionPollerDependencies = productionSource.substring(
+        productionSource.indexOf('DebugE2EPollerDependencies('),
+        productionSource.indexOf(
+          '\n          ),',
+          productionSource.indexOf('DebugE2EPollerDependencies('),
+        ),
+      );
+      final debugConversationRoute = debugRootSource.substring(
+        debugRootSource.indexOf('openConversationByPeerId:'),
+        debugRootSource.indexOf(
+          '\n      },',
+          debugRootSource.indexOf('openConversationByPeerId:'),
+        ),
+      );
+
+      expect(
+        dependencyDeclaration,
+        contains('required this.outgoingCallCapability,'),
+        reason: 'the debug poller must own an explicit call-capability seam',
+      );
+      expect(
+        productionPollerDependencies,
+        contains('outgoingCallCapability: callSignalingComposition,'),
+        reason:
+            'production must supply its process-owned call-signaling composition',
+      );
+      expect(
+        debugConversationRoute,
+        contains(
+          'outgoingCallCapability: dependencies.outgoingCallCapability,',
+        ),
+        reason:
+            'the debug-created ConversationWired must receive that capability',
+      );
+      expect(
+        debugConversationRoute,
+        isNot(contains('directRouteAuthority:')),
+        reason:
+            'debug routing deliberately has no linked-device route authority',
+      );
+    },
+  );
+
+  test(
+    'intro E2E call-wake distribution uses production signaling callbacks',
+    () {
+      final productionSource = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      final debugRootSource = File(
+        'lib/debug/debug_e2e_composition_root.dart',
+      ).readAsStringSync();
+      final dependencyDeclaration = debugRootSource.substring(
+        debugRootSource.indexOf('final class DebugE2EPollerDependencies'),
+        debugRootSource.indexOf('/// Pure compile-time activation policy'),
+      );
+      final startPoller = debugRootSource.substring(
+        debugRootSource.indexOf('startIntroE2EPoller('),
+        debugRootSource.indexOf(
+          '\n    );',
+          debugRootSource.indexOf('startIntroE2EPoller('),
+        ),
+      );
+      final productionPollerDependencies = productionSource.substring(
+        productionSource.indexOf('DebugE2EPollerDependencies('),
+        productionSource.indexOf(
+          '\n          ),',
+          productionSource.indexOf('DebugE2EPollerDependencies('),
+        ),
+      );
+      final normalizedProductionPollerDependencies =
+          productionPollerDependencies.replaceAll(RegExp(r'\s+'), ' ');
+
+      for (final callback in const [
+        'resolveCallWakeHandle',
+        'onCallWakeHandleDistributed',
+      ]) {
+        expect(dependencyDeclaration, contains('required this.$callback,'));
+        expect(startPoller, contains('$callback: dependencies.$callback,'));
+        expect(
+          normalizedProductionPollerDependencies,
+          contains('$callback: callSignalingComposition.$callback,'),
+        );
+      }
+    },
+  );
+
   test('default composition invokes zero harness controller factories', () {
     var reliabilityFactoryCalls = 0;
     var iosBackgroundFactoryCalls = 0;
+    var productionCallObserverFactoryCalls = 0;
 
     final root = DebugE2ECompositionRoot.tryCreate(
       stateDirectory: Directory.systemTemp,
@@ -26,11 +129,16 @@ void main() {
         iosBackgroundFactoryCalls++;
         throw StateError('default iOS factory was invoked');
       },
+      productionCallObserverFactory: () {
+        productionCallObserverFactoryCalls++;
+        throw StateError('default production-call observer was invoked');
+      },
     );
 
     expect(root, isNull);
     expect(reliabilityFactoryCalls, 0);
     expect(iosBackgroundFactoryCalls, 0);
+    expect(productionCallObserverFactoryCalls, 0);
   });
 
   test(
@@ -42,6 +150,7 @@ void main() {
       addTearDown(() => stateDirectory.deleteSync(recursive: true));
       var reliabilityFactoryCalls = 0;
       var iosBackgroundFactoryCalls = 0;
+      var productionCallObserverFactoryCalls = 0;
 
       final root = DebugE2ECompositionRoot.tryCreate(
         stateDirectory: stateDirectory,
@@ -65,11 +174,55 @@ void main() {
             installedProfileId: 'android.e2e.main',
           );
         },
+        productionCallObserverFactory: () {
+          productionCallObserverFactoryCalls++;
+          throw StateError('unrelated profile constructed call observer');
+        },
       );
 
       expect(root, isNotNull);
       expect(reliabilityFactoryCalls, 1);
       expect(iosBackgroundFactoryCalls, 1);
+      expect(productionCallObserverFactoryCalls, 0);
+    },
+  );
+
+  test(
+    'dedicated Android production-call profile constructs one observer only',
+    () {
+      final stateDirectory = Directory.systemTemp.createTempSync(
+        'production-call-observer-root-',
+      );
+      addTearDown(() => stateDirectory.deleteSync(recursive: true));
+      var observerFactoryCalls = 0;
+
+      final root = DebugE2ECompositionRoot.tryCreate(
+        stateDirectory: stateDirectory,
+        activation: const DebugE2EActivation(
+          isDebugMode: true,
+          isAndroid: true,
+          e2eTestMode: true,
+          directTextProofMode: false,
+          androidProductionAudioCallE2EEnabled: true,
+          installedSimsProfile: androidProductionAudioCallE2EBuildProfile,
+        ),
+        productionCallObserverFactory: () {
+          observerFactoryCalls++;
+          return AndroidProductionAudioCallE2EObserver.tryCreate(
+            enabled: true,
+            isAndroid: true,
+            installedProfileId: androidProductionAudioCallE2EBuildProfile,
+          )!;
+        },
+      );
+
+      expect(root, isNotNull);
+      expect(root!.startsIntroPoller, isTrue);
+      expect(observerFactoryCalls, 1);
+      final firstDispose = root.dispose();
+      final secondDispose = root.dispose();
+      expect(identical(firstDispose, secondDispose), isTrue);
+      return firstDispose;
     },
   );
 
@@ -79,6 +232,14 @@ void main() {
       e2eTestMode: false,
       directTextProofMode: false,
       installedSimsProfile: '',
+    );
+    const productionCall = DebugE2EActivation(
+      isDebugMode: true,
+      isAndroid: true,
+      e2eTestMode: true,
+      directTextProofMode: false,
+      androidProductionAudioCallE2EEnabled: true,
+      installedSimsProfile: androidProductionAudioCallE2EBuildProfile,
     );
     const emptyRelease = DebugE2EActivation(
       isDebugMode: false,
@@ -133,6 +294,7 @@ void main() {
       iosDisposableRelease,
       iosProduction,
       plan397IosSetup,
+      productionCall,
     ]) {
       expect(activation.constructsControllerRoot, isTrue);
       expect(activation.constructsPrivateMediaController, isTrue);
@@ -145,6 +307,9 @@ void main() {
     expect(iosDisposableRelease.startsIntroPoller, isTrue);
     expect(iosProduction.startsIntroPoller, isFalse);
     expect(plan397IosSetup.startsIntroPoller, isTrue);
+    expect(productionCall.startsIntroPoller, isTrue);
+    expect(productionCall.constructsProductionAudioCallObserver, isTrue);
+    expect(debugE2E.constructsProductionAudioCallObserver, isFalse);
     expect(iosProduction.startsIosSenderProjection, isTrue);
     expect(iosProduction.publishesIosReceiverBootstrap, isTrue);
     expect(iosProduction.decoratesIosGroupMediaProof, isFalse);
@@ -314,6 +479,8 @@ void main() {
         'unawaited(\n      runIosSenderProjectionFixtureLoop(',
         'publishIosReceiverBootstrapIdentityWhenReady(',
         'startIntroE2EPoller(',
+        'runAndroidProductionAudioCallE2E:',
+        'bindAndroidProductionAudioCallObservationSource',
       ]) {
         expect(
           debugRootSource,
@@ -323,6 +490,63 @@ void main() {
       }
       expect(autoSetupSource, contains('AUTO_SETUP_USERNAME'));
       expect(autoSetupSource, contains('auto_setup.json'));
+      expect(
+        productionSource,
+        contains('onGraphBuilt: (graph) {'),
+        reason: 'production graph must bind only read-only call observations',
+      );
+      expect(productionSource, contains('graph.readActiveConnectionSnapshot'));
+      expect(
+        productionSource,
+        contains('await debugE2EComposition?.dispose();'),
+        reason: 'app detach must stop observer and poller after call shutdown',
+      );
+      final graphCallback = productionSource.indexOf('onGraphBuilt: (graph) {');
+      final graphCallbackTry = productionSource.indexOf('try {', graphCallback);
+      final graphBinding = productionSource.indexOf(
+        'bindAndroidProductionAudioCallObservationSource(',
+        graphCallbackTry,
+      );
+      final graphCallbackCatch = productionSource.indexOf(
+        '} catch (_)',
+        graphBinding,
+      );
+      expect(graphCallback, greaterThanOrEqualTo(0));
+      expect(graphCallbackTry, greaterThan(graphCallback));
+      expect(graphBinding, greaterThan(graphCallbackTry));
+      expect(
+        graphCallbackCatch,
+        greaterThan(graphBinding),
+        reason: 'debug observation cannot throw into production graph build',
+      );
+      final detachCallback = productionSource.indexOf(
+        'onAppDetached: () async {',
+      );
+      final callShutdown = productionSource.indexOf(
+        'await callSignalingComposition.shutdown();',
+        detachCallback,
+      );
+      final detachFinally = productionSource.indexOf(
+        '} finally {',
+        callShutdown,
+      );
+      final debugDispose = productionSource.indexOf(
+        'await debugE2EComposition?.dispose();',
+        detachFinally,
+      );
+      expect(detachCallback, greaterThanOrEqualTo(0));
+      expect(callShutdown, greaterThan(detachCallback));
+      expect(detachFinally, greaterThan(callShutdown));
+      expect(
+        debugDispose,
+        greaterThan(detachFinally),
+        reason: 'detach must preserve call shutdown and always tear down E2E',
+      );
+      expect(debugRootSource, contains('await stopIntroE2EPoller();'));
+      expect(
+        debugRootSource,
+        contains('await _productionAudioCallObserver?.dispose();'),
+      );
     },
   );
 }

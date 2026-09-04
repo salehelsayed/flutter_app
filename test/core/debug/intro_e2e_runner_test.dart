@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/core/debug/intro_e2e_runner.dart' as intro_runner;
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart'
+    as contact_request;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../integration_test/scripts/run_intro_accept_notification_android.dart'
@@ -10,6 +13,35 @@ import '../../../integration_test/scripts/run_intro_accept_notification_sims.dar
     as intro_sims;
 
 void main() {
+  test(
+    'poller teardown is idempotent and cancels initial and periodic work',
+    () {
+      fakeAsync((async) {
+        var ticks = 0;
+        final lifecycle = intro_runner.IntroE2EPollerLifecycle(
+          initialDelay: const Duration(seconds: 2),
+          pollInterval: const Duration(seconds: 3),
+          tick: () async {
+            ticks++;
+          },
+        )..start();
+
+        final first = lifecycle.dispose();
+        final second = lifecycle.dispose();
+        expect(identical(first, second), isTrue);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 20));
+        async.flushMicrotasks();
+
+        expect(
+          ticks,
+          0,
+          reason: 'neither scheduled timer may poll after dispose',
+        );
+      });
+    },
+  );
+
   test('accepts ActivityManager wait timeout for later identity proof', () {
     expect(intro_campaign.isAndroidActivityStartAccepted('Status: ok'), isTrue);
     expect(
@@ -425,6 +457,145 @@ void main() {
       isFalse,
     );
   });
+
+  test(
+    'exact call-wake contact setup retries beyond legacy attempts until an exact success',
+    () async {
+      var now = DateTime.utc(2026, 1, 1);
+      var attempts = 0;
+      final exactReceiptRequirements = <bool>[];
+      final retryDelays = <Duration>[];
+
+      final result = await intro_runner.retryIntroE2EContactRequest(
+        requireExactCallWakeReceipt: true,
+        sendAttempt: ({required requireExactCallWakeReceipt}) async {
+          attempts++;
+          exactReceiptRequirements.add(requireExactCallWakeReceipt);
+          return attempts == 9
+              ? contact_request.SendContactRequestResult.success
+              : contact_request.SendContactRequestResult.sendFailed;
+        },
+        now: () => now,
+        delay: (duration) async {
+          retryDelays.add(duration);
+          now = now.add(duration);
+        },
+      );
+
+      expect(result, contact_request.SendContactRequestResult.success);
+      expect(attempts, 9);
+      expect(exactReceiptRequirements, everyElement(isTrue));
+      expect(retryDelays, hasLength(8));
+      expect(retryDelays, everyElement(const Duration(seconds: 2)));
+    },
+  );
+
+  test(
+    'exact call-wake contact setup stops at its bounded retry window',
+    () async {
+      var now = DateTime.utc(2026, 1, 1);
+      var attempts = 0;
+
+      final result = await intro_runner.retryIntroE2EContactRequest(
+        requireExactCallWakeReceipt: true,
+        sendAttempt: ({required requireExactCallWakeReceipt}) async {
+          attempts++;
+          expect(requireExactCallWakeReceipt, isTrue);
+          return contact_request.SendContactRequestResult.sendFailed;
+        },
+        now: () => now,
+        delay: (duration) async => now = now.add(duration),
+      );
+
+      expect(result, contact_request.SendContactRequestResult.sendFailed);
+      expect(
+        attempts,
+        60,
+        reason: 'a two-second cadence receives a bounded 120-second window',
+      );
+    },
+  );
+
+  test('ordinary contact setup remains bounded to eight attempts', () async {
+    var attempts = 0;
+    final exactReceiptRequirements = <bool>[];
+
+    final result = await intro_runner.retryIntroE2EContactRequest(
+      requireExactCallWakeReceipt: false,
+      sendAttempt: ({required requireExactCallWakeReceipt}) async {
+        attempts++;
+        exactReceiptRequirements.add(requireExactCallWakeReceipt);
+        return contact_request.SendContactRequestResult.sendFailed;
+      },
+      delay: (_) async {},
+    );
+
+    expect(result, contact_request.SendContactRequestResult.sendFailed);
+    expect(attempts, 8);
+    expect(exactReceiptRequirements, everyElement(isFalse));
+  });
+
+  test(
+    'added-contact requests carry optional call-wake callbacks and opt in to exact receipts',
+    () {
+      final source = File(
+        'lib/core/debug/intro_e2e_runner.dart',
+      ).readAsStringSync();
+      final actionStart = source.indexOf('Future<void> runIntroE2EActions({');
+      final actionEnd = source.indexOf(
+        'Future<void> _runConnectivityRestoreObservation({',
+        actionStart,
+      );
+      final pollerStart = source.indexOf('void startIntroE2EPoller({');
+      final pollerEnd = source.indexOf(
+        'Future<Map<String, dynamic>?> _openConversationIfRequested({',
+        pollerStart,
+      );
+      final helperStart = source.indexOf(
+        'Future<void> _sendContactRequestsForAddedContacts({',
+      );
+      final helperEnd = source.indexOf(
+        'bool shouldDelayBetweenIntroE2EContactRequests',
+        helperStart,
+      );
+      final action = source.substring(actionStart, actionEnd);
+      final poller = source.substring(pollerStart, pollerEnd);
+      final helper = source.substring(helperStart, helperEnd);
+
+      for (final callback in const [
+        'ResolveCallWakeHandleForIntroE2EFn? resolveCallWakeHandle',
+        'OnCallWakeHandleDistributedForIntroE2EFn? onCallWakeHandleDistributed',
+      ]) {
+        expect(action, contains(callback));
+        expect(poller, contains(callback));
+        expect(helper, contains(callback));
+      }
+      expect(action, contains('resolveCallWakeHandle: resolveCallWakeHandle,'));
+      expect(
+        action,
+        contains('onCallWakeHandleDistributed: onCallWakeHandleDistributed,'),
+      );
+      expect(poller, contains('resolveCallWakeHandle: resolveCallWakeHandle,'));
+      expect(
+        poller,
+        contains('onCallWakeHandleDistributed: onCallWakeHandleDistributed,'),
+      );
+      expect(helper, contains('resolveCallWakeHandle: resolveCallWakeHandle,'));
+      expect(
+        helper,
+        contains('onCallWakeHandleDistributed: onCallWakeHandleDistributed,'),
+      );
+      expect(
+        helper,
+        contains("config['require_exact_call_wake_receipt'] == true"),
+        reason: 'only an explicit config boolean may require receipt proof',
+      );
+      expect(
+        helper,
+        contains('requireExactCallWakeReceipt: requireExactCallWakeReceipt,'),
+      );
+    },
+  );
 
   test('contact setup skips the non-causal full database snapshot', () {
     final source = File(

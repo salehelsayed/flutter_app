@@ -270,7 +270,8 @@ final class IosAppVisibilitySnapshotTests: XCTestCase {
       expectedReasons: [
         "NSPrivacyAccessedAPICategorySystemBootTime": ["35F9.1"],
         "NSPrivacyAccessedAPICategoryDiskSpace": ["E174.1"],
-      ]
+      ],
+      expectsVoipDeviceIdentifier: true
     )
     try assertPrivacyManifest(
       at: Bundle.main.bundleURL.appendingPathComponent(
@@ -279,7 +280,8 @@ final class IosAppVisibilitySnapshotTests: XCTestCase {
       expectedReasons: [
         "NSPrivacyAccessedAPICategorySystemBootTime": ["35F9.1"],
         "NSPrivacyAccessedAPICategoryFileTimestamp": ["C617.1"],
-      ]
+      ],
+      expectsVoipDeviceIdentifier: false
     )
   }
 
@@ -409,7 +411,8 @@ final class IosAppVisibilitySnapshotTests: XCTestCase {
 
   private func assertPrivacyManifest(
     at url: URL,
-    expectedReasons: [String: Set<String>]
+    expectedReasons: [String: Set<String>],
+    expectsVoipDeviceIdentifier: Bool
   ) throws {
     let data = try Data(contentsOf: url)
     let plist = try PropertyListSerialization.propertyList(
@@ -433,6 +436,26 @@ final class IosAppVisibilitySnapshotTests: XCTestCase {
       actual[category] = Set(reasons)
     }
     XCTAssertEqual(actual, expectedReasons)
+
+    let collected = try XCTUnwrap(
+      root["NSPrivacyCollectedDataTypes"] as? [[String: Any]]
+    )
+    if expectsVoipDeviceIdentifier {
+      XCTAssertEqual(collected.count, 1)
+      let row = try XCTUnwrap(collected.first)
+      XCTAssertEqual(
+        row["NSPrivacyCollectedDataType"] as? String,
+        "NSPrivacyCollectedDataTypeDeviceID"
+      )
+      XCTAssertEqual(row["NSPrivacyCollectedDataTypeLinked"] as? Bool, true)
+      XCTAssertEqual(row["NSPrivacyCollectedDataTypeTracking"] as? Bool, false)
+      XCTAssertEqual(
+        row["NSPrivacyCollectedDataTypePurposes"] as? [String],
+        ["NSPrivacyCollectedDataTypePurposeAppFunctionality"]
+      )
+    } else {
+      XCTAssertTrue(collected.isEmpty)
+    }
   }
 
   private func assertCompleteUntilFirstUserAuthenticationProtection(

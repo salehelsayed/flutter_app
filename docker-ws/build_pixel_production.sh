@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build a non-E2E (no dart-defines) debug APK for the Pixel.
+# Build a non-E2E debug APK for the Pixel (voice-call gates from tool/build/voice_call_release_defines.json).
 # Debug-signed like the currently installed sims build, so it installs as an
 # in-place UPDATE (app data and identity survive). No E2E_TEST_MODE define
 # means the contact-request presentation gate stays open.
@@ -25,6 +25,7 @@ echo "PROVENANCE tree=current-working-tree sha=$GIT_SHA dirty_files=$GIT_DIRTY b
 
 echo "Building non-E2E debug APK (arm64)..."
 if flutter build apk --debug --target-platform=android-arm64 --target=lib/main.dart \
+    --dart-define-from-file=tool/build/voice_call_release_defines.json --android-project-arg=enableAndroidNativeCalls=true \
     --build-name="$BUILD_NAME"; then
   APK=build/app/outputs/flutter-apk/app-debug.apk
   if [ ! -f "$APK" ]; then

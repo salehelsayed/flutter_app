@@ -39,6 +39,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>MknoonVoipEnvironment</key>
+	<string>$(MKNOON_VOIP_ENVIRONMENT)</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_mknoon._tcp</string>
@@ -54,7 +56,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app needs location access to share nearby posts with your direct friends</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>This app needs microphone access to record voice messages</string>
+	<string>Allow microphone access for private voice calls and voice messages.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>To share photos and videos</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
@@ -84,8 +86,10 @@
 	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>fetch</string>
 		<string>remote-notification</string>
+		<string>voip</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

@@ -6,6 +6,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
+import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/contact_request/application/contact_auto_add_rate_limiter.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
@@ -80,6 +81,22 @@ class ContactRequestListener {
   /// through [processIncomingMessage]).
   final ReceivedWakeTokenStore? receivedWakeTokenStore;
 
+  /// Call-only wake authority received through the signed, encrypted v2
+  /// contact-request payload. Deliberately separate from ordinary `wt` state.
+  final ReceivedCallWakeHandleStore? receivedCallWakeHandleStore;
+
+  /// Best-effort presentation refresh after a verified call wake handle is
+  /// durably accepted as strictly newer.
+  final Future<void> Function()? onCallWakeHandleStored;
+
+  /// Best-effort response to a verified existing contact's explicit
+  /// key-exchange retry. The listener invokes this only after the sender's
+  /// signed call-wake grant is durably current and its direct ACK has been
+  /// released. The callback sends this device's grant in a fresh encrypted
+  /// request; grants never ride the ACK itself.
+  final Future<void> Function(String contactPeerId)?
+  requestReciprocalCallWakeRecovery;
+
   /// 171: when wired (non-null), a v2 [HandleMessageResult.contactAutoAdded]
   /// result is added tap-free by invoking this — it adds the scanner as a
   /// contact AND fires the reciprocal request (acceptAndReciprocate). When
@@ -110,13 +127,15 @@ class ContactRequestListener {
     this.attemptSilentIntroRecovery,
     this.emitRecoveredIntroductionStatus,
     this.receivedWakeTokenStore,
+    this.receivedCallWakeHandleStore,
+    this.onCallWakeHandleStored,
+    this.requestReciprocalCallWakeRecovery,
     this.autoAcceptAndReciprocate,
     ContactAutoAddRateLimiter? autoAddRateLimiter,
   }) : downloadProfilePictureFn =
            downloadProfilePictureFn ?? downloadProfilePicture,
        _replayCache = replayCache ?? ReplayCache(),
-       _autoAddRateLimiter =
-           autoAddRateLimiter ?? ContactAutoAddRateLimiter() {
+       _autoAddRateLimiter = autoAddRateLimiter ?? ContactAutoAddRateLimiter() {
     // A request that arrives while no screen is subscribed is stored pending
     // but never becomes visible again: the broadcast emission is dropped and
     // every re-send short-circuits as duplicateRequest (status==pending). The
@@ -239,8 +258,10 @@ class ContactRequestListener {
       // Resolve own private key for v2 decryption
       final ownPrivateKey = await getOwnPrivateKey?.call();
       IntroContactRequestRecoveryResult? recoveryResult;
+      var callWakeReceiptRequired = false;
+      String? callWakeReceipt;
 
-      final (result, request, keyUpdatePeerId) = await handleIncomingMessage(
+      final (result, request, verifiedPeerId) = await handleIncomingMessage(
         message: message,
         bridge: bridge,
         requestRepo: requestRepo,
@@ -249,6 +270,12 @@ class ContactRequestListener {
         ownPrivateKey: ownPrivateKey,
         seenMessageIds: _replayCache.ids,
         receivedWakeTokenStore: receivedWakeTokenStore,
+        receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+        onCallWakeHandleStored: onCallWakeHandleStored,
+        onCallWakeHandleReceiptEvaluated: (challenge, exactCurrent) {
+          callWakeReceiptRequired = true;
+          if (exactCurrent) callWakeReceipt = challenge;
+        },
         attemptSilentIntroRecovery: attemptSilentIntroRecovery == null
             ? null
             : (verifiedRequest) async {
@@ -287,10 +314,10 @@ class ContactRequestListener {
           request != null) {
         await _routeAutoAdd(request);
       } else if (result == HandleMessageResult.contactKeyUpdated &&
-          keyUpdatePeerId != null) {
-        final peerPrefix = keyUpdatePeerId.length > 10
-            ? keyUpdatePeerId.substring(0, 10)
-            : keyUpdatePeerId;
+          verifiedPeerId != null) {
+        final peerPrefix = verifiedPeerId.length > 10
+            ? verifiedPeerId.substring(0, 10)
+            : verifiedPeerId;
 
         emitFlowEvent(
           layer: 'FL',
@@ -300,7 +327,7 @@ class ContactRequestListener {
 
         // Broadcast the updated contact so UI screens refresh their
         // cached copy (e.g. ConversationWired picks up the new ML-KEM key).
-        final updatedContact = await contactRepo.getContact(keyUpdatePeerId);
+        final updatedContact = await contactRepo.getContact(verifiedPeerId);
         if (updatedContact != null) {
           _contactKeyUpdatedController.add(updatedContact);
         }
@@ -322,11 +349,66 @@ class ContactRequestListener {
       // the happy path never 2s-times-out. A thrown error below sends ok=false
       // instead (Go withholds the ack -> sender inboxes -> retried). A null
       // confirmNonce (e.g. an inbox-replayed entry) is a no-op.
-      await _maybeConfirmDirectNonce(message, ok: true);
+      String? reciprocalCallWakeRecoveryPeerId;
+      if (requestReciprocalCallWakeRecovery != null &&
+          _hasKeyExchangeRetryIntent(message) &&
+          message.confirmNonce?.isNotEmpty == true &&
+          callWakeReceipt != null &&
+          verifiedPeerId != null &&
+          (result == HandleMessageResult.alreadyContact ||
+              result == HandleMessageResult.contactKeyUpdated)) {
+        final existingContact = await contactRepo.getContact(verifiedPeerId);
+        if (existingContact != null && !existingContact.isBlocked) {
+          reciprocalCallWakeRecoveryPeerId = verifiedPeerId;
+        }
+      }
+
+      await _maybeConfirmDirectNonce(
+        message,
+        ok: !callWakeReceiptRequired || callWakeReceipt != null,
+        callWakeReceipt: callWakeReceipt,
+      );
+
+      if (reciprocalCallWakeRecoveryPeerId != null) {
+        try {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CALL_WAKE_RECIPROCAL_RECOVERY_REQUESTED',
+            details: {},
+          );
+          await requestReciprocalCallWakeRecovery!(
+            reciprocalCallWakeRecoveryPeerId,
+          );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CALL_WAKE_RECIPROCAL_RECOVERY_COMPLETED',
+            details: {},
+          );
+        } catch (_) {
+          // The inbound grant is already durable and acknowledged. Failure to
+          // send our reciprocal grant must not invalidate or replay it.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CALL_WAKE_RECIPROCAL_RECOVERY_FAILED',
+            details: {},
+          );
+        }
+      }
       return result;
     } catch (e) {
       await _maybeConfirmDirectNonce(message, ok: false);
       rethrow;
+    }
+  }
+
+  bool _hasKeyExchangeRetryIntent(ChatMessage message) {
+    try {
+      final envelope = jsonDecode(message.content) as Map<String, dynamic>;
+      return envelope['type'] == 'contact_request' &&
+          envelope['version'] == '2' &&
+          envelope['intent'] == 'key_exchange_retry';
+    } catch (_) {
+      return false;
     }
   }
 
@@ -454,13 +536,19 @@ class ContactRequestListener {
   Future<void> _maybeConfirmDirectNonce(
     ChatMessage message, {
     required bool ok,
+    String? callWakeReceipt,
   }) async {
     final nonce = message.confirmNonce;
     if (nonce == null || nonce.isEmpty) {
       return;
     }
     try {
-      await callP2PConfirmDirectMessage(bridge, nonce: nonce, ok: ok);
+      await callP2PConfirmDirectMessage(
+        bridge,
+        nonce: nonce,
+        ok: ok,
+        callWakeReceipt: callWakeReceipt,
+      );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

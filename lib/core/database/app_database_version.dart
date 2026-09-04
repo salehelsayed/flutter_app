@@ -67,4 +67,6 @@
 // 369: DB v116 adds the installation-local, seven-day completed notification
 // outcome outbox. Historical display/terminal facts are deliberately not
 // backfilled because they cannot prove that a local effect completed.
-const int currentIdentityDatabaseVersion = 116;
+// VC2-02: DB v117 adds one privacy-safe local call-history row per terminal
+// call. Historical rows are not synthesized.
+const int currentIdentityDatabaseVersion = 117;

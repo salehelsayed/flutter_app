@@ -1517,6 +1517,57 @@ void main() {
       expect(payload['timeoutMs'], equals(30000));
     });
 
+    test(
+      'diagnostics omit recipient identity and raw native error text',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(
+          (payload) => flowEvents.add(Map<String, dynamic>.from(payload)),
+        );
+        bridge.nextResponse = {
+          'ok': false,
+          'sent': false,
+          'errorCode': 'SEND_FAILED',
+          'errorMessage': 'native detail naming recipient-private',
+        };
+
+        final result = await callP2PMessageSend(
+          bridge,
+          peerId: 'recipient-private',
+          message: 'opaque-call-envelope',
+          timeoutMs: 5000,
+        );
+
+        final request = flowEvents.singleWhere(
+          (event) => event['event'] == 'P2P_MESSAGE_SEND_REQUEST',
+        );
+        final response = flowEvents.singleWhere(
+          (event) => event['event'] == 'P2P_MESSAGE_SEND_RESPONSE',
+        );
+        expect(
+          request['details'] as Map<String, dynamic>,
+          isNot(contains('peerId')),
+        );
+        expect(
+          response['details'] as Map<String, dynamic>,
+          isNot(contains('errorMessage')),
+        );
+        expect(flowEvents.toString(), isNot(contains('recipient-private')));
+        expect(
+          flowEvents.toString(),
+          isNot(contains('native detail naming recipient-private')),
+        );
+
+        final payload =
+            bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['peerId'], 'recipient-private');
+        expect(
+          result['errorMessage'],
+          'native detail naming recipient-private',
+        );
+      },
+    );
+
     test('returns BRIDGE_TIMEOUT instead of hanging when the bridge never '
         'responds and a timeoutMs is set (F5)', () async {
       // _HangingBridge.send returns Completer<String>().future — it never
@@ -1573,6 +1624,26 @@ void main() {
         equals({'nonce': 'nonce-123', 'ok': false}),
       );
     });
+
+    test(
+      'forwards optional call-wake receipt without changing legacy payload',
+      () async {
+        bridge.nextResponse = {'ok': true};
+
+        await callP2PConfirmDirectMessage(
+          bridge,
+          nonce: 'nonce-456',
+          ok: true,
+          callWakeReceipt: 'commit-9f8e7d',
+        );
+
+        expect(bridge.lastParsedRequest!['payload'], {
+          'nonce': 'nonce-456',
+          'ok': true,
+          'callWakeReceipt': 'commit-9f8e7d',
+        });
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

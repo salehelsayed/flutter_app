@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -164,6 +165,49 @@ Future<void> main(List<String> arguments) async {
     );
   });
 
+  test(
+    'system host runner applies an explicit timeout without relaxing its default',
+    () async {
+      if (Platform.isWindows) return;
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-runner-operation-timeout-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final script = File('${root.path}/delayed.dart')
+        ..writeAsStringSync(r'''
+import 'dart:async';
+
+Future<void> main() async {
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+}
+''', flush: true);
+      final runner = SystemAndroidHostProcessRunner(
+        commandTimeout: const Duration(milliseconds: 50),
+        terminationGrace: const Duration(milliseconds: 300),
+      );
+
+      await expectLater(
+        runner.run(_fixtureDartExecutable(), <String>[script.path]),
+        throwsA(
+          isA<ProcessException>().having(
+            (error) => error.errorCode,
+            'errorCode',
+            124,
+          ),
+        ),
+      );
+
+      final result = await runner.runWithTimeout(
+        _fixtureDartExecutable(),
+        <String>[script.path],
+        timeout: const Duration(seconds: 5),
+      );
+      expect(result.exitCode, 0);
+    },
+  );
+
   test('pure restore policy protects installed-app Keystore state', () {
     expect(
       androidPackageRestoreAction(
@@ -187,6 +231,39 @@ Future<void> main(List<String> arguments) async {
       AndroidPackageRestoreAction.failKeystoreAlreadyLost,
     );
   });
+
+  test(
+    'original APK restore disables adb streaming without uninstalling',
+    () async {
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 2, 3, 4],
+        ],
+        permissions: const <String, bool>{},
+      );
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'non-streaming-restore-test',
+        runner: adb,
+      );
+      addTearDown(() async {
+        if (guard.backupDirectory.existsSync()) {
+          await guard.backupDirectory.delete(recursive: true);
+        }
+      });
+
+      await guard.restoreAll();
+
+      expect(guard.restored, isTrue);
+      expect(
+        adb.commands,
+        contains(contains(' install --no-streaming -r -d -t ')),
+      );
+      expect(adb.commands.join('\n'), isNot(contains('uninstall')));
+      expect(adb.commands.join('\n'), isNot(contains(' pm clear ')));
+    },
+  );
 
   test('state guard retries a bounded transient adb offline window', () async {
     final state = _FakeAdbState.installed(
@@ -216,6 +293,44 @@ Future<void> main(List<String> arguments) async {
     expect(adb.injectedFailures, 2);
     await guard.restoreAll();
     expect(guard.restored, isTrue);
+  });
+
+  test('state guard gives only original APK pulls a larger deadline', () async {
+    final state = _FakeAdbState.installed(
+      apkBytes: <List<int>>[
+        <int>[1, 2, 3, 4],
+      ],
+      permissions: const <String, bool>{},
+    );
+    final runner = _TimeoutRecordingAdbRunner(state);
+
+    final guard = await AndroidAppStateGuard.capture(
+      devices: const <String>['physical-1'],
+      packageName: _packageName,
+      backupLabel: 'apk-pull-timeout-test',
+      runner: runner,
+    );
+    addTearDown(() async {
+      if (guard.backupDirectory.existsSync()) {
+        await guard.backupDirectory.delete(recursive: true);
+      }
+    });
+
+    expect(runner.timedRuns, hasLength(1));
+    final apkPull = runner.timedRuns.single;
+    expect(apkPull.executable, 'adb');
+    expect(apkPull.arguments, contains('pull'));
+    expect(apkPull.timeout, greaterThan(const Duration(minutes: 2)));
+    expect(apkPull.timeout, lessThanOrEqualTo(const Duration(minutes: 15)));
+    expect(runner.regularRuns, isNotEmpty);
+    expect(
+      runner.regularRuns.any((run) => run.arguments.contains('pull')),
+      isFalse,
+    );
+
+    await guard.restoreAll();
+    expect(guard.restored, isTrue);
+    expect(runner.timedRuns, hasLength(1));
   });
 
   test(
@@ -279,6 +394,80 @@ Future<void> main(List<String> arguments) async {
     await guard.restoreAll();
     expect(guard.restored, isTrue);
   });
+
+  test(
+    'private archive capture has a distinct bounded large-transfer deadline',
+    () async {
+      if (Platform.isWindows) return;
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-private-archive-deadline-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final archive = File('${root.path}/private-data.tar');
+      _writePrivateTarFixture(archive, const <String>['files']);
+      final script = File('${root.path}/emit_archive.dart')
+        ..writeAsStringSync(r'''
+import 'dart:io';
+
+Future<void> main(List<String> arguments) async {
+  stdout.add(await File(arguments.single).readAsBytes());
+  await stdout.flush();
+}
+''', flush: true);
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 2, 3, 4],
+        ],
+        permissions: const <String, bool>{},
+        privateEntries: const <String>{'files'},
+      );
+      final observedDeadlines = <Duration>[];
+
+      final guard = await runZoned<Future<AndroidAppStateGuard>>(
+        () => AndroidAppStateGuard.capture(
+          devices: const <String>['physical-1'],
+          packageName: _packageName,
+          backupLabel: 'private-archive-deadline-test',
+          runner: adb,
+          privateArchiveProcessStarter: (_, _) => Process.start(
+            _fixtureDartExecutable(),
+            <String>[script.path, archive.path],
+            runInShell: false,
+          ),
+        ),
+        zoneSpecification: ZoneSpecification(
+          createTimer: (self, parent, zone, duration, callback) {
+            observedDeadlines.add(duration);
+            return parent.createTimer(zone, duration, callback);
+          },
+        ),
+      );
+      addTearDown(() async {
+        if (guard.backupDirectory.existsSync()) {
+          await guard.backupDirectory.delete(recursive: true);
+        }
+      });
+
+      expect(
+        observedDeadlines,
+        contains(const Duration(minutes: 10)),
+        reason:
+            'the private archive stream must outlive the 2-minute host '
+            'command bound while remaining fail-bounded',
+      );
+      expect(
+        observedDeadlines.where(
+          (duration) => duration > const Duration(minutes: 10),
+        ),
+        isEmpty,
+      );
+
+      await guard.restoreAll();
+      expect(guard.restored, isTrue);
+    },
+  );
 
   test(
     'default backup policy still rejects a private tree above 512 MiB',
@@ -806,7 +995,10 @@ Future<void> main(List<String> arguments) async {
       expect(adb.permissions['android.permission.POST_NOTIFICATIONS'], isFalse);
       expect(adb.running, isTrue);
       expect(adb.foreground, isFalse);
-      expect(adb.commands.join('\n'), contains('install-multiple -r -d -t'));
+      expect(
+        adb.commands.join('\n'),
+        contains('install-multiple --no-streaming -r -d -t'),
+      );
       expect(adb.commands.join('\n'), contains('shell pm grant'));
       expect(adb.commands.join('\n'), contains('shell pm revoke'));
       expect(adb.commands.join('\n'), contains('KEYCODE_HOME'));
@@ -866,7 +1058,7 @@ Future<void> main(List<String> arguments) async {
       );
       final restoreInstall = adb.commands.lastIndexWhere(
         (command) =>
-            command.contains(' install -r -d -t ') &&
+            command.contains(' install --no-streaming -r -d -t ') &&
             command.contains('installed-0.apk'),
       );
       final canonicalVerify = adb.commands.lastIndexWhere(
@@ -949,7 +1141,7 @@ Future<void> main(List<String> arguments) async {
       expect(adb.codeCacheNonEmpty, isTrue);
       final restoreInstall = adb.commands.lastIndexWhere(
         (command) =>
-            command.contains(' install -r -d -t ') &&
+            command.contains(' install --no-streaming -r -d -t ') &&
             command.contains('installed-0.apk'),
       );
       final extract = adb.commands.indexWhere(
@@ -2196,6 +2388,41 @@ final class _TransientOfflineAdbRunner implements AndroidHostProcessRunner {
         ProcessResult(_pid++, 1, '', diagnostic),
       );
     }
+    return delegate.run(executable, arguments);
+  }
+}
+
+final class _TimeoutRecordingAdbRunner
+    implements AndroidHostProcessRunnerWithTimeout {
+  _TimeoutRecordingAdbRunner(this.delegate);
+
+  final AndroidHostProcessRunner delegate;
+  final List<({String executable, List<String> arguments})> regularRuns =
+      <({String executable, List<String> arguments})>[];
+  final List<({String executable, List<String> arguments, Duration timeout})>
+  timedRuns =
+      <({String executable, List<String> arguments, Duration timeout})>[];
+
+  @override
+  Future<ProcessResult> run(String executable, List<String> arguments) {
+    regularRuns.add((
+      executable: executable,
+      arguments: List<String>.unmodifiable(arguments),
+    ));
+    return delegate.run(executable, arguments);
+  }
+
+  @override
+  Future<ProcessResult> runWithTimeout(
+    String executable,
+    List<String> arguments, {
+    required Duration timeout,
+  }) {
+    timedRuns.add((
+      executable: executable,
+      arguments: List<String>.unmodifiable(arguments),
+      timeout: timeout,
+    ));
     return delegate.run(executable, arguments);
   }
 }

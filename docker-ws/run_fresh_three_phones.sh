@@ -33,10 +33,11 @@ BUILD_NAME="${BUILD_NAME}.t${RUN_STAMP}"
 FRESH_MARK=$(mktemp)
 note "PROVENANCE tree=current-working-tree sha=$GIT_SHA branch=$GIT_BRANCH dirty_files=$GIT_DIRTY build_name=$BUILD_NAME ios_bundle_version=$RUN_STAMP date=$(date '+%Y-%m-%d %H:%M:%S')"
 
-# --- 1. Android: defines-free debug APK (real app UX — no E2E gate), arm64 ---
-echo "== Building Android debug APK (no dart-defines, arm64)"
+# --- 1. Android: debug APK (real app UX — no E2E gate; voice-call gates from tool/build/voice_call_release_defines.json), arm64 ---
+echo "== Building Android debug APK (voice-call gates on, arm64)"
 APK=build/app/outputs/flutter-apk/app-debug.apk
 if ! flutter build apk --debug --target-platform=android-arm64 --target=lib/main.dart \
+    --dart-define-from-file=tool/build/voice_call_release_defines.json --android-project-arg=enableAndroidNativeCalls=true \
     --build-name="$BUILD_NAME" \
     || [ ! -f "$APK" ]; then
   note "ANDROID FAILED(build)"; APK=""; FAILED=1
@@ -48,6 +49,7 @@ fi
 echo "== Building iOS release app"
 APP=build/ios/iphoneos/Runner.app
 if ! flutter build ios --release --target=lib/main.dart --dart-define=PRODUCTION_APNS=true \
+    --dart-define-from-file=tool/build/voice_call_release_defines.json \
     --build-name="$BUILD_NAME" --build-number="$RUN_STAMP" \
     || [ ! -d "$APP" ]; then
   note "IOS FAILED(build)"; APP=""; FAILED=1

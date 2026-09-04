@@ -117,8 +117,6 @@ void main() {
     final project = File(
       'ios/Runner.xcodeproj/project.pbxproj',
     ).readAsStringSync();
-    final runnerInfo = File('ios/Runner/Info.plist').readAsStringSync();
-    final rootInfo = File('info.plist').readAsStringSync();
     for (final forbidden in <String>[
       'AVPictureInPictureController',
       'AVKit',
@@ -128,8 +126,8 @@ void main() {
       expect(iosSource, isNot(contains(forbidden)));
       expect(project, isNot(contains(forbidden)));
     }
-    expect(runnerInfo, isNot(contains('<string>audio</string>')));
-    expect(rootInfo, isNot(contains('<string>audio</string>')));
+    // UIBackgroundModes.audio is shared by the supported CallKit/WebRTC call
+    // path, so it is not evidence that the unsupported iOS PiP path exists.
   });
 }
 

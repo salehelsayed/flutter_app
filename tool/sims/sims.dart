@@ -847,6 +847,7 @@ SimsFailureClass _failureClass(SimsVerdict verdict) =>
       SimsBlockerKind.product => SimsFailureClass.product,
       SimsBlockerKind.test => SimsFailureClass.test,
       SimsBlockerKind.harness => SimsFailureClass.harness,
+      SimsBlockerKind.restoration => SimsFailureClass.harness,
       SimsBlockerKind.flake => SimsFailureClass.flake,
       _ => SimsFailureClass.environment,
     };

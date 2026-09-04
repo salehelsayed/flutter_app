@@ -40,7 +40,7 @@ void main() {
         isTrue,
         reason: 'TC-343-10 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 116);
+      expect(currentIdentityDatabaseVersion, 117);
 
       final previousFlowEventLoggingEnabled = flowEventLoggingEnabled;
       flowEventLoggingEnabled = false;
@@ -87,7 +87,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _cipherVersion(db), isNotEmpty);
         final currentTextCustody = <String, Object?>{
           ...textCustody,
@@ -322,7 +322,7 @@ END
         proofStage = 'second-production-migration-pass-is-stable';
         await runProductionOnUpgrade(db, 108, 109);
         await runDirectReactionInboxCustodyOutboxMigration(db);
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _authoritySnapshot(db), convergedSnapshot);
         await db.close();
         db = null;
@@ -351,7 +351,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 116);
+        expect(await _userVersion(db), 117);
         expect(await _authoritySnapshot(db), convergedSnapshot);
       } catch (error, stackTrace) {
         fail('TC-343-10 failed at $proofStage: $error\n$stackTrace');

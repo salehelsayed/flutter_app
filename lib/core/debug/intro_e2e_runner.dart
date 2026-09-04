@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/android_production_audio_call_e2e.dart';
 import 'package:flutter_app/core/debug/android_notification_payload_e2e.dart';
 import 'package:flutter_app/core/debug/android_voice_message_e2e.dart';
 import 'package:flutter_app/core/debug/connectivity_restore_e2e_contract.dart';
@@ -273,6 +274,13 @@ Future<Map<String, Object?>> evaluateDirectTextRelayTokenProof({
 
 typedef OpenConversationForIntroE2EFn = Future<bool> Function(String peerId);
 typedef ResolveWakeTokenForIntroE2EFn = Future<String?> Function(String peerId);
+typedef ResolveCallWakeHandleForIntroE2EFn = ResolveCallWakeHandle;
+typedef OnCallWakeHandleDistributedForIntroE2EFn = OnCallWakeHandleDistributed;
+typedef SendIntroE2EContactRequestAttempt =
+    Future<SendContactRequestResult> Function({
+      required bool requireExactCallWakeReceipt,
+    });
+typedef IntroE2ERetryDelay = Future<void> Function(Duration duration);
 typedef RunGroupMediaReliabilityE2EFn =
     Future<Map<String, Object?>> Function(Map<String, dynamic> config);
 typedef RunGroupNotificationProjectionE2EFn =
@@ -285,9 +293,71 @@ typedef RunGroupMediaIosBackgroundE2EFn =
       GroupMediaIosReceiverObservationAccepted? onReceiverObservationAccepted,
       GroupMediaIosReceiverObservationComplete? onReceiverObservationComplete,
     });
+typedef RunAndroidProductionAudioCallE2EFn =
+    Future<Map<String, Object?>> Function(Map<String, dynamic> config);
 
-Timer? _introE2EPoller;
+@visibleForTesting
+final class IntroE2EPollerLifecycle {
+  IntroE2EPollerLifecycle({
+    required this.initialDelay,
+    required this.pollInterval,
+    required Future<void> Function() tick,
+  }) : _tick = tick;
+
+  final Duration initialDelay;
+  final Duration pollInterval;
+  final Future<void> Function() _tick;
+
+  Timer? _initialTimer;
+  Timer? _periodicTimer;
+  Future<void>? _tickInFlight;
+  Future<void>? _disposeFuture;
+  bool _started = false;
+  bool _disposed = false;
+
+  void start() {
+    if (_started || _disposed) return;
+    _started = true;
+    _initialTimer = Timer(initialDelay, () {
+      _initialTimer = null;
+      _scheduleTick();
+    });
+    _periodicTimer = Timer.periodic(pollInterval, (_) => _scheduleTick());
+  }
+
+  void _scheduleTick() {
+    if (_disposed || _tickInFlight != null) return;
+    _tickInFlight = _invokeTick();
+  }
+
+  Future<void> _invokeTick() async {
+    try {
+      await _tick();
+    } catch (_) {
+      // The file-channel poller is diagnostic support and must never affect
+      // production application availability.
+    } finally {
+      _tickInFlight = null;
+    }
+  }
+
+  Future<void> dispose() => _disposeFuture ??= _dispose();
+
+  Future<void> _dispose() {
+    _disposed = true;
+    _initialTimer?.cancel();
+    _periodicTimer?.cancel();
+    _initialTimer = null;
+    _periodicTimer = null;
+    return Future<void>.value();
+  }
+}
+
+IntroE2EPollerLifecycle? _introE2EPollerLifecycle;
 bool _introE2ERunInFlight = false;
+
+Future<void> stopIntroE2EPoller() =>
+    _introE2EPollerLifecycle?.dispose() ?? Future<void>.value();
 
 @visibleForTesting
 Future<bool> awaitIntroE2EDrainWithin({
@@ -582,6 +652,8 @@ Future<void> runIntroE2EActions({
   required IntroductionRepository introRepo,
   required MessageRepository messageRepo,
   ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
+  ResolveCallWakeHandleForIntroE2EFn? resolveCallWakeHandle,
+  OnCallWakeHandleDistributedForIntroE2EFn? onCallWakeHandleDistributed,
   OpenConversationForIntroE2EFn? openConversationByPeerId,
 }) async {
   final allowsPlan397SetupActions =
@@ -628,6 +700,8 @@ Future<void> runIntroE2EActions({
         bridge: bridge,
         contactRepo: contactRepo,
         resolveWakeToken: resolveWakeToken,
+        resolveCallWakeHandle: resolveCallWakeHandle,
+        onCallWakeHandleDistributed: onCallWakeHandleDistributed,
       );
     }
 
@@ -999,7 +1073,10 @@ void startIntroE2EPoller({
   RunGroupNotificationProjectionE2EFn? runGroupNotificationProjectionE2E,
   RunGroupStrictNotificationE2EFn? runGroupStrictNotificationE2E,
   RunGroupMediaIosBackgroundE2EFn? runGroupMediaIosBackgroundE2E,
+  RunAndroidProductionAudioCallE2EFn? runAndroidProductionAudioCallE2E,
   ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
+  ResolveCallWakeHandleForIntroE2EFn? resolveCallWakeHandle,
+  OnCallWakeHandleDistributedForIntroE2EFn? onCallWakeHandleDistributed,
   OpenConversationForIntroE2EFn? openConversationByPeerId,
   Duration initialDelay = const Duration(seconds: 2),
   Duration pollInterval = const Duration(seconds: 3),
@@ -1020,7 +1097,7 @@ void startIntroE2EPoller({
       !allowsIosReleaseFileChannel) {
     return;
   }
-  if (_introE2EPoller != null) return;
+  if (_introE2EPollerLifecycle != null) return;
 
   Future<void> tick() async {
     if (_introE2ERunInFlight) return;
@@ -1032,6 +1109,26 @@ void startIntroE2EPoller({
       }
       final config = await _loadConfig();
       if (config == null) return;
+
+      if (config['transport_action'] == androidProductionAudioCallE2EAction) {
+        await _deleteConfigIfPresent();
+        try {
+          final run = runAndroidProductionAudioCallE2E;
+          if (run == null) {
+            throw StateError('production-call observer is not wired');
+          }
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(await run(config)),
+          );
+        } catch (_) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              androidProductionAudioCallE2EFailureReceipt(config: config),
+            ),
+          );
+        }
+        return;
+      }
 
       if (config['transport_action'] == groupMediaIosBackgroundE2EAction) {
         await _deleteConfigIfPresent();
@@ -1376,6 +1473,8 @@ void startIntroE2EPoller({
         introRepo: introRepo,
         messageRepo: messageRepo,
         resolveWakeToken: resolveWakeToken,
+        resolveCallWakeHandle: resolveCallWakeHandle,
+        onCallWakeHandleDistributed: onCallWakeHandleDistributed,
         openConversationByPeerId: openConversationByPeerId,
       );
     } finally {
@@ -1383,12 +1482,11 @@ void startIntroE2EPoller({
     }
   }
 
-  Timer(initialDelay, () {
-    unawaited(tick());
-  });
-  _introE2EPoller = Timer.periodic(pollInterval, (_) {
-    unawaited(tick());
-  });
+  _introE2EPollerLifecycle = IntroE2EPollerLifecycle(
+    initialDelay: initialDelay,
+    pollInterval: pollInterval,
+    tick: tick,
+  )..start();
 }
 
 Future<Map<String, dynamic>?> _openConversationIfRequested({
@@ -1524,11 +1622,15 @@ Future<void> _sendContactRequestsForAddedContacts({
   required Bridge bridge,
   required ContactRepository contactRepo,
   ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
+  ResolveCallWakeHandleForIntroE2EFn? resolveCallWakeHandle,
+  OnCallWakeHandleDistributedForIntroE2EFn? onCallWakeHandleDistributed,
 }) async {
   final contacts = config['add_contacts'];
   if (contacts is! List<dynamic>) return;
 
   final contactRows = contacts.cast<Map<String, dynamic>>();
+  final requireExactCallWakeReceipt =
+      config['require_exact_call_wake_receipt'] == true;
   for (
     var contactIndex = 0;
     contactIndex < contactRows.length;
@@ -1539,21 +1641,21 @@ Future<void> _sendContactRequestsForAddedContacts({
     final qrMap = jsonDecode(qrJson) as Map<String, dynamic>;
     final peerId = qrMap['ns'] as String;
     final publicKey = qrMap['pk'] as String;
-    SendContactRequestResult result = SendContactRequestResult.sendFailed;
-    for (var attempt = 0; attempt < 8; attempt++) {
-      result = await sendContactRequest(
-        p2pService: p2pService,
-        identityRepo: identityRepo,
-        bridge: bridge,
-        targetPeerId: peerId,
-        recipientPublicKey: publicKey,
-        resolveWakeToken: resolveWakeToken,
-      );
-      if (result == SendContactRequestResult.success) {
-        break;
-      }
-      await Future<void>.delayed(const Duration(seconds: 2));
-    }
+    final result = await retryIntroE2EContactRequest(
+      requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+      sendAttempt: ({required requireExactCallWakeReceipt}) =>
+          sendContactRequest(
+            p2pService: p2pService,
+            identityRepo: identityRepo,
+            bridge: bridge,
+            targetPeerId: peerId,
+            recipientPublicKey: publicKey,
+            resolveWakeToken: resolveWakeToken,
+            resolveCallWakeHandle: resolveCallWakeHandle,
+            onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+            requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+          ),
+    );
     if (result != SendContactRequestResult.success) {
       throw StateError(
         'Contact request to $peerId failed in intro E2E: $result',
@@ -1567,6 +1669,49 @@ Future<void> _sendContactRequestsForAddedContacts({
       contactCount: contactRows.length,
     )) {
       await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+  }
+}
+
+/// Retries a contact send while preserving the stronger exact-receipt contract.
+///
+/// Ordinary intro setup keeps its historical eight attempts. Concurrent call
+/// setup can take longer for the reciprocal peer to become discoverable, so an
+/// exact signed wake receipt gets a bounded convergence window instead.
+@visibleForTesting
+Future<SendContactRequestResult> retryIntroE2EContactRequest({
+  required bool requireExactCallWakeReceipt,
+  required SendIntroE2EContactRequestAttempt sendAttempt,
+  DateTime Function()? now,
+  IntroE2ERetryDelay? delay,
+}) async {
+  const retryDelay = Duration(seconds: 2);
+  const ordinaryMaxAttempts = 8;
+  const exactCallWakeReceiptRetryWindow = Duration(seconds: 120);
+  final readNow = now ?? DateTime.now;
+  final wait = delay ?? Future<void>.delayed;
+  final exactRetryDeadline = requireExactCallWakeReceipt
+      ? readNow().add(exactCallWakeReceiptRetryWindow)
+      : null;
+  var attempts = 0;
+  var result = SendContactRequestResult.sendFailed;
+
+  while (true) {
+    result = await sendAttempt(
+      requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+    );
+    attempts++;
+    if (result == SendContactRequestResult.success) return result;
+
+    // Retain the historical interval after every failed ordinary attempt;
+    // exact mode uses that same cadence while it awaits reciprocal discovery.
+    await wait(retryDelay);
+    if (!requireExactCallWakeReceipt && attempts >= ordinaryMaxAttempts) {
+      return result;
+    }
+    if (requireExactCallWakeReceipt &&
+        !readNow().isBefore(exactRetryDeadline!)) {
+      return result;
     }
   }
 }

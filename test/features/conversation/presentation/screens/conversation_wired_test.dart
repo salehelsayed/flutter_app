@@ -44,6 +44,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -1635,6 +1636,65 @@ class _TerminalComposerUploadProjection
   );
 }
 
+final class _RecordingOutgoingCallCapability implements OutgoingCallCapability {
+  _RecordingOutgoingCallCapability({
+    required this.isOutgoingCallAvailable,
+    required this.result,
+    this.contactOutgoingAvailable = true,
+    this.error,
+  });
+
+  @override
+  bool isOutgoingCallAvailable;
+  final OutgoingCallStartResult result;
+  bool contactOutgoingAvailable;
+  final Object? error;
+  Completer<bool>? nextAvailabilityCompleter;
+  Completer<OutgoingCallStartResult>? startCompleter;
+  final List<String> peerIds = <String>[];
+  final List<String> availabilityPeerIds = <String>[];
+  final StreamController<bool> _availabilityChanges =
+      StreamController<bool>.broadcast(sync: true);
+
+  @override
+  Stream<bool> get outgoingCallAvailabilityChanges =>
+      _availabilityChanges.stream;
+
+  void publishAvailability({
+    required bool processAvailable,
+    bool? contactAvailable,
+  }) {
+    isOutgoingCallAvailable = processAvailable;
+    if (contactAvailable != null) {
+      contactOutgoingAvailable = contactAvailable;
+    }
+    _availabilityChanges.add(processAvailable);
+  }
+
+  Future<void> close() => _availabilityChanges.close();
+
+  @override
+  Future<bool> isOutgoingCallAvailableFor(String contactAccountPeerId) async {
+    availabilityPeerIds.add(contactAccountPeerId);
+    final completer = nextAvailabilityCompleter;
+    nextAvailabilityCompleter = null;
+    if (completer != null) return completer.future;
+    return contactOutgoingAvailable;
+  }
+
+  @override
+  Future<OutgoingCallStartResult> startOutgoingCall(
+    String contactAccountPeerId,
+  ) async {
+    peerIds.add(contactAccountPeerId);
+    final error = this.error;
+    if (error != null) throw error;
+    final completer = startCompleter;
+    if (completer != null) return completer.future;
+    return result;
+  }
+}
+
 void main() {
   late FakeUploadWakeLockDriver wakeLockDriver;
 
@@ -1876,6 +1936,7 @@ void main() {
     bool? directMediaBlobCustodyClientEnabled,
     bool? directLinkedEventFanoutEnabled,
     ActiveConversationTracker? conversationTracker,
+    OutgoingCallCapability? outgoingCallCapability,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -1941,11 +2002,223 @@ void main() {
           preparedDirectMediaBlobCustodyCoordinator:
               preparedDirectMediaBlobCustodyCoordinator,
           modalityGate: modalityGate ?? const DirectConversationModalityGate(),
+          outgoingCallCapability: outgoingCallCapability,
         ),
       ),
     );
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  testWidgets('VC2-03 null outgoing capability keeps call action hidden', (
+    tester,
+  ) async {
+    final messageRepo = FakeMessageRepository();
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      messageRepo: messageRepo,
+      chatListener: ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      ),
+      sendFn: _instantSuccessSendFn,
+    );
+
+    expect(find.byIcon(Icons.call_outlined), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      messageRepo: messageRepo,
+      chatListener: ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      ),
+      sendFn: _instantSuccessSendFn,
+      outgoingCallCapability: _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: false,
+        result: OutgoingCallStartResult.started,
+      ),
+    );
+    expect(find.byIcon(Icons.call_outlined), findsOneWidget);
+    expect(
+      find.byTooltip('Voice calling is unavailable right now'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'VC2-03 call action invokes exact peer once and hides private failures',
+    (tester) async {
+      final messageRepo = FakeMessageRepository();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        result: OutgoingCallStartResult.started,
+        error: StateError('private endpoint and routing detail'),
+      );
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+
+      await tester.tap(find.byTooltip('Start voice call'));
+      await tester.pump();
+
+      expect(capability.peerIds, <String>[makeContact().peerId]);
+      expect(
+        find.text("Couldn't start voice call. Please try again."),
+        findsOneWidget,
+      );
+      expect(find.textContaining('private endpoint'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'VC2-03 disables call action when trusted endpoint is unavailable',
+    (tester) async {
+      final messageRepo = FakeMessageRepository();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        contactOutgoingAvailable: false,
+        result: OutgoingCallStartResult.started,
+      );
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+
+      expect(capability.availabilityPeerIds, <String>[makeContact().peerId]);
+      expect(find.byIcon(Icons.call_outlined), findsOneWidget);
+      expect(
+        find.byTooltip('Voice calling is unavailable right now'),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byTooltip('Voice calling is unavailable right now'),
+        warnIfMissed: false,
+      );
+      await tester.pump();
+      expect(
+        find.text('Voice calling is unavailable right now'),
+        findsOneWidget,
+      );
+      expect(capability.peerIds, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'VC2-03 start-in-flight copy covers endpoint recheck and suppresses duplicates',
+    (tester) async {
+      final messageRepo = FakeMessageRepository();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        result: OutgoingCallStartResult.started,
+      );
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+      expect(find.byTooltip('Start voice call'), findsOneWidget);
+
+      final availability = Completer<bool>();
+      final start = Completer<OutgoingCallStartResult>();
+      capability
+        ..nextAvailabilityCompleter = availability
+        ..startCompleter = start;
+
+      await tester.tap(find.byTooltip('Start voice call'));
+      await tester.pump();
+      expect(find.byTooltip('Starting voice call'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.call_outlined), warnIfMissed: false);
+      await tester.pump();
+      expect(capability.peerIds, isEmpty);
+
+      availability.complete(true);
+      await tester.pump();
+      expect(capability.peerIds, <String>[makeContact().peerId]);
+      expect(find.byTooltip('Starting voice call'), findsOneWidget);
+
+      start.complete(OutgoingCallStartResult.started);
+      await tester.pump();
+      await tester.pump();
+      expect(capability.peerIds, <String>[makeContact().peerId]);
+      expect(find.byTooltip('Start voice call'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'VC2-03 late call readiness rechecks the contact without widget churn',
+    (tester) async {
+      final messageRepo = FakeMessageRepository();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: false,
+        result: OutgoingCallStartResult.started,
+      );
+      addTearDown(capability.close);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+
+      expect(find.byIcon(Icons.call_outlined), findsOneWidget);
+      expect(
+        find.byTooltip('Voice calling is unavailable right now'),
+        findsOneWidget,
+      );
+      expect(capability.availabilityPeerIds, isEmpty);
+
+      capability.publishAvailability(processAvailable: true);
+      await tester.pump();
+      await tester.pump();
+
+      expect(capability.availabilityPeerIds, <String>[makeContact().peerId]);
+      expect(find.byTooltip('Start voice call'), findsOneWidget);
+
+      capability.publishAvailability(processAvailable: false);
+      await tester.pump();
+
+      expect(find.byIcon(Icons.call_outlined), findsOneWidget);
+      expect(
+        find.byTooltip('Voice calling is unavailable right now'),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('TC-393-01 direct read requires resumed exact tracking', (
     tester,

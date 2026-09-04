@@ -136,9 +136,24 @@ class GoBridge internal constructor(
             // Relay
             "relayReconnect" -> runOnBackground({ GoMknoon.relayReconnect() }, result)
             "relayProbe" -> runOnBackground({ GoMknoon.relayProbe(args ?: "") }, result, "relayProbe")
+            "relayTurnCredentialsV1" -> runOnBackground({ GoMknoon.turnCredentialsV1() }, result)
             // Presence (FDC-08/09) — Dart case names map to Go presenceGet/presenceSet bindings
             "relayPresenceGet" -> runOnBackground({ GoMknoon.presenceGet(args ?: "") }, result)
             "relayPresenceSet" -> runOnBackground({ GoMknoon.presenceSet(args ?: "") }, result)
+
+            // Dedicated call-control relay and capability authority. These
+            // commands never traverse the durable chat inbox/outbox paths.
+            "callStoreV1" -> runOnBackground({ GoMknoon.callStoreV1(args ?: "") }, result)
+            "callRetrieveV1" -> runOnBackground({ GoMknoon.callRetrieveV1(args ?: "") }, result)
+            "callAckV1" -> runOnBackground({ GoMknoon.callAckV1(args ?: "") }, result)
+            "callCancelV1" -> runOnBackground({ GoMknoon.callCancelV1(args ?: "") }, result)
+            "callEndpointSetV1" -> runOnBackground({ GoMknoon.callEndpointSetV1(args ?: "") }, result)
+            "callEndpointGetV1" -> runOnBackground({ GoMknoon.callEndpointGetV1(args ?: "") }, result)
+            "callEndpointRevokeV1" -> runOnBackground({ GoMknoon.callEndpointRevokeV1(args ?: "") }, result)
+            "callWakeHandleSetV1" -> runOnBackground({ GoMknoon.callWakeHandleSetV1(args ?: "") }, result)
+            "callWakeHandleRevokeV1" -> runOnBackground({ GoMknoon.callWakeHandleRevokeV1(args ?: "") }, result)
+            "callTokenSetV1" -> runOnBackground({ GoMknoon.callTokenSetV1(args ?: "") }, result)
+            "callTokenRevokeV1" -> runOnBackground({ GoMknoon.callTokenRevokeV1(args ?: "") }, result)
 
             // Peer operations
             "dialPeer" -> runOnBackground({ GoMknoon.dialPeer(args ?: "") }, result, "dialPeer")
@@ -236,7 +251,10 @@ class GoBridge internal constructor(
             }
             pendingEvents.addLast(json)
         }
-        android.util.Log.w("GoBridge", "onEvent: BUFFERED ($reason) event=${json.take(80)}")
+        android.util.Log.w(
+            "GoBridge",
+            "onEvent: BUFFERED ($reason) eventLength=${json.length}",
+        )
     }
 
     private fun flushPendingEvents() {
