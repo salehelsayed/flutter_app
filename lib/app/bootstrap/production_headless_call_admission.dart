@@ -16,6 +16,11 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
+import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
+import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
+import 'package:flutter_app/features/call/application/call_history_projector.dart';
+import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
 import 'package:flutter_app/features/call/application/headless_call_decline_reply.dart';
@@ -66,6 +71,20 @@ typedef AuthenticateHeadlessMailboxEvent =
 typedef HeadlessDeclineReplySender =
     Future<bool> Function(CallSignal invite, String callHandle);
 
+/// 406: writes the local terminal call-history row for a call that ended with
+/// no coordinator to project it.
+///
+/// A killed-app call never reaches `CallCoordinator`, so without this the chat
+/// shows nothing at all for it — the row the conversation renders simply never
+/// exists. [invite] is absent when the invite row was acknowledged by an
+/// earlier run and only the terminal row remains.
+typedef HeadlessCallHistoryRecorder =
+    Future<void> Function({
+      required CallSignal terminal,
+      required CallEndReason reason,
+      CallSignal? invite,
+    });
+
 /// Evaluates one exact-handle mailbox page without dispatching coordinator
 /// events, acknowledging custody, or starting media. All provisional replay
 /// reservations are rolled back so the foreground canonical owner can
@@ -77,14 +96,17 @@ final class MailboxProductionHeadlessCallAdmissionSession
     required AuthenticateHeadlessMailboxEvent authenticateEvent,
     required Future<HeadlessCallAdmissionCleanup> Function() closeResources,
     HeadlessDeclineReplySender? declineReplySender,
+    HeadlessCallHistoryRecorder? historyRecorder,
   }) : _mailboxClient = mailboxClient,
        _authenticateEvent = authenticateEvent,
        _closeResources = closeResources,
-       _declineReplySender = declineReplySender;
+       _declineReplySender = declineReplySender,
+       _historyRecorder = historyRecorder;
 
   final CallMailboxClient _mailboxClient;
   final AuthenticateHeadlessMailboxEvent _authenticateEvent;
   final HeadlessDeclineReplySender? _declineReplySender;
+  final HeadlessCallHistoryRecorder? _historyRecorder;
   final Future<HeadlessCallAdmissionCleanup> Function() _closeResources;
   Future<HeadlessCallAdmissionDisposition>? _evaluation;
   Future<HeadlessCallAdmissionCleanup>? _cleanup;
@@ -122,6 +144,8 @@ final class MailboxProductionHeadlessCallAdmissionSession
     final reservations = <HeadlessAuthenticatedMailboxEvent>[];
     final authenticatedMessageIds = <String>[];
     var terminal = false;
+    CallSignal? terminalSignal;
+    CallSignal? inviteSignal;
     var boundInvites = 0;
     var companionInvites = 0;
     var deferredRows = false;
@@ -160,7 +184,9 @@ final class MailboxProductionHeadlessCallAdmissionSession
           case CallSignalType.reject:
           case CallSignalType.terminate:
             terminal = true;
+            terminalSignal ??= authenticated.signal;
           case CallSignalType.invite:
+            inviteSignal ??= authenticated.signal;
             if (bound) {
               boundInvites++;
             } else {
@@ -177,6 +203,9 @@ final class MailboxProductionHeadlessCallAdmissionSession
         // 2026-09-05 17:15Z: the next call to the locked Pixel was refused
         // with CALL_RECIPIENT_CAPACITY, "Couldn't start voice call").
         await _acknowledgeEndedCall(invocation.callId, authenticatedMessageIds);
+        // 406: no foreground owner will ever project this call, so the row has
+        // to be written here or the chat shows nothing for it.
+        await _recordHistory(terminal: terminalSignal, invite: inviteSignal);
         return HeadlessCallAdmissionDisposition.terminal;
       }
       // An unjudged row may be the terminate; never ring past it.
@@ -195,6 +224,29 @@ final class MailboxProductionHeadlessCallAdmissionSession
       for (final reservation in reservations.reversed) {
         reservation.rollbackReplay();
       }
+    }
+  }
+
+  /// Writes the terminal row for a call no coordinator will ever see.
+  ///
+  /// Best effort by construction: releasing the relay's pending slot is
+  /// custody work and must not be undone by a history write that failed.
+  Future<void> _recordHistory({
+    required CallSignal? terminal,
+    CallSignal? invite,
+  }) async {
+    final recorder = _historyRecorder;
+    if (recorder == null || terminal == null) return;
+    try {
+      await recorder(
+        terminal: terminal,
+        reason: terminal.event == CallSignalType.reject
+            ? CallEndReason.declined
+            : CallEndReason.callerCancelled,
+        invite: invite,
+      );
+    } catch (_) {
+      // The ack already happened; a missing row is a display gap, not custody.
     }
   }
 
@@ -552,6 +604,41 @@ final class AndroidProductionHeadlessCallAdmissionBackend
     final receivedWakeHandles = ReceivedCallWakeHandleStoreImpl(
       secureKeyStore: _secureKeyStore,
     );
+    // 406: a killed-app call never reaches CallCoordinator, so this isolate
+    // is the only place its history row can be written. Without it the chat
+    // renders nothing for a call taken while the app was dead.
+    final callHistory = CallHistoryProjector(
+      CallHistoryRepositoryImpl(database),
+    );
+    Future<void> recordTerminalCallHistory({
+      required CallSignal terminal,
+      required CallEndReason reason,
+      CallSignal? invite,
+    }) async {
+      final startedAtMs = invite?.createdAtMs ?? terminal.createdAtMs;
+      // The terminal row can carry an earlier clock than the invite; history
+      // timestamps must stay monotonic or the entry refuses to construct.
+      final endedAtMs = terminal.createdAtMs < startedAtMs
+          ? startedAtMs
+          : terminal.createdAtMs;
+      await callHistory.projectTerminal(
+        CallSessionSnapshot.active(
+          callId: terminal.callId,
+          contactPeerId: terminal.senderAccountPeerId,
+          direction: CallDirection.incoming,
+          state: CallState.ended,
+          callerAccountPeerId: terminal.senderAccountPeerId,
+          callerDeviceId: terminal.senderDevicePeerId,
+          startedAt: DateTime.fromMillisecondsSinceEpoch(
+            startedAtMs,
+            isUtc: true,
+          ),
+          endedAt: DateTime.fromMillisecondsSinceEpoch(endedAtMs, isUtc: true),
+          endReason: reason,
+        ),
+      );
+    }
+
     // Plan 404: the decline reply writes through the foreground's transport
     // shape (direct race + mailbox custody) without a coordinator lane.
     final signalingService = CallSignalingService(
@@ -599,6 +686,7 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       },
       declineReplySender: (invite, callHandle) =>
           declineReply.sendDeclineFor(invite, callHandle: callHandle),
+      historyRecorder: recordTerminalCallHistory,
       closeResources: _closeResources,
     );
     _activeSession = session;

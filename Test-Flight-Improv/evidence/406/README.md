@@ -42,3 +42,30 @@ which is what stops a replay from re-notifying.
 
 Two pre-existing tests asserted exactly two notification channels; both were
 re-pinned to the census (three) with a written rationale, never weakened.
+
+## Killed-app history row (gap 4)
+
+A call that arrives while the Android app is dead never reaches
+`CallCoordinator`: `androidHeadlessCallAdmissionMain` starts no coordinator by
+design. So it wrote NO history row at all, and the chat rendered nothing for
+it even after the rows shipped.
+
+`MailboxProductionHeadlessCallAdmissionSession` now takes a
+`HeadlessCallHistoryRecorder`. When the admission walk judges the call terminal
+(the caller ended it while the app was dead) it captures the invite and
+terminal signals and projects the row: `terminate` → `callerCancelled`,
+`reject` → `declined`. The composition builds a `CallHistoryProjector` over the
+isolate's own database and guards timestamp monotonicity, because the terminal
+row can carry an earlier clock than the invite and `CallHistoryEntry` refuses
+to construct on a non-monotonic pair.
+
+| File | What it proves |
+|---|---|
+| `dart_headless_history_green_2026-09-05.txt` | GREEN: 1397 passing, 0 failing; TC-406-30 records a killed-app cancel, TC-406-31 records nothing for an admitted call (the foreground owner still projects it, so no double row), TC-406-32 keeps the disposition when the recorder throws |
+
+**Deliberately not done:** the killed-app case still posts no missed-call
+*card*. That needs this isolate to initialise its own
+`FlutterLocalNotificationsPlugin`, the way `background_message_handler.dart`
+does, and is only verifiable on a device. The user is not left with nothing —
+the incoming call still rings and its notification is shown — but the call is
+not summarised afterwards.

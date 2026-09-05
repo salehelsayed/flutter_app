@@ -1,4 +1,5 @@
 import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
+import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
@@ -750,6 +751,79 @@ void main() {
       HeadlessCallAdmissionDisposition.deferred,
     );
   });
+
+  group('406 killed-app call history', () {
+    test('TC-406-30 a call the caller ended while the app was dead is '
+        'recorded as cancelled', () async {
+      final recorder = _HistoryRecorder();
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: _Mailbox(<CallMailboxEvent>[
+          _event(messageId: '44444444-4444-4444-8444-444444444444'),
+          _event(messageId: '55555555-5555-4555-8555-555555555555'),
+        ]),
+        authenticateEvent: _signalAuthenticator(),
+        historyRecorder: recorder.record,
+        closeResources: () async => _Session.safeCleanup,
+      );
+
+      expect(
+        await session.evaluate(invocation),
+        HeadlessCallAdmissionDisposition.terminal,
+      );
+
+      expect(
+        recorder.calls,
+        hasLength(1),
+        reason:
+            'no coordinator ever runs for a killed-app call, so this is the '
+            'only chance to write the row',
+      );
+      final recorded = recorder.calls.single;
+      expect(recorded.reason, CallEndReason.callerCancelled);
+      expect(recorded.terminal.event, CallSignalType.terminate);
+      expect(recorded.invite?.event, CallSignalType.invite);
+      expect(recorded.terminal.senderAccountPeerId, 'caller-account');
+    });
+
+    test('TC-406-31 an admitted call records nothing: the foreground owner '
+        'still projects it', () async {
+      final recorder = _HistoryRecorder();
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: _Mailbox(<CallMailboxEvent>[
+          _event(messageId: '44444444-4444-4444-8444-444444444444'),
+        ]),
+        authenticateEvent: _signalAuthenticator(),
+        historyRecorder: recorder.record,
+        closeResources: () async => _Session.safeCleanup,
+      );
+
+      expect(
+        await session.evaluate(invocation),
+        HeadlessCallAdmissionDisposition.admitted,
+      );
+      expect(recorder.calls, isEmpty);
+    });
+
+    test('TC-406-32 a failing recorder never changes the disposition', () async {
+      final recorder = _HistoryRecorder()..error = StateError('db closed');
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: _Mailbox(<CallMailboxEvent>[
+          _event(messageId: '44444444-4444-4444-8444-444444444444'),
+          _event(messageId: '55555555-5555-4555-8555-555555555555'),
+        ]),
+        authenticateEvent: _signalAuthenticator(),
+        historyRecorder: recorder.record,
+        closeResources: () async => _Session.safeCleanup,
+      );
+
+      expect(
+        await session.evaluate(invocation),
+        HeadlessCallAdmissionDisposition.terminal,
+        reason:
+            'releasing the relay slot is custody work; a history write is not',
+      );
+    });
+  });
 }
 
 /// Mirrors the production admission's wake binding: a row is authenticated
@@ -773,6 +847,22 @@ AuthenticateHeadlessMailboxEvent _bindingAuthenticator(
 
 /// Authenticates every row against its own expiry and hands the session the
 /// decoded signal: the 4444… row is the invite, every other row a terminate.
+/// 406: records what the headless session asked to be projected.
+final class _HistoryRecorder {
+  final calls =
+      <({CallSignal terminal, CallSignal? invite, CallEndReason reason})>[];
+  Object? error;
+
+  Future<void> record({
+    required CallSignal terminal,
+    required CallEndReason reason,
+    CallSignal? invite,
+  }) async {
+    calls.add((terminal: terminal, invite: invite, reason: reason));
+    if (error != null) throw error!;
+  }
+}
+
 AuthenticateHeadlessMailboxEvent _signalAuthenticator() =>
     ({required invocation, required event}) async {
       final type = event.messageId == '44444444-4444-4444-8444-444444444444'
