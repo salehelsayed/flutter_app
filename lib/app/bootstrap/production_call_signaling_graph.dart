@@ -1487,9 +1487,15 @@ CallSignalingComposition createProductionCallSignalingComposition({
         iosCallLifecycleAdapter: iosLifecycleAdapter,
         iosVoipTokenCoordinator: iosTokenCoordinator,
         ringback: iosLifecycleAdapter != null
-            ? MethodChannelCallRingbackPort.ios()
+            ? MethodChannelCallRingbackPort.ios(
+                resolveCallHandle: (callId) =>
+                    signalingContextStore.read(callId)?.callHandle,
+              )
             : androidLifecycleAdapter != null
-            ? MethodChannelCallRingbackPort.android()
+            ? MethodChannelCallRingbackPort.android(
+                resolveCallHandle: (callId) =>
+                    signalingContextStore.read(callId)?.callHandle,
+              )
             : null,
         networkEffectsAllowed: networkEffectsAllowed,
         nowMs: clock,

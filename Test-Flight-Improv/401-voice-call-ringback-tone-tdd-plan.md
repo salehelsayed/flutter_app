@@ -49,6 +49,16 @@ Capture `docker-ws/deploy-captures/fresh-260905170004/`: iPhone 11 → iPhone 13
 
 Graph wiring now picks the port from the native lifecycle adapter that exists (`iosLifecycleAdapter` → `.ios()`, `androidLifecycleAdapter` → `.android()`, else none). Lesson recorded in memory: the container's view of capture files written on the Mac lags by minutes — grep them on the Mac (`docker-ws/capture_grep.sh`).
 
+## Device finding 2026-09-05 15:09Z — still no tone: the port named the call by its id
+
+Capture `docker-ws/deploy-captures/fresh-260905170844/`: the request now reached the lifecycle bridge (`CALL_RINGBACK_RESULT {"action":"start","outcome":"failed"}` 4 ms after `remoteRinging`) but still no native `ringback=` line: the bridge answered `bad_args` before the controller ran. The native side knows a call only by the authenticated signaling handle the lifecycle adapter registered (`signalingContextStore.read(callId)?.callHandle`), never by the Dart `CallId`; the port sent the raw id, which `resolveCallHandle` cannot map.
+
+| Row | RED | GREEN | Evidence |
+|---|---|---|---|
+| `call_ringback_channel_test.dart`: every port takes `resolveCallHandle` (the adapters' `AuthenticatedCallHandleResolver`); the wire carries the resolved handle and never the call id; a call without a handle is refused with no native call | `No named parameter with the name 'resolveCallHandle'` | contract 9/9 + coordinator 9/9; composition, graph diagnostics and live-call guard suites green in the same run | `dart_ringback_handle_red_2026-09-05.txt`, `dart_ringback_handle_green_2026-09-05.txt` |
+
+Graph wiring passes the same resolver closure the lifecycle adapters get. Third deploy: `docker-ws/deploy_three_phones_ringback_r3_result.txt`.
+
 ## Known limits
 
 - The tone cadence is fixed (European 425 Hz 1/4 s) on iOS; Android uses the platform's regional `TONE_SUP_RINGTONE`.

@@ -1,0 +1,9 @@
+=== GREEN 2026-09-05T15:12:24Z: handle resolver + contract + coordinator + affected graph suites ===
+00:01 +82 -1: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: a call wake drains the production call mailbox
+00:01 +83 -1: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: a relay recovery drains the production call mailbox once
+00:01 +84 -1: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: shutdown revokes endpoint and token
+00:01 +85 -1: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: advertisement failure with a terminal session performs the idle rollback
+00:01 +86 -1: Some tests failed.
+test/features/call/infrastructure/call_ringback_channel_test.dart:28:53: Error: Required named parameter 'resolveCallHandle' must be provided.
+=== GREEN (rerun) 2026-09-05T15:13:07Z: channel contract file after the missed construction site ===
+00:00 +18: All tests passed!
