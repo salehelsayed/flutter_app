@@ -227,9 +227,37 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         reconcilePersistedDescriptor()
     }
 
-    /** Plan 404: a natively declined call with no Dart owner answers the caller headlessly. */
+    /**
+     * Plan 404: a natively declined call with no Dart owner answers the caller
+     * headlessly. The reply run enters the call foreground service at once
+     * (the notification action that declined grants the start), exactly as
+     * the FCM wake does for admission: without it the process runs at
+     * background priority and the reply took 7 s to reach the network
+     * (device 2026-09-05 18:23Z). The worker releases the service when done.
+     */
     private fun scheduleHeadlessDeclineReply(descriptor: PendingNativeCallDescriptor) {
-        HeadlessCallAdmissionWorkScheduler(applicationContext).enqueueDeclineReply(descriptor)
+        if (!HeadlessCallAdmissionWorkScheduler(applicationContext).enqueueDeclineReply(descriptor)) {
+            return
+        }
+        if (!BuildConfig.ENABLE_ANDROID_NATIVE_CALLS || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+        val intent = Intent(applicationContext, MknoonCallForegroundService::class.java)
+            .setAction(MknoonCallForegroundService.ACTION_START_ADMISSION)
+            .putExtra(
+                MknoonCallForegroundService.EXTRA_NATIVE_CALL_ID,
+                descriptor.nativeCallId.toString(),
+            )
+        runCatching { applicationContext.startForegroundService(intent) }
+    }
+
+    /** Releases the admission foreground state a decline reply run held. */
+    internal fun stopAdmissionForeground(callId: String) {
+        val nativeCallId = runCatching { UUID.fromString(callId) }.getOrNull() ?: return
+        val intent = Intent(applicationContext, MknoonCallForegroundService::class.java)
+            .setAction(MknoonCallForegroundService.ACTION_STOP)
+            .putExtra(MknoonCallForegroundService.EXTRA_NATIVE_CALL_ID, nativeCallId.toString())
+        runCatching { applicationContext.startService(intent) }
     }
 
     fun setCapabilityEnabled(enabled: Boolean): Boolean {

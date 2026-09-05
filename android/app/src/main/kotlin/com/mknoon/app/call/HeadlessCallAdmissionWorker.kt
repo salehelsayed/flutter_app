@@ -359,6 +359,12 @@ internal class HeadlessCallAdmissionExecution(
     private val nonceFactory: () -> String = { UUID.randomUUID().toString() },
     private val presentAuthenticated: suspend (String, Long) -> Boolean,
     private val terminalizeAuthenticated: suspend (String, Long) -> Boolean,
+    /**
+     * Plan 404 (c): the decline reply runs under the call foreground service
+     * started by the native decline; released once the engine is finished,
+     * whatever Dart reported.
+     */
+    private val releaseDeclineReply: suspend (String) -> Unit = {},
 ) {
     private val lock = Any()
     private val stopRequested = AtomicBoolean(false)
@@ -415,6 +421,12 @@ internal class HeadlessCallAdmissionExecution(
                 if (activeRunner === runner) activeRunner = null
             }
         }
+        if (identity.mode == HeadlessCallAdmissionMode.DECLINE_REPLY) {
+            // The reply run never presents or terminalizes: the native call
+            // already ended when the user declined it.
+            runCatching { releaseDeclineReply(identity.callId) }
+            return noPresentation()
+        }
         val authenticated = completion?.takeIf {
             it.nonce == identity.nonce &&
                 it.callId == identity.callId &&
@@ -429,12 +441,6 @@ internal class HeadlessCallAdmissionExecution(
         }
         val presentationNow = runCatching(nowMs).getOrNull() ?: return noPresentation()
         if (presentationNow < 0L || authenticated.expiresAtMs <= presentationNow) {
-            return noPresentation()
-        }
-
-        if (identity.mode == HeadlessCallAdmissionMode.DECLINE_REPLY) {
-            // The reply run never presents or terminalizes: the native call
-            // already ended when the user declined it.
             return noPresentation()
         }
 
@@ -600,6 +606,11 @@ internal class HeadlessCallAdmissionWorker(
                 }
                 withContext(Dispatchers.Default) {
                     runtime.terminalizeAuthenticated(callId, expiresAtMs)
+                }
+            },
+            releaseDeclineReply = { callId ->
+                withContext(Dispatchers.Main.immediate) {
+                    MknoonCallRuntime.get(applicationContext).stopAdmissionForeground(callId)
                 }
             },
         )

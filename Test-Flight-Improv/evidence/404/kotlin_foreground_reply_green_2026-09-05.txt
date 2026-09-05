@@ -1,0 +1,4 @@
+log: /Volumes/CrucialX9/flutter_app/build/call-native-unit/android-call-jvm.log
+> Task :app:testDebugUnitTest
+BUILD SUCCESSFUL in 17s
+gradle exit: 0

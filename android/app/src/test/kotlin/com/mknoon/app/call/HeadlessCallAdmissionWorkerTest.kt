@@ -140,6 +140,7 @@ class HeadlessCallAdmissionWorkerTest {
                 execution.execute(validInput()),
             )
             assertEquals(listOf(CALL_ID to EXPIRES_AT_MS), presented)
+            assertTrue(operations.none { it.contains("releaseDeclineReply") })
             assertEquals(
                 listOf(
                     "dart.complete",
@@ -496,12 +497,20 @@ class HeadlessCallAdmissionWorkerTest {
                 )
             ) {
                 var observedMode: HeadlessCallAdmissionMode? = null
+                val operations = mutableListOf<String>()
                 val runner = FakeHeadlessCallAdmissionRunner { observed ->
                     observedMode = observed.mode
+                    operations += "dart.complete"
                     validCompletionObject(observed).copy(disposition = disposition)
+                }.also {
+                    it.onFinish = {
+                        operations += "engine.finish"
+                        true
+                    }
                 }
                 var presentations = 0
                 var terminalizations = 0
+                val released = mutableListOf<String>()
                 val execution = execution(
                     runner = runner,
                     nowMs = { NOW_MS },
@@ -512,6 +521,10 @@ class HeadlessCallAdmissionWorkerTest {
                     terminalizeAuthenticated = { _, _ ->
                         terminalizations += 1
                         true
+                    },
+                    releaseDeclineReply = { callId ->
+                        operations += "native.releaseDeclineReply"
+                        released += callId
                     },
                 )
 
@@ -524,6 +537,15 @@ class HeadlessCallAdmissionWorkerTest {
                 assertEquals(1, runner.finishCalls)
                 assertEquals(0, presentations)
                 assertEquals(0, terminalizations)
+                // Plan 404 (c): the reply runs under the call foreground
+                // service (device 2026-09-05 18:23Z: without it the run took
+                // 7 s to reach the network); the worker releases it once the
+                // engine is safely finished, whatever Dart reported.
+                assertEquals(listOf(CALL_ID), released)
+                assertEquals(
+                    listOf("dart.complete", "engine.finish", "native.releaseDeclineReply"),
+                    operations,
+                )
             }
         }
 
@@ -598,6 +620,13 @@ class HeadlessCallAdmissionWorkerTest {
         assertFalse(source.contains("android.util.Log"))
         assertFalse(service.contains(".present(payload)"))
         assertTrue(service.contains("HeadlessCallAdmissionWorkScheduler"))
+        val runtime = sourceFile("MknoonCallAndroidRuntime.kt").readText()
+        val declineReply = runtime.substringAfter("fun scheduleHeadlessDeclineReply")
+        assertTrue(declineReply.contains("enqueueDeclineReply(descriptor)"))
+        assertTrue(declineReply.contains("MknoonCallForegroundService.ACTION_START_ADMISSION"))
+        assertTrue(runtime.contains("fun stopAdmissionForeground("))
+        assertTrue(runtime.contains("MknoonCallForegroundService.ACTION_STOP"))
+        assertTrue(source.contains("stopAdmissionForeground("))
     }
 
     private fun execution(
@@ -606,6 +635,7 @@ class HeadlessCallAdmissionWorkerTest {
         timeoutMillis: Long = 1_000L,
         presentAuthenticated: suspend (String, Long) -> Boolean,
         terminalizeAuthenticated: suspend (String, Long) -> Boolean = { _, _ -> true },
+        releaseDeclineReply: suspend (String) -> Unit = {},
     ): HeadlessCallAdmissionExecution = HeadlessCallAdmissionExecution(
         runnerFactory = { runner },
         isStopped = { false },
@@ -614,6 +644,7 @@ class HeadlessCallAdmissionWorkerTest {
         nonceFactory = { "nonce-a" },
         presentAuthenticated = presentAuthenticated,
         terminalizeAuthenticated = terminalizeAuthenticated,
+        releaseDeclineReply = releaseDeclineReply,
     )
 
     private fun identity() = HeadlessCallAdmissionRunIdentity(
