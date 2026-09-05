@@ -1,0 +1,24 @@
+=== plan 401 redeploy r3 (ringback uses the signaling handle) started 20260905T151330Z tree=4ba725d42+wip ===
+--- stop previous captures
+  (no idevicesyslog)
+  (no logcat)
+--- iOS build
+PROVENANCE sha=4ba725d42 dirty=12 build_name=1.0.0-4ba725d42.d12.flowlog.t260905171408 bundle_version=260905171408
+IOS BUILT 1.0.0-4ba725d42.d12.flowlog.t260905171408 bundleVersion=260905171408
+ios build exit=0
+--- iPhones (keep identity) and Pixel (in place) in parallel
+ios install exit=0
+ARTIFACT 1.0.0472542.12.260905171408 bundleVersion=260905171408
+00008030-001A6D2801BB802E OK 1.0.0472542.12.260905171408 bundleVersion=260905171408 (verified)
+00008110-00184D622289801E OK 1.0.0472542.12.260905171408 bundleVersion=260905171408 (verified)
+pixel deploy exit=0
+PIXEL 21071FDF600CSC OK 1.0.0-3cc20cd6e.d7.t260905171659 (verified)
+PIXEL PASS
+--- captures
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905171744
+--- relaunch into captures
+--- capture status
+docker-ws/deploy-captures/fresh-260905171744/iphone_00008030_syslog.txt: 2115 lines, 416 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905171744/iphone_00008110_syslog.txt: 3116 lines, 480 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905171744/pixel_logcat.txt: 1503 lines, 397 [FLOW] lines
+=== done 20260905T151754Z ===
