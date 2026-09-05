@@ -1,0 +1,50 @@
+=== plan 407 chain started 20260905T212924Z at 38362fd48 ===
+--- stop captures
+after:
+  (no idevicesyslog)
+  (no logcat)
+runner_mtime_before=1788642512
+--- iOS build + Pixel deploy in parallel
+PIXEL 21071FDF600CSC OK 1.0.0-38362fd48.d30.t260905232958 (verified)
+PIXEL PASS
+pixel deploy exit=0
+--- wait for the iOS artifact by probing the Mac
+ios_wait_loops=4 ios_ok=1
+--- artifact gate
+now: 23:32:25
+=== binary ===
+-rwxr-xr-x@ 1 I560101  staff  38728176 Sep  5 23:31 build/ios/iphoneos/Runner.app/Runner
+=== version ===
+1.0.03836248.30.260905232958
+260905232958
+=== go bridge symbol count ===
+1
+=== 405 call-row string present in the flutter assets? ===
+1
+=== embedded flutter engine version ===
+1.0
+--- iPhones install (keep identity)
+ARTIFACT 1.0.03836248.30.260905232958 bundleVersion=260905232958
+00008030-001A6D2801BB802E OK 1.0.03836248.30.260905232958 bundleVersion=260905232958 (verified)
+00008110-00184D622289801E FAILED(launch — unlocked?)
+ARTIFACT 1.0.03836248.30.260905232958 bundleVersion=260905232958
+00008030-001A6D2801BB802E OK 1.0.03836248.30.260905232958 bundleVersion=260905232958 (verified)
+00008110-00184D622289801E FAILED(launch — unlocked?)
+--- captures
+CAP_DIR=docker-ws/deploy-captures/fresh-260905233249
+=== done 20260905T213254Z ===
+
+=== summary ===
+All three phones on 38362fd48 (ring-time call mailbox drain), identities kept.
+Pixel   21071FDF600CSC            1.0.0-38362fd48.d30.t260905232958 (verified)
+iPhone  00008030-001A6D2801BB802E bundleVersion=260905232958 (verified)
+iPhone  00008110-00184D622289801E bundleVersion=260905232958 (verified)
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905233249
+
+The narrowed build probe worked: ios_wait_loops=4 (~80 s) instead of the
+ten-minute hang on the previous deploy.
+
+iPhone 13 failed its post-install launch twice with "FAILED(launch —
+unlocked?)" and succeeded on the third attempt; the install itself had already
+landed each time (the script only reaches launch after a successful install).
+This is the second deploy in a row where that phone needed a manual relaunch.
