@@ -188,6 +188,8 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/screens/conversation_call_timeline_rows_test.dart"
   # 406: missed-call notification policy and its dedicated channel.
   "test/features/call/application/missed_call_notifier_test.dart"
+  # 407: ring-time call mailbox drain.
+  "test/features/call/application/ringing_call_mailbox_poller_test.dart"
   "test/core/notifications/missed_call_notification_channel_test.dart"
   "test/features/conversation/presentation/widgets/conversation_header_test.dart"
   # 294 DTR-15: shared compositional conversation-controller ownership,

@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../core/permissions/mic_permission_gateway.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/application/foreground_call_capability.dart';
+import '../../features/call/application/ringing_call_mailbox_poller.dart';
 import '../../features/call/application/handle_incoming_call_signal.dart';
 import '../../features/call/infrastructure/call_authority_client.dart';
 import '../../features/call/application/outgoing_call_capability.dart';
@@ -157,6 +158,14 @@ final class CallSignalingComposition
       StreamController<bool>.broadcast(sync: true);
   final Completer<void> _terminalSignal = Completer<void>();
   ForegroundCallProjection? _foregroundCurrent;
+
+  /// 407: while a call rings, the relay may deliberately send no wake (it
+  /// treats a recipient that acked an earlier event of the call as attached)
+  /// and the live leg can still fail. Polling the mailbox for the ring's
+  /// bounded lifetime is the only thing that closes that window.
+  late final RingingCallMailboxPoller _ringingPoller = RingingCallMailboxPoller(
+    drain: _drainCallMailboxForRing,
+  );
   CallId? _presentedIncomingCallId;
   int _foregroundGeneration = 0;
   Future<void>? _startInFlight;
@@ -684,6 +693,8 @@ final class CallSignalingComposition
     if (inFlight != null) return inFlight;
     if (_terminal) return Future<void>.value();
     _terminal = true;
+    // 407: stop the ring poll before anything it reads can be torn down.
+    _ringingPoller.dispose();
     _publishOutgoingCallAvailability();
     if (!_terminalSignal.isCompleted) _terminalSignal.complete();
     late final Future<void> attempt;
@@ -826,7 +837,18 @@ final class CallSignalingComposition
 
   void _publishForeground(ForegroundCallProjection? projection) {
     _foregroundCurrent = projection;
+    _ringingPoller.onSession(projection?.session);
     if (!_foregroundChanges.isClosed) _foregroundChanges.add(projection);
+  }
+
+  /// The ring-time drain. Deliberately narrower than [onCallWake]: it never
+  /// starts the graph, so a poll can only read a mailbox the ringing call
+  /// already proves is live.
+  Future<void> _drainCallMailboxForRing() async {
+    if (!isEnabled || _terminal || !_started) return;
+    final graph = _graph;
+    if (graph is! CallSignalingWakeDrain) return;
+    await (graph as CallSignalingWakeDrain).drainCallMailbox();
   }
 
   void _publishOutgoingCallAvailability() {
