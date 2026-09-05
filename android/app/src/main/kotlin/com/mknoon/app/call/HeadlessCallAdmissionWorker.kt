@@ -18,6 +18,7 @@ import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.davidmartos96.sqflite_sqlcipher.SqfliteSqlCipherPlugin
+import com.dexterous.flutterlocalnotifications.FlutterLocalNotificationsPlugin
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.it_nomads.fluttersecurestorage.FlutterSecureStoragePlugin
@@ -836,6 +837,12 @@ private class FlutterHeadlessCallAdmissionEngineRunner(
     private fun registerAllowlistedPlugins(engine: FlutterEngine) {
         engine.plugins.add(FlutterSecureStoragePlugin())
         engine.plugins.add(SqfliteSqlCipherPlugin())
+        // 408: without this the killed-app missed-call card dies with
+        // MissingPluginException (device 2026-09-05 22:00:41Z). A background
+        // FlutterEngine has its own plugin registry, and this one is an
+        // explicit allowlist. HeadlessCanonicalRecoveryWorker registers the
+        // same plugin for the same reason.
+        engine.plugins.add(FlutterLocalNotificationsPlugin())
         engine.plugins.add(PathProviderPlugin())
     }
 }

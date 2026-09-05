@@ -22,8 +22,13 @@ final class HeadlessMissedCallNotification {
   final FlutterLocalNotificationsPlugin _plugin;
   bool _initialized = false;
 
-  /// Shows one card. Never throws: a notification is presentation, and a call
-  /// must not fail because the platform refused to draw one.
+  /// Shows one card.
+  ///
+  /// Diagnoses its own failure and RETHROWS. Swallowing here too made the
+  /// caller report `MISSED_CALL_NOTIFICATION_SHOWN` for a card that was never
+  /// drawn (device 2026-09-05 22:00:41Z, `MissingPluginException`).
+  /// `MissedCallNotifier` is the single place that decides a failed card must
+  /// not fail the call.
   Future<void> show({
     required String contactAccountPeerId,
     required String title,
@@ -53,6 +58,7 @@ final class HeadlessMissedCallNotification {
         event: 'HEADLESS_MISSED_CALL_NOTIFICATION_FAILED',
         details: {'errorType': error.runtimeType.toString()},
       );
+      rethrow;
     }
   }
 

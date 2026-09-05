@@ -25,6 +25,27 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class HeadlessCallAdmissionWorkerTest {
+
+    /**
+     * 408: device 2026-09-05 22:00:41Z — the killed-app missed-call card died
+     * with MissingPluginException because this engine's allowlist omitted the
+     * notifications plugin. HeadlessCanonicalRecoveryWorker, which posts cards
+     * headlessly today, registers it; this engine must too.
+     */
+    @Test
+    fun headlessEngineRegistersTheNotificationsPlugin() {
+        val source = java.io.File(
+            "src/main/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorker.kt",
+        ).readText()
+        val allowlist = source.substringAfter("private fun registerAllowlistedPlugins")
+            .substringBefore("}")
+        assertTrue(
+            "the headless engine must register the notifications plugin or " +
+                "every card it posts throws MissingPluginException",
+            allowlist.contains("FlutterLocalNotificationsPlugin()"),
+        )
+    }
+
     private lateinit var context: Context
 
     @Before

@@ -42,3 +42,31 @@ The mocked plugin first returned `null` where `initialize` expects a `bool`,
 which threw inside the plugin rather than exercising the code under test. The
 mock was fixed, not the production path — the same trap the existing
 `local_notification_support_test.dart` documents for `getNotificationChannels`.
+
+## Device finding — 2026-09-05 22:00:41Z (captures `fresh-260905235835`)
+
+The first build of this plan FAILED on device. The headless worker ran and the
+row was written, but the card threw:
+
+```
+HEADLESS_MISSED_CALL_NOTIFICATION_FAILED  errorType: MissingPluginException
+```
+
+`HeadlessCallAdmissionWorker.registerAllowlistedPlugins` listed only secure
+storage, SQLCipher and path provider. A background `FlutterEngine` has its own
+plugin registry, so the foreground registration means nothing there.
+`HeadlessCanonicalRecoveryWorker`, which already posts cards headlessly,
+registers `FlutterLocalNotificationsPlugin()`; this engine now does too, pinned
+by a Kotlin source census so the two cannot drift apart.
+
+**The worse defect underneath.** The next line in the same capture read
+`MISSED_CALL_NOTIFICATION_SHOWN`. `HeadlessMissedCallNotification.show()`
+swallowed its own error and returned normally, so `MissedCallNotifier` believed
+the post succeeded and reported a card that was never drawn. Two layers were
+swallowing and the outer one lied — anyone reading only that event would have
+called this shipped.
+
+`show()` now diagnoses and RETHROWS; `MissedCallNotifier` is the single place
+that decides a failed card must not fail the call. TC-408-04/05 originally
+pinned the swallow and were rewritten to pin the rethrow: they had asserted the
+wrong behaviour.

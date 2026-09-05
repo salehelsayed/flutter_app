@@ -122,31 +122,36 @@ void main() {
   });
 
   test(
-    'TC-408-04 a failing platform never throws into the call path',
+    'TC-408-04 a failing platform is reported to the caller, not hidden',
     () async {
       installHandler(failOn: 'show');
 
+      // Swallowing here as well made MissedCallNotifier report
+      // MISSED_CALL_NOTIFICATION_SHOWN for a card that was never drawn
+      // (device 2026-09-05 22:00:41Z, MissingPluginException).
       await expectLater(
         HeadlessMissedCallNotification().show(
           contactAccountPeerId: contactPeerId,
           title: 'Alice',
           body: 'Missed voice call',
         ),
-        completes,
+        throwsA(isA<PlatformException>()),
       );
     },
   );
 
-  test('TC-408-05 a failing initialize never throws either', () async {
+  test('TC-408-05 a failing initialize is reported too', () async {
     installHandler(failOn: 'initialize');
 
+    // Swallowing here as well made MissedCallNotifier report
+    // MISSED_CALL_NOTIFICATION_SHOWN for a card that was never drawn.
     await expectLater(
       HeadlessMissedCallNotification().show(
         contactAccountPeerId: contactPeerId,
         title: 'Alice',
         body: 'Missed voice call',
       ),
-      completes,
+      throwsA(isA<PlatformException>()),
     );
   });
 }
