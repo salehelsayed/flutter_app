@@ -1,0 +1,22 @@
+=== relay v1.10.4 deploy started 20260905T130923Z ===
+--- pre-deploy state ---
+relay: active NRestarts=0
+live binary: 79df9b408f19ea27913bd5ea4eb7aa8ce49fb5b376a9ca4bb1aea9c1a79d8fdc
+uploaded binary: cca91cb72a5b1025cccbcbc3d25fb47a743b581ce6b3a82763b3fdb4dad8ec1e
+relay_apns_voip_push_enabled 1
+relay_backend_durable 1
+--- install ---
+backup: /usr/local/bin/relay-server.pre-1.10.4-20260905T130923Z
+installed: cca91cb72a5b1025cccbcbc3d25fb47a743b581ce6b3a82763b3fdb4dad8ec1e
+--- post-restart ---
+relay: active NRestarts=0
+Sep 05 13:09:24 ip-172-31-34-24 relay-server[1033590]: 2026/09/05 13:09:24 [APNS_VOIP] enabled=true environment=production routing=per-token-environment cross_environment_fallback=on (default off; APNS_VOIP_PUSH_ENABLED)
+Sep 05 13:09:24 ip-172-31-34-24 relay-server[1033590]: 2026/09/05 13:09:24 [INBOX] ack custody contract=ack_or_expiry_v1 admission_enabled=true backend=redis (default off; DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED)
+Sep 05 13:09:24 ip-172-31-34-24 relay-server[1033590]: 2026/09/05 13:09:24 Starting relay-server v1.10.4
+Sep 05 13:09:24 ip-172-31-34-24 relay-server[1033590]: 2026/09/05 13:09:24 Control-plane: backend=redis durable=true prefix=relay:
+relay_apns_voip_push_enabled 1
+relay_backend_durable 1
+t+12s: active NRestarts=0
+t+40s: active NRestarts=0
+t+40s: active NRestarts=0
+=== done 20260905T131103Z ===
