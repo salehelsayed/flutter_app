@@ -35,6 +35,21 @@ While the Pixel's live relay connection is up, the invite goes direct (`sendMess
 2. Killed-app wake: Pixel app sent to the background and its process killed (`am kill`, not force-stop), then iPhone 11 calls the Pixel: the iPhone's invite falls back to the mailbox, the relay sends the FCM wake, the Pixel rings (headless admission), and the iPhone plays ringback.
 3. The original scenario: Pixel locked "for a while", then called.
 
+## Device finding 2026-09-05 15:50Z — the wake works, the hang-up did not end the ring
+
+With the token in place, iPhone 11 → killed Pixel app: the invite went to the mailbox (`mailboxStored: true`), the FCM wake started a headless admission, the Pixel rang at 17:50:35. The caller hung up at 15:50:36; the terminate was stored behind the unacknowledged invite and its wake started a second admission at 17:50:37.6, which reported success while the Pixel rang on until a timeout at 17:51:10.
+
+Cause (capture `fresh-260905174750`, relay probe, code): the second admission retrieved the page and stopped within 18 ms without a single crypto call. `IncomingCallPrePresentationAdmission.authenticateMailboxEvent` requires every row's expiry to equal the wake's (`wakeExpiresAtMs != event.expiresAtMs` → `permanentReject`), and `MailboxProductionHeadlessCallAdmissionSession._evaluateOnce` aborted the whole evaluation on the first failing row. The terminate's wake carried the terminate's expiry; the invite row (stored 6 s earlier, its own expiry) came first, so the page was judged `permanentReject` and the terminate was never authenticated. The relay was innocent: `TestCallRetrieveReturnsTerminateBehindAnUnackedInvite` (new, green by construction) pins that both rows are returned.
+
+Fix: the session judges every row. The wake binds only the row it was issued for; other rows of the same call are authenticated against their own expiry (the per-row guard stays as pinned by its test). An authenticated reject/terminate dominates → `terminal` (the worker's existing `terminalizeAuthenticated` ends the Telecom call); an unjudged (deferred) row defers the page; exactly one bound invite → `admitted`; a companion invite without a bound row → `emptyOrAlreadyAcked` (a stale wake never re-rings).
+
+| Row | RED | GREEN | Evidence |
+|---|---|---|---|
+| `production_headless_call_admission_test.dart` +4: terminate wake behind an earlier invite → `terminal` (bindings `[E1, E2]`); stale wake → `emptyOrAlreadyAcked`; terminate stored after the invite wake → `terminal`; deferred companion → `deferred` | three `Actual: permanentReject` | 11/11; analyzer clean | `dart_headless_terminate_red_2026-09-05.txt`, `dart_headless_terminate_green_2026-09-05.txt` |
+| relay `call_terminate_after_unacked_invite_test.go` | (contract pin, green) | pass | — |
+
+Device proof pending: killed Pixel app, iPhone 11 calls, hangs up while ringing → the Pixel stops ringing within ~2 s (`MknoonCallRingtone stage=lifecycle result=stopped` right after the second `HeadlessCallAdmissionWorker`).
+
 ## Follow-ups (not in this plan)
 
 - Endpoint records expire 6 h after the last advertisement and are refreshed only on start/resume: a phone left locked longer loses its wake route on both platforms.

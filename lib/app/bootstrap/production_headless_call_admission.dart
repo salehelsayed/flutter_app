@@ -87,38 +87,72 @@ final class MailboxProductionHeadlessCallAdmissionSession
     if (page.events.isEmpty) {
       return HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked;
     }
-
+    // A page may hold rows from several wakes: this admission presents
+    // without acknowledging, so the caller's terminate is stored behind the
+    // still-unacked invite and arrives with its own wake. The wake binds only
+    // the row it was issued for (equal expiry); every other row of the call
+    // is authenticated against its own expiry, so a terminate can end the
+    // ringing call and a stale wake can never re-ring an older invite.
     final reservations = <HeadlessAuthenticatedMailboxEvent>[];
+    var terminal = false;
+    var boundInvites = 0;
+    var companionInvites = 0;
+    var deferredRows = false;
+    var rejectedRows = false;
     try {
       for (final event in page.events) {
-        reservations.add(
-          await _authenticateEvent(invocation: invocation, event: event),
-        );
+        final bound = event.expiresAtMs == invocation.expiresAtMs;
+        final rowInvocation = bound
+            ? invocation
+            : HeadlessCallAdmissionInvocation(
+                nonce: invocation.nonce,
+                callId: invocation.callId,
+                wakeHandle: invocation.wakeHandle,
+                expiresAtMs: event.expiresAtMs,
+              );
+        HeadlessAuthenticatedMailboxEvent authenticated;
+        try {
+          authenticated = await _authenticateEvent(
+            invocation: rowInvocation,
+            event: event,
+          );
+        } on IncomingCallPrePresentationAdmissionException catch (error) {
+          switch (error.code) {
+            case IncomingCallPrePresentationAdmissionFailureCode.deferred:
+              deferredRows = true;
+            case IncomingCallPrePresentationAdmissionFailureCode.duplicate:
+            case IncomingCallPrePresentationAdmissionFailureCode
+                .permanentReject:
+              rejectedRows = true;
+          }
+          continue;
+        }
+        reservations.add(authenticated);
+        switch (authenticated.event) {
+          case CallSignalType.reject:
+          case CallSignalType.terminate:
+            terminal = true;
+          case CallSignalType.invite:
+            if (bound) {
+              boundInvites++;
+            } else {
+              companionInvites++;
+            }
+          default:
+            rejectedRows = true;
+        }
       }
-      if (
-        reservations.any(
-          (entry) =>
-              entry.event == CallSignalType.reject ||
-              entry.event == CallSignalType.terminate,
-        )
-      ) {
-        return HeadlessCallAdmissionDisposition.terminal;
-      }
-      if (
-        reservations.length == 1 &&
-        reservations.single.event == CallSignalType.invite
-      ) {
+      if (terminal) return HeadlessCallAdmissionDisposition.terminal;
+      // An unjudged row may be the terminate; never ring past it.
+      if (deferredRows) return HeadlessCallAdmissionDisposition.deferred;
+      if (boundInvites == 1 && companionInvites == 0) {
         return HeadlessCallAdmissionDisposition.admitted;
       }
+      if (boundInvites == 0 && companionInvites > 0 && !rejectedRows) {
+        // The wake's own row is gone; the invite already had its own wake.
+        return HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked;
+      }
       return HeadlessCallAdmissionDisposition.permanentReject;
-    } on IncomingCallPrePresentationAdmissionException catch (error) {
-      return switch (error.code) {
-        IncomingCallPrePresentationAdmissionFailureCode.deferred =>
-          HeadlessCallAdmissionDisposition.deferred,
-        IncomingCallPrePresentationAdmissionFailureCode.duplicate ||
-        IncomingCallPrePresentationAdmissionFailureCode.permanentReject =>
-          HeadlessCallAdmissionDisposition.permanentReject,
-      };
     } catch (_) {
       return HeadlessCallAdmissionDisposition.deferred;
     } finally {
@@ -156,8 +190,7 @@ final class ProductionHeadlessCallAdmissionRunner {
     required ProductionHeadlessCallAdmissionBackend backend,
     int Function()? nowMs,
   }) : _backend = backend,
-       _nowMs = nowMs ??
-           (() => DateTime.now().toUtc().millisecondsSinceEpoch);
+       _nowMs = nowMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch);
 
   static const int maximumFutureLifetimeMs = 45 * 1000;
 
@@ -238,10 +271,9 @@ final class AndroidProductionHeadlessCallAdmissionBackend
     _bindingCoordinator = CanonicalRuntimeBindingCoordinator(
       secureKeyStore: _secureKeyStore,
     );
-    _migrationAuthority =
-        SecureKeyStoreAccountMigrationAuthorityRepository(
-          secureKeyStore: _secureKeyStore,
-        );
+    _migrationAuthority = SecureKeyStoreAccountMigrationAuthorityRepository(
+      secureKeyStore: _secureKeyStore,
+    );
     _linkedAuthority = LinkedInstallationAuthority(
       secureKeyStore: _secureKeyStore,
     );
@@ -269,9 +301,8 @@ final class AndroidProductionHeadlessCallAdmissionBackend
     if (binding == null) return null;
     final database = await _writableSession.acquireThenOpen<Database>(
       binding: binding,
-      openDatabase: () => _openExistingDatabase(
-        onOpened: (opened) => _database = opened,
-      ),
+      openDatabase: () =>
+          _openExistingDatabase(onOpened: (opened) => _database = opened),
       closeAfterOpenFailure: _closeCurrentDatabase,
       closeDatabaseOnRuntimeAttachFailure: (opened) async {
         if (opened.isOpen) await opened.close();
@@ -389,8 +420,7 @@ final class AndroidProductionHeadlessCallAdmissionBackend
   }
 
   @override
-  Future<HeadlessCallAdmissionCleanup> emergencyCleanup() =>
-      _closeResources();
+  Future<HeadlessCallAdmissionCleanup> emergencyCleanup() => _closeResources();
 
   Future<HeadlessCallAdmissionCleanup> _closeResources() {
     final inFlight = _cleanupInFlight;
@@ -480,8 +510,7 @@ Future<HeadlessCallAdmissionRunReport> runProductionHeadlessCallAdmission({
   isStopRequested: isStopRequested,
 );
 
-Future<HeadlessCallAdmissionCleanup>
-cleanupProductionHeadlessCallAdmission() =>
+Future<HeadlessCallAdmissionCleanup> cleanupProductionHeadlessCallAdmission() =>
     _productionHeadlessCallAdmissionBackend.emergencyCleanup();
 
 Future<void> runProductionAndroidHeadlessCallAdmission(

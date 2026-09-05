@@ -1,0 +1,13 @@
+=== RED 2026-09-05T16:05:25Z: headless session must judge every row; terminate behind an earlier invite ends the call ===
+00:00 +6 -1: a terminate wake ends a call whose invite row came with an earlier wake [E]
+  Expected: HeadlessCallAdmissionDisposition:<HeadlessCallAdmissionDisposition.terminal>
+    Actual: HeadlessCallAdmissionDisposition:<HeadlessCallAdmissionDisposition.permanentReject>
+00:00 +6 -1: a stale wake whose own row is gone never re-rings an older invite
+00:00 +6 -2: a stale wake whose own row is gone never re-rings an older invite [E]
+  Expected: HeadlessCallAdmissionDisposition:<HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked>
+    Actual: HeadlessCallAdmissionDisposition:<HeadlessCallAdmissionDisposition.permanentReject>
+00:00 +6 -2: a terminate stored after the invite wake still dominates it
+00:00 +6 -3: a terminate stored after the invite wake still dominates it [E]
+  Expected: HeadlessCallAdmissionDisposition:<HeadlessCallAdmissionDisposition.terminal>
+    Actual: HeadlessCallAdmissionDisposition:<HeadlessCallAdmissionDisposition.permanentReject>
+00:00 +6 -3: a companion row that cannot be judged yet defers the page

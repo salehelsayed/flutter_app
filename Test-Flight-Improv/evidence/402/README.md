@@ -5,3 +5,4 @@
 | `dart_android_call_token_red_2026-09-05.txt` / `…_green_…` | coordinator unit tests: RED on missing types, GREEN 7/7 |
 | `dart_android_call_token_wiring_mutation_red_2026-09-05.txt` / `…_wiring_green_…` | composition wiring: mutation RED (graph not calling the coordinator), GREEN |
 | `dart_android_call_token_listen_red_2026-09-05.txt` / `…_affected_green_…` | Firebase-less host: RED `[core/no-app]` escaping `start()`, GREEN 86/86 across the affected suites |
+| `dart_headless_terminate_red_2026-09-05.txt` / `…_green_…` | second device finding: the terminate's wake rejected the page on the invite row's expiry; RED three `permanentReject`, GREEN 11/11 with per-row binding |
