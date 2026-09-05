@@ -564,6 +564,11 @@ void main() {
       expect(alerted.decision, CallEventDecision.applied);
       expect(alerted.snapshot.state, CallState.ringing);
       expect(alerted.snapshot.ringingAt, _t0);
+      expect(
+        alerted.snapshot.mailboxCustodyConfirmed,
+        isTrue,
+        reason: 'a dispatched wake implies the invite is in the mailbox',
+      );
 
       final rung = reducer.reduce(
         alerted.snapshot,

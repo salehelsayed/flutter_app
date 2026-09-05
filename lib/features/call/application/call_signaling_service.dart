@@ -353,7 +353,11 @@ final class CallSignalingService {
       final stored =
           result.expiresAtMs > signal.createdAtMs &&
           result.expiresAtMs <= signal.expiresAtMs;
-      _emitLegResult(_CallSignalingLeg.mailboxStore, stored);
+      _emitLegResult(
+        _CallSignalingLeg.mailboxStore,
+        stored,
+        wake: result.wake.name,
+      );
       return (
         stored: stored,
         wakeDispatched:
@@ -365,7 +369,11 @@ final class CallSignalingService {
     }
   }
 
-  static void _emitLegResult(_CallSignalingLeg leg, bool result) {
+  static void _emitLegResult(
+    _CallSignalingLeg leg,
+    bool result, {
+    String? wake,
+  }) {
     try {
       emitFlowEvent(
         layer: 'FL',
@@ -373,6 +381,7 @@ final class CallSignalingService {
         details: <String, Object?>{
           'operation': leg.operation,
           'result': result,
+          if (wake != null) 'wake': wake,
         },
       );
     } catch (_) {

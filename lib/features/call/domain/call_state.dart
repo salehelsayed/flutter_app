@@ -278,16 +278,23 @@ final class CallReducer {
         event,
       );
     }
-    if (event.type == CallEventType.wakeRequested &&
-        snapshot.state == CallState.inviting) {
-      // The relay alerted the callee's device: ring back now. A callee woken
+    if (event.type == CallEventType.wakeRequested) {
+      // The relay alerted the callee's device, which also proves the signal
+      // is in the mailbox. In `inviting` ring back now: a callee woken
       // headlessly signals nothing until it is answered.
-      return _transition(
-        snapshot,
-        event,
-        CallState.ringing,
-        ringingAt: event.occurredAt,
+      final custody = snapshot.copyWith(
+        mailboxCustodyConfirmed: true,
+        transportRoute: event.transportRoute ?? CallRouteClass.ephemeralMailbox,
       );
+      if (snapshot.state == CallState.inviting) {
+        return _transition(
+          custody,
+          event,
+          CallState.ringing,
+          ringingAt: event.occurredAt,
+        );
+      }
+      return _apply(custody, event);
     }
     if (_isTransportReceipt(event.type)) {
       return _apply(snapshot, event);

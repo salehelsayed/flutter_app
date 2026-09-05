@@ -158,6 +158,7 @@ final class ProductionCallControlSignalingAdapter
       return CallControlSendResult(
         directAccepted: transport.directAccepted,
         mailboxStored: transport.mailboxStored,
+        wakeDispatched: transport.wakeDispatched,
         directRoute: _routeClass(transport.directRoute),
         mailboxStoreSettled: transport.mailboxStoreSettled,
       );

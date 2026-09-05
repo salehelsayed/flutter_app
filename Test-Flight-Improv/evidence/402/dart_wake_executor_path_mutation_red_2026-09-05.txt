@@ -1,0 +1,9 @@
+=== MUTATION RED 2026-09-05T17:08:52Z: adapter drops wakeDispatched; reducer drops custody on wakeRequested ===
+00:00 +0 -1: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter the relay wake outcome reaches the executor result without a receipt of its own [E]
+  Expected: true
+    Actual: <false>
+00:00 +0 -1: /Volumes/CrucialX9/flutter_app/test/features/call/domain/call_state_machine_test.dart: VC2-02 pure reducer causal matrix a dispatched wake alerts the caller like a remote ring
+00:00 +0 -2: /Volumes/CrucialX9/flutter_app/test/features/call/domain/call_state_machine_test.dart: VC2-02 pure reducer causal matrix a dispatched wake alerts the caller like a remote ring [E]
+  Expected: true
+    Actual: <false>
+00:00 +0 -2: Some tests failed.

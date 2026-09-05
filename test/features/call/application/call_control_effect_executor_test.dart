@@ -129,6 +129,57 @@ void main() {
   );
 
   test(
+    'a dispatched wake turns the mailbox custody follow-up into ringing',
+    () async {
+      // The relay alerted the callee's device; a headless callee signals
+      // nothing until it is answered, so the caller rings back on this
+      // receipt (device 2026-09-05: no ringback when calling a dead Pixel).
+      final port = _Port(
+        result: CallControlSendResult(
+          directAccepted: false,
+          mailboxStored: true,
+          wakeDispatched: true,
+          mailboxStoreSettled: Future<void>.value(),
+        ),
+      );
+      final store = CallSignalingContextStore();
+      final control = _executor(port, store);
+      final negotiation = _RecordingExecutor();
+      final coordinator = CallCoordinator(
+        reducer: const CallReducer(),
+        cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+        historyProjector: CallHistoryProjector(_History()),
+        effectExecutor: CompositeCallEffectExecutor(
+          controlExecutor: control,
+          negotiationExecutor: negotiation,
+        ),
+        clock: () => _now,
+        idSource: () => _callId,
+      );
+      addTearDown(coordinator.dispose);
+      await coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.place,
+          eventId: 'place-call',
+          occurredAt: _now,
+          callId: _callId,
+          contactPeerId: 'remote-account',
+          localAccountPeerId: 'local-account',
+          localDeviceId: 'local-device',
+        ),
+      );
+      expect(coordinator.activeSession?.state, CallState.ringing);
+      expect(coordinator.activeSession?.mailboxCustodyConfirmed, isTrue);
+      expect(coordinator.activeSession?.ringingAt, _now);
+      expect(
+        coordinator.activeSession?.recentEventIds,
+        contains(startsWith('call-control-wakeRequested-')),
+      );
+      expect(port.signals.single.event, CallSignalType.invite);
+    },
+  );
+
+  test(
     'applied foreground cancel sends authenticated caller-cancelled terminate',
     () async {
       final port = _Port();

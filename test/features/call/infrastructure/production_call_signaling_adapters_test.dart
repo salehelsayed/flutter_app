@@ -393,6 +393,80 @@ void main() {
       expect(harness.mailbox.stores, 1);
     });
 
+    test(
+      'the relay wake outcome reaches the executor result without a receipt of its own',
+      () async {
+        final harness = _ServiceHarness(
+          directResult: const CallDirectSendResult(
+            outcome: CallDirectTransportOutcome.acceptedBytes,
+            transportAcknowledged: true,
+            route: CallDirectRoute.circuitRelay,
+          ),
+        );
+        addTearDown(harness.dispose);
+        await _prepareCoordinator(harness.coordinator);
+        final before = List<String>.of(
+          harness.coordinator.activeSession!.recentEventIds,
+        );
+        final authority = _EndpointAuthority(_endpoint());
+        final adapter = ProductionCallControlSignalingAdapter(
+          signalingService: harness.service,
+          contextStore: CallSignalingContextStore(),
+          resolveCurrentEndpoint: authority.resolve,
+          loadSenderSigningPrivateKey: _loadSigningKey,
+        );
+        harness.mailbox.wake = CallMailboxWakeStatus.dispatched;
+
+        final result = await adapter.send(
+          signal: _controlSignal(),
+          callHandle: _callHandle,
+        );
+
+        expect(result.directAccepted, isTrue);
+        expect(result.mailboxStored, isTrue);
+        expect(result.wakeDispatched, isTrue);
+        expect(result.directRoute, CallRouteClass.circuitRelay);
+        expect(authority.calls, 1);
+        expect(harness.direct.calls, 1);
+        expect(harness.mailbox.stores, 1);
+        expect(harness.coordinator.activeSession!.recentEventIds, before);
+        expect(
+          harness.coordinator.activeSession!.mailboxCustodyConfirmed,
+          false,
+        );
+      },
+    );
+
+    test('propagates direct-first pending mailbox settlement', () async {
+      final storeGate = Completer<void>();
+      final harness = _ServiceHarness(mailboxStoreGate: storeGate.future);
+      addTearDown(harness.dispose);
+      final adapter = ProductionCallControlSignalingAdapter(
+        signalingService: harness.service,
+        contextStore: CallSignalingContextStore(),
+        resolveCurrentEndpoint: _EndpointAuthority(_endpoint()).resolve,
+        loadSenderSigningPrivateKey: _loadSigningKey,
+      );
+
+      final result = await adapter.send(
+        signal: _controlSignal(),
+        callHandle: _callHandle,
+      );
+      var mailboxSettled = false;
+      final settlement = result.mailboxStoreSettled;
+      unawaited(settlement.then<void>((_) => mailboxSettled = true));
+      await Future<void>.delayed(Duration.zero);
+      expect(result.directAccepted, isTrue);
+      expect(result.mailboxStored, isFalse);
+      expect(mailboxSettled, isFalse);
+
+      storeGate.complete();
+      await settlement;
+
+      expect(mailboxSettled, isTrue);
+      expect(harness.mailbox.stores, 1);
+    });
+
     test('maps arbitrary failures to fixed-shape redacted errors', () async {
       final harness = _ServiceHarness();
       addTearDown(harness.dispose);
@@ -1034,6 +1108,7 @@ final class _Mailbox implements CallMailboxClient {
 
   final Future<void>? storeGate;
   int stores = 0;
+  CallMailboxWakeStatus wake = CallMailboxWakeStatus.none;
 
   @override
   Future<CallMailboxStoreResult> store(CallMailboxStoreRequest request) async {
@@ -1046,6 +1121,7 @@ final class _Mailbox implements CallMailboxClient {
       eventCount: 1,
       totalBytes: 100,
       pendingHandles: 1,
+      wake: wake,
     );
   }
 

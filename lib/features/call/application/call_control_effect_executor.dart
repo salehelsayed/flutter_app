@@ -36,10 +36,15 @@ final class CallControlSendResult {
     required this.mailboxStored,
     required this.mailboxStoreSettled,
     this.directRoute,
+    this.wakeDispatched = false,
   });
 
   final bool directAccepted;
   final bool mailboxStored;
+
+  /// The relay alerted the callee's device for this signal; the caller may
+  /// treat the far end as ringing.
+  final bool wakeDispatched;
   final CallRouteClass? directRoute;
   final Future<void> mailboxStoreSettled;
 
@@ -48,6 +53,7 @@ final class CallControlSendResult {
   Map<String, Object?> toDiagnosticMap() => <String, Object?>{
     'directAccepted': directAccepted,
     'mailboxStored': mailboxStored,
+    'wakeDispatched': wakeDispatched,
     'directRoute': directRoute?.name,
   };
 
@@ -425,8 +431,12 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
       _mailboxStoreSettlements[callId] = result.mailboxStoreSettled;
       if (result.mailboxStored) {
         _mailboxStoredInvites.add(callId);
+        // A dispatched wake confirms custody and alerts the far end at once:
+        // a headless callee rings without signalling until it is answered.
         return _followUp(
-          type: CallEventType.mailboxStored,
+          type: result.wakeDispatched
+              ? CallEventType.wakeRequested
+              : CallEventType.mailboxStored,
           snapshot: snapshot,
           transportRoute: CallRouteClass.ephemeralMailbox,
         );
