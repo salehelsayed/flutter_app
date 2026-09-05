@@ -1,0 +1,42 @@
+=== plan 405 deploy (terminal call rows in the 1:1 conversation) ===
+started 2026-09-05T19:44:44Z at b055738c7, finished 2026-09-05T20:17:48Z
+
+PROVENANCE sha=b055738c7 dirty_files=32
+  (dirty count includes another session's unrelated working-tree edits; the
+   run timestamp is the provenance anchor, not the sha — see
+   build-current-working-tree-not-commits)
+
+PIXEL   21071FDF600CSC              OK 1.0.0-b055738c7.d32.t260905214521 (verified)
+IPHONE  00008030-001A6D2801BB802E   OK bundleVersion=260905214521 (verified)
+IPHONE  00008110-00184D622289801E   OK bundleVersion=260905214521 (verified)
+  iOS CFBundleShortVersionString reads 1.0.00557387.32.260905214521 — Xcode
+  strips non-digits, same shape as every previous deploy; bundleVersion is the
+  anchor the install script verifies.
+
+App identities kept on all three phones. The Pixel app was deliberately left
+RUNNING: call rows are a foreground chat surface, and the killed-app headless
+admission path writes no call-history row at all (review gap 4).
+
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905221748
+
+=== artifact gate (checked directly on the Mac) ===
+build/ios/iphoneos/Runner.app/Runner  38728176 bytes, built 21:49 local
+  BridgeGenerateIdentity            present (Go bridge linked)
+  "Missed voice call" in App.framework/App  present (405 call-row copy shipped)
+
+=== incidents ===
+1. Flutter SDK. The checkout requires 3.47.2 while the Mac's PATH still
+   resolves `flutter` to 3.41.4. Both build scripts now source
+   docker-ws/_flutter_sdk_env.sh, which prepends ~/development/flutter-3.47.2.
+   Without it the Pixel build fails version solving and the iOS build dies
+   inside flutter/lib/src.
+2. Host bridge broke the pipe on the long iOS step. The Mac finished the build
+   at 21:49 but ~/host-bridge.log ends in BrokenPipeError and the container
+   client hung with an empty log. Verified completion from the Mac
+   (docker-ws/ios_build_progress.sh, docker-ws/ios_artifact_probe.sh), killed
+   the stuck client, and ran the install + capture steps directly.
+   Lesson: on a long host-run step, an empty log is not evidence of progress —
+   probe the Mac for build processes and artifact mtimes.
+3. iPhone 13 was locked, so the first `devicectl process launch` failed
+   ("FAILED(launch — unlocked?)") even though the install had succeeded. A
+   retry after unlock launched and verified it.

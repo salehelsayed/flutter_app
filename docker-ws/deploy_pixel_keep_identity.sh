@@ -5,6 +5,7 @@
 # deploy_pixel_only_377.sh. Run ON THE MAC or via host-run.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+. "$(dirname "$0")/_flutter_sdk_env.sh"
 
 BUNDLE_ID=com.mknoon.app
 SERIAL=${PIXEL_SERIAL:-21071FDF600CSC}

@@ -5,6 +5,7 @@
 # Diagnostic build for call debugging; install with install_iphones_keep_identity.sh.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+. "$(dirname "$0")/_flutter_sdk_env.sh"
 GIT_SHA=$(git rev-parse --short HEAD)
 GIT_DIRTY=$(git status --porcelain | wc -l | tr -d ' ')
 STAMP=$(date +%y%m%d%H%M%S)
