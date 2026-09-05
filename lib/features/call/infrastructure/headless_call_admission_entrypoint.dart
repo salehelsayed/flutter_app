@@ -13,12 +13,26 @@ enum HeadlessCallAdmissionDisposition {
   final String wireName;
 }
 
+/// What one headless run is asked to do. Admission presents an authenticated
+/// invite natively. The decline reply (plan 404) answers a call that was
+/// declined natively while the process had no Dart owner: it sends the
+/// caller its `reject` and acknowledges the ended call's rows.
+enum HeadlessCallAdmissionMode {
+  admission('admission'),
+  declineReply('decline_reply');
+
+  const HeadlessCallAdmissionMode(this.wireName);
+
+  final String wireName;
+}
+
 final class HeadlessCallAdmissionInvocation {
   const HeadlessCallAdmissionInvocation({
     required this.nonce,
     required this.callId,
     required this.wakeHandle,
     required this.expiresAtMs,
+    this.mode = HeadlessCallAdmissionMode.admission,
   });
 
   static final RegExp _nonce = RegExp(
@@ -36,11 +50,12 @@ final class HeadlessCallAdmissionInvocation {
   final String callId;
   final String wakeHandle;
   final int expiresAtMs;
+  final HeadlessCallAdmissionMode mode;
 
   factory HeadlessCallAdmissionInvocation.parse(List<String> arguments) {
-    if (arguments.length != 4) {
+    if (arguments.length != 4 && arguments.length != 5) {
       throw const FormatException(
-        'headless call admission requires four opaque arguments',
+        'headless call admission requires four or five opaque arguments',
       );
     }
     final nonce = arguments[0];
@@ -57,11 +72,19 @@ final class HeadlessCallAdmissionInvocation {
     if (expiresAtMs == null || expiresAtMs <= 0) {
       throw const FormatException('invalid headless call admission expiry');
     }
+    var mode = HeadlessCallAdmissionMode.admission;
+    if (arguments.length == 5) {
+      if (arguments[4] != HeadlessCallAdmissionMode.declineReply.wireName) {
+        throw const FormatException('invalid headless call admission mode');
+      }
+      mode = HeadlessCallAdmissionMode.declineReply;
+    }
     return HeadlessCallAdmissionInvocation(
       nonce: nonce,
       callId: callId,
       wakeHandle: wakeHandle,
       expiresAtMs: expiresAtMs,
+      mode: mode,
     );
   }
 

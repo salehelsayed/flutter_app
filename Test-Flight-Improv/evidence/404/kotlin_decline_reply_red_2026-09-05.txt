@@ -1,0 +1,16 @@
+=== plan 404 Kotlin RED 2026-09-05T18:10:42Z: scripts/test/run_call_native_unit_tests.sh ===
+BUILD FAILED in 24s
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:445:30 Unresolved reference 'enqueueDeclineReply'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:466:52 Unresolved reference 'INPUT_MODE'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:480:13 Unresolved reference 'HeadlessCallAdmissionMode'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:481:64 Unresolved reference 'INPUT_MODE'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:484:31 Unresolved reference 'enqueueDeclineReply'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:485:31 Unresolved reference 'enqueueDeclineReply'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:498:35 Unresolved reference 'HeadlessCallAdmissionMode'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:500:45 Unresolved reference 'mode'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:522:30 Unresolved reference 'HeadlessCallAdmissionMode'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:682:24 Unresolved reference 'HeadlessCallAdmissionMode'.
+e: src/test/kotlin/com/mknoon/app/call/HeadlessCallAdmissionWorkerTest.kt:687:55 Unresolved reference 'INPUT_MODE'.
+e: src/test/kotlin/com/mknoon/app/call/MknoonCallLifecycleControllerTest.kt:1200:9 No parameter with name 'onDeclineWithoutOwner' found.
+e: src/test/kotlin/com/mknoon/app/call/MknoonCallLifecycleControllerTest.kt:1200:35 Cannot infer type for this parameter. Please specify it explicitly.
+gradle exit: 1

@@ -986,6 +986,74 @@ void main() {
     },
   );
 
+  // Plan 404: the headless decline reply runs without a coordinator lane; the
+  // transport legs must stay usable on their own.
+  test(
+    'transmit needs no coordinator and send fails closed without one',
+    () async {
+      final direct = _Direct(
+        const CallDirectSendResult(
+          outcome: CallDirectTransportOutcome.acceptedBytes,
+          transportAcknowledged: true,
+          route: CallDirectRoute.circuitRelay,
+        ),
+      );
+      final mailbox = _Mailbox(storeSucceeds: true);
+      final service = CallSignalingService(
+        codec: SecureCallEnvelopeCodec(crypto: _Crypto(), nowMs: () => _nowMs),
+        directTransport: direct,
+        mailboxClient: mailbox,
+        networkEffectsAllowed: () => true,
+      );
+      final signal = CallSignal.create(
+        callId: CallId.parse('22222222-2222-4222-8222-222222222222'),
+        messageId: '55555555-5555-4555-8555-555555555555',
+        event: CallSignalType.reject,
+        senderAccountPeerId: 'local-account',
+        senderDevicePeerId: 'local-device',
+        recipientAccountPeerId: 'caller-account',
+        recipientDevicePeerId: 'caller-device',
+        senderSequence: 1,
+        iceGeneration: 0,
+        createdAtMs: _nowMs,
+        expiresAtMs: _nowMs + 40_000,
+        payload: const <String, Object?>{'reason': 'declined'},
+      );
+      final endpoint = ResolvedCallEndpoint(
+        accountPeerId: 'caller-account',
+        devicePeerId: 'caller-device',
+        signingPublicKey: 'caller-signing-key',
+        mlKemPublicKey: 'caller-kem-key',
+        deviceKeyEpoch: 1,
+        preferenceEpoch: 1,
+        platform: CallEndpointPlatform.ios,
+        expiresAtMs: _nowMs + 60_000,
+        routingHandle: 'caller-routing-handle',
+        wakeHandle: 'a' * 32,
+      );
+
+      final transport = await service.transmit(
+        signal: signal,
+        callHandle: '22222222-2222-4222-8222-222222222222',
+        endpoint: endpoint,
+        senderSigningPrivateKey: 'local-signing-key',
+      );
+      expect(transport.delivered, isTrue);
+      expect(direct.calls, 1);
+      expect(mailbox.stores, 1);
+
+      await expectLater(
+        service.send(
+          signal: signal,
+          callHandle: '22222222-2222-4222-8222-222222222222',
+          endpoint: endpoint,
+          senderSigningPrivateKey: 'local-signing-key',
+        ),
+        throwsStateError,
+      );
+    },
+  );
+
   test(
     'call signaling production roots exclude ordinary notification and retrier seams',
     () {

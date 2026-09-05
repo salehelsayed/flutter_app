@@ -53,6 +53,22 @@ internal enum class HeadlessCallAdmissionDisposition {
     DEFERRED,
 }
 
+/**
+ * What one headless run is asked to do. Admission presents an authenticated
+ * invite; the decline reply (plan 404) answers a call declined natively while
+ * no Dart owner existed to send the caller its reject.
+ */
+internal enum class HeadlessCallAdmissionMode(val wireName: String) {
+    ADMISSION("admission"),
+    DECLINE_REPLY("decline_reply"),
+    ;
+
+    companion object {
+        fun fromWireName(value: String?): HeadlessCallAdmissionMode? =
+            entries.firstOrNull { it.wireName == value }
+    }
+}
+
 internal data class HeadlessCallAdmissionCompletion(
     val nonce: String,
     val callId: String,
@@ -69,6 +85,7 @@ internal data class HeadlessCallAdmissionRunIdentity(
     val callId: String,
     val wakeHandle: String,
     val expiresAtMs: Long,
+    val mode: HeadlessCallAdmissionMode = HeadlessCallAdmissionMode.ADMISSION,
 )
 
 /** Strict, fixed-shape Dart-to-native admission result. */
@@ -209,6 +226,7 @@ internal class HeadlessCallAdmissionWorkScheduler(
         internal const val INPUT_CALL_ID = "call_id"
         internal const val INPUT_WAKE_HANDLE = "wake_handle"
         internal const val INPUT_EXPIRES_AT_MS = "expires_at_ms"
+        internal const val INPUT_MODE = "mode"
         private const val UNIQUE_PREFIX = "mknoon-headless-call-admission-"
         private const val WORK_TAG = "mknoon-headless-call-admission"
 
@@ -237,6 +255,52 @@ internal class HeadlessCallAdmissionWorkScheduler(
                     .putString(INPUT_CALL_ID, callId)
                     .putString(INPUT_WAKE_HANDLE, payload.wakeHandle)
                     .putLong(INPUT_EXPIRES_AT_MS, payload.expiresAtMs)
+                    .build(),
+            )
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .addTag(WORK_TAG)
+            .build()
+        return runCatching {
+            enqueuer.enqueueUnique(
+                uniqueName(callId),
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
+                request,
+            )
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Plan 404: a natively declined call without a Dart owner. One decline-reply
+     * run for the same call, serialized behind any admission job of that call
+     * (same unique name, APPEND_OR_REPLACE) and carrying the mode as one extra
+     * input key plus the descriptor's own wake handle and expiry.
+     */
+    fun enqueueDeclineReply(descriptor: PendingNativeCallDescriptor): Boolean {
+        val observedNow = runCatching(nowMs).getOrNull() ?: return false
+        val callId = descriptor.nativeCallId.toString()
+        if (
+            observedNow < 0L ||
+            descriptor.callHandle != callId ||
+            !CANONICAL_CALL_HANDLE.matches(callId) ||
+            !CALL_RANDOM_ID.matches(descriptor.wakeHandle) ||
+            descriptor.expiresAtMs <= observedNow ||
+            descriptor.expiresAtMs - observedNow > CallPayloadParser.MAX_FUTURE_SKEW_MS
+        ) {
+            return false
+        }
+        val request = OneTimeWorkRequestBuilder<HeadlessCallAdmissionWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build(),
+            )
+            .setInputData(
+                Data.Builder()
+                    .putString(INPUT_CALL_ID, callId)
+                    .putString(INPUT_WAKE_HANDLE, descriptor.wakeHandle)
+                    .putLong(INPUT_EXPIRES_AT_MS, descriptor.expiresAtMs)
+                    .putString(INPUT_MODE, HeadlessCallAdmissionMode.DECLINE_REPLY.wireName)
                     .build(),
             )
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -321,6 +385,7 @@ internal class HeadlessCallAdmissionExecution(
             callId = invocation.callId,
             wakeHandle = invocation.wakeHandle,
             expiresAtMs = invocation.expiresAtMs,
+            mode = invocation.mode,
         )
         val runner = runCatching(runnerFactory).getOrNull() ?: return noPresentation()
         synchronized(lock) { activeRunner = runner }
@@ -367,6 +432,12 @@ internal class HeadlessCallAdmissionExecution(
             return noPresentation()
         }
 
+        if (identity.mode == HeadlessCallAdmissionMode.DECLINE_REPLY) {
+            // The reply run never presents or terminalizes: the native call
+            // already ended when the user declined it.
+            return noPresentation()
+        }
+
         return when (authenticated.disposition) {
             HeadlessCallAdmissionDisposition.ADMITTED -> {
                 val presented = try {
@@ -409,15 +480,24 @@ internal class HeadlessCallAdmissionExecution(
         val callId: String,
         val wakeHandle: String,
         val expiresAtMs: Long,
+        val mode: HeadlessCallAdmissionMode,
     )
 
     private fun parseInput(inputData: Data, observedNow: Long): Invocation? {
-        val expectedKeys = setOf(
+        val admissionKeys = setOf(
             HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID,
             HeadlessCallAdmissionWorkScheduler.INPUT_WAKE_HANDLE,
             HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS,
         )
-        if (inputData.keyValueMap.keys != expectedKeys || observedNow < 0L) return null
+        val mode = when (inputData.keyValueMap.keys) {
+            admissionKeys -> HeadlessCallAdmissionMode.ADMISSION
+            admissionKeys + HeadlessCallAdmissionWorkScheduler.INPUT_MODE ->
+                HeadlessCallAdmissionMode.fromWireName(
+                    inputData.getString(HeadlessCallAdmissionWorkScheduler.INPUT_MODE),
+                )?.takeIf { it != HeadlessCallAdmissionMode.ADMISSION } ?: return null
+            else -> return null
+        }
+        if (observedNow < 0L) return null
         val callId = inputData.getString(HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID)
             ?: return null
         val wakeHandle = inputData.getString(
@@ -435,7 +515,7 @@ internal class HeadlessCallAdmissionExecution(
         ) {
             return null
         }
-        return Invocation(callId, wakeHandle, expiresAtMs)
+        return Invocation(callId, wakeHandle, expiresAtMs, mode)
     }
 
     private fun noPresentation() =
@@ -657,12 +737,15 @@ private class FlutterHeadlessCallAdmissionEngineRunner(
         )
         created.dartExecutor.executeDartEntrypoint(
             entrypoint,
-            listOf(
-                identity.nonce,
-                identity.callId,
-                identity.wakeHandle,
-                identity.expiresAtMs.toString(),
-            ),
+            buildList {
+                add(identity.nonce)
+                add(identity.callId)
+                add(identity.wakeHandle)
+                add(identity.expiresAtMs.toString())
+                if (identity.mode == HeadlessCallAdmissionMode.DECLINE_REPLY) {
+                    add(identity.mode.wireName)
+                }
+            },
         )
         dartStarted = true
         if (stopRequested.get()) postCancelOnMain()

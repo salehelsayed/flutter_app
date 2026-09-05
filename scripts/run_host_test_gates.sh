@@ -35,6 +35,8 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/call/data/call_history_repository_test.dart"
   "test/features/call/infrastructure/call_authority_client_test.dart"
   "test/features/call/infrastructure/call_mailbox_client_test.dart"
+  "test/features/call/infrastructure/bridge_call_direct_transport_test.dart"
+  "test/features/call/application/headless_call_decline_reply_test.dart"
   "test/features/call/infrastructure/call_native_bridge_privacy_contract_test.dart"
   "test/features/call/infrastructure/call_signaling_runtime_test.dart"
   "test/features/call/infrastructure/database_call_trusted_roster_provider_test.dart"

@@ -87,7 +87,9 @@ final class CallSignalingService {
     required SecureCallEnvelopeCodec codec,
     required CallDirectTransport directTransport,
     required CallMailboxClient mailboxClient,
-    required CallCoordinator coordinator,
+    // Transport-only runtimes (the headless decline reply) pass no
+    // coordinator: [transmit] works, [send] fails closed.
+    CallCoordinator? coordinator,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
   }) : _codec = codec,
        _directTransport = directTransport,
@@ -98,7 +100,7 @@ final class CallSignalingService {
   final SecureCallEnvelopeCodec _codec;
   final CallDirectTransport _directTransport;
   final CallMailboxClient _mailboxClient;
-  final CallCoordinator _coordinator;
+  final CallCoordinator? _coordinator;
   final CallNetworkEffectsAllowed _networkEffectsAllowed;
   static final RegExp _wakeHandleGrammar = RegExp(r'^[0-9a-f]{32}$');
 
@@ -244,10 +246,14 @@ final class CallSignalingService {
     required CallSignal signal,
     required CallSignalTransportResult result,
   }) async {
+    final coordinator = _coordinator;
+    if (coordinator == null) {
+      throw StateError('receipt dispatch requires a coordinator');
+    }
     // Mailbox custody can win while direct is still unresolved. Do not turn
     // that provisional false value into a synthetic direct-failure event.
     if (result._directSettled) {
-      await _coordinator.dispatch(
+      await coordinator.dispatch(
         CallEvent(
           type: result.directAccepted
               ? CallEventType.directAccepted
@@ -269,7 +275,7 @@ final class CallSignalingService {
       );
     }
     if (result.mailboxStored) {
-      await _coordinator.dispatch(
+      await coordinator.dispatch(
         CallEvent(
           type: CallEventType.mailboxStored,
           eventId: '${signal.messageId}:mailbox-stored',
@@ -291,7 +297,7 @@ final class CallSignalingService {
       // The relay alerted the callee's device. A headless callee rings
       // without signalling anything until it is answered, so this receipt is
       // the caller's only sign that the far end is being alerted.
-      await _coordinator.dispatch(
+      await coordinator.dispatch(
         CallEvent(
           type: CallEventType.wakeRequested,
           eventId: '${signal.messageId}:wake-dispatched',
@@ -381,7 +387,7 @@ final class CallSignalingService {
         details: <String, Object?>{
           'operation': leg.operation,
           'result': result,
-          if (wake != null) 'wake': wake,
+          'wake': ?wake,
         },
       );
     } catch (_) {

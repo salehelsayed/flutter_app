@@ -50,6 +50,64 @@ void main() {
     }
   });
 
+  // Device 2026-09-05 17:44Z: a call presented headlessly (app killed) and
+  // declined on the Pixel never told the caller; the iPhone rang back until
+  // its own cancel. The native decline now schedules a second headless run in
+  // decline-reply mode, carried as one extra fixed argument.
+  test('invocation parser accepts the decline reply mode as a fifth field', () {
+    final admission = HeadlessCallAdmissionInvocation.parse(const <String>[
+      nonce,
+      callId,
+      wakeHandle,
+      '$expiresAtMs',
+    ]);
+    expect(admission.mode, HeadlessCallAdmissionMode.admission);
+
+    final decline = HeadlessCallAdmissionInvocation.parse(const <String>[
+      nonce,
+      callId,
+      wakeHandle,
+      '$expiresAtMs',
+      'decline_reply',
+    ]);
+    expect(decline.mode, HeadlessCallAdmissionMode.declineReply);
+    expect(decline.callId, callId);
+    expect(decline.expiresAtMs, expiresAtMs);
+    expect(decline.identityPayload(), admission.identityPayload());
+
+    for (final invalid in <List<String>>[
+      const <String>[nonce, callId, wakeHandle, '$expiresAtMs', 'admission'],
+      const <String>[nonce, callId, wakeHandle, '$expiresAtMs', ''],
+      const <String>[
+        nonce,
+        callId,
+        wakeHandle,
+        '$expiresAtMs',
+        'DECLINE_REPLY',
+      ],
+      const <String>[
+        nonce,
+        callId,
+        wakeHandle,
+        '$expiresAtMs',
+        'decline-reply',
+      ],
+      const <String>[
+        nonce,
+        callId,
+        wakeHandle,
+        '$expiresAtMs',
+        'decline_reply',
+        'decline_reply',
+      ],
+    ]) {
+      expect(
+        () => HeadlessCallAdmissionInvocation.parse(invalid),
+        throwsFormatException,
+      );
+    }
+  });
+
   test('admitted completion echoes only the fixed safe result shape', () async {
     final channel = _FakeChannel();
     await runAndroidHeadlessCallAdmission(

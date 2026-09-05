@@ -12,14 +12,22 @@ import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/legacy_group_secret_storage_scrub.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
+import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
+import 'package:flutter_app/features/call/application/call_signaling_service.dart';
+import 'package:flutter_app/features/call/application/headless_call_decline_reply.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
+import 'package:flutter_app/features/call/infrastructure/bridge_call_direct_transport.dart';
+import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
 import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
+import 'package:flutter_app/features/call/infrastructure/production_call_endpoint_resolution.dart';
+import 'package:flutter_app/features/call/infrastructure/received_call_wake_handle_store_impl.dart';
 import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
@@ -29,9 +37,14 @@ final class HeadlessAuthenticatedMailboxEvent {
   const HeadlessAuthenticatedMailboxEvent({
     required this.event,
     required void Function() rollbackReplay,
+    this.signal,
   }) : _rollbackReplay = rollbackReplay;
 
   final CallSignalType event;
+
+  /// The decoded signal when the authenticator hands it over: the decline
+  /// reply builds the caller's `reject` from the invite.
+  final CallSignal? signal;
   final void Function() _rollbackReplay;
 
   void rollbackReplay() => _rollbackReplay();
@@ -46,6 +59,10 @@ typedef AuthenticateHeadlessMailboxEvent =
       required CallMailboxEvent event,
     });
 
+/// Sends the caller one `reject` for [invite]. Resolves true once the reject
+/// reached custody (direct acceptance or mailbox store); never throws.
+typedef HeadlessDeclineReplySender = Future<bool> Function(CallSignal invite);
+
 /// Evaluates one exact-handle mailbox page without dispatching coordinator
 /// events, acknowledging custody, or starting media. All provisional replay
 /// reservations are rolled back so the foreground canonical owner can
@@ -56,12 +73,15 @@ final class MailboxProductionHeadlessCallAdmissionSession
     required CallMailboxClient mailboxClient,
     required AuthenticateHeadlessMailboxEvent authenticateEvent,
     required Future<HeadlessCallAdmissionCleanup> Function() closeResources,
+    HeadlessDeclineReplySender? declineReplySender,
   }) : _mailboxClient = mailboxClient,
        _authenticateEvent = authenticateEvent,
-       _closeResources = closeResources;
+       _closeResources = closeResources,
+       _declineReplySender = declineReplySender;
 
   final CallMailboxClient _mailboxClient;
   final AuthenticateHeadlessMailboxEvent _authenticateEvent;
+  final HeadlessDeclineReplySender? _declineReplySender;
   final Future<HeadlessCallAdmissionCleanup> Function() _closeResources;
   Future<HeadlessCallAdmissionDisposition>? _evaluation;
   Future<HeadlessCallAdmissionCleanup>? _cleanup;
@@ -69,7 +89,10 @@ final class MailboxProductionHeadlessCallAdmissionSession
   @override
   Future<HeadlessCallAdmissionDisposition> evaluate(
     HeadlessCallAdmissionInvocation invocation,
-  ) => _evaluation ??= _evaluateOnce(invocation);
+  ) => _evaluation ??= switch (invocation.mode) {
+    HeadlessCallAdmissionMode.admission => _evaluateOnce(invocation),
+    HeadlessCallAdmissionMode.declineReply => _declineReplyOnce(invocation),
+  };
 
   Future<HeadlessCallAdmissionDisposition> _evaluateOnce(
     HeadlessCallAdmissionInvocation invocation,
@@ -169,6 +192,125 @@ final class MailboxProductionHeadlessCallAdmissionSession
       for (final reservation in reservations.reversed) {
         reservation.rollbackReplay();
       }
+    }
+  }
+
+  /// Decline-reply mode (plan 404): the native call was declined while no
+  /// Dart owner existed to answer the caller (device 2026-09-05 17:44Z: the
+  /// iPhone rang back until its own cancel). Every row is authenticated
+  /// against its own expiry. A terminal row means the caller already ended
+  /// the call; otherwise the invite yields the caller's `reject`. The rows of
+  /// the ended call are acknowledged once the reply reached custody. Nothing
+  /// is presented and no replay reservation is kept.
+  Future<HeadlessCallAdmissionDisposition> _declineReplyOnce(
+    HeadlessCallAdmissionInvocation invocation,
+  ) async {
+    late final CallMailboxRetrieveResult page;
+    try {
+      page = await _mailboxClient.retrieve(
+        callHandle: invocation.callId,
+        limit: BridgeCallMailboxClient.maxRetrieveEvents,
+      );
+    } catch (_) {
+      _emitDeclineReplyResult('retrieve_failed');
+      return HeadlessCallAdmissionDisposition.deferred;
+    }
+    if (page.hasMore) {
+      _emitDeclineReplyResult('page_incomplete');
+      return HeadlessCallAdmissionDisposition.deferred;
+    }
+    if (page.events.isEmpty) {
+      _emitDeclineReplyResult('empty');
+      return HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked;
+    }
+    final reservations = <HeadlessAuthenticatedMailboxEvent>[];
+    final authenticatedMessageIds = <String>[];
+    CallSignal? invite;
+    var terminal = false;
+    var deferredRows = false;
+    try {
+      for (final event in page.events) {
+        final rowInvocation = HeadlessCallAdmissionInvocation(
+          nonce: invocation.nonce,
+          callId: invocation.callId,
+          wakeHandle: invocation.wakeHandle,
+          expiresAtMs: event.expiresAtMs,
+          mode: invocation.mode,
+        );
+        HeadlessAuthenticatedMailboxEvent authenticated;
+        try {
+          authenticated = await _authenticateEvent(
+            invocation: rowInvocation,
+            event: event,
+          );
+        } on IncomingCallPrePresentationAdmissionException catch (error) {
+          if (error.code ==
+              IncomingCallPrePresentationAdmissionFailureCode.deferred) {
+            deferredRows = true;
+          }
+          continue;
+        }
+        reservations.add(authenticated);
+        authenticatedMessageIds.add(event.messageId);
+        switch (authenticated.event) {
+          case CallSignalType.reject:
+          case CallSignalType.terminate:
+            terminal = true;
+          case CallSignalType.invite:
+            invite ??= authenticated.signal;
+          default:
+            break;
+        }
+      }
+      if (terminal) {
+        await _acknowledgeEndedCall(invocation.callId, authenticatedMessageIds);
+        _emitDeclineReplyResult('already_ended');
+        return HeadlessCallAdmissionDisposition.terminal;
+      }
+      final pendingInvite = invite;
+      if (pendingInvite == null) {
+        _emitDeclineReplyResult(deferredRows ? 'invite_deferred' : 'no_invite');
+        return deferredRows
+            ? HeadlessCallAdmissionDisposition.deferred
+            : HeadlessCallAdmissionDisposition.permanentReject;
+      }
+      final sender = _declineReplySender;
+      if (sender == null) {
+        _emitDeclineReplyResult('no_sender');
+        return HeadlessCallAdmissionDisposition.deferred;
+      }
+      var sent = false;
+      try {
+        sent = await sender(pendingInvite);
+      } catch (_) {
+        sent = false;
+      }
+      if (!sent) {
+        _emitDeclineReplyResult('unsent');
+        return HeadlessCallAdmissionDisposition.deferred;
+      }
+      await _acknowledgeEndedCall(invocation.callId, authenticatedMessageIds);
+      _emitDeclineReplyResult('sent');
+      return HeadlessCallAdmissionDisposition.terminal;
+    } catch (_) {
+      _emitDeclineReplyResult('error');
+      return HeadlessCallAdmissionDisposition.deferred;
+    } finally {
+      for (final reservation in reservations.reversed) {
+        reservation.rollbackReplay();
+      }
+    }
+  }
+
+  static void _emitDeclineReplyResult(String outcome) {
+    try {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_HEADLESS_DECLINE_REPLY_RESULT',
+        details: <String, Object?>{'outcome': outcome},
+      );
+    } catch (_) {
+      // Fixed-shape diagnostics cannot change the reply outcome.
     }
   }
 
@@ -388,12 +530,50 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       throw StateError('headless call transport did not start');
     }
 
-    final admission = IncomingCallPrePresentationAdmission(
-      codec: SecureCallEnvelopeCodec(
-        crypto: BridgeCallEnvelopeCrypto(bridge: bridge),
-        nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+    int nowMs() => DateTime.now().toUtc().millisecondsSinceEpoch;
+    final codec = SecureCallEnvelopeCodec(
+      crypto: BridgeCallEnvelopeCrypto(bridge: bridge),
+      nowMs: nowMs,
+    );
+    final roster = DatabaseCallTrustedRosterProvider(database);
+    final mailbox = BridgeCallMailboxClient(bridge: bridge);
+    final authority = BridgeCallAuthorityClient(bridge: bridge);
+    final resolver = CallEndpointResolver(
+      nowMs: nowMs,
+      verifyEndpointSignature: (endpoint, trustedSigningPublicKey) =>
+          authority.verifyEndpoint(
+            endpoint,
+            trustedDeviceSigningPublicKey: trustedSigningPublicKey,
+          ),
+    );
+    final receivedWakeHandles = ReceivedCallWakeHandleStoreImpl(
+      secureKeyStore: _secureKeyStore,
+    );
+    // Plan 404: the decline reply writes through the foreground's transport
+    // shape (direct race + mailbox custody) without a coordinator lane.
+    final signalingService = CallSignalingService(
+      codec: codec,
+      directTransport: BridgeCallDirectTransport(bridge: bridge),
+      mailboxClient: mailbox,
+      networkEffectsAllowed: () => true,
+    );
+    final declineReply = HeadlessCallDeclineReplyTransmitter(
+      transmit: signalingService.transmit,
+      resolveEndpoint: (contactAccountPeerId) => resolveProductionCallEndpoint(
+        contactAccountPeerId: contactAccountPeerId,
+        resolver: resolver,
+        rosterProvider: roster,
+        authorityClient: authority,
+        receivedCallWakeHandleStore: receivedWakeHandles,
       ),
-      trustedRosterProvider: DatabaseCallTrustedRosterProvider(database),
+      localAccountPeerId: identity.peerId,
+      localDevicePeerId: physicalPeerId,
+      loadSigningPrivateKey: () async => identity.privateKey,
+      nowMs: nowMs,
+    );
+    final admission = IncomingCallPrePresentationAdmission(
+      codec: codec,
+      trustedRosterProvider: roster,
       localAuthorityProvider: () async => CallLocalDeviceAuthority(
         accountPeerId: identity.peerId,
         devicePeerId: physicalPeerId,
@@ -401,7 +581,7 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       ),
     );
     final session = MailboxProductionHeadlessCallAdmissionSession(
-      mailboxClient: BridgeCallMailboxClient(bridge: bridge),
+      mailboxClient: mailbox,
       authenticateEvent: ({required invocation, required event}) async {
         final authenticated = await admission.authenticateMailboxEvent(
           nativeCallId: invocation.callId,
@@ -411,8 +591,10 @@ final class AndroidProductionHeadlessCallAdmissionBackend
         return HeadlessAuthenticatedMailboxEvent(
           event: authenticated.signal.event,
           rollbackReplay: authenticated.rollbackReplay,
+          signal: authenticated.signal,
         );
       },
+      declineReplySender: declineReply.sendDeclineFor,
       closeResources: _closeResources,
     );
     _activeSession = session;

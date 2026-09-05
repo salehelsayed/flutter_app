@@ -1,5 +1,6 @@
 import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
+import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
@@ -459,6 +460,222 @@ void main() {
     },
   );
 
+  // Device 2026-09-05 17:44Z (captures fresh-260905194144): the Pixel's app
+  // was killed, the call was presented headlessly and declined from the
+  // notification at 19:44:14; nothing reached the iPhone, which rang back
+  // until its own cancel five seconds later. A native decline without a Dart
+  // owner now schedules a decline-reply run: the same headless session
+  // authenticates the invite row again, sends the caller one `reject`, and
+  // acknowledges the rows of the ended call.
+  group('decline reply mode', () {
+    final declineInvocation = HeadlessCallAdmissionInvocation(
+      nonce: invocation.nonce,
+      callId: invocation.callId,
+      wakeHandle: invocation.wakeHandle,
+      expiresAtMs: invocation.expiresAtMs,
+      mode: HeadlessCallAdmissionMode.declineReply,
+    );
+
+    test('rejects the caller from the authenticated invite and acks', () async {
+      final order = <String>[];
+      final replied = <CallSignal>[];
+      final mailbox = _Mailbox(<CallMailboxEvent>[
+        _event(messageId: '44444444-4444-4444-8444-444444444444'),
+      ], onAck: () => order.add('ack'));
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: mailbox,
+        authenticateEvent: _signalAuthenticator(),
+        declineReplySender: (invite) async {
+          order.add('reply');
+          replied.add(invite);
+          return true;
+        },
+        closeResources: () async {
+          order.add('close');
+          return _Session.safeCleanup;
+        },
+      );
+
+      expect(
+        await session.evaluate(declineInvocation),
+        HeadlessCallAdmissionDisposition.terminal,
+      );
+      expect(await session.close(), _Session.safeCleanup);
+      expect(replied.map((signal) => signal.messageId), <String>[
+        '44444444-4444-4444-8444-444444444444',
+      ]);
+      expect(replied.single.event, CallSignalType.invite);
+      expect(mailbox.ackedHandles, <String>[invocation.callId]);
+      expect(mailbox.ackedMessageIds, <List<String>>[
+        <String>['44444444-4444-4444-8444-444444444444'],
+      ]);
+      expect(order, <String>['reply', 'ack', 'close']);
+      expect(mailbox.retrievedHandles, <String>[invocation.callId]);
+    });
+
+    test('an already ended call is acknowledged without a reply', () async {
+      var replies = 0;
+      final mailbox = _Mailbox(<CallMailboxEvent>[
+        _event(
+          messageId: '44444444-4444-4444-8444-444444444444',
+          expiresAtMs: 1_800_000_045_000,
+        ),
+        _event(
+          messageId: '55555555-5555-4555-8555-555555555555',
+          expiresAtMs: 1_800_000_051_000,
+        ),
+      ]);
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: mailbox,
+        authenticateEvent: _signalAuthenticator(),
+        declineReplySender: (_) async {
+          replies++;
+          return true;
+        },
+        closeResources: () async => _Session.safeCleanup,
+      );
+
+      expect(
+        await session.evaluate(declineInvocation),
+        HeadlessCallAdmissionDisposition.terminal,
+      );
+      expect(replies, 0);
+      expect(mailbox.ackedMessageIds, <List<String>>[
+        <String>[
+          '44444444-4444-4444-8444-444444444444',
+          '55555555-5555-4555-8555-555555555555',
+        ],
+      ]);
+    });
+
+    test(
+      'a reply that reaches no custody leaves the rows and defers',
+      () async {
+        for (final sender in <HeadlessDeclineReplySender>[
+          (_) async => false,
+          (_) async => throw StateError('relay unreachable'),
+        ]) {
+          final mailbox = _Mailbox(<CallMailboxEvent>[_event()]);
+          final session = MailboxProductionHeadlessCallAdmissionSession(
+            mailboxClient: mailbox,
+            authenticateEvent: _signalAuthenticator(),
+            declineReplySender: sender,
+            closeResources: () async => _Session.safeCleanup,
+          );
+
+          expect(
+            await session.evaluate(declineInvocation),
+            HeadlessCallAdmissionDisposition.deferred,
+          );
+          expect(mailbox.ackedHandles, isEmpty);
+        }
+      },
+    );
+
+    test(
+      'without a sender or an authenticated invite nothing is sent',
+      () async {
+        var replies = 0;
+        final noSender = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: _Mailbox(<CallMailboxEvent>[_event()]),
+          authenticateEvent: _signalAuthenticator(),
+          closeResources: () async => _Session.safeCleanup,
+        );
+        expect(
+          await noSender.evaluate(declineInvocation),
+          HeadlessCallAdmissionDisposition.deferred,
+        );
+
+        final rejected = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: _Mailbox(<CallMailboxEvent>[_event()]),
+          authenticateEvent: ({required invocation, required event}) async {
+            throw const IncomingCallPrePresentationAdmissionException(
+              IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+            );
+          },
+          declineReplySender: (_) async {
+            replies++;
+            return true;
+          },
+          closeResources: () async => _Session.safeCleanup,
+        );
+        expect(
+          await rejected.evaluate(declineInvocation),
+          HeadlessCallAdmissionDisposition.permanentReject,
+        );
+
+        final deferred = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: _Mailbox(<CallMailboxEvent>[_event()]),
+          authenticateEvent: ({required invocation, required event}) async {
+            throw const IncomingCallPrePresentationAdmissionException(
+              IncomingCallPrePresentationAdmissionFailureCode.deferred,
+            );
+          },
+          declineReplySender: (_) async {
+            replies++;
+            return true;
+          },
+          closeResources: () async => _Session.safeCleanup,
+        );
+        expect(
+          await deferred.evaluate(declineInvocation),
+          HeadlessCallAdmissionDisposition.deferred,
+        );
+
+        final empty = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: _Mailbox(const <CallMailboxEvent>[]),
+          authenticateEvent: _signalAuthenticator(),
+          declineReplySender: (_) async {
+            replies++;
+            return true;
+          },
+          closeResources: () async => _Session.safeCleanup,
+        );
+        expect(
+          await empty.evaluate(declineInvocation),
+          HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked,
+        );
+        expect(replies, 0);
+      },
+    );
+
+    test('an admission run never replies even when a sender exists', () async {
+      var replies = 0;
+      final mailbox = _Mailbox(<CallMailboxEvent>[_event()]);
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: mailbox,
+        authenticateEvent: _signalAuthenticator(),
+        declineReplySender: (_) async {
+          replies++;
+          return true;
+        },
+        closeResources: () async => _Session.safeCleanup,
+      );
+
+      expect(
+        await session.evaluate(invocation),
+        HeadlessCallAdmissionDisposition.admitted,
+      );
+      expect(replies, 0);
+      expect(mailbox.ackedHandles, isEmpty);
+    });
+
+    test('the runner hands the decline reply mode to the session', () async {
+      final session = _Session(HeadlessCallAdmissionDisposition.terminal);
+      final report = await ProductionHeadlessCallAdmissionRunner(
+        backend: _Backend(session),
+        nowMs: () => 1_800_000_000_000,
+      ).run(invocation: declineInvocation, isStopRequested: () => false);
+
+      expect(
+        session.lastInvocation?.mode,
+        HeadlessCallAdmissionMode.declineReply,
+      );
+      expect(report.disposition, HeadlessCallAdmissionDisposition.terminal);
+      expect(report.requiredPersistenceComplete, isTrue);
+    });
+  });
+
   test('a companion row that cannot be judged yet defers the page', () async {
     final session = MailboxProductionHeadlessCallAdmissionSession(
       mailboxClient: _Mailbox(<CallMailboxEvent>[
@@ -548,6 +765,41 @@ AuthenticateHeadlessMailboxEvent _bindingAuthenticator(
     rollbackReplay: () {},
   );
 };
+
+/// Authenticates every row against its own expiry and hands the session the
+/// decoded signal: the 4444… row is the invite, every other row a terminate.
+AuthenticateHeadlessMailboxEvent _signalAuthenticator() =>
+    ({required invocation, required event}) async {
+      final type = event.messageId == '44444444-4444-4444-8444-444444444444'
+          ? CallSignalType.invite
+          : CallSignalType.terminate;
+      return HeadlessAuthenticatedMailboxEvent(
+        event: type,
+        rollbackReplay: () {},
+        signal: CallSignal.create(
+          callId: CallId.parse(invocation.callId),
+          messageId: event.messageId,
+          event: type,
+          senderAccountPeerId: 'caller-account',
+          senderDevicePeerId: 'caller-device',
+          recipientAccountPeerId: 'local-account',
+          recipientDevicePeerId: 'local-device',
+          senderSequence: type == CallSignalType.invite ? 1 : 2,
+          iceGeneration: 0,
+          createdAtMs: 1_800_000_000_000,
+          expiresAtMs: event.expiresAtMs,
+          payload: type == CallSignalType.invite
+              ? const <String, Object?>{
+                  'capabilities': <Object?>['audio'],
+                  'metadata': <String, Object?>{
+                    'media': 'audio',
+                    'video': false,
+                  },
+                }
+              : const <String, Object?>{'reason': 'local_hangup'},
+        ),
+      );
+    };
 
 CallMailboxEvent _event({
   String messageId = '44444444-4444-4444-8444-444444444444',
@@ -649,12 +901,14 @@ final class _Session implements ProductionHeadlessCallAdmissionSession {
   final Object? evaluateError;
   int evaluateCalls = 0;
   int closeCalls = 0;
+  HeadlessCallAdmissionInvocation? lastInvocation;
 
   @override
   Future<HeadlessCallAdmissionDisposition> evaluate(
     HeadlessCallAdmissionInvocation invocation,
   ) async {
     evaluateCalls++;
+    lastInvocation = invocation;
     final error = evaluateError;
     if (error != null) throw error;
     return disposition;

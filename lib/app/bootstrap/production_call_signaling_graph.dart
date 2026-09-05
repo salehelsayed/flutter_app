@@ -50,6 +50,7 @@ import '../../features/call/infrastructure/call_media_conflict_adapter.dart';
 import '../../features/call/infrastructure/call_microphone_permission_adapter.dart';
 import '../../features/call/infrastructure/call_signaling_runtime.dart';
 import '../../features/call/infrastructure/call_trusted_roster_provider.dart';
+import '../../features/call/infrastructure/production_call_endpoint_resolution.dart';
 import '../../features/call/infrastructure/flutter_webrtc_call_engine.dart';
 import '../../features/call/application/call_ringback_coordinator.dart';
 import '../../features/call/infrastructure/android_call_token_coordinator.dart';
@@ -91,8 +92,6 @@ typedef ProductionCallSignalingGraphObserver =
     void Function(ProductionCallSignalingGraph graph);
 typedef LoadCallWakeEligibleContacts =
     Future<List<CallWakeEligibleContact>> Function();
-typedef EnsureReceivedCallWakeHandle =
-    Future<bool> Function(String contactAccountPeerId);
 
 final class PreparedOutgoingCall {
   const PreparedOutgoingCall({required this.endpoint, required this.reduction});
@@ -370,7 +369,7 @@ final class ProductionCallSignalingGraph
       );
 
   Future<ResolvedCallEndpoint> _resolveEndpoint(String contactAccountPeerId) =>
-      _resolveProductionCallEndpoint(
+      resolveProductionCallEndpoint(
         contactAccountPeerId: contactAccountPeerId,
         resolver: endpointResolver,
         rosterProvider: trustedRosterProvider,
@@ -1127,7 +1126,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
       );
       Future<ResolvedCallEndpoint> resolveCurrentEndpoint(
         String contactAccountPeerId,
-      ) => _resolveProductionCallEndpoint(
+      ) => resolveProductionCallEndpoint(
         contactAccountPeerId: contactAccountPeerId,
         resolver: resolver,
         rosterProvider: roster,
@@ -1738,7 +1737,7 @@ Future<bool> probeProductionCallEndpointAvailability({
       gate: networkEffectsAllowed,
       action: () async {
         resolutionStarted = true;
-        await _resolveProductionCallEndpoint(
+        await resolveProductionCallEndpoint(
           contactAccountPeerId: contactAccountPeerId,
           resolver: resolver,
           rosterProvider: rosterProvider,
@@ -1751,119 +1750,13 @@ Future<bool> probeProductionCallEndpointAvailability({
     );
   } catch (_) {
     if (!resolutionStarted) {
-      _emitCallEndpointResolutionResult(
+      emitCallEndpointResolutionResult(
         stage: 'network_gate',
         outcome: 'blocked',
         reason: 'network_effects_blocked',
       );
     }
     return false;
-  }
-}
-
-Future<T> _loadCallEndpointDependency<T>({
-  required String stage,
-  required Future<T> Function() load,
-}) async {
-  try {
-    return await load();
-  } catch (_) {
-    _emitCallEndpointResolutionResult(
-      stage: stage,
-      outcome: 'error',
-      reason: 'dependency_error',
-    );
-    rethrow;
-  }
-}
-
-void _emitCallEndpointResolutionResult({
-  required String stage,
-  required String outcome,
-  required String reason,
-}) {
-  try {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CALL_ENDPOINT_RESOLUTION_RESULT',
-      details: <String, Object?>{
-        'stage': stage,
-        'outcome': outcome,
-        'reason': reason,
-      },
-    );
-  } catch (_) {
-    // Diagnostic observers must never change call availability.
-  }
-}
-
-Future<ResolvedCallEndpoint> _resolveProductionCallEndpoint({
-  required String contactAccountPeerId,
-  required CallEndpointResolver resolver,
-  required CallTrustedRosterProvider rosterProvider,
-  required CallAuthorityClient authorityClient,
-  required ReceivedCallWakeHandleStore receivedCallWakeHandleStore,
-  EnsureReceivedCallWakeHandle? ensureReceivedCallWakeHandle,
-}) async {
-  final roster = await _loadCallEndpointDependency(
-    stage: 'trusted_roster_load',
-    load: () => rosterProvider.loadForContact(contactAccountPeerId),
-  );
-  try {
-    await ensureReceivedCallWakeHandle?.call(contactAccountPeerId);
-  } catch (_) {
-    // Recovery is best effort. The durable store read below remains authority.
-  }
-  final wakeHandleGrant = await _loadCallEndpointDependency(
-    stage: 'received_wake_handle_load',
-    load: () => receivedCallWakeHandleStore.readForIssuer(contactAccountPeerId),
-  );
-  final relayEndpoint = await _loadCallEndpointDependency(
-    stage: 'relay_endpoint_load',
-    load: () => authorityClient.getEndpoint(contactAccountPeerId),
-  );
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'CALL_ENDPOINT_RESOLUTION_INPUT',
-    details: <String, Object?>{
-      'contactAccepted': roster.contactAccepted,
-      'contactBlocked': roster.contactBlocked,
-      'trustedDeviceCount': roster.devices.length,
-      'relayEndpointPresent': relayEndpoint != null,
-      'wakeHandleGrantPresent': wakeHandleGrant != null,
-    },
-  );
-  try {
-    final endpoint = await resolver.resolve(
-      contactAccountPeerId: contactAccountPeerId,
-      contactAccepted: roster.contactAccepted,
-      contactBlocked: roster.contactBlocked,
-      trustedDevices: roster.devices,
-      relayCapabilities: relayEndpoint == null
-          ? const <SignedCallEndpointRecord>[]
-          : <SignedCallEndpointRecord>[relayEndpoint],
-      wakeHandleGrant: wakeHandleGrant,
-    );
-    _emitCallEndpointResolutionResult(
-      stage: 'ready',
-      outcome: 'available',
-      reason: 'none',
-    );
-    return endpoint;
-  } on CallEndpointResolutionException catch (error) {
-    _emitCallEndpointResolutionResult(
-      stage: 'endpoint_resolve',
-      outcome: 'unavailable',
-      reason: error.code.name,
-    );
-    rethrow;
-  } catch (_) {
-    _emitCallEndpointResolutionResult(
-      stage: 'endpoint_resolve',
-      outcome: 'error',
-      reason: 'dependency_error',
-    );
-    rethrow;
   }
 }
 

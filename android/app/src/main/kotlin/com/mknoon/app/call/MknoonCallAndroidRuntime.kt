@@ -221,9 +221,15 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             onSettled = ::cancelExpiry,
             onTerminated = ::recordTerminalTombstone,
             onCleanupPending = ::scheduleCleanupRetry,
+            onDeclineWithoutOwner = ::scheduleHeadlessDeclineReply,
             diagnosticSink = AndroidMknoonCallLifecycleDiagnosticSink,
         )
         reconcilePersistedDescriptor()
+    }
+
+    /** Plan 404: a natively declined call with no Dart owner answers the caller headlessly. */
+    private fun scheduleHeadlessDeclineReply(descriptor: PendingNativeCallDescriptor) {
+        HeadlessCallAdmissionWorkScheduler(applicationContext).enqueueDeclineReply(descriptor)
     }
 
     fun setCapabilityEnabled(enabled: Boolean): Boolean {

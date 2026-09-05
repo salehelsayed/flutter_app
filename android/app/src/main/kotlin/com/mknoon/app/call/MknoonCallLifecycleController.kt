@@ -138,6 +138,7 @@ internal class MknoonCallLifecycleController(
     private val onSettled: (UUID) -> Unit = {},
     private val onTerminated: (UUID, Long) -> Boolean = { _, _ -> true },
     private val onCleanupPending: (UUID) -> Unit = {},
+    private val onDeclineWithoutOwner: (PendingNativeCallDescriptor) -> Unit = {},
     private val diagnosticSink: MknoonCallLifecycleDiagnosticSink =
         MknoonCallLifecycleDiagnosticSink { _ -> },
     private val terminalAckTimeoutMs: Long = TERMINAL_ACK_TIMEOUT_MS,
@@ -1078,6 +1079,16 @@ internal class MknoonCallLifecycleController(
         }
         performCleanup(cleanup)
         if (event != null) emitIfAttached(event)
+        if (
+            type == PendingNativeCallEventType.DECLINE_REQUESTED &&
+            firstDurableTerminal &&
+            adoptedBefore == null &&
+            descriptorBefore != null
+        ) {
+            // Plan 404: no Dart lifecycle owns this call, so nobody would send
+            // the caller its reject; the headless decline reply does.
+            runCatching { onDeclineWithoutOwner(descriptorBefore) }
+        }
 
         cleanupState = if (cleanup.complete && cleanup.terminalPersisted) null else cleanup
         if (cleanupState != null) {

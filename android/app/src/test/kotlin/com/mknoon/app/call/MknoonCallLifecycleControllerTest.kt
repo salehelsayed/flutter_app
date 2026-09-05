@@ -321,6 +321,64 @@ class MknoonCallLifecycleControllerTest {
         )
     }
 
+    // Plan 404 (device 2026-09-05 17:44Z): a headlessly presented call declined
+    // from the notification never answered the caller; the iPhone rang back
+    // until its own cancel. A decline with no adopted Dart lifecycle hands the
+    // ended descriptor to the headless decline reply exactly once.
+    @Test
+    fun `a native decline without a Dart owner schedules one headless decline reply`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertTrue(
+            rig.controller.terminate(
+                rig.payload.nativeCallId,
+                PendingNativeCallEventType.DECLINE_REQUESTED,
+            ),
+        )
+        assertFalse(
+            rig.controller.terminate(
+                rig.payload.nativeCallId,
+                PendingNativeCallEventType.DECLINE_REQUESTED,
+            ),
+        )
+        assertEquals(
+            listOf(rig.payload.nativeCallId),
+            rig.declineReplies.map { it.nativeCallId },
+        )
+        assertEquals(rig.payload.expiresAtMs, rig.declineReplies.single().expiresAtMs)
+        assertEquals(rig.payload.wakeHandle, rig.declineReplies.single().wakeHandle)
+
+        for (
+            other in listOf(
+                PendingNativeCallEventType.END_REQUESTED,
+                PendingNativeCallEventType.REMOTE_CANCELLED,
+                PendingNativeCallEventType.PROVIDER_REMOVED,
+                PendingNativeCallEventType.EXPIRED,
+            )
+        ) {
+            val otherRig = LifecycleRig()
+            assertEquals(
+                MknoonCallPresentationResult.PRESENTED,
+                otherRig.controller.present(otherRig.payload),
+            )
+            otherRig.controller.terminate(otherRig.payload.nativeCallId, other)
+            assertTrue(otherRig.declineReplies.isEmpty())
+        }
+
+        val adoptedRig = LifecycleRig()
+        assertEquals(
+            MknoonCallPresentationResult.PRESENTED,
+            adoptedRig.controller.present(adoptedRig.payload),
+        )
+        assertNotNull(adoptedRig.controller.attach())
+        assertTrue(adoptedRig.controller.markAdopted(adoptedRig.payload.nativeCallId))
+        adoptedRig.controller.terminate(
+            adoptedRig.payload.nativeCallId,
+            PendingNativeCallEventType.DECLINE_REQUESTED,
+        )
+        assertTrue(adoptedRig.declineReplies.isEmpty())
+    }
+
     @Test
     fun `every terminal source dominates answer and cleans native resources exactly once`() {
         val terminalTypes = listOf(
@@ -1124,6 +1182,7 @@ internal class LifecycleRig(
     val presented = mutableListOf<Pair<UUID, Long>>()
     val settled = mutableListOf<UUID>()
     val cleanupPending = mutableListOf<UUID>()
+    val declineReplies = mutableListOf<PendingNativeCallDescriptor>()
     var capabilityEnabled: Boolean = capabilityEnabled
     var recordAudioGranted: Boolean = recordAudioGranted
     val controller = MknoonCallLifecycleController(
@@ -1138,6 +1197,7 @@ internal class LifecycleRig(
         },
         onSettled = { nativeCallId -> settled += nativeCallId },
         onCleanupPending = { nativeCallId -> cleanupPending += nativeCallId },
+        onDeclineWithoutOwner = { descriptor -> declineReplies += descriptor },
         diagnosticSink = diagnosticSink,
     )
 }

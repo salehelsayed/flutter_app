@@ -1,0 +1,575 @@
+00:00 +0: loading /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart
+00:00 +0: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart: invocation parser accepts only the exact opaque four-field shape
+00:00 +1: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart: invocation parser accepts the decline reply mode as a fifth field
+00:00 +2: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart: admitted completion echoes only the fixed safe result shape
+00:00 +3: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart: runner failure reports deferred with fail-closed cleanup facts
+00:00 +4: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart: production main exposes the dedicated AOT admission entrypoint
+00:00 +5: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: authenticated invite reports admitted only after proven teardown
+00:00 +6: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: empty handle and permanent rejection are durable no-ring outcomes
+00:00 +7: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: defer stop expiry and teardown uncertainty never admit
+00:00 +8: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: acquisition or evaluation failure uses emergency cleanup
+00:00 +9: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: expiry reached during authentication dominates admission
+00:00 +10: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: mailbox session retrieves c not h and terminal dominates invite
+00:00 +11: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a terminate wake ends a call whose invite row came with an earlier wake
+00:00 +12: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a stale wake whose own row is gone never re-rings an older invite
+00:00 +13: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a terminate stored after the invite wake still dominates it
+00:00 +14: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a terminal page acknowledges its authenticated rows before close
+00:00 +15: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a terminal page acknowledges only the rows it authenticated
+00:00 +16: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: an acknowledgement failure never changes the terminal verdict
+00:00 +17: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: every non-terminal verdict leaves the rows for foreground adoption
+00:00 +18: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: decline reply mode rejects the caller from the authenticated invite and acks
+[FLOW] {"ts":"2026-09-05T18:06:31.829789Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_HEADLESS_DECLINE_REPLY_RESULT","details":{"outcome":"sent"}}
+00:00 +19: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: decline reply mode an already ended call is acknowledged without a reply
+[FLOW] {"ts":"2026-09-05T18:06:31.846112Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_HEADLESS_DECLINE_REPLY_RESULT","details":{"outcome":"already_ended"}}
+00:00 +20: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: decline reply mode a reply that reaches no custody leaves the rows and defers
+[FLOW] {"ts":"2026-09-05T18:06:31.848950Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_HEADLESS_DECLINE_REPLY_RESULT","details":{"outcome":"unsent"}}
+[FLOW] {"ts":"2026-09-05T18:06:31.849371Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_HEADLESS_DECLINE_REPLY_RESULT","details":{"outcome":"unsent"}}
+00:00 +21: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: decline reply mode without a sender or an authenticated invite nothing is sent
+[FLOW] {"ts":"2026-09-05T18:06:31.850974Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_HEADLESS_DECLINE_REPLY_RESULT","details":{"outcome":"no_sender"}}
+[FLOW] {"ts":"2026-09-05T18:06:31.851249Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_HEADLESS_DECLINE_REPLY_RESULT","details":{"outcome":"no_invite"}}
+[FLOW] {"ts":"2026-09-05T18:06:31.851485Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_HEADLESS_DECLINE_REPLY_RESULT","details":{"outcome":"invite_deferred"}}
+[FLOW] {"ts":"2026-09-05T18:06:31.851685Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_HEADLESS_DECLINE_REPLY_RESULT","details":{"outcome":"empty"}}
+00:00 +22: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: decline reply mode an admission run never replies even when a sender exists
+00:00 +23: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: decline reply mode the runner hands the decline reply mode to the session
+00:00 +24: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a companion row that cannot be judged yet defers the page
+00:00 +25: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: mailbox empty and incomplete or transient pages never ring
+00:00 +26: /Volumes/CrucialX9/flutter_app/test/features/call/application/headless_call_decline_reply_test.dart: replies to the inviting device with one signed declined reject
+00:00 +27: /Volumes/CrucialX9/flutter_app/test/features/call/application/headless_call_decline_reply_test.dart: a mailbox-only custody also counts as delivered
+00:00 +28: /Volumes/CrucialX9/flutter_app/test/features/call/application/headless_call_decline_reply_test.dart: replies only to an invite addressed to this exact device
+00:00 +29: /Volumes/CrucialX9/flutter_app/test/features/call/application/headless_call_decline_reply_test.dart: a caller endpoint that is no longer the inviting device is refused
+00:00 +30: /Volumes/CrucialX9/flutter_app/test/features/call/application/headless_call_decline_reply_test.dart: resolution or transport failures never throw and report false
+00:00 +31: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: direct acceptance exposes exact mailbox settlement before retirement
+[FLOW] {"ts":"2026-09-05T18:06:32.087665Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.101219Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:00 +32: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: mailbox custody returns in the same virtual turn while direct is hung
+[FLOW] {"ts":"2026-09-05T18:06:32.108745Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.109346Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
+00:00 +33: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: a dispatched wake rings the caller back before the callee signals
+[FLOW] {"ts":"2026-09-05T18:06:32.112660Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"dispatched"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.113099Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
+00:00 +34: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: mailbox settlement completes without error after store failure
+[FLOW] {"ts":"2026-09-05T18:06:32.117357Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.119073Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":false}}
+00:00 +35: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: direct failure still gains call-mailbox custody without false ringing
+[FLOW] {"ts":"2026-09-05T18:06:32.125189Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
+[FLOW] {"ts":"2026-09-05T18:06:32.125468Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:00 +36: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: direct exception cannot erase committed mailbox custody
+[FLOW] {"ts":"2026-09-05T18:06:32.131277Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
+[FLOW] {"ts":"2026-09-05T18:06:32.131495Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:00 +37: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: leg diagnostics distinguish failures and exclude signaling material
+[FLOW] {"ts":"2026-09-05T18:06:32.137322Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
+[FLOW] {"ts":"2026-09-05T18:06:32.137602Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":false}}
+00:00 +38: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: diagnostic sink failure cannot change either leg result
+00:00 +39: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: transport ACK records bytes only and cannot synthesize ringing
+[FLOW] {"ts":"2026-09-05T18:06:32.145911Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.146120Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:00 +40: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: network-only transmit returns receipts without recursively dispatching
+[FLOW] {"ts":"2026-09-05T18:06:32.148724Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.148980Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:00 +41: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: migration pause fails before codec or either transport
+00:00 +42: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: malformed received wake handle fails before either transport
+00:00 +43: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: transmit needs no coordinator and send fails closed without one
+[FLOW] {"ts":"2026-09-05T18:06:32.155041Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.155238Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":false,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.155992Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.156253Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":false,"wake":"none"}}
+00:00 +44: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/bridge_call_direct_transport_test.dart: an acknowledged bridge send is an accepted direct leg
+00:00 +45: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/bridge_call_direct_transport_test.dart: an acknowledged bridge send is an accepted direct leg
+[FLOW] {"ts":"2026-09-05T18:06:32.164342Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MESSAGE_SEND_REQUEST","details":{"messageLength":15}}
+[FLOW] {"ts":"2026-09-05T18:06:32.179689Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MESSAGE_SEND_RESPONSE","details":{"ok":true,"sent":true,"acked":true,"hasReply":false,"transport":"circuit-relay","errorCode":null}}
+00:00 +46: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/bridge_call_direct_transport_test.dart: an unacknowledged, refused, or failing send is not accepted
+[FLOW] {"ts":"2026-09-05T18:06:32.185023Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MESSAGE_SEND_REQUEST","details":{"messageLength":2}}
+[FLOW] {"ts":"2026-09-05T18:06:32.185357Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MESSAGE_SEND_RESPONSE","details":{"ok":true,"sent":true,"acked":false,"hasReply":false,"transport":null,"errorCode":null}}
+[FLOW] {"ts":"2026-09-05T18:06:32.185604Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MESSAGE_SEND_REQUEST","details":{"messageLength":2}}
+[FLOW] {"ts":"2026-09-05T18:06:32.185817Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MESSAGE_SEND_RESPONSE","details":{"ok":false,"sent":false,"acked":null,"hasReply":false,"transport":null,"errorCode":null}}
+[FLOW] {"ts":"2026-09-05T18:06:32.185968Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MESSAGE_SEND_REQUEST","details":{"messageLength":2}}
+[FLOW] {"ts":"2026-09-05T18:06:32.186280Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MESSAGE_SEND_RESPONSE","details":{"ok":true,"sent":null,"acked":null,"hasReply":false,"transport":null,"errorCode":null}}
+[FLOW] {"ts":"2026-09-05T18:06:32.186551Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"P2P_MESSAGE_SEND_REQUEST","details":{"messageLength":2}}
+00:00 +47: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/bridge_call_direct_transport_test.dart: oversized envelopes and empty recipients never reach the bridge
+00:00 +48: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: stores through the dedicated call_store_v1 action
+00:00 +49: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: a store receipt carries the wake outcome
+00:00 +50: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: retrieves typed attributed events through call_retrieve_v1
+00:00 +51: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: ack and cancel never use the chat inbox actions
+00:00 +52: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: cancel treats an unauthorized relay answer as an absent invite
+[FLOW] {"ts":"2026-09-05T18:06:32.307068Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_UNAUTHORIZED"}}
+00:00 +53: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: only cancel tolerates the unauthorized answer
+[FLOW] {"ts":"2026-09-05T18:06:32.312373Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_BACKEND_UNAVAILABLE"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.314570Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_RATE_LIMITED"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.317107Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_INVALID_REQUEST"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.317593Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_CONTROL_UNAVAILABLE"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.318115Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"INTERNAL_ERROR"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.318556Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_ack_v1","code":"CALL_UNAUTHORIZED"}}
+00:00 +54: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: rejects oversized envelopes before crossing the bridge
+00:00 +55: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: bounds an unresponsive native mailbox bridge
+00:00 +56: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: reports only allowlisted mailbox operations and bridge error codes
+[FLOW] {"ts":"2026-09-05T18:06:32.329235Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_store_v1","code":"INVALID_INPUT"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.329648Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"UNKNOWN"}}
+00:00 +57: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: reports only fixed relay call-control error codes
+[FLOW] {"ts":"2026-09-05T18:06:32.331760Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_BACKEND_UNAVAILABLE"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.332086Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_INVALID_REQUEST"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.332365Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_UNAUTHORIZED"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.332634Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_IDENTITY_CONFLICT"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.332926Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_REPLAY"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.333193Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_EXPIRY_INVALID"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.333452Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_ENVELOPE_TOO_LARGE"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.333722Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_RECIPIENT_CAPACITY"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.333985Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_EVENT_CAPACITY"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.334256Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_BYTE_CAPACITY"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.334506Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_RATE_LIMITED"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.334750Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_STALE_EPOCH"}}
+00:00 +58: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: diagnostic sink failure preserves the mailbox exception
+00:00 +59: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_diagnostics_test.dart: availability reports a closed network gate without resolving
+[FLOW] {"ts":"2026-09-05T18:06:32.511463Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_RESULT","details":{"stage":"network_gate","outcome":"blocked","reason":"network_effects_blocked"}}
+00:00 +60: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_diagnostics_test.dart: availability identifies each dependency load failure
+[FLOW] {"ts":"2026-09-05T18:06:32.523724Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_RESULT","details":{"stage":"trusted_roster_load","outcome":"error","reason":"dependency_error"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.524903Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_RESULT","details":{"stage":"received_wake_handle_load","outcome":"error","reason":"dependency_error"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.525703Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_RESULT","details":{"stage":"relay_endpoint_load","outcome":"error","reason":"dependency_error"}}
+00:00 +61: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_diagnostics_test.dart: availability reports the typed resolver rejection
+[FLOW] {"ts":"2026-09-05T18:06:32.529066Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_INPUT","details":{"contactAccepted":false,"contactBlocked":false,"trustedDeviceCount":1,"relayEndpointPresent":true,"wakeHandleGrantPresent":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.530161Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_RESULT","details":{"stage":"endpoint_resolve","outcome":"unavailable","reason":"notAccepted"}}
+00:00 +62: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_diagnostics_test.dart: availability recovers a missing received wake handle once
+[FLOW] {"ts":"2026-09-05T18:06:32.534180Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_INPUT","details":{"contactAccepted":true,"contactBlocked":false,"trustedDeviceCount":1,"relayEndpointPresent":true,"wakeHandleGrantPresent":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.535423Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_RESULT","details":{"stage":"ready","outcome":"available","reason":"none"}}
+00:00 +63: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_diagnostics_test.dart: availability emits one identifier-free ready result
+[FLOW] {"ts":"2026-09-05T18:06:32.537494Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_INPUT","details":{"contactAccepted":true,"contactBlocked":false,"trustedDeviceCount":1,"relayEndpointPresent":true,"wakeHandleGrantPresent":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.537809Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_RESULT","details":{"stage":"ready","outcome":"available","reason":"none"}}
+00:00 +64: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_diagnostics_test.dart: call capability advertisement exposes identifier-free stage results
+00:00 +65: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_diagnostics_test.dart: media bundle close failure names the failing stage
+[FLOW] {"ts":"2026-09-05T18:06:32.556376Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MEDIA_CLOSE_FAILURE_STAGE","details":{"stage":"audio_cleanup"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.557243Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MEDIA_CLOSE_FAILURE_STAGE","details":{"stage":"engine_release"}}
+00:01 +66: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: (setUpAll)
+00:01 +66: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: default-off flags construct no runtime and install no subscription
+[FLOW] {"ts":"2026-09-05T18:06:32.736788Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"disabled","enabled":false,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+00:01 +67: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: foreground call graph does not require later native lifecycle flags
+00:01 +68: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: foreground graph stays fail-closed while TURN gate is disabled
+00:01 +69: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing-only flags build and advertise no call graph
+[FLOW] {"ts":"2026-09-05T18:06:32.761398Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"disabled","enabled":false,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+00:01 +70: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: incoming-only graph never exposes or invokes outgoing capability
+[FLOW] {"ts":"2026-09-05T18:06:32.766004Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":false,"stage":"complete"}}
+00:01 +71: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing capability delegates once to the current started graph only
+[FLOW] {"ts":"2026-09-05T18:06:32.768475Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.769515Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T18:06:32.769810Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +72: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing refreshes caller authority after microphone grant before invite
+[FLOW] {"ts":"2026-09-05T18:06:32.771787Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +73: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: failed caller wake-authority distribution blocks invite fail closed
+[FLOW] {"ts":"2026-09-05T18:06:32.774346Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.774922Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +74: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: wake-authority completion cannot enter a withdrawn graph
+[FLOW] {"ts":"2026-09-05T18:06:32.778189Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.778640Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+00:01 +75: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: failed pre-call authority refresh withdraws before invite delegation
+[FLOW] {"ts":"2026-09-05T18:06:32.780582Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +76: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing microphone preflight blocks graph delegation until granted
+[FLOW] {"ts":"2026-09-05T18:06:32.782373Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +77: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing microphone refusal or failure is fixed fail-closed
+[FLOW] {"ts":"2026-09-05T18:06:32.784806Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.785313Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.785718Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +78: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing permission completion cannot enter a withdrawn or replaced graph
+[FLOW] {"ts":"2026-09-05T18:06:32.787697Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.788127Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T18:06:32.788544Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.788818Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T18:06:32.789168Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +79: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: contact action stays hidden unless current graph resolves one endpoint
+[FLOW] {"ts":"2026-09-05T18:06:32.791528Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +80: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: stable composition delegates call-wake distribution only to active graph
+[FLOW] {"ts":"2026-09-05T18:06:32.793997Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +81: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: resume rearms current call-wake grants once per process
+[FLOW] {"ts":"2026-09-05T18:06:32.798361Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.799012Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.799215Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+00:01 +82: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: resume retries call-wake rearm after a transient failure
+[FLOW] {"ts":"2026-09-05T18:06:32.801474Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.801736Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.801928Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+00:01 +83: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: concurrent resumes coalesce one call-wake rearm attempt
+[FLOW] {"ts":"2026-09-05T18:06:32.803687Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.804963Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.805197Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+00:01 +84: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: wake-handle refresh only re-publishes outgoing availability
+[FLOW] {"ts":"2026-09-05T18:06:32.807107Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +85: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: contact eligibility refreshes serialize and withdraw on failed authority
+[FLOW] {"ts":"2026-09-05T18:06:32.809347Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.810056Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RECONCILE_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.810475Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RECONCILE_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+00:01 +86: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing readiness re-emits after resume and graph replacement
+[FLOW] {"ts":"2026-09-05T18:06:32.812249Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.812478Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.812772Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T18:06:32.813144Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +87: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: stable foreground capability replays current graph and fences stale actions
+[FLOW] {"ts":"2026-09-05T18:06:32.815422Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +88: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: the call the surface showed passes its terminal snapshot through once
+[FLOW] {"ts":"2026-09-05T18:06:32.819889Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.820181Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+00:01 +89: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: withdrawal publishes null before shutdown and ignores old graph
+[FLOW] {"ts":"2026-09-05T18:06:32.822746Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.823100Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T18:06:32.823799Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +90: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: incoming presentation requires foreground listener validation and expiry
+00:01 +91: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: backgrounding withdraws UI and terminalizes only the active call
+00:01 +92: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: resume restores a validated incoming active call after native UI
+00:01 +93: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: enabled graph starts after readiness and owns an independent lifecycle
+00:01 +94: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: start and resume diagnostics expose only identifier-free graph state
+00:01 +95: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: failed start diagnostic distinguishes capability advertisement withdrawal
+00:01 +96: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +97: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +98: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +99: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +100: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +101: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +102: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +103: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +104: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +105: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +106: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +107: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +108: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +109: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +110: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +111: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +112: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +112: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter send uses the pinned endpoint when the directory record is gone
+[FLOW] {"ts":"2026-09-05T18:06:32.988269Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:32.997998Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:32.999772Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unavailable"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.000160Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_PINNED_FALLBACK","details":{"reason":"unavailable","adapter":"control"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.000783Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.001010Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:01 +113: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +113: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter invite and blocked resolutions never use the pinned endpoint
+[FLOW] {"ts":"2026-09-05T18:06:33.004331Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.004609Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.005547Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unavailable"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.006041Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"blocked"}}
+00:01 +114: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +114: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter pinned endpoint is purged at terminal cleanup
+[FLOW] {"ts":"2026-09-05T18:06:33.008807Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.009098Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.009383Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unavailable"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.009635Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_PINNED_FALLBACK","details":{"reason":"unavailable","adapter":"control"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.010154Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.010349Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.010967Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unavailable"}}
+00:01 +115: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +115: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter maps transmit receipts without recursively dispatching coordinator events
+[FLOW] {"ts":"2026-09-05T18:06:33.017582Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.017853Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:01 +116: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +116: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter propagates direct-first pending mailbox settlement
+[FLOW] {"ts":"2026-09-05T18:06:33.023234Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.023922Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:01 +117: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +117: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter the relay wake outcome reaches the executor result without a receipt of its own
+[FLOW] {"ts":"2026-09-05T18:06:33.026702Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.026963Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"dispatched"}}
+00:01 +118: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +118: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter propagates direct-first pending mailbox settlement
+[FLOW] {"ts":"2026-09-05T18:06:33.029521Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.029882Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:01 +119: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +119: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter maps arbitrary failures to fixed-shape redacted errors
+[FLOW] {"ts":"2026-09-05T18:06:33.031686Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unexpected"}}
+00:01 +120: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +120: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallNegotiationSignalingAdapter uses context bindings and monotonic metadata for SDP, ICE, and restart
+[FLOW] {"ts":"2026-09-05T18:06:33.035959Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.036168Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.036823Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.037025Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.037997Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.038207Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.038803Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.039023Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.039753Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.039935Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.040630Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.040831Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:01 +121: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +121: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallNegotiationSignalingAdapter negotiation send fails closed after rotation
+[FLOW] {"ts":"2026-09-05T18:06:33.044792Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.045023Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:01 +122: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +122: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallNegotiationSignalingAdapter sendDescription uses the pinned endpoint when the directory record is gone
+[FLOW] {"ts":"2026-09-05T18:06:33.047392Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.047597Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.047890Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_PINNED_FALLBACK","details":{"reason":"unavailable","adapter":"negotiation"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.048474Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.048911Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:01 +123: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +124: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +124: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallNegotiationSignalingAdapter answers from the authenticated incoming binding
+[FLOW] {"ts":"2026-09-05T18:06:33.052794Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.053085Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+00:01 +125: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +126: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +127: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+[FLOW] {"ts":"2026-09-05T18:06:33.201243Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"DIRECT_LINKED_DEVICE_ADDRESSING_MIGRATION_START","details":{"migration":"112_direct_linked_device_addressing"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.210652Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"DIRECT_LINKED_DEVICE_ADDRESSING_MIGRATION_SUCCESS","details":{"migration":"112_direct_linked_device_addressing"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.211433Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"CALL_HISTORY_MIGRATION_START","details":{"migration":"117_call_history"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.212316Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"CALL_HISTORY_MIGRATION_SUCCESS","details":{"migration":"117_call_history"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.238811Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MESSAGE_ROUTER_START","details":{}}
+00:01 +128: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +128: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: an Android graph publishes the FCM token as the relay standard call token
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +129: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +129: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production factory is reachable and disposes no shared router transport
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +130: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +130: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production iOS publishes VoIP token before endpoint and survives background
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +130: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+[FLOW] {"ts":"2026-09-05T18:06:33.318279Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"QR_FL_BRIDGE_SIGN_REQUEST","details":{"dataLength":299,"correlationId":"1788631593318096"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.319726Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"QR_FL_BRIDGE_SIGN_RESPONSE","details":{"ok":true,"correlationId":"1788631593318096"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.320999Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CAPABILITY_ADVERTISEMENT_RESULT","details":{"stage":"ready","outcome":"ready"}}
+00:01 +131: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+[FLOW] {"ts":"2026-09-05T18:06:33.321905Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+00:01 +131: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production iOS token success plus endpoint failure rolls back before detach
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +131: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+[FLOW] {"ts":"2026-09-05T18:06:33.326688Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteInvite","state":"incomingValidating","endReason":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.335013Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"incomingValidated","state":"incomingValidating","endReason":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.345281Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_AUTHORITY_BRIDGE_FAILURE","details":{"operation":"call_token_set_v1","code":"CALL_STALE_EPOCH"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.354553Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_VOIP_TOKEN_EPOCH_ADVANCE_RESULT","details":{"outcome":"native_failure"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.355648Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CAPABILITY_ADVERTISEMENT_RESULT","details":{"stage":"voip_token","outcome":"deferred_live_call"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.356100Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_deferred","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+00:01 +132: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +132: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production iOS token publication failure disables native callability
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +133: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +133: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production iOS malformed lifecycle attach publishes no call authority
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +133: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+[FLOW] {"ts":"2026-09-05T18:06:33.381424Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"appShutdown","state":"ended","endReason":"appShutdown"}}
+00:01 +134: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +134: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production token invalidation withdraws outgoing before ordered teardown
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +134: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+[FLOW] {"ts":"2026-09-05T18:06:33.402129Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_TERMINAL_CLEANUP_RESULT","details":{"status":"ready","reason":"none"}}
+00:01 +135: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +135: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production shutdown during endpoint wait cannot enqueue outgoing call
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +136: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +136: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production revalidates current wake authority after endpoint wait before invite
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +136: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+[FLOW] {"ts":"2026-09-05T18:06:33.424199Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MESSAGE_ROUTER_STOP","details":{}}
+00:01 +137: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +137: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: native disable false or throw cannot skip the other rollback legs
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +138: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +138: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production gate-false shutdown still revokes exact iOS authorities
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +139: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +140: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +141: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: failed advertisement during a live call revokes nothing and ends no CallKit call
+00:01 +142: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production graph wires one coordinator to real call-only effects
+00:01 +142: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: token authority invalidation during a live call defers withdrawal until the call ends
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+[FLOW] {"ts":"2026-09-05T18:06:33.463856Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"DIRECT_LINKED_DEVICE_ADDRESSING_MIGRATION_START","details":{"migration":"112_direct_linked_device_addressing"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.464835Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"DIRECT_LINKED_DEVICE_ADDRESSING_MIGRATION_SUCCESS","details":{"migration":"112_direct_linked_device_addressing"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.465028Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"CALL_HISTORY_MIGRATION_START","details":{"migration":"117_call_history"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.465509Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"CALL_HISTORY_MIGRATION_SUCCESS","details":{"migration":"117_call_history"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.466105Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MESSAGE_ROUTER_START","details":{}}
+00:01 +143: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: token authority invalidation during a live call defers withdrawal until the call ends
+[FLOW] {"ts":"2026-09-05T18:06:33.472718Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"QR_FL_BRIDGE_SIGN_REQUEST","details":{"dataLength":299,"correlationId":"1788631593472670"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.473027Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"QR_FL_BRIDGE_SIGN_RESPONSE","details":{"ok":true,"correlationId":"1788631593472670"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.473324Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CAPABILITY_ADVERTISEMENT_RESULT","details":{"stage":"ready","outcome":"ready"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.473574Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.475102Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteInvite","state":"incomingValidating","endReason":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.475444Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"incomingValidated","state":"incomingValidating","endReason":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.477989Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_AUTHORITY_BRIDGE_FAILURE","details":{"operation":"call_token_set_v1","code":"CALL_STALE_EPOCH"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.478220Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_VOIP_TOKEN_EPOCH_ADVANCE_RESULT","details":{"outcome":"native_failure"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.478503Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CAPABILITY_ADVERTISEMENT_RESULT","details":{"stage":"voip_token","outcome":"deferred_live_call"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.478680Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_deferred","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+00:01 +144: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: token authority invalidation during a live call defers withdrawal until the call ends
+00:01 +145: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: token authority invalidation during a live call defers withdrawal until the call ends
+[FLOW] {"ts":"2026-09-05T18:06:33.484620Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteTerminate","state":"ended","endReason":"remoteHangup"}}
+00:01 +146: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: token authority invalidation during a live call defers withdrawal until the call ends
+[FLOW] {"ts":"2026-09-05T18:06:33.498256Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_AUTHORITY_BRIDGE_FAILURE","details":{"operation":"call_token_set_v1","code":"CALL_STALE_EPOCH"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.498731Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_TERMINAL_CLEANUP_RESULT","details":{"status":"ready","reason":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.500213Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_VOIP_TOKEN_EPOCH_ADVANCE_RESULT","details":{"outcome":"native_failure"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.500429Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CAPABILITY_ADVERTISEMENT_RESULT","details":{"stage":"voip_token","outcome":"unavailable"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.502729Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RECONCILE_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T18:06:33.503720Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MESSAGE_ROUTER_STOP","details":{}}
+00:01 +147: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: deferred advertisement is retried once at the terminal snapshot
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+[FLOW] {"ts":"2026-09-05T18:06:33.507422Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"DIRECT_LINKED_DEVICE_ADDRESSING_MIGRATION_START","details":{"migration":"112_direct_linked_device_addressing"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.508614Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"DIRECT_LINKED_DEVICE_ADDRESSING_MIGRATION_SUCCESS","details":{"migration":"112_direct_linked_device_addressing"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.508787Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"CALL_HISTORY_MIGRATION_START","details":{"migration":"117_call_history"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.509317Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"CALL_HISTORY_MIGRATION_SUCCESS","details":{"migration":"117_call_history"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.509822Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MESSAGE_ROUTER_START","details":{}}
+[FLOW] {"ts":"2026-09-05T18:06:33.513073Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"QR_FL_BRIDGE_SIGN_REQUEST","details":{"dataLength":299,"correlationId":"1788631593513038"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.513371Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"QR_FL_BRIDGE_SIGN_RESPONSE","details":{"ok":true,"correlationId":"1788631593513038"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.513616Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CAPABILITY_ADVERTISEMENT_RESULT","details":{"stage":"ready","outcome":"ready"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.513869Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.514483Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteInvite","state":"incomingValidating","endReason":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.514843Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"incomingValidated","state":"incomingValidating","endReason":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.515448Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_AUTHORITY_BRIDGE_FAILURE","details":{"operation":"call_token_set_v1","code":"CALL_STALE_EPOCH"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.515697Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_VOIP_TOKEN_EPOCH_ADVANCE_RESULT","details":{"outcome":"native_failure"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.515860Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CAPABILITY_ADVERTISEMENT_RESULT","details":{"stage":"voip_token","outcome":"deferred_live_call"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.516002Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_deferred","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.516267Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteTerminate","state":"ended","endReason":"remoteHangup"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.517150Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_TERMINAL_CLEANUP_RESULT","details":{"status":"ready","reason":"none"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.520999Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"QR_FL_BRIDGE_SIGN_REQUEST","details":{"dataLength":299,"correlationId":"1788631593520950"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.521296Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"QR_FL_BRIDGE_SIGN_RESPONSE","details":{"ok":true,"correlationId":"1788631593520950"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.521576Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CAPABILITY_ADVERTISEMENT_RESULT","details":{"stage":"ready","outcome":"ready"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.521718Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RECONCILE_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T18:06:33.523175Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MESSAGE_ROUTER_STOP","details":{}}
+00:01 +148: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: idle advertisement failure revokes the endpoint only
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+[FLOW] {"ts":"2026-09-05T18:06:33.525743Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"DIRECT_LINKED_DEVICE_ADDRESSING_MIGRATION_START","details":{"migration":"112_direct_linked_device_addressing"}}
+[FLOW] {"ts":"2026-09-05T18:06:33.526660Z","milestone":"M1_IDENTITY_INIT","layer":"DB","event":"DIRECT_LINKED_DEVICE_ADDRESSING_MIGRATION_SUCCESS","details":{"migration":"112_direct_linked_device_addressing"}}
+00:01 +149: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: relay stale epoch advances the native epoch and keeps the graph callable
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +150: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: a call wake drains the production call mailbox
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +151: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: a relay recovery drains the production call mailbox once
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +152: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: shutdown revokes endpoint and token
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +153: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_call_signaling_graph_live_call_guard_test.dart: advertisement failure with a terminal session performs the idle rollback
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
+00:01 +154: All tests passed!

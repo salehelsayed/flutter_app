@@ -426,6 +426,132 @@ class HeadlessCallAdmissionWorkerTest {
         assertEquals(3, enqueuer.requests.size)
     }
 
+    // Plan 404 (device 2026-09-05 17:44Z): a call presented headlessly and
+    // declined natively never told the caller, whose ringback played until its
+    // own cancel. The decline schedules one decline-reply run for the same
+    // call: serialized behind any admission job of that call, carrying the
+    // mode as one extra input key and the descriptor's own wake handle.
+    @Test
+    fun `scheduler enqueues one decline reply job for a declined headless call`() {
+        val enqueuer = RecordingHeadlessCallAdmissionEnqueuer()
+        val scheduler = HeadlessCallAdmissionWorkScheduler(
+            context = context,
+            enqueuer = enqueuer,
+            nowMs = { NOW_MS },
+        )
+        val descriptor = declinedDescriptor()
+
+        assertTrue(scheduler.enqueue(payload()))
+        assertTrue(scheduler.enqueueDeclineReply(descriptor))
+
+        assertEquals(2, enqueuer.requests.size)
+        assertEquals(enqueuer.requests[0].uniqueName, enqueuer.requests[1].uniqueName)
+        val recorded = enqueuer.requests[1]
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, recorded.policy)
+        assertTrue(recorded.request.workSpec.expedited)
+        assertEquals(
+            NetworkType.CONNECTED,
+            recorded.request.workSpec.constraints.requiredNetworkType,
+        )
+        assertEquals(
+            HeadlessCallAdmissionWorker::class.java.name,
+            recorded.request.workSpec.workerClassName,
+        )
+        val input = recorded.request.workSpec.input
+        assertEquals(
+            setOf(
+                HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID,
+                HeadlessCallAdmissionWorkScheduler.INPUT_WAKE_HANDLE,
+                HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS,
+                HeadlessCallAdmissionWorkScheduler.INPUT_MODE,
+            ),
+            input.keyValueMap.keys,
+        )
+        assertEquals(CALL_ID, input.getString(HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID))
+        assertEquals(
+            NATIVE_WAKE_HANDLE,
+            input.getString(HeadlessCallAdmissionWorkScheduler.INPUT_WAKE_HANDLE),
+        )
+        assertEquals(
+            EXPIRES_AT_MS,
+            input.getLong(HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS, -1L),
+        )
+        assertEquals(
+            HeadlessCallAdmissionMode.DECLINE_REPLY.wireName,
+            input.getString(HeadlessCallAdmissionWorkScheduler.INPUT_MODE),
+        )
+
+        assertFalse(scheduler.enqueueDeclineReply(descriptor.copy(expiresAtMs = NOW_MS)))
+        assertFalse(scheduler.enqueueDeclineReply(descriptor.copy(callHandle = "readable")))
+        assertEquals(2, enqueuer.requests.size)
+    }
+
+    @Test
+    fun `decline reply input runs the engine in decline mode and never presents`() =
+        runBlocking {
+            for (
+                disposition in listOf(
+                    HeadlessCallAdmissionDisposition.ADMITTED,
+                    HeadlessCallAdmissionDisposition.TERMINAL,
+                )
+            ) {
+                var observedMode: HeadlessCallAdmissionMode? = null
+                val runner = FakeHeadlessCallAdmissionRunner { observed ->
+                    observedMode = observed.mode
+                    validCompletionObject(observed).copy(disposition = disposition)
+                }
+                var presentations = 0
+                var terminalizations = 0
+                val execution = execution(
+                    runner = runner,
+                    nowMs = { NOW_MS },
+                    presentAuthenticated = { _, _ ->
+                        presentations += 1
+                        true
+                    },
+                    terminalizeAuthenticated = { _, _ ->
+                        terminalizations += 1
+                        true
+                    },
+                )
+
+                assertEquals(
+                    HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION,
+                    execution.execute(declineInput()),
+                )
+                assertEquals(HeadlessCallAdmissionMode.DECLINE_REPLY, observedMode)
+                assertEquals(1, runner.runCalls)
+                assertEquals(1, runner.finishCalls)
+                assertEquals(0, presentations)
+                assertEquals(0, terminalizations)
+            }
+        }
+
+    @Test
+    fun `an unknown mode never constructs an engine`() = runBlocking {
+        for (mode in listOf("admission", "", "DECLINE_REPLY", "decline-reply")) {
+            var constructed = 0
+            val execution = HeadlessCallAdmissionExecution(
+                runnerFactory = {
+                    constructed += 1
+                    FakeHeadlessCallAdmissionRunner { validCompletionObject(it) }
+                },
+                isStopped = { false },
+                nowMs = { NOW_MS },
+                timeoutMillis = 1_000L,
+                nonceFactory = { "nonce-a" },
+                presentAuthenticated = { _, _ -> true },
+                terminalizeAuthenticated = { _, _ -> true },
+            )
+
+            assertEquals(
+                HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION,
+                execution.execute(declineInput(mode = mode)),
+            )
+            assertEquals(0, constructed)
+        }
+    }
+
     @Test
     @Config(sdk = [24])
     fun `pre Android 12 expedited foreground fallback is generic and silent`() {
@@ -541,6 +667,26 @@ class HeadlessCallAdmissionWorkerTest {
         expiresAtMs = EXPIRES_AT_MS,
     )
 
+    private fun declinedDescriptor() = PendingNativeCallDescriptor(
+        nativeCallId = UUID.fromString(CALL_ID),
+        callHandle = CALL_ID,
+        wakeHandle = NATIVE_WAKE_HANDLE,
+        receivedAtMs = NOW_MS,
+        expiresAtMs = EXPIRES_AT_MS,
+        highestSequence = 2L,
+        terminalEvent = null,
+        events = emptyList(),
+    )
+
+    private fun declineInput(
+        mode: String = HeadlessCallAdmissionMode.DECLINE_REPLY.wireName,
+    ): Data = Data.Builder()
+        .putString(HeadlessCallAdmissionWorkScheduler.INPUT_CALL_ID, CALL_ID)
+        .putString(HeadlessCallAdmissionWorkScheduler.INPUT_WAKE_HANDLE, NATIVE_WAKE_HANDLE)
+        .putLong(HeadlessCallAdmissionWorkScheduler.INPUT_EXPIRES_AT_MS, EXPIRES_AT_MS)
+        .putString(HeadlessCallAdmissionWorkScheduler.INPUT_MODE, mode)
+        .build()
+
     private fun sourceFile(name: String): File = File(
         requireNotNull(System.getProperty("user.dir")),
         "src/main/kotlin/com/mknoon/app/call/$name",
@@ -553,6 +699,7 @@ class HeadlessCallAdmissionWorkerTest {
         private const val OTHER_CALL_ID = "10112233-4455-6677-8899-aabbccddeeff"
         private const val WAKE_HANDLE = "10112233445566778899aabbccddeeff"
         private const val OTHER_WAKE_HANDLE = "20112233445566778899aabbccddeeff"
+        private const val NATIVE_WAKE_HANDLE = "30112233-4455-4677-8899-aabbccddeeff"
     }
 }
 

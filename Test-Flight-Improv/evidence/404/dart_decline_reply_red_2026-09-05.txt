@@ -1,0 +1,295 @@
+00:00 +0: loading /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart
+00:00 +0 -1: loading /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart [E]
+  Failed to load "/Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart":
+  Compilation failed for testPath=/Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart: test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart:64:28: Error: Undefined name 'HeadlessCallAdmissionMode'.
+      expect(admission.mode, HeadlessCallAdmissionMode.admission);
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart:73:26: Error: Undefined name 'HeadlessCallAdmissionMode'.
+      expect(decline.mode, HeadlessCallAdmissionMode.declineReply);
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart:64:22: Error: The getter 'mode' isn't defined for the type 'HeadlessCallAdmissionInvocation'.
+   - 'HeadlessCallAdmissionInvocation' is from 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart' ('lib/features/call/infrastructure/headless_call_admission_entrypoint.dart').
+  Try correcting the name to the name of an existing getter, or defining a getter or field named 'mode'.
+      expect(admission.mode, HeadlessCallAdmissionMode.admission);
+                       ^^^^
+  test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart:73:20: Error: The getter 'mode' isn't defined for the type 'HeadlessCallAdmissionInvocation'.
+   - 'HeadlessCallAdmissionInvocation' is from 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart' ('lib/features/call/infrastructure/headless_call_admission_entrypoint.dart').
+  Try correcting the name to the name of an existing getter, or defining a getter or field named 'mode'.
+      expect(decline.mode, HeadlessCallAdmissionMode.declineReply);
+                     ^^^^
+  .
+  Error: The Dart compiler exited unexpectedly.
+  package:flutter_tools/src/base/common.dart 34:3  throwToolExit
+  package:flutter_tools/src/compile.dart 939:11    DefaultResidentCompiler._compile.<fn>
+  dart:async/zone_root.dart 48:47                  _rootRunUnary
+  dart:async/zone.dart 733:19                      _CustomZone.runUnary
+  dart:async/future_impl.dart 948:45               Future._propagateToListeners.handleValueCallback
+  dart:async/future_impl.dart 977:13               Future._propagateToListeners
+  dart:async/future_impl.dart 862:9                Future._propagateToListeners
+  dart:async/future_impl.dart 720:5                Future._completeWithValue
+  dart:async/future_impl.dart 804:7                Future._asyncCompleteWithValue.<fn>
+  dart:async/zone_root.dart 35:13                  _rootRun
+  dart:async/zone.dart 726:19                      _CustomZone.run
+  dart:async/zone.dart 625:7                       _CustomZone.runGuarded
+  dart:async/zone.dart 666:23                      _CustomZone.bindCallbackGuarded.<fn>
+  dart:async/schedule_microtask.dart 40:35         _microtaskLoop
+  dart:async/schedule_microtask.dart 49:5          _startMicrotaskLoop
+  dart:isolate-patch/isolate_patch.dart 127:13     _runPendingImmediateCallback
+  dart:isolate-patch/isolate_patch.dart 194:5      _RawReceivePort._handleMessage
+  
+00:00 +0 -2: loading /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart [E]
+  Failed to load "/Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart":
+  Compilation failed for testPath=/Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: test/core/bootstrap/production_headless_call_admission_test.dart:476:13: Error: Undefined name 'HeadlessCallAdmissionMode'.
+        mode: HeadlessCallAdmissionMode.declineReply,
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:476:7: Error: No named parameter with the name 'mode'.
+        mode: HeadlessCallAdmissionMode.declineReply,
+        ^^^^
+  lib/features/call/infrastructure/headless_call_admission_entrypoint.dart:17:9: Context: Found this candidate, but the arguments don't match.
+    const HeadlessCallAdmissionInvocation({
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:488:9: Error: No named parameter with the name 'declineReplySender'.
+          declineReplySender: (invite) async {
+          ^^^^^^^^^^^^^^^^^^
+  lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+    MailboxProductionHeadlessCallAdmissionSession({
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:531:9: Error: No named parameter with the name 'declineReplySender'.
+          declineReplySender: (_) async {
+          ^^^^^^^^^^^^^^^^^^
+  lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+    MailboxProductionHeadlessCallAdmissionSession({
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:554:31: Error: 'HeadlessDeclineReplySender' isn't a type.
+          for (final sender in <HeadlessDeclineReplySender>[
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:562:13: Error: No named parameter with the name 'declineReplySender'.
+              declineReplySender: sender,
+              ^^^^^^^^^^^^^^^^^^
+  lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+    MailboxProductionHeadlessCallAdmissionSession({
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:596:11: Error: No named parameter with the name 'declineReplySender'.
+            declineReplySender: (_) async {
+            ^^^^^^^^^^^^^^^^^^
+  lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+    MailboxProductionHeadlessCallAdmissionSession({
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:614:11: Error: No named parameter with the name 'declineReplySender'.
+            declineReplySender: (_) async {
+            ^^^^^^^^^^^^^^^^^^
+  lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+    MailboxProductionHeadlessCallAdmissionSession({
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:628:11: Error: No named parameter with the name 'declineReplySender'.
+            declineReplySender: (_) async {
+            ^^^^^^^^^^^^^^^^^^
+  lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+    MailboxProductionHeadlessCallAdmissionSession({
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:648:9: Error: No named parameter with the name 'declineReplySender'.
+          declineReplySender: (_) async {
+          ^^^^^^^^^^^^^^^^^^
+  lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+    MailboxProductionHeadlessCallAdmissionSession({
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:672:9: Error: Undefined name 'HeadlessCallAdmissionMode'.
+          HeadlessCallAdmissionMode.declineReply,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:671:33: Error: The getter 'mode' isn't defined for the type 'HeadlessCallAdmissionInvocation'.
+   - 'HeadlessCallAdmissionInvocation' is from 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart' ('lib/features/call/infrastructure/headless_call_admission_entrypoint.dart').
+  Try correcting the name to the name of an existing getter, or defining a getter or field named 'mode'.
+          session.lastInvocation?.mode,
+                                  ^^^^
+  test/core/bootstrap/production_headless_call_admission_test.dart:779:9: Error: No named parameter with the name 'signal'.
+          signal: CallSignal.create(
+          ^^^^^^
+  lib/app/bootstrap/production_headless_call_admission.dart:29:9: Context: Found this candidate, but the arguments don't match.
+    const HeadlessAuthenticatedMailboxEvent({
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  .
+00:00 +0 -2: loading /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart [E]
+  Error: The Dart compiler exited unexpectedly.
+  package:flutter_tools/src/base/common.dart 34:3  throwToolExit
+  package:flutter_tools/src/compile.dart 939:11    DefaultResidentCompiler._compile.<fn>
+  dart:async/zone_root.dart 48:47                  _rootRunUnary
+  dart:async/zone.dart 733:19                      _CustomZone.runUnary
+  dart:async/future_impl.dart 948:45               Future._propagateToListeners.handleValueCallback
+  dart:async/future_impl.dart 977:13               Future._propagateToListeners
+  dart:async/future_impl.dart 862:9                Future._propagateToListeners
+  dart:async/future_impl.dart 720:5                Future._completeWithValue
+  dart:async/future_impl.dart 804:7                Future._asyncCompleteWithValue.<fn>
+  dart:async/zone_root.dart 35:13                  _rootRun
+  dart:async/zone.dart 726:19                      _CustomZone.run
+  dart:async/zone.dart 625:7                       _CustomZone.runGuarded
+  dart:async/zone.dart 666:23                      _CustomZone.bindCallbackGuarded.<fn>
+  dart:async/schedule_microtask.dart 40:35         _microtaskLoop
+  dart:async/schedule_microtask.dart 49:5          _startMicrotaskLoop
+  dart:isolate-patch/isolate_patch.dart 127:13     _runPendingImmediateCallback
+  dart:isolate-patch/isolate_patch.dart 194:5      _RawReceivePort._handleMessage
+  
+00:00 +0 -3: loading /Volumes/CrucialX9/flutter_app/test/features/call/application/headless_call_decline_reply_test.dart [E]
+  Failed to load "/Volumes/CrucialX9/flutter_app/test/features/call/application/headless_call_decline_reply_test.dart":
+  Compilation failed for testPath=/Volumes/CrucialX9/flutter_app/test/features/call/application/headless_call_decline_reply_test.dart: test/features/call/application/headless_call_decline_reply_test.dart:3:8: Error: Error when reading 'lib/features/call/application/headless_call_decline_reply.dart': No such file or directory
+  import 'package:flutter_app/features/call/application/headless_call_decline_reply.dart';
+         ^
+  test/features/call/application/headless_call_decline_reply_test.dart:65:8: Error: 'HeadlessCallDeclineReplyTransmitter' isn't a type.
+    late HeadlessCallDeclineReplyTransmitter transmitter;
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/features/call/application/headless_call_decline_reply_test.dart:76:19: Error: Method not found: 'HeadlessCallDeclineReplyTransmitter'.
+      transmitter = HeadlessCallDeclineReplyTransmitter(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  .
+00:00 +0 -3: loading /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart [E]
+  Error: The Dart compiler exited unexpectedly.
+  package:flutter_tools/src/base/common.dart 34:3  throwToolExit
+  package:flutter_tools/src/compile.dart 939:11    DefaultResidentCompiler._compile.<fn>
+  dart:async/zone_root.dart 48:47                  _rootRunUnary
+  dart:async/zone.dart 733:19                      _CustomZone.runUnary
+  dart:async/future_impl.dart 948:45               Future._propagateToListeners.handleValueCallback
+  dart:async/future_impl.dart 977:13               Future._propagateToListeners
+  dart:async/future_impl.dart 862:9                Future._propagateToListeners
+  dart:async/future_impl.dart 720:5                Future._completeWithValue
+  dart:async/future_impl.dart 804:7                Future._asyncCompleteWithValue.<fn>
+  dart:async/zone_root.dart 35:13                  _rootRun
+  dart:async/zone.dart 726:19                      _CustomZone.run
+  dart:async/zone.dart 625:7                       _CustomZone.runGuarded
+  dart:async/zone.dart 666:23                      _CustomZone.bindCallbackGuarded.<fn>
+  dart:async/schedule_microtask.dart 40:35         _microtaskLoop
+  dart:async/schedule_microtask.dart 49:5          _startMicrotaskLoop
+  dart:isolate-patch/isolate_patch.dart 127:13     _runPendingImmediateCallback
+  dart:isolate-patch/isolate_patch.dart 194:5      _RawReceivePort._handleMessage
+  
+00:00 +0 -4: loading /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart [E]
+  Failed to load "/Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart":
+  Compilation failed for testPath=/Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: test/features/call/application/call_signaling_service_test.dart:1002:43: Error: Required named parameter 'coordinator' must be provided.
+        final service = CallSignalingService(
+                                            ^
+  lib/features/call/application/call_signaling_service.dart:86:9: Context: Found this candidate, but the arguments don't match.
+    const CallSignalingService({
+          ^^^^^^^^^^^^^^^^^^^^
+  .
+00:00 +0 -4: Some tests failed.
+test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart:64:28: Error: Undefined name 'HeadlessCallAdmissionMode'.
+    expect(admission.mode, HeadlessCallAdmissionMode.admission);
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^
+test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart:73:26: Error: Undefined name 'HeadlessCallAdmissionMode'.
+    expect(decline.mode, HeadlessCallAdmissionMode.declineReply);
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart:64:22: Error: The getter 'mode' isn't defined for the type 'HeadlessCallAdmissionInvocation'.
+ - 'HeadlessCallAdmissionInvocation' is from 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart' ('lib/features/call/infrastructure/headless_call_admission_entrypoint.dart').
+Try correcting the name to the name of an existing getter, or defining a getter or field named 'mode'.
+    expect(admission.mode, HeadlessCallAdmissionMode.admission);
+                     ^^^^
+test/features/call/infrastructure/headless_call_admission_entrypoint_test.dart:73:20: Error: The getter 'mode' isn't defined for the type 'HeadlessCallAdmissionInvocation'.
+ - 'HeadlessCallAdmissionInvocation' is from 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart' ('lib/features/call/infrastructure/headless_call_admission_entrypoint.dart').
+Try correcting the name to the name of an existing getter, or defining a getter or field named 'mode'.
+    expect(decline.mode, HeadlessCallAdmissionMode.declineReply);
+                   ^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:476:13: Error: Undefined name 'HeadlessCallAdmissionMode'.
+      mode: HeadlessCallAdmissionMode.declineReply,
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:476:7: Error: No named parameter with the name 'mode'.
+      mode: HeadlessCallAdmissionMode.declineReply,
+      ^^^^
+lib/features/call/infrastructure/headless_call_admission_entrypoint.dart:17:9: Context: Found this candidate, but the arguments don't match.
+  const HeadlessCallAdmissionInvocation({
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:488:9: Error: No named parameter with the name 'declineReplySender'.
+        declineReplySender: (invite) async {
+        ^^^^^^^^^^^^^^^^^^
+lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+  MailboxProductionHeadlessCallAdmissionSession({
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:531:9: Error: No named parameter with the name 'declineReplySender'.
+        declineReplySender: (_) async {
+        ^^^^^^^^^^^^^^^^^^
+lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+  MailboxProductionHeadlessCallAdmissionSession({
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:554:31: Error: 'HeadlessDeclineReplySender' isn't a type.
+        for (final sender in <HeadlessDeclineReplySender>[
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:562:13: Error: No named parameter with the name 'declineReplySender'.
+            declineReplySender: sender,
+            ^^^^^^^^^^^^^^^^^^
+lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+  MailboxProductionHeadlessCallAdmissionSession({
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:596:11: Error: No named parameter with the name 'declineReplySender'.
+          declineReplySender: (_) async {
+          ^^^^^^^^^^^^^^^^^^
+lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+  MailboxProductionHeadlessCallAdmissionSession({
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:614:11: Error: No named parameter with the name 'declineReplySender'.
+          declineReplySender: (_) async {
+          ^^^^^^^^^^^^^^^^^^
+lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+  MailboxProductionHeadlessCallAdmissionSession({
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:628:11: Error: No named parameter with the name 'declineReplySender'.
+          declineReplySender: (_) async {
+          ^^^^^^^^^^^^^^^^^^
+lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+  MailboxProductionHeadlessCallAdmissionSession({
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:648:9: Error: No named parameter with the name 'declineReplySender'.
+        declineReplySender: (_) async {
+        ^^^^^^^^^^^^^^^^^^
+lib/app/bootstrap/production_headless_call_admission.dart:55:3: Context: Found this candidate, but the arguments don't match.
+  MailboxProductionHeadlessCallAdmissionSession({
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:672:9: Error: Undefined name 'HeadlessCallAdmissionMode'.
+        HeadlessCallAdmissionMode.declineReply,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:671:33: Error: The getter 'mode' isn't defined for the type 'HeadlessCallAdmissionInvocation'.
+ - 'HeadlessCallAdmissionInvocation' is from 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart' ('lib/features/call/infrastructure/headless_call_admission_entrypoint.dart').
+Try correcting the name to the name of an existing getter, or defining a getter or field named 'mode'.
+        session.lastInvocation?.mode,
+                                ^^^^
+test/core/bootstrap/production_headless_call_admission_test.dart:779:9: Error: No named parameter with the name 'signal'.
+        signal: CallSignal.create(
+        ^^^^^^
+lib/app/bootstrap/production_headless_call_admission.dart:29:9: Context: Found this candidate, but the arguments don't match.
+  const HeadlessAuthenticatedMailboxEvent({
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/features/call/application/headless_call_decline_reply_test.dart:3:8: Error: Error when reading 'lib/features/call/application/headless_call_decline_reply.dart': No such file or directory
+import 'package:flutter_app/features/call/application/headless_call_decline_reply.dart';
+       ^
+test/features/call/application/headless_call_decline_reply_test.dart:65:8: Error: 'HeadlessCallDeclineReplyTransmitter' isn't a type.
+  late HeadlessCallDeclineReplyTransmitter transmitter;
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/features/call/application/headless_call_decline_reply_test.dart:76:19: Error: Method not found: 'HeadlessCallDeclineReplyTransmitter'.
+    transmitter = HeadlessCallDeclineReplyTransmitter(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+test/features/call/application/call_signaling_service_test.dart:1002:43: Error: Required named parameter 'coordinator' must be provided.
+      final service = CallSignalingService(
+                                          ^
+lib/features/call/application/call_signaling_service.dart:86:9: Context: Found this candidate, but the arguments don't match.
+  const CallSignalingService({
+        ^^^^^^^^^^^^^^^^^^^^
+=== RED: direct transport ===
+test/features/call/infrastructure/bridge_call_direct_transport_test.dart:4:8: Error: Error when reading 'lib/features/call/infrastructure/bridge_call_direct_transport.dart': No such file or directory
+import 'package:flutter_app/features/call/infrastructure/bridge_call_direct_transport.dart';
+       ^
+test/features/call/infrastructure/bridge_call_direct_transport_test.dart:30:8: Error: 'BridgeCallDirectTransport' isn't a type.
+  late BridgeCallDirectTransport transport;
+       ^^^^^^^^^^^^^^^^^^^^^^^^^
+test/features/call/infrastructure/bridge_call_direct_transport_test.dart:34:17: Error: Method not found: 'BridgeCallDirectTransport'.
+    transport = BridgeCallDirectTransport(bridge: bridge, timeoutMs: 4000);
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+00:00 +0: loading /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/bridge_call_direct_transport_test.dart
+00:00 +0 -1: loading /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/bridge_call_direct_transport_test.dart [E]
+  Failed to load "/Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/bridge_call_direct_transport_test.dart":
+  Compilation failed for testPath=/Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/bridge_call_direct_transport_test.dart: test/features/call/infrastructure/bridge_call_direct_transport_test.dart:4:8: Error: Error when reading 'lib/features/call/infrastructure/bridge_call_direct_transport.dart': No such file or directory
+  import 'package:flutter_app/features/call/infrastructure/bridge_call_direct_transport.dart';
+         ^
+  test/features/call/infrastructure/bridge_call_direct_transport_test.dart:30:8: Error: 'BridgeCallDirectTransport' isn't a type.
+    late BridgeCallDirectTransport transport;
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  test/features/call/infrastructure/bridge_call_direct_transport_test.dart:34:17: Error: Method not found: 'BridgeCallDirectTransport'.
+      transport = BridgeCallDirectTransport(bridge: bridge, timeoutMs: 4000);
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+  .
+00:00 +0 -1: Some tests failed.
