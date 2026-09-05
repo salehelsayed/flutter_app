@@ -847,7 +847,22 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   }
 
   func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+    synchronized { configureCallAudioSession(stage: "start") }
     action.fulfill()
+  }
+
+  /// Configures the call audio session before an answer or start action is
+  /// fulfilled, as Apple's CallKit sample does. CallKit activates the session
+  /// the app configured; on a first call nothing was configured yet, and the
+  /// activation (and `didActivate`) never came, so media could not start.
+  /// This only sets the category; activation stays with CallKit.
+  private func configureCallAudioSession(stage: String) {
+    do {
+      try audio.prepareForCallKitActivation()
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] audio_session=configured stage=" + stage)
+    } catch {
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] audio_session=configure_failed stage=" + stage)
+    }
   }
 
   func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
@@ -906,6 +921,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       answeredCallIds.insert(nativeCallId)
       scheduleAnswerAdoptionBound(nativeCallId)
       mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] answer=recorded")
+      configureCallAudioSession(stage: "answer")
       return true
     }
   }

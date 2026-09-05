@@ -405,7 +405,9 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     )
     XCTAssertTrue(rig.controller.acknowledge(callA, through: 1, disposition: .adopted))
     XCTAssertTrue(rig.controller.activateAudio(callA))
-    XCTAssertEqual(rig.audio.prepareCount, 1)
+    // Configured once at answer (before CallKit activates) and once at the
+    // activation latch.
+    XCTAssertEqual(rig.audio.prepareCount, 2)
     XCTAssertTrue(rig.controller.requestRoute(callA, route: "speaker"))
     XCTAssertEqual(rig.audio.requestedRoutes, ["speaker"])
     XCTAssertTrue(rig.controller.deactivateAudio(callA))
@@ -877,6 +879,21 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       capability: capability,
       notificationCenter: notificationCenter
     )
+  }
+
+  // MARK: - Call audio session configuration
+
+  func testAnswerConfiguresTheCallAudioSessionBeforeFulfilment() {
+    let rig = makeRig()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertEqual(rig.audio.prepareCount, 0, "ringing never configures call audio")
+
+    XCTAssertTrue(rig.controller.handleAnswer(callA))
+
+    // CallKit activates whatever session the app configured before the
+    // answer action is fulfilled; configuring only inside didActivate leaves
+    // nothing for it to activate on the first call.
+    XCTAssertEqual(rig.audio.prepareCount, 1)
   }
 
   // MARK: - Answer adoption bound
