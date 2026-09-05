@@ -1,0 +1,40 @@
+DEVICE PROOF — plan 406 (missed-call notification + killed-app history row)
+Build 38362fd48 / bundleVersion 260905232958 on all three phones.
+Captures: docker-ws/deploy-captures/fresh-260905233249
+
+=== missed-call notification posts (both platforms) ===
+iPhone 13 (Runner pid 1379)
+  23:35:23.377  MISSED_CALL_NOTIFICATION_SHOWN
+  23:37:14.961  MISSED_CALL_NOTIFICATION_POSTED  +  _SHOWN
+Pixel (pid 17974, app alive)
+  23:38:34.170  MISSED_CALL_NOTIFICATION_POSTED
+  23:38:34.173  MISSED_CALL_NOTIFICATION_SHOWN   status=cancelled
+  23:39:18.509  MISSED_CALL_NOTIFICATION_POSTED  +  _SHOWN
+
+status=cancelled is the callee's view of a caller who hung up before the
+answer, which is the exact case that used to leave the phone with nothing.
+
+=== suppression while the conversation is visible ===
+iPhone 13  23:36:32.442, 23:38:00.095, 23:38:20.985  MISSED_CALL_NOTIFICATION_SUPPRESSED
+Pixel      23:38:57.337                              MISSED_CALL_NOTIFICATION_SUPPRESSED
+
+Every suppression is preceded by its own CALL_TERMINAL_CLEANUP_RESULT, so the
+row was still projected — only the card was withheld. That is the intended
+split: the row appears live in the open chat, so a card would be noise.
+
+=== killed-app history row ===
+App killed at ~21:39:0xZ (pid 17974 gone, stopped=false so FCM still wakes it).
+A NEW process (pid 19395) then ran the headless worker for each call:
+  23:40:13.012  WM-WorkerWrapper Worker result SUCCESS  HeadlessCallAdmissionWorker
+  23:40:15.329  Starting work                           HeadlessCallAdmissionWorker
+  23:40:17.860  MknoonCallDisconnect CALL_ANDROID_DISCONNECT source=explicit_end
+  23:40:17.932  Worker result SUCCESS
+  23:40:32.569 / 23:40:35.085   second call, SUCCESS
+  23:40:37.159 / 23:40:39.683   third call, SUCCESS (CALL_ANDROID_DISCONNECT)
+User confirmed the Missed voice call row is present in the chat after reopening
+the app. Before this change the killed-app path wrote no row at all.
+
+=== still unverified on device ===
+- Ring-time mailbox drain (plan 407): the iPhone 11 capture stops at 23:33:14,
+  so the iPhone-to-iPhone cancel was not re-run on this build.
+- iOS `.unanswered` missed badge in the Phone app's Recents.

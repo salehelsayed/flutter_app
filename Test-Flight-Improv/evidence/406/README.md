@@ -69,3 +69,19 @@ to construct on a non-monotonic pair.
 does, and is only verifiable on a device. The user is not left with nothing —
 the incoming call still rings and its notification is shown — but the call is
 not summarised afterwards.
+
+## Device proof — 2026-09-05 21:35-21:40Z
+
+`device_proof_2026-09-05.txt`, captures `fresh-260905233249`, build
+`38362fd48`. The notification posts on BOTH platforms (`status=cancelled`,
+the callee's view of a caller who hung up before the answer), suppression
+holds while the conversation is visible, and every suppressed case still
+logged its `CALL_TERMINAL_CLEANUP_RESULT` — the row was projected, only the
+card was withheld.
+
+The killed-app row is proven too: after the app was killed (pid 17974 gone,
+`stopped=false`), a new process (19395) ran `HeadlessCallAdmissionWorker` to
+SUCCESS for three calls and the row was present on reopening.
+
+Still unverified: the plan-407 ring drain and the iOS `.unanswered` Recents
+badge.
