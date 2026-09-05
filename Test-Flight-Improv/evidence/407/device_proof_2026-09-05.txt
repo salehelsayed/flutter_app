@@ -1,0 +1,25 @@
+DEVICE PROOF — plan 407 (ring-time call mailbox drain)
+Build 38362fd48 / bundleVersion 260905232958.
+Captures: docker-ws/deploy-captures/fresh-260905233249
+
+=== before (build 260905230619, captures fresh-260905231926) ===
+21:21:03  iPhone 13  systemUiPresented -> ringing
+21:21:05  iPhone 11  cancel; terminate stored wake:"none", directAccepted:false
+21:21:07  iPhone 11  direct_send result:false
+21:21:10  iPhone 11  direct_send result:false
+21:21:14  iPhone 13  user declines BY HAND — first transition since 21:21:03
+          => 9 s of ringing after the caller hung up; the callee was never told.
+
+=== after (this build) ===
+21:43:19.566  iPhone 13  CALL_STATE_TRANSITION trigger=systemUiPresented state=ringing
+21:43:22.405  iPhone 13  CALL_STATE_TRANSITION trigger=remoteTerminate state=ended
+                         endReason=callerCancelled
+          => 2.8 s tap-to-end, self-initiated. One poll interval plus the
+             drain, exactly what the 2 s timer predicts.
+
+The relay still reports the attached-recipient skip; nothing about
+recipientAttached changed and nothing should. The fix is that the ringing
+callee now goes and looks instead of waiting to be told.
+
+User confirmed on device 2026-09-05: stuck ringing resolved, and the iOS
+.unanswered change puts a missed-call entry in the Phone app's Recents.

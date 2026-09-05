@@ -55,3 +55,13 @@ composition shutdown.
 TC-407-02 first failed because the test fired two ticks synchronously, which
 the anti-stacking guard correctly collapses. The test was fixed, not the guard:
 real ticks are an interval apart.
+
+## Device proof — 2026-09-05 21:43Z
+
+`device_proof_2026-09-05.txt`. The same cancel that hung for 9 s now ends the
+callee's ring in **2.8 s**, self-initiated: `systemUiPresented` at 21:43:19.566,
+`remoteTerminate endReason=callerCancelled` at 21:43:22.405. That is one poll
+interval plus the drain.
+
+The iOS `.unanswered` change was confirmed in the same pass: a cancelled call
+to a locked iPhone now appears as a missed call in the Phone app's Recents.
