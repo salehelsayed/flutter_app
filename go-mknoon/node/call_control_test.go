@@ -446,3 +446,50 @@ func TestVC205CallTokenNodeRejectsMetadataAndResponseFailures(t *testing.T) {
 func formatCallTestInt(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
+
+// The relay's store receipt says what became of the wake ("dispatched" when
+// the callee's device was alerted, "failed" when the provider refused, absent
+// when nothing was sent). The node passes it through untouched and rejects
+// anything else.
+func TestCallStoreReceiptCarriesTheWakeOutcome(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	relay, requests := startTurnCredentialsRelayFixture(t, `{
+		"status":"OK","schema":"mknoon.call_mailbox.v1","version":1,
+		"storeStatus":"stored","receiptAtMs":`+formatCallTestInt(now.UnixMilli())+`,
+		"expiresAtMs":`+formatCallTestInt(now.Add(30*time.Second).UnixMilli())+`,
+		"eventCount":1,"totalBytes":23,"pendingHandles":1,"wake":"dispatched"
+	}`)
+	n := turnCredentialsNode(t, relay)
+	request := CallStoreRequest{
+		RecipientDevicePeerID: relay.ID().String(),
+		CallHandle:            nodeCallHandle,
+		MessageID:             nodeCallMessage,
+		Envelope:              "encrypted-node-envelope",
+		ExpiresAtMs:           now.Add(30 * time.Second).UnixMilli(),
+		WakeHandle:            nodeCallWake,
+	}
+	receipt, err := n.CallStoreV1(request)
+	if err != nil || receipt.Wake != "dispatched" {
+		t.Fatalf("CallStoreV1 receipt = %#v err = %v, want wake dispatched", receipt, err)
+	}
+	select {
+	case raw := <-requests:
+		var got map[string]any
+		if json.Unmarshal([]byte(raw), &got) != nil || got["wakeReceipt"] != true {
+			t.Fatalf("store request must opt in to the wake receipt: %s", raw)
+		}
+	default:
+		t.Fatal("the relay fixture saw no store request")
+	}
+
+	odd, _ := startTurnCredentialsRelayFixture(t, `{
+		"status":"OK","schema":"mknoon.call_mailbox.v1","version":1,
+		"storeStatus":"stored","receiptAtMs":`+formatCallTestInt(now.UnixMilli())+`,
+		"expiresAtMs":`+formatCallTestInt(now.Add(30*time.Second).UnixMilli())+`,
+		"eventCount":1,"totalBytes":23,"pendingHandles":1,"wake":"someday"
+	}`)
+	request.RecipientDevicePeerID = odd.ID().String()
+	if _, err := turnCredentialsNode(t, odd).CallStoreV1(request); err == nil {
+		t.Fatal("an unknown wake outcome must be an invalid response")
+	}
+}

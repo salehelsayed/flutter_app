@@ -494,6 +494,102 @@ void main() {
     },
   );
 
+  test('a dispatched wake rings the caller back before the callee signals', () {
+    fakeAsync((clock) {
+      final coordinator = _coordinator();
+      var prepared = false;
+      unawaited(_prepare(coordinator).then<void>((_) => prepared = true));
+      clock.flushMicrotasks();
+      expect(prepared, isTrue);
+
+      final direct = _CompleterDirect();
+      final mailbox = _CompleterMailbox();
+      final service = CallSignalingService(
+        codec: SecureCallEnvelopeCodec(crypto: _Crypto(), nowMs: () => _nowMs),
+        directTransport: direct,
+        mailboxClient: mailbox,
+        coordinator: coordinator,
+        networkEffectsAllowed: () => true,
+      );
+      CallSignalTransportResult? result;
+      Object? failure;
+      unawaited(
+        service
+            .send(
+              signal: _invite(),
+              callHandle: '33333333-3333-4333-8333-333333333333',
+              endpoint: _endpoint,
+              senderSigningPrivateKey: 'local-signing',
+            )
+            .then<void>(
+              (value) => result = value,
+              onError: (Object error, StackTrace stackTrace) {
+                failure = error;
+              },
+            ),
+      );
+      clock.flushMicrotasks();
+      expect(direct.calls, 1);
+      expect(mailbox.stores, 1);
+      expect(result, isNull);
+
+      clock.elapse(const Duration(milliseconds: 250));
+      mailbox.result.complete(
+        const CallMailboxStoreResult(
+          status: CallMailboxStoreStatus.stored,
+          receiptAtMs: _nowMs,
+          expiresAtMs: _nowMs + 45_000,
+          eventCount: 1,
+          totalBytes: 100,
+          pendingHandles: 1,
+          wake: CallMailboxWakeStatus.dispatched,
+        ),
+      );
+      clock.flushMicrotasks();
+
+      expect(failure, isNull);
+      expect(result?.directAccepted, isFalse);
+      expect(result?.mailboxStored, isTrue);
+      expect(result?.directRoute, CallDirectRoute.unknown);
+      expect(clock.elapsed, const Duration(milliseconds: 250));
+      expect(direct.result.isCompleted, isFalse);
+      expect(coordinator.activeSession?.mailboxCustodyConfirmed, isTrue);
+      expect(coordinator.activeSession?.state, CallState.ringing);
+      expect(
+        coordinator.activeSession?.recentEventIds,
+        contains('11111111-1111-4111-8111-111111111111:wake-dispatched'),
+      );
+      expect(
+        coordinator.activeSession?.recentEventIds,
+        contains('11111111-1111-4111-8111-111111111111:mailbox-stored'),
+      );
+      expect(
+        coordinator.activeSession?.recentEventIds,
+        isNot(contains('11111111-1111-4111-8111-111111111111:direct-failed')),
+      );
+
+      direct.result.complete(
+        const CallDirectSendResult(
+          outcome: CallDirectTransportOutcome.failed,
+          transportAcknowledged: false,
+          route: CallDirectRoute.unknown,
+        ),
+      );
+      clock.flushMicrotasks();
+      expect(direct.calls, 1);
+      expect(mailbox.stores, 1);
+      expect(
+        coordinator.activeSession?.recentEventIds,
+        isNot(contains('11111111-1111-4111-8111-111111111111:direct-failed')),
+      );
+
+      var disposed = false;
+      unawaited(coordinator.dispose().then<void>((_) => disposed = true));
+      clock.flushMicrotasks();
+      expect(disposed, isTrue);
+    });
+  });
+
   test('mailbox settlement completes without error after store failure', () {
     fakeAsync((clock) {
       final coordinator = _coordinator();

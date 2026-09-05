@@ -26,6 +26,12 @@ final class CallMailboxException implements Exception {
 
 enum CallMailboxStoreStatus { stored, duplicate }
 
+/// What became of the relay's wake for a stored event. `dispatched` means the
+/// callee's device was alerted (a headless callee rings without signalling
+/// anything until it is answered); `none` covers no route and a callee already
+/// on the call; `failed` means the push provider refused.
+enum CallMailboxWakeStatus { none, dispatched, failed }
+
 final class CallMailboxStoreRequest {
   const CallMailboxStoreRequest({
     required this.recipientDevicePeerId,
@@ -52,6 +58,7 @@ final class CallMailboxStoreResult {
     required this.eventCount,
     required this.totalBytes,
     required this.pendingHandles,
+    this.wake = CallMailboxWakeStatus.none,
   });
 
   final CallMailboxStoreStatus status;
@@ -60,6 +67,7 @@ final class CallMailboxStoreResult {
   final int eventCount;
   final int totalBytes;
   final int pendingHandles;
+  final CallMailboxWakeStatus wake;
 }
 
 final class CallMailboxEvent {
@@ -163,6 +171,11 @@ final class BridgeCallMailboxClient implements CallMailboxClient {
       eventCount: _responseInt(response, 'eventCount'),
       totalBytes: _responseInt(response, 'totalBytes'),
       pendingHandles: _responseInt(response, 'pendingHandles'),
+      wake: switch (response['wake']) {
+        'dispatched' => CallMailboxWakeStatus.dispatched,
+        'failed' => CallMailboxWakeStatus.failed,
+        _ => CallMailboxWakeStatus.none,
+      },
     );
   }
 

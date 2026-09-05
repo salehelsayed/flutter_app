@@ -33,7 +33,7 @@ func TestVC202CallMailboxBridgeExportsAllTypedActions(t *testing.T) {
 		return node.CallStoreReceipt{
 			Schema: node.CallMailboxSchema, Version: 1, StoreStatus: "stored",
 			ReceiptAtMs: 1_900_000_000_000, ExpiresAtMs: 1_900_000_045_000,
-			EventCount: 1, TotalBytes: 27, PendingHandles: 1,
+			EventCount: 1, TotalBytes: 27, PendingHandles: 1, Wake: "dispatched",
 		}, nil
 	}
 	stored := parseJSON(t, CallStoreV1(`{
@@ -42,7 +42,7 @@ func TestVC202CallMailboxBridgeExportsAllTypedActions(t *testing.T) {
 		"expiresAtMs":1900000045000,"wakeHandle":"`+nodeCallBridgeWake+`"
 	}`))
 	if stored["ok"] != true || stored["storeStatus"] != "stored" ||
-		stored["receiptAtMs"] != float64(1_900_000_000_000) {
+		stored["receiptAtMs"] != float64(1_900_000_000_000) || stored["wake"] != "dispatched" {
 		t.Fatalf("CallStoreV1 response = %#v", stored)
 	}
 

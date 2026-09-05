@@ -82,6 +82,17 @@ type CallStoreRequest struct {
 	WakeHandle            string
 }
 
+// CallWakeStatus tells the caller what became of the wake for a stored
+// event: the recipient's device was alerted (the caller may ring back), the
+// provider refused, or nothing was sent (no route, or a recipient already
+// attached to the call).
+type CallWakeStatus string
+
+const (
+	CallWakeStatusDispatched CallWakeStatus = "dispatched"
+	CallWakeStatusFailed     CallWakeStatus = "failed"
+)
+
 type CallStoreReceipt struct {
 	Schema         string
 	Version        int
@@ -91,6 +102,7 @@ type CallStoreReceipt struct {
 	EventCount     int
 	TotalBytes     int
 	PendingHandles int
+	WakeStatus     CallWakeStatus
 }
 
 type CallMailboxEvent struct {
@@ -382,6 +394,11 @@ func (s *CallControlService) Store(
 			CallHandle: request.CallHandle, WakeHandle: request.WakeHandle,
 			ExpiresAtMs: receipt.ExpiresAtMs,
 		})
+	}
+	if dispatchErr == nil {
+		receipt.WakeStatus = CallWakeStatusDispatched
+	} else {
+		receipt.WakeStatus = CallWakeStatusFailed
 	}
 	if err := s.backend.CompleteWake(bookkeepingCtx, authenticatedSender, request, wakeOwner); err != nil {
 		// The provider has returned, so this owner can no longer enter it even

@@ -32,6 +32,7 @@ final class CallSignalTransportResult {
     required this.directAccepted,
     required this.mailboxStored,
     required this.directRoute,
+    this.wakeDispatched = false,
   }) : _directSettled = true,
        _mailboxStoreSettled = null;
 
@@ -41,11 +42,16 @@ final class CallSignalTransportResult {
     required this.directRoute,
     required bool directSettled,
     required Future<void> mailboxStoreSettled,
+    this.wakeDispatched = false,
   }) : _directSettled = directSettled,
        _mailboxStoreSettled = mailboxStoreSettled;
 
   final bool directAccepted;
   final bool mailboxStored;
+
+  /// The relay alerted the callee's device for this signal (its store
+  /// receipt said `wake: dispatched`). The caller may ring back on it.
+  final bool wakeDispatched;
   final CallDirectRoute directRoute;
   final bool _directSettled;
   final Future<void>? _mailboxStoreSettled;
@@ -173,12 +179,13 @@ final class CallSignalingService {
 
   Future<CallSignalTransportResult> _firstSufficientResult({
     required Future<CallDirectSendResult> directFuture,
-    required Future<bool> mailboxFuture,
+    required Future<_MailboxLegResult> mailboxFuture,
   }) {
     final result = Completer<CallSignalTransportResult>();
     final mailboxStoreSettled = mailboxFuture.then<void>((_) {});
     CallDirectSendResult? direct;
     bool? mailboxStored;
+    var wakeDispatched = false;
     var resolutionQueued = false;
 
     void resolve() {
@@ -195,6 +202,7 @@ final class CallSignalingService {
             directRoute: currentDirect?.route ?? CallDirectRoute.unknown,
             directSettled: currentDirect != null,
             mailboxStoreSettled: mailboxStoreSettled,
+            wakeDispatched: wakeDispatched,
           ),
         );
         return;
@@ -224,7 +232,8 @@ final class CallSignalingService {
     );
     unawaited(
       mailboxFuture.then<void>((value) {
-        mailboxStored = value;
+        mailboxStored = value.stored;
+        wakeDispatched = value.wakeDispatched;
         queueResolution();
       }),
     );
@@ -278,6 +287,28 @@ final class CallSignalingService {
         ),
       );
     }
+    if (result.wakeDispatched) {
+      // The relay alerted the callee's device. A headless callee rings
+      // without signalling anything until it is answered, so this receipt is
+      // the caller's only sign that the far end is being alerted.
+      await _coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.wakeRequested,
+          eventId: '${signal.messageId}:wake-dispatched',
+          occurredAt: DateTime.fromMillisecondsSinceEpoch(
+            signal.createdAtMs,
+            isUtc: true,
+          ),
+          callId: signal.callId,
+          contactPeerId: signal.recipientAccountPeerId,
+          localAccountPeerId: signal.senderAccountPeerId,
+          localDeviceId: signal.senderDevicePeerId,
+          remoteAccountPeerId: signal.recipientAccountPeerId,
+          remoteDeviceId: signal.recipientDevicePeerId,
+          transportRoute: CallRouteClass.ephemeralMailbox,
+        ),
+      );
+    }
   }
 
   Future<CallDirectSendResult> _sendDirect({
@@ -302,7 +333,7 @@ final class CallSignalingService {
     }
   }
 
-  Future<bool> _storeMailbox({
+  Future<_MailboxLegResult> _storeMailbox({
     required CallSignal signal,
     required String callHandle,
     required ResolvedCallEndpoint endpoint,
@@ -323,10 +354,14 @@ final class CallSignalingService {
           result.expiresAtMs > signal.createdAtMs &&
           result.expiresAtMs <= signal.expiresAtMs;
       _emitLegResult(_CallSignalingLeg.mailboxStore, stored);
-      return stored;
+      return (
+        stored: stored,
+        wakeDispatched:
+            stored && result.wake == CallMailboxWakeStatus.dispatched,
+      );
     } catch (_) {
       _emitLegResult(_CallSignalingLeg.mailboxStore, false);
-      return false;
+      return (stored: false, wakeDispatched: false);
     }
   }
 
@@ -351,3 +386,5 @@ final class CallSignalingService {
     CallDirectRoute.unknown => null,
   };
 }
+
+typedef _MailboxLegResult = ({bool stored, bool wakeDispatched});

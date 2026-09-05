@@ -27,15 +27,18 @@ const (
 )
 
 type callControlWireRequest struct {
-	Action                 string   `json:"action"`
-	To                     string   `json:"to,omitempty"`
-	CallHandle             string   `json:"callHandle,omitempty"`
-	MessageID              string   `json:"messageId,omitempty"`
-	MessageIDs             []string `json:"messageIds,omitempty"`
-	Envelope               string   `json:"envelope,omitempty"`
-	ExpiresAtMs            int64    `json:"expiresAtMs,omitempty"`
-	WakeHandle             string   `json:"wakeHandle,omitempty"`
-	Limit                  int      `json:"limit,omitempty"`
+	Action      string   `json:"action"`
+	To          string   `json:"to,omitempty"`
+	CallHandle  string   `json:"callHandle,omitempty"`
+	MessageID   string   `json:"messageId,omitempty"`
+	MessageIDs  []string `json:"messageIds,omitempty"`
+	Envelope    string   `json:"envelope,omitempty"`
+	ExpiresAtMs int64    `json:"expiresAtMs,omitempty"`
+	WakeHandle  string   `json:"wakeHandle,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
+	// WakeReceipt asks for the wake outcome on the store receipt. Older
+	// clients refuse unknown response fields, so it is only sent when asked.
+	WakeReceipt            bool     `json:"wakeReceipt,omitempty"`
 	AccountPeerID          string   `json:"accountPeerId,omitempty"`
 	DevicePeerID           string   `json:"devicePeerId,omitempty"`
 	Capabilities           []string `json:"capabilities,omitempty"`
@@ -89,6 +92,7 @@ type callControlWireResponse struct {
 	EventCount      int                      `json:"eventCount,omitempty"`
 	TotalBytes      int                      `json:"totalBytes,omitempty"`
 	PendingHandles  int                      `json:"pendingHandles,omitempty"`
+	Wake            string                   `json:"wake,omitempty"`
 	Events          []callControlWireEvent   `json:"events,omitempty"`
 	HasMore         bool                     `json:"hasMore,omitempty"`
 	Acked           int                      `json:"acked,omitempty"`
@@ -150,6 +154,9 @@ func handleCallControlRequest(
 		response.EventCount = receipt.EventCount
 		response.TotalBytes = receipt.TotalBytes
 		response.PendingHandles = receipt.PendingHandles
+		if request.WakeReceipt {
+			response.Wake = string(receipt.WakeStatus)
+		}
 	case callRetrieveAction:
 		result, callErr := service.Retrieve(ctx, authenticatedPeerID, CallRetrieveRequest{
 			CallHandle: request.CallHandle, Limit: request.Limit,
@@ -366,7 +373,7 @@ func callControlAllowedFields(action string) map[string]struct{} {
 	fields := []string{"action"}
 	switch action {
 	case callStoreAction:
-		fields = append(fields, "to", "callHandle", "messageId", "envelope", "expiresAtMs", "wakeHandle")
+		fields = append(fields, "to", "callHandle", "messageId", "envelope", "expiresAtMs", "wakeHandle", "wakeReceipt")
 	case callRetrieveAction:
 		fields = append(fields, "callHandle", "limit")
 	case callAckAction:

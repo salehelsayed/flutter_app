@@ -71,6 +71,44 @@ void main() {
     expect(payload, isNot(contains('chatMessage')));
   });
 
+  test('a store receipt carries the wake outcome', () async {
+    const request = CallMailboxStoreRequest(
+      recipientDevicePeerId: 'recipient-device',
+      callHandle: '0123456789abcdef0123456789abcdef',
+      messageId: '550e8400-e29b-41d4-a716-446655440000',
+      envelopeJson: '{"type":"call_signal","version":"1"}',
+      expiresAtMs: 45_000,
+      wakeHandle: 'abcdef0123456789abcdef0123456789',
+    );
+    final base = <String, Object?>{
+      'ok': true,
+      'storeStatus': 'stored',
+      'receiptAtMs': 1_000,
+      'expiresAtMs': 45_000,
+      'eventCount': 1,
+      'totalBytes': 512,
+      'pendingHandles': 1,
+    };
+
+    bridge.responses['call_store_v1'] = <String, Object?>{
+      ...base,
+      'wake': 'dispatched',
+    };
+    expect(
+      (await client.store(request)).wake,
+      CallMailboxWakeStatus.dispatched,
+    );
+
+    bridge.responses['call_store_v1'] = <String, Object?>{
+      ...base,
+      'wake': 'failed',
+    };
+    expect((await client.store(request)).wake, CallMailboxWakeStatus.failed);
+
+    bridge.responses['call_store_v1'] = base;
+    expect((await client.store(request)).wake, CallMailboxWakeStatus.none);
+  });
+
   test('retrieves typed attributed events through call_retrieve_v1', () async {
     bridge.responses['call_retrieve_v1'] = <String, Object?>{
       'ok': true,

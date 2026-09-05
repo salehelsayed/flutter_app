@@ -77,6 +77,7 @@ func CallStoreV1(paramsJSON string) (result string) {
 		"storeStatus": receipt.StoreStatus, "receiptAtMs": receipt.ReceiptAtMs,
 		"expiresAtMs": receipt.ExpiresAtMs, "eventCount": receipt.EventCount,
 		"totalBytes": receipt.TotalBytes, "pendingHandles": receipt.PendingHandles,
+		"wake": receipt.Wake,
 	})
 }
 

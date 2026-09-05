@@ -86,6 +86,10 @@ type CallStoreReceipt struct {
 	EventCount     int
 	TotalBytes     int
 	PendingHandles int
+	// Wake is the relay's wake outcome for this event: "dispatched" when the
+	// callee's device was alerted, "failed" when the provider refused, empty
+	// when nothing was sent (no route, or a callee already on the call).
+	Wake string
 }
 
 type CallRetrieveRequest struct {
@@ -165,15 +169,17 @@ type CallTokenSetResult struct {
 }
 
 type callControlWireRequest struct {
-	Action                 string   `json:"action"`
-	To                     string   `json:"to,omitempty"`
-	CallHandle             string   `json:"callHandle,omitempty"`
-	MessageID              string   `json:"messageId,omitempty"`
-	MessageIDs             []string `json:"messageIds,omitempty"`
-	Envelope               string   `json:"envelope,omitempty"`
-	ExpiresAtMs            int64    `json:"expiresAtMs,omitempty"`
-	WakeHandle             string   `json:"wakeHandle,omitempty"`
-	Limit                  int      `json:"limit,omitempty"`
+	Action      string   `json:"action"`
+	To          string   `json:"to,omitempty"`
+	CallHandle  string   `json:"callHandle,omitempty"`
+	MessageID   string   `json:"messageId,omitempty"`
+	MessageIDs  []string `json:"messageIds,omitempty"`
+	Envelope    string   `json:"envelope,omitempty"`
+	ExpiresAtMs int64    `json:"expiresAtMs,omitempty"`
+	WakeHandle  string   `json:"wakeHandle,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
+	// WakeReceipt asks the relay for the wake outcome on the store receipt.
+	WakeReceipt            bool     `json:"wakeReceipt,omitempty"`
 	AccountPeerID          string   `json:"accountPeerId,omitempty"`
 	DevicePeerID           string   `json:"devicePeerId,omitempty"`
 	Capabilities           []string `json:"capabilities,omitempty"`
@@ -204,6 +210,7 @@ type callControlWireResponse struct {
 	EventCount      int                 `json:"eventCount,omitempty"`
 	TotalBytes      int                 `json:"totalBytes,omitempty"`
 	PendingHandles  int                 `json:"pendingHandles,omitempty"`
+	Wake            string              `json:"wake,omitempty"`
 	Events          []CallMailboxEvent  `json:"events,omitempty"`
 	HasMore         bool                `json:"hasMore,omitempty"`
 	Acked           int                 `json:"acked,omitempty"`
@@ -232,7 +239,7 @@ func (n *Node) CallStoreV1(request CallStoreRequest) (CallStoreReceipt, error) {
 		Action: callStoreAction, To: request.RecipientDevicePeerID,
 		CallHandle: request.CallHandle, MessageID: request.MessageID,
 		Envelope: request.Envelope, ExpiresAtMs: request.ExpiresAtMs,
-		WakeHandle: request.WakeHandle,
+		WakeHandle: request.WakeHandle, WakeReceipt: true,
 	})
 	if err != nil {
 		return CallStoreReceipt{}, err
@@ -243,13 +250,14 @@ func (n *Node) CallStoreV1(request CallStoreRequest) (CallStoreReceipt, error) {
 		response.ReceiptAtMs > response.ExpiresAtMs || response.EventCount < 1 ||
 		response.EventCount > callMaxEvents || response.TotalBytes < len(request.Envelope) ||
 		response.TotalBytes > callMaxBytes || response.PendingHandles < 1 || response.PendingHandles > 2 ||
+		!validCallWakeOutcome(response.Wake) ||
 		absCallDuration(now.Sub(time.UnixMilli(response.ReceiptAtMs))) > callMaxClockSkew {
 		return CallStoreReceipt{}, ErrCallControlInvalidResponse
 	}
 	return CallStoreReceipt{
 		Schema: response.Schema, Version: response.Version, StoreStatus: response.StoreStatus,
 		ReceiptAtMs: response.ReceiptAtMs, ExpiresAtMs: response.ExpiresAtMs,
-		EventCount: response.EventCount, TotalBytes: response.TotalBytes,
+		EventCount: response.EventCount, TotalBytes: response.TotalBytes, Wake: response.Wake,
 		PendingHandles: response.PendingHandles,
 	}, nil
 }
@@ -285,6 +293,14 @@ func (n *Node) CallRetrieveV1(request CallRetrieveRequest) (CallRetrieveResult, 
 		ReceiptAtMs: response.ReceiptAtMs, ExpiresAtMs: response.ExpiresAtMs,
 		HasMore: response.HasMore,
 	}, nil
+}
+
+func validCallWakeOutcome(value string) bool {
+	switch value {
+	case "", "dispatched", "failed":
+		return true
+	}
+	return false
 }
 
 func (n *Node) CallAckV1(request CallAckRequest) (int, error) {
@@ -624,7 +640,7 @@ func validateCallControlResponseFieldSet(raw []byte, action string) error {
 		var fields []string
 		switch action {
 		case callStoreAction:
-			fields = []string{"schema", "version", "storeStatus", "receiptAtMs", "expiresAtMs", "eventCount", "totalBytes", "pendingHandles"}
+			fields = []string{"schema", "version", "storeStatus", "receiptAtMs", "expiresAtMs", "eventCount", "totalBytes", "pendingHandles", "wake"}
 		case callRetrieveAction:
 			fields = []string{"schema", "version", "events", "receiptAtMs", "expiresAtMs", "hasMore"}
 		case callAckAction:

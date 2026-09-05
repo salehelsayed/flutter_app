@@ -278,6 +278,17 @@ final class CallReducer {
         event,
       );
     }
+    if (event.type == CallEventType.wakeRequested &&
+        snapshot.state == CallState.inviting) {
+      // The relay alerted the callee's device: ring back now. A callee woken
+      // headlessly signals nothing until it is answered.
+      return _transition(
+        snapshot,
+        event,
+        CallState.ringing,
+        ringingAt: event.occurredAt,
+      );
+    }
     if (_isTransportReceipt(event.type)) {
       return _apply(snapshot, event);
     }
