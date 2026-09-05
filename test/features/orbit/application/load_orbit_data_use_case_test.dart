@@ -9,6 +9,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
 
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
@@ -839,6 +840,28 @@ void main() {
         expect(result.single.unreadCount, 2);
       },
     );
+
+    test('TC-410-24 the unread result is observable', () async {
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await loadOrbitData(
+        contactRepo: FakeContactRepository(
+          contacts: [_makeContact('peer-A'), _makeContact('peer-B')],
+        ),
+        messageRepo: FakeMessageRepository(),
+        callActivitySource: FakeOrbitCallActivitySource(unread: {'peer-A': 3}),
+      );
+
+      final result = events.firstWhere(
+        (event) => event['event'] == 'ORBIT_CALL_UNREAD_RESULT',
+      );
+      // Without this, a zero count and a broken query look identical in a
+      // capture: ORBIT_CALL_UNREAD_SKIPPED only fires when the query THROWS.
+      expect((result['details'] as Map)['contacts'], 1);
+      expect((result['details'] as Map)['total'], 3);
+    });
 
     test('TC-410-23 the unread query is batched like the rest', () async {
       final source = FakeOrbitCallActivitySource();

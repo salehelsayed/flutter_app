@@ -155,7 +155,20 @@ Future<Map<String, int>> _loadUnreadCallCounts({
 }) async {
   if (callActivitySource == null) return const <String, int>{};
   try {
-    return await callActivitySource.unreadCallCountsForContacts(contactPeerIds);
+    final counts = await callActivitySource.unreadCallCountsForContacts(
+      contactPeerIds,
+    );
+    // Without this a zero count and a broken query look identical in a
+    // capture: ORBIT_CALL_UNREAD_SKIPPED only fires when the query THROWS.
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'ORBIT_CALL_UNREAD_RESULT',
+      details: <String, Object?>{
+        'contacts': counts.length,
+        'total': counts.values.fold<int>(0, (sum, value) => sum + value),
+      },
+    );
+    return counts;
   } catch (error) {
     emitFlowEvent(
       layer: 'UC',
