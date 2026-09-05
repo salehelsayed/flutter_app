@@ -49,10 +49,10 @@ CallSessionSnapshot _terminal({
 
 void main() {
   test('TC-405-43 a projected terminal call announces itself once', () async {
-    final announced = <void>[];
+    final announced = <bool>[];
     final projector = CallHistoryProjector(
       _Repository(),
-      onTerminalProjected: () => announced.add(null),
+      onTerminalProjected: (_, inserted) => announced.add(inserted),
     );
     final snapshot = _terminal(
       id: 'a2f0a1d6-0000-4000-8000-000000000043',
@@ -65,7 +65,7 @@ void main() {
 
     expect(
       announced,
-      hasLength(1),
+      <bool>[true],
       reason:
           'the chat re-reads the table on this signal; without it a call taken '
           'from inside the conversation leaves the screen mounted and stale',
@@ -74,10 +74,10 @@ void main() {
 
   test('TC-405-44 a replayed terminal call still announces, so a late '
       'listener converges', () async {
-    final announced = <void>[];
+    final announced = <bool>[];
     final projector = CallHistoryProjector(
       _Repository(),
-      onTerminalProjected: () => announced.add(null),
+      onTerminalProjected: (_, inserted) => announced.add(inserted),
     );
     final snapshot = _terminal(
       id: 'a2f0a1d6-0000-4000-8000-000000000044',
@@ -89,14 +89,14 @@ void main() {
     await projector.projectTerminal(snapshot);
     await projector.projectTerminal(snapshot);
 
-    expect(announced, hasLength(2));
+    expect(announced, <bool>[true, false]);
   });
 
   test('TC-405-45 a throwing listener never breaks the projection', () async {
     final repository = _Repository();
     final projector = CallHistoryProjector(
       repository,
-      onTerminalProjected: () => throw StateError('listener exploded'),
+      onTerminalProjected: (_, _) => throw StateError('listener exploded'),
     );
     final snapshot = _terminal(
       id: 'a2f0a1d6-0000-4000-8000-000000000045',

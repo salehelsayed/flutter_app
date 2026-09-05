@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'dart:async';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -1036,7 +1037,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
   required ReceivedCallWakeHandleStore receivedCallWakeHandleStore,
   // 405: fired after each terminal call row is durable so a conversation that
   // is already on screen can re-read its call history.
-  void Function()? onCallHistoryProjected,
+  void Function(CallHistoryEntry entry, bool inserted)? onCallHistoryProjected,
   EnsureReceivedCallWakeHandle? ensureReceivedCallWakeHandle,
   MicrophoneCaptureLeaseCoordinator? microphoneCaptureLeases,
   CallMicrophonePermission? microphonePermission,

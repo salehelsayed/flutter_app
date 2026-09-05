@@ -777,7 +777,13 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   func remoteCancel(callHandle: String) -> Bool {
     synchronized {
       guard let callId = store.resolveCallHandle(callHandle) else { return false }
-      return terminate(callId, type: .remoteCancelled, reason: .remoteEnded)
+      // 406: a caller who hangs up before the answer left a MISSED call.
+      // `.remoteEnded` puts an ordinary ended call in Recents with no missed
+      // badge; `.unanswered` is the reason that marks it missed. A call that
+      // was answered and then ended remotely keeps `.remoteEnded`.
+      let reason: CXCallEndedReason =
+        answeredCallIds.contains(callId) ? .remoteEnded : .unanswered
+      return terminate(callId, type: .remoteCancelled, reason: reason)
     }
   }
 

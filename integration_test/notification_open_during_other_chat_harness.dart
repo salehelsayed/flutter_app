@@ -185,6 +185,20 @@ class _RecordingNotificationService implements NotificationService {
   Future<void> clearDeliveredNotifications() async {}
 
   @override
+  Future<void> showMissedCallNotification({
+    required String contactAccountPeerId,
+    required String title,
+    required String body,
+  }) async {
+    missedCallNotifications.add(
+      (contactAccountPeerId: contactAccountPeerId, title: title, body: body),
+    );
+  }
+
+  final missedCallNotifications =
+      <({String contactAccountPeerId, String title, String body})>[];
+
+  @override
   void dispose() {}
 }
 

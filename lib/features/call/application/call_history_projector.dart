@@ -19,7 +19,8 @@ final class CallHistoryProjector {
   /// coordinator publishes its terminal snapshot before this projection runs,
   /// so a listener bound to the snapshot would read the table too early and
   /// still see nothing.
-  final void Function()? onTerminalProjected;
+  final void Function(CallHistoryEntry entry, bool inserted)?
+  onTerminalProjected;
 
   final DateTime Function() _clock;
 
@@ -35,7 +36,7 @@ final class CallHistoryProjector {
     }
     final existing = await repository.getByCallId(snapshot.callId!);
     if (existing != null) {
-      _announce();
+      _announce(existing, false);
       return existing;
     }
     final now = _clock().toUtc();
@@ -54,16 +55,16 @@ final class CallHistoryProjector {
     );
     await repository.upsertTerminal(entry);
     final stored = await repository.getByCallId(entry.callId) ?? entry;
-    _announce();
+    _announce(stored, true);
     return stored;
   }
 
   /// A listener is presentation, never custody: it can never fail a call.
-  void _announce() {
+  void _announce(CallHistoryEntry entry, bool inserted) {
     final listener = onTerminalProjected;
     if (listener == null) return;
     try {
-      listener();
+      listener(entry, inserted);
     } catch (_) {
       // The projection is already durable; a broken listener changes nothing.
     }

@@ -1922,5 +1922,6 @@
   "call_row_cancelled": "Cancelled",
   "call_row_failed": "Call failed",
   "call_row_with_duration": "{label} · {duration}",
-  "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}}
+  "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}},
+  "missed_call_notification_unknown_caller": "Someone"
 }

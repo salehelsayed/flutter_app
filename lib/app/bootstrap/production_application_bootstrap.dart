@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -20,6 +21,8 @@ import 'package:flutter_app/app/bootstrap/production_canonical_direct_replay_com
 import 'package:flutter_app/app/bootstrap/production_canonical_direct_projection_composition.dart';
 import 'package:flutter_app/app/bootstrap/production_canonical_group_replay_composition.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
+import 'package:flutter_app/features/call/application/missed_call_notifier.dart';
 import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
 import 'package:flutter_app/features/call/data/call_history_conversation_timeline_source.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
@@ -6141,6 +6144,36 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     );
     final foregroundCallPresentationReady = Completer<void>();
     late final CallSignalingComposition callSignalingComposition;
+    // 406: neither OS reports a call the user never took. Android runs
+    // self-managed Telecom (no system call log, no missed-call card) and iOS
+    // CallKit reports a remote cancel as an ordinary ended call. The app posts
+    // it, on its own channel, from the one place that knows a terminal row
+    // just became durable.
+    final missedCallNotifier = MissedCallNotifier(
+      post:
+          ({
+            required String contactAccountPeerId,
+            required String title,
+            required String body,
+          }) => notificationService.showMissedCallNotification(
+            contactAccountPeerId: contactAccountPeerId,
+            title: title,
+            body: body,
+          ),
+      resolveContactName: (contactAccountPeerId) async =>
+          (await contactRepository.getContact(contactAccountPeerId))?.username,
+      isSuppressed: (contactAccountPeerId) async {
+        final visibility = await appVisibilityAuthority.evaluate(
+          AppVisibilityConversationIdentity.tryParse(
+            lane: AppVisibilityConversationLane.direct,
+            value: contactAccountPeerId,
+          ),
+        );
+        return visibility.maySuppress;
+      },
+      missedBody: localizedMissedCallBody(),
+      unknownCallerTitle: localizedMissedCallUnknownCaller(),
+    );
     // 405: one process-wide "a terminal call row is durable" signal. The
     // projector writes the row, then this fires, then any open conversation
     // re-reads its call history. Binding the chat to the coordinator's
@@ -6173,8 +6206,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           },
         );
     callSignalingComposition = createProductionCallSignalingComposition(
-      onCallHistoryProjected: () {
+      onCallHistoryProjected: (entry, inserted) {
         if (!callHistoryProjected.isClosed) callHistoryProjected.add(null);
+        unawaited(missedCallNotifier.notifyTerminal(entry, inserted: inserted));
       },
       featureFlags: voiceCallFeatureFlags,
       platform: callEndpointPlatform,

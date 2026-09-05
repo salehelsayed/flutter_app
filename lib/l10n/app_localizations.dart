@@ -6229,6 +6229,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{label} · {duration}'**
   String call_row_with_duration(String label, String duration);
+
+  /// No description provided for @missed_call_notification_unknown_caller.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone'**
+  String get missed_call_notification_unknown_caller;
 }
 
 class _AppLocalizationsDelegate

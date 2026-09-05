@@ -67,7 +67,10 @@ void main() {
     await ensureMknoonNotificationChannel(FlutterLocalNotificationsPlugin());
 
     // 118 Phase 3: BOTH the high channel and the silent channel are created.
-    expect(log, hasLength(2));
+    // 406: plus the dedicated calls channel, so a missed call can be silenced
+    // independently of chat.
+    expect(log, hasLength(mknoonNotificationChannels.length));
+    expect(log, hasLength(3));
     expect(
       log.every((call) => call.method == 'createNotificationChannel'),
       isTrue,

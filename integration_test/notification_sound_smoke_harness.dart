@@ -365,6 +365,17 @@ class _RecordingNotificationService implements NotificationService {
       _inner.clearDeliveredNotifications();
 
   @override
+  Future<void> showMissedCallNotification({
+    required String contactAccountPeerId,
+    required String title,
+    required String body,
+  }) => _inner.showMissedCallNotification(
+    contactAccountPeerId: contactAccountPeerId,
+    title: title,
+    body: body,
+  );
+
+  @override
   void dispose() => _inner.dispose();
 }
 

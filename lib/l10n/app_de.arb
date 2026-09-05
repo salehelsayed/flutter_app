@@ -1784,5 +1784,6 @@
   "call_row_cancelled": "Abgebrochen",
   "call_row_failed": "Anruf fehlgeschlagen",
   "call_row_with_duration": "{label} · {duration}",
-  "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}}
+  "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}},
+  "missed_call_notification_unknown_caller": "Jemand"
 }

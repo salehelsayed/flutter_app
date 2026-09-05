@@ -301,6 +301,17 @@ abstract class NotificationService {
     String? androidNotificationTag,
   });
 
+  /// 406: show one missed-call card for [contactAccountPeerId].
+  ///
+  /// Published on the dedicated calls channel so the user can silence chat and
+  /// calls independently. The payload routes to the same conversation a
+  /// message card would.
+  Future<void> showMissedCallNotification({
+    required String contactAccountPeerId,
+    required String title,
+    required String body,
+  });
+
   /// Callback invoked when the user taps a notification.
   void Function(String payload)? onNotificationTap;
 

@@ -132,8 +132,10 @@ void main() {
 
     await service.initialize();
 
+    // 406: three channels now — messages, silent messages, and calls.
     expect(log.map((call) => call.method).toList(), <String>[
       'initialize',
+      'createNotificationChannel',
       'createNotificationChannel',
       'createNotificationChannel',
       'getNotificationAppLaunchDetails',

@@ -186,6 +186,9 @@ readonly ONE_TO_ONE_TESTS=(
   # 405: terminal call rows in the 1:1 conversation timeline.
   "test/features/conversation/presentation/widgets/call_timeline_row_test.dart"
   "test/features/conversation/presentation/screens/conversation_call_timeline_rows_test.dart"
+  # 406: missed-call notification policy and its dedicated channel.
+  "test/features/call/application/missed_call_notifier_test.dart"
+  "test/core/notifications/missed_call_notification_channel_test.dart"
   "test/features/conversation/presentation/widgets/conversation_header_test.dart"
   # 294 DTR-15: shared compositional conversation-controller ownership,
   # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.

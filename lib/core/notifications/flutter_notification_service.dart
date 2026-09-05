@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -556,6 +557,35 @@ class FlutterNotificationService
         layer: 'FL',
         event: 'NOTIFICATION_SHOWN',
         details: {'title': title, 'payload': payload ?? ''},
+      );
+    } finally {
+      await _notifyNotificationUpdated();
+    }
+  }
+
+  @override
+  Future<void> showMissedCallNotification({
+    required String contactAccountPeerId,
+    required String title,
+    required String body,
+  }) async {
+    // 406: a call-scoped id namespace so a missed call never replaces (or is
+    // replaced by) the message card for the same contact.
+    final notificationId = deterministicConversationNotificationId(
+      'call:${contactAccountPeerId.trim()}',
+    );
+    try {
+      await _plugin.show(
+        notificationId,
+        title,
+        body,
+        mknoonMissedCallNotificationDetails,
+        payload: contactAccountPeerId,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MISSED_CALL_NOTIFICATION_POSTED',
+        details: {'notificationId': notificationId},
       );
     } finally {
       await _notifyNotificationUpdated();

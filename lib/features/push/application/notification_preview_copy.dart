@@ -90,3 +90,13 @@ String localizedNotificationGroupReactionSomeone(
 }) => notificationPreviewLocalizations(
   locale: locale,
 ).notification_group_reaction_someone(targetKind);
+
+/// 406: missed-call card copy. Resolved without a BuildContext because the
+/// projection that triggers it can run in a background isolate.
+String localizedMissedCallBody({Locale? locale}) =>
+    notificationPreviewLocalizations(locale: locale).call_row_missed;
+
+String localizedMissedCallUnknownCaller({Locale? locale}) =>
+    notificationPreviewLocalizations(
+      locale: locale,
+    ).missed_call_notification_unknown_caller;

@@ -3793,4 +3793,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String call_row_with_duration(String label, String duration) {
     return '$label · $duration';
   }
+
+  @override
+  String get missed_call_notification_unknown_caller => 'شخص ما';
 }

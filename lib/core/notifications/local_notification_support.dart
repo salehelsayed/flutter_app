@@ -23,6 +23,39 @@ const mknoonMessagesSilentChannelName = 'Messages (silent)';
 const mknoonMessagesSilentChannelDescription =
     'Silent follow-up message updates';
 
+// 406: a missed call is not a message. Its own channel lets the user silence
+// chat without silencing calls, and keeps a chat-channel the user disabled
+// from taking missed calls down with it.
+const mknoonCallsChannelId = 'mknoon_calls';
+const mknoonCallsChannelName = 'Calls';
+const mknoonCallsChannelDescription = 'Missed call notifications';
+
+const mknoonCallsChannel = AndroidNotificationChannel(
+  mknoonCallsChannelId,
+  mknoonCallsChannelName,
+  description: mknoonCallsChannelDescription,
+  importance: Importance.high,
+  audioAttributesUsage: mknoonMessageAudioAttributesUsage,
+);
+
+const mknoonMissedCallNotificationDetails = NotificationDetails(
+  android: AndroidNotificationDetails(
+    mknoonCallsChannelId,
+    mknoonCallsChannelName,
+    channelDescription: mknoonCallsChannelDescription,
+    importance: Importance.high,
+    priority: Priority.high,
+    category: AndroidNotificationCategory.missedCall,
+    playSound: true,
+    audioAttributesUsage: mknoonMessageAudioAttributesUsage,
+  ),
+  iOS: DarwinNotificationDetails(
+    presentAlert: true,
+    presentBadge: true,
+    presentSound: true,
+  ),
+);
+
 const mknoonMessagesChannel = AndroidNotificationChannel(
   mknoonMessagesChannelId,
   mknoonMessagesChannelName,
@@ -307,6 +340,15 @@ Future<void> ensureMknoonNotificationChannel(
       .resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin
       >();
-  await android?.createNotificationChannel(mknoonMessagesChannel);
-  await android?.createNotificationChannel(mknoonMessagesSilentChannel);
+  for (final channel in mknoonNotificationChannels) {
+    await android?.createNotificationChannel(channel);
+  }
 }
+
+/// Every channel the app creates. A channel that is never created posts
+/// nothing at all on Android 8+, so this is the one list to extend.
+const mknoonNotificationChannels = <AndroidNotificationChannel>[
+  mknoonMessagesChannel,
+  mknoonMessagesSilentChannel,
+  mknoonCallsChannel,
+];
