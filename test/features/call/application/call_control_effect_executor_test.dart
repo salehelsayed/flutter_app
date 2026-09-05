@@ -200,6 +200,89 @@ void main() {
     },
   );
 
+  test('a mailbox-stored invite cancelled before ringing keeps the mailbox and '
+      'stores the terminate after the invite settles', () async {
+    final inviteSettled = Completer<void>();
+    final order = <String>[];
+    final port = _Port(
+      onSend: (signal, callHandle) {
+        order.add(signal.event.wireName);
+        if (signal.event == CallSignalType.invite) {
+          return Future<CallControlSendResult>.value(
+            CallControlSendResult(
+              directAccepted: false,
+              mailboxStored: true,
+              mailboxStoreSettled: inviteSettled.future,
+            ),
+          );
+        }
+        return Future<CallControlSendResult>.value(
+          CallControlSendResult(
+            directAccepted: false,
+            mailboxStored: true,
+            mailboxStoreSettled: Future<void>.value(),
+          ),
+        );
+      },
+    );
+    final store = CallSignalingContextStore();
+    final retirements = <String>[];
+    late final CallControlEffectExecutor control;
+    final coordinator = CallCoordinator(
+      reducer: const CallReducer(),
+      cleanupCoordinator: CallCleanupCoordinator(<CallCleanupStep>[
+        CallCleanupStep('call_signaling_context', (snapshot) async {
+          await control.retireOutgoingPreconnectInvite(snapshot);
+          store.purge(snapshot.callId!);
+        }, requiredForTerminalAck: true),
+      ]),
+      historyProjector: CallHistoryProjector(_History()),
+      effectExecutor: control = _executor(
+        port,
+        store,
+        cancelOutgoingMailboxInvite:
+            ({required recipientDevicePeerId, required callHandle}) async {
+              retirements.add(callHandle);
+              return true;
+            },
+      ),
+      clock: () => _now,
+      idSource: () => _callId,
+    );
+    addTearDown(coordinator.dispose);
+
+    await coordinator.placeCall(
+      contactPeerId: 'remote-account',
+      localAccountPeerId: 'local-account',
+      localDeviceId: 'local-device',
+    );
+    expect(order, <String>['invite']);
+
+    // The caller gives up before any ringing signal came back. The relay
+    // already woke the callee natively for the invite, so the terminate
+    // must land behind it instead of the mailbox being wiped.
+    final cancel = coordinator.dispatch(
+      CallEvent(
+        type: CallEventType.cancel,
+        eventId: 'cancel-before-ringing',
+        occurredAt: _now,
+        callId: _callId,
+        contactPeerId: 'remote-account',
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(order, <String>['invite'], reason: 'terminate waits for custody');
+
+    inviteSettled.complete();
+    final reduction = await cancel;
+
+    expect(reduction.decision, CallEventDecision.applied);
+    expect(order, <String>['invite', 'terminate']);
+    expect(retirements, isEmpty);
+    expect(store.read(_callId), isNull);
+    expect(coordinator.terminalCleanupAckReady(_callId), isTrue);
+  });
+
   test(
     'mailbox retirement waits for invite custody and coalesces duplicates',
     () async {

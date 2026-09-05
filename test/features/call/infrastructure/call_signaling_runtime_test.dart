@@ -963,4 +963,136 @@ void main() {
       await expectLater(runtime.shutdown(), completes);
     },
   );
+
+  test('a page holding an invite and a terminal for the same call marks the '
+      'invite superseded', () async {
+    final stream = StreamController<ChatMessage>.broadcast();
+    addTearDown(stream.close);
+    final mailbox = _Mailbox();
+    final coordinator = _coordinator();
+    addTearDown(coordinator.dispose);
+    final frames = <IncomingCallSignalFrame>[];
+    final peeked = <String?>[];
+    final callA = CallId.parse('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    final callB = CallId.parse('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    CallMailboxEvent event(String messageId) => CallMailboxEvent(
+      callHandle: 'handle-$messageId',
+      messageId: messageId,
+      authenticatedSenderDevicePeerId: 'sender-device',
+      recipientDevicePeerId: 'recipient-device',
+      envelopeJson: '{"type":"call_signal","id":"$messageId"}',
+      receiptAtMs: 1,
+      expiresAtMs: 2,
+    );
+    final runtime = CallSignalingRuntime(
+      directCallSignalStream: stream.stream,
+      mailboxClient: mailbox,
+      handleIncoming: (frame) async {
+        frames.add(frame);
+        return IncomingCallSignalOutcome.accepted;
+      },
+      peekIncoming: (frame) async {
+        peeked.add(frame.expectedMessageId);
+        return switch (frame.expectedMessageId) {
+          'invite-a' => IncomingCallSignalPeek(
+            callId: callA,
+            event: CallSignalType.invite,
+          ),
+          'terminate-a' => IncomingCallSignalPeek(
+            callId: callA,
+            event: CallSignalType.terminate,
+          ),
+          'invite-b' => IncomingCallSignalPeek(
+            callId: callB,
+            event: CallSignalType.invite,
+          ),
+          _ => null,
+        };
+      },
+      coordinator: coordinator,
+      networkEffectsAllowed: () => true,
+    );
+    addTearDown(runtime.shutdown);
+    mailbox.pages.add(
+      CallMailboxRetrieveResult(
+        events: <CallMailboxEvent>[
+          event('invite-a'),
+          event('terminate-a'),
+          event('invite-b'),
+          event('opaque'),
+        ],
+        receiptAtMs: 1,
+        expiresAtMs: 2,
+        hasMore: false,
+      ),
+    );
+
+    await runtime.start();
+    await runtime.settle();
+
+    expect(peeked, <String?>['invite-a', 'terminate-a', 'invite-b', 'opaque']);
+    expect(frames.map((frame) => frame.expectedMessageId).toList(), <String?>[
+      'invite-a',
+      'terminate-a',
+      'invite-b',
+      'opaque',
+    ]);
+    expect(frames.map((frame) => frame.terminalFollows).toList(), <bool>[
+      true,
+      false,
+      false,
+      false,
+    ]);
+    expect(mailbox.acks, 4);
+  });
+
+  test('a single-event page is handled without a peek', () async {
+    final stream = StreamController<ChatMessage>.broadcast();
+    addTearDown(stream.close);
+    final mailbox = _Mailbox();
+    final coordinator = _coordinator();
+    addTearDown(coordinator.dispose);
+    final frames = <IncomingCallSignalFrame>[];
+    var peeks = 0;
+    final runtime = CallSignalingRuntime(
+      directCallSignalStream: stream.stream,
+      mailboxClient: mailbox,
+      handleIncoming: (frame) async {
+        frames.add(frame);
+        return IncomingCallSignalOutcome.accepted;
+      },
+      peekIncoming: (_) async {
+        peeks++;
+        return null;
+      },
+      coordinator: coordinator,
+      networkEffectsAllowed: () => true,
+    );
+    addTearDown(runtime.shutdown);
+    mailbox.pages.add(
+      CallMailboxRetrieveResult(
+        events: <CallMailboxEvent>[
+          CallMailboxEvent(
+            callHandle: 'handle',
+            messageId: 'invite',
+            authenticatedSenderDevicePeerId: 'sender-device',
+            recipientDevicePeerId: 'recipient-device',
+            envelopeJson: '{"type":"call_signal"}',
+            receiptAtMs: 1,
+            expiresAtMs: 2,
+          ),
+        ],
+        receiptAtMs: 1,
+        expiresAtMs: 2,
+        hasMore: false,
+      ),
+    );
+
+    await runtime.start();
+    await runtime.settle();
+
+    expect(peeks, 0);
+    expect(frames.single.terminalFollows, isFalse);
+    expect(mailbox.acks, 1);
+  });
 }

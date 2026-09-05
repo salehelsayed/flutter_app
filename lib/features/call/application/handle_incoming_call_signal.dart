@@ -16,7 +16,33 @@ import 'incoming_call_pre_presentation_admission.dart';
 export 'incoming_call_pre_presentation_admission.dart'
     show CallLocalAuthorityProvider, CallLocalDeviceAuthority;
 
-enum IncomingCallSignalOutcome { accepted, duplicate, rejected, deferred }
+enum IncomingCallSignalOutcome {
+  accepted,
+  duplicate,
+  rejected,
+  deferred,
+
+  /// An invite whose call the caller already ended within the same mailbox
+  /// page. It is acknowledged without ringing or dispatch.
+  superseded,
+}
+
+/// What a mailbox event is, read without consuming it. Lets a drain see that
+/// a terminal signal follows an invite before either is handled.
+final class IncomingCallSignalPeek {
+  const IncomingCallSignalPeek({required this.callId, required this.event});
+
+  final CallId callId;
+  final CallSignalType event;
+
+  bool get isInvite => event == CallSignalType.invite;
+
+  bool get isTerminal =>
+      event == CallSignalType.reject || event == CallSignalType.terminate;
+
+  @override
+  String toString() => 'IncomingCallSignalPeek(redacted)';
+}
 
 final class IncomingCallSignalFrame {
   const IncomingCallSignalFrame({
@@ -27,6 +53,7 @@ final class IncomingCallSignalFrame {
     this.expectedMessageId,
     this.expectedExpiresAtMs,
     this.expectedRecipientDevicePeerId,
+    this.terminalFollows = false,
   });
 
   final String envelopeJson;
@@ -36,6 +63,10 @@ final class IncomingCallSignalFrame {
   final String? expectedMessageId;
   final int? expectedExpiresAtMs;
   final String? expectedRecipientDevicePeerId;
+
+  /// A terminal signal for the same call sits behind this frame in the same
+  /// mailbox page: the caller already ended the call this invite announces.
+  final bool terminalFollows;
 
   @override
   String toString() => 'IncomingCallSignalFrame(redacted)';
@@ -138,6 +169,33 @@ final class HandleIncomingCallSignal {
   final AuthenticatedCallSignalingContextObserver? _signalingContextObserver;
   final CallNegotiationMaterialStore _negotiationMaterialStore;
 
+  /// Authenticates [frame] and reports its call and event without consuming
+  /// it: the replay reservation is rolled back so [handle] can admit the same
+  /// envelope afterwards. Any failure reads as null.
+  Future<IncomingCallSignalPeek?> peek(IncomingCallSignalFrame frame) async {
+    AuthenticatedIncomingCallAdmission admitted;
+    try {
+      admitted = await _admission.authenticateSignal(
+        envelopeJson: frame.envelopeJson,
+        authenticatedTransportPeerId: frame.authenticatedTransportPeerId,
+        expectedCallHandle: frame.expectedCallHandle,
+        expectedMessageId: frame.expectedMessageId,
+        expectedExpiresAtMs: frame.expectedExpiresAtMs,
+        expectedRecipientDevicePeerId: frame.expectedRecipientDevicePeerId,
+      );
+    } catch (_) {
+      return null;
+    }
+    try {
+      return IncomingCallSignalPeek(
+        callId: admitted.signal.callId,
+        event: admitted.signal.event,
+      );
+    } finally {
+      admitted.rollbackReplay();
+    }
+  }
+
   Future<IncomingCallSignalOutcome> handle(
     IncomingCallSignalFrame frame,
   ) async {
@@ -180,6 +238,19 @@ final class HandleIncomingCallSignal {
         expectedRecipientDevicePeerId: frame.expectedRecipientDevicePeerId,
       );
       final signal = admitted.signal;
+
+      if (signal.event == CallSignalType.invite && frame.terminalFollows) {
+        // Ringing now would announce a call that is already over. The
+        // terminal signal behind this invite still retires any native
+        // presentation the wake made for it.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CALL_INCOMING_INVITE_SUPERSEDED',
+          details: const <String, Object?>{},
+        );
+        admitted.commitReplay();
+        return settle(IncomingCallSignalOutcome.superseded);
+      }
 
       _signalingContextObserver?.captureAuthenticated(
         signal: signal,

@@ -163,8 +163,11 @@ final class _Mailbox implements CallMailboxClient {
   Future<CallMailboxStoreResult> store(CallMailboxStoreRequest request) async {
     storeCalls++;
     if (!_cancelledHandles.contains(request.callHandle)) {
+      // The relay appends: every stored event of the call stays retrievable
+      // behind the earlier ones.
       page = CallMailboxRetrieveResult(
         events: <CallMailboxEvent>[
+          ...?page?.events,
           CallMailboxEvent(
             callHandle: request.callHandle,
             messageId: request.messageId,
@@ -216,11 +219,8 @@ final class _MailboxBackedControlPort implements CallControlSignalingPort {
     required CallSignal signal,
     required String callHandle,
   }) async {
-    if (signal.event != CallSignalType.invite) {
-      throw const CallControlSignalingPortException(
-        CallControlSignalingPortErrorCode.transportUnavailable,
-      );
-    }
+    // Every pre-connect control signal, the caller's terminate included, is
+    // stored behind the invite: that mirrors the production port.
     final envelope = await codec.encode(
       signal: signal,
       callHandle: callHandle,
@@ -351,112 +351,125 @@ void main() {
     },
   );
 
-  test(
-    'caller cancellation retires mailbox before a late recipient drain',
-    () async {
-      final now = DateTime.utc(2026, 8, 30, 12);
-      final nowMs = now.millisecondsSinceEpoch;
-      final callId = CallId.parse('22222222-2222-4222-8222-222222222222');
-      const callHandle = '33333333-3333-4333-8333-333333333333';
-      final codec = SecureCallEnvelopeCodec(
-        crypto: _Crypto(),
-        nowMs: () => nowMs,
-      );
-      final mailbox = _Mailbox(null);
-      final senderContext = CallSignalingContextStore();
-      late final CallControlEffectExecutor senderControl;
-      final sender = CallCoordinator(
-        reducer: const CallReducer(),
-        cleanupCoordinator: CallCleanupCoordinator(<CallCleanupStep>[
-          CallCleanupStep('call_signaling_context', (snapshot) async {
-            await senderControl.retireOutgoingPreconnectInvite(snapshot);
-            senderContext.purge(snapshot.callId!);
-          }, requiredForTerminalAck: true),
-        ]),
-        historyProjector: CallHistoryProjector(_History()),
-        effectExecutor: senderControl = CallControlEffectExecutor(
-          contextStore: senderContext,
-          signalingPort: _MailboxBackedControlPort(
-            mailbox: mailbox,
-            codec: codec,
-            callHandle: callHandle,
-          ),
-          clock: () => now,
-          idSource: () => CallId.parse('11111111-1111-4111-8111-111111111111'),
-          cancelOutgoingMailboxInvite:
-              ({required recipientDevicePeerId, required callHandle}) =>
-                  mailbox.cancel(
-                    recipientDevicePeerId: recipientDevicePeerId,
-                    callHandle: callHandle,
-                  ),
+  test('caller cancellation stores its terminate behind the invite so a late '
+      'recipient drain never rings', () async {
+    final now = DateTime.utc(2026, 8, 30, 12);
+    final nowMs = now.millisecondsSinceEpoch;
+    final callId = CallId.parse('22222222-2222-4222-8222-222222222222');
+    const callHandle = '33333333-3333-4333-8333-333333333333';
+    final codec = SecureCallEnvelopeCodec(
+      crypto: _Crypto(),
+      nowMs: () => nowMs,
+    );
+    final mailbox = _Mailbox(null);
+    final senderContext = CallSignalingContextStore();
+    late final CallControlEffectExecutor senderControl;
+    final sender = CallCoordinator(
+      reducer: const CallReducer(),
+      cleanupCoordinator: CallCleanupCoordinator(<CallCleanupStep>[
+        CallCleanupStep('call_signaling_context', (snapshot) async {
+          await senderControl.retireOutgoingPreconnectInvite(snapshot);
+          senderContext.purge(snapshot.callId!);
+        }, requiredForTerminalAck: true),
+      ]),
+      historyProjector: CallHistoryProjector(_History()),
+      effectExecutor: senderControl = CallControlEffectExecutor(
+        contextStore: senderContext,
+        signalingPort: _MailboxBackedControlPort(
+          mailbox: mailbox,
+          codec: codec,
+          callHandle: callHandle,
         ),
         clock: () => now,
-        idSource: () => callId,
-      );
-      addTearDown(sender.dispose);
+        idSource: () => CallId.parse('11111111-1111-4111-8111-111111111111'),
+        cancelOutgoingMailboxInvite:
+            ({required recipientDevicePeerId, required callHandle}) =>
+                mailbox.cancel(
+                  recipientDevicePeerId: recipientDevicePeerId,
+                  callHandle: callHandle,
+                ),
+      ),
+      clock: () => now,
+      idSource: () => callId,
+    );
+    addTearDown(sender.dispose);
 
-      await sender.placeCall(
+    await sender.placeCall(
+      contactPeerId: 'recipient-account',
+      localAccountPeerId: 'sender-account',
+      localDeviceId: 'sender-device',
+    );
+    expect(mailbox.storeCalls, 1);
+    await sender.dispatch(
+      CallEvent(
+        type: CallEventType.cancel,
+        eventId: 'caller-cancel',
+        occurredAt: now,
+        callId: callId,
         contactPeerId: 'recipient-account',
-        localAccountPeerId: 'sender-account',
-        localDeviceId: 'sender-device',
-      );
-      expect(mailbox.storeCalls, 1);
-      await sender.dispatch(
-        CallEvent(
-          type: CallEventType.cancel,
-          eventId: 'caller-cancel',
-          occurredAt: now,
-          callId: callId,
-          contactPeerId: 'recipient-account',
-        ),
-      );
+      ),
+    );
 
-      final recipient = CallCoordinator(
-        reducer: const CallReducer(),
-        cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
-        historyProjector: CallHistoryProjector(_History()),
-        clock: () => now,
-        idSource: () => callId,
-      );
-      final presenter = _Presenter();
-      final emittedStates = <CallState>[];
-      final stateSubscription = recipient.snapshots.listen(
-        (snapshot) => emittedStates.add(snapshot.state),
-      );
-      addTearDown(stateSubscription.cancel);
-      final handler = HandleIncomingCallSignal(
-        codec: codec,
-        coordinator: recipient,
-        trustedRosterProvider: const _Roster(),
-        localAuthorityProvider: () async => const CallLocalDeviceAuthority(
-          accountPeerId: 'recipient-account',
-          devicePeerId: 'recipient-device',
-          mlKemSecretKey: 'recipient-mlkem-secret',
-        ),
-        incomingCallPresenter: presenter,
-        networkEffectsAllowed: () => true,
-      );
-      final direct = StreamController<ChatMessage>.broadcast();
-      final runtime = CallSignalingRuntime(
-        directCallSignalStream: direct.stream,
-        mailboxClient: mailbox,
-        handleIncoming: handler.handle,
-        coordinator: recipient,
-        networkEffectsAllowed: () => true,
-      );
-      addTearDown(runtime.shutdown);
-      addTearDown(direct.close);
+    final recipient = CallCoordinator(
+      reducer: const CallReducer(),
+      cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+      historyProjector: CallHistoryProjector(_History()),
+      clock: () => now,
+      idSource: () => callId,
+    );
+    final presenter = _Presenter();
+    final emittedStates = <CallState>[];
+    final stateSubscription = recipient.snapshots.listen(
+      (snapshot) => emittedStates.add(snapshot.state),
+    );
+    addTearDown(stateSubscription.cancel);
+    final handler = HandleIncomingCallSignal(
+      codec: codec,
+      coordinator: recipient,
+      trustedRosterProvider: const _Roster(),
+      localAuthorityProvider: () async => const CallLocalDeviceAuthority(
+        accountPeerId: 'recipient-account',
+        devicePeerId: 'recipient-device',
+        mlKemSecretKey: 'recipient-mlkem-secret',
+      ),
+      incomingCallPresenter: presenter,
+      networkEffectsAllowed: () => true,
+    );
+    final direct = StreamController<ChatMessage>.broadcast();
+    final outcomes = <IncomingCallSignalOutcome>[];
+    final runtime = CallSignalingRuntime(
+      directCallSignalStream: direct.stream,
+      mailboxClient: mailbox,
+      handleIncoming: (frame) async {
+        final outcome = await handler.handle(frame);
+        outcomes.add(outcome);
+        return outcome;
+      },
+      peekIncoming: handler.peek,
+      coordinator: recipient,
+      networkEffectsAllowed: () => true,
+    );
+    addTearDown(runtime.shutdown);
+    addTearDown(direct.close);
 
-      expect(await runtime.start(), isTrue);
-      await runtime.settle();
+    expect(await runtime.start(), isTrue);
+    await runtime.settle();
 
-      expect(mailbox.cancelCalls, 1);
-      expect(mailbox.retrieveCalls, 1);
-      expect(presenter.presentations, 0);
-      expect(emittedStates, isNot(contains(CallState.ringing)));
-      expect(recipient.activeSession, isNull);
-      expect(senderContext.read(callId), isNull);
-      expect(sender.terminalCleanupAckReady(callId), isTrue);
-    },
-  );
+    // The invite stays for the callee the relay may already have woken;
+    // the terminate behind it is that callee's only cancel.
+    expect(mailbox.cancelCalls, 0);
+    expect(mailbox.storeCalls, 2);
+    expect(mailbox.retrieveCalls, 1);
+    expect(mailbox.acked, 2);
+    // The invite is superseded by the terminate behind it; the terminate
+    // itself is consumed, never left for a replay.
+    expect(outcomes, hasLength(2));
+    expect(outcomes.first, IncomingCallSignalOutcome.superseded);
+    expect(outcomes.last, isNot(IncomingCallSignalOutcome.deferred));
+    expect(presenter.presentations, 0);
+    expect(emittedStates, isNot(contains(CallState.ringing)));
+    expect(recipient.activeSession, isNull);
+    expect(senderContext.read(callId), isNull);
+    expect(sender.terminalCleanupAckReady(callId), isTrue);
+  });
 }

@@ -1,0 +1,6 @@
+# go test ./... -count=1 (2026-09-05, after the attached-recipient wake rule)
+ok  	github.com/mknoon/relay-server	20.573s
+
+# RED before the rule:
+--- FAIL: TestCallStoreSkipsIOSVoIPWakeForAnAttachedRecipient: attached recipient wake routes = [ios_voip, ios_voip], want no second VoIP wake
+# first rule (pending list holds only this message) also skipped a call's FIRST event: invite wake routes = [] and 3 existing VoIP-wake tests went red; corrected by requiring meta.AckedEvents > 0

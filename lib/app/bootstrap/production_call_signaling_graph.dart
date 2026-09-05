@@ -10,6 +10,7 @@ import '../../core/database/helpers/direct_contact_device_bindings_db_helpers.da
 import '../../core/media/audio_recorder_service.dart';
 import '../../core/services/incoming_message_router.dart';
 import '../../core/services/p2p_service.dart';
+import '../../features/p2p/domain/models/node_state.dart';
 import '../../core/utils/flow_event_emitter.dart';
 import '../../features/call/application/call_cleanup_coordinator.dart';
 import '../../features/call/application/call_audio_controller.dart';
@@ -100,6 +101,7 @@ final class ProductionCallSignalingGraph
         ForegroundCallBackgroundLifecycle,
         CallSignalingCallabilityInvalidations,
         CallSignalingDeferredAdvertisementRetries,
+        CallSignalingWakeDrain,
         CallWakeHandleDistributionLifecycle {
   ProductionCallSignalingGraph({
     required this.runtime,
@@ -261,6 +263,12 @@ final class ProductionCallSignalingGraph
     final active = coordinator.activeSession;
     if (active != null) _onSessionSnapshot(active);
   }
+
+  /// A native wake or relay recovery: drain the ephemeral call mailbox now.
+  /// The runtime's resume is exactly that drain (listener start, network
+  /// gate, page retrieval, authenticated admission, ack).
+  @override
+  Future<void> drainCallMailbox() => runtime.onResume();
 
   /// Intersects current local trust with the independently verified relay
   /// capability before the coordinator is permitted to create a session.
@@ -1435,6 +1443,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         directCallSignalStream: messageRouter.callSignalStream,
         mailboxClient: mailbox,
         handleIncoming: handler.handle,
+        peekIncoming: handler.peek,
         coordinator: coordinator,
         networkEffectsAllowed: networkEffectsAllowed,
       );
@@ -1463,6 +1472,13 @@ CallSignalingComposition createProductionCallSignalingComposition({
       onGraphBuilt?.call(graph);
       return graph;
     },
+  );
+  // A suspended app loses its relay link; when the node recovers it, a call
+  // invite that only reached the mailbox (the live transport was down) must
+  // be drained without waiting for a foreground resume.
+  _drainCallMailboxOnRelayRecovery(
+    p2pService: p2pService,
+    composition: composition,
   );
   return composition;
 }
@@ -1866,3 +1882,24 @@ void _emitMediaCloseFailureStage(String stage) {
 }
 
 CallId _newCallId() => CallId.parse(const Uuid().v4());
+
+/// Calls [CallSignalingComposition.onCallWake] each time the node's relay
+/// health goes from none to at least one healthy relay. Stops after the
+/// composition shut down.
+void _drainCallMailboxOnRelayRecovery({
+  required P2PService p2pService,
+  required CallSignalingComposition composition,
+}) {
+  var previousHealthy = p2pService.currentState.healthyRelayCount ?? 0;
+  StreamSubscription<NodeState>? subscription;
+  subscription = p2pService.stateStream.listen((state) {
+    if (composition.isShutdown) {
+      unawaited(subscription?.cancel());
+      return;
+    }
+    final healthy = state.healthyRelayCount ?? 0;
+    final recovered = previousHealthy <= 0 && healthy > 0;
+    previousHealthy = healthy;
+    if (recovered) unawaited(composition.onCallWake());
+  }, onError: (Object _) {});
+}

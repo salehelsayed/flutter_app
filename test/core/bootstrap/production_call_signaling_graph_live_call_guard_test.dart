@@ -253,6 +253,63 @@ void main() {
     },
   );
 
+  test('a call wake drains the production call mailbox', () async {
+    final fixture = await _createFixture();
+    await fixture.composition.start();
+    expect(fixture.composition.isStarted, isTrue);
+    int retrieves() => fixture.bridge.commands
+        .where((command) => command == 'call_retrieve_v1')
+        .length;
+    final before = retrieves();
+
+    await fixture.composition.onCallWake();
+
+    expect(retrieves(), before + 1);
+    expect(fixture.composition.isStarted, isTrue);
+    expect(
+      _details(fixture.flowEvents, 'CALL_SIGNALING_WAKE_RESULT').last,
+      containsPair('outcome', 'drained'),
+    );
+  });
+
+  test('a relay recovery drains the production call mailbox once', () async {
+    final fixture = await _createFixture();
+    await fixture.composition.start();
+    int retrieves() => fixture.bridge.commands
+        .where((command) => command == 'call_retrieve_v1')
+        .length;
+    final before = retrieves();
+
+    // The node lost its relay link (the app was suspended) and recovered.
+    fixture.p2p.states.add(
+      const NodeState(
+        peerId: 'local-account',
+        isStarted: true,
+        relayState: 'recovering',
+        healthyRelayCount: 0,
+      ),
+    );
+    fixture.p2p.states.add(
+      const NodeState(
+        peerId: 'local-account',
+        isStarted: true,
+        relayState: 'healthy',
+        healthyRelayCount: 1,
+      ),
+    );
+    fixture.p2p.states.add(
+      const NodeState(
+        peerId: 'local-account',
+        isStarted: true,
+        relayState: 'healthy',
+        healthyRelayCount: 1,
+      ),
+    );
+    await _settle();
+
+    expect(retrieves(), before + 1);
+  });
+
   test('shutdown revokes endpoint and token', () async {
     final fixture = await _createFixture();
     await fixture.composition.start();
@@ -395,6 +452,7 @@ final class _Fixture {
     required this.graphs,
     required this.flowEvents,
     required this.tokenSet,
+    required this.p2p,
   });
 
   final CallSignalingComposition composition;
@@ -403,6 +461,7 @@ final class _Fixture {
   final List<ProductionCallSignalingGraph> graphs;
   final List<Map<String, dynamic>> flowEvents;
   final _TokenSetScript tokenSet;
+  final _P2P p2p;
 }
 
 Future<_Fixture> _createFixture() async {
@@ -551,6 +610,7 @@ Future<_Fixture> _createFixture() async {
     await composition.shutdown();
     router.dispose();
     await p2p.messages.close();
+    await p2p.states.close();
     await tokenEvents.close();
     await database.close();
   });
@@ -561,6 +621,7 @@ Future<_Fixture> _createFixture() async {
     graphs: graphs,
     flowEvents: flowEvents,
     tokenSet: tokenSet,
+    p2p: p2p,
   );
 }
 
@@ -619,6 +680,8 @@ final class _Bridge implements Bridge {
 final class _P2P implements P2PService {
   final StreamController<ChatMessage> messages =
       StreamController<ChatMessage>.broadcast();
+  final StreamController<NodeState> states =
+      StreamController<NodeState>.broadcast(sync: true);
 
   @override
   NodeState get currentState =>
@@ -628,7 +691,7 @@ final class _P2P implements P2PService {
   Stream<ChatMessage> get messageStream => messages.stream;
 
   @override
-  Stream<NodeState> get stateStream => const Stream<NodeState>.empty();
+  Stream<NodeState> get stateStream => states.stream;
 
   @override
   Future<SendMessageResult> sendMessageWithReply(

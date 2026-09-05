@@ -829,11 +829,16 @@ final class IosSetupReadinessEntryCoordinator {
     runtimeWake: { [weak self] in
       DispatchQueue.main.async {
         self?.configureIosNotificationOpenBridgeFromRootViewController()
+        // The Dart side drains the ephemeral call mailbox so the call CallKit
+        // just presented exists there before the user answers.
+        self?.iosCallWakeChannel?.invokeMethod("callWake", arguments: nil)
       }
     }
   )
   private var iosCallNativeBridge: MknoonCallNativeBridge?
   private var iosVoipTokenBridge: MknoonVoipTokenBridge?
+  private let iosCallWakeChannelName = "mknoon/ios_call_wake"
+  private var iosCallWakeChannel: FlutterMethodChannel?
   private let iosNotificationOpenChannelName = "mknoon/ios_notification_open"
   private var iosNotificationOpenChannel: FlutterMethodChannel?
   private let iosNotificationRecoveryChannelName =
@@ -1835,6 +1840,10 @@ final class IosSetupReadinessEntryCoordinator {
     iosVoipTokenBridge = MknoonVoipTokenBridge(
       authority: iosVoipTokenAuthority,
       messenger: messenger
+    )
+    iosCallWakeChannel = FlutterMethodChannel(
+      name: iosCallWakeChannelName,
+      binaryMessenger: messenger
     )
   }
 

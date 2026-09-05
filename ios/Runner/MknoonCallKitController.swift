@@ -202,6 +202,11 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private var mediaClaimedCallIds: Set<UUID> = []
   private var incomingReportWaiters: [UUID: [IncomingReportWaiter]] = [:]
   private var expiryWorkItem: DispatchWorkItem?
+  /// An answered call whose answer the runtime never consumed is a phantom:
+  /// CallKit shows it connected while nothing signals or carries media behind
+  /// it. Bound that state instead of letting it sit until the user hangs up.
+  static let answerAdoptionBoundMs: Int64 = 10_000
+  private var answerAdoptionWorkItem: DispatchWorkItem?
 
   init(
     provider: MknoonCallProviding,
@@ -855,8 +860,39 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     synchronized {
       guard record(nativeCallId, .answerRequested) else { return false }
       answeredCallIds.insert(nativeCallId)
+      scheduleAnswerAdoptionBound(nativeCallId)
       return true
     }
+  }
+
+  /// Ends the call when its answer is still unconsumed by the runtime after
+  /// `answerAdoptionBoundMs`. A consumed answer leaves the journal through
+  /// acknowledgement, so its presence is the phantom signal. Returns true only
+  /// when this check ended the call.
+  @discardableResult
+  func enforceAnswerAdoptionBound(_ nativeCallId: UUID) -> Bool {
+    synchronized {
+      guard let descriptor = store.snapshot(),
+            descriptor.nativeCallId == nativeCallId,
+            descriptor.terminalEvent == nil,
+            let answer = descriptor.events.last(where: { $0.type == .answerRequested }),
+            nowMs() - answer.occurredAtMs >= Self.answerAdoptionBoundMs
+      else { return false }
+      NSLog("[MKNOON_CALLKIT_DIAG] answer_adoption_bound=exceeded")
+      return terminate(nativeCallId, type: .nativeFailure, reason: .failed)
+    }
+  }
+
+  private func scheduleAnswerAdoptionBound(_ nativeCallId: UUID) {
+    answerAdoptionWorkItem?.cancel()
+    let item = DispatchWorkItem { [weak self] in
+      self?.enforceAnswerAdoptionBound(nativeCallId)
+    }
+    answerAdoptionWorkItem = item
+    DispatchQueue.global(qos: .userInitiated).asyncAfter(
+      deadline: .now() + .milliseconds(Int(Self.answerAdoptionBoundMs)),
+      execute: item
+    )
   }
 
   /// In-app Answer routed through CallKit. Only a presented, non-terminal
@@ -1242,6 +1278,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     endCallKitOnce(nativeCallId, reason: reason)
     clearRuntimeAudio(nativeCallId)
     expiryWorkItem?.cancel()
+    answerAdoptionWorkItem?.cancel()
     if newlyRecorded {
       NSLog("[MKNOON_CALLKIT_DIAG] terminal=%@", type.wireName)
       if type == .remoteCancelled {
@@ -1294,6 +1331,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     clearRuntimeAudio(nativeCallId)
     endedCallIds.remove(nativeCallId)
     expiryWorkItem?.cancel()
+    answerAdoptionWorkItem?.cancel()
   }
 
   private func expirePendingIfNecessary() {

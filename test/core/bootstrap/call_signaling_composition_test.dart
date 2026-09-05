@@ -58,6 +58,7 @@ final class _Graph
         CallSignalingGraphLifecycle,
         ForegroundCallCapability,
         ForegroundCallBackgroundLifecycle,
+        CallSignalingWakeDrain,
         CallWakeHandleDistributionLifecycle {
   _Graph(
     this.events, {
@@ -206,6 +207,11 @@ final class _Graph
   @override
   Future<void> onResume() async {
     events.add('mailbox_resume');
+  }
+
+  @override
+  Future<void> drainCallMailbox() async {
+    events.add('call_mailbox_drain');
   }
 
   @override
@@ -1759,6 +1765,73 @@ void main() {
     );
 
     await composition.shutdown();
+  });
+
+  test('call wake drains the call mailbox on a started graph', () async {
+    final events = <String>[];
+    final flowEvents = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(flowEvents.add);
+    addTearDown(() => debugSetFlowEventSink(null));
+    final composition = CallSignalingComposition(
+      featureFlags: _enabledFlags(),
+      platform: CallEndpointPlatform.ios,
+      awaitReadiness: () async => events.add('readiness'),
+      buildGraph: () async => _Graph(events),
+    );
+    await composition.start();
+    expect(composition.isStarted, isTrue);
+    events.clear();
+
+    await composition.onCallWake();
+
+    expect(events, <String>['call_mailbox_drain']);
+    expect(composition.isStarted, isTrue);
+    final wake = flowEvents
+        .where((event) => event['event'] == 'CALL_SIGNALING_WAKE_RESULT')
+        .toList(growable: false);
+    expect(wake, hasLength(1));
+    expect(wake.single['details'], containsPair('outcome', 'drained'));
+    await composition.shutdown();
+  });
+
+  test('call wake starts the graph before draining', () async {
+    final events = <String>[];
+    final composition = CallSignalingComposition(
+      featureFlags: _enabledFlags(),
+      platform: CallEndpointPlatform.ios,
+      awaitReadiness: () async => events.add('readiness'),
+      buildGraph: () async => _Graph(events),
+    );
+    expect(composition.isStarted, isFalse);
+
+    await composition.onCallWake();
+
+    expect(composition.isStarted, isTrue);
+    expect(
+      events,
+      containsAllInOrder(<String>[
+        'readiness',
+        'call_subscription',
+        'advertise',
+        'call_mailbox_drain',
+      ]),
+    );
+    await composition.shutdown();
+  });
+
+  test('call wake is ignored while voice calling is disabled', () async {
+    final events = <String>[];
+    final composition = CallSignalingComposition(
+      featureFlags: const <String, bool>{},
+      platform: CallEndpointPlatform.ios,
+      awaitReadiness: () async => events.add('readiness'),
+      buildGraph: () async => _Graph(events),
+    );
+
+    await composition.onCallWake();
+
+    expect(events, isEmpty);
+    expect(composition.isStarted, isFalse);
   });
 
   test('failed resume refresh withdraws the active call graph', () async {

@@ -167,6 +167,9 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
   final Map<CallId, Future<void>> _inFlightMailboxRetirements =
       <CallId, Future<void>>{};
   final Set<CallId> _retiredMailboxInvites = <CallId>{};
+  final Set<CallId> _mailboxStoredInvites = <CallId>{};
+  final Map<CallId, Future<CallEvent?>> _inFlightPreconnectTerminals =
+      <CallId, Future<CallEvent?>>{};
   final ListQueue<CallId> _retiredMailboxInviteOrder = ListQueue<CallId>();
   int _nextEventSequence = 0;
   int _failureCount = 0;
@@ -209,6 +212,13 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
           _mailboxRetirementRequired.add(callId);
           return _trackInviteSend(snapshot);
         }
+        if ((effect.type == CallEffectType.sendTerminate ||
+                effect.type == CallEffectType.sendReject) &&
+            snapshot.direction == CallDirection.outgoing &&
+            snapshot.connectedAt == null &&
+            _mailboxRetirementRequired.contains(callId)) {
+          return _trackPreconnectTerminal(effect.type, snapshot);
+        }
         return _sendForSnapshot(effect.type, snapshot);
       default:
         return null;
@@ -232,7 +242,18 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
       // which is the only copy a backgrounded callee can still receive.
       _mailboxRetirementRequired.remove(callId);
       _mailboxStoreSettlements.remove(callId);
+      _mailboxStoredInvites.remove(callId);
       return Future<void>.value();
+    }
+    if (_mailboxStoredInvites.remove(callId)) {
+      // The relay took the invite into the callee's mailbox and woke the
+      // callee natively for it, even though no ringing signal reached this
+      // side yet. The terminate stored behind that invite is the callee's
+      // only cancel; retiring the mailbox would delete both and leave a
+      // natively presented call with nothing to end it.
+      _mailboxRetirementRequired.remove(callId);
+      _mailboxStoreSettlements.remove(callId);
+      return _awaitPreconnectTerminal(callId);
     }
     if (!_mailboxRetirementRequired.contains(callId)) {
       return Future<void>.value();
@@ -251,6 +272,36 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
     });
     _inFlightMailboxRetirements[callId] = retirement;
     return retirement;
+  }
+
+  /// A pre-connect terminate waits for the invite's mailbox custody, so the
+  /// signaling-context cleanup must not purge the context underneath it.
+  /// The context is purged right after retirement; let the terminate that
+  /// is still ordering itself behind the invite finish first.
+  Future<void> _awaitPreconnectTerminal(CallId callId) async {
+    final send = _inFlightPreconnectTerminals[callId];
+    if (send == null) return;
+    try {
+      await send;
+    } catch (_) {
+      // The send reports its own failure; retirement is unaffected.
+    }
+  }
+
+  Future<CallEvent?> _trackPreconnectTerminal(
+    CallEffectType effectType,
+    CallSessionSnapshot snapshot,
+  ) async {
+    final callId = snapshot.callId!;
+    final send = _sendForSnapshot(effectType, snapshot);
+    _inFlightPreconnectTerminals[callId] = send;
+    try {
+      return await send;
+    } finally {
+      if (identical(_inFlightPreconnectTerminals[callId], send)) {
+        _inFlightPreconnectTerminals.remove(callId);
+      }
+    }
   }
 
   Future<CallEvent?> _trackInviteSend(CallSessionSnapshot snapshot) async {
@@ -352,6 +403,19 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
           CallSignalingContextErrorCode.contextUnavailable,
         );
       }
+      if (terminal && preserveForMailboxRetirement) {
+        // A pre-connect terminate must land behind the invite's mailbox
+        // custody, never before it: a callee draining a late invite after
+        // the terminate would ring for a call that is already over.
+        final inviteCustody = _mailboxStoreSettlements[callId];
+        if (inviteCustody != null) {
+          try {
+            await inviteCustody;
+          } catch (_) {
+            // A failed invite store leaves nothing to order behind.
+          }
+        }
+      }
       final result = await _send(
         effectType: effectType,
         context: context,
@@ -360,6 +424,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
       if (effectType != CallEffectType.sendInvite) return null;
       _mailboxStoreSettlements[callId] = result.mailboxStoreSettled;
       if (result.mailboxStored) {
+        _mailboxStoredInvites.add(callId);
         return _followUp(
           type: CallEventType.mailboxStored,
           snapshot: snapshot,
@@ -380,6 +445,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
       return _signalingFailure(snapshot);
     } finally {
       if (terminal && !preserveForMailboxRetirement) {
+        _mailboxStoredInvites.remove(callId);
         contextStore.purge(callId);
       }
     }

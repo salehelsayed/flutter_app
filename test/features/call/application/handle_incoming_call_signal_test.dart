@@ -1275,4 +1275,75 @@ void main() {
       await coordinator.dispose();
     }
   });
+
+  test(
+    'an invite whose terminal follows in the same page is superseded without '
+    'presentation or dispatch',
+    () async {
+      final effects = _Effects();
+      final coordinator = _coordinator(effects);
+      addTearDown(coordinator.dispose);
+      final built = await _build(coordinator, _Presenter());
+
+      expect(
+        await built.handler.handle(
+          IncomingCallSignalFrame(
+            envelopeJson: built.envelope,
+            authenticatedTransportPeerId: 'sender-device',
+            route: CallRouteClass.ephemeralMailbox,
+            terminalFollows: true,
+          ),
+        ),
+        IncomingCallSignalOutcome.superseded,
+      );
+      expect(coordinator.activeSession, isNull);
+    },
+  );
+
+  test(
+    'peek reads the call and event without consuming the envelope',
+    () async {
+      final effects = _Effects();
+      final coordinator = _coordinator(effects);
+      addTearDown(coordinator.dispose);
+      final built = await _build(coordinator, _Presenter());
+      final frame = IncomingCallSignalFrame(
+        envelopeJson: built.envelope,
+        authenticatedTransportPeerId: 'sender-device',
+        route: CallRouteClass.ephemeralMailbox,
+      );
+
+      final peek = await built.handler.peek(frame);
+      expect(peek?.event, CallSignalType.invite);
+      expect(peek?.isTerminal, isFalse);
+      expect(peek?.callId, isNotNull);
+      expect(coordinator.activeSession, isNull);
+
+      expect(
+        await built.handler.handle(frame),
+        IncomingCallSignalOutcome.accepted,
+      );
+      expect(coordinator.activeSession?.callId, peek?.callId);
+    },
+  );
+
+  test('peek returns null for an envelope that fails authentication', () async {
+    final effects = _Effects();
+    final coordinator = _coordinator(effects);
+    addTearDown(coordinator.dispose);
+    final crypto = _Crypto();
+    final built = await _build(coordinator, _Presenter(), crypto: crypto);
+    crypto.throwOnVerify = true;
+
+    expect(
+      await built.handler.peek(
+        IncomingCallSignalFrame(
+          envelopeJson: built.envelope,
+          authenticatedTransportPeerId: 'sender-device',
+          route: CallRouteClass.ephemeralMailbox,
+        ),
+      ),
+      isNull,
+    );
+  });
 }

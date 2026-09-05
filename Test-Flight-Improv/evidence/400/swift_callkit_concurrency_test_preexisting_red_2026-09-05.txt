@@ -1,0 +1,3 @@
+# HEAD baseline check (my two Swift files reverted to HEAD for this run, then restored)
+ios/RunnerTests/MknoonCallKitLifecycleTests.swift:135,141,142,143: XCTAssert failures in testConcurrentPushKitAndAuthenticatedPresentationCoalesceOneCallKitReportAndOnePresentedEvent
+** TEST FAILED ** (same four assertions with and without the answer-bound change)

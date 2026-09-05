@@ -5,11 +5,15 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import '../application/call_coordinator.dart';
 import '../application/call_network_gate.dart';
 import '../application/handle_incoming_call_signal.dart';
+import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import 'call_mailbox_client.dart';
 
 typedef HandleCallSignalFrame =
     Future<IncomingCallSignalOutcome> Function(IncomingCallSignalFrame frame);
+
+typedef PeekCallSignalFrame =
+    Future<IncomingCallSignalPeek?> Function(IncomingCallSignalFrame frame);
 
 /// Owns only call signaling resources: one dedicated router subscription, a
 /// serial inbound lane, and call-mailbox resume drains. It never owns or tears
@@ -19,6 +23,7 @@ final class CallSignalingRuntime {
     required Stream<ChatMessage> directCallSignalStream,
     required CallMailboxClient mailboxClient,
     required HandleCallSignalFrame handleIncoming,
+    PeekCallSignalFrame? peekIncoming,
     required CallCoordinator coordinator,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     this.maxMailboxPagesPerDrain = 8,
@@ -26,6 +31,7 @@ final class CallSignalingRuntime {
   }) : _directCallSignalStream = directCallSignalStream,
        _mailboxClient = mailboxClient,
        _handleIncoming = handleIncoming,
+       _peekIncoming = peekIncoming,
        _coordinator = coordinator,
        _networkEffectsAllowed = networkEffectsAllowed {
     if (maxMailboxPagesPerDrain < 1 || maxMailboxPagesPerDrain > 32) {
@@ -42,6 +48,7 @@ final class CallSignalingRuntime {
   final Stream<ChatMessage> _directCallSignalStream;
   final CallMailboxClient _mailboxClient;
   final HandleCallSignalFrame _handleIncoming;
+  final PeekCallSignalFrame? _peekIncoming;
   final CallCoordinator _coordinator;
   final CallNetworkEffectsAllowed _networkEffectsAllowed;
   final int maxMailboxPagesPerDrain;
@@ -135,21 +142,14 @@ final class CallSignalingRuntime {
       } catch (_) {
         return;
       }
-      for (final event in page.events) {
+      final superseded = await _supersededInvites(page.events);
+      for (var index = 0; index < page.events.length; index++) {
+        final event = page.events[index];
         if (_disposed) return;
         late final IncomingCallSignalOutcome outcome;
         try {
           outcome = await _handleIncoming(
-            IncomingCallSignalFrame(
-              envelopeJson: event.envelopeJson,
-              authenticatedTransportPeerId:
-                  event.authenticatedSenderDevicePeerId,
-              route: CallRouteClass.ephemeralMailbox,
-              expectedCallHandle: event.callHandle,
-              expectedMessageId: event.messageId,
-              expectedExpiresAtMs: event.expiresAtMs,
-              expectedRecipientDevicePeerId: event.recipientDevicePeerId,
-            ),
+            _frameFor(event, terminalFollows: superseded.contains(index)),
           );
         } catch (_) {
           // Transient application/authority failure retains mailbox custody.
@@ -171,6 +171,51 @@ final class CallSignalingRuntime {
       }
       if (!page.hasMore) return;
     }
+  }
+
+  IncomingCallSignalFrame _frameFor(
+    CallMailboxEvent event, {
+    bool terminalFollows = false,
+  }) => IncomingCallSignalFrame(
+    envelopeJson: event.envelopeJson,
+    authenticatedTransportPeerId: event.authenticatedSenderDevicePeerId,
+    route: CallRouteClass.ephemeralMailbox,
+    expectedCallHandle: event.callHandle,
+    expectedMessageId: event.messageId,
+    expectedExpiresAtMs: event.expiresAtMs,
+    expectedRecipientDevicePeerId: event.recipientDevicePeerId,
+    terminalFollows: terminalFollows,
+  );
+
+  /// Indexes of invites in [events] whose call also has a terminal signal in
+  /// the same page. Peeking never consumes an event. A peek that fails leaves
+  /// its event unmarked, which at worst rings for a call the next frame ends.
+  Future<Set<int>> _supersededInvites(List<CallMailboxEvent> events) async {
+    final peek = _peekIncoming;
+    if (peek == null || events.length < 2) return const <int>{};
+    final peeks = <IncomingCallSignalPeek?>[];
+    for (final event in events) {
+      if (_disposed) return const <int>{};
+      IncomingCallSignalPeek? result;
+      try {
+        result = await peek(_frameFor(event));
+      } catch (_) {
+        result = null;
+      }
+      peeks.add(result);
+    }
+    final endedCalls = <CallId>{
+      for (final peek in peeks)
+        if (peek != null && peek.isTerminal) peek.callId,
+    };
+    final superseded = <int>{};
+    for (var index = 0; index < peeks.length; index++) {
+      final peek = peeks[index];
+      if (peek != null && peek.isInvite && endedCalls.contains(peek.callId)) {
+        superseded.add(index);
+      }
+    }
+    return superseded;
   }
 
   Future<void> settle() => _serialTail;

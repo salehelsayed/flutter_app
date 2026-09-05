@@ -1,0 +1,42 @@
+GREEN run starting 01:12:51
+simulator: 674DFFF6-5F38-4235-93F6-AF7FBF86AE65
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testRequiredInvalidComplianceReportIsEphemeralAndWaitsToEndUntilSuccess]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testReturnWakeForRegisteredOutgoingPreservesOutgoingDescriptorWithoutIncomingUi]' started.
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testReturnWakeForRegisteredOutgoingPreservesOutgoingDescriptorWithoutIncomingUi]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testRouteChangeNotificationSerializesAndPersistenceFailureFailsClosed]' started.
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testRouteChangeNotificationSerializesAndPersistenceFailureFailsClosed]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testSuccessfulLegacyBusyReportRaceEndsAndFailsMatchingActiveCall]' started.
+2026-09-05 03:13:47.805474+0200 Runner[53825:3191920] [MKNOON_CALLKIT_DIAG] terminal=nativeFailure
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testSuccessfulLegacyBusyReportRaceEndsAndFailsMatchingActiveCall]' passed (0.007 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testSuccessfulReturnWakeReportForRegisteredOutgoingDoesNotEndCall]' started.
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testSuccessfulReturnWakeReportForRegisteredOutgoingDoesNotEndCall]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testUnconnectedOutgoingStillExpiresAcrossControllerRecreation]' started.
+2026-09-05 03:13:47.818704+0200 Runner[53825:3191920] [MKNOON_CALLKIT_DIAG] terminal=expired
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testUnconnectedOutgoingStillExpiresAcrossControllerRecreation]' passed (0.007 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testUnpresentedDuplicateRetriesSameUuidAcrossBothCrashWindows]' started.
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testUnpresentedDuplicateRetriesSameUuidAcrossBothCrashWindows]' passed (0.001 seconds).
+Test Suite 'MknoonCallKitLifecycleTests' failed at 2026-09-05 03:13:47.820.
+	 Executed 45 tests, with 4 failures (0 unexpected) in 1.223 (1.238) seconds
+Test Suite 'RunnerTests.xctest' failed at 2026-09-05 03:13:47.821.
+	 Executed 45 tests, with 4 failures (0 unexpected) in 1.223 (1.238) seconds
+Test Suite 'Selected tests' failed at 2026-09-05 03:13:47.821.
+	 Executed 45 tests, with 4 failures (0 unexpected) in 1.223 (1.239) seconds
+2026-09-05 03:13:47.835385+0200 Runner[53825:3191920] flutter: [STARTUP_TIMING] share_launch_probe_complete +1733ms
+2026-09-05 03:13:47.836094+0200 Runner[53825:3191920] flutter: [FLOW] {"ts":"2026-09-05T01:13:47.835974Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"MEDIA_RENDER_RESOLVER_SEEDED","details":{"seeded":true}}
+2026-09-05 03:13:47.836191+0200 Runner[53825:3191920] flutter: [STARTUP_TIMING] documents_dir_ready +1740ms
+2026-09-05 03:14:03.694 xcodebuild[52301:3183687] [MT] IDETestOperationsObserverDebug: 49.180 elapsed -- Testing started completed.
+2026-09-05 03:14:03.694 xcodebuild[52301:3183687] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-05 03:14:03.694 xcodebuild[52301:3183687] [MT] IDETestOperationsObserverDebug: 49.180 sec, +49.180 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/I560101/Library/Developer/Xcode/DerivedData/Runner-bbonzqbmiscotnephxgpuzbtzrhe/Logs/Test/Test-Runner-2026.09.05_03-12-52-+0200.xcresult
+
+Failing tests:
+	MknoonCallKitLifecycleTests.testConcurrentPushKitAndAuthenticatedPresentationCoalesceOneCallKitReportAndOnePresentedEvent()
+	MknoonCallKitLifecycleTests.testConcurrentPushKitAndAuthenticatedPresentationCoalesceOneCallKitReportAndOnePresentedEvent()
+	MknoonCallKitLifecycleTests.testConcurrentPushKitAndAuthenticatedPresentationCoalesceOneCallKitReportAndOnePresentedEvent()
+	MknoonCallKitLifecycleTests.testConcurrentPushKitAndAuthenticatedPresentationCoalesceOneCallKitReportAndOnePresentedEvent()
+
+** TEST FAILED **
+
+Testing started

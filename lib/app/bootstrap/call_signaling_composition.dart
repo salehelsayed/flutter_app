@@ -75,6 +75,13 @@ abstract interface class CallSignalingDeferredAdvertisementRetries {
   Stream<void> get deferredAdvertisementRetries;
 }
 
+/// Optional graph hook: drains the ephemeral call mailbox right now because a
+/// native call wake (PushKit) or a relay recovery reported that a signal may be
+/// waiting there for this device. Foreground state is not touched.
+abstract interface class CallSignalingWakeDrain {
+  Future<void> drainCallMailbox();
+}
+
 /// Optional graph boundary used by encrypted contact-request distribution.
 /// The stable composition prevents retained UI owners from holding a graph-
 /// lifetime coordinator after callability has been withdrawn.
@@ -459,6 +466,47 @@ final class CallSignalingComposition
         event: 'CALL_SIGNALING_START_RESULT',
         outcome: outcome,
         startStage: stage,
+      );
+    }
+  }
+
+  /// A native call wake (a PushKit VoIP push presented a call while the app
+  /// was backgrounded) or a relay recovery: the call mailbox may hold the
+  /// invite that the live transport could not deliver. Starts the graph if
+  /// needed and drains that mailbox without changing foreground state, so the
+  /// call exists on the Dart side before the user answers from the lock screen.
+  Future<void> onCallWake() async {
+    var outcome = 'failed';
+    try {
+      if (!isEnabled) {
+        outcome = 'disabled';
+        return;
+      }
+      if (_terminal) {
+        outcome = 'terminal';
+        return;
+      }
+      await start();
+      final graph = _graph;
+      if (!_started || graph == null || _terminal) {
+        outcome = _terminal ? 'terminal' : 'start_unavailable';
+        return;
+      }
+      final drain = graph is CallSignalingWakeDrain
+          ? graph as CallSignalingWakeDrain
+          : null;
+      if (drain == null) {
+        outcome = 'unsupported';
+        return;
+      }
+      await drain.drainCallMailbox();
+      outcome = identical(_graph, graph) ? 'drained' : 'graph_replaced';
+    } catch (_) {
+      // Best effort: the next resume or relay recovery drains again.
+    } finally {
+      _emitLifecycleResult(
+        event: 'CALL_SIGNALING_WAKE_RESULT',
+        outcome: outcome,
       );
     }
   }

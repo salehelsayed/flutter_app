@@ -36,3 +36,17 @@ Gates: `curated_1to1_lane_2026-09-04.txt` (Flutter leg 4165/4165; trailing devic
 | TC-400-27 graph flow event | coordinator-side emission rejected by the privacy census | live-guard 7/7 | outcome stream → `CALL_VOIP_TOKEN_EPOCH_ADVANCE_RESULT` |
 | TC-400-28/29 Swift | build error `no member 'advanceRefreshEpoch'` | 27/27 (`swift_runner_tests_epoch_advance_2026-09-05.txt`) | |
 | TC-400-30 device | — | see `epoch_advance_device_proof_2026-09-05.txt` | iPhone 11 + production relay |
+
+## Addendum 2026-09-05 (b) — locked callee: call answered, never ended (four fixes)
+
+Symptom (captures `docker-ws/deploy-captures/fresh-260905024353/`): iPhone 13 locked, VoIP-woken, answered; iPhone 11 hung up; the call never ended on iPhone 13 (and, earlier, rang a second time after a hang-up).
+
+| Fix | Row | RED | GREEN | Notes |
+|---|---|---|---|---|
+| 1 background admission on VoIP wake | `call_signaling_composition_test` ×3, live-guard ×2, `ios_call_wake_channel_test` ×3 | seams missing (`CallSignalingWakeDrain`, `onCallWake`, `IosCallWakeChannel`) | 73 across the three files | `CALL_SIGNALING_WAKE_RESULT` outcomes; PushKit `runtimeWake` → `mknoon/ios_call_wake` channel; relay recovery drains once |
+| 2 answered-but-unadopted native call | `MknoonCallKitLifecycleTests` ×3 (`testAnswerNobodyConsumesEndsTheCallAtTheAdoptionBound`, `...ConsumedByTheRuntimeIsNotEnded...`, `...IgnoresOtherCalls`) | build error `no member 'enforceAnswerAdoptionBound'` | 45 tests, 3 new pass (`swift_runner_tests_callkit_answer_bound_2026-09-05.txt`) | `answerAdoptionBoundMs` = 10 s; consumed answers leave `events` through ack. One PRE-EXISTING red: `testConcurrentPushKitAndAuthenticatedPresentationCoalesceOneCallKitReportAndOnePresentedEvent` fails identically at HEAD (`swift_callkit_concurrency_test_preexisting_red_2026-09-05.txt`) |
+| 3 caller cancel keeps the mailbox, orders the terminate behind the invite | executor test `a mailbox-stored invite cancelled before ringing keeps the mailbox and stores the terminate after the invite settles` | `Expected: ['invite'] / Actual: ['invite', 'terminate']` (terminate raced the invite's custody) | executor 16/16 | retirement now waits for the in-flight pre-connect terminate so the context purge cannot starve it |
+| 3b late drain never rings a cancelled invite | runtime ×2, handler ×3 (`peek`, `superseded`), convergence contract rewritten | compile: `IncomingCallSignalPeek`/`peekIncoming`/`terminalFollows` missing | 40/40 (runtime + handler + convergence) | convergence: `cancelCalls 1 → 0`, `storeCalls 2`, `acked 2`, outcomes `[superseded, non-deferred]`; production runtime wired with `peekIncoming: handler.peek` |
+| 4 relay wakes only when needed | `call_wake_attached_recipient_test.go` ×3 | two VoIP routes for an attached recipient | 3/3 + full relay suite ok (`relay_wake_attached_recipient_2026-09-05.txt`) | `redisCallMeta.AckedEvents` (omitempty; old records → never attached); Android standard route unchanged. NOT DEPLOYED to the production relay (needs explicit approval) |
+
+Gates: affected union 258/258 (13 files); `flutter analyze` clean; arch graph `--incremental` refreshed; host `1to1` batch + curated `1to1` lane: see the files named in the plan's Execution Progress row.

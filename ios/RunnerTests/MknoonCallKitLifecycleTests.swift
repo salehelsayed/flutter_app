@@ -879,6 +879,53 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     )
   }
 
+  // MARK: - Answer adoption bound
+
+  func testAnswerNobodyConsumesEndsTheCallAtTheAdoptionBound() {
+    var clock = now
+    let rig = makeRig(nowMsProvider: { clock })
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertTrue(rig.controller.handleAnswer(callA))
+
+    clock += MknoonCallKitController.answerAdoptionBoundMs - 1
+    XCTAssertFalse(rig.controller.enforceAnswerAdoptionBound(callA))
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    XCTAssertTrue(rig.provider.endReports.isEmpty)
+
+    clock += 1
+    XCTAssertTrue(rig.controller.enforceAnswerAdoptionBound(callA))
+    XCTAssertEqual(rig.store.snapshot()?.terminalEvent?.type, .nativeFailure)
+    XCTAssertEqual(rig.provider.endReports.map(\.0), [callA])
+    XCTAssertEqual(rig.provider.endReports.map(\.1), [.failed])
+    // Idempotent: the bound never ends a call twice.
+    XCTAssertFalse(rig.controller.enforceAnswerAdoptionBound(callA))
+  }
+
+  func testAnswerConsumedByTheRuntimeIsNotEndedAtTheAdoptionBound() {
+    var clock = now
+    let rig = makeRig(nowMsProvider: { clock })
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertTrue(rig.controller.handleAnswer(callA))
+    let answerSequence = rig.store.snapshot()!.highestSequence
+    XCTAssertTrue(
+      rig.controller.acknowledge(callA, through: answerSequence, disposition: .adopted))
+
+    clock += MknoonCallKitController.answerAdoptionBoundMs * 2
+    XCTAssertFalse(rig.controller.enforceAnswerAdoptionBound(callA))
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    XCTAssertTrue(rig.provider.endReports.isEmpty)
+  }
+
+  func testAnswerAdoptionBoundIgnoresOtherCalls() {
+    var clock = now
+    let rig = makeRig(nowMsProvider: { clock })
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertTrue(rig.controller.handleAnswer(callA))
+    clock += MknoonCallKitController.answerAdoptionBoundMs
+    XCTAssertFalse(rig.controller.enforceAnswerAdoptionBound(UUID()))
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+  }
+
   private func present(
     _ rig: CallKitRig,
     _ payload: VoipWakePayload,

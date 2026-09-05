@@ -21,6 +21,7 @@ import 'package:flutter_app/app/bootstrap/production_canonical_direct_projection
 import 'package:flutter_app/app/bootstrap/production_canonical_group_replay_composition.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
+import 'package:flutter_app/features/call/infrastructure/ios_call_wake_channel.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/issued_call_wake_handle_store_impl.dart';
@@ -6241,6 +6242,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         }
       },
     );
+    if (Platform.isIOS) {
+      // PushKit presents a call natively while the app may be suspended; the
+      // wake channel drains the call mailbox so the Dart session exists before
+      // the user answers from the lock screen.
+      IosCallWakeChannel(
+        onCallWake: callSignalingComposition.onCallWake,
+      ).install();
+    }
     notifyCallWakeEligibilityChanged = () {
       unawaited(callSignalingComposition.onContactEligibilityChanged());
     };
