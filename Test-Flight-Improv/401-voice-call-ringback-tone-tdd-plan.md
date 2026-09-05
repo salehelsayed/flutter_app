@@ -1,6 +1,6 @@
 # Plan 401 — Voice call: caller-side ringback tone (TDD)
 
-Status: implemented 2026-09-05 (device proof pending)
+Status: CLOSED 2026-09-05 15:19Z — proven on device (user: "works ! I can hear it ringing")
 Origin: user report 2026-09-05 — "when I call from iPhone 11 to the Pixel or iPhone 13 and put the phone on my ear, I hear no sign that I am calling and that it rings on the other side."
 Evidence: `Test-Flight-Improv/evidence/401/`
 
@@ -58,6 +58,17 @@ Capture `docker-ws/deploy-captures/fresh-260905170844/`: the request now reached
 | `call_ringback_channel_test.dart`: every port takes `resolveCallHandle` (the adapters' `AuthenticatedCallHandleResolver`); the wire carries the resolved handle and never the call id; a call without a handle is refused with no native call | `No named parameter with the name 'resolveCallHandle'` | contract 9/9 + coordinator 9/9; composition, graph diagnostics and live-call guard suites green in the same run | `dart_ringback_handle_red_2026-09-05.txt`, `dart_ringback_handle_green_2026-09-05.txt` |
 
 Graph wiring passes the same resolver closure the lifecycle adapters get. Third deploy: `docker-ws/deploy_three_phones_ringback_r3_result.txt`.
+
+## Device proof 2026-09-05 15:18Z — heard on the phone, matched in the captures
+
+Captures `docker-ws/deploy-captures/fresh-260905171744/`, evidence `ringback_device_proof_2026-09-05.txt`.
+
+| Caller | Far end rings | Tone | Stop |
+|---|---|---|---|
+| iPhone 11 (build `1.0.0-4ba725d42.d12.flowlog.t260905171408`) | `remoteRinging` 15:18:55.362 (session latched 6 ms earlier) | `[MKNOON_CALLKIT_DIAG] ringback=started` 15:18:55.470, `CALL_RINGBACK_RESULT start ok` | callee ended the call at 15:19:03.567: native `ringback=stopped reason=terminal` before `terminal=remoteCancelled`; Dart's own stop then answered `refused` (nothing left to stop), which the coordinator treats as silence |
+| Pixel (build `1.0.0-3cc20cd6e.d7.t260905171659`) | `remoteRinging` 15:19:16.194 | `MknoonCallRingback: ringback stage=start result=playing` 15:19:16.245, `start ok` | 15:19:19.243 `stage=stop result=stopped`, `stop ok` |
+
+Rows 1 and 3 of the device-proof profile are covered (tone while ringing; instant stop on a terminal). Rows 2 (Pixel → iPhone acoustics) and 4 (route change during ringing) were not separately observed.
 
 ## Known limits
 

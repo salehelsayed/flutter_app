@@ -9,5 +9,6 @@
 | `dart_ringback_channel_contract_red_2026-09-05.txt` / `…_green_…` | device finding: the port used an unserved channel; RED on the missing per-platform factories, GREEN 93/93 with the cross-language source census |
 | `dart_ringback_handle_red_2026-09-05.txt` / `…_green_…` | second device finding: the port sent the Dart call id, the native bridge only resolves the signaling handle; RED on the missing resolver, GREEN with the resolved handle on the wire |
 | `host_1to1_batch_ringback_2026-09-05.txt` | host `1to1` batch with the new gate entries: PASS, 194 paths, 3323 passed / 4 skipped |
+| `ringback_device_proof_2026-09-05.txt` | user-driven proof: iPhone 11 `ringback=started` 108 ms after `remoteRinging`, native stop on the callee's cancel; Pixel `stage=start result=playing` 51 ms after ringing, stopped on answer |
 
-Device proof rows are listed in `../401-voice-call-ringback-tone-tdd-plan.md` (user-driven; not yet run).
+Device proof rows: see the plan's "Device proof 2026-09-05 15:18Z" section.

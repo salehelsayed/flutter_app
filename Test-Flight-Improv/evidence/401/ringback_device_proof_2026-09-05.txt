@@ -1,0 +1,35 @@
+=== plan 401 device proof 2026-09-05T15:19:47Z — user: 'works ! I can hear it ringing' (iPhone 11 caller) ===
+builds: iPhones 1.0.0-4ba725d42.d12.flowlog.t260905171408, Pixel 1.0.0-3cc20cd6e.d7.t260905171659; captures docker-ws/deploy-captures/fresh-260905171744
+now: 15:19:47Z
+=== iphone_00008030_syslog.txt (3721 lines, last: Sep  5 17:19:42.810562 R)
+Sep  5 17:18:54.918143 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:18:54.917759Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"place","state":"preparing
+Sep  5 17:18:55.010939 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:18:55.009055Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"outgoingInviteReady","sta
+Sep  5 17:18:55.011816 Runner[1797] <Notice>: [MKNOON_CALLKIT_DIAG] audio_session=configured stage=start
+Sep  5 17:18:55.283549 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:18:55.279872Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"directAccepted","state":"
+Sep  5 17:18:55.356325 Runner[1797] <Notice>: [MKNOON_CALLKIT_DIAG] audio_session=latched
+Sep  5 17:18:55.370164 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:18:55.361828Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteRinging","state":"r
+Sep  5 17:18:55.469988 Runner[1797] <Notice>: [MKNOON_CALLKIT_DIAG] ringback=started
+Sep  5 17:18:55.471335 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:18:55.471035Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_RINGBACK_RESULT","details":{"action":"start","outcome":"ok"}}
+Sep  5 17:19:03.566908 Runner[1797] <Notice>: [MKNOON_CALLKIT_DIAG] ringback=stopped reason=terminal
+Sep  5 17:19:03.568591 Runner[1797] <Notice>: [MKNOON_CALLKIT_DIAG] terminal=remoteCancelled
+Sep  5 17:19:03.568931 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:19:03.554195Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteReject","state":"en
+Sep  5 17:19:03.569275 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:19:03.560226Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_RINGBACK_RESULT","details":{"action":"stop","outcome":"refused"}}
+Sep  5 17:19:14.483195 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:19:14.482930Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteInvite","state":"in
+Sep  5 17:19:14.483359 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:19:14.483169Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"incomingValidated","state
+Sep  5 17:19:14.617565 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:19:14.617192Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"systemUiPresented","state
+Sep  5 17:19:17.576280 Runner(Flutter)[1797] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:19:17.575629Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"nativeAction","state":"en
+=== iphone_00008110_syslog.txt (3795 lines, last: Sep  5 17:19:26.419324 R)
+Sep  5 17:18:55.200581 Runner(Flutter)[1134] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:18:55.200314Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteInvite","state":"in
+Sep  5 17:18:55.200861 Runner(Flutter)[1134] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:18:55.200657Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"incomingValidated","state
+Sep  5 17:18:55.256073 Runner(Flutter)[1134] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:18:55.256001Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"systemUiPresented","state
+Sep  5 17:19:03.370498 Runner(Flutter)[1134] <Notice>: flutter: [FLOW] {"ts":"2026-09-05T15:19:03.370053Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"nativeAction","state":"en
+=== pixel_logcat.txt (5802 lines, last: 09-05 17:19:48.639 23660)
+09-05 17:19:14.527 23660 23660 I flutter : [FLOW] {"ts":"2026-09-05T15:19:14.527121Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"place","state":"preparing","endReason":"none"}
+09-05 17:19:14.926 23660 23660 I flutter : [FLOW] {"ts":"2026-09-05T15:19:14.926730Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"outgoingInviteReady","state":"inviting","endRe
+09-05 17:19:15.333 23660 23660 I flutter : [FLOW] {"ts":"2026-09-05T15:19:15.333430Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"mailboxStored","state":"inviting","endReason":
+09-05 17:19:16.194 23660 23660 I flutter : [FLOW] {"ts":"2026-09-05T15:19:16.194419Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteRinging","state":"ringing","endReason":"
+09-05 17:19:16.245 23660 23660 I MknoonCallRingback: ringback stage=start result=playing
+09-05 17:19:16.246 23660 23660 I flutter : [FLOW] {"ts":"2026-09-05T15:19:16.246794Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_RINGBACK_RESULT","details":{"action":"start","outcome":"ok"}}
+09-05 17:19:19.171 23660 23660 I flutter : [FLOW] {"ts":"2026-09-05T15:19:19.170994Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_STATE_TRANSITION","details":{"trigger":"remoteReject","state":"ended","endReason":"dec
+09-05 17:19:19.243 23660 23660 I MknoonCallRingback: ringback stage=stop result=stopped
+09-05 17:19:19.244 23660 23660 I flutter : [FLOW] {"ts":"2026-09-05T15:19:19.244190Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_RINGBACK_RESULT","details":{"action":"stop","outcome":"ok"}}
