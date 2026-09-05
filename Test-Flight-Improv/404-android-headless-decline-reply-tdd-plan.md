@@ -1,6 +1,6 @@
 # Plan 404 — Android headless decline reply: a natively declined call answers the caller (TDD)
 
-Status: implemented 2026-09-05 (device proof pending)
+Status: implemented 2026-09-05, deployed to the three phones 2026-09-05 18:19Z (device proof pending)
 Origin: user report 2026-09-05 — "when canceling the call from pixel, the ringback on iphone keeps going".
 Evidence: `Test-Flight-Improv/evidence/404/`
 
@@ -50,6 +50,10 @@ A second headless run, the **decline reply**, reuses the admission runtime (SQLC
 - `flutter analyze` on the changed Dart files: clean (one pre-existing `use_null_aware_elements` info in `call_signaling_service.dart` fixed on the way); `dart format` clean.
 - New Dart tests registered in both 1:1 gate arrays: `headless_call_decline_reply_test.dart`, `bridge_call_direct_transport_test.dart`.
 - Device proof (pending "deploy"): kill the Pixel app, lock it, call from the iPhone 11, decline from the Pixel notification. Expect on the Pixel: a second `HeadlessCallAdmissionWorker` run with `CALL_HEADLESS_DECLINE_REPLY_RESULT outcome=sent`, `call_store_v1` and `call_ack_v1`; on the iPhone: `CALL_STATE_TRANSITION trigger=remoteReject endReason=declined` and `ringback=stopped` within a few seconds, no `cancel` needed.
+
+## Deploy
+
+2026-09-05 18:19Z (`docker-ws/deploy_three_phones_404_result.txt`): iPhones `1.0.0-d5c404b87.d8.flowlog.t260905201506` (both verified, identities kept), Pixel `1.0.0-d5c404b87.d8.t260905201506` (verified, in place); captures `docker-ws/deploy-captures/fresh-260905201908/`.
 
 ## Follow-ups (not in this plan)
 

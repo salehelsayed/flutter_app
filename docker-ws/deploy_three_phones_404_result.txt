@@ -1,0 +1,30 @@
+=== plan 404 chain started 20260905T181428Z at d5c404b87 ===
+--- stop captures
+after:
+  (no idevicesyslog)
+  (no logcat)
+--- iOS build + Pixel deploy in parallel
+PROVENANCE sha=d5c404b87 dirty=8 build_name=1.0.0-d5c404b87.d8.flowlog.t260905201506 bundle_version=260905201506
+IOS BUILT 1.0.0-d5c404b87.d8.flowlog.t260905201506 bundleVersion=260905201506
+ios build exit=0
+PIXEL 21071FDF600CSC OK 1.0.0-d5c404b87.d8.t260905201506 (verified)
+PIXEL PASS
+pixel deploy exit=0
+--- iPhones install (keep identity)
+ios install exit=0
+ARTIFACT 1.0.0540487.8.260905201506 bundleVersion=260905201506
+00008030-001A6D2801BB802E OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
+00008110-00184D622289801E OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
+ARTIFACT 1.0.0540487.8.260905201506 bundleVersion=260905201506
+00008030-001A6D2801BB802E OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
+00008110-00184D622289801E OK 1.0.0540487.8.260905201506 bundleVersion=260905201506 (verified)
+--- captures
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905201908
+--- kill the Pixel app (HOME, wait, am kill)
+pid_after_kill=6205
+--- capture status
+-rw-r--r--@  1 I560101  staff  32198 Sep  5 20:19 pixel_logcat.txt
+iphone_00008030_syslog.txt: last line at: Sep  5 20:19:11.110724 Runner(Flutter)[1
+iphone_00008110_syslog.txt: last line at: Sep  5 20:19:14.203698 Runner(Security)[
+pixel_logcat.txt: last line at: 09-05 20:19:29.509  1240  1240 I adbd   
+=== done 20260905T181928Z ===

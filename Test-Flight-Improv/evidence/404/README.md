@@ -9,4 +9,4 @@
 
 Device capture that motivated the plan: `docker-ws/deploy-captures/fresh-260905194144/` (Pixel decline at 19:44:14 local, no reject, iPhone cancel at 19:44:19).
 
-Device proof: pending the user's "deploy" (see plan §Gates).
+Deployed 2026-09-05 18:19Z (`docker-ws/deploy_three_phones_404_result.txt`): iPhones `1.0.0-d5c404b87.d8.flowlog.t260905201506`, Pixel `1.0.0-d5c404b87.d8.t260905201506`, captures `docker-ws/deploy-captures/fresh-260905201908/`. Device proof: pending (see plan §Gates).
