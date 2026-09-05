@@ -1,6 +1,6 @@
 # Plan 403 — Release the relay's pending-call slot for ended and never-stored calls (TDD)
 
-Status: implemented 2026-09-05 (device proof pending)
+Status: implemented 2026-09-05, deployed to the three phones 2026-09-05 17:42Z (device proof pending)
 Origin: user report 2026-09-05 — "works... but when I locked pixel and tried to call it from iphone. got the error (Couldn't start voice call)".
 Evidence: `Test-Flight-Improv/evidence/403/`
 
@@ -42,6 +42,10 @@ Two defects:
 - `flutter analyze` on the four changed files: clean; `dart format`: clean.
 - Tests already registered: `production_headless_call_admission_test.dart` in `BASELINE_TESTS` (`scripts/run_test_gates.sh`), `call_mailbox_client_test.dart` in both 1:1 arrays.
 - Device proof (pending the user's "deploy"): lock the Pixel, call it from the iPhone 11 three times within 40 s, cancelling each; every call must ring back and the Pixel must present each one. Expect `call_ack_v1` in the Pixel logcat after each `CALL_ANDROID_DISCONNECT`, no `CALL_RECIPIENT_CAPACITY` on the iPhone, and `CALL_TERMINAL_CLEANUP_RESULT status=ready` after every call.
+
+## Deploy
+
+2026-09-05 17:42Z (`docker-ws/deploy_three_phones_403_result.txt`): iPhones `1.0.0-4d87486a2.d7.flowlog.t260905193900` (both verified, identities kept), Pixel `1.0.0-4d87486a2.d7.t260905193900` (verified, in place); captures `docker-ws/deploy-captures/fresh-260905194144/`; the Pixel app was killed after the capture start so the headless path runs on the next call.
 
 ## Follow-ups (not in this plan)
 

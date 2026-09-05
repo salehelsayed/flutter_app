@@ -7,4 +7,4 @@
 | `dart_pending_slot_green_2026-09-05.txt` | GREEN: 26/26 across both suites |
 | `dart_pending_slot_affected_2026-09-05.txt` | GREEN: 161/161 across the affected suites (composition, signaling service, pre-presentation admission, runtime, production adapters, direct/mailbox convergence, executor, headless entrypoint) |
 
-Device proof: pending the user's "deploy" (see plan §Gates).
+Deployed 2026-09-05 17:42Z (`docker-ws/deploy_three_phones_403_result.txt`): iPhones `1.0.0-4d87486a2.d7.flowlog.t260905193900`, Pixel `1.0.0-4d87486a2.d7.t260905193900`, captures `docker-ws/deploy-captures/fresh-260905194144/`. Device proof: pending (see plan §Gates).
