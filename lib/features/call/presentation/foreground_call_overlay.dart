@@ -268,17 +268,26 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       };
     }
 
+    // A software keyboard reports itself as the bottom view inset; keep the
+    // controls above it while it is still (dis)appearing.
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        widget.child,
+        // While a call surface is visible it owns the screen: release any
+        // keyboard focus held underneath (the conversation composer) and block
+        // refocus so the keyboard can never cover the call controls.
+        ExcludeFocus(excluding: surface != null, child: widget.child),
         if (surface != null)
           Positioned.fill(
             key: ValueKey<CallId?>(callId),
-            child: Overlay.wrap(
-              child: Material(
-                type: MaterialType.transparency,
-                child: surface,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: keyboardInset),
+              child: Overlay.wrap(
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: surface,
+                ),
               ),
             ),
           ),

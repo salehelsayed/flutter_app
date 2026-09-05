@@ -24,6 +24,7 @@ void main() {
   Widget harness({
     required _FakeForegroundCallCapability capability,
     Future<String?> Function(String peerId)? loadContactDisplayName,
+    double keyboardInset = 0,
     Widget child = const Scaffold(
       body: ColoredBox(
         color: Colors.black,
@@ -39,12 +40,24 @@ void main() {
         BackgroundReadableColors.dark,
       ],
     ),
-    home: ForegroundCallOverlay(
-      capability: capability,
-      loadContactDisplayName:
-          loadContactDisplayName ?? (_) async => 'Local contact',
-      now: () => now,
-      child: child,
+    home: Builder(
+      builder: (context) {
+        final overlay = ForegroundCallOverlay(
+          capability: capability,
+          loadContactDisplayName:
+              loadContactDisplayName ?? (_) async => 'Local contact',
+          now: () => now,
+          child: child,
+        );
+        if (keyboardInset == 0) return overlay;
+        // A software keyboard reports itself as the bottom view inset.
+        return MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(viewInsets: EdgeInsets.only(bottom: keyboardInset)),
+          child: overlay,
+        );
+      },
     ),
   );
 
@@ -828,6 +841,108 @@ void main() {
       expect(navigatorKey.currentState!.canPop(), isTrue);
     },
   );
+  testWidgets(
+    'a visible call surface releases keyboard focus and blocks refocus until it hides',
+    (tester) async {
+      final capability = _FakeForegroundCallCapability();
+      addTearDown(capability.dispose);
+      final composerFocus = FocusNode(debugLabel: 'composer');
+      addTearDown(composerFocus.dispose);
+      await tester.pumpWidget(
+        harness(
+          capability: capability,
+          child: Scaffold(
+            body: Center(child: TextField(focusNode: composerFocus)),
+          ),
+        ),
+      );
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      expect(composerFocus.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+
+      capability.emit(
+        _projection(
+          now: now,
+          callId: _outgoingId,
+          peerId: 'outgoing-peer',
+          direction: CallDirection.outgoing,
+          state: CallState.inviting,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(OutgoingCallScreen), findsOneWidget);
+      expect(composerFocus.hasFocus, isFalse);
+      expect(tester.testTextInput.isVisible, isFalse);
+
+      // Nothing underneath may bring the keyboard back over the call surface.
+      composerFocus.requestFocus();
+      await tester.pump();
+      expect(composerFocus.hasFocus, isFalse);
+      expect(tester.testTextInput.isVisible, isFalse);
+
+      capability.emit(null);
+      await tester.pump();
+      expect(find.byType(OutgoingCallScreen), findsNothing);
+      composerFocus.requestFocus();
+      await tester.pump();
+      expect(composerFocus.hasFocus, isTrue);
+    },
+  );
+
+  testWidgets('call controls stay above the keyboard inset', (tester) async {
+    final capability = _FakeForegroundCallCapability();
+    addTearDown(capability.dispose);
+    // iPhone-class geometry (390x844 logical); a keyboard takes ~300 of it.
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.reset);
+    const keyboardInset = 300.0;
+    await tester.pumpWidget(
+      harness(capability: capability, keyboardInset: keyboardInset),
+    );
+    final logicalHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    final visibleBottom = logicalHeight - keyboardInset;
+
+    capability.emit(
+      _projection(
+        now: now,
+        callId: _outgoingId,
+        peerId: 'outgoing-peer',
+        direction: CallDirection.outgoing,
+        state: CallState.inviting,
+      ),
+    );
+    await tester.pump();
+    expect(
+      tester.getRect(find.byTooltip('Cancel call')).bottom,
+      lessThanOrEqualTo(visibleBottom),
+    );
+
+    capability.emit(
+      _projection(
+        now: now,
+        callId: _activeId,
+        peerId: 'active-peer',
+        direction: CallDirection.outgoing,
+        state: CallState.connected,
+        audio: _audio(
+          muted: false,
+          selectedRoute: CallAudioOutputRoute.systemDefault,
+        ),
+      ),
+    );
+    await tester.pump();
+    for (final tooltip in const <String>['Mute', 'Speaker', 'End call']) {
+      expect(
+        tester.getRect(find.byTooltip(tooltip)).bottom,
+        lessThanOrEqualTo(visibleBottom),
+        reason: tooltip,
+      );
+    }
+  });
 }
 
 final _incomingId = CallId.parse('11111111-1111-4111-8111-111111111111');
