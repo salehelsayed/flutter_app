@@ -59,6 +59,10 @@ fi
 # --- 2. iOS: release app, dev-signed, same define as ios.device.production ---
 echo "== Building iOS release app"
 APP=build/ios/iphoneos/Runner.app
+# Go binding freshness: the GoMknoon Pod copies the xcframework slice while the
+# Pods project builds, BEFORE the Runner target's ensure phase can rebuild it,
+# so a changed go-mknoon source links one build late. Refresh first.
+scripts/ensure_go_ios_bindings.sh || { echo "IOS FAILED(go bindings)"; exit 1; }
 if ! flutter build ios --release --target=lib/main.dart --dart-define=PRODUCTION_APNS=true \
     --dart-define-from-file=tool/build/voice_call_release_defines.json \
     $IOS_FLOW_LOG \
