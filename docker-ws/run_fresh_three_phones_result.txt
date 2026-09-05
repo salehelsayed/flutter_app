@@ -1,4 +1,4 @@
-PROVENANCE tree=current-working-tree sha=67f218f6d branch=feat/audio-prd-implementation dirty_files=288 build_name=1.0.0-67f218f6d.d288.t260904224820 ios_bundle_version=260904224820 date=2026-09-04 22:48:20
-00008030-001A6D2801BB802E OK 1.0.0-67f218f6d.d288.t260904224820 bundleVersion=260904224820 (verified)
-00008110-00184D622289801E OK 1.0.0-67f218f6d.d288.t260904224820 bundleVersion=260904224820 (verified)
-21071FDF600CSC OK 1.0.0-67f218f6d.d288.t260904224820 (verified)
+PROVENANCE tree=current-working-tree sha=ad3c82644 branch=feat/audio-prd-implementation dirty_files=2 build_name=1.0.0-ad3c82644.d2.t260905020430 ios_bundle_version=260905020430 ios_flow_log=--dart-define=FDC_FLOW_LOG=1 date=2026-09-05 02:04:30
+00008030-001A6D2801BB802E OK 1.0.0-ad3c82644.d2.t260905020430 bundleVersion=260905020430 (verified)
+00008110-00184D622289801E OK 1.0.0-ad3c82644.d2.t260905020430 bundleVersion=260905020430 (verified)
+21071FDF600CSC OK 1.0.0-ad3c82644.d2.t260905020430 (verified)

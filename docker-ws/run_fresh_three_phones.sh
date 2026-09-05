@@ -18,6 +18,17 @@ FAILED=0
 IPHONE_UDIDS="00008030-001A6D2801BB802E 00008110-00184D622289801E"
 PIXEL_SERIAL=21071FDF600CSC
 
+# Optional: --flowlog adds --dart-define=FDC_FLOW_LOG=1 to the iOS release
+# build so Dart [FLOW] events reach the iPhone syslog (release builds gate
+# flowEventLoggingEnabled on kDebugMode; the Android debug APK logs anyway).
+IOS_FLOW_LOG=""
+for arg in ${1+"$@"}; do
+  case "$arg" in
+    --flowlog) IOS_FLOW_LOG="--dart-define=FDC_FLOW_LOG=1" ;;
+    *) echo "unknown argument: $arg (supported: --flowlog)" >&2; exit 2 ;;
+  esac
+done
+
 # Wrap devicectl in timeout when available (zombie-tunnel hangs must not
 # block later phases); macOS may lack GNU timeout.
 if command -v timeout >/dev/null 2>&1; then TO() { timeout "$@"; }; else TO() { shift; "$@"; }; fi
@@ -31,7 +42,7 @@ BUILD_NAME="1.0.0-${GIT_SHA}"
 [ "$GIT_DIRTY" != "0" ] && BUILD_NAME="${BUILD_NAME}.d${GIT_DIRTY}"
 BUILD_NAME="${BUILD_NAME}.t${RUN_STAMP}"
 FRESH_MARK=$(mktemp)
-note "PROVENANCE tree=current-working-tree sha=$GIT_SHA branch=$GIT_BRANCH dirty_files=$GIT_DIRTY build_name=$BUILD_NAME ios_bundle_version=$RUN_STAMP date=$(date '+%Y-%m-%d %H:%M:%S')"
+note "PROVENANCE tree=current-working-tree sha=$GIT_SHA branch=$GIT_BRANCH dirty_files=$GIT_DIRTY build_name=$BUILD_NAME ios_bundle_version=$RUN_STAMP ios_flow_log=${IOS_FLOW_LOG:-off} date=$(date '+%Y-%m-%d %H:%M:%S')"
 
 # --- 1. Android: debug APK (real app UX — no E2E gate; voice-call gates from tool/build/voice_call_release_defines.json), arm64 ---
 echo "== Building Android debug APK (voice-call gates on, arm64)"
@@ -50,6 +61,7 @@ echo "== Building iOS release app"
 APP=build/ios/iphoneos/Runner.app
 if ! flutter build ios --release --target=lib/main.dart --dart-define=PRODUCTION_APNS=true \
     --dart-define-from-file=tool/build/voice_call_release_defines.json \
+    $IOS_FLOW_LOG \
     --build-name="$BUILD_NAME" --build-number="$RUN_STAMP" \
     || [ ! -d "$APP" ]; then
   note "IOS FAILED(build)"; APP=""; FAILED=1
