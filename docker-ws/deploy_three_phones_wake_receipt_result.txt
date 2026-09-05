@@ -1,0 +1,23 @@
+=== plan 402 (c)(d) three-phone deploy started 20260905T164354Z tree=38f465215 (Go bindings rebuild expected) ===
+--- stop previous captures
+  (no logcat)
+--- iOS build
+PROVENANCE sha=38f465215 dirty=5 build_name=1.0.0-38f465215.d5.flowlog.t260905184357 bundle_version=260905184357
+IOS BUILT 1.0.0-38f465215.d5.flowlog.t260905184357 bundleVersion=260905184357
+ios build exit=0
+--- iPhones (keep identity) and Pixel (in place) in parallel
+ios install exit=0
+ARTIFACT 1.0.038465215.5.260905184357 bundleVersion=260905184357
+00008030-001A6D2801BB802E OK 1.0.038465215.5.260905184357 bundleVersion=260905184357 (verified)
+00008110-00184D622289801E OK 1.0.038465215.5.260905184357 bundleVersion=260905184357 (verified)
+pixel deploy exit=0
+PIXEL 21071FDF600CSC OK 1.0.0-e431cd73b.d6.t260905184719 (verified)
+PIXEL PASS
+--- captures
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905184832
+--- relaunch into captures
+--- capture status
+docker-ws/deploy-captures/fresh-260905184832/iphone_00008030_syslog.txt: 2531 lines, 416 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905184832/iphone_00008110_syslog.txt: 2700 lines, 462 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905184832/pixel_logcat.txt: 1292 lines, 399 [FLOW] lines
+=== done 20260905T164843Z ===
