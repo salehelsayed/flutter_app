@@ -479,15 +479,17 @@ void main() {
     test('rejects the caller from the authenticated invite and acks', () async {
       final order = <String>[];
       final replied = <CallSignal>[];
+      final repliedHandles = <String>[];
       final mailbox = _Mailbox(<CallMailboxEvent>[
         _event(messageId: '44444444-4444-4444-8444-444444444444'),
       ], onAck: () => order.add('ack'));
       final session = MailboxProductionHeadlessCallAdmissionSession(
         mailboxClient: mailbox,
         authenticateEvent: _signalAuthenticator(),
-        declineReplySender: (invite) async {
+        declineReplySender: (invite, callHandle) async {
           order.add('reply');
           replied.add(invite);
+          repliedHandles.add(callHandle);
           return true;
         },
         closeResources: () async {
@@ -505,6 +507,9 @@ void main() {
         '44444444-4444-4444-8444-444444444444',
       ]);
       expect(replied.single.event, CallSignalType.invite);
+      // The reply rides the mailbox handle the rows were retrieved under,
+      // never the call id inside the envelope (device 2026-09-05 18:23Z).
+      expect(repliedHandles, <String>[invocation.callId]);
       expect(mailbox.ackedHandles, <String>[invocation.callId]);
       expect(mailbox.ackedMessageIds, <List<String>>[
         <String>['44444444-4444-4444-8444-444444444444'],
@@ -528,7 +533,7 @@ void main() {
       final session = MailboxProductionHeadlessCallAdmissionSession(
         mailboxClient: mailbox,
         authenticateEvent: _signalAuthenticator(),
-        declineReplySender: (_) async {
+        declineReplySender: (_, _) async {
           replies++;
           return true;
         },
@@ -552,8 +557,8 @@ void main() {
       'a reply that reaches no custody leaves the rows and defers',
       () async {
         for (final sender in <HeadlessDeclineReplySender>[
-          (_) async => false,
-          (_) async => throw StateError('relay unreachable'),
+          (_, _) async => false,
+          (_, _) async => throw StateError('relay unreachable'),
         ]) {
           final mailbox = _Mailbox(<CallMailboxEvent>[_event()]);
           final session = MailboxProductionHeadlessCallAdmissionSession(
@@ -593,7 +598,7 @@ void main() {
               IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
             );
           },
-          declineReplySender: (_) async {
+          declineReplySender: (_, _) async {
             replies++;
             return true;
           },
@@ -611,7 +616,7 @@ void main() {
               IncomingCallPrePresentationAdmissionFailureCode.deferred,
             );
           },
-          declineReplySender: (_) async {
+          declineReplySender: (_, _) async {
             replies++;
             return true;
           },
@@ -625,7 +630,7 @@ void main() {
         final empty = MailboxProductionHeadlessCallAdmissionSession(
           mailboxClient: _Mailbox(const <CallMailboxEvent>[]),
           authenticateEvent: _signalAuthenticator(),
-          declineReplySender: (_) async {
+          declineReplySender: (_, _) async {
             replies++;
             return true;
           },
@@ -645,7 +650,7 @@ void main() {
       final session = MailboxProductionHeadlessCallAdmissionSession(
         mailboxClient: mailbox,
         authenticateEvent: _signalAuthenticator(),
-        declineReplySender: (_) async {
+        declineReplySender: (_, _) async {
           replies++;
           return true;
         },

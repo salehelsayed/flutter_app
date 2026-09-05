@@ -8,6 +8,10 @@ import 'package:flutter_app/features/call/infrastructure/p2p_call_transport.dart
 import 'package:flutter_test/flutter_test.dart';
 
 const _callId = '22222222-2222-4222-8222-222222222222';
+// The mailbox handle the invite row was stored under: the caller mints it
+// apart from the call id (ProductionCallControlSignalingAdapter forbids the
+// two to be equal), so the reply must ride it, never the call id.
+const _mailboxHandle = '33333333-3333-4333-8333-333333333333';
 const _inviteMessageId = '44444444-4444-4444-8444-444444444444';
 const _replyMessageId = '55555555-5555-4555-8555-555555555555';
 const _now = 1_800_000_000_000;
@@ -104,11 +108,14 @@ void main() {
   test(
     'replies to the inviting device with one signed declined reject',
     () async {
-      expect(await transmitter.sendDeclineFor(_invite()), isTrue);
+      expect(
+        await transmitter.sendDeclineFor(_invite(), callHandle: _mailboxHandle),
+        isTrue,
+      );
 
       expect(resolved, <String>['caller-account']);
       final sent = transmitted.single;
-      expect(sent.callHandle, _callId);
+      expect(sent.callHandle, _mailboxHandle);
       expect(sent.signingKey, 'local-signing-key');
       expect(sent.endpoint.devicePeerId, 'caller-device');
       final signal = sent.signal;
@@ -134,7 +141,10 @@ void main() {
       directRoute: CallDirectRoute.unknown,
       wakeDispatched: true,
     );
-    expect(await transmitter.sendDeclineFor(_invite()), isTrue);
+    expect(
+      await transmitter.sendDeclineFor(_invite(), callHandle: _mailboxHandle),
+      isTrue,
+    );
     expect(transmitted, hasLength(1));
   });
 
@@ -144,7 +154,10 @@ void main() {
       _invite(recipientAccountPeerId: 'other-account'),
       _invite(recipientDevicePeerId: 'other-device'),
     ]) {
-      expect(await transmitter.sendDeclineFor(signal), isFalse);
+      expect(
+        await transmitter.sendDeclineFor(signal, callHandle: _mailboxHandle),
+        isFalse,
+      );
     }
     expect(transmitted, isEmpty);
     expect(resolved, isEmpty);
@@ -154,8 +167,30 @@ void main() {
     'a caller endpoint that is no longer the inviting device is refused',
     () async {
       endpoint = () => _endpoint(devicePeerId: 'caller-second-device');
-      expect(await transmitter.sendDeclineFor(_invite()), isFalse);
+      expect(
+        await transmitter.sendDeclineFor(_invite(), callHandle: _mailboxHandle),
+        isFalse,
+      );
       expect(transmitted, isEmpty);
+    },
+  );
+
+  // Device 2026-09-05 18:23Z (captures fresh-260905201908): the first reply
+  // rode the call id as its mailbox handle. The iPhone received it on both
+  // legs (direct message decrypted, VoIP wake drained) and dropped it
+  // silently: the caller's context is keyed by the handle it minted.
+  test(
+    'a reply under the call id itself or a malformed handle is refused',
+    () async {
+      for (final handle in <String>[_callId, 'readable-handle', '', 'A' * 32]) {
+        expect(
+          await transmitter.sendDeclineFor(_invite(), callHandle: handle),
+          isFalse,
+          reason: handle,
+        );
+      }
+      expect(transmitted, isEmpty);
+      expect(resolved, isEmpty);
     },
   );
 
@@ -165,20 +200,29 @@ void main() {
       endpoint = () => throw const CallEndpointResolutionException(
         CallEndpointResolutionCode.unavailable,
       );
-      expect(await transmitter.sendDeclineFor(_invite()), isFalse);
+      expect(
+        await transmitter.sendDeclineFor(_invite(), callHandle: _mailboxHandle),
+        isFalse,
+      );
 
       endpoint = () => _endpoint();
       result = () => throw const CallSignalingException(
         CallSignalingErrorCode.transportUnavailable,
       );
-      expect(await transmitter.sendDeclineFor(_invite()), isFalse);
+      expect(
+        await transmitter.sendDeclineFor(_invite(), callHandle: _mailboxHandle),
+        isFalse,
+      );
 
       result = () => const CallSignalTransportResult(
         directAccepted: false,
         mailboxStored: false,
         directRoute: CallDirectRoute.unknown,
       );
-      expect(await transmitter.sendDeclineFor(_invite()), isFalse);
+      expect(
+        await transmitter.sendDeclineFor(_invite(), callHandle: _mailboxHandle),
+        isFalse,
+      );
     },
   );
 }

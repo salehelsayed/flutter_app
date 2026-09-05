@@ -59,9 +59,12 @@ typedef AuthenticateHeadlessMailboxEvent =
       required CallMailboxEvent event,
     });
 
-/// Sends the caller one `reject` for [invite]. Resolves true once the reject
-/// reached custody (direct acceptance or mailbox store); never throws.
-typedef HeadlessDeclineReplySender = Future<bool> Function(CallSignal invite);
+/// Sends the caller one `reject` for [invite] under [callHandle], the mailbox
+/// handle the invite row was retrieved with (the caller keys its context by
+/// it, not by the call id). Resolves true once the reject reached custody
+/// (direct acceptance or mailbox store); never throws.
+typedef HeadlessDeclineReplySender =
+    Future<bool> Function(CallSignal invite, String callHandle);
 
 /// Evaluates one exact-handle mailbox page without dispatching coordinator
 /// events, acknowledging custody, or starting media. All provisional replay
@@ -281,7 +284,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
       }
       var sent = false;
       try {
-        sent = await sender(pendingInvite);
+        sent = await sender(pendingInvite, invocation.callId);
       } catch (_) {
         sent = false;
       }
@@ -594,7 +597,8 @@ final class AndroidProductionHeadlessCallAdmissionBackend
           signal: authenticated.signal,
         );
       },
-      declineReplySender: declineReply.sendDeclineFor,
+      declineReplySender: (invite, callHandle) =>
+          declineReply.sendDeclineFor(invite, callHandle: callHandle),
       closeResources: _closeResources,
     );
     _activeSession = session;

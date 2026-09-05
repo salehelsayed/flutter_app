@@ -23,7 +23,8 @@ typedef ResolveHeadlessCallEndpoint =
 /// its own cancel. From the authenticated invite this builds the callee's one
 /// `reject` (reason `declined`, first sender sequence, the invite's ICE
 /// generation, the standard 40 s lifetime) and writes it through the same
-/// direct-plus-mailbox transport the foreground uses.
+/// direct-plus-mailbox transport the foreground uses, under the invite's
+/// mailbox handle.
 final class HeadlessCallDeclineReplyTransmitter {
   HeadlessCallDeclineReplyTransmitter({
     required TransmitCallSignal transmit,
@@ -53,14 +54,28 @@ final class HeadlessCallDeclineReplyTransmitter {
 
   static String _newMessageId() => const Uuid().v4();
 
+  /// The mailbox handle grammar (canonical UUID v4), as the envelope codec
+  /// enforces it.
+  static final RegExp _callHandleGrammar = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+  );
+
   /// Resolves true once the reject reached custody (direct acceptance or
   /// mailbox store). Only an invite addressed to this exact device is
   /// answered, and only while the caller's current endpoint is still the
-  /// inviting device. Never throws.
-  Future<bool> sendDeclineFor(CallSignal invite) async {
+  /// inviting device. [callHandle] is the mailbox handle the invite row was
+  /// retrieved under: the caller minted it apart from the call id and keys
+  /// its context by it, so a reply under the call id is dropped unseen
+  /// (device 2026-09-05 18:23Z). Never throws.
+  Future<bool> sendDeclineFor(
+    CallSignal invite, {
+    required String callHandle,
+  }) async {
     if (invite.event != CallSignalType.invite ||
         invite.recipientAccountPeerId != _localAccountPeerId ||
-        invite.recipientDevicePeerId != _localDevicePeerId) {
+        invite.recipientDevicePeerId != _localDevicePeerId ||
+        !_callHandleGrammar.hasMatch(callHandle) ||
+        callHandle == invite.callId.value) {
       return false;
     }
     try {
@@ -86,7 +101,7 @@ final class HeadlessCallDeclineReplyTransmitter {
       );
       final result = await _transmit(
         signal: reject,
-        callHandle: invite.callId.value,
+        callHandle: callHandle,
         endpoint: endpoint,
         senderSigningPrivateKey: await _loadSigningPrivateKey(),
       );
