@@ -1,0 +1,21 @@
+# curated 1to1 lane 2026-09-05 (after the locked-callee fixes) — summary lines; full log had 4.2 MB of [FLOW] noise
+00:36 +2538 ~3: /Volumes/CrucialX9/flutter_app/test/core/services/p2p_service_impl_lan_media_test.dart: TD2: a FAILING libp2p-LAN leg never changes sendLocalMedia outcome (relay-CDN upload stays unconditional at the caller)
+[HEALTH] relay:reconnect FAILED (failure #1, took 0ms)
+00:50 +3006 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: ConversationWired media props edit action prefills the composer and cancel exits edit mode
+00:50 +3006 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: ConversationWired media props edit action prefills the composer and cancel exits edit mode
+00:51 +3039 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: ConversationWired media props deleting the message currently being edited exits edit mode immediately
+00:51 +3039 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: ConversationWired media props deleting the message currently being edited exits edit mode immediately
+00:51 +3039 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: ConversationWired media props deleting the message currently being edited exits edit mode immediately
+00:51 +3040 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: ConversationWired media props deleting the message currently being quoted exits quote mode immediately
+00:51 +3040 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: ConversationWired media props deleting the message currently being quoted exits quote mode immediately
+00:51 +3040 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: ConversationWired media props deleting the message currently being quoted exits quote mode immediately
+01:05 +3636 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_protected_thumbnail_protection_test.dart: conversation with a protected thumbnail enters protection and exits on dispose
+01:05 +3637 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_protected_thumbnail_protection_test.dart: conversation with a protected thumbnail enters protection and exits on dispose
+01:06 +3638 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_protected_thumbnail_protection_test.dart: conversation with a protected thumbnail enters protection and exits on dispose
+01:06 +3639 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_protected_thumbnail_protection_test.dart: conversation with a protected thumbnail enters protection and exits on dispose
+01:06 +3640 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_protected_thumbnail_protection_test.dart: conversation with a protected thumbnail enters protection and exits on dispose
+01:06 +3641 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_protected_thumbnail_protection_test.dart: conversation with a protected thumbnail enters protection and exits on dispose
+01:06 +3642 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_protected_thumbnail_protection_test.dart: conversation with a protected thumbnail enters protection and exits on dispose
+01:10 +3839 ~11: /Volumes/CrucialX9/flutter_app/test/core/lifecycle/handle_app_paused_pause_flush_test.dart: FDC-S4 pause-flush — ENABLED: deposit-first / mark-on-reject rejected deposit (storeInInbox=false) is marked FAILED
+02:02 +4186 ~11: All tests passed!
+More than one device connected; please specify a device with the '-d <deviceId>' flag, or use '-d all' to act on all devices.
