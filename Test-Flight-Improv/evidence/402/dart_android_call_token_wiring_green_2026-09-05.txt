@@ -1,0 +1,5 @@
+=== GREEN 2026-09-05T15:43:38Z: composition wiring test + whole composition suite ===
+00:00 +57 -3: production registers native outgoing ownership before invite and audio
+00:00 +58 -3: production bootstrap orders call lifecycle around shared owners
+00:00 +59 -3: (tearDownAll)
+00:00 +59 -3: Some tests failed.

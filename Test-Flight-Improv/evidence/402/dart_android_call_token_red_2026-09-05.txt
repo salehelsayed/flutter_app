@@ -1,0 +1,6 @@
+=== RED 2026-09-05T15:39:43Z: AndroidCallTokenCoordinator before any implementation ===
+test/features/call/infrastructure/android_call_token_coordinator_test.dart:3:8: Error: Error when reading 'lib/features/call/infrastructure/android_call_token_coordinator.dart': No such file or directory
+test/features/call/infrastructure/android_call_token_coordinator_test.dart:174:1: Error: Type 'AndroidCallTokenCoordinator' not found.
+test/features/call/infrastructure/android_call_token_coordinator_test.dart:177:12: Error: Type 'AndroidCallTokenReader' not found.
+test/features/call/infrastructure/android_call_token_coordinator_test.dart:179:3: Error: Type 'CallTokenPublicationAllowed' not found.
+test/features/call/infrastructure/android_call_token_coordinator_test.dart:180:3: Error: Type 'AndroidCallTokenResultObserver' not found.

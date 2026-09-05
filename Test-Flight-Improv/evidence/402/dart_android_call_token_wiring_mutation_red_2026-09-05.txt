@@ -1,0 +1,7 @@
+=== MUTATION RED 2026-09-05T15:43:34Z: graph start/advertise do not call the coordinator ===
+00:00 +0 -1: an Android graph publishes the FCM token as the relay standard call token [E]
+  Expected: contains in order([
+    Actual: [
+     Which: did not find a value matching 'call_token_set_v1' following expected prior values
+00:00 +0 -1: (tearDownAll)
+00:00 +0 -1: Some tests failed.

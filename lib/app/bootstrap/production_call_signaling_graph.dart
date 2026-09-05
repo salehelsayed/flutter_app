@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
@@ -51,6 +52,7 @@ import '../../features/call/infrastructure/call_signaling_runtime.dart';
 import '../../features/call/infrastructure/call_trusted_roster_provider.dart';
 import '../../features/call/infrastructure/flutter_webrtc_call_engine.dart';
 import '../../features/call/application/call_ringback_coordinator.dart';
+import '../../features/call/infrastructure/android_call_token_coordinator.dart';
 import '../../features/call/infrastructure/call_ringback_channel.dart';
 import '../../features/call/infrastructure/ios_call_lifecycle_adapter.dart';
 import '../../features/call/infrastructure/ios_voip_token_coordinator.dart';
@@ -72,6 +74,12 @@ typedef IosCallLifecycleAdapterFactory =
       required CallCoordinator coordinator,
       required AuthenticatedCallHandleResolver resolveAuthenticatedHandle,
       required DateTime Function() clock,
+    });
+typedef AndroidCallTokenCoordinatorFactory =
+    AndroidCallTokenCoordinator Function({
+      required CallAuthorityClient authorityClient,
+      required DateTime Function() clock,
+      required CallTokenPublicationAllowed publicationAllowed,
     });
 typedef IosVoipTokenCoordinatorFactory =
     IosVoipTokenCoordinator Function({
@@ -124,6 +132,7 @@ final class ProductionCallSignalingGraph
     this.androidCallLifecycleAdapter,
     this.iosCallLifecycleAdapter,
     this.iosVoipTokenCoordinator,
+    this.androidCallTokenCoordinator,
     this.ringback,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     required int Function() nowMs,
@@ -180,6 +189,10 @@ final class ProductionCallSignalingGraph
   final AndroidCallLifecycleAdapter? androidCallLifecycleAdapter;
   final IosCallLifecycleAdapter? iosCallLifecycleAdapter;
   final IosVoipTokenCoordinator? iosVoipTokenCoordinator;
+
+  /// Publishes the FCM token as the relay's standard call token so an Android
+  /// callee can be woken once its live connection is gone.
+  final AndroidCallTokenCoordinator? androidCallTokenCoordinator;
 
   /// Ringback (the caller-side ringing tone). Absent on hosts without a
   /// tone player; the call is unaffected either way.
@@ -269,6 +282,7 @@ final class ProductionCallSignalingGraph
   Future<bool> start() async {
     await _nativeCallLifecycleAdapter?.start();
     await iosVoipTokenCoordinator?.start();
+    await androidCallTokenCoordinator?.start();
     return runtime.start();
   }
 
@@ -671,6 +685,10 @@ final class ProductionCallSignalingGraph
           !await tokenCoordinator.publishForAuthenticatedGraph()) {
         return _failCapabilityAdvertisement(stage: stage);
       }
+      stage = 'android_call_token';
+      // Best effort: direct calls work without it, so a missing or rejected
+      // token never blocks the endpoint advertisement.
+      await androidCallTokenCoordinator?.ensurePublished();
       stage = 'wake_authority';
       if (!await wakeAuthorizationCoordinator.reconcile(
         eligibleContacts: await loadWakeEligibleContacts(),
@@ -838,6 +856,10 @@ final class ProductionCallSignalingGraph
     }
     await attempt(mediaOwner.close);
     await attempt(wakeAuthorizationCoordinator.close);
+    final androidTokenCoordinator = androidCallTokenCoordinator;
+    if (androidTokenCoordinator != null) {
+      await attempt(androidTokenCoordinator.close);
+    }
     if (iosCallLifecycleAdapter != null || iosVoipTokenCoordinator != null) {
       // Native iOS presentation, token authority, and endpoint authority are
       // withdrawn as one ordered unit before either native channel detaches.
@@ -1022,6 +1044,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
   AndroidCallLifecycleAdapterFactory? androidCallLifecycleAdapterFactory,
   IosCallLifecycleAdapterFactory? iosCallLifecycleAdapterFactory,
   IosVoipTokenCoordinatorFactory? iosVoipTokenCoordinatorFactory,
+  AndroidCallTokenCoordinatorFactory? androidCallTokenCoordinatorFactory,
   ProductionCallSignalingGraphObserver? onGraphBuilt,
   bool Function()? isForeground,
   int Function()? nowMs,
@@ -1195,6 +1218,16 @@ CallSignalingComposition createProductionCallSignalingComposition({
       final iosTokenCoordinator = useIosNativeLifecycle
           ? (iosVoipTokenCoordinatorFactory ??
                     _createMethodChannelIosVoipTokenCoordinator)
+                .call(
+                  authorityClient: authority,
+                  clock: callClock,
+                  publicationAllowed: () =>
+                      callNetworkEffectsAreAllowed(networkEffectsAllowed),
+                )
+          : null;
+      final androidTokenCoordinator = useAndroidNativeLifecycle
+          ? (androidCallTokenCoordinatorFactory ??
+                    _createFirebaseAndroidCallTokenCoordinator)
                 .call(
                   authorityClient: authority,
                   clock: callClock,
@@ -1486,6 +1519,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         androidCallLifecycleAdapter: androidLifecycleAdapter,
         iosCallLifecycleAdapter: iosLifecycleAdapter,
         iosVoipTokenCoordinator: iosTokenCoordinator,
+        androidCallTokenCoordinator: androidTokenCoordinator,
         ringback: iosLifecycleAdapter != null
             ? MethodChannelCallRingbackPort.ios(
                 resolveCallHandle: (callId) =>
@@ -1613,6 +1647,40 @@ void _emitTerminalCleanupResult(CallCleanupReport report) {
   } catch (_) {
     // Fixed-shape diagnostics cannot change terminal cleanup authority.
   }
+}
+
+AndroidCallTokenCoordinator _createFirebaseAndroidCallTokenCoordinator({
+  required CallAuthorityClient authorityClient,
+  required DateTime Function() clock,
+  required CallTokenPublicationAllowed publicationAllowed,
+}) => AndroidCallTokenCoordinator(
+  authorityClient: authorityClient,
+  clock: clock,
+  readToken: () => FirebaseMessaging.instance.getToken(),
+  // Lazy on purpose: FirebaseMessaging.instance is first touched when the
+  // graph starts, after the live services initialised Firebase.
+  tokenRefreshes: Stream<String>.multi((controller) {
+    try {
+      unawaited(
+        controller.addStream(FirebaseMessaging.instance.onTokenRefresh),
+      );
+    } catch (error, stackTrace) {
+      // No Firebase app yet: surface it as a stream error the coordinator
+      // ignores, and let the next publication attempt subscribe again.
+      controller.addError(error, stackTrace);
+      unawaited(controller.close());
+    }
+  }),
+  publicationAllowed: publicationAllowed,
+  onResult: _emitAndroidCallTokenResult,
+);
+
+void _emitAndroidCallTokenResult(String outcome) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CALL_ANDROID_TOKEN_PUBLISH_RESULT',
+    details: <String, dynamic>{'outcome': outcome},
+  );
 }
 
 IosVoipTokenCoordinator _createMethodChannelIosVoipTokenCoordinator({

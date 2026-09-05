@@ -34,6 +34,7 @@ import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/call/domain/issued_call_wake_handle_store.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_token_coordinator.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_signaling_runtime.dart';
@@ -1946,6 +1947,135 @@ void main() {
           'payload.sign',
           'call_endpoint_set_v1',
         ]),
+      );
+    },
+  );
+
+  test(
+    'an Android graph publishes the FCM token as the relay standard call token',
+    () async {
+      // The relay wakes an Android callee only through this record; before
+      // 2026-09-05 nothing published it and a locked Pixel could not be called.
+      databaseFactory = databaseFactoryFfi;
+      final database = await openDatabase(
+        inMemoryDatabasePath,
+        version: 1,
+        onCreate: (db, _) => db.execute(
+          'CREATE TABLE contacts('
+          'peer_id TEXT PRIMARY KEY, username TEXT, is_blocked INTEGER)',
+        ),
+      );
+      addTearDown(database.close);
+      final bridge = _Bridge();
+      final p2p = _P2P(state: const NodeState(peerId: '', isStarted: false));
+      addTearDown(p2p.messages.close);
+      final router = IncomingMessageRouter(p2pService: p2p)..start();
+      addTearDown(router.dispose);
+      final identity = IdentityModel(
+        peerId: 'local-account',
+        publicKey: 'local-public-key',
+        privateKey: 'local-private-key',
+        mnemonic12: 'unused fixture words',
+        mlKemPublicKey: 'local-mlkem-public-key',
+        mlKemSecretKey: 'local-mlkem-secret-key',
+        createdAt: '2026-08-30T00:00:00.000Z',
+        updatedAt: '2026-08-30T00:00:00.000Z',
+      );
+      final callWakeStores = _newCallWakeStores();
+      final tokenOutcomes = <String>[];
+      final composition = createProductionCallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        database: database,
+        bridge: bridge,
+        p2pService: p2p,
+        messageRouter: router,
+        loadIdentity: () async => identity,
+        networkEffectsAllowed: () => true,
+        isVoiceNoteRecording: () => false,
+        issuedCallWakeHandleStore: callWakeStores.issued,
+        receivedCallWakeHandleStore: callWakeStores.received,
+        androidCallLifecycleAdapterFactory:
+            ({
+              required coordinator,
+              required resolveAuthenticatedHandle,
+              required clock,
+            }) => AndroidCallLifecycleAdapter(
+              invokeMethod: (method, arguments) async {
+                if (method == 'attach') {
+                  return const <String, Object?>{
+                    'version': 1,
+                    'descriptor': null,
+                    'events': <Object?>[],
+                    'nativeCallId': null,
+                    'highestSequence': 0,
+                  };
+                }
+                return true;
+              },
+              nativeEvents: const Stream<Object?>.empty(),
+              coordinator: coordinator,
+              resolveAuthenticatedHandle: resolveAuthenticatedHandle,
+              clock: clock,
+            ),
+        androidCallTokenCoordinatorFactory:
+            ({
+              required authorityClient,
+              required clock,
+              required publicationAllowed,
+            }) => AndroidCallTokenCoordinator(
+              authorityClient: authorityClient,
+              clock: clock,
+              readToken: () async => 'fcm-token-fixture',
+              tokenRefreshes: const Stream<String>.empty(),
+              publicationAllowed: publicationAllowed,
+              onResult: tokenOutcomes.add,
+            ),
+        isForeground: () => true,
+        nowMs: () => 2_000_000,
+      );
+
+      await composition.start();
+      expect(bridge.commands, isEmpty, reason: 'nothing before P2P starts');
+
+      p2p.state = const NodeState(peerId: 'local-account', isStarted: true);
+      await composition.onResume();
+
+      expect(
+        bridge.commands,
+        containsAllInOrder(<String>[
+          'call_token_set_v1',
+          'call_retrieve_v1',
+          'payload.sign',
+          'call_endpoint_set_v1',
+        ]),
+      );
+      expect(
+        bridge.commands.where((command) => command == 'call_token_set_v1'),
+        hasLength(1),
+        reason: 'start publishes once; the advertisement finds it unchanged',
+      );
+      final publication = bridge.requests.singleWhere(
+        (request) => request['cmd'] == 'call_token_set_v1',
+      );
+      expect(publication['payload'], <String, Object?>{
+        'tokenKind': 'standard_call',
+        'platform': 'android',
+        'token': 'fcm-token-fixture',
+        'expiresAtMs': 2_000_000 + const Duration(days: 30).inMilliseconds,
+      });
+      expect(tokenOutcomes.first, 'published');
+      expect(
+        tokenOutcomes.skip(1),
+        everyElement('unchanged'),
+        reason: 'every later advertisement finds the token already published',
+      );
+
+      await composition.shutdown();
+      expect(
+        bridge.commands,
+        isNot(contains('call_token_revoke_v1')),
+        reason: 'the relay must keep waking the app after it closes',
       );
     },
   );
