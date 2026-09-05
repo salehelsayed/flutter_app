@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/share/application/handle_share_intent_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_call_timeline_source.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/features/introduction/data/repositories/introduction_repository_impl.dart';
@@ -419,6 +420,11 @@ class MyApp extends StatefulWidget {
   /// Stable foreground-call capability owned by the process composition.
   final OutgoingCallCapability? outgoingCallCapability;
 
+  /// 405: local terminal call history projected into 1:1 conversation
+  /// timelines. It is deliberately independent of the call graph: past calls
+  /// stay readable in the chat even when calling itself is disabled.
+  final ConversationCallTimelineSource? callTimelineSource;
+
   /// Stable root call-surface capability. It projects the canonical reducer
   /// and actual audio state without changing the retained navigation stack.
   final ForegroundCallCapability? foregroundCallCapability;
@@ -613,6 +619,7 @@ class MyApp extends StatefulWidget {
     this.directEventFanoutResolver,
     this.isLinkedBlobFreeRuntime,
     this.outgoingCallCapability,
+    this.callTimelineSource,
     this.foregroundCallCapability,
     this.drainDirectBlobFreeLinkedOutboxes,
     this.drainLinkedDirectMediaBlobCustody,
@@ -745,6 +752,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         directDeviceTrust: widget.directDeviceTrust,
         isLinkedBlobFreeRuntime: widget.isLinkedBlobFreeRuntime,
         outgoingCallCapability: widget.outgoingCallCapability,
+        callTimelineSource: widget.callTimelineSource,
       );
 
   bool _isResuming = false;
@@ -2049,6 +2057,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           directEventFanout: _directRouteAuthority.directEventFanout,
           modalityGate: _directRouteAuthority.modalityGate,
           outgoingCallCapability: _directRouteAuthority.outgoingCallCapability,
+          callTimelineSource: _directRouteAuthority.callTimelineSource,
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
           uploadRetryProjectionRepo: widget.messageRepository,

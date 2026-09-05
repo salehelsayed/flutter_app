@@ -31,6 +31,8 @@ import 'package:flutter_app/features/conversation/presentation/widgets/attachmen
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compact_origin_marker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/call_timeline_row.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/empty_conversation_state.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -258,6 +260,11 @@ class ConversationScreen extends StatefulWidget {
   final String connectionDate;
   final String? ownPeerId;
   final List<ConversationMessage> messages;
+
+  /// 405: terminal call-history rows shown alongside the chat. Empty by
+  /// default so a composition without a call source renders exactly the
+  /// incumbent message list.
+  final List<ConversationCallTimelineEntry> callEntries;
   final ValueChanged<String> onSend;
   final VoidCallback onBack;
   final ScrollController? scrollController;
@@ -374,6 +381,7 @@ class ConversationScreen extends StatefulWidget {
     required this.connectionDate,
     this.ownPeerId,
     required this.messages,
+    this.callEntries = const <ConversationCallTimelineEntry>[],
     required this.onSend,
     required this.onBack,
     this.scrollController,
@@ -494,6 +502,9 @@ class _ConversationScreenState extends State<ConversationScreen>
   // that drive the day-separator labels (`_formatDateLabel` reads both).
   List<_DisplayItem>? _cachedDisplayItems;
   List<ConversationMessage>? _cachedMessagesRef;
+  List<ConversationCallTimelineEntry>? _cachedCallEntriesRef;
+  List<ConversationCallTimelineEntry>? _cachedVisibleCallsRef;
+  List<ConversationCallTimelineEntry>? _cachedVisibleCalls;
   bool? _cachedWasEmpty;
   bool? _cachedHasMoreOlderMessages;
   bool? _cachedIsLoadingMore;
@@ -796,7 +807,7 @@ class _ConversationScreenState extends State<ConversationScreen>
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 400),
-              child: widget.messages.isEmpty
+              child: widget.messages.isEmpty && _visibleCallEntries.isEmpty
                   ? _buildEmptyOrLoadingState()
                   : _buildMessageList(),
             ),
@@ -950,6 +961,13 @@ class _ConversationScreenState extends State<ConversationScreen>
             );
           case _ItemType.dateSeparator:
             return DateSeparator(label: item.dateLabel!);
+          case _ItemType.call:
+            final call = item.call!;
+            return Padding(
+              key: ValueKey('call-${call.callId}'),
+              padding: const EdgeInsets.only(bottom: 16),
+              child: CallTimelineRow(entry: call),
+            );
           case _ItemType.loadingIndicator:
             return const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
@@ -1487,6 +1505,7 @@ class _ConversationScreenState extends State<ConversationScreen>
     final cached = _cachedDisplayItems;
     if (cached != null &&
         identical(widget.messages, _cachedMessagesRef) &&
+        identical(widget.callEntries, _cachedCallEntriesRef) &&
         _cachedWasEmpty == _wasEmpty &&
         _cachedHasMoreOlderMessages == widget.hasMoreOlderMessages &&
         _cachedIsLoadingMore == widget.isLoadingMore &&
@@ -1516,8 +1535,28 @@ class _ConversationScreenState extends State<ConversationScreen>
     String? prevSenderPeerId;
     DateTime? prevTimestamp;
     var prevBreaks = true; // first message always starts a run
-    for (var i = 0; i < widget.messages.length; i++) {
-      final message = widget.messages[i];
+    for (final row in _mergedTimelineRows()) {
+      final callRow = row.call;
+      if (callRow != null) {
+        // 405: a call row takes its day from when the call STARTED, which is
+        // also the instant it is sorted by.
+        final callDateLabel = _formatDateLabel(
+          callRow.startedAt.toIso8601String(),
+        );
+        if (callDateLabel != lastDateLabel) {
+          items.add(_DisplayItem.dateSeparator(callDateLabel));
+          lastDateLabel = callDateLabel;
+        }
+        items.add(_DisplayItem.call(callRow));
+        // A call row carries no run chrome and forces the NEXT message to
+        // start a fresh run, exactly like a system row.
+        prevBreaks = true;
+        prevSenderPeerId = null;
+        prevTimestamp = null;
+        continue;
+      }
+
+      final message = row.message!;
       final dateLabel = _formatDateLabel(message.timestamp);
 
       if (dateLabel != lastDateLabel) {
@@ -1542,7 +1581,7 @@ class _ConversationScreenState extends State<ConversationScreen>
         prevBreaks: prevBreaks,
       );
 
-      final isNew = i == widget.messages.length - 1 && _wasEmpty;
+      final isNew = row.messageIndex == widget.messages.length - 1 && _wasEmpty;
       items.add(
         _DisplayItem.message(
           message,
@@ -1597,12 +1636,75 @@ class _ConversationScreenState extends State<ConversationScreen>
     final result = items.reversed.toList();
     _cachedDisplayItems = result;
     _cachedMessagesRef = widget.messages;
+    _cachedCallEntriesRef = widget.callEntries;
     _cachedWasEmpty = _wasEmpty;
     _cachedHasMoreOlderMessages = widget.hasMoreOlderMessages;
     _cachedIsLoadingMore = widget.isLoadingMore;
     _cachedLocale = locale;
     _cachedTodayToken = todayToken;
     return result;
+  }
+
+  /// 405: the terminal calls that belong to THIS conversation, oldest first.
+  ///
+  /// A row for another contact can only be a composition mistake and must
+  /// never render here. Memoized on the incoming list reference so an
+  /// unrelated rebuild does not re-filter and re-sort.
+  List<ConversationCallTimelineEntry> get _visibleCallEntries {
+    final source = widget.callEntries;
+    final cached = _cachedVisibleCalls;
+    if (cached != null && identical(source, _cachedVisibleCallsRef)) {
+      return cached;
+    }
+    final visible =
+        source
+            .where((entry) => entry.contactPeerId == widget.contactPeerId)
+            .toList()
+          ..sort((left, right) {
+            final byTime = left.startedAt.compareTo(right.startedAt);
+            return byTime != 0 ? byTime : left.callId.compareTo(right.callId);
+          });
+    final result = List<ConversationCallTimelineEntry>.unmodifiable(visible);
+    _cachedVisibleCallsRef = source;
+    _cachedVisibleCalls = result;
+    return result;
+  }
+
+  /// 405: messages and call rows as one chronological sequence.
+  ///
+  /// The message order is never rewritten — the walk keeps `widget.messages`
+  /// exactly as the wired layer sorted it and only decides where each call
+  /// falls between them. On an exact tie the message stays first, matching
+  /// `loadConversationTimeline`. A message whose timestamp cannot be parsed
+  /// holds its position and simply pulls no call ahead of itself.
+  List<_TimelineRow> _mergedTimelineRows() {
+    final calls = _visibleCallEntries;
+    if (calls.isEmpty) {
+      return <_TimelineRow>[
+        for (var i = 0; i < widget.messages.length; i++)
+          _TimelineRow.message(widget.messages[i], i),
+      ];
+    }
+    final rows = <_TimelineRow>[];
+    var callIndex = 0;
+    for (var i = 0; i < widget.messages.length; i++) {
+      final message = widget.messages[i];
+      final parsed = message.parsedTimestamp;
+      if (parsed != null) {
+        final at = parsed.toUtc();
+        while (callIndex < calls.length &&
+            calls[callIndex].startedAt.isBefore(at)) {
+          rows.add(_TimelineRow.call(calls[callIndex]));
+          callIndex++;
+        }
+      }
+      rows.add(_TimelineRow.message(message, i));
+    }
+    while (callIndex < calls.length) {
+      rows.add(_TimelineRow.call(calls[callIndex]));
+      callIndex++;
+    }
+    return rows;
   }
 
   /// 159: a per-day token (`YYYY-M-D`) folded into the grouping memo key so the
@@ -2661,11 +2763,31 @@ class _AnimatedLetterCardState extends State<_AnimatedLetterCard>
   }
 }
 
-enum _ItemType { originMarker, dateSeparator, message, loadingIndicator }
+enum _ItemType { originMarker, dateSeparator, message, call, loadingIndicator }
+
+/// 405: one row of the merged conversation sequence. Exactly one of
+/// [message] and [call] is non-null.
+final class _TimelineRow {
+  const _TimelineRow.message(
+    ConversationMessage this.message,
+    this.messageIndex,
+  ) : call = null;
+
+  const _TimelineRow.call(ConversationCallTimelineEntry this.call)
+    : message = null,
+      messageIndex = -1;
+
+  final ConversationMessage? message;
+  final ConversationCallTimelineEntry? call;
+
+  /// Index into `widget.messages`, or -1 for a call row.
+  final int messageIndex;
+}
 
 class _DisplayItem {
   final _ItemType type;
   final ConversationMessage? message;
+  final ConversationCallTimelineEntry? call;
   final String? dateLabel;
   final bool isLastAndWasEmpty;
 
@@ -2681,6 +2803,7 @@ class _DisplayItem {
   const _DisplayItem._({
     required this.type,
     this.message,
+    this.call,
     this.dateLabel,
     this.isLastAndWasEmpty = false,
     this.isFirstInGroup = true,
@@ -2695,6 +2818,9 @@ class _DisplayItem {
 
   factory _DisplayItem.loadingIndicator() =>
       const _DisplayItem._(type: _ItemType.loadingIndicator);
+
+  factory _DisplayItem.call(ConversationCallTimelineEntry entry) =>
+      _DisplayItem._(type: _ItemType.call, call: entry);
 
   factory _DisplayItem.message(
     ConversationMessage msg, {
@@ -2714,6 +2840,7 @@ class _DisplayItem {
   _DisplayItem copyWithLastInGroup(bool value) => _DisplayItem._(
     type: type,
     message: message,
+    call: call,
     dateLabel: dateLabel,
     isLastAndWasEmpty: isLastAndWasEmpty,
     isFirstInGroup: isFirstInGroup,

@@ -1681,6 +1681,8 @@ class _FeedWiredState extends State<FeedWired>
           modalityGate: widget.directRouteAuthority.resolvedModalityGate,
           outgoingCallCapability:
               widget.directRouteAuthority.resolvedOutgoingCallCapability,
+          callTimelineSource:
+              widget.directRouteAuthority.resolvedCallTimelineSource,
           contact: contact,
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
@@ -1729,6 +1731,8 @@ class _FeedWiredState extends State<FeedWired>
               modalityGate: widget.directRouteAuthority.resolvedModalityGate,
               outgoingCallCapability:
                   widget.directRouteAuthority.resolvedOutgoingCallCapability,
+              callTimelineSource:
+                  widget.directRouteAuthority.resolvedCallTimelineSource,
               contact: contact,
               identityRepo: widget.repository,
               messageRepo: widget.messageRepository,

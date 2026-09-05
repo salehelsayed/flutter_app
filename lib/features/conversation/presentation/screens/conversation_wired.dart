@@ -51,6 +51,8 @@ import 'package:flutter_app/features/settings/domain/models/media_download_prefe
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_call_timeline_source.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
@@ -553,6 +555,10 @@ class ConversationWired extends StatefulWidget {
   /// capability remains visible as a disabled, explanatory action.
   final OutgoingCallCapability? outgoingCallCapability;
 
+  /// 405: local terminal call history projected into this conversation's
+  /// timeline. Null keeps the chat message-only.
+  final ConversationCallTimelineSource? callTimelineSource;
+
   const ConversationWired({
     super.key,
     required this.contact,
@@ -617,6 +623,7 @@ class ConversationWired extends StatefulWidget {
     this.modalityGate = const DirectConversationModalityGate(),
     this.directEventFanout,
     this.outgoingCallCapability,
+    this.callTimelineSource,
   });
 
   @override
@@ -667,6 +674,8 @@ class _ConversationWiredState extends State<ConversationWired>
   final _scrollController = ScrollController();
 
   bool _hasMoreOlderMessages = true;
+  List<ConversationCallTimelineEntry> _callEntries =
+      const <ConversationCallTimelineEntry>[];
   bool _isLoadingMore = false;
   bool _initialLoadDone = false;
   bool _isSending = false;
@@ -1476,6 +1485,7 @@ class _ConversationWiredState extends State<ConversationWired>
     } else {
       _loadInitialPage().then((_) => _markAsRead());
     }
+    unawaited(_refreshCallTimeline());
     _startListeningForMessages();
     _startListeningForOutgoingMessageChanges();
     _startListeningForContactUpdates();
@@ -7817,6 +7827,7 @@ class _ConversationWiredState extends State<ConversationWired>
     if (state == AppLifecycleState.resumed) {
       unawaited(_recoverAndMarkReadAfterResume());
       unawaited(_refreshOutgoingCallAvailability());
+      unawaited(_refreshCallTimeline());
     }
   }
 
@@ -7831,6 +7842,36 @@ class _ConversationWiredState extends State<ConversationWired>
     } else if (oldWidget.contact.peerId != widget.contact.peerId) {
       unawaited(_refreshOutgoingCallAvailability());
     }
+    if (!identical(oldWidget.callTimelineSource, widget.callTimelineSource) ||
+        oldWidget.contact.peerId != widget.contact.peerId) {
+      unawaited(_refreshCallTimeline());
+    }
+  }
+
+  /// 405: loads this contact's terminal call rows.
+  ///
+  /// A missing or failing source never blocks the chat — the timeline simply
+  /// stays message-only, exactly as it was before call rows existed. The reply
+  /// is dropped when the screen has since moved to another contact.
+  Future<void> _refreshCallTimeline() async {
+    final source = widget.callTimelineSource;
+    if (source == null) return;
+    final contactPeerId = _contact.peerId;
+    final List<ConversationCallTimelineEntry> entries;
+    try {
+      entries = await source.listCallsForContact(contactPeerId);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_CALL_TIMELINE_LOAD_SKIPPED',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      return;
+    }
+    if (!mounted || _contact.peerId != contactPeerId) return;
+    setState(() {
+      _callEntries = List<ConversationCallTimelineEntry>.unmodifiable(entries);
+    });
   }
 
   Future<void> _recoverAndMarkReadAfterResume() async {
@@ -7960,6 +8001,7 @@ class _ConversationWiredState extends State<ConversationWired>
           connectionDate: _formatConnectionDate(),
           ownPeerId: _identity?.peerId,
           messages: _messages,
+          callEntries: _callEntries,
           onSend: _onSend,
           onBack: _handleBackNavigation,
           scrollController: _scrollController,

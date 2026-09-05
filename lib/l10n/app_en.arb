@@ -1912,5 +1912,15 @@
   "push_registration_health_registration_failed": "Mknoon could not register this device for notifications.",
   "push_registration_health_temporary_problem": "Notification setup hit a temporary problem.",
   "push_registration_health_retry": "Retry",
-  "push_registration_health_open_notification_settings": "Open notification settings"
+  "push_registration_health_open_notification_settings": "Open notification settings",
+  "call_row_voice_call": "Voice call",
+  "call_row_missed": "Missed voice call",
+  "call_row_no_answer": "No answer",
+  "call_row_you_declined": "You declined",
+  "call_row_declined": "Call declined",
+  "call_row_busy": "Contact was busy",
+  "call_row_cancelled": "Cancelled",
+  "call_row_failed": "Call failed",
+  "call_row_with_duration": "{label} · {duration}",
+  "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}}
 }

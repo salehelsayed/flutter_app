@@ -6,6 +6,9 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
     show DirectMediaFanoutStageAuthority, DirectMediaFanoutTargetBinding;
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_call_timeline_source.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/call_timeline_row.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'dart:async';
 
@@ -1937,6 +1940,7 @@ void main() {
     bool? directLinkedEventFanoutEnabled,
     ActiveConversationTracker? conversationTracker,
     OutgoingCallCapability? outgoingCallCapability,
+    ConversationCallTimelineSource? callTimelineSource,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -2003,11 +2007,121 @@ void main() {
               preparedDirectMediaBlobCustodyCoordinator,
           modalityGate: modalityGate ?? const DirectConversationModalityGate(),
           outgoingCallCapability: outgoingCallCapability,
+          callTimelineSource: callTimelineSource,
         ),
       ),
     );
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  group('405 terminal call rows', () {
+    testWidgets('TC-405-30 a missed call from the call source renders in the '
+        'chat', (tester) async {
+      final messageRepo = FakeMessageRepository();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        callTimelineSource: _FakeCallTimelineSource(
+          calls: [
+            _callEntry(
+              contactPeerId: makeContact().peerId,
+              status: ConversationCallStatus.cancelled,
+            ),
+          ],
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(CallTimelineRow), findsOneWidget);
+      expect(find.text('Missed voice call'), findsOneWidget);
+    });
+
+    testWidgets('TC-405-31 the exact contact is the only one asked for', (
+      tester,
+    ) async {
+      final messageRepo = FakeMessageRepository();
+      final source = _FakeCallTimelineSource(calls: const []);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        callTimelineSource: source,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(source.requestedPeerIds, <String>[makeContact().peerId]);
+    });
+
+    testWidgets('TC-405-32 a failing call source never blocks the chat', (
+      tester,
+    ) async {
+      final messageRepo = FakeMessageRepository();
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'call-coexist-1',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'still here',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        callTimelineSource: _FakeCallTimelineSource(
+          calls: const [],
+          error: StateError('call history unavailable'),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('still here'), findsOneWidget);
+      expect(find.byType(CallTimelineRow), findsNothing);
+    });
+
+    testWidgets('TC-405-33 no call source leaves the chat message-only', (
+      tester,
+    ) async {
+      final messageRepo = FakeMessageRepository();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(CallTimelineRow), findsNothing);
+    });
+  });
 
   testWidgets('VC2-03 null outgoing capability keeps call action hidden', (
     tester,
@@ -4092,11 +4206,9 @@ void main() {
           isNotNull,
           reason: 'the v110 token is durable before the first blob callback',
         );
-        expect(
-          v111StatesAtFirstNetwork,
-          <String>['outgoing_prepared'],
-          reason: 'v111 commits before the first LAN/relay blob call',
-        );
+        expect(v111StatesAtFirstNetwork, <String>[
+          'outgoing_prepared',
+        ], reason: 'v111 commits before the first LAN/relay blob call');
         expect(networkOrder, <String>[
           'strict:${sentAttachments!.single.id}',
           'envelope',
@@ -15803,4 +15915,42 @@ _throwingDeleteForEveryoneFn({
   DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   throw StateError('media action must not call delete-for-everyone delivery');
+}
+
+/// 405: a terminal-call source under test control.
+class _FakeCallTimelineSource implements ConversationCallTimelineSource {
+  _FakeCallTimelineSource({required this.calls, this.error});
+
+  final List<ConversationCallTimelineEntry> calls;
+  final Object? error;
+  final List<String> requestedPeerIds = <String>[];
+
+  @override
+  Future<List<ConversationCallTimelineEntry>> listCallsForContact(
+    String contactPeerId,
+  ) async {
+    requestedPeerIds.add(contactPeerId);
+    if (error != null) throw error!;
+    return calls
+        .where((entry) => entry.contactPeerId == contactPeerId)
+        .toList(growable: false);
+  }
+}
+
+ConversationCallTimelineEntry _callEntry({
+  required String contactPeerId,
+  ConversationCallDirection direction = ConversationCallDirection.incoming,
+  ConversationCallStatus status = ConversationCallStatus.missed,
+  Duration? duration,
+}) {
+  final startedAt = DateTime.now().toUtc();
+  return ConversationCallTimelineEntry(
+    callId: 'a2f0a1d6-0000-4000-8000-000000000405',
+    contactPeerId: contactPeerId,
+    direction: direction,
+    status: status,
+    startedAt: startedAt,
+    endedAt: startedAt.add(const Duration(seconds: 20)),
+    duration: duration,
+  );
 }

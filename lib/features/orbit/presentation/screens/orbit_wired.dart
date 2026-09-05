@@ -2696,6 +2696,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             modalityGate: widget.directRouteAuthority.resolvedModalityGate,
             outgoingCallCapability:
                 widget.directRouteAuthority.resolvedOutgoingCallCapability,
+            callTimelineSource:
+                widget.directRouteAuthority.resolvedCallTimelineSource,
             contact: contact,
             initialText: initialText,
             identityRepo: widget.identityRepo,

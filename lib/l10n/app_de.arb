@@ -1774,5 +1774,15 @@
   "push_registration_health_registration_failed": "Mknoon konnte dieses Gerät nicht für Benachrichtigungen registrieren.",
   "push_registration_health_temporary_problem": "Beim Einrichten der Benachrichtigungen ist ein vorübergehendes Problem aufgetreten.",
   "push_registration_health_retry": "Erneut versuchen",
-  "push_registration_health_open_notification_settings": "Benachrichtigungseinstellungen öffnen"
+  "push_registration_health_open_notification_settings": "Benachrichtigungseinstellungen öffnen",
+  "call_row_voice_call": "Sprachanruf",
+  "call_row_missed": "Verpasster Sprachanruf",
+  "call_row_no_answer": "Keine Antwort",
+  "call_row_you_declined": "Du hast abgelehnt",
+  "call_row_declined": "Anruf abgelehnt",
+  "call_row_busy": "Kontakt war besetzt",
+  "call_row_cancelled": "Abgebrochen",
+  "call_row_failed": "Anruf fehlgeschlagen",
+  "call_row_with_duration": "{label} · {duration}",
+  "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}}
 }

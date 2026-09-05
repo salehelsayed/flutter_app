@@ -6175,6 +6175,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open notification settings'**
   String get push_registration_health_open_notification_settings;
+
+  /// No description provided for @call_row_voice_call.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice call'**
+  String get call_row_voice_call;
+
+  /// No description provided for @call_row_missed.
+  ///
+  /// In en, this message translates to:
+  /// **'Missed voice call'**
+  String get call_row_missed;
+
+  /// No description provided for @call_row_no_answer.
+  ///
+  /// In en, this message translates to:
+  /// **'No answer'**
+  String get call_row_no_answer;
+
+  /// No description provided for @call_row_you_declined.
+  ///
+  /// In en, this message translates to:
+  /// **'You declined'**
+  String get call_row_you_declined;
+
+  /// No description provided for @call_row_declined.
+  ///
+  /// In en, this message translates to:
+  /// **'Call declined'**
+  String get call_row_declined;
+
+  /// No description provided for @call_row_busy.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact was busy'**
+  String get call_row_busy;
+
+  /// No description provided for @call_row_cancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get call_row_cancelled;
+
+  /// No description provided for @call_row_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Call failed'**
+  String get call_row_failed;
+
+  /// No description provided for @call_row_with_duration.
+  ///
+  /// In en, this message translates to:
+  /// **'{label} · {duration}'**
+  String call_row_with_duration(String label, String duration);
 }
 
 class _AppLocalizationsDelegate

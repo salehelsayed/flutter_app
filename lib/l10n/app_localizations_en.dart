@@ -3705,4 +3705,33 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get push_registration_health_open_notification_settings =>
       'Open notification settings';
+
+  @override
+  String get call_row_voice_call => 'Voice call';
+
+  @override
+  String get call_row_missed => 'Missed voice call';
+
+  @override
+  String get call_row_no_answer => 'No answer';
+
+  @override
+  String get call_row_you_declined => 'You declined';
+
+  @override
+  String get call_row_declined => 'Call declined';
+
+  @override
+  String get call_row_busy => 'Contact was busy';
+
+  @override
+  String get call_row_cancelled => 'Cancelled';
+
+  @override
+  String get call_row_failed => 'Call failed';
+
+  @override
+  String call_row_with_duration(String label, String duration) {
+    return '$label · $duration';
+  }
 }

@@ -340,6 +340,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             modalityGate: widget.directRouteAuthority.resolvedModalityGate,
             outgoingCallCapability:
                 widget.directRouteAuthority.resolvedOutgoingCallCapability,
+            callTimelineSource:
+                widget.directRouteAuthority.resolvedCallTimelineSource,
             contact: contact,
             identityRepo: widget.repository,
             messageRepo: widget.messageRepository,

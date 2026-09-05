@@ -7,6 +7,8 @@ import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.da
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_call_timeline_source.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -98,6 +100,7 @@ void main() {
           'directDeviceTrust:',
           'modalityGate:',
           'outgoingCallCapability:',
+          'callTimelineSource:',
         ]) {
           if (!block.contains(required)) {
             offenders.add('$path is missing $required');
@@ -196,6 +199,7 @@ void main() {
     final secondFanout = _fanoutSentinel('peer-second');
     final trust = _TrustSentinel();
     final outgoingCallCapability = _OutgoingCallCapabilitySentinel();
+    final callTimelineSource = _CallTimelineSourceSentinel();
     var linkedBlobFreeRuntime = false;
     var fanoutResolutionCount = 0;
     final authority = DirectConversationRouteAuthority(
@@ -204,6 +208,7 @@ void main() {
       directDeviceTrust: trust,
       isLinkedBlobFreeRuntime: () => linkedBlobFreeRuntime,
       outgoingCallCapability: outgoingCallCapability,
+      callTimelineSource: callTimelineSource,
     );
 
     expect(authority.resolvedDirectEventFanout, same(firstFanout));
@@ -218,6 +223,7 @@ void main() {
       authority.resolvedOutgoingCallCapability,
       same(outgoingCallCapability),
     );
+    expect(authority.resolvedCallTimelineSource, same(callTimelineSource));
 
     final primaryGate = authority.resolvedModalityGate;
     expect(primaryGate.allowsMediaAuthoring, isTrue);
@@ -238,6 +244,7 @@ void main() {
     expect(absent.resolvedDirectEventFanout, isNull);
     expect(absent.resolvedDirectDeviceTrust, isNull);
     expect(absent.resolvedOutgoingCallCapability, isNull);
+    expect(absent.resolvedCallTimelineSource, isNull);
     expect(absent.resolvedModalityGate.allowsMediaAuthoring, isTrue);
   });
 
@@ -364,4 +371,13 @@ class _TrustSentinel implements DirectContactDeviceTrustCapability {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw StateError('trust sentinel must only be identity-compared');
+}
+
+/// 405: a terminal-call source that records nothing; the contract only needs
+/// identity preservation through the bundle.
+class _CallTimelineSourceSentinel implements ConversationCallTimelineSource {
+  @override
+  Future<List<ConversationCallTimelineEntry>> listCallsForContact(
+    String contactPeerId,
+  ) async => const <ConversationCallTimelineEntry>[];
 }

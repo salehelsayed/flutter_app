@@ -3792,4 +3792,33 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get push_registration_health_open_notification_settings =>
       'Benachrichtigungseinstellungen öffnen';
+
+  @override
+  String get call_row_voice_call => 'Sprachanruf';
+
+  @override
+  String get call_row_missed => 'Verpasster Sprachanruf';
+
+  @override
+  String get call_row_no_answer => 'Keine Antwort';
+
+  @override
+  String get call_row_you_declined => 'Du hast abgelehnt';
+
+  @override
+  String get call_row_declined => 'Anruf abgelehnt';
+
+  @override
+  String get call_row_busy => 'Kontakt war besetzt';
+
+  @override
+  String get call_row_cancelled => 'Abgebrochen';
+
+  @override
+  String get call_row_failed => 'Anruf fehlgeschlagen';
+
+  @override
+  String call_row_with_duration(String label, String duration) {
+    return '$label · $duration';
+  }
 }

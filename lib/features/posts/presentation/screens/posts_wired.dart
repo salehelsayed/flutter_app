@@ -1017,6 +1017,8 @@ class _PostsWiredState extends State<PostsWired> {
           modalityGate: widget.directRouteAuthority.resolvedModalityGate,
           outgoingCallCapability:
               widget.directRouteAuthority.resolvedOutgoingCallCapability,
+          callTimelineSource:
+              widget.directRouteAuthority.resolvedCallTimelineSource,
           contact: contact,
           identityRepo: widget.identityRepo,
           messageRepo: messageRepo,

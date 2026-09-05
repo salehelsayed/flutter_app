@@ -1774,5 +1774,15 @@
   "push_registration_health_registration_failed": "تعذّر تسجيل هذا الجهاز لاستلام إشعارات مكنون.",
   "push_registration_health_temporary_problem": "حدثت مشكلة مؤقتة أثناء إعداد الإشعارات.",
   "push_registration_health_retry": "إعادة المحاولة",
-  "push_registration_health_open_notification_settings": "فتح إعدادات الإشعارات"
+  "push_registration_health_open_notification_settings": "فتح إعدادات الإشعارات",
+  "call_row_voice_call": "مكالمة صوتية",
+  "call_row_missed": "مكالمة صوتية فائتة",
+  "call_row_no_answer": "لا يوجد رد",
+  "call_row_you_declined": "لقد رفضت المكالمة",
+  "call_row_declined": "تم رفض المكالمة",
+  "call_row_busy": "جهة الاتصال مشغولة",
+  "call_row_cancelled": "أُلغيت",
+  "call_row_failed": "فشلت المكالمة",
+  "call_row_with_duration": "{label} · {duration}",
+  "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}}
 }

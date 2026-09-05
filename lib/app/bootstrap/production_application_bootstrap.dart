@@ -20,6 +20,8 @@ import 'package:flutter_app/app/bootstrap/production_canonical_direct_replay_com
 import 'package:flutter_app/app/bootstrap/production_canonical_direct_projection_composition.dart';
 import 'package:flutter_app/app/bootstrap/production_canonical_group_replay_composition.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
+import 'package:flutter_app/features/call/data/call_history_conversation_timeline_source.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_call_wake_channel.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
@@ -9668,6 +9670,11 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               callSignalingComposition.onContactEligibilityChanged(),
         ),
         outgoingCallCapability: callSignalingComposition,
+        // 405: chat call rows read the local history table directly, so
+        // they survive a withdrawn or disabled call graph.
+        callTimelineSource: CallHistoryConversationTimelineSource(
+          CallHistoryRepositoryImpl(db),
+        ),
         foregroundCallCapability: callSignalingComposition,
         resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,
         onCallWakeHandleDistributed:

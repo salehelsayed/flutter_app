@@ -3764,4 +3764,33 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get push_registration_health_open_notification_settings =>
       'فتح إعدادات الإشعارات';
+
+  @override
+  String get call_row_voice_call => 'مكالمة صوتية';
+
+  @override
+  String get call_row_missed => 'مكالمة صوتية فائتة';
+
+  @override
+  String get call_row_no_answer => 'لا يوجد رد';
+
+  @override
+  String get call_row_you_declined => 'لقد رفضت المكالمة';
+
+  @override
+  String get call_row_declined => 'تم رفض المكالمة';
+
+  @override
+  String get call_row_busy => 'جهة الاتصال مشغولة';
+
+  @override
+  String get call_row_cancelled => 'أُلغيت';
+
+  @override
+  String get call_row_failed => 'فشلت المكالمة';
+
+  @override
+  String call_row_with_duration(String label, String duration) {
+    return '$label · $duration';
+  }
 }

@@ -183,6 +183,9 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
   "test/features/conversation/presentation/screens/direct_conversation_route_authority_contract_test.dart"
+  # 405: terminal call rows in the 1:1 conversation timeline.
+  "test/features/conversation/presentation/widgets/call_timeline_row_test.dart"
+  "test/features/conversation/presentation/screens/conversation_call_timeline_rows_test.dart"
   "test/features/conversation/presentation/widgets/conversation_header_test.dart"
   # 294 DTR-15: shared compositional conversation-controller ownership,
   # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.

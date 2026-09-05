@@ -77,7 +77,11 @@ const _controllerTestPaths = <String>[
 // VC2-03: repinned for exactly one optional `ConversationWired` field,
 // `outgoingCallCapability`. It delegates to the process-owned call composition
 // and cannot manufacture availability when the capability is absent.
-const _expectedDirectApiFingerprint = '6370e861';
+// 405: repinned for exactly one optional `ConversationWired` field,
+// `callTimelineSource`. It only READS the local terminal call-history
+// projection for this contact; it owns no call state, sends nothing, and a
+// null source keeps the conversation message-only.
+const _expectedDirectApiFingerprint = '84e5424e';
 const _expectedGroupApiFingerprint = '3ffab64f';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection
@@ -89,7 +93,10 @@ const _expectedGroupApiFingerprint = '3ffab64f';
 // `callActionEnabled`, all projected from the optional process-owned call
 // capability. The reviewed per-contact availability and duplicate-start guards
 // are part of those expressions; ConversationScreen remains presentation-only.
-const _expectedDirectHandoffFingerprint = 'ffd1f021';
+// 405: the direct handoff adds only `callEntries`, the already-loaded local
+// call-history projection for this contact. ConversationScreen merges it into
+// the display pass and remains presentation-only; no owner moved.
+const _expectedDirectHandoffFingerprint = '6dfaa77f';
 const _expectedGroupHandoffFingerprint = '74b2fe80';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();
