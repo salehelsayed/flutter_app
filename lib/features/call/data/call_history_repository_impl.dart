@@ -19,6 +19,14 @@ final class CallHistoryRepositoryImpl implements CallHistoryRepository {
     return row == null ? null : CallHistoryEntry.fromMap(row);
   }
 
+  /// 409: newest-first rows for a batch of contacts, for the Orbit rows.
+  Future<List<CallHistoryEntry>> latestForContacts(
+    List<String> contactAccountPeerIds,
+  ) async => (await loadLatestCallHistoryForContacts(
+    database,
+    contactAccountPeerIds,
+  )).map(CallHistoryEntry.fromMap).toList(growable: false);
+
   @override
   Future<List<CallHistoryEntry>> listForContact(
     String contactAccountPeerId,

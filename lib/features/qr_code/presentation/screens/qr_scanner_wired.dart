@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
@@ -119,9 +120,13 @@ class QRScannerWired extends StatelessWidget {
   /// hands off to.
   final DirectConversationRouteAuthority? directRouteAuthority;
 
+  /// 409: forwarded to the Orbit this shell can reach.
+  final OrbitCallActivitySource? orbitCallActivitySource;
+
   const QRScannerWired({
     super.key,
     this.directRouteAuthority,
+    this.orbitCallActivitySource,
     required this.bridge,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -447,6 +452,7 @@ class QRScannerWired extends StatelessWidget {
                     buildFeedSlideUpRoute(
                       builder: (_) => FeedWired(
                         directRouteAuthority: directRouteAuthority,
+                        orbitCallActivitySource: orbitCallActivitySource,
                         repository: identityRepository,
                         contactRepository: contactRepository,
                         contactRequestRepository: contactRequestRepository,

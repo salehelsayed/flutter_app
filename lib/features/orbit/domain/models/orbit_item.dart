@@ -18,7 +18,7 @@ class OrbitFriendItem extends OrbitItem {
   OrbitFriendItem(this.friend);
 
   @override
-  String get sortKey => friend.lastMessageTimestamp ?? '';
+  String get sortKey => friend.lastActivityAt ?? '';
 }
 
 /// An orbit item representing a group.

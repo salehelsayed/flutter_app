@@ -72,6 +72,7 @@ import 'package:flutter_app/features/contacts/application/block_contact_use_case
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unblock_contact_use_case.dart';
+import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 import 'package:flutter_app/features/orbit/application/inner_circle_items.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
@@ -137,6 +138,10 @@ class OrbitWired extends StatefulWidget {
   final MessageRepository messageRepo;
   final PostRepository? postRepository;
   final MediaAttachmentRepository mediaAttachmentRepo;
+
+  /// 409: newest terminal call per contact. Null keeps Orbit message-only,
+  /// exactly as it was before calls had a row of their own.
+  final OrbitCallActivitySource? callActivitySource;
   final ChatMessageListener chatMessageListener;
   final Bridge bridge;
   final P2PService p2pService;
@@ -229,6 +234,7 @@ class OrbitWired extends StatefulWidget {
     required this.messageRepo,
     this.postRepository,
     required this.mediaAttachmentRepo,
+    this.callActivitySource,
     required this.chatMessageListener,
     required this.bridge,
     required this.p2pService,
@@ -850,6 +856,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         contactRepo: widget.contactRepo,
         messageRepo: widget.messageRepo,
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        callActivitySource: widget.callActivitySource,
       );
       if (!mounted) return;
 
@@ -877,6 +884,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         contactRepo: widget.contactRepo,
         messageRepo: widget.messageRepo,
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        callActivitySource: widget.callActivitySource,
         includeArchived: true,
       );
       if (!mounted) return;
@@ -1192,6 +1200,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         messageRepo: widget.messageRepo,
         contactPeerId: peerId,
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        callActivitySource: widget.callActivitySource,
       );
       if (!mounted) return;
 
@@ -1296,8 +1305,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   void _sortFriends(List<OrbitFriend> friends) {
     friends.sort((a, b) {
-      final aTime = a.lastMessageTimestamp ?? '';
-      final bTime = b.lastMessageTimestamp ?? '';
+      final aTime = a.lastActivityAt ?? '';
+      final bTime = b.lastActivityAt ?? '';
       return bTime.compareTo(aTime);
     });
   }

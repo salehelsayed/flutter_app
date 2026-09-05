@@ -7,6 +7,8 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_thr
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
+import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
 
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
@@ -200,6 +202,42 @@ ContactModel _makeContact(String peerId, {bool isArchived = false}) {
     archivedAt: isArchived ? '2026-02-01T00:00:00.000Z' : null,
   );
 }
+
+/// 409: newest terminal call per contact, under test control.
+class FakeOrbitCallActivitySource implements OrbitCallActivitySource {
+  FakeOrbitCallActivitySource({this.calls = const {}, this.error});
+
+  final Map<String, ConversationCallTimelineEntry> calls;
+  final Object? error;
+  int callCount = 0;
+
+  @override
+  Future<Map<String, ConversationCallTimelineEntry>> latestCallsForContacts(
+    Iterable<String> contactPeerIds,
+  ) async {
+    callCount++;
+    if (error != null) throw error!;
+    final wanted = contactPeerIds.toSet();
+    return <String, ConversationCallTimelineEntry>{
+      for (final entry in calls.entries)
+        if (wanted.contains(entry.key)) entry.key: entry.value,
+    };
+  }
+}
+
+ConversationCallTimelineEntry _call({
+  required String contactPeerId,
+  required DateTime endedAt,
+  ConversationCallStatus status = ConversationCallStatus.missed,
+  ConversationCallDirection direction = ConversationCallDirection.incoming,
+}) => ConversationCallTimelineEntry(
+  callId: 'a2f0a1d6-0000-4000-8000-00000000040${contactPeerId.hashCode % 10}',
+  contactPeerId: contactPeerId,
+  direction: direction,
+  status: status,
+  startedAt: endedAt.subtract(const Duration(seconds: 20)),
+  endedAt: endedAt,
+);
 
 void main() {
   group('loadOrbitData', () {
@@ -400,10 +438,7 @@ void main() {
       expect(result, isNull);
     });
 
-    ConversationMessage mediaLatest({
-      String text = '',
-      String? deletedAt,
-    }) {
+    ConversationMessage mediaLatest({String text = '', String? deletedAt}) {
       return ConversationMessage(
         id: 'msg-a',
         contactPeerId: 'peer-A',
@@ -479,47 +514,259 @@ void main() {
       expect(result.single.latestMedia!.count, 2);
     });
 
-    test('caption wins: text + media keeps the caption as lastActivity', () async {
-      final repo = FakeMessageRepository(
-        latestMessages: {'peer-A': mediaLatest(text: 'Look at this')},
-      );
-      final mediaRepo = InMemoryMediaAttachmentRepository();
-      await mediaRepo.saveAttachment(
-        attachment(),
-        owner: MediaOwnerLane.direct,
-      );
+    test(
+      'caption wins: text + media keeps the caption as lastActivity',
+      () async {
+        final repo = FakeMessageRepository(
+          latestMessages: {'peer-A': mediaLatest(text: 'Look at this')},
+        );
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        await mediaRepo.saveAttachment(
+          attachment(),
+          owner: MediaOwnerLane.direct,
+        );
 
-      final result = await loadOrbitData(
-        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
-        messageRepo: repo,
-        mediaAttachmentRepo: mediaRepo,
-      );
+        final result = await loadOrbitData(
+          contactRepo: FakeContactRepository(
+            contacts: [_makeContact('peer-A')],
+          ),
+          messageRepo: repo,
+          mediaAttachmentRepo: mediaRepo,
+        );
 
-      expect(result.single.lastActivity, 'Look at this');
-      expect(result.single.latestMedia, isNotNull);
-    });
+        expect(result.single.lastActivity, 'Look at this');
+        expect(result.single.latestMedia, isNotNull);
+      },
+    );
 
-    test('soft-deleted media latest suppresses the descriptor (INV-5)', () async {
+    test(
+      'soft-deleted media latest suppresses the descriptor (INV-5)',
+      () async {
+        final repo = FakeMessageRepository(
+          latestMessages: {
+            'peer-A': mediaLatest(deletedAt: '2026-03-02T00:00:00.000Z'),
+          },
+        );
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        await mediaRepo.saveAttachment(
+          attachment(),
+          owner: MediaOwnerLane.direct,
+        );
+
+        final result = await loadOrbitData(
+          contactRepo: FakeContactRepository(
+            contacts: [_makeContact('peer-A')],
+          ),
+          messageRepo: repo,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result.single.latestMedia, isNull);
+        expect(result.single.isLatestDeleted, isTrue);
+        expect(result.single.lastActivity, isNull);
+      },
+    );
+  });
+
+  group('409 call activity in the orbit row', () {
+    test('TC-409-01 a call newer than the last message becomes the row '
+        'activity', () async {
       final repo = FakeMessageRepository(
         latestMessages: {
-          'peer-A': mediaLatest(deletedAt: '2026-03-02T00:00:00.000Z'),
+          'peer-A': ConversationMessage(
+            id: 'm1',
+            contactPeerId: 'peer-A',
+            senderPeerId: 'peer-A',
+            text: 'older text',
+            timestamp: '2026-02-09T15:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:00:00.000Z',
+          ),
         },
-      );
-      final mediaRepo = InMemoryMediaAttachmentRepository();
-      await mediaRepo.saveAttachment(
-        attachment(),
-        owner: MediaOwnerLane.direct,
       );
 
       final result = await loadOrbitData(
         contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
         messageRepo: repo,
-        mediaAttachmentRepo: mediaRepo,
+        callActivitySource: FakeOrbitCallActivitySource(
+          calls: {
+            'peer-A': _call(
+              contactPeerId: 'peer-A',
+              endedAt: DateTime.utc(2026, 2, 9, 16),
+            ),
+          },
+        ),
       );
 
-      expect(result.single.latestMedia, isNull);
-      expect(result.single.isLatestDeleted, isTrue);
-      expect(result.single.lastActivity, isNull);
+      final friend = result.single;
+      expect(friend.latestCall, isNotNull);
+      expect(friend.latestCall!.status, ConversationCallStatus.missed);
+      expect(
+        friend.lastActivityAt,
+        DateTime.utc(2026, 2, 9, 16).toIso8601String(),
+        reason: 'the row is ordered and timestamped by the newest activity',
+      );
+    });
+
+    test(
+      'TC-409-02 a call older than the last message leaves the row alone',
+      () async {
+        final repo = FakeMessageRepository(
+          latestMessages: {
+            'peer-A': ConversationMessage(
+              id: 'm1',
+              contactPeerId: 'peer-A',
+              senderPeerId: 'peer-A',
+              text: 'newer text',
+              timestamp: '2026-02-09T17:00:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T17:00:00.000Z',
+            ),
+          },
+        );
+
+        final result = await loadOrbitData(
+          contactRepo: FakeContactRepository(
+            contacts: [_makeContact('peer-A')],
+          ),
+          messageRepo: repo,
+          callActivitySource: FakeOrbitCallActivitySource(
+            calls: {
+              'peer-A': _call(
+                contactPeerId: 'peer-A',
+                endedAt: DateTime.utc(2026, 2, 9, 16),
+              ),
+            },
+          ),
+        );
+
+        final friend = result.single;
+        expect(friend.latestCall, isNull);
+        expect(friend.lastActivityAt, '2026-02-09T17:00:00.000Z');
+      },
+    );
+
+    test('TC-409-03 no call source leaves orbit exactly as it was', () async {
+      final repo = FakeMessageRepository(
+        latestMessages: {
+          'peer-A': ConversationMessage(
+            id: 'm1',
+            contactPeerId: 'peer-A',
+            senderPeerId: 'peer-A',
+            text: 'hello',
+            timestamp: '2026-02-09T15:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:00:00.000Z',
+          ),
+        },
+      );
+
+      final result = await loadOrbitData(
+        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
+        messageRepo: repo,
+      );
+
+      expect(result.single.latestCall, isNull);
+      expect(result.single.lastActivityAt, '2026-02-09T15:00:00.000Z');
+    });
+
+    test(
+      'TC-409-04 a recent call sorts its contact above an older message',
+      () async {
+        final repo = FakeMessageRepository(
+          latestMessages: {
+            'peer-A': ConversationMessage(
+              id: 'm1',
+              contactPeerId: 'peer-A',
+              senderPeerId: 'peer-A',
+              text: 'oldest',
+              timestamp: '2026-02-09T14:00:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T14:00:00.000Z',
+            ),
+            'peer-B': ConversationMessage(
+              id: 'm2',
+              contactPeerId: 'peer-B',
+              senderPeerId: 'peer-B',
+              text: 'newer message',
+              timestamp: '2026-02-09T15:00:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T15:00:00.000Z',
+            ),
+          },
+        );
+
+        final result = await loadOrbitData(
+          contactRepo: FakeContactRepository(
+            contacts: [_makeContact('peer-A'), _makeContact('peer-B')],
+          ),
+          messageRepo: repo,
+          callActivitySource: FakeOrbitCallActivitySource(
+            calls: {
+              'peer-A': _call(
+                contactPeerId: 'peer-A',
+                endedAt: DateTime.utc(2026, 2, 9, 16),
+              ),
+            },
+          ),
+        );
+
+        expect(result.map((friend) => friend.peerId), <String>[
+          'peer-A',
+          'peer-B',
+        ]);
+      },
+    );
+
+    test('TC-409-05 a failing call source never blocks orbit', () async {
+      final repo = FakeMessageRepository(
+        latestMessages: {
+          'peer-A': ConversationMessage(
+            id: 'm1',
+            contactPeerId: 'peer-A',
+            senderPeerId: 'peer-A',
+            text: 'hello',
+            timestamp: '2026-02-09T15:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:00:00.000Z',
+          ),
+        },
+      );
+
+      final result = await loadOrbitData(
+        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
+        messageRepo: repo,
+        callActivitySource: FakeOrbitCallActivitySource(
+          error: StateError('call history unavailable'),
+        ),
+      );
+
+      expect(result.single.peerId, 'peer-A');
+      expect(result.single.latestCall, isNull);
+    });
+
+    test('TC-409-06 the call source is asked once for every contact', () async {
+      final source = FakeOrbitCallActivitySource();
+
+      await loadOrbitData(
+        contactRepo: FakeContactRepository(
+          contacts: [_makeContact('peer-A'), _makeContact('peer-B')],
+        ),
+        messageRepo: FakeMessageRepository(),
+        callActivitySource: source,
+      );
+
+      expect(
+        source.callCount,
+        1,
+        reason: 'orbit batches; one query per contact would not scale',
+      );
     });
   });
 }

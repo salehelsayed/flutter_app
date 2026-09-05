@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -118,9 +119,13 @@ class FirstTimeExperienceWired extends StatefulWidget {
   /// push and for the FeedWired it hands off to.
   final DirectConversationRouteAuthority? directRouteAuthority;
 
+  /// 409: forwarded to the Orbit this shell can reach.
+  final OrbitCallActivitySource? orbitCallActivitySource;
+
   const FirstTimeExperienceWired({
     super.key,
     this.directRouteAuthority,
+    this.orbitCallActivitySource,
     required this.repository,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -275,6 +280,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         buildFeedSlideUpRoute(
           builder: (_) => FeedWired(
             directRouteAuthority: widget.directRouteAuthority,
+            orbitCallActivitySource: widget.orbitCallActivitySource,
             resolveCallWakeHandle: widget.resolveCallWakeHandle,
             onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
             repository: widget.repository,

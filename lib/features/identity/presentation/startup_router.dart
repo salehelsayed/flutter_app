@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -454,9 +455,13 @@ class StartupRouter extends StatefulWidget {
   /// 1:1 conversation (FeedWired, and the first-time experience).
   final DirectConversationRouteAuthority? directRouteAuthority;
 
+  /// 409: forwarded to the Orbit this shell can reach.
+  final OrbitCallActivitySource? orbitCallActivitySource;
+
   const StartupRouter({
     super.key,
     this.directRouteAuthority,
+    this.orbitCallActivitySource,
     required this.repository,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -695,6 +700,7 @@ class _StartupRouterState extends State<StartupRouter> {
           final navigator = Navigator.of(context);
           Widget buildFeed(BuildContext _) => FeedWired(
             directRouteAuthority: widget.directRouteAuthority,
+            orbitCallActivitySource: widget.orbitCallActivitySource,
             resolveCallWakeHandle: widget.resolveCallWakeHandle,
             onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
             repository: repository,

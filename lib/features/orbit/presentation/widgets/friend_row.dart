@@ -34,8 +34,11 @@ class FriendRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
-    final relativeTime = friend.lastMessageTimestamp != null
-        ? formatRelativeTime(friend.lastMessageTimestamp!)
+    // 409: a call can be the newest thing here, so the row's time follows the
+    // newest activity rather than the newest message.
+    final activityAt = friend.lastActivityAt;
+    final relativeTime = activityAt != null
+        ? formatRelativeTime(activityAt)
         : '';
     // Resolve the preview: caption wins; else a localized media label
     // ("Voice message" / "Photo" / "2 photos" …); else the deleted placeholder.
@@ -44,6 +47,7 @@ class FriendRow extends StatelessWidget {
       l10n: l10n,
       caption: friend.lastActivity,
       media: friend.latestMedia,
+      call: friend.latestCall,
       isDeleted: friend.isLatestDeleted,
     );
     final previewDirection = previewText.isNotEmpty
@@ -207,7 +211,8 @@ class _AnimatedFriendRowState extends State<AnimatedFriendRow>
     // clamp the stagger so a deep-list row is never invisible for seconds on a
     // fling — index*20ms was unbounded (index 100 → 2s).
     final mediaQuery = MediaQuery.maybeOf(context);
-    final reduceMotion = (mediaQuery?.disableAnimations ?? false) ||
+    final reduceMotion =
+        (mediaQuery?.disableAnimations ?? false) ||
         (mediaQuery?.accessibleNavigation ?? false);
     if (reduceMotion) {
       _controller.value = 1.0;

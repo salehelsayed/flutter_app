@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/share/application/handle_share_intent_use_case.dart';
+import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_call_timeline_source.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
@@ -425,6 +426,11 @@ class MyApp extends StatefulWidget {
   /// stay readable in the chat even when calling itself is disabled.
   final ConversationCallTimelineSource? callTimelineSource;
 
+  /// 409: newest terminal call per contact for the Orbit rows. Independent of
+  /// the call graph for the same reason the chat timeline is: past calls stay
+  /// visible when calling itself is disabled.
+  final OrbitCallActivitySource? orbitCallActivitySource;
+
   /// Stable root call-surface capability. It projects the canonical reducer
   /// and actual audio state without changing the retained navigation stack.
   final ForegroundCallCapability? foregroundCallCapability;
@@ -620,6 +626,7 @@ class MyApp extends StatefulWidget {
     this.isLinkedBlobFreeRuntime,
     this.outgoingCallCapability,
     this.callTimelineSource,
+    this.orbitCallActivitySource,
     this.foregroundCallCapability,
     this.drainDirectBlobFreeLinkedOutboxes,
     this.drainLinkedDirectMediaBlobCustody,
@@ -1987,6 +1994,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       messageRepository: widget.messageRepository,
       builder: (feedUnreadCountListenable) => OrbitWired(
         directRouteAuthority: _directRouteAuthority,
+        callActivitySource: widget.orbitCallActivitySource,
         resolveCallWakeHandle: widget.resolveCallWakeHandle,
         onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
         groupMediaDeleteForMeCoordinator:
@@ -3381,6 +3389,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         themeMode: themeMode,
         home: StartupRouter(
           directRouteAuthority: _directRouteAuthority,
+          orbitCallActivitySource: widget.orbitCallActivitySource,
           resolveCallWakeHandle: widget.resolveCallWakeHandle,
           onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
           repository: widget.repository,

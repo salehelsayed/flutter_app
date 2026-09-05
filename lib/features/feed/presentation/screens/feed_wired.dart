@@ -87,6 +87,7 @@ import 'package:flutter_app/features/introduction/domain/repositories/intro_revi
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
@@ -200,9 +201,13 @@ class FeedWired extends StatefulWidget {
   /// single-target behaviour exactly.
   final DirectConversationRouteAuthority? directRouteAuthority;
 
+  /// 409: forwarded to the Orbit route this shell pushes.
+  final OrbitCallActivitySource? orbitCallActivitySource;
+
   const FeedWired({
     super.key,
     this.directRouteAuthority,
+    this.orbitCallActivitySource,
     required this.repository,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -2962,6 +2967,7 @@ class _FeedWiredState extends State<FeedWired>
   Widget _buildOrbitHost() {
     return OrbitWired(
       directRouteAuthority: widget.directRouteAuthority,
+      callActivitySource: widget.orbitCallActivitySource,
       resolveCallWakeHandle: widget.resolveCallWakeHandle,
       onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
       identityRepo: widget.repository,

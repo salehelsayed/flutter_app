@@ -24,6 +24,7 @@ import 'package:flutter_app/features/contacts/application/direct_contact_device_
 import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 import 'package:flutter_app/features/call/application/missed_call_notifier.dart';
 import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
+import 'package:flutter_app/features/call/data/call_history_orbit_activity_source.dart';
 import 'package:flutter_app/features/call/data/call_history_conversation_timeline_source.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_call_wake_channel.dart';
@@ -6179,6 +6180,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // re-reads its call history. Binding the chat to the coordinator's
     // terminal SNAPSHOT instead would read the table before the insert.
     final callHistoryProjected = StreamController<void>.broadcast();
+    final callHistoryRepository = CallHistoryRepositoryImpl(db);
     final receivedCallWakeHandleRecovery =
         ReceivedCallWakeHandleRecoveryCoordinator(
           receivedCallWakeHandleStore: receivedCallWakeHandleStore,
@@ -9715,8 +9717,13 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         // 405: chat call rows read the local history table directly, so
         // they survive a withdrawn or disabled call graph.
         callTimelineSource: CallHistoryConversationTimelineSource(
-          CallHistoryRepositoryImpl(db),
+          callHistoryRepository,
           changes: callHistoryProjected.stream,
+        ),
+        // 409: the Orbit rows read the same local table, batched for the whole
+        // roster rather than one query per contact.
+        orbitCallActivitySource: CallHistoryOrbitActivitySource(
+          callHistoryRepository.latestForContacts,
         ),
         foregroundCallCapability: callSignalingComposition,
         resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,

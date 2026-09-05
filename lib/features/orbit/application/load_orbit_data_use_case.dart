@@ -7,6 +7,8 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
+import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/features/orbit/application/load_latest_media_descriptors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 
@@ -17,6 +19,8 @@ Future<List<OrbitFriend>> loadOrbitData({
   required ContactRepository contactRepo,
   required MessageRepository messageRepo,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  // 409: newest terminal call per contact. Null keeps Orbit message-only.
+  OrbitCallActivitySource? callActivitySource,
   bool includeArchived = false,
 }) async {
   emitFlowEvent(layer: 'UC', event: 'LOAD_ORBIT_DATA_START', details: {});
@@ -34,13 +38,19 @@ Future<List<OrbitFriend>> loadOrbitData({
       messageIds: _previewableLatestIds(summaries.values),
       owner: MediaOwnerLane.direct,
     );
+    final latestCalls = await _loadLatestCalls(
+      callActivitySource: callActivitySource,
+      contactPeerIds: contacts.map((contact) => contact.peerId),
+    );
     final friends = contacts
         .map(
           (contact) => _buildOrbitFriend(
             contact: contact,
-            summary: summaries[contact.peerId] ??
+            summary:
+                summaries[contact.peerId] ??
                 ConversationThreadSummary(contactPeerId: contact.peerId),
             descriptors: descriptors,
+            latestCall: latestCalls[contact.peerId],
           ),
         )
         .toList(growable: false);
@@ -69,6 +79,8 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
   required MessageRepository messageRepo,
   required String contactPeerId,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  // 409: keep a single-row refresh as call-aware as the full load.
+  OrbitCallActivitySource? callActivitySource,
 }) async {
   emitFlowEvent(
     layer: 'UC',
@@ -96,10 +108,15 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
       messageIds: _previewableLatestIds([summary]),
       owner: MediaOwnerLane.direct,
     );
+    final latestCalls = await _loadLatestCalls(
+      callActivitySource: callActivitySource,
+      contactPeerIds: <String>[contactPeerId],
+    );
     final friend = _buildOrbitFriend(
       contact: contact,
       summary: summary,
       descriptors: descriptors,
+      latestCall: latestCalls[contactPeerId],
     );
 
     emitFlowEvent(
@@ -118,11 +135,35 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
   }
 }
 
+/// 409: the newest terminal call per contact, or an empty map.
+///
+/// Best effort by construction: a call source that is absent or failing must
+/// never keep the roster off screen. Orbit is the app's home surface.
+Future<Map<String, ConversationCallTimelineEntry>> _loadLatestCalls({
+  required OrbitCallActivitySource? callActivitySource,
+  required Iterable<String> contactPeerIds,
+}) async {
+  if (callActivitySource == null) {
+    return const <String, ConversationCallTimelineEntry>{};
+  }
+  try {
+    return await callActivitySource.latestCallsForContacts(contactPeerIds);
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'ORBIT_CALL_ACTIVITY_SKIPPED',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+    return const <String, ConversationCallTimelineEntry>{};
+  }
+}
+
 OrbitFriend _buildOrbitFriend({
   required ContactModel contact,
   required ConversationThreadSummary summary,
   Map<String, MediaPreviewDescriptor> descriptors =
       const <String, MediaPreviewDescriptor>{},
+  ConversationCallTimelineEntry? latestCall,
 }) {
   final latest = summary.latestMessage;
   final isDeleted = latest?.deletedAt != null;
@@ -140,7 +181,23 @@ OrbitFriend _buildOrbitFriend({
     unreadCount: summary.unreadCount,
     latestMedia: descriptor,
     isLatestDeleted: isDeleted,
+    // Only a call NEWER than the latest message takes over the row, so the
+    // preview rule downstream stays a single null check.
+    latestCall: _callIfNewer(latestCall, latest?.timestamp),
   );
+}
+
+ConversationCallTimelineEntry? _callIfNewer(
+  ConversationCallTimelineEntry? call,
+  String? latestMessageTimestamp,
+) {
+  if (call == null) return null;
+  if (latestMessageTimestamp == null) return call;
+  final messageAt = DateTime.tryParse(latestMessageTimestamp);
+  // An unparseable message timestamp must not silently promote the call: the
+  // incumbent row ordering already treats such a message as its own activity.
+  if (messageAt == null) return null;
+  return call.endedAt.isAfter(messageAt.toUtc()) ? call : null;
 }
 
 /// Latest-message ids worth a media lookup: present and not soft-deleted.
@@ -180,7 +237,8 @@ Future<ConversationThreadSummary> _loadConversationThreadSummary({
   );
 }
 
-Future<Map<String, ConversationThreadSummary>> _loadConversationThreadSummaries({
+Future<Map<String, ConversationThreadSummary>>
+_loadConversationThreadSummaries({
   required MessageRepository messageRepo,
   required Iterable<String> contactPeerIds,
 }) async {
@@ -206,8 +264,8 @@ Future<Map<String, ConversationThreadSummary>> _loadConversationThreadSummaries(
 
 void _sortOrbitFriends(List<OrbitFriend> friends) {
   friends.sort((a, b) {
-    final aTime = a.lastMessageTimestamp ?? '';
-    final bTime = b.lastMessageTimestamp ?? '';
+    final aTime = a.lastActivityAt ?? '';
+    final bTime = b.lastActivityAt ?? '';
     return bTime.compareTo(aTime);
   });
 }
