@@ -1,0 +1,25 @@
+DEVICE PROOF — plan 408 (killed-app missed-call card)
+Build 9e667d12b / 1.0.0-9e667d12b.d31.t260906001149, bundleVersion 260906001149.
+Captures: docker-ws/deploy-captures/fresh-260906001420
+
+Pixel app killed before the test (pid gone, stopped=false so FCM still wakes
+it). The mknoon_calls channel was already registered on the device alongside
+mknoon_messages, so a missing or disabled channel could not mask the result.
+
+00:15:29.278  WM-WorkerWrapper  Starting work  HeadlessCallAdmissionWorker
+00:15:31.429  HEADLESS_MISSED_CALL_NOTIFICATION_POSTED   {}
+00:15:31.429  MISSED_CALL_NOTIFICATION_SHOWN   status=cancelled
+00:15:31.676  WM-WorkerWrapper  Worker result SUCCESS
+
+User confirmed the card is visible in the notification shade under Calls while
+the app is still dead, and the row is present on reopening.
+
+=== what the previous build proved instead ===
+Same test at 2026-09-05 22:00:41Z (fresh-260905235835):
+  HEADLESS_MISSED_CALL_NOTIFICATION_FAILED  errorType: MissingPluginException
+  MISSED_CALL_NOTIFICATION_SHOWN            status=cancelled   <-- FALSE
+
+The engine's plugin allowlist omitted flutter_local_notifications, and the
+poster swallowed its own error so the notifier reported a card that was never
+drawn. Both are fixed; the _SHOWN line above is now truthful because a failure
+would surface as MISSED_CALL_NOTIFICATION_FAILED instead.
