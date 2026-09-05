@@ -69,6 +69,10 @@ Fix: `MknoonCallRuntime.scheduleHeadlessDeclineReply` starts the same `ACTION_ST
 
 2026-09-05 18:19Z (`docker-ws/deploy_three_phones_404_result.txt`): iPhones `1.0.0-d5c404b87.d8.flowlog.t260905201506` (both verified, identities kept), Pixel `1.0.0-d5c404b87.d8.t260905201506` (verified, in place); captures `docker-ws/deploy-captures/fresh-260905201908/`.
 
+2026-09-05 18:35Z (`docker-ws/deploy_three_phones_404b_result.txt`, finding (b) fix `ff3ada35a`): iPhones `1.0.0-ff3ada35a.d14.flowlog.t260905203056`, Pixel `1.0.0-ff3ada35a.d14.t260905203056`; captures `docker-ws/deploy-captures/fresh-260905203527/` (still running); Pixel app killed.
+
+2026-09-05 18:45Z (`docker-ws/deploy_pixel_404c_result.txt`, finding (c) fix, tree of `df894a010`): Pixel only, in place, `1.0.0-ff3ada35a.d24.t260905204414` (verified); iPhones unchanged; the same captures keep running; Pixel app killed.
+
 ## Follow-ups (not in this plan)
 
 - App alive with Flutter attached but the call not adopted by Dart: the decline reply is scheduled but the runtime lease is held, so the run defers and no reject is sent; the foreground drain is expected to own such calls.

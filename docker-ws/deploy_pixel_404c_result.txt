@@ -1,0 +1,11 @@
+=== plan 404 (c) pixel redeploy started 20260905T184339Z at ff3ada35a ===
+pixel deploy exit=0
+PIXEL 21071FDF600CSC OK 1.0.0-ff3ada35a.d24.t260905204414 (verified)
+PIXEL PASS
+--- kill the Pixel app (HOME intent off the top task, then am kill)
+pid_after_kill=
+--- capture status
+iphone_00008030_syslog.txt: last line at: Sep  5 20:45:08.917610 Runner(Flutter)[1
+iphone_00008110_syslog.txt: last line at: Sep  5 20:45:07.945575 Runner(Flutter)[1
+pixel_logcat.txt: last line at: 09-05 20:45:20.388 12960  8043 I Network
+=== done 20260905T184519Z ===
