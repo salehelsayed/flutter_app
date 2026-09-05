@@ -186,8 +186,12 @@ final class HandleIncomingCallSignal {
         callHandle: admitted.callHandle,
       );
       capturedSignal = signal;
+      // A PushKit-first call already has a native descriptor, so the verified
+      // name lands now; a Dart-first call gets its descriptor in `present`
+      // below and is retried right after it (see contactNameApplied).
+      var contactNameApplied = false;
       if (signal.event == CallSignalType.invite) {
-        await _updateAuthenticatedContactSafely(
+        contactNameApplied = await _updateAuthenticatedContactSafely(
           admitted.callHandle,
           signal.senderAccountPeerId,
         );
@@ -338,6 +342,15 @@ final class HandleIncomingCallSignal {
         return settle(IncomingCallSignalOutcome.rejected);
       }
 
+      if (!contactNameApplied && signal.event == CallSignalType.invite) {
+        // The presentation created the native descriptor: apply the verified
+        // caller name now so CallKit never stays on the generic label.
+        await _updateAuthenticatedContactSafely(
+          admitted.callHandle,
+          signal.senderAccountPeerId,
+        );
+      }
+
       final shown = await _coordinator.dispatch(
         _derivedEvent(
           signal,
@@ -446,26 +459,31 @@ final class HandleIncomingCallSignal {
     }
   }
 
-  Future<void> _updateAuthenticatedContactSafely(
+  /// Returns true only when native accepted the verified display name for a
+  /// live descriptor of [callHandle]. A refusal (no descriptor yet, or any
+  /// native failure) keeps the privacy-safe generic label and is retryable.
+  Future<bool> _updateAuthenticatedContactSafely(
     String callHandle,
     String contactAccountPeerId,
   ) async {
     final resolver = _authenticatedDisplayNameResolver;
     final lifecycle = _provisionalNativeLifecycle;
-    if (resolver == null || lifecycle == null) return;
+    if (resolver == null || lifecycle == null) return false;
     try {
       final displayName = (await resolver(contactAccountPeerId))?.trim();
       if (displayName == null ||
           displayName.isEmpty ||
           displayName.length > 128) {
-        return;
+        return false;
       }
       await lifecycle.updateAuthenticatedContact(
         callHandle: callHandle,
         displayName: displayName,
       );
+      return true;
     } catch (_) {
       // The privacy-safe generic native label remains valid.
+      return false;
     }
   }
 

@@ -162,10 +162,19 @@ final class _Presenter implements IncomingCallPresenter {
 
 final class _ProvisionalLifecycle
     implements ProvisionalNativeIncomingCallLifecycle {
-  _ProvisionalLifecycle({this.onCall, this.remoteCancelGate});
+  _ProvisionalLifecycle({
+    this.onCall,
+    this.remoteCancelGate,
+    this.contactUpdateAccepted,
+  });
 
   final void Function(String call)? onCall;
   final Completer<void>? remoteCancelGate;
+
+  /// Native accepts a verified display name only while a live descriptor for
+  /// the call handle exists (a Dart-first presentation creates it in
+  /// `present`). Null means always accepted.
+  final bool Function()? contactUpdateAccepted;
   final List<String> calls = <String>[];
 
   void _record(String call) {
@@ -195,6 +204,10 @@ final class _ProvisionalLifecycle
     required String callHandle,
     required String displayName,
   }) async {
+    if (contactUpdateAccepted?.call() == false) {
+      _record('updateAuthenticatedContact:$callHandle:$displayName:rejected');
+      throw StateError('no native descriptor for this call handle yet');
+    }
     _record('updateAuthenticatedContact:$callHandle:$displayName');
   }
 
@@ -812,6 +825,44 @@ void main() {
       expect(coordinator.activeSession?.state, CallState.ringing);
       expect(effects.effects, contains(CallEffectType.sendRinging));
       expect(provisional.calls, <String>[
+        'updateAuthenticatedContact:$_callHandle:Alice',
+      ]);
+    },
+  );
+
+  test(
+    'verified caller name is applied after a Dart-first presentation creates '
+    'the native descriptor',
+    () async {
+      final effects = _Effects();
+      final coordinator = _coordinator(effects);
+      addTearDown(coordinator.dispose);
+      final presenter = _Presenter();
+      // Before `present`, native has no descriptor for the call handle, so the
+      // pre-presentation update is refused; after it the update must land or
+      // CallKit keeps showing the generic "Mknoon call" label.
+      final provisional = _ProvisionalLifecycle(
+        contactUpdateAccepted: () => presenter.calls > 0,
+      );
+      final built = await _build(
+        coordinator,
+        presenter,
+        provisionalNativeLifecycle: provisional,
+        authenticatedDisplayNameResolver: (_) async => 'Alice',
+      );
+
+      final outcome = await built.handler.handle(
+        IncomingCallSignalFrame(
+          envelopeJson: built.envelope,
+          authenticatedTransportPeerId: 'sender-device',
+          route: CallRouteClass.direct,
+        ),
+      );
+
+      expect(outcome, IncomingCallSignalOutcome.accepted);
+      expect(coordinator.activeSession?.state, CallState.ringing);
+      expect(provisional.calls, <String>[
+        'updateAuthenticatedContact:$_callHandle:Alice:rejected',
         'updateAuthenticatedContact:$_callHandle:Alice',
       ]);
     },
