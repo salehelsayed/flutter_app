@@ -1,0 +1,6 @@
+=== GREEN 2026-09-05T16:34:26Z: relay wake receipt (opt-in) + full suite + race ===
+--- PASS: TestCallStoreReceiptReportsTheWakeOutcome (0.01s)
+--- PASS: TestCallStoreResponseCarriesTheWakeOutcomeOnlyWhenAsked (0.01s)
+ok  	github.com/mknoon/relay-server	0.031s
+ok  	github.com/mknoon/relay-server	20.180s
+ok  	github.com/mknoon/relay-server	1.149s

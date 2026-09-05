@@ -1,0 +1,13 @@
+=== RED 2026-09-05T16:28:58Z: wake outcome on the receipt rings the caller back ===
+00:00 +0 -1: loading /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart [E]
+  Compilation failed for testPath=/Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: test/features/call/infrastructure/call_mailbox_client_test.dart:99:7: Error: Undefined name 'CallMailboxWakeStatus'.
+  test/features/call/infrastructure/call_mailbox_client_test.dart:106:48: Error: Undefined name 'CallMailboxWakeStatus'.
+  test/features/call/infrastructure/call_mailbox_client_test.dart:109:48: Error: Undefined name 'CallMailboxWakeStatus'.
+  test/features/call/infrastructure/call_mailbox_client_test.dart:98:37: Error: The getter 'wake' isn't defined for the type 'CallMailboxStoreResult'.
+  test/features/call/infrastructure/call_mailbox_client_test.dart:106:42: Error: The getter 'wake' isn't defined for the type 'CallMailboxStoreResult'.
+  test/features/call/infrastructure/call_mailbox_client_test.dart:109:42: Error: The getter 'wake' isn't defined for the type 'CallMailboxStoreResult'.
+  Error: The Dart compiler exited unexpectedly.
+00:00 +0 -2: loading /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart [E]
+  Compilation failed for testPath=/Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: test/features/call/application/call_signaling_service_test.dart:545:17: Error: Undefined name 'CallMailboxWakeStatus'.
+  test/features/call/application/call_signaling_service_test.dart:545:11: Error: No named parameter with the name 'wake'.
+00:00 +0 -2: loading /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart [E]

@@ -50,6 +50,27 @@ Fix: the session judges every row. The wake binds only the row it was issued for
 
 Device proof pending: killed Pixel app, iPhone 11 calls, hangs up while ringing → the Pixel stops ringing within ~2 s (`MknoonCallRingtone stage=lifecycle result=stopped` right after the second `HeadlessCallAdmissionWorker`).
 
+## Device findings 2026-09-05 16:10Z — three more (after the terminate fix worked)
+
+User: (1) killed-app Pixel rings and now stops on hang-up, but the iPhone 11 hears no ringback; (2) a locked Pixel later showed no incoming call at all; (3) iPhone → iPhone ringback fine. Capture `docker-ws/deploy-captures/fresh-260905180840/`.
+
+**(c) An ended headless call blocked the next presentation (report 2).** The locked Pixel's wake ran an admission that verified and decrypted the new invite and then presented nothing: the previous call's descriptor (ended natively, never acknowledged because headless admission has no Dart owner) was still on disk, so `PendingNativeCallStore.create` answered `Busy` and `presentAuthenticated` silently returned false. Fix: `create` retires a stored descriptor whose call already ended exactly as a terminal acknowledgement would (receipt, then deletion), so the next call replaces it, a late acknowledgement still succeeds through the receipt, and the old wake stays a duplicate. `MknoonCallAndroidRuntime.present` now logs `MKNOON_CALL_PRESENTATION_DIAG result=<…>` (tag `MknoonCallPresentation`).
+
+| Row | RED | GREEN | Evidence |
+|---|---|---|---|
+| `PendingNativeCallStoreTest`: ended call never blocks the next call and leaves its receipt; a live call still makes another busy; controller presents the next call after a headless call ended (real store) | two tests FAILED (`Busy`/`BUSY`) | call package BUILD SUCCESSFUL | `kotlin_orphaned_terminal_red_2026-09-05.txt`, `kotlin_orphaned_terminal_green_2026-09-05.txt` |
+
+**(d) No ringback on the wake path (report 1).** A headless callee rings from the relay's wake but sends `ringing` only once it is answered, so the caller's `remoteRinging` never comes. The relay now reports the wake outcome on the store receipt (`CallStoreReceipt.WakeStatus`: `dispatched` after a successful push, `failed` after a refused one, empty when nothing was sent), surfaced on the wire as `wake` — opt-in through the client's `wakeReceipt` request flag because both wire decoders refuse unknown fields (deploy the relay first). The Go node asks for it and passes it through (`CallStoreReceipt.Wake`, bridge key `wake`); the Dart mailbox client reads `CallMailboxWakeStatus`; the signaling service dispatches `CallEventType.wakeRequested` after `mailboxStored` when the wake was dispatched; the reducer turns `inviting` + `wakeRequested` into `ringing` (the outgoing screen shows Ringing and the ringback plays), and a later `remoteRinging` is the usual duplicate. The relay is also no longer silent about a skipped wake: the receipt says so.
+
+| Row | RED | GREEN | Evidence |
+|---|---|---|---|
+| relay `TestCallStoreReceiptReportsTheWakeOutcome` (dispatched / failed / attached-skip) | mutation (status never set): `dispatched wake receipt = ""` | pass + full suite + race | `relay_wake_status_mutation_red_2026-09-05.txt`, `relay_wake_receipt_green_2026-09-05.txt` |
+| relay handler `TestCallStoreResponseCarriesTheWakeOutcomeOnlyWhenAsked` | (opt-in written with the feature) | pass | same |
+| go node `TestCallStoreReceiptCarriesTheWakeOutcome` (+ request opts in, unknown value rejected) + bridge map | `receipt.Wake undefined`, `unknown field Wake` | node + bridge suites ok | `go_wake_receipt_red_2026-09-05.txt`, `go_wake_receipt_green_2026-09-05.txt` |
+| Dart: mailbox client `wake` parse; reducer `inviting + wakeRequested → ringing` (+ outside inviting unchanged); service dispatches `…:wake-dispatched` and the session rings | `Undefined name 'CallMailboxWakeStatus'` | 78/78 in the three files; affected dependents 135/135 | `dart_wake_receipt_red_2026-09-05.txt`, `dart_wake_receipt_green_2026-09-05.txt`, `dart_wake_receipt_affected_2026-09-05.txt` |
+
+Deploy order: relay v1.10.5 (`docker-ws/deploy_relay_v1105.sh`) BEFORE any phone build; then Pixel (c)+(d) and both iPhones (d, ringback on the wake path to a Pixel).
+
 ## Follow-ups (not in this plan)
 
 - Endpoint records expire 6 h after the last advertisement and are refreshed only on start/resume: a phone left locked longer loses its wake route on both platforms.

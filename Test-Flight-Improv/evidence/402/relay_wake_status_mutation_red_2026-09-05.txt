@@ -1,0 +1,5 @@
+=== MUTATION RED 2026-09-05T16:26:47Z: Store never sets receipt.WakeStatus ===
+--- FAIL: TestCallStoreReceiptReportsTheWakeOutcome (0.00s)
+    call_store_wake_status_test.go:24: dispatched wake receipt = "" routes=1, want dispatched/1
+FAIL
+FAIL	github.com/mknoon/relay-server	0.015s

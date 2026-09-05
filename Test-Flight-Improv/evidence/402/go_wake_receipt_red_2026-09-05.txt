@@ -1,0 +1,6 @@
+=== RED 2026-09-05T16:28:43Z: go node/bridge must carry the wake outcome ===
+node/call_control_test.go:472:27: receipt.Wake undefined (type CallStoreReceipt has no field or method Wake)
+bridge/call_control_bridge_test.go:36:54: unknown field Wake in struct literal of type node.CallStoreReceipt
+FAIL	github.com/mknoon/go-mknoon/node [build failed]
+FAIL	github.com/mknoon/go-mknoon/bridge [build failed]
+FAIL

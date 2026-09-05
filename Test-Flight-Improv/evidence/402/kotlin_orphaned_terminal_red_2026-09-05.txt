@@ -1,0 +1,10 @@
+=== RED 2026-09-05T16:27:44Z: an ended (unacknowledged) call must not block the next presentation (store unchanged) ===
+> Task :app:testDebugUnitTest FAILED
+BUILD FAILED in 14s
+gradle exit: 1
+exit=0
+--- failures
+PendingNativeCallStoreTest > an ended call never blocks the next call and leaves its terminal receipt FAILED
+PendingNativeCallStoreTest > controller presents the next call after a headless call ended FAILED
+> Task :app:testDebugUnitTest FAILED
+BUILD FAILED in 14s

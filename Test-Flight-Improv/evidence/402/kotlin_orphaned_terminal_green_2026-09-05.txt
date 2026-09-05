@@ -1,0 +1,6 @@
+=== GREEN 2026-09-05T16:29:42Z: call package JVM suite with the retire-ended-call rule ===
+> Task :app:testDebugUnitTest
+BUILD SUCCESSFUL in 13s
+gradle exit: 0
+exit=0
+BUILD SUCCESSFUL in 13s

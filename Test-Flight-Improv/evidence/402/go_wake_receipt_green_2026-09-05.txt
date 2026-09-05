@@ -1,0 +1,3 @@
+=== GREEN 2026-09-05T16:35:39Z: go node + bridge call-control suites (opt-in wake receipt) ===
+ok  	github.com/mknoon/go-mknoon/node	2.799s
+ok  	github.com/mknoon/go-mknoon/bridge	10.486s
