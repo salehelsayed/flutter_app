@@ -39,6 +39,16 @@ Ringback is the tone a caller hears while the far end rings. The app had none on
 3. Cancel from the caller while ringing: tone stops at once, nothing rings on after hang-up.
 4. Speaker/headset route during ringing: the tone follows the route.
 
+## Device finding 2026-09-05 15:01Z — no tone on the first deploy (channel mismatch)
+
+Capture `docker-ws/deploy-captures/fresh-260905170004/`: iPhone 11 → iPhone 13, `remoteRinging` at 15:01:10.09, then `CALL_RINGBACK_RESULT {"action":"start","outcome":"refused"}` and no native `ringback=` line at all; `audio_session=latched` followed 180 ms later. The Dart port invoked `mknoon/call_ringback`, a channel nobody serves natively; the native methods live on the lifecycle bridges (`mknoon/ios_call_lifecycle`, `mknoon/android_call_lifecycle`), so the call returned `MissingPluginException` → false. Each language's tests were green; nothing pinned the cross-language contract.
+
+| Row | RED | GREEN | Evidence |
+|---|---|---|---|
+| `call_ringback_channel_test.dart` rewritten: `MethodChannelCallRingbackPort.ios()/.android()` must use the adapters' `methodChannelName`, methods `startRingback`/`stopRingback`; a source census reads `MknoonCallNativeBridge.swift` and `.kt` and requires those channel constants and `case`/`->` handlers | `Member not found: 'MethodChannelCallRingbackPort.ios'` | contract + coordinator + affected graph suites 93/93; analyzer clean | `dart_ringback_channel_contract_red_2026-09-05.txt`, `dart_ringback_channel_contract_green_2026-09-05.txt` |
+
+Graph wiring now picks the port from the native lifecycle adapter that exists (`iosLifecycleAdapter` → `.ios()`, `androidLifecycleAdapter` → `.android()`, else none). Lesson recorded in memory: the container's view of capture files written on the Mac lags by minutes — grep them on the Mac (`docker-ws/capture_grep.sh`).
+
 ## Known limits
 
 - The tone cadence is fixed (European 425 Hz 1/4 s) on iOS; Android uses the platform's regional `TONE_SUP_RINGTONE`.

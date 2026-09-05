@@ -1,0 +1,7 @@
+=== RED 2026-09-05T15:04:34Z: port must ride the native lifecycle bridges (device finding: start refused, no native ringback line) ===
+test/features/call/infrastructure/call_ringback_channel_test.dart:20:48: Error: Member not found: 'MethodChannelCallRingbackPort.ios'.
+test/features/call/infrastructure/call_ringback_channel_test.dart:37:37: Error: Member not found: 'MethodChannelCallRingbackPort.ios'.
+test/features/call/infrastructure/call_ringback_channel_test.dart:41:37: Error: Member not found: 'MethodChannelCallRingbackPort.android'.
+test/features/call/infrastructure/call_ringback_channel_test.dart:79:48: Error: Member not found: 'MethodChannelCallRingbackPort.android'.
+test/features/call/infrastructure/call_ringback_channel_test.dart:88:48: Error: Member not found: 'MethodChannelCallRingbackPort.ios'.
+test/features/call/infrastructure/call_ringback_channel_test.dart:96:48: Error: Member not found: 'MethodChannelCallRingbackPort.ios'.

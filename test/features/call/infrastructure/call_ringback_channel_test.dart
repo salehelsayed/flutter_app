@@ -1,17 +1,25 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/call_ringback_channel.dart';
+import 'package:flutter_app/features/call/infrastructure/ios_call_lifecycle_adapter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// Ringback rides each platform's native call lifecycle bridge: the Swift and
+/// Kotlin bridges own the tone players and already resolve the Dart call
+/// handle. A port on any other channel reaches no native code at all (device
+/// finding 2026-09-05: `start refused`, no native `ringback=` line).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final callA = CallId.parse('11111111-1111-4111-8111-111111111111');
 
   test(
-    'start and stop cross the channel with the versioned call handle',
+    'start and stop cross the bridge with the versioned call handle',
     () async {
       final calls = <MethodCall>[];
-      final port = MethodChannelCallRingbackPort(
+      final port = MethodChannelCallRingbackPort.ios(
         invokeMethod: (method, arguments) async {
           calls.add(MethodCall(method, arguments));
           return method == MethodChannelCallRingbackPort.startMethod;
@@ -20,22 +28,67 @@ void main() {
 
       expect(await port.start(callA), isTrue);
       expect(await port.stop(callA), isFalse);
-      expect(calls.map((call) => call.method), ['start', 'stop']);
+      expect(calls.map((call) => call.method), [
+        'startRingback',
+        'stopRingback',
+      ]);
       for (final call in calls) {
         expect(call.arguments, {'version': 1, 'callHandle': callA.value});
       }
     },
   );
 
-  test('the production channel name and methods are pinned', () {
-    expect(MethodChannelCallRingbackPort.channelName, 'mknoon/call_ringback');
-    expect(MethodChannelCallRingbackPort.startMethod, 'start');
-    expect(MethodChannelCallRingbackPort.stopMethod, 'stop');
+  test("the port rides each platform's native lifecycle bridge", () {
+    expect(
+      MethodChannelCallRingbackPort.ios().channelName,
+      IosCallLifecycleAdapter.methodChannelName,
+    );
+    expect(
+      MethodChannelCallRingbackPort.android().channelName,
+      AndroidCallLifecycleAdapter.methodChannelName,
+    );
+    expect(MethodChannelCallRingbackPort.startMethod, 'startRingback');
+    expect(MethodChannelCallRingbackPort.stopMethod, 'stopRingback');
     expect(MethodChannelCallRingbackPort.protocolVersion, 1);
   });
 
+  test('both native bridges serve those channels and handle the methods', () {
+    final swift = File(
+      'ios/Runner/MknoonCallNativeBridge.swift',
+    ).readAsStringSync();
+    final kotlin = File(
+      'android/app/src/main/kotlin/com/mknoon/app/call/MknoonCallNativeBridge.kt',
+    ).readAsStringSync();
+
+    expect(
+      swift,
+      contains(
+        'static let methodChannelName = '
+        '"${IosCallLifecycleAdapter.methodChannelName}"',
+      ),
+    );
+    expect(
+      kotlin,
+      contains(
+        'const val METHOD_CHANNEL = '
+        '"${AndroidCallLifecycleAdapter.methodChannelName}"',
+      ),
+    );
+    for (final method in <String>[
+      MethodChannelCallRingbackPort.startMethod,
+      MethodChannelCallRingbackPort.stopMethod,
+    ]) {
+      expect(
+        swift,
+        contains('case "$method":'),
+        reason: 'Swift bridge $method',
+      );
+      expect(kotlin, contains('"$method" ->'), reason: 'Kotlin bridge $method');
+    }
+  });
+
   test('a platform without a native tone player answers false', () async {
-    final port = MethodChannelCallRingbackPort(
+    final port = MethodChannelCallRingbackPort.android(
       invokeMethod: (_, _) async => throw MissingPluginException(),
     );
 
@@ -44,7 +97,7 @@ void main() {
   });
 
   test('a null native answer counts as refused', () async {
-    final port = MethodChannelCallRingbackPort(
+    final port = MethodChannelCallRingbackPort.ios(
       invokeMethod: (_, _) async => null,
     );
 
@@ -52,15 +105,15 @@ void main() {
   });
 
   test('a native failure surfaces for the coordinator to report', () async {
-    final port = MethodChannelCallRingbackPort(
+    final port = MethodChannelCallRingbackPort.ios(
       invokeMethod: (_, _) async => throw PlatformException(code: 'bad_args'),
     );
 
     await expectLater(port.start(callA), throwsA(isA<PlatformException>()));
   });
 
-  test('the default port talks to the real method channel', () async {
-    const channel = MethodChannel(MethodChannelCallRingbackPort.channelName);
+  test('the default port talks to the real lifecycle method channel', () async {
+    const channel = MethodChannel(IosCallLifecycleAdapter.methodChannelName);
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     final seen = <MethodCall>[];
@@ -70,8 +123,8 @@ void main() {
     });
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
-    expect(await MethodChannelCallRingbackPort().start(callA), isTrue);
-    expect(seen.single.method, 'start');
+    expect(await MethodChannelCallRingbackPort.ios().start(callA), isTrue);
+    expect(seen.single.method, 'startRingback');
     expect(seen.single.arguments, {'version': 1, 'callHandle': callA.value});
   });
 }
