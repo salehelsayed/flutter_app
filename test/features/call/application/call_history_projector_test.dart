@@ -48,6 +48,69 @@ CallSessionSnapshot _terminal({
 );
 
 void main() {
+  test('TC-405-43 a projected terminal call announces itself once', () async {
+    final announced = <void>[];
+    final projector = CallHistoryProjector(
+      _Repository(),
+      onTerminalProjected: () => announced.add(null),
+    );
+    final snapshot = _terminal(
+      id: 'a2f0a1d6-0000-4000-8000-000000000043',
+      direction: CallDirection.outgoing,
+      reason: CallEndReason.callerCancelled,
+      startedAt: DateTime.utc(2026, 2, 9, 15, 30),
+    );
+
+    await projector.projectTerminal(snapshot);
+
+    expect(
+      announced,
+      hasLength(1),
+      reason:
+          'the chat re-reads the table on this signal; without it a call taken '
+          'from inside the conversation leaves the screen mounted and stale',
+    );
+  });
+
+  test('TC-405-44 a replayed terminal call still announces, so a late '
+      'listener converges', () async {
+    final announced = <void>[];
+    final projector = CallHistoryProjector(
+      _Repository(),
+      onTerminalProjected: () => announced.add(null),
+    );
+    final snapshot = _terminal(
+      id: 'a2f0a1d6-0000-4000-8000-000000000044',
+      direction: CallDirection.incoming,
+      reason: CallEndReason.declined,
+      startedAt: DateTime.utc(2026, 2, 9, 15, 30),
+    );
+
+    await projector.projectTerminal(snapshot);
+    await projector.projectTerminal(snapshot);
+
+    expect(announced, hasLength(2));
+  });
+
+  test('TC-405-45 a throwing listener never breaks the projection', () async {
+    final repository = _Repository();
+    final projector = CallHistoryProjector(
+      repository,
+      onTerminalProjected: () => throw StateError('listener exploded'),
+    );
+    final snapshot = _terminal(
+      id: 'a2f0a1d6-0000-4000-8000-000000000045',
+      direction: CallDirection.outgoing,
+      reason: CallEndReason.localHangup,
+      startedAt: DateTime.utc(2026, 2, 9, 15, 30),
+    );
+
+    final entry = await projector.projectTerminal(snapshot);
+
+    expect(entry.status, CallHistoryStatus.cancelled);
+    expect(repository.rows, hasLength(1));
+  });
+
   test('history status enum preserves the exact frozen product grammar', () {
     expect(CallHistoryStatus.values.map((status) => status.wireName), <String>[
       'completed',

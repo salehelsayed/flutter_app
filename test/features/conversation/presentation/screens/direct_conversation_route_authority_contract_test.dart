@@ -380,4 +380,7 @@ class _CallTimelineSourceSentinel implements ConversationCallTimelineSource {
   Future<List<ConversationCallTimelineEntry>> listCallsForContact(
     String contactPeerId,
   ) async => const <ConversationCallTimelineEntry>[];
+
+  @override
+  Stream<void> get changes => const Stream<void>.empty();
 }

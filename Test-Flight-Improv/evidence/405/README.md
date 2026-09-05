@@ -16,6 +16,29 @@ that reaches all six production conversation routes.
 | `dart_call_rows_affected_2026-09-05.txt` | first full affected lane: 781 passing, 1 failing — the TC-294-09 public-API/handoff freeze, which is exactly what a new public parameter must trip |
 | `dart_call_rows_green_2026-09-05.txt` | GREEN: the full affected conversation lane after re-pinning both fingerprints and registering the new suites |
 
+## Follow-up: the chat did not refresh while it stayed on screen
+
+Device 2026-09-05 20:19Z (captures `fresh-260905221748`): old rows rendered but
+a new cancelled call showed nothing. The captures settled it — every call
+logged `CALL_TERMINAL_CLEANUP_RESULT`, so the row WAS projected, and no
+`CHAT_CALL_TIMELINE_LOAD_SKIPPED` was emitted, so the read worked. Only one
+`CONV_FL_SCREEN_INIT` appeared, at 22:19:30, before the last call: the call
+surface is a layer above the navigator, not a route, so a call placed from
+inside a chat never rebuilds or resumes that screen and nothing re-read the
+table.
+
+`CallHistoryProjector` now fires `onTerminalProjected` after the row is
+durable, the bootstrap owns one broadcast signal feeding both the graph factory
+and `CallHistoryConversationTimelineSource`, and `ConversationWired` re-reads
+on it. The signal deliberately does NOT ride the coordinator's terminal
+snapshot: that is published before the projection runs, so a listener would
+read the table too early and still see nothing.
+
+| File | What it proves |
+|---|---|
+| `dart_live_refresh_red_2026-09-05.txt` | RED: no `onTerminalProjected` on the projector, no `changes` on the source |
+| `dart_live_refresh_green_2026-09-05.txt` | GREEN: 1582 passing, 0 failing across the call, bootstrap and conversation-presentation suites, including TC-405-34 (a call written while the chat is open appears without leaving the screen) |
+
 Affected set chosen with
 `python3 graphify-arch/tdd_context.py affected <changed files> --budget 900`.
 

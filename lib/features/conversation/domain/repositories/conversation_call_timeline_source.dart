@@ -9,4 +9,12 @@ abstract interface class ConversationCallTimelineSource {
   Future<List<ConversationCallTimelineEntry>> listCallsForContact(
     String contactPeerId,
   );
+
+  /// Emits once per terminal call written locally.
+  ///
+  /// A conversation that is already on screen when a call happens is never
+  /// rebuilt or resumed — the call surface is a layer above it, not a route —
+  /// so this is the only thing that can bring the new row in. A source with no
+  /// signal returns an empty stream and the chat stays load-on-open.
+  Stream<void> get changes;
 }

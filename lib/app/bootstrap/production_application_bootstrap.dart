@@ -6141,6 +6141,11 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     );
     final foregroundCallPresentationReady = Completer<void>();
     late final CallSignalingComposition callSignalingComposition;
+    // 405: one process-wide "a terminal call row is durable" signal. The
+    // projector writes the row, then this fires, then any open conversation
+    // re-reads its call history. Binding the chat to the coordinator's
+    // terminal SNAPSHOT instead would read the table before the insert.
+    final callHistoryProjected = StreamController<void>.broadcast();
     final receivedCallWakeHandleRecovery =
         ReceivedCallWakeHandleRecoveryCoordinator(
           receivedCallWakeHandleStore: receivedCallWakeHandleStore,
@@ -6168,6 +6173,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           },
         );
     callSignalingComposition = createProductionCallSignalingComposition(
+      onCallHistoryProjected: () {
+        if (!callHistoryProjected.isClosed) callHistoryProjected.add(null);
+      },
       featureFlags: voiceCallFeatureFlags,
       platform: callEndpointPlatform,
       database: db,
@@ -9674,6 +9682,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         // they survive a withdrawn or disabled call graph.
         callTimelineSource: CallHistoryConversationTimelineSource(
           CallHistoryRepositoryImpl(db),
+          changes: callHistoryProjected.stream,
         ),
         foregroundCallCapability: callSignalingComposition,
         resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,

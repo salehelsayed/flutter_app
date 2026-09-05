@@ -1034,6 +1034,9 @@ CallSignalingComposition createProductionCallSignalingComposition({
   required IsVoiceNoteRecording isVoiceNoteRecording,
   required IssuedCallWakeHandleStore issuedCallWakeHandleStore,
   required ReceivedCallWakeHandleStore receivedCallWakeHandleStore,
+  // 405: fired after each terminal call row is durable so a conversation that
+  // is already on screen can re-read its call history.
+  void Function()? onCallHistoryProjected,
   EnsureReceivedCallWakeHandle? ensureReceivedCallWakeHandle,
   MicrophoneCaptureLeaseCoordinator? microphoneCaptureLeases,
   CallMicrophonePermission? microphonePermission,
@@ -1168,6 +1171,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         ),
         historyProjector: CallHistoryProjector(
           CallHistoryRepositoryImpl(database),
+          onTerminalProjected: onCallHistoryProjected,
         ),
         effectExecutor: boundEffects,
         clock: callClock,

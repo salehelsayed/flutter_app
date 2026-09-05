@@ -676,6 +676,7 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _hasMoreOlderMessages = true;
   List<ConversationCallTimelineEntry> _callEntries =
       const <ConversationCallTimelineEntry>[];
+  StreamSubscription<void>? _callTimelineChangesSubscription;
   bool _isLoadingMore = false;
   bool _initialLoadDone = false;
   bool _isSending = false;
@@ -1485,6 +1486,7 @@ class _ConversationWiredState extends State<ConversationWired>
     } else {
       _loadInitialPage().then((_) => _markAsRead());
     }
+    _bindCallTimelineChanges();
     unawaited(_refreshCallTimeline());
     _startListeningForMessages();
     _startListeningForOutgoingMessageChanges();
@@ -7780,6 +7782,7 @@ class _ConversationWiredState extends State<ConversationWired>
     _contactUpdateSubscription?.cancel();
     _outgoingCallAvailabilityGeneration++;
     _outgoingCallAvailabilitySubscription?.cancel();
+    _callTimelineChangesSubscription?.cancel();
     _reactionSubscription?.cancel();
     _uploadActivityController.removeListener(_onControllerInvalidated);
     _reactionProjectionController.removeListener(_onControllerInvalidated);
@@ -7844,8 +7847,27 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     if (!identical(oldWidget.callTimelineSource, widget.callTimelineSource) ||
         oldWidget.contact.peerId != widget.contact.peerId) {
+      if (!identical(oldWidget.callTimelineSource, widget.callTimelineSource)) {
+        _bindCallTimelineChanges();
+      }
       unawaited(_refreshCallTimeline());
     }
+  }
+
+  /// 405: a call placed from inside this chat never rebuilds or resumes the
+  /// screen — the call surface is a layer above the navigator, not a route —
+  /// so the written-row signal is the only thing that can bring the new row
+  /// in. Device 2026-09-05 proved the row was projected and readable while the
+  /// chat stayed stale.
+  void _bindCallTimelineChanges() {
+    _callTimelineChangesSubscription?.cancel();
+    _callTimelineChangesSubscription = null;
+    final source = widget.callTimelineSource;
+    if (source == null) return;
+    _callTimelineChangesSubscription = source.changes.listen(
+      (_) => unawaited(_refreshCallTimeline()),
+      onError: (_) {},
+    );
   }
 
   /// 405: loads this contact's terminal call rows.

@@ -10,9 +10,16 @@ import 'call_history_repository.dart';
 /// mailbox, wake, and cryptographic field.
 final class CallHistoryConversationTimelineSource
     implements ConversationCallTimelineSource {
-  const CallHistoryConversationTimelineSource(this.repository);
+  const CallHistoryConversationTimelineSource(
+    this.repository, {
+    Stream<void>? changes,
+  }) : _changes = changes;
 
   final CallHistoryRepository repository;
+  final Stream<void>? _changes;
+
+  @override
+  Stream<void> get changes => _changes ?? const Stream<void>.empty();
 
   @override
   Future<List<ConversationCallTimelineEntry>> listCallsForContact(

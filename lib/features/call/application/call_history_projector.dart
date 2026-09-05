@@ -7,11 +7,20 @@ final class CallHistoryProjector {
   CallHistoryProjector(
     this.repository, {
     this.diagnosticsRouteAllowed = false,
+    this.onTerminalProjected,
     DateTime Function()? clock,
   }) : _clock = clock ?? _systemClock;
 
   final CallHistoryRepository repository;
   final bool diagnosticsRouteAllowed;
+
+  /// 405: fired AFTER a terminal row is durable, so a conversation that is
+  /// already on screen can re-read the table. The order matters: the
+  /// coordinator publishes its terminal snapshot before this projection runs,
+  /// so a listener bound to the snapshot would read the table too early and
+  /// still see nothing.
+  final void Function()? onTerminalProjected;
+
   final DateTime Function() _clock;
 
   Future<CallHistoryEntry> projectTerminal(CallSessionSnapshot snapshot) async {
@@ -25,7 +34,10 @@ final class CallHistoryProjector {
       throw StateError('only a complete terminal call can enter history');
     }
     final existing = await repository.getByCallId(snapshot.callId!);
-    if (existing != null) return existing;
+    if (existing != null) {
+      _announce();
+      return existing;
+    }
     final now = _clock().toUtc();
     final entry = CallHistoryEntry(
       callId: snapshot.callId!,
@@ -41,7 +53,20 @@ final class CallHistoryProjector {
       updatedAt: now,
     );
     await repository.upsertTerminal(entry);
-    return await repository.getByCallId(entry.callId) ?? entry;
+    final stored = await repository.getByCallId(entry.callId) ?? entry;
+    _announce();
+    return stored;
+  }
+
+  /// A listener is presentation, never custody: it can never fail a call.
+  void _announce() {
+    final listener = onTerminalProjected;
+    if (listener == null) return;
+    try {
+      listener();
+    } catch (_) {
+      // The projection is already durable; a broken listener changes nothing.
+    }
   }
 
   /// Conversation projection order is chronological and deterministic. The

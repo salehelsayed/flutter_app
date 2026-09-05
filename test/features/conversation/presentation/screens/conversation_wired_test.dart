@@ -2102,6 +2102,45 @@ void main() {
       expect(find.byType(CallTimelineRow), findsNothing);
     });
 
+    testWidgets('TC-405-34 a call written while the chat is open appears '
+        'without leaving the screen', (tester) async {
+      final messageRepo = FakeMessageRepository();
+      // Growable: the test appends the row the projector would have written.
+      final source = _FakeCallTimelineSource(
+        calls: <ConversationCallTimelineEntry>[],
+      );
+      addTearDown(source.dispose);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        callTimelineSource: source,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(CallTimelineRow), findsNothing);
+
+      // The call is placed and cancelled from inside this very chat, so the
+      // screen is never rebuilt or resumed. Only the post-projection signal
+      // can bring the row in.
+      source.calls.add(
+        _callEntry(
+          contactPeerId: makeContact().peerId,
+          status: ConversationCallStatus.cancelled,
+        ),
+      );
+      source.announceWritten();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(CallTimelineRow), findsOneWidget);
+      expect(find.text('Missed voice call'), findsOneWidget);
+    });
+
     testWidgets('TC-405-33 no call source leaves the chat message-only', (
       tester,
     ) async {
@@ -15924,6 +15963,14 @@ class _FakeCallTimelineSource implements ConversationCallTimelineSource {
   final List<ConversationCallTimelineEntry> calls;
   final Object? error;
   final List<String> requestedPeerIds = <String>[];
+  final StreamController<void> _changes = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get changes => _changes.stream;
+
+  void announceWritten() => _changes.add(null);
+
+  Future<void> dispose() => _changes.close();
 
   @override
   Future<List<ConversationCallTimelineEntry>> listCallsForContact(
