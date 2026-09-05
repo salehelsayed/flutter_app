@@ -1,0 +1,57 @@
+Plan 403 device evidence — captures docker-ws/deploy-captures/fresh-260905191258/
+iPhone 11 1.0.0-d3ca67f80.d4.flowlog.t260905190931, Pixel 1.0.0-d3ca67f80.d8.t260905191154, relay v1.10.5
+Local time UTC+2 (flow-event "ts" is UTC). Extracted with docker-ws/capture_grep.sh on the Mac.
+
+=== iPhone 11 (caller) state transitions and send results ===
+19:14:33.135 CALL_STATE_TRANSITION place preparing
+19:14:33.236 CALL_STATE_TRANSITION outgoingInviteReady inviting
+19:14:33.474 CALL_CONTROL_SIGNAL_SEND_RESULT invite
+19:14:33.474 CALL_STATE_TRANSITION wakeRequested ringing            (call B to the Pixel)
+19:14:40.051 CALL_STATE_TRANSITION cancel ended callerCancelled
+19:14:40.302 CALL_CONTROL_SIGNAL_SEND_RESULT terminate               (row expires 17:15:20.3Z)
+19:14:47.759 CALL_STATE_TRANSITION place preparing
+19:14:48.096 CALL_CONTROL_SIGNAL_SEND_RESULT invite
+19:14:48.096 CALL_STATE_TRANSITION wakeRequested ringing            (call C to the Pixel)
+19:14:53.919 CALL_STATE_TRANSITION cancel ended callerCancelled
+19:14:54.196 CALL_CONTROL_SIGNAL_SEND_RESULT terminate               (row expires 17:15:34.2Z)
+19:15:10.845 CALL_STATE_TRANSITION place preparing                   (call D to the locked Pixel)
+19:15:10.941 CALL_STATE_TRANSITION outgoingInviteReady inviting
+19:15:11.063 CALL_MAILBOX_BRIDGE_FAILURE {"operation":"call_store_v1","code":"CALL_RECIPIENT_CAPACITY"}
+19:15:11.063 CALL_SIGNALING_LEG_RESULT {"operation":"mailbox_store","result":false}
+19:15:16.003 CALL_SIGNALING_LEG_RESULT {"operation":"direct_send","result":false}
+19:15:16.004 CALL_CONTROL_SIGNAL_SEND_FAILED {"type":"invite","code":"transportUnavailable"}
+19:15:16.005 CALL_STATE_TRANSITION {"trigger":"negotiationFailed","state":"ended","endReason":"signalingFailed"}
+19:15:16.042 [MKNOON_CALLKIT_DIAG] terminal=nativeFailure
+19:15:16.090 CALL_MAILBOX_BRIDGE_FAILURE {"operation":"call_cancel_v1","code":"CALL_UNAUTHORIZED"}
+19:15:16.090 CALL_TERMINAL_CLEANUP_RESULT {"status":"blocked","reason":"otherRequired"}
+19:15:16.159 CALL_MAILBOX_BRIDGE_FAILURE {"operation":"call_store_v1","code":"CALL_RECIPIENT_CAPACITY"}   (the terminate)
+19:15:16.556 / 19:15:16.604 call_cancel_v1 -> CALL_UNAUTHORIZED, cleanup blocked (retries)
+19:15:21.107 CALL_CONTROL_SIGNAL_SEND_FAILED {"type":"terminate","code":"transportUnavailable"}
+19:15:25.471 call_cancel_v1 -> CALL_UNAUTHORIZED; CALL_TERMINAL_CLEANUP_RESULT blocked otherRequired;
+             CALL_NATIVE_OUTGOING_REGISTRATION_RESULT {"stage":"terminalReplay","status":"rejected","reason":"terminalCleanupPending"}
+19:15:28.695 same
+19:15:49.647 same
+19:15:56.607 same
+
+=== Pixel (callee, app killed, phone locked) headless timeline ===
+19:14:3x  ActivityManager: Start proc com.mknoon.app for broadcast MknoonFirebaseMessagingReceiver
+          WM-WorkerWrapper: Starting work for com.mknoon.app.call.HeadlessCallAdmissionWorker
+17:14:37.293Z GO_BRIDGE_SEND call_retrieve_v1 (bridgeMs 155)
+          MknoonCallPresentation: MKNOON_CALL_PRESENTATION_DIAG result=PRESENTED
+          MknoonCallRingtone: MKNOON_CALL_RINGTONE_DIAG stage=start result=playing
+          Worker result SUCCESS
+          WM-WorkerWrapper: Starting work for HeadlessCallAdmissionWorker   (the terminate's wake)
+17:14:43.344Z GO_BRIDGE_SEND call_retrieve_v1
+          MknoonCallRingtone: stage=lifecycle result=stopped
+          MknoonCallDisconnect: CALL_ANDROID_DISCONNECT source=explicit_end stage=requested
+          Worker result SUCCESS                                             (no call_ack_v1)
+17:14:51.625Z call_retrieve_v1 -> PRESENTED, ringtone playing              (call C)
+17:14:57.249Z call_retrieve_v1 -> ringtone stopped, CALL_ANDROID_DISCONNECT (no call_ack_v1)
+17:15:1x  nothing: the relay refused call D before any wake
+
+grep 'call_ack_v1' over the whole Pixel capture: 0 lines.
+grep 'CALL_RECIPIENT_CAPACITY' over the 15 capture directories of 2026-09-05: only fresh-260905191258 (2 lines).
+
+Relay rule (go-relay-server/call_control_redis.go): a new handle is refused with ErrCallRecipientCapacity when the recipient's
+pending-handle index already holds CallMaxPendingHandles = 2 unexpired handles; a handle leaves the index only when every row is
+acknowledged (ack path ZRem), when the sender cancels (terminalizeTx), or when its newest row's expiry passes.

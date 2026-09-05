@@ -169,6 +169,92 @@ void main() {
     );
   });
 
+  // Device 2026-09-05 17:15Z: an invite the relay refused
+  // (CALL_RECIPIENT_CAPACITY) was never stored, yet terminal cleanup kept
+  // cancelling it. The relay answers CALL_UNAUTHORIZED for a handle it holds
+  // nothing of, so the cleanup stayed blocked and every native terminal replay
+  // was rejected with terminalCleanupPending. Nothing of ours is left to
+  // cancel behind that answer: never stored, already terminal, or expired.
+  test(
+    'cancel treats an unauthorized relay answer as an absent invite',
+    () async {
+      final diagnostics = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(diagnostics.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      bridge.responses['call_cancel_v1'] = const <String, Object?>{
+        'ok': false,
+        'errorCode': 'CALL_UNAUTHORIZED',
+        'errorMessage': 'raw relay detail must not be emitted',
+      };
+
+      expect(
+        await client.cancel(
+          recipientDevicePeerId: 'recipient-device',
+          callHandle: '0123456789abcdef0123456789abcdef',
+        ),
+        isTrue,
+      );
+      final failures = diagnostics
+          .where((event) => event['event'] == 'CALL_MAILBOX_BRIDGE_FAILURE')
+          .map((event) => event['details'])
+          .toList(growable: false);
+      expect(failures, <Object?>[
+        <String, Object?>{
+          'operation': 'call_cancel_v1',
+          'code': 'CALL_UNAUTHORIZED',
+        },
+      ]);
+      expect(jsonEncode(diagnostics), isNot(contains('raw relay detail')));
+    },
+  );
+
+  test('only cancel tolerates the unauthorized answer', () async {
+    for (final code in const <String>[
+      'CALL_BACKEND_UNAVAILABLE',
+      'CALL_RATE_LIMITED',
+      'CALL_INVALID_REQUEST',
+      'CALL_CONTROL_UNAVAILABLE',
+      'INTERNAL_ERROR',
+    ]) {
+      bridge.responses['call_cancel_v1'] = <String, Object?>{
+        'ok': false,
+        'errorCode': code,
+      };
+      await expectLater(
+        client.cancel(
+          recipientDevicePeerId: 'recipient-device',
+          callHandle: '0123456789abcdef0123456789abcdef',
+        ),
+        throwsA(
+          isA<CallMailboxException>().having(
+            (error) => error.code,
+            'code',
+            CallMailboxErrorCode.bridgeFailure,
+          ),
+        ),
+        reason: code,
+      );
+    }
+
+    bridge.responses['call_ack_v1'] = const <String, Object?>{
+      'ok': false,
+      'errorCode': 'CALL_UNAUTHORIZED',
+    };
+    await expectLater(
+      client.ack(
+        callHandle: '0123456789abcdef0123456789abcdef',
+        messageIds: const <String>['550e8400-e29b-41d4-a716-446655440000'],
+      ),
+      throwsA(
+        isA<CallMailboxException>().having(
+          (error) => error.code,
+          'code',
+          CallMailboxErrorCode.bridgeFailure,
+        ),
+      ),
+    );
+  });
+
   test('rejects oversized envelopes before crossing the bridge', () async {
     await expectLater(
       client.store(

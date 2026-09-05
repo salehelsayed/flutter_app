@@ -94,6 +94,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
     // is authenticated against its own expiry, so a terminate can end the
     // ringing call and a stale wake can never re-ring an older invite.
     final reservations = <HeadlessAuthenticatedMailboxEvent>[];
+    final authenticatedMessageIds = <String>[];
     var terminal = false;
     var boundInvites = 0;
     var companionInvites = 0;
@@ -128,6 +129,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
           continue;
         }
         reservations.add(authenticated);
+        authenticatedMessageIds.add(event.messageId);
         switch (authenticated.event) {
           case CallSignalType.reject:
           case CallSignalType.terminate:
@@ -142,7 +144,15 @@ final class MailboxProductionHeadlessCallAdmissionSession
             rejectedRows = true;
         }
       }
-      if (terminal) return HeadlessCallAdmissionDisposition.terminal;
+      if (terminal) {
+        // The caller ended this call: no foreground owner is left to adopt
+        // it, and its unacknowledged rows would hold one of the recipient's
+        // two pending-call slots at the relay until they expire (device
+        // 2026-09-05 17:15Z: the next call to the locked Pixel was refused
+        // with CALL_RECIPIENT_CAPACITY, "Couldn't start voice call").
+        await _acknowledgeEndedCall(invocation.callId, authenticatedMessageIds);
+        return HeadlessCallAdmissionDisposition.terminal;
+      }
       // An unjudged row may be the terminate; never ring past it.
       if (deferredRows) return HeadlessCallAdmissionDisposition.deferred;
       if (boundInvites == 1 && companionInvites == 0) {
@@ -159,6 +169,21 @@ final class MailboxProductionHeadlessCallAdmissionSession
       for (final reservation in reservations.reversed) {
         reservation.rollbackReplay();
       }
+    }
+  }
+
+  /// Best effort: a failed acknowledgement leaves the rows to expire on the
+  /// relay and never changes the terminal verdict the native side acts on.
+  Future<void> _acknowledgeEndedCall(
+    String callHandle,
+    List<String> messageIds,
+  ) async {
+    if (messageIds.isEmpty) return;
+    try {
+      await _mailboxClient.ack(callHandle: callHandle, messageIds: messageIds);
+    } catch (_) {
+      // The relay drops the handle once its rows expire; presentation and
+      // termination are already decided from the authenticated page.
     }
   }
 
@@ -258,7 +283,8 @@ final class ProductionHeadlessCallAdmissionRunner {
 /// Android production owner for the one admission-only SQLCipher/Go runtime.
 /// It starts no Flutter UI, notification owner, listener, coordinator, or
 /// media graph. The exact mailbox row remains unacknowledged for foreground
-/// canonical adoption.
+/// canonical adoption; only the rows of a call the caller already ended are
+/// acknowledged, so an ended call stops occupying a relay pending-call slot.
 final class AndroidProductionHeadlessCallAdmissionBackend
     implements ProductionHeadlessCallAdmissionBackend {
   AndroidProductionHeadlessCallAdmissionBackend({

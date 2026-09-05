@@ -261,6 +261,204 @@ void main() {
     expect(boundExpiries, <int>[1_800_000_045_000, 1_800_000_051_000]);
   });
 
+  // Device 2026-09-05 17:15Z: the iPhone's third call to the locked Pixel was
+  // refused by the relay with CALL_RECIPIENT_CAPACITY ("Couldn't start voice
+  // call"). The relay keeps a call handle in the recipient's pending index
+  // (two slots) until every row is acknowledged or expires 40 s later. Both
+  // earlier calls had been retrieved headlessly, presented and then ended
+  // natively by the caller's terminate, but never acknowledged, so both slots
+  // were still taken. An ended call has no foreground owner left to adopt it.
+  test(
+    'a terminal page acknowledges its authenticated rows before close',
+    () async {
+      final order = <String>[];
+      final mailbox = _Mailbox(<CallMailboxEvent>[
+        _event(
+          messageId: '44444444-4444-4444-8444-444444444444',
+          expiresAtMs: 1_800_000_045_000,
+        ),
+        _event(
+          messageId: '55555555-5555-4555-8555-555555555555',
+          expiresAtMs: 1_800_000_051_000,
+        ),
+      ], onAck: () => order.add('ack'));
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: mailbox,
+        authenticateEvent: _bindingAuthenticator(<int>[]),
+        closeResources: () async {
+          order.add('close');
+          return _Session.safeCleanup;
+        },
+      );
+
+      expect(
+        await session.evaluate(invocation),
+        HeadlessCallAdmissionDisposition.terminal,
+      );
+      expect(await session.close(), _Session.safeCleanup);
+      expect(mailbox.ackedHandles, <String>[invocation.callId]);
+      expect(mailbox.ackedMessageIds, <List<String>>[
+        <String>[
+          '44444444-4444-4444-8444-444444444444',
+          '55555555-5555-4555-8555-555555555555',
+        ],
+      ]);
+      expect(order, <String>['ack', 'close']);
+    },
+  );
+
+  test('a terminal page acknowledges only the rows it authenticated', () async {
+    final mailbox = _Mailbox(<CallMailboxEvent>[
+      _event(
+        messageId: '44444444-4444-4444-8444-444444444444',
+        expiresAtMs: 1_800_000_045_000,
+      ),
+      _event(
+        messageId: '55555555-5555-4555-8555-555555555555',
+        expiresAtMs: 1_800_000_051_000,
+      ),
+      _event(
+        messageId: '66666666-6666-4666-8666-666666666666',
+        expiresAtMs: 1_800_000_053_000,
+      ),
+    ]);
+    final session = MailboxProductionHeadlessCallAdmissionSession(
+      mailboxClient: mailbox,
+      authenticateEvent: ({required invocation, required event}) async {
+        if (event.messageId == '66666666-6666-4666-8666-666666666666') {
+          throw const IncomingCallPrePresentationAdmissionException(
+            IncomingCallPrePresentationAdmissionFailureCode.deferred,
+          );
+        }
+        return HeadlessAuthenticatedMailboxEvent(
+          event: event.messageId == '44444444-4444-4444-8444-444444444444'
+              ? CallSignalType.invite
+              : CallSignalType.terminate,
+          rollbackReplay: () {},
+        );
+      },
+      closeResources: () async => _Session.safeCleanup,
+    );
+
+    expect(
+      await session.evaluate(invocation),
+      HeadlessCallAdmissionDisposition.terminal,
+    );
+    expect(mailbox.ackedMessageIds, <List<String>>[
+      <String>[
+        '44444444-4444-4444-8444-444444444444',
+        '55555555-5555-4555-8555-555555555555',
+      ],
+    ]);
+  });
+
+  test(
+    'an acknowledgement failure never changes the terminal verdict',
+    () async {
+      final mailbox = _Mailbox(<CallMailboxEvent>[
+        _event(
+          messageId: '44444444-4444-4444-8444-444444444444',
+          expiresAtMs: 1_800_000_045_000,
+        ),
+        _event(
+          messageId: '55555555-5555-4555-8555-555555555555',
+          expiresAtMs: 1_800_000_051_000,
+        ),
+      ])..ackFailure = StateError('relay unreachable');
+      var closeCalls = 0;
+      final session = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: mailbox,
+        authenticateEvent: _bindingAuthenticator(<int>[]),
+        closeResources: () async {
+          closeCalls++;
+          return _Session.safeCleanup;
+        },
+      );
+
+      expect(
+        await session.evaluate(invocation),
+        HeadlessCallAdmissionDisposition.terminal,
+      );
+      expect(await session.close(), _Session.safeCleanup);
+      expect(closeCalls, 1);
+    },
+  );
+
+  test(
+    'every non-terminal verdict leaves the rows for foreground adoption',
+    () async {
+      final admittedMailbox = _Mailbox(<CallMailboxEvent>[_event()]);
+      final admitted = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: admittedMailbox,
+        authenticateEvent: _bindingAuthenticator(<int>[]),
+        closeResources: () async => _Session.safeCleanup,
+      );
+      expect(
+        await admitted.evaluate(invocation),
+        HeadlessCallAdmissionDisposition.admitted,
+      );
+
+      final staleMailbox = _Mailbox(<CallMailboxEvent>[
+        _event(expiresAtMs: 1_800_000_045_000),
+      ]);
+      final stale = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: staleMailbox,
+        authenticateEvent: _bindingAuthenticator(<int>[]),
+        closeResources: () async => _Session.safeCleanup,
+      );
+      expect(
+        await stale.evaluate(
+          HeadlessCallAdmissionInvocation(
+            nonce: invocation.nonce,
+            callId: invocation.callId,
+            wakeHandle: invocation.wakeHandle,
+            expiresAtMs: 1_800_000_051_000,
+          ),
+        ),
+        HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked,
+      );
+
+      final rejectedMailbox = _Mailbox(<CallMailboxEvent>[_event()]);
+      final rejected = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: rejectedMailbox,
+        authenticateEvent: ({required invocation, required event}) async {
+          throw const IncomingCallPrePresentationAdmissionException(
+            IncomingCallPrePresentationAdmissionFailureCode.permanentReject,
+          );
+        },
+        closeResources: () async => _Session.safeCleanup,
+      );
+      expect(
+        await rejected.evaluate(invocation),
+        HeadlessCallAdmissionDisposition.permanentReject,
+      );
+
+      final deferredMailbox = _Mailbox(<CallMailboxEvent>[_event()]);
+      final deferred = MailboxProductionHeadlessCallAdmissionSession(
+        mailboxClient: deferredMailbox,
+        authenticateEvent: ({required invocation, required event}) async {
+          throw const IncomingCallPrePresentationAdmissionException(
+            IncomingCallPrePresentationAdmissionFailureCode.deferred,
+          );
+        },
+        closeResources: () async => _Session.safeCleanup,
+      );
+      expect(
+        await deferred.evaluate(invocation),
+        HeadlessCallAdmissionDisposition.deferred,
+      );
+
+      for (final mailbox in <_Mailbox>[
+        admittedMailbox,
+        staleMailbox,
+        rejectedMailbox,
+        deferredMailbox,
+      ]) {
+        expect(mailbox.ackedHandles, isEmpty);
+      }
+    },
+  );
+
   test('a companion row that cannot be judged yet defers the page', () async {
     final session = MailboxProductionHeadlessCallAdmissionSession(
       mailboxClient: _Mailbox(<CallMailboxEvent>[
@@ -365,11 +563,15 @@ CallMailboxEvent _event({
 );
 
 final class _Mailbox implements CallMailboxClient {
-  _Mailbox(this.events, {this.hasMore = false});
+  _Mailbox(this.events, {this.hasMore = false, this.onAck});
 
   final List<CallMailboxEvent> events;
   final bool hasMore;
   final List<String?> retrievedHandles = <String?>[];
+  final List<String> ackedHandles = <String>[];
+  final List<List<String>> ackedMessageIds = <List<String>>[];
+  final void Function()? onAck;
+  Object? ackFailure;
 
   @override
   Future<CallMailboxRetrieveResult> retrieve({
@@ -389,7 +591,14 @@ final class _Mailbox implements CallMailboxClient {
   Future<int> ack({
     required String callHandle,
     required List<String> messageIds,
-  }) => throw StateError('headless admission must not ack');
+  }) async {
+    final failure = ackFailure;
+    if (failure != null) throw failure;
+    ackedHandles.add(callHandle);
+    ackedMessageIds.add(List<String>.unmodifiable(messageIds));
+    onAck?.call();
+    return messageIds.length;
+  }
 
   @override
   Future<bool> cancel({

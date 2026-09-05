@@ -1,0 +1,49 @@
+00:00 +0: loading /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart
+00:00 +0: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: authenticated invite reports admitted only after proven teardown
+00:00 +1: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: empty handle and permanent rejection are durable no-ring outcomes
+00:00 +2: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: defer stop expiry and teardown uncertainty never admit
+00:00 +3: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: acquisition or evaluation failure uses emergency cleanup
+00:00 +4: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: expiry reached during authentication dominates admission
+00:00 +5: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: mailbox session retrieves c not h and terminal dominates invite
+00:00 +6: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a terminate wake ends a call whose invite row came with an earlier wake
+00:00 +7: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a stale wake whose own row is gone never re-rings an older invite
+00:00 +8: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a terminate stored after the invite wake still dominates it
+00:00 +9: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a terminal page acknowledges its authenticated rows before close
+00:00 +10: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a terminal page acknowledges only the rows it authenticated
+00:00 +11: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: an acknowledgement failure never changes the terminal verdict
+00:00 +12: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: every non-terminal verdict leaves the rows for foreground adoption
+00:00 +13: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: a companion row that cannot be judged yet defers the page
+00:00 +14: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/production_headless_call_admission_test.dart: mailbox empty and incomplete or transient pages never ring
+00:00 +15: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: stores through the dedicated call_store_v1 action
+00:00 +16: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: a store receipt carries the wake outcome
+00:00 +17: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: retrieves typed attributed events through call_retrieve_v1
+00:00 +18: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: ack and cancel never use the chat inbox actions
+00:00 +19: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: cancel treats an unauthorized relay answer as an absent invite
+[FLOW] {"ts":"2026-09-05T17:31:10.542222Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_UNAUTHORIZED"}}
+00:00 +20: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: only cancel tolerates the unauthorized answer
+[FLOW] {"ts":"2026-09-05T17:31:10.547545Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_BACKEND_UNAVAILABLE"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.549716Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_RATE_LIMITED"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.552367Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_INVALID_REQUEST"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.552913Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_CONTROL_UNAVAILABLE"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.553444Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"INTERNAL_ERROR"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.553878Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_ack_v1","code":"CALL_UNAUTHORIZED"}}
+00:00 +21: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: rejects oversized envelopes before crossing the bridge
+00:00 +22: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: bounds an unresponsive native mailbox bridge
+00:00 +23: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: reports only allowlisted mailbox operations and bridge error codes
+[FLOW] {"ts":"2026-09-05T17:31:10.565235Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_store_v1","code":"INVALID_INPUT"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.565636Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"UNKNOWN"}}
+00:00 +24: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: reports only fixed relay call-control error codes
+[FLOW] {"ts":"2026-09-05T17:31:10.567630Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_BACKEND_UNAVAILABLE"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.567966Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_INVALID_REQUEST"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.568237Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_UNAUTHORIZED"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.568645Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_IDENTITY_CONFLICT"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.568964Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_REPLAY"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.569258Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_EXPIRY_INVALID"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.569584Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_ENVELOPE_TOO_LARGE"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.569927Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_RECIPIENT_CAPACITY"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.570249Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_EVENT_CAPACITY"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.570522Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_BYTE_CAPACITY"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.570861Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_RATE_LIMITED"}}
+[FLOW] {"ts":"2026-09-05T17:31:10.571180Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_STALE_EPOCH"}}
+00:00 +25: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: diagnostic sink failure preserves the mailbox exception
+00:00 +26: All tests passed!

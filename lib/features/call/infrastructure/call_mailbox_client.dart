@@ -117,6 +117,9 @@ abstract interface class CallMailboxClient {
     required List<String> messageIds,
   });
 
+  /// Resolves true once the relay holds no cancellable invite of ours for
+  /// this handle: cancelled now, or absent (never stored, already terminal,
+  /// or expired). Every other refusal throws so terminal cleanup retries it.
   Future<bool> cancel({
     required String recipientDevicePeerId,
     required String callHandle,
@@ -266,17 +269,26 @@ final class BridgeCallMailboxClient implements CallMailboxClient {
     if (recipientDevicePeerId.trim().isEmpty || callHandle.trim().isEmpty) {
       throw const CallMailboxException(CallMailboxErrorCode.invalidRequest);
     }
+    // The relay answers CALL_UNAUTHORIZED when it holds nothing of ours for
+    // the handle (never stored, tombstone expired, or not our call). Nothing
+    // is left to cancel, so cleanup must not retry it forever (device
+    // 2026-09-05 17:15Z: an invite refused with CALL_RECIPIENT_CAPACITY kept
+    // terminal cleanup blocked and every native terminal replay rejected).
     final response = await _invoke(callCancelV1BridgeCommand, <String, Object?>{
       'toPeerId': recipientDevicePeerId,
       'callHandle': callHandle,
-    });
-    return response['canceled'] == true;
+    }, tolerated: _absentInviteCodes);
+    return response['canceled'] == true ||
+        _absentInviteCodes.contains(response['errorCode']);
   }
+
+  static const Set<String> _absentInviteCodes = <String>{'CALL_UNAUTHORIZED'};
 
   Future<Map<String, dynamic>> _invoke(
     String command,
-    Map<String, Object?> payload,
-  ) async {
+    Map<String, Object?> payload, {
+    Set<String> tolerated = const <String>{},
+  }) async {
     try {
       final raw = await _bridge
           .send(
@@ -285,12 +297,16 @@ final class BridgeCallMailboxClient implements CallMailboxClient {
           .timeout(requestTimeout);
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic> || decoded['ok'] != true) {
+        final code = decoded is Map<String, dynamic>
+            ? _safeBridgeErrorCode(decoded['errorCode'])
+            : 'MALFORMED_RESPONSE';
         _emitBridgeFailure(
           operation: _safeBridgeOperation(command),
-          code: decoded is Map<String, dynamic>
-              ? _safeBridgeErrorCode(decoded['errorCode'])
-              : 'MALFORMED_RESPONSE',
+          code: code,
         );
+        if (decoded is Map<String, dynamic> && tolerated.contains(code)) {
+          return <String, dynamic>{'ok': false, 'errorCode': code};
+        }
         throw const CallMailboxException(CallMailboxErrorCode.bridgeFailure);
       }
       return decoded;

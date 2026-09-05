@@ -1,0 +1,375 @@
++19: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: cancel treats an unauthorized relay answer as an absent invite
+[FLOW] {"ts":"2026-09-05T17:31:45.328658Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_UNAUTHORIZED"}}
++20: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: only cancel tolerates the unauthorized answer
+[FLOW] {"ts":"2026-09-05T17:31:45.334444Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_BACKEND_UNAVAILABLE"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.336824Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_RATE_LIMITED"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.339780Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_INVALID_REQUEST"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.340678Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"CALL_CONTROL_UNAVAILABLE"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.341633Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_cancel_v1","code":"INTERNAL_ERROR"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.342170Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_ack_v1","code":"CALL_UNAUTHORIZED"}}
++23: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: reports only allowlisted mailbox operations and bridge error codes
+[FLOW] {"ts":"2026-09-05T17:31:45.356888Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_store_v1","code":"INVALID_INPUT"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.357456Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"UNKNOWN"}}
++24: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_mailbox_client_test.dart: reports only fixed relay call-control error codes
+[FLOW] {"ts":"2026-09-05T17:31:45.361533Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_BACKEND_UNAVAILABLE"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.362552Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_INVALID_REQUEST"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.362934Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_UNAUTHORIZED"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.363438Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_IDENTITY_CONFLICT"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.363856Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_REPLAY"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.364135Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_EXPIRY_INVALID"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.364403Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_ENVELOPE_TOO_LARGE"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.364679Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_RECIPIENT_CAPACITY"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.364943Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_EVENT_CAPACITY"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.365226Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_BYTE_CAPACITY"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.365734Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_RATE_LIMITED"}}
+[FLOW] {"ts":"2026-09-05T17:31:45.366076Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_MAILBOX_BRIDGE_FAILURE","details":{"operation":"call_retrieve_v1","code":"CALL_STALE_EPOCH"}}
++26: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: default-off flags construct no runtime and install no subscription
+[FLOW] {"ts":"2026-09-05T17:31:47.017943Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"disabled","enabled":false,"started":false,"graphPresent":false,"outgoingAvailable":false}}
++29: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing-only flags build and advertise no call graph
+[FLOW] {"ts":"2026-09-05T17:31:47.041799Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"disabled","enabled":false,"started":false,"graphPresent":false,"outgoingAvailable":false}}
++30: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: incoming-only graph never exposes or invokes outgoing capability
+[FLOW] {"ts":"2026-09-05T17:31:47.046117Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":false,"stage":"complete"}}
++31: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing capability delegates once to the current started graph only
+[FLOW] {"ts":"2026-09-05T17:31:47.048403Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.049630Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.049998Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++32: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing refreshes caller authority after microphone grant before invite
+[FLOW] {"ts":"2026-09-05T17:31:47.052173Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++33: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: failed caller wake-authority distribution blocks invite fail closed
+[FLOW] {"ts":"2026-09-05T17:31:47.055097Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.055565Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++34: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: wake-authority completion cannot enter a withdrawn graph
+[FLOW] {"ts":"2026-09-05T17:31:47.059155Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.059625Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
++35: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: failed pre-call authority refresh withdraws before invite delegation
+[FLOW] {"ts":"2026-09-05T17:31:47.068632Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++36: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing microphone preflight blocks graph delegation until granted
+[FLOW] {"ts":"2026-09-05T17:31:47.070834Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++37: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing microphone refusal or failure is fixed fail-closed
+[FLOW] {"ts":"2026-09-05T17:31:47.073463Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.074019Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.074399Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++38: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing permission completion cannot enter a withdrawn or replaced graph
+[FLOW] {"ts":"2026-09-05T17:31:47.076388Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.076814Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.077230Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.077537Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.077828Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++39: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: contact action stays hidden unless current graph resolves one endpoint
+[FLOW] {"ts":"2026-09-05T17:31:47.079767Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++40: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: stable composition delegates call-wake distribution only to active graph
+[FLOW] {"ts":"2026-09-05T17:31:47.082017Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++41: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: resume rearms current call-wake grants once per process
+[FLOW] {"ts":"2026-09-05T17:31:47.085555Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.086152Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.086352Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
++42: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: resume retries call-wake rearm after a transient failure
+[FLOW] {"ts":"2026-09-05T17:31:47.088655Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.088915Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.089104Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
++43: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: concurrent resumes coalesce one call-wake rearm attempt
+[FLOW] {"ts":"2026-09-05T17:31:47.095142Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.095829Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.096043Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
++44: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: wake-handle refresh only re-publishes outgoing availability
+[FLOW] {"ts":"2026-09-05T17:31:47.098500Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++45: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: contact eligibility refreshes serialize and withdraw on failed authority
+[FLOW] {"ts":"2026-09-05T17:31:47.100622Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.101160Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RECONCILE_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.101421Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RECONCILE_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
++46: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: outgoing readiness re-emits after resume and graph replacement
+[FLOW] {"ts":"2026-09-05T17:31:47.103724Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.104006Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.104217Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.104494Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++47: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: stable foreground capability replays current graph and fences stale actions
+[FLOW] {"ts":"2026-09-05T17:31:47.106366Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++48: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: the call the surface showed passes its terminal snapshot through once
+[FLOW] {"ts":"2026-09-05T17:31:47.110726Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.111010Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}}
++49: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: withdrawal publishes null before shutdown and ignores old graph
+[FLOW] {"ts":"2026-09-05T17:31:47.113574Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.113920Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_RESUME_RESULT","details":{"outcome":"advertisement_unavailable","enabled":true,"started":false,"graphPresent":false,"outgoingAvailable":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.114285Z","milestone":"M1_IDENTITY_INIT","layer":"CALL_SIGNALING_COMPOSITION","event":"CALL_SIGNALING_START_RESULT","details":{"outcome":"ready","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true,"stage":"complete"}}
++53: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: direct acceptance exposes exact mailbox settlement before retirement
+[FLOW] {"ts":"2026-09-05T17:31:47.120383Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
++56: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: direct acceptance exposes exact mailbox settlement before retirement
+[FLOW] {"ts":"2026-09-05T17:31:47.136011Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++62: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: mailbox custody returns in the same virtual turn while direct is hung
+[FLOW] {"ts":"2026-09-05T17:31:47.144367Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++63: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: mailbox custody returns in the same virtual turn while direct is hung
+[FLOW] {"ts":"2026-09-05T17:31:47.145814Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
++65: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: a dispatched wake rings the caller back before the callee signals
+[FLOW] {"ts":"2026-09-05T17:31:47.149352Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"dispatched"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.150151Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
++68: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: mailbox settlement completes without error after store failure
+[FLOW] {"ts":"2026-09-05T17:31:47.154079Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
++69: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: mailbox settlement completes without error after store failure
+[FLOW] {"ts":"2026-09-05T17:31:47.156375Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":false}}
++72: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: direct failure still gains call-mailbox custody without false ringing
+[FLOW] {"ts":"2026-09-05T17:31:47.159443Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.160059Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++75: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: direct exception cannot erase committed mailbox custody
+[FLOW] {"ts":"2026-09-05T17:31:47.164084Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.164376Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++76: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: leg diagnostics distinguish failures and exclude signaling material
+[FLOW] {"ts":"2026-09-05T17:31:47.168696Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.169039Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":false}}
++78: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: transport ACK records bytes only and cannot synthesize ringing
+[FLOW] {"ts":"2026-09-05T17:31:47.176688Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.177032Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++79: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_signaling_service_test.dart: network-only transmit returns receipts without recursively dispatching
+[FLOW] {"ts":"2026-09-05T17:31:47.179968Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.180287Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++97: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_signaling_runtime_test.dart: transient crypto exception retains mailbox custody until retry succeeds
+[FLOW] {"ts":"2026-09-05T17:31:47.442106Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_ATTEMPT","details":{}}
+[FLOW] {"ts":"2026-09-05T17:31:47.445343Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_RESULT","details":{"presented":true,"threw":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.451230Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_ATTEMPT","details":{}}
+[FLOW] {"ts":"2026-09-05T17:31:47.451816Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_RESULT","details":{"presented":true,"threw":false}}
++98: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_signaling_runtime_test.dart: ICE sequence 3 before offer sequence 2 still processes the unseen offer
+[FLOW] {"ts":"2026-09-05T17:31:47.458683Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_ATTEMPT","details":{}}
+[FLOW] {"ts":"2026-09-05T17:31:47.458909Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_RESULT","details":{"presented":true,"threw":false}}
++99: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_signaling_runtime_test.dart: far-future signed signal is permanently ACKed without blocking next event
+[FLOW] {"ts":"2026-09-05T17:31:47.467884Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_ATTEMPT","details":{}}
+[FLOW] {"ts":"2026-09-05T17:31:47.468100Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_RESULT","details":{"presented":true,"threw":false}}
++105: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter send uses the pinned endpoint when the directory record is gone
+[FLOW] {"ts":"2026-09-05T17:31:47.589208Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.599885Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.601750Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unavailable"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.602135Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_PINNED_FALLBACK","details":{"reason":"unavailable","adapter":"control"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.602660Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.603370Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++106: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter invite and blocked resolutions never use the pinned endpoint
+[FLOW] {"ts":"2026-09-05T17:31:47.606786Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.607036Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.607450Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unavailable"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.608067Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"blocked"}}
++107: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter pinned endpoint is purged at terminal cleanup
+[FLOW] {"ts":"2026-09-05T17:31:47.610887Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.611104Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.611445Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unavailable"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.611656Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_PINNED_FALLBACK","details":{"reason":"unavailable","adapter":"control"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.612183Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.612408Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.612959Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unavailable"}}
++108: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter maps transmit receipts without recursively dispatching coordinator events
+[FLOW] {"ts":"2026-09-05T17:31:47.620129Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.620454Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++109: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter propagates direct-first pending mailbox settlement
+[FLOW] {"ts":"2026-09-05T17:31:47.625992Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.627003Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++110: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter the relay wake outcome reaches the executor result without a receipt of its own
+[FLOW] {"ts":"2026-09-05T17:31:47.629848Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.630133Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"dispatched"}}
++111: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter propagates direct-first pending mailbox settlement
+[FLOW] {"ts":"2026-09-05T17:31:47.632710Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.633077Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++112: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter maps arbitrary failures to fixed-shape redacted errors
+[FLOW] {"ts":"2026-09-05T17:31:47.635195Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_RESOLUTION_FAILED","details":{"code":"unexpected"}}
++113: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallNegotiationSignalingAdapter uses context bindings and monotonic metadata for SDP, ICE, and restart
+[FLOW] {"ts":"2026-09-05T17:31:47.640266Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.640527Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.641199Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.641383Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.642176Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.642348Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.642991Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.643174Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.643841Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.644013Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.644557Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.644729Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++114: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallNegotiationSignalingAdapter negotiation send fails closed after rotation
+[FLOW] {"ts":"2026-09-05T17:31:47.650432Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.650835Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++115: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallNegotiationSignalingAdapter sendDescription uses the pinned endpoint when the directory record is gone
+[FLOW] {"ts":"2026-09-05T17:31:47.654529Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.654807Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.655199Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_ENDPOINT_PINNED_FALLBACK","details":{"reason":"unavailable","adapter":"negotiation"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.655870Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.656056Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++117: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallNegotiationSignalingAdapter answers from the authenticated incoming binding
+[FLOW] {"ts":"2026-09-05T17:31:47.660742Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"direct_send","result":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.661Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_SIGNALING_LEG_RESULT","details":{"operation":"mailbox_store","result":true,"wake":"none"}}
++121: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: an Android graph publishes the FCM token as the relay standard call token
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++121: /Volumes/CrucialX9/flutter_app/test/features/call/integration/call_direct_mailbox_convergence_test.dart: authenticated direct and mailbox duplicate converge on one session and UI
+[FLOW] {"ts":"2026-09-05T17:31:47.700643Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_ATTEMPT","details":{}}
+[FLOW] {"ts":"2026-09-05T17:31:47.703719Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_PRESENTATION_RESULT","details":{"presented":true,"threw":false}}
++122: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production factory is reachable and disposes no shared router transport
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++124: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production iOS publishes VoIP token before endpoint and survives background
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++124: /Volumes/CrucialX9/flutter_app/test/features/call/integration/call_direct_mailbox_convergence_test.dart: caller cancellation stores its terminate behind the invite so a late recipient drain never rings
+[FLOW] {"ts":"2026-09-05T17:31:47.734905Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.739022Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":false,"mailboxStored":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.740253Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"terminate"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.741104Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"terminate","delivered":true,"directAccepted":false,"mailboxStored":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.744148Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_INCOMING_INVITE_SUPERSEDED","details":{}}
++126: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production iOS token success plus endpoint failure rolls back before detach
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++126: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: one canonical coordinator consumes prepare and custody follow-ups in lane
+[FLOW] {"ts":"2026-09-05T17:31:47.803534Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
++127: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production iOS token publication failure disables native callability
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++127: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: one canonical coordinator consumes prepare and custody follow-ups in lane
+[FLOW] {"ts":"2026-09-05T17:31:47.818092Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":true,"mailboxStored":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.823823Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"terminate"}}
++128: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: one canonical coordinator consumes prepare and custody follow-ups in lane
+[FLOW] {"ts":"2026-09-05T17:31:47.824102Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"terminate","delivered":true,"directAccepted":true,"mailboxStored":true}}
++128: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production iOS malformed lifecycle attach publishes no call authority
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++129: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: a dispatched wake turns the mailbox custody follow-up into ringing
+[FLOW] {"ts":"2026-09-05T17:31:47.828738Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.829462Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":false,"mailboxStored":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.830642Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"terminate"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.830904Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"terminate","delivered":true,"directAccepted":false,"mailboxStored":true}}
++130: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: applied foreground cancel sends authenticated caller-cancelled terminate
+[FLOW] {"ts":"2026-09-05T17:31:47.834139Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.834475Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":true,"mailboxStored":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.835522Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"terminate"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.835822Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"terminate","delivered":true,"directAccepted":true,"mailboxStored":false}}
++131: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: a mailbox-stored invite cancelled before ringing keeps the mailbox and stores the terminate after the invite settles
+[FLOW] {"ts":"2026-09-05T17:31:47.840483Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.840860Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":false,"mailboxStored":true}}
+[FLOW] {"ts":"2026-09-05T17:31:47.841930Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"terminate"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.842138Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"terminate","delivered":true,"directAccepted":false,"mailboxStored":true}}
++132: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: mailbox retirement waits for invite custody and coalesces duplicates
+[FLOW] {"ts":"2026-09-05T17:31:47.844553Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.844930Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":true,"mailboxStored":false}}
++133: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: terminate transport failure still retires one mailbox invitation
+[FLOW] {"ts":"2026-09-05T17:31:47.847083Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.847361Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":true,"mailboxStored":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.847753Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"terminate"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.848756Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_FAILED","details":{"type":"terminate","code":"transportUnavailable"}}
++134: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: failed invite retains its handle through nested terminal retirement
+[FLOW] {"ts":"2026-09-05T17:31:47.851789Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.852168Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_FAILED","details":{"type":"invite","code":"transportUnavailable"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.852601Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"terminate"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.852840Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_FAILED","details":{"type":"terminate","code":"transportUnavailable"}}
++136: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: remote preconnect terminal without a send effect still retires mailbox
+[FLOW] {"ts":"2026-09-05T17:31:47.856162Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.856447Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":true,"mailboxStored":false}}
++136: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production token invalidation withdraws outgoing before ordered teardown
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++137: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: prepare then invite sends once and returns only mailbox custody receipt
+[FLOW] {"ts":"2026-09-05T17:31:47.861954Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.862200Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":true,"mailboxStored":true}}
++138: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: outgoing native registration sees stored handle before ready and invite
+[FLOW] {"ts":"2026-09-05T17:31:47.864853Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.865070Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":true,"mailboxStored":false}}
++140: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production shutdown during endpoint wait cannot enqueue outgoing call
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++141: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: default signal expiry reserves five seconds below the hard maximum
+[FLOW] {"ts":"2026-09-05T17:31:47.868603Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.868834Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":true,"mailboxStored":false}}
++142: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: direct invite receipt is returned only without mailbox custody
+[FLOW] {"ts":"2026-09-05T17:31:47.870526Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.870758Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"invite","delivered":true,"directAccepted":true,"mailboxStored":false}}
++143: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: accept sends control only and composite does not start an offer
+[FLOW] {"ts":"2026-09-05T17:31:47.873182Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"accept"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.873427Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"accept","delivered":true,"directAccepted":true,"mailboxStored":false}}
++144: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: reject and terminate carry fixed reasons and purge their contexts
+[FLOW] {"ts":"2026-09-05T17:31:47.875184Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"reject"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.875502Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"reject","delivered":true,"directAccepted":true,"mailboxStored":false}}
+[FLOW] {"ts":"2026-09-05T17:31:47.875912Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"terminate"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.876081Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"terminate","delivered":true,"directAccepted":true,"mailboxStored":false}}
++145: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: busy targets the pending authenticated call, not the active call
+[FLOW] {"ts":"2026-09-05T17:31:47.878547Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"reject"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.878852Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_RESULT","details":{"type":"reject","delivered":true,"directAccepted":true,"mailboxStored":false}}
++146: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_control_effect_executor_test.dart: fixed-shape port failures become redacted signaling failures
+[FLOW] {"ts":"2026-09-05T17:31:47.881040Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_ATTEMPT","details":{"type":"invite"}}
+[FLOW] {"ts":"2026-09-05T17:31:47.881336Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CALL_CONTROL_SIGNAL_SEND_FAILED","details":{"type":"invite","code":"transportUnavailable"}}
++148: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production revalidates current wake authority after endpoint wait before invite
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++149: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: native disable false or throw cannot skip the other rollback legs
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++150: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: native disable false or throw cannot skip the other rollback legs
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++152: /Volumes/CrucialX9/flutter_app/test/core/bootstrap/call_signaling_composition_test.dart: production gate-false shutdown still revokes exact iOS authorities
+*** sqflite warning ***
+
+You are changing sqflite default factory.
+Be aware of the potential side effects. Any library using sqflite
+will have this factory as the default for all operations.
+
+*** sqflite warning ***
+
++161: All tests passed!
