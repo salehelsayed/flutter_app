@@ -696,7 +696,7 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
     bundleIdentifier: @escaping () -> String? = { Bundle.main.bundleIdentifier },
     runtimeWake: @escaping () -> Void = {},
     diagnosticSink: @escaping MknoonVoipPushDiagnosticSink = { event in
-      NSLog("%@", event.logLine)
+      mknoonCallKitDiag(event.logLine)
     }
   ) {
     self.controller = controller

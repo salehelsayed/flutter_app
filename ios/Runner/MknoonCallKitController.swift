@@ -1,6 +1,16 @@
 import AVFoundation
 import CallKit
 import Foundation
+import os.log
+
+/// CallKit diagnostics carry only fixed wire names and outcomes (never a
+/// handle, token or contact), so they are logged public: NSLog lines from a
+/// release build reach the device syslog fully redacted as `<private>`.
+private let callKitDiagLog = OSLog(subsystem: "com.mknoon.app", category: "callkit")
+
+func mknoonCallKitDiag(_ message: String) {
+  os_log("%{public}@", log: callKitDiagLog, type: .default, message)
+}
 
 internal enum MknoonCallPresentationResult: Equatable {
   case presented
@@ -436,13 +446,13 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
           callId.uuidString.lowercased() == callHandle,
           OpaqueCallContactResolver.validHandle(callHandle)
     else {
-      NSLog("[MKNOON_CALLKIT_DIAG] result=invalid_handle")
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] result=invalid_handle")
       completion(false)
       return
     }
     let now = nowMs()
     guard now >= 0 else {
-      NSLog("[MKNOON_CALLKIT_DIAG] result=invalid_clock")
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] result=invalid_clock")
       completion(false)
       return
     }
@@ -454,7 +464,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     guard !localExpiryOverflow, !authenticatedExpiryOverflow,
           expiresAtMs > now, expiresAtMs <= authenticatedExpiryLimit
     else {
-      NSLog("[MKNOON_CALLKIT_DIAG] result=invalid_expiry")
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] result=invalid_expiry")
       completion(false)
       return
     }
@@ -462,7 +472,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     if let descriptor = snapshot(), descriptor.callHandle == callHandle,
        descriptor.expiresAtMs == effectiveExpiresAtMs,
        descriptor.terminalEvent == nil, descriptor.presented {
-      NSLog("[MKNOON_CALLKIT_DIAG] result=existing_presented")
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] result=existing_presented")
       completion(true)
       return
     }
@@ -482,9 +492,9 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
             && $0.presented
         } == true
       let accepted = result == .presented || acceptedDuplicate
-      NSLog(
-        "[MKNOON_CALLKIT_DIAG] result=%@",
-        accepted ? "presented" : "rejected"
+      mknoonCallKitDiag(
+        "[MKNOON_CALLKIT_DIAG] result=" + (accepted ? "presented" : "rejected")
+          + " presentation=" + String(describing: result)
       )
       completion(accepted)
     }
@@ -590,6 +600,10 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         highestConsumedSequence: sequence,
         acknowledgement: disposition
       )
+      mknoonCallKitDiag(
+        "[MKNOON_CALLKIT_DIAG] ack=" + String(describing: disposition) + " through=" + String(sequence)
+          + " ok=" + String(acknowledged)
+      )
       if acknowledged && disposition == .terminal {
         clearNativeReferences(nativeCallId)
       }
@@ -601,20 +615,43 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     synchronized {
       guard let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
             descriptor.terminalEvent == nil
-      else { return false }
+      else {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] adopt=refused")
+        return false
+      }
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] adopt=ok phase=" + String(describing: descriptor.phase))
       return true
     }
   }
 
   func activateAudio(_ nativeCallId: UUID) -> Bool {
     synchronized {
-      guard let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
-            descriptor.terminalEvent == nil,
-            canLatchCallKitAudio(for: descriptor),
-            descriptor.handoffAcknowledgement == .adopted,
-            audioActivatedCallIds.contains(nativeCallId)
-      else { return false }
+      guard let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId else {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] activate_audio=refused reason=no_matching_descriptor")
+        return false
+      }
+      guard descriptor.terminalEvent == nil else {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] activate_audio=refused reason=terminal")
+        return false
+      }
+      guard canLatchCallKitAudio(for: descriptor) else {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] activate_audio=refused reason=not_answered")
+        return false
+      }
+      guard descriptor.handoffAcknowledgement == .adopted else {
+        mknoonCallKitDiag(
+          "[MKNOON_CALLKIT_DIAG] activate_audio=refused reason=not_adopted handoff="
+            + String(describing: descriptor.handoffAcknowledgement)
+            + " phase=" + String(describing: descriptor.phase)
+        )
+        return false
+      }
+      guard audioActivatedCallIds.contains(nativeCallId) else {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] activate_audio=refused reason=session_not_activated")
+        return false
+      }
       mediaClaimedCallIds.insert(nativeCallId)
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] activate_audio=claimed")
       return true
     }
   }
@@ -817,10 +854,14 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     synchronized {
       guard let descriptor = store.snapshot(), descriptor.terminalEvent == nil,
             canLatchCallKitAudio(for: descriptor)
-      else { return }
+      else {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] audio_session=activated_unlatched")
+        return
+      }
       do {
         try audio.prepareForCallKitActivation()
         audioActivatedCallIds.insert(descriptor.nativeCallId)
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] audio_session=latched")
         guard record(descriptor.nativeCallId, .audioActivated) else {
           failClosedAfterPersistenceFailure(descriptor.nativeCallId)
           return
@@ -858,9 +899,13 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   @discardableResult
   func handleAnswer(_ nativeCallId: UUID) -> Bool {
     synchronized {
-      guard record(nativeCallId, .answerRequested) else { return false }
+      guard record(nativeCallId, .answerRequested) else {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] answer=persist_failed")
+        return false
+      }
       answeredCallIds.insert(nativeCallId)
       scheduleAnswerAdoptionBound(nativeCallId)
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] answer=recorded")
       return true
     }
   }
@@ -878,7 +923,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
             let answer = descriptor.events.last(where: { $0.type == .answerRequested }),
             nowMs() - answer.occurredAtMs >= Self.answerAdoptionBoundMs
       else { return false }
-      NSLog("[MKNOON_CALLKIT_DIAG] answer_adoption_bound=exceeded")
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] answer_adoption_bound=exceeded")
       return terminate(nativeCallId, type: .nativeFailure, reason: .failed)
     }
   }
@@ -1280,9 +1325,9 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     expiryWorkItem?.cancel()
     answerAdoptionWorkItem?.cancel()
     if newlyRecorded {
-      NSLog("[MKNOON_CALLKIT_DIAG] terminal=%@", type.wireName)
+      mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] terminal=" + type.wireName)
       if type == .remoteCancelled {
-        NSLog("[MKNOON_CALLKIT_DIAG] result=remote_cancelled")
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] result=remote_cancelled")
       }
     }
     return true

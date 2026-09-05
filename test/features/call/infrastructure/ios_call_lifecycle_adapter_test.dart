@@ -592,6 +592,89 @@ void main() {
       await malformedAudio.events.close();
     },
   );
+
+  test('a natively presented call observed before its invite adopts and '
+      'activates audio', () async {
+    final native = _LifecycleNative()..attachResult = _emptyBatch();
+    final effects = _ActivatingEffects();
+    final coordinator = _coordinator(effects: effects);
+    final adapter = _adapter(native, coordinator);
+    effects.adapter = adapter;
+    await adapter.start();
+
+    // PushKit reported the call; its journal reaches Dart before the
+    // mailbox drain hands the invite to the coordinator.
+    native.events.add(_batch(<Map<String, Object?>>[_event(1, 'presented')]));
+    await _prepareIncoming(coordinator);
+    expect(await adapter.present(_presentation()), isTrue);
+    await coordinator.dispatch(
+      CallEvent(
+        type: CallEventType.systemUiPresented,
+        eventId: 'system-ui-presented',
+        occurredAt: _now,
+        callId: _callId,
+        contactPeerId: 'remote-account',
+      ),
+    );
+    expect(coordinator.activeSession?.state, CallState.ringing);
+    expect(native.callsOf('adopt'), hasLength(1));
+    expect(
+      native
+          .callsOf('acknowledge')
+          .any((call) => call.arguments['disposition'] == 'ADOPTED'),
+      isTrue,
+    );
+
+    native.emit('answer');
+    native.didActivate();
+    await _until(() => effects.mediaReady == 1);
+    expect(coordinator.activeSession?.state, CallState.accepted);
+    expect(adapter.ownsSession, isTrue);
+
+    await adapter.close();
+    await coordinator.dispose();
+    await native.events.close();
+  });
+
+  test('an invite handled before the native journal arrives still adopts and '
+      'activates audio', () async {
+    final native = _LifecycleNative()..attachResult = _emptyBatch();
+    final effects = _ActivatingEffects();
+    final coordinator = _coordinator(effects: effects);
+    final adapter = _adapter(native, coordinator);
+    effects.adapter = adapter;
+    await adapter.start();
+
+    await _prepareIncoming(coordinator);
+    expect(await adapter.present(_presentation()), isTrue);
+    // The PushKit journal for the same call lands after presentation.
+    native.events.add(_batch(<Map<String, Object?>>[_event(1, 'presented')]));
+    await coordinator.dispatch(
+      CallEvent(
+        type: CallEventType.systemUiPresented,
+        eventId: 'system-ui-presented',
+        occurredAt: _now,
+        callId: _callId,
+        contactPeerId: 'remote-account',
+      ),
+    );
+    expect(coordinator.activeSession?.state, CallState.ringing);
+    await _until(
+      () => native
+          .callsOf('acknowledge')
+          .any((call) => call.arguments['disposition'] == 'ADOPTED'),
+    );
+
+    native.emit('answer');
+    native.didActivate();
+    await _until(() => effects.mediaReady == 1);
+    expect(coordinator.activeSession?.state, CallState.accepted);
+    expect(adapter.ownsSession, isTrue);
+
+    await adapter.close();
+    await coordinator.dispose();
+    await native.events.close();
+  });
 }
 
 IosCallLifecycleAdapter _adapter(
