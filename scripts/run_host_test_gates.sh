@@ -74,6 +74,11 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   # token publication, rotation and refresh-epoch-scoped invalidation.
   "test/features/call/infrastructure/ios_call_lifecycle_adapter_test.dart"
   "test/features/call/infrastructure/ios_voip_token_coordinator_test.dart"
+  # Plan 400 (b): PushKit call wake channel.
+  "test/features/call/infrastructure/ios_call_wake_channel_test.dart"
+  # Plan 401: caller-side ringback tone (coordinator + platform channel).
+  "test/features/call/application/call_ringback_coordinator_test.dart"
+  "test/features/call/infrastructure/call_ringback_channel_test.dart"
   # Plan 400: voice-call app-side hardening — Android ended-handle audio
   # release, media-close failure stage, iOS live-call advertisement deferral.
   "test/features/call/infrastructure/android_call_lifecycle_adapter_test.dart"

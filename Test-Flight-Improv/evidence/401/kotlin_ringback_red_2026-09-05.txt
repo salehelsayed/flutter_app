@@ -1,0 +1,20 @@
+=== RED 2026-09-05T13:38:04Z: MknoonOutgoingCallRingbackTest + MknoonCallNativeBridgeRingbackTest before any implementation ===
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:113:61 Unresolved reference 'MknoonCallRingbackToneStarter'.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:117:5 'start' overrides nothing.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:117:27 Unresolved reference 'MknoonCallRingbackToneSession'.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:120:16 Unresolved reference 'MknoonCallRingbackToneSession'.
+gradle exit: 1
+exit=0
+--- compiler errors (gradle.log)
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNativeBridgeTest.kt:713:13 No parameter with name 'ringbackStarter' found.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNativeBridgeTest.kt:713:33 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNativeBridgeTest.kt:714:13 No parameter with name 'ringbackStopper' found.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonCallNativeBridgeTest.kt:714:33 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:21:24 Unresolved reference 'MknoonOutgoingCallRingback'.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:41:24 Unresolved reference 'MknoonOutgoingCallRingback'.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:64:24 Unresolved reference 'MknoonOutgoingCallRingback'.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:83:24 Unresolved reference 'MknoonOutgoingCallRingback'.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:104:5 Unresolved reference 'MknoonCallRingbackToneSession'.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:107:5 'stop' overrides nothing.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:113:61 Unresolved reference 'MknoonCallRingbackToneStarter'.
+e: file:///Volumes/CrucialX9/flutter_app/android/app/src/test/kotlin/com/mknoon/app/call/MknoonOutgoingCallRingbackTest.kt:117:5 'start' overrides nothing.

@@ -91,6 +91,10 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
       project(call.arguments, result)
     case "readAudioState":
       readAudioState(call.arguments, result)
+    case "startRingback":
+      ringback(call.arguments, result, controller.startRingback)
+    case "stopRingback":
+      ringback(call.arguments, result, controller.stopRingback)
     case "requestRoute":
       requestRoute(call.arguments, result)
     case "answer":
@@ -404,6 +408,18 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
       let expiresAtMs = parseInt64(map["expiresAtMs"])
     else { return nil }
     return (callHandle, expiresAtMs)
+  }
+
+  private func ringback(
+    _ arguments: Any?,
+    _ result: @escaping FlutterResult,
+    _ operation: (UUID) -> Bool
+  ) {
+    guard let map = identityMap(arguments), let callId = resolve(map["callHandle"]) else {
+      badArguments(result)
+      return
+    }
+    result(operation(callId))
   }
 
   private func identityMap(_ arguments: Any?) -> [String: Any]? {

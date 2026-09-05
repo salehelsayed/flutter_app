@@ -324,6 +324,38 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
     XCTAssertEqual(envelope["highestSequence"] as? Int64, 2)
   }
 
+  func testRingbackMethodsResolveTheCallHandleAndDelegateToTheController() throws {
+    let rig = makeBridgeRig()
+    var registered: Bool?
+    rig.controller.registerOutgoingAuthenticated(
+      callHandle: callId.uuidString.lowercased(),
+      expiresAtMs: now + 30_000
+    ) { registered = $0 }
+    XCTAssertEqual(registered, true)
+    XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callId))
+    let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil)
+    let handle = callId.uuidString.lowercased()
+    let arguments: [String: Any] = ["version": 1, "callHandle": handle]
+
+    XCTAssertEqual(invoke(bridge, "startRingback", arguments) as? Bool, true)
+    XCTAssertEqual(rig.ringback.startCount, 1)
+    XCTAssertEqual(invoke(bridge, "stopRingback", arguments) as? Bool, true)
+    XCTAssertEqual(rig.ringback.stopCount, 1)
+    XCTAssertEqual(invoke(bridge, "stopRingback", arguments) as? Bool, false)
+
+    let malformed: [(String, Any?)] = [
+      ("startRingback", nil),
+      ("startRingback", ["version": 2, "callHandle": handle]),
+      ("stopRingback", ["version": 1, "callHandle": "not-a-call-handle"]),
+      ("startRingback", ["version": 1, "callHandle": handle, "loop": true]),
+    ]
+    for (method, arguments) in malformed {
+      let error = invoke(bridge, method, arguments) as? FlutterError
+      XCTAssertEqual(error?.code, "bad_args", method)
+    }
+    XCTAssertEqual(rig.ringback.startCount, 1)
+  }
+
   private func makeBridgeRig(nowMs: (() -> Int64)? = nil) -> CallKitRig {
     let clock = nowMs ?? { self.now }
     let backend = MemoryPendingCallBackend()
@@ -335,6 +367,7 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
       nowMs: { self.now }
     )
     let audio = FakeCallAudio()
+    let ringback = FakeCallRingback()
     let capability = MemoryCallCapability(enabled: true)
     let notificationCenter = NotificationCenter()
     let controller = MknoonCallKitController(
@@ -345,7 +378,8 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
       audio: audio,
       capability: capability,
       nowMs: clock,
-      notificationCenter: notificationCenter
+      notificationCenter: notificationCenter,
+      ringback: ringback
     )
     return CallKitRig(
       controller: controller,
@@ -356,7 +390,8 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
       contacts: contacts,
       audio: audio,
       capability: capability,
-      notificationCenter: notificationCenter
+      notificationCenter: notificationCenter,
+      ringback: ringback
     )
   }
 

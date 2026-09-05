@@ -1,0 +1,13 @@
+=== GREEN 2026-09-05T13:43:53Z: coordinator + channel tests ===
+00:00 +4: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_ringback_coordinator_test.dart: an incoming call never plays ringback
+00:00 +5: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_ringback_coordinator_test.dart: a refused or failing start is reported once and not retried per snapshot
+00:00 +6: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_ringback_coordinator_test.dart: a failing stop is retried on the next snapshot and on dispose
+00:00 +7: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_ringback_coordinator_test.dart: stop never overlaps a start still in flight
+00:00 +8: /Volumes/CrucialX9/flutter_app/test/features/call/application/call_ringback_coordinator_test.dart: a later call rings back again after the first one ended
+00:00 +9: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_ringback_channel_test.dart: start and stop cross the channel with the versioned call handle
+00:00 +10: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_ringback_channel_test.dart: the production channel name and methods are pinned
+00:00 +11: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_ringback_channel_test.dart: a platform without a native tone player answers false
+00:00 +12: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_ringback_channel_test.dart: a null native answer counts as refused
+00:00 +13: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_ringback_channel_test.dart: a native failure surfaces for the coordinator to report
+00:00 +14: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/call_ringback_channel_test.dart: the default port talks to the real method channel
+00:00 +15: All tests passed!

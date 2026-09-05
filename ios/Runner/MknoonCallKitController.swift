@@ -63,6 +63,96 @@ internal protocol MknoonCallAudioManaging: AnyObject {
   func requestRoute(_ route: String) -> Bool
 }
 
+/// Ringback: the tone the caller hears while the far end rings. The
+/// controller decides when it may play; the player only makes sound.
+internal protocol MknoonCallRingbackPlaying: AnyObject {
+  func start() -> Bool
+  func stop()
+}
+
+/// Plays a generated ringback cadence (425 Hz, 1 s on / 4 s off) through the
+/// call audio session CallKit activated, so it follows the call route
+/// (earpiece, speaker, headset) and ignores the silent switch like any call
+/// audio. No asset and no file: the tone is synthesised into a WAV buffer once.
+internal final class MknoonCallRingbackTonePlayer: MknoonCallRingbackPlaying {
+  private let lock = NSLock()
+  private var player: AVAudioPlayer?
+
+  func start() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    if let player, player.isPlaying { return true }
+    guard let data = Self.toneData else { return false }
+    do {
+      let next = try AVAudioPlayer(data: data, fileTypeHint: AVFileType.wav.rawValue)
+      next.numberOfLoops = -1
+      next.volume = 1.0
+      guard next.prepareToPlay(), next.play() else { return false }
+      player = next
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  func stop() {
+    lock.lock()
+    defer { lock.unlock() }
+    player?.stop()
+    player = nil
+  }
+
+  private static let toneData: Data? = makeToneData()
+
+  /// 16 kHz mono 16-bit PCM: one second of 425 Hz, then four seconds of
+  /// silence, with 10 ms ramps so the tone edges never click.
+  private static func makeToneData() -> Data? {
+    let sampleRate = 16_000
+    let frequency = 425.0
+    let amplitude = 0.25
+    let toneFrames = sampleRate
+    let totalFrames = sampleRate * 5
+    let ramp = sampleRate / 100
+    var pcm = [Int16](repeating: 0, count: totalFrames)
+    for frame in 0..<toneFrames {
+      var envelope = 1.0
+      if frame < ramp {
+        envelope = Double(frame) / Double(ramp)
+      } else if frame >= toneFrames - ramp {
+        envelope = Double(toneFrames - frame) / Double(ramp)
+      }
+      let sample = sin(2.0 * Double.pi * frequency * Double(frame) / Double(sampleRate))
+      let scaled = max(-1.0, min(1.0, sample * amplitude * envelope))
+      pcm[frame] = Int16(scaled * Double(Int16.max))
+    }
+    let dataSize = pcm.count * MemoryLayout<Int16>.size
+    var wav = Data(capacity: 44 + dataSize)
+    func append32(_ value: UInt32) {
+      var little = value.littleEndian
+      wav.append(Data(bytes: &little, count: 4))
+    }
+    func append16(_ value: UInt16) {
+      var little = value.littleEndian
+      wav.append(Data(bytes: &little, count: 2))
+    }
+    wav.append(contentsOf: Array("RIFF".utf8))
+    append32(UInt32(36 + dataSize))
+    wav.append(contentsOf: Array("WAVE".utf8))
+    wav.append(contentsOf: Array("fmt ".utf8))
+    append32(16)
+    append16(1)
+    append16(1)
+    append32(UInt32(sampleRate))
+    append32(UInt32(sampleRate * MemoryLayout<Int16>.size))
+    append16(UInt16(MemoryLayout<Int16>.size))
+    append16(16)
+    wav.append(contentsOf: Array("data".utf8))
+    append32(UInt32(dataSize))
+    pcm.withUnsafeBufferPointer { buffer in wav.append(Data(buffer: buffer)) }
+    return wav
+  }
+}
+
 internal final class MknoonSystemCallAudioManager: MknoonCallAudioManaging {
   private let session: AVAudioSession
 
@@ -202,6 +292,9 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private let capability: NativeCallCapabilityPersisting
   private let nowMs: () -> Int64
   private let notificationCenter: NotificationCenter
+  private let ringback: MknoonCallRingbackPlaying
+  private var ringbackCallId: UUID?
+  private var ringbackPlaying = false
   private let lock = NSRecursiveLock()
   private var eventHandler: EventHandler?
   private var capabilityChangeHandler: ((Bool) -> Bool)?
@@ -227,8 +320,10 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     capability: NativeCallCapabilityPersisting,
     nowMs: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1_000) },
     notificationCenter: NotificationCenter = .default,
-    delegateQueue: DispatchQueue? = nil
+    delegateQueue: DispatchQueue? = nil,
+    ringback: MknoonCallRingbackPlaying = MknoonCallRingbackTonePlayer()
   ) {
+    self.ringback = ringback
     self.provider = provider
     self.transactionRequester = transactionRequester
     self.store = store
@@ -661,6 +756,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         return false
       }
       mediaClaimedCallIds.insert(nativeCallId)
+      silenceRingbackLocked(reason: "media")
       mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] activate_audio=claimed")
       return true
     }
@@ -887,6 +983,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         try audio.prepareForCallKitActivation()
         audioActivatedCallIds.insert(descriptor.nativeCallId)
         mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] audio_session=latched")
+        resumeRingbackIfWantedLocked(descriptor.nativeCallId)
         guard record(descriptor.nativeCallId, .audioActivated) else {
           failClosedAfterPersistenceFailure(descriptor.nativeCallId)
           return
@@ -900,6 +997,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
     synchronized {
       guard let descriptor = store.snapshot(), descriptor.terminalEvent == nil else { return }
+      pauseRingbackLocked()
       audio.releaseAfterCallKitDeactivation()
       if audioActivatedCallIds.remove(descriptor.nativeCallId) != nil {
         mediaClaimedCallIds.remove(descriptor.nativeCallId)
@@ -1014,12 +1112,78 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   }
 
   @discardableResult
+  // MARK: - Ringback
+
+  /// Ringback plays only for the outgoing call CallKit knows, only while its
+  /// audio session is active, and never once media claimed the call. A wanted
+  /// ringback that arrives before activation starts in `didActivate`. Every
+  /// terminal path and the media claim silence it without Dart's help.
+  func startRingback(_ nativeCallId: UUID) -> Bool {
+    synchronized {
+      guard let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
+            descriptor.direction == .outgoing, descriptor.terminalEvent == nil,
+            !mediaClaimedCallIds.contains(nativeCallId)
+      else {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] ringback=refused")
+        return false
+      }
+      if ringbackCallId == nativeCallId, ringbackPlaying { return true }
+      ringbackCallId = nativeCallId
+      guard audioActivatedCallIds.contains(nativeCallId) else {
+        mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] ringback=deferred reason=session_not_activated")
+        return true
+      }
+      return playRingbackLocked()
+    }
+  }
+
+  func stopRingback(_ nativeCallId: UUID) -> Bool {
+    synchronized {
+      guard ringbackCallId == nativeCallId else { return false }
+      silenceRingbackLocked(reason: "dart")
+      return true
+    }
+  }
+
+  private func playRingbackLocked() -> Bool {
+    let started = ringback.start()
+    ringbackPlaying = started
+    if !started { ringbackCallId = nil }
+    mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] ringback=" + (started ? "started" : "unavailable"))
+    return started
+  }
+
+  private func resumeRingbackIfWantedLocked(_ nativeCallId: UUID) {
+    guard ringbackCallId == nativeCallId, !ringbackPlaying else { return }
+    _ = playRingbackLocked()
+  }
+
+  /// A session deactivation silences the tone but keeps it wanted, so the
+  /// next activation resumes it.
+  private func pauseRingbackLocked() {
+    guard ringbackCallId != nil, ringbackPlaying else { return }
+    ringback.stop()
+    ringbackPlaying = false
+    mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] ringback=paused reason=session_deactivated")
+  }
+
+  private func silenceRingbackLocked(reason: String) {
+    guard ringbackCallId != nil else { return }
+    ringbackCallId = nil
+    if ringbackPlaying {
+      ringback.stop()
+      ringbackPlaying = false
+    }
+    mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] ringback=stopped reason=" + reason)
+  }
+
   func recordAudioActivatedForTests(_ nativeCallId: UUID) -> Bool {
     synchronized {
       guard let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
             canLatchCallKitAudio(for: descriptor) else { return false }
       do { try audio.prepareForCallKitActivation() } catch { return false }
       audioActivatedCallIds.insert(nativeCallId)
+      resumeRingbackIfWantedLocked(nativeCallId)
       guard record(nativeCallId, .audioActivated) else {
         failClosedAfterPersistenceFailure(nativeCallId)
         return false
@@ -1038,6 +1202,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   func recordAudioDeactivatedForTests(_ nativeCallId: UUID) -> Bool {
     synchronized {
       guard audioActivatedCallIds.remove(nativeCallId) != nil else { return false }
+      pauseRingbackLocked()
       audio.releaseAfterCallKitDeactivation()
       guard record(nativeCallId, .audioDeactivated) else {
         failClosedAfterPersistenceFailure(nativeCallId)
@@ -1386,6 +1551,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     mutedCallIds.remove(nativeCallId)
     audioActivatedCallIds.remove(nativeCallId)
     mediaClaimedCallIds.remove(nativeCallId)
+    silenceRingbackLocked(reason: "terminal")
     audio.releaseAfterCallKitDeactivation()
   }
 

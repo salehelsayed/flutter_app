@@ -699,6 +699,87 @@ private class CapturingCallEventSink : EventChannel.EventSink {
     override fun endOfStream() = Unit
 }
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33])
+class MknoonCallNativeBridgeRingbackTest {
+    @Test
+    fun `startRingback and stopRingback validate arguments and delegate exactly`() {
+        val rig = LifecycleRig()
+        val started = mutableListOf<String>()
+        val stopped = mutableListOf<String>()
+        val bridge = MknoonCallNativeBridge(
+            controller = rig.controller,
+            messenger = null,
+            ringbackStarter = { handle -> started += handle; true },
+            ringbackStopper = { handle -> stopped += handle; false },
+        )
+
+        val start = CapturingCallBridgeResult()
+        bridge.onMethodCall(
+            MethodCall("startRingback", mapOf("version" to 1, "callHandle" to RINGBACK_HANDLE)),
+            start,
+        )
+        assertEquals(true, start.value)
+        assertEquals(listOf(RINGBACK_HANDLE), started)
+
+        val stop = CapturingCallBridgeResult()
+        bridge.onMethodCall(
+            MethodCall("stopRingback", mapOf("version" to 1, "callHandle" to RINGBACK_HANDLE)),
+            stop,
+        )
+        assertEquals(false, stop.value)
+        assertEquals(listOf(RINGBACK_HANDLE), stopped)
+
+        val badVersion = CapturingCallBridgeResult()
+        bridge.onMethodCall(
+            MethodCall("startRingback", mapOf("version" to 2, "callHandle" to RINGBACK_HANDLE)),
+            badVersion,
+        )
+        assertEquals("bad_args", badVersion.errorCode)
+        val badHandle = CapturingCallBridgeResult()
+        bridge.onMethodCall(
+            MethodCall("stopRingback", mapOf("version" to 1, "callHandle" to "not-a-call-handle")),
+            badHandle,
+        )
+        assertEquals("bad_args", badHandle.errorCode)
+        val extraKey = CapturingCallBridgeResult()
+        bridge.onMethodCall(
+            MethodCall(
+                "startRingback",
+                mapOf("version" to 1, "callHandle" to RINGBACK_HANDLE, "loop" to true),
+            ),
+            extraKey,
+        )
+        assertEquals("bad_args", extraKey.errorCode)
+        assertEquals(1, started.size)
+        assertEquals(1, stopped.size)
+    }
+
+    @Test
+    fun `ringback without a native tone player answers false`() {
+        val rig = LifecycleRig()
+        val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null)
+
+        val start = CapturingCallBridgeResult()
+        bridge.onMethodCall(
+            MethodCall("startRingback", mapOf("version" to 1, "callHandle" to RINGBACK_HANDLE)),
+            start,
+        )
+        val stop = CapturingCallBridgeResult()
+        bridge.onMethodCall(
+            MethodCall("stopRingback", mapOf("version" to 1, "callHandle" to RINGBACK_HANDLE)),
+            stop,
+        )
+
+        assertEquals(false, start.value)
+        assertEquals(false, stop.value)
+    }
+
+    private companion object {
+        const val RINGBACK_HANDLE = "123e4567-e89b-42d3-a456-426614174000"
+    }
+}
+
 private class CapturingCallBridgeResult : MethodChannel.Result {
     var value: Any? = null
     var errorCode: String? = null

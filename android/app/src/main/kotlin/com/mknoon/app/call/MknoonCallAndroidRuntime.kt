@@ -172,6 +172,9 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     private val incomingCallRinger = MknoonIncomingCallRinger(
         AndroidMknoonCallRingtoneStarter(applicationContext),
     )
+    private val outgoingRingback = MknoonOutgoingCallRingback(
+        AndroidMknoonCallRingbackToneStarter(),
+    )
     private val preferences = applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val runtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -198,6 +201,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             controller = { controller },
             stopIncomingRinger = { nativeCallId ->
                 stopIncomingRingtone(nativeCallId, "lifecycle")
+                stopOutgoingRingbackFromLifecycle()
             },
         )
         controller = MknoonCallLifecycleController(
@@ -343,11 +347,37 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             beforeAttach = ::settleUnconsumableTerminalBeforeAttach,
             authenticatedPresenter = ::presentAuthenticated,
             authenticatedOutgoingRegistrar = ::registerOutgoingAuthenticated,
+            ringbackStarter = ::startOutgoingRingback,
+            ringbackStopper = ::stopOutgoingRingback,
             registrationExecutor = registrationExecutor,
         )
 
     fun foregroundRuntime(service: Service): MknoonCallForegroundRuntime =
         AndroidMknoonCallForegroundRuntime(service)
+
+    private fun startOutgoingRingback(callHandle: String): Boolean {
+        val started = outgoingRingback.start(callHandle)
+        logRingback(stage = "start", result = if (started) "playing" else "unavailable")
+        return started
+    }
+
+    private fun stopOutgoingRingback(callHandle: String): Boolean {
+        val stopped = outgoingRingback.stop(callHandle)
+        if (stopped) logRingback(stage = "stop", result = "stopped")
+        return stopped
+    }
+
+    /** Native answer/terminal paths silence ringback even if Dart never asks. */
+    private fun stopOutgoingRingbackFromLifecycle() {
+        if (outgoingRingback.stopAll()) logRingback(stage = "lifecycle", result = "stopped")
+    }
+
+    private fun logRingback(stage: String, result: String) {
+        android.util.Log.i(
+            MKNOON_CALL_RINGBACK_DIAGNOSTIC_TAG,
+            "ringback stage=$stage result=$result",
+        )
+    }
 
     private fun stopIncomingRingtone(nativeCallId: UUID, stage: String) {
         if (incomingCallRinger.stop(nativeCallId)) {

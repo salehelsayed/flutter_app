@@ -1,0 +1,12 @@
+=== GREEN 2026-09-05T13:44:39Z: android call package JVM suite with ringback ===
+log: /Volumes/CrucialX9/flutter_app/build/call-native-unit/android-call-jvm.log
+> Task :app:testDebugUnitTest
+BUILD SUCCESSFUL in 24s
+gradle exit: 0
+exit=0
+--- summary (gradle.log)
+BUILD SUCCESSFUL in 24s
+--- per-suite counts (build/app/test-results/testDebugUnitTest)
+MknoonOutgoingCallRingbackTest: tests=4 failures=0 errors=0
+MknoonCallNativeBridgeRingbackTest: tests=2 failures=0 errors=0
+call package: 13 suites, 122 tests, 0 failures/errors

@@ -50,6 +50,8 @@ import '../../features/call/infrastructure/call_microphone_permission_adapter.da
 import '../../features/call/infrastructure/call_signaling_runtime.dart';
 import '../../features/call/infrastructure/call_trusted_roster_provider.dart';
 import '../../features/call/infrastructure/flutter_webrtc_call_engine.dart';
+import '../../features/call/application/call_ringback_coordinator.dart';
+import '../../features/call/infrastructure/call_ringback_channel.dart';
 import '../../features/call/infrastructure/ios_call_lifecycle_adapter.dart';
 import '../../features/call/infrastructure/ios_voip_token_coordinator.dart';
 import '../../features/call/infrastructure/p2p_call_transport.dart';
@@ -122,6 +124,7 @@ final class ProductionCallSignalingGraph
     this.androidCallLifecycleAdapter,
     this.iosCallLifecycleAdapter,
     this.iosVoipTokenCoordinator,
+    this.ringback,
     required CallNetworkEffectsAllowed networkEffectsAllowed,
     required int Function() nowMs,
   }) : assert(
@@ -129,6 +132,13 @@ final class ProductionCallSignalingGraph
        ),
        _networkEffectsAllowed = networkEffectsAllowed,
        _nowMs = nowMs {
+    final ringbackPort = ringback;
+    _ringback = ringbackPort == null
+        ? null
+        : CallRingbackCoordinator(
+            port: ringbackPort,
+            onResult: _emitRingbackResult,
+          );
     _sessionSubscription = coordinator.snapshots.listen(
       _onSessionSnapshot,
       onError: (_) => _publishForeground(null),
@@ -170,6 +180,11 @@ final class ProductionCallSignalingGraph
   final AndroidCallLifecycleAdapter? androidCallLifecycleAdapter;
   final IosCallLifecycleAdapter? iosCallLifecycleAdapter;
   final IosVoipTokenCoordinator? iosVoipTokenCoordinator;
+
+  /// Ringback (the caller-side ringing tone). Absent on hosts without a
+  /// tone player; the call is unaffected either way.
+  final CallRingbackPort? ringback;
+  late final CallRingbackCoordinator? _ringback;
   final CallNetworkEffectsAllowed _networkEffectsAllowed;
   final int Function() _nowMs;
 
@@ -531,6 +546,7 @@ final class ProductionCallSignalingGraph
   }
 
   void _onSessionSnapshot(CallSessionSnapshot session) {
+    _ringback?.onSession(session);
     if (_shuttingDown || session.callId == null || session.isTerminal) {
       _clearConnectionSnapshotReader();
       _unbindAudio();
@@ -795,6 +811,10 @@ final class ProductionCallSignalingGraph
 
     await attempt(runtime.shutdown);
     await attempt(_sessionSubscription.cancel);
+    final ringbackCoordinator = _ringback;
+    if (ringbackCoordinator != null) {
+      await attempt(ringbackCoordinator.dispose);
+    }
     await attempt(_mediaBundleSubscription.cancel);
     final tokenInvalidationSubscription = _tokenInvalidationSubscription;
     _tokenInvalidationSubscription = null;
@@ -1466,6 +1486,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         androidCallLifecycleAdapter: androidLifecycleAdapter,
         iosCallLifecycleAdapter: iosLifecycleAdapter,
         iosVoipTokenCoordinator: iosTokenCoordinator,
+        ringback: MethodChannelCallRingbackPort(),
         networkEffectsAllowed: networkEffectsAllowed,
         nowMs: clock,
       );
@@ -1526,6 +1547,14 @@ IosCallLifecycleAdapter _createMethodChannelIosCallLifecycleAdapter({
     resolveAuthenticatedHandle: resolveAuthenticatedHandle,
     clock: clock,
     onOutgoingRegistrationResult: _emitNativeOutgoingRegistrationResult,
+  );
+}
+
+void _emitRingbackResult(CallRingbackAction action, String outcome) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CALL_RINGBACK_RESULT',
+    details: <String, dynamic>{'action': action.name, 'outcome': outcome},
   );
 }
 

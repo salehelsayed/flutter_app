@@ -896,6 +896,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       nowMs: clock
     )
     let audio = FakeCallAudio()
+    let ringback = FakeCallRingback()
     let capability = MemoryCallCapability(enabled: true)
     let notificationCenter = NotificationCenter()
     let controller = MknoonCallKitController(
@@ -906,7 +907,8 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       audio: audio,
       capability: capability,
       nowMs: clock,
-      notificationCenter: notificationCenter
+      notificationCenter: notificationCenter,
+      ringback: ringback
     )
     return CallKitRig(
       controller: controller,
@@ -917,7 +919,8 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       contacts: contacts,
       audio: audio,
       capability: capability,
-      notificationCenter: notificationCenter
+      notificationCenter: notificationCenter,
+      ringback: ringback
     )
   }
 
@@ -934,6 +937,91 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     // answer action is fulfilled; configuring only inside didActivate leaves
     // nothing for it to activate on the first call.
     XCTAssertEqual(rig.audio.prepareCount, 1)
+  }
+
+  // MARK: - Ringback
+
+  private func registerOutgoing(_ rig: CallKitRig) {
+    var registered: Bool?
+    rig.controller.registerOutgoingAuthenticated(
+      callHandle: callA.uuidString.lowercased(),
+      expiresAtMs: now + 30_000
+    ) { registered = $0 }
+    XCTAssertEqual(registered, true)
+  }
+
+  func testRingbackWaitsForCallKitToActivateTheOutgoingCallAudio() {
+    let rig = makeRig()
+    registerOutgoing(rig)
+
+    XCTAssertTrue(rig.controller.startRingback(callA), "a wanted ringback is remembered")
+    XCTAssertEqual(rig.ringback.startCount, 0, "nothing plays before CallKit activates the session")
+
+    XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callA))
+    XCTAssertEqual(rig.ringback.startCount, 1)
+    XCTAssertTrue(rig.ringback.playing)
+  }
+
+  func testRingbackPlaysAtOnceOnAnActivatedSessionAndStopsExactlyOnce() {
+    let rig = makeRig()
+    registerOutgoing(rig)
+    XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callA))
+
+    XCTAssertTrue(rig.controller.startRingback(callA))
+    XCTAssertTrue(rig.controller.startRingback(callA))
+    XCTAssertEqual(rig.ringback.startCount, 1)
+
+    XCTAssertTrue(rig.controller.stopRingback(callA))
+    XCTAssertFalse(rig.controller.stopRingback(callA))
+    XCTAssertEqual(rig.ringback.stopCount, 1)
+    XCTAssertFalse(rig.ringback.playing)
+  }
+
+  func testRingbackIsRefusedForIncomingUnknownAndTerminalCalls() {
+    let incoming = makeRig()
+    XCTAssertEqual(present(incoming, payload(callA)), .presented)
+    XCTAssertFalse(incoming.controller.startRingback(callA), "only the caller hears ringback")
+    XCTAssertFalse(incoming.controller.startRingback(callB))
+    XCTAssertEqual(incoming.ringback.startCount, 0)
+
+    let ended = makeRig()
+    registerOutgoing(ended)
+    XCTAssertTrue(ended.controller.endFromDart(callA))
+    XCTAssertFalse(ended.controller.startRingback(callA))
+    XCTAssertEqual(ended.ringback.startCount, 0)
+  }
+
+  func testMediaClaimAndTerminalStopTheRingbackWithoutDart() {
+    let claimed = makeRig()
+    registerOutgoing(claimed)
+    XCTAssertTrue(claimed.controller.acknowledge(callA, through: 1, disposition: .adopted))
+    XCTAssertTrue(claimed.controller.recordAudioActivatedForTests(callA))
+    XCTAssertTrue(claimed.controller.startRingback(callA))
+    XCTAssertTrue(claimed.controller.activateAudio(callA))
+    XCTAssertEqual(claimed.ringback.stopCount, 1, "media takes over the call audio")
+    XCTAssertFalse(claimed.controller.stopRingback(callA), "nothing is left to stop")
+
+    let ended = makeRig()
+    registerOutgoing(ended)
+    XCTAssertTrue(ended.controller.recordAudioActivatedForTests(callA))
+    XCTAssertTrue(ended.controller.startRingback(callA))
+    XCTAssertTrue(ended.controller.endFromDart(callA))
+    XCTAssertEqual(ended.ringback.stopCount, 1, "a terminal call never keeps ringing")
+    XCTAssertFalse(ended.controller.startRingback(callA))
+  }
+
+  func testDeactivationSilencesTheRingbackAndReactivationResumesIt() {
+    let rig = makeRig()
+    registerOutgoing(rig)
+    XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callA))
+    XCTAssertTrue(rig.controller.startRingback(callA))
+    XCTAssertEqual(rig.ringback.startCount, 1)
+
+    rig.controller.recordAudioDeactivatedForTests(callA)
+    XCTAssertEqual(rig.ringback.stopCount, 1)
+
+    XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callA))
+    XCTAssertEqual(rig.ringback.startCount, 2, "a still-wanted ringback resumes with the session")
   }
 
   // MARK: - Answer adoption bound
@@ -1021,6 +1109,7 @@ struct CallKitRig {
   let audio: FakeCallAudio
   let capability: MemoryCallCapability
   let notificationCenter: NotificationCenter
+  let ringback: FakeCallRingback
 }
 
 final class FakeCallProvider: MknoonCallProviding {
@@ -1096,6 +1185,24 @@ final class FakeCallAudio: MknoonCallAudioManaging {
     requestedRoutes.append(route)
     state.route = route
     return true
+  }
+}
+
+final class FakeCallRingback: MknoonCallRingbackPlaying {
+  var startCount = 0
+  var stopCount = 0
+  var startResult = true
+  var playing = false
+
+  func start() -> Bool {
+    startCount += 1
+    playing = startResult
+    return startResult
+  }
+
+  func stop() {
+    stopCount += 1
+    playing = false
   }
 }
 

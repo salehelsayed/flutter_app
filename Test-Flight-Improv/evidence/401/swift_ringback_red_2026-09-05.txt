@@ -1,0 +1,6 @@
+=== RED 2026-09-05T13:43:11Z: CallKit ringback tests before any implementation (expected: build errors) ===
+simulator: 674DFFF6-5F38-4235-93F6-AF7FBF86AE65
+ios/RunnerTests/MknoonCallKitLifecycleTests.swift:1191:31: error: cannot find type 'MknoonCallRingbackPlaying' in scope
+ios/RunnerTests/MknoonCallNativeBridgeTests.swift:382:17: error: extra argument 'ringback' in call
+** TEST FAILED **
+exit=0

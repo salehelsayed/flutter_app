@@ -1,0 +1,45 @@
+# Plan 401 — Voice call: caller-side ringback tone (TDD)
+
+Status: implemented 2026-09-05 (device proof pending)
+Origin: user report 2026-09-05 — "when I call from iPhone 11 to the Pixel or iPhone 13 and put the phone on my ear, I hear no sign that I am calling and that it rings on the other side."
+Evidence: `Test-Flight-Improv/evidence/401/`
+
+## Problem
+
+Ringback is the tone a caller hears while the far end rings. The app had none on any platform: the outgoing screen only switched from "Calling" to "Ringing" (`outgoing_call_screen.dart:92`) when the callee's `ringing` signal arrived. Neither CallKit nor Android Telecom plays ringback for an app's own VoIP call; the app must. The PRD (§11.1) only specified the labels.
+
+## Design
+
+- **Policy (Dart, pure):** `ringbackWanted(session)` = outgoing direction AND state `ringing` AND not terminal. `inviting` stays silent (the far end has not confirmed ringing yet); `accepted` and later stop it. Only the caller ever hears it.
+- **Coordinator (Dart, `lib/features/call/application/call_ringback_coordinator.dart`):** turns call snapshots into exactly one `start` and one `stop` per ringing outgoing call, runs port calls one at a time in order (a stop can never overtake its start), reports each outcome (`ok|refused|failed`) as `CALL_RINGBACK_RESULT`. A refused/failed start is not retried per snapshot; a failed stop keeps the coordinator armed so the next snapshot and `dispose` retry. Wired in `ProductionCallSignalingGraph` (`_onSessionSnapshot` feeds it first; `close()` disposes it).
+- **Channel (`mknoon/call_ringback`, methods `start`/`stop`, `{version: 1, callHandle: <Dart call id>}`):** `MethodChannelCallRingbackPort`; a platform without a tone player (`MissingPluginException`) answers false and the call carries on silent.
+- **iOS (`MknoonCallKitController.startRingback/stopRingback`, bridge cases `startRingback`/`stopRingback`):** plays only for the outgoing call CallKit knows, only once CallKit activated the call audio session (a wanted ringback before activation starts in `didActivate`), never after media claimed the call. Silenced natively on the media claim and on every terminal path; paused on session deactivation and resumed on re-activation. Tone: `MknoonCallRingbackTonePlayer`, an `AVAudioPlayer` looping a synthesised WAV (425 Hz, 1 s on / 4 s off, 16 kHz mono, 10 ms ramps) through the call session, so it follows the call route (earpiece when the phone is at the ear) and ignores the silent switch like any call audio.
+- **Android (`MknoonOutgoingCallRingback`, bridge cases `startRingback`/`stopRingback`, runtime wiring in `MknoonCallAndroidRuntime`):** one best-effort `ToneGenerator(STREAM_VOICE_CALL, 70).startTone(TONE_SUP_RINGTONE)` session keyed by the Dart call handle (works with or without a Telecom connection); the runtime's native answer/terminal path (`stopIncomingRinger` hook) also stops it. Diag tag `MknoonCallRingback`.
+
+## TDD rows
+
+| Row | RED | GREEN | Evidence |
+|---|---|---|---|
+| Dart `call_ringback_coordinator_test.dart` (9) + `call_ringback_channel_test.dart` (6) | files missing: `Type 'CallRingbackCoordinator' not found`, `Undefined name 'MethodChannelCallRingbackPort'` | 15/15 | `dart_ringback_red_2026-09-05.txt`, `dart_ringback_green_2026-09-05.txt` |
+| Kotlin `MknoonOutgoingCallRingbackTest` (4) + `MknoonCallNativeBridgeRingbackTest` (2) | `Unresolved reference 'MknoonOutgoingCallRingback'`, `No parameter with name 'ringbackStarter'` | 4/4 + 2/2; call-package JVM suite 13 suites, 122 tests, 0 failures | `kotlin_ringback_red_2026-09-05.txt`, `kotlin_ringback_green_2026-09-05.txt` |
+| Swift lifecycle ×5 (`testRingbackWaitsForCallKitToActivateTheOutgoingCallAudio`, `…PlaysAtOnceOnAnActivatedSessionAndStopsExactlyOnce`, `…IsRefusedForIncomingUnknownAndTerminalCalls`, `testMediaClaimAndTerminalStopTheRingbackWithoutDart`, `testDeactivationSilencesTheRingbackAndReactivationResumesIt`) + bridge ×1 | `cannot find type 'MknoonCallRingbackPlaying'`, `extra argument 'ringback'` | lifecycle suite 52 tests / 0 failures, bridge suite 12 / 0 | `swift_ringback_red_2026-09-05.txt`, `swift_ringback_green_2026-09-05.txt` |
+
+## Gates
+
+- `tdd_context.py affected` names `call_signaling_composition_test`, `production_call_signaling_graph_diagnostics_test`, `production_call_signaling_graph_live_call_guard_test` plus the two new files: 92/92 (`dart_affected_2026-09-05.txt`).
+- New Dart tests registered in `ONE_TO_ONE_TESTS` and `ONE_TO_ONE_HOST_TESTS` (also the previously unregistered `ios_call_wake_channel_test.dart` from plan 400 (b)).
+- `flutter analyze` on the changed files: 0 issues; `dart format` clean.
+- Host `1to1` batch (`--batch-flutter --concurrency 4`): PASS, 194 test paths, 3323 passed / 4 skipped / 0 failed (`host_1to1_batch_ringback_2026-09-05.txt`).
+- Architecture graph refreshed (`--incremental`).
+
+## Device proof (user-driven)
+
+1. iPhone 11 → iPhone 13 (locked and unlocked) and iPhone 11 → Pixel: after the far end starts ringing, the iPhone 11 earpiece plays the 425 Hz cadence until the callee answers; the tone stops within a second of the answer and never overlaps the voice. Syslog: `[MKNOON_CALLKIT_DIAG] ringback=started` … `ringback=stopped reason=media` (answered) or `reason=terminal` (cancelled/timeout). Flow log: `CALL_RINGBACK_RESULT {"action":"start","outcome":"ok"}` then `{"action":"stop","outcome":"ok"}`.
+2. Pixel → iPhone: the Pixel plays the platform ringback tone on the voice-call stream; logcat tag `MknoonCallRingback` shows `ringback stage=start result=playing` then `stage=stop result=stopped` (or `stage=lifecycle` when Telecom ends the call first).
+3. Cancel from the caller while ringing: tone stops at once, nothing rings on after hang-up.
+4. Speaker/headset route during ringing: the tone follows the route.
+
+## Known limits
+
+- The tone cadence is fixed (European 425 Hz 1/4 s) on iOS; Android uses the platform's regional `TONE_SUP_RINGTONE`.
+- No ringback while `inviting` (before the callee confirms ringing). If the callee is unreachable the caller stays silent until the ring timeout, as before.

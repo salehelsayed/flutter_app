@@ -153,6 +153,8 @@ internal class MknoonCallNativeBridge(
     private val beforeAttach: (() -> Unit)? = null,
     private val authenticatedPresenter: ((String, Long) -> Boolean)? = null,
     private val authenticatedOutgoingRegistrar: ((String, Long) -> Boolean)? = null,
+    private val ringbackStarter: ((String) -> Boolean)? = null,
+    private val ringbackStopper: ((String) -> Boolean)? = null,
     private val mainHandler: Handler = Handler(Looper.getMainLooper()),
     private val registrationExecutor: Executor? = null,
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
@@ -209,6 +211,8 @@ internal class MknoonCallNativeBridge(
             "setCapabilityEnabled" -> setCapabilityEnabled(call.arguments, result)
             "readCapability" -> readCapability(call.arguments, result)
             "failClosed" -> failClosed(call.arguments, result)
+            "startRingback" -> withRingbackHandle(call.arguments, result, ringbackStarter)
+            "stopRingback" -> withRingbackHandle(call.arguments, result, ringbackStopper)
             else -> result.notImplemented()
         }
     }
@@ -673,6 +677,27 @@ internal class MknoonCallNativeBridge(
         (value as? String)?.let { text ->
             PendingNativeCallAcknowledgement.entries.singleOrNull { it.name == text }
         }
+
+    /**
+     * Ringback (the caller-side ringing tone) is keyed by the Dart call handle
+     * rather than a native call id: the tone must work even when no Telecom
+     * connection exists, and a stale stop must never silence a later call.
+     */
+    private fun withRingbackHandle(
+        arguments: Any?,
+        result: MethodChannel.Result,
+        operation: ((String) -> Boolean)?,
+    ) {
+        val map = arguments as? Map<*, *> ?: return badArguments(result)
+        if (map.keys != setOf("version", "callHandle") || !validVersion(map["version"])) {
+            return badArguments(result)
+        }
+        val callHandle = map["callHandle"] as? String ?: return badArguments(result)
+        if (callHandle.length != 36 || runCatching { UUID.fromString(callHandle) }.isFailure) {
+            return badArguments(result)
+        }
+        result.success(operation?.invoke(callHandle) == true)
+    }
 
     private fun validVersion(value: Any?): Boolean = parseLong(value) == VERSION.toLong()
 

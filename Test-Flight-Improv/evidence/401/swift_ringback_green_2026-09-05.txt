@@ -1,0 +1,14 @@
+=== GREEN 2026-09-05T13:47:40Z: RunnerTests/MknoonCallKitLifecycleTests + MknoonCallNativeBridgeTests with ringback ===
+simulator: 674DFFF6-5F38-4235-93F6-AF7FBF86AE65
+	 Executed 52 tests, with 0 failures (0 unexpected) in 0.101 (0.151) seconds
+	 Executed 52 tests, with 0 failures (0 unexpected) in 0.101 (0.151) seconds
+	 Executed 52 tests, with 0 failures (0 unexpected) in 0.101 (0.152) seconds
+** TEST SUCCEEDED **
+exit=0
+--- bridge suite
+simulator: 674DFFF6-5F38-4235-93F6-AF7FBF86AE65
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.055 (0.061) seconds
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.055 (0.061) seconds
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.055 (0.061) seconds
+** TEST SUCCEEDED **
+exit=0
