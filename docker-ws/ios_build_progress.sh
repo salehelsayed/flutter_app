@@ -5,7 +5,10 @@
 cd /Volumes/CrucialX9/flutter_app
 echo "now: $(date '+%H:%M:%S')"
 echo "=== build processes ==="
-ps -eo pid,etime,comm | grep -Ei "xcodebuild|flutter|dart|swift-frontend|clang|ld$" | grep -v grep | head -12
+# Only real compile/link work counts as busy. A bare `dart`/`flutter`
+# match caught long-lived analyzer and test processes under the SDK and
+# hung every wait loop built on this probe (2026-09-05 21:07-21:18Z).
+ps -eo pid,etime,comm | grep -Ei "xcodebuild|swift-frontend|clang|ld$|Xcode.app" | grep -v grep | head -12
 echo "=== files touched under build/ios in the last 3 minutes ==="
 find build/ios -type f -newermt '-3 minutes' 2>/dev/null | wc -l
 find build/ios -type f -newermt '-3 minutes' 2>/dev/null | tail -5

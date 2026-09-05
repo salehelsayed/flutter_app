@@ -1,0 +1,32 @@
+=== plan 406 deploy (missed-call notification + killed-app history row) ===
+started 2026-09-05T21:05:43Z at bcb472b82, finished 2026-09-05T21:19:30Z
+
+PIXEL   21071FDF600CSC              OK 1.0.0-bcb472b82.d30.t260905230619 (verified)
+IPHONE  00008030-001A6D2801BB802E   OK bundleVersion=260905230619 (verified)
+IPHONE  00008110-00184D622289801E   OK bundleVersion=260905230619 (verified)
+
+Identities kept on all three. The Pixel app is left RUNNING so the alive-app
+missed-call notification can be tested before the killed-app row.
+
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905231926
+
+=== artifact gate (checked on the Mac before install) ===
+build/ios/iphoneos/Runner.app/Runner  38728176 bytes, built 23:08 local
+  BridgeGenerateIdentity            present (Go bridge linked)
+  "Missed voice call" in App.framework/App  present
+
+=== incident: the wait loop hung on its own busy check ===
+The iOS build finished at 21:08Z but deploy_406_chain.sh spun until 21:18Z.
+docker-ws/ios_build_progress.sh matched "dart" when reporting build processes,
+and five long-lived dartvm processes from earlier test runs (etime 1h31m) under
+~/development/flutter-3.47.2 kept the busy count above zero forever. The
+pattern now matches only real compile/link work
+(xcodebuild|swift-frontend|clang|ld$|Xcode.app).
+
+Lesson: a liveness probe must match the WORK, not the toolchain. A test or
+analyzer process living under the same SDK looks identical to a build unless
+the pattern names the compiler.
+
+Second lesson (repeat of a known landmine): `pkill -f <pattern>` kills the
+issuing shell when the pattern appears in its own command line. Resolve pids
+with ps/awk and kill those instead.
