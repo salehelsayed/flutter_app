@@ -1,1 +1,32 @@
 === host 1to1 batch 2026-09-05T16:36:13Z — plan 402 (b)(c)(d): headless terminate, ended-call retirement, wake receipt ===
+[FLOW] {"ts":"2026-09-05T16:37:53.727763Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_START","details":{"contactPeerId":"12D3KooWCo","pageSize":50,"hasCursor":false}}
+[FLOW] {"ts":"2026-09-05T16:37:53.736053Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_SUCCESS","details":{"count":1}}
+[FLOW] {"ts":"2026-09-05T16:37:53.736453Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_MESSAGES_LOADED","details":{"count":1}}
+[FLOW] {"ts":"2026-09-05T16:37:53.770721Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"att-del","action":"delete","outcome":"success","owner":"direct"}}
++3326 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: 231 direct received media actions bubble and viewer media egress use controller with zero delivery calls
+[FLOW] {"ts":"2026-09-05T16:37:53.811860Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_SCREEN_INIT","details":{}}
+[FLOW] {"ts":"2026-09-05T16:37:53.812110Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_START","details":{"contactPeerId":"12D3KooWCo","pageSize":50,"hasCursor":false}}
+[FLOW] {"ts":"2026-09-05T16:37:53.820830Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_SUCCESS","details":{"count":1}}
+[FLOW] {"ts":"2026-09-05T16:37:53.821098Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_MESSAGES_LOADED","details":{"count":1}}
+[FLOW] {"ts":"2026-09-05T16:37:53.911310Z","milestone":"M1_IDENTITY_INIT","layer":"UI","event":"MEDIA_VIEWER_ACTION","details":{"attachmentId":"att-egre","action":"share","outcome":"success","owner":"direct"}}
++3327 ~4: /Volumes/CrucialX9/flutter_app/test/features/conversation/presentation/screens/conversation_wired_test.dart: TC-361-03b linked runtime starts only direct blob-free event owners — the restricted conversation surface refuses media and voice authoring while the default gate keeps the incumbent full surface
+[FLOW] {"ts":"2026-09-05T16:37:53.974527Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_SCREEN_INIT","details":{}}
+[FLOW] {"ts":"2026-09-05T16:37:53.974776Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_START","details":{"contactPeerId":"12D3KooWCo","pageSize":50,"hasCursor":false}}
+[FLOW] {"ts":"2026-09-05T16:37:53.985050Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_SUCCESS","details":{"count":0}}
+[FLOW] {"ts":"2026-09-05T16:37:53.985334Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_MESSAGES_LOADED","details":{"count":0}}
+[FLOW] {"ts":"2026-09-05T16:37:53.989230Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_MODALITY_GATE_VOICE_REFUSED","details":{}}
+[FLOW] {"ts":"2026-09-05T16:37:54.007044Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_SCREEN_INIT","details":{}}
+[FLOW] {"ts":"2026-09-05T16:37:54.007342Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_START","details":{"contactPeerId":"12D3KooWCo","pageSize":50,"hasCursor":false}}
+[FLOW] {"ts":"2026-09-05T16:37:54.016897Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_SUCCESS","details":{"count":0}}
+[FLOW] {"ts":"2026-09-05T16:37:54.017142Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_MESSAGES_LOADED","details":{"count":0}}
+[FLOW] {"ts":"2026-09-05T16:37:54.021122Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_MODALITY_GATE_MEDIA_REFUSED","details":{}}
+[FLOW] {"ts":"2026-09-05T16:37:54.034054Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_SCREEN_INIT","details":{}}
+[FLOW] {"ts":"2026-09-05T16:37:54.034316Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_START","details":{"contactPeerId":"12D3KooWCo","pageSize":50,"hasCursor":false}}
+[FLOW] {"ts":"2026-09-05T16:37:54.044211Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CHAT_MSG_LOAD_PAGE_SUCCESS","details":{"count":0}}
+[FLOW] {"ts":"2026-09-05T16:37:54.044460Z","milestone":"M1_IDENTITY_INIT","layer":"FL","event":"CONV_FL_MESSAGES_LOADED","details":{"count":0}}
++3339 ~4: 4 skipped tests.
++3339 ~4: All other tests passed!
+PASS: Flutter batch (195 test paths)
+
+PASS: host tests completed for scope: 1to1
+lane exit=0
