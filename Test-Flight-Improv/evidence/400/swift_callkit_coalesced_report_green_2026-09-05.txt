@@ -1,0 +1,54 @@
+=== GREEN 2026-09-05T11:34:17Z: full RunnerTests/MknoonCallKitLifecycleTests after 'coalesced presentation reports again only for PushKit' ===
+simulator: 674DFFF6-5F38-4235-93F6-AF7FBF86AE65
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAnswerAdoptionBoundIgnoresOtherCalls]' passed (0.005 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAnswerBeforeFlutterPersistsAndReplaysOnceInOrder]' passed (0.004 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAnswerConfiguresTheCallAudioSessionBeforeFulfilment]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAnswerConsumedByTheRuntimeIsNotEndedAtTheAdoptionBound]' passed (0.003 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAnswerNobodyConsumesEndsTheCallAtTheAdoptionBound]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAnswerThenExpiryBeforeAttachmentCannotBeRevivedAndTerminalAckDeletesOnce]' passed (0.007 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAnswerThenRemoteCancelBeforeAttachmentCannotBeRevivedAndTerminalAckDeletesOnce]' passed (0.004 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAttachSweepsTerminalOnlyAfterBoundedReplayDeadline]' passed (0.012 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAudioRequiresAnswerAndCallKitActivationThenSerializesRouteAndDeactivation]' passed (0.002 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAudioRouteStateAndRequestsUseExactDartCanonicalWireNames]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAuthenticatedPresentationAcceptsExactPeerClockSkewBudget]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAuthenticatedPresentationPreservesNearerExpiry]' passed (0.000 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAuthenticatedPresentationRejectsAlreadyExpiredSignal]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAuthenticatedPresentationRejectsBeyondPeerClockSkewBudget]' passed (0.000 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAuthenticatedPresentationRetriesMatchingUnpresentedDescriptor]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAuthenticatedPresentationToleratesPeerClockSkewAndBoundsLocalExpiry]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testAuthenticatedReceiptReplayCannotClaimPresentationWithoutCallKit]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testBusySecondCallIsRejectedWithoutSecondCallKitReport]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testCallerNameComesOnlyFromProtectedOpaqueMappingAndCanUpdate]' passed (0.003 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testCapabilityDisableAttemptsRegistryAndFailsCurrentCallWhenDurabilityFails]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testCapabilityDisablePersistsAndFailsCurrentCallDespiteRegistryHandlerFailure]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testCapabilityEnableStillRequiresDurabilityBeforeRegistration]' passed (0.000 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testConcurrentPushKitAndAuthenticatedPresentationCoalesceOneCallKitReportAndOnePresentedEvent]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testConnectedOutgoingSurvivesRegistrationExpiryAcrossControllerRecreation]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testConnectedProjectionFailsClosedBeforeReportingWhenMarkerCannotPersist]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testDeclineEndRemoteCancelAndDartRaceConvergeOnOneTerminal]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testExpiredDescriptorOnColdLaunchEndsWithoutRestoringRinging]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testInterruptionNotificationsSerializeDeactivationAndEndedRoute]' passed (0.008 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testLegacyDisabledPushWithSurvivingActiveDescriptorReportsExistingUuid]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testLegacyMalformedPushDuringActiveCallReportsExistingUuidAndPreservesOnError]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testLegacyRequiredBusyPushAttemptsExistingUuidWithoutSecondDescriptor]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testMediaServicesResetNotificationSerializesDeactivationAndRoute]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testMetadataRequiredBusyPushReportsAndEndsDistinctUuidPreservingActiveCall]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testMuteStateRehydratesAcrossProcessRecreationForMuteAndUnmute]' passed (0.014 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testOpaqueContactCanPublishAndRevokeWithoutCallDescriptor]' passed (0.000 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testOutgoingPresentedAdoptedCallKitActivationAllowsMediaClaimWithoutAnswer]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testProviderResetAndAudioJournalFailuresFailClosedWithoutMemoryOnlySuccess]' passed (0.005 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testProviderResetSerializesOneTerminalAndNotifiesDartOnce]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testPushKitPresentationDuringAnInFlightAuthenticatedReportStillReportsToCallKit]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testReportsExactlyOneIncomingCallAndDuplicateAdoptsSameUUID]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testRequiredInvalidComplianceReportIsEphemeralAndWaitsToEndUntilSuccess]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testReturnWakeForRegisteredOutgoingPreservesOutgoingDescriptorWithoutIncomingUi]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testRouteChangeNotificationSerializesAndPersistenceFailureFailsClosed]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testSuccessfulLegacyBusyReportRaceEndsAndFailsMatchingActiveCall]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testSuccessfulReturnWakeReportForRegisteredOutgoingDoesNotEndCall]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testUnconnectedOutgoingStillExpiresAcrossControllerRecreation]' passed (0.001 seconds).
+Test Case '-[RunnerTests.MknoonCallKitLifecycleTests testUnpresentedDuplicateRetriesSameUuidAcrossBothCrashWindows]' passed (0.001 seconds).
+	 Executed 47 tests, with 0 failures (0 unexpected) in 0.095 (0.173) seconds
+	 Executed 47 tests, with 0 failures (0 unexpected) in 0.095 (0.173) seconds
+	 Executed 47 tests, with 0 failures (0 unexpected) in 0.095 (0.178) seconds
+** TEST SUCCEEDED **
+exit=0

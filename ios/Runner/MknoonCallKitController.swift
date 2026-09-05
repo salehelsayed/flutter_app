@@ -398,9 +398,19 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         )
         return
       }
-      reportIncoming(payload, acceptsAlreadyReportedCall: true, completion: completion)
+      reportIncoming(
+        payload,
+        acceptsAlreadyReportedCall: true,
+        reportRequired: reportPolicy != .notRequired,
+        completion: completion
+      )
     case .created:
-      reportIncoming(payload, acceptsAlreadyReportedCall: false, completion: completion)
+      reportIncoming(
+        payload,
+        acceptsAlreadyReportedCall: false,
+        reportRequired: reportPolicy != .notRequired,
+        completion: completion
+      )
     }
   }
 
@@ -1095,6 +1105,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private func reportIncoming(
     _ payload: VoipWakePayload,
     acceptsAlreadyReportedCall: Bool,
+    reportRequired: Bool,
     completion: @escaping (MknoonCallPresentationResult) -> Void
   ) {
     let shouldReport = synchronized {
@@ -1111,12 +1122,20 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     }
     let update = incomingUpdate(for: payload)
     guard shouldReport else {
-      // PushKit requires a CallKit report inside every delegate invocation,
-      // even when the same call is already being reported (the relay signal
-      // and the VoIP push race). Report the same UUID again: CallKit answers
-      // "already exists" while the first report is live, and the first
-      // report's completion settles every waiter. Should this duplicate
-      // outlive a failed first report, it must not leave a ghost call ringing.
+      // The first report's completion settles every coalesced waiter, so a
+      // presentation that arrives while the same call is still being
+      // reported (the relay signal and the VoIP push race) needs no CallKit
+      // report of its own: one report, one presented event. A PushKit
+      // delivery is the exception. PushKit requires a CallKit report inside
+      // every delegate invocation, so report the same UUID again: CallKit
+      // answers "already exists" while the first report is live. Should
+      // this duplicate outlive a failed first report, it must not leave a
+      // ghost call ringing.
+      mknoonCallKitDiag(
+        "[MKNOON_CALLKIT_DIAG] presentation=coalesced report="
+          + (reportRequired ? "pushkit" : "none")
+      )
+      guard reportRequired else { return }
       provider.reportNewIncomingCall(with: payload.nativeCallId, update: update) {
         [weak self] error in
         guard let self, error == nil else { return }

@@ -126,7 +126,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     var pushResult: MknoonCallPresentationResult?
     var authenticatedResult: Bool?
 
-    rig.controller.presentIncoming(payload(callA)) { pushResult = $0 }
+    rig.controller.presentIncoming(payload(callA), reportRequired: true) { pushResult = $0 }
     rig.controller.presentAuthenticated(
       callHandle: callA.uuidString.lowercased(),
       expiresAtMs: now + 30_000
@@ -141,6 +141,46 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(pushResult, .presented)
     XCTAssertEqual(authenticatedResult, true)
     XCTAssertEqual(rig.store.snapshot()?.events.map(\.type), [.presented])
+  }
+
+  func testPushKitPresentationDuringAnInFlightAuthenticatedReportStillReportsToCallKit() {
+    let rig = makeRig()
+    rig.provider.delayedReportCompletion = { _ in }
+    var authenticatedResult: Bool?
+    var pushResult: MknoonCallPresentationResult?
+
+    rig.controller.presentAuthenticated(
+      callHandle: callA.uuidString.lowercased(),
+      expiresAtMs: now + 30_000
+    ) { authenticatedResult = $0 }
+    rig.controller.presentIncoming(payload(callA), reportRequired: true) { pushResult = $0 }
+
+    XCTAssertEqual(
+      rig.provider.incomingReports.map(\.0), [callA, callA],
+      "PushKit needs a CallKit report inside its own delegate invocation"
+    )
+    XCTAssertNil(authenticatedResult)
+    XCTAssertNil(pushResult)
+    guard rig.provider.delayedReportCompletions.count == 2 else {
+      return XCTFail(
+        "expected two in-flight CallKit reports, got \(rig.provider.delayedReportCompletions.count)"
+      )
+    }
+
+    rig.provider.delayedReportCompletions[0](nil)
+
+    XCTAssertEqual(authenticatedResult, true)
+    XCTAssertEqual(pushResult, .duplicate)
+    XCTAssertEqual(rig.store.snapshot()?.events.map(\.type), [.presented])
+
+    rig.provider.delayedReportCompletions[1](NSError(
+      domain: CXErrorDomainIncomingCall,
+      code: CXErrorCodeIncomingCallError.Code.callUUIDAlreadyExists.rawValue
+    ))
+
+    XCTAssertTrue(rig.provider.endReports.isEmpty)
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    XCTAssertEqual(rig.store.snapshot()?.presented, true)
   }
 
   func testAuthenticatedReceiptReplayCannotClaimPresentationWithoutCallKit() throws {
@@ -992,6 +1032,7 @@ final class FakeCallProvider: MknoonCallProviding {
   var outgoingConnected: [UUID] = []
   var nextReportError: Error?
   var delayedReportCompletion: ((Error?) -> Void)?
+  var delayedReportCompletions: [(Error?) -> Void] = []
 
   func setDelegate(_ delegate: CXProviderDelegate?, queue: DispatchQueue?) {
     self.delegate = delegate
@@ -1007,6 +1048,7 @@ final class FakeCallProvider: MknoonCallProviding {
       completion(nextReportError)
     } else {
       delayedReportCompletion = completion
+      delayedReportCompletions.append(completion)
     }
   }
 

@@ -1,0 +1,11 @@
+=== MUTATION RED 2026-09-05T11:31:39Z: reportIncoming coalesced branch with 'guard !reportRequired' (PushKit duplicate report dropped, authenticated one kept) ===
+test: testPushKitPresentationDuringAnInFlightAuthenticatedReportStillReportsToCallKit
+simulator: 674DFFF6-5F38-4235-93F6-AF7FBF86AE65
+ios/RunnerTests/MknoonCallKitLifecycleTests.swift:158: error: -[RunnerTests.MknoonCallKitLifecycleTests testPushKitPresentationDuringAnInFlightAuthenticatedReportStillReportsToCallKit] : XCTAssertEqual failed: ("[123E4567-E89B-42D3-A456-426614174000]") is not equal to ("[123E4567-E89B-42D3-A456-426614174000, 123E4567-E89B-42D3-A456-426614174000]") - PushKit needs a CallKit report inside its own delegate invocation
+ios/RunnerTests/MknoonCallKitLifecycleTests.swift:162: error: -[RunnerTests.MknoonCallKitLifecycleTests testPushKitPresentationDuringAnInFlightAuthenticatedReportStillReportsToCallKit] : XCTAssertEqual failed: ("1") is not equal to ("2")
+Swift/ContiguousArrayBuffer.swift:692: Fatal error: Index out of range
+2026-09-05 13:33:05.168974+0200 Runner[97981:5250719] Swift/ContiguousArrayBuffer.swift:692: Fatal error: Index out of range
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+** TEST FAILED **
+exit=65
