@@ -196,16 +196,40 @@ internal class PendingNativeCallStore(
                 }
 
                 is StoredState.Valid -> {
-                    if (state.descriptor.matches(payload, direction)) {
-                        PendingNativeCallCreateResult.Duplicate(state.descriptor)
-                    } else {
-                        PendingNativeCallCreateResult.Busy(state.descriptor)
+                    val current = state.descriptor
+                    when {
+                        current.matches(payload, direction) ->
+                            PendingNativeCallCreateResult.Duplicate(current)
+                        current.terminalEvent != null -> {
+                            // An ended call never blocks the next one. Headless admission
+                            // presents without a Dart owner, so nobody acknowledges its
+                            // terminal; retire it exactly as a terminal acknowledgement
+                            // would (receipt, then deletion) so a late acknowledgement
+                            // still succeeds and its wake stays a duplicate.
+                            if (retireEndedLocked(current)) {
+                                createReplacingState(payload, direction)
+                            } else {
+                                PendingNativeCallCreateResult.PersistenceFailure
+                            }
+                        }
+                        else -> PendingNativeCallCreateResult.Busy(current)
                     }
                 }
 
                 StoredState.Invalid -> PendingNativeCallCreateResult.PersistenceFailure
             }
         }
+
+    private fun retireEndedLocked(descriptor: PendingNativeCallDescriptor): Boolean {
+        val observedNow = safeNow() ?: return false
+        val receipt = PendingNativeCallAcknowledgementReceipt(
+            nativeCallId = descriptor.nativeCallId,
+            callHandleDigest = callHandleDigest(descriptor.callHandle) ?: return false,
+            highestConsumedSequence = descriptor.highestSequence,
+            expiresAtMs = saturatingAdd(observedNow, ACKNOWLEDGEMENT_RECEIPT_TTL_MS),
+        )
+        return commitReceipt(receipt) && deleteCommitted()
+    }
 
     override fun append(
         nativeCallId: UUID,

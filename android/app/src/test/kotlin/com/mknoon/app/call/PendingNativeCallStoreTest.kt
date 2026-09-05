@@ -3,6 +3,7 @@ package com.mknoon.app.call
 import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +35,72 @@ class PendingNativeCallStoreTest {
         assertTrue(backend.maximumCommittedBytes <= PendingNativeCallStore.MAX_RECORD_BYTES)
         assertEquals(32, PendingNativeCallStore.MAX_EVENTS)
         assertEquals(8 * 1024, PendingNativeCallStore.MAX_RECORD_BYTES)
+    }
+
+    @Test
+    fun `an ended call never blocks the next call and leaves its terminal receipt`() {
+        // Headless admission presents without any Dart owner; nobody acknowledges
+        // the terminal, and the ended call's descriptor stayed on disk and made
+        // every later presentation BUSY (device 2026-09-05 16:11Z: a locked Pixel
+        // decrypted the next invite and rang nothing).
+        val backend = InMemoryPendingNativeCallBackend()
+        val store = store(backend)
+        created(store.create(payloadA()))
+        appended(store.append(NATIVE_CALL_ID_A, PendingNativeCallEventType.PRESENTED))
+        val ended = appended(
+            store.append(NATIVE_CALL_ID_A, PendingNativeCallEventType.REMOTE_CANCELLED),
+        ).descriptor
+        assertNotNull(ended.terminalEvent)
+
+        val next = created(store.create(payloadB())).descriptor
+        assertEquals(NATIVE_CALL_ID_B, next.nativeCallId)
+        assertEquals(next, store.snapshot())
+
+        // A late terminal acknowledgement for the replaced call still succeeds
+        // through its receipt, and its wake can never be presented again.
+        assertTrue(
+            store.acknowledge(
+                NATIVE_CALL_ID_A,
+                ended.highestSequence,
+                PendingNativeCallAcknowledgement.TERMINAL,
+            ),
+        )
+        assertEquals(next, store.snapshot())
+        duplicate(store.create(payloadA()))
+    }
+
+    @Test
+    fun `a live call still makes another call busy`() {
+        val store = store(InMemoryPendingNativeCallBackend())
+        created(store.create(payloadA()))
+        appended(store.append(NATIVE_CALL_ID_A, PendingNativeCallEventType.PRESENTED))
+
+        busy(store.create(payloadB()))
+    }
+
+    @Test
+    fun `controller presents the next call after a headless call ended`() {
+        val operations = mutableListOf<String>()
+        val controller = MknoonCallLifecycleController(
+            store = store(InMemoryPendingNativeCallBackend()),
+            platform = LifecycleFakePlatform(operations),
+            eventSink = LifecycleFakeEventSink(operations),
+            capabilityEnabled = { true },
+            recordAudioPermissionGranted = { true },
+            nowMs = { NOW_MS },
+            onPresented = { _, _ -> },
+            onSettled = { },
+            onCleanupPending = { },
+            diagnosticSink = LifecycleFakeDiagnosticSink(),
+        )
+
+        assertEquals(MknoonCallPresentationResult.PRESENTED, controller.present(payloadA()))
+        assertTrue(
+            controller.terminate(NATIVE_CALL_ID_A, PendingNativeCallEventType.REMOTE_CANCELLED),
+        )
+
+        assertEquals(MknoonCallPresentationResult.PRESENTED, controller.present(payloadB()))
+        assertEquals(NATIVE_CALL_ID_B, controller.snapshot()?.nativeCallId)
     }
 
     @Test

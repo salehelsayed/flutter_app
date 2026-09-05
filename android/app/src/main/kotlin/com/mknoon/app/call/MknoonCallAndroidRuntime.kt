@@ -52,6 +52,7 @@ internal const val MKNOON_CALL_LIFECYCLE_DIAGNOSTIC_PREFIX = "CALL_ANDROID_LIFEC
 internal const val MKNOON_TELECOM_DISCONNECT_DIAGNOSTIC_TAG = "MknoonCallDisconnect"
 internal const val MKNOON_TELECOM_DISCONNECT_DIAGNOSTIC_PREFIX = "CALL_ANDROID_DISCONNECT"
 internal const val MKNOON_CALL_RINGTONE_DIAGNOSTIC_TAG = "MknoonCallRingtone"
+internal const val MKNOON_CALL_PRESENTATION_DIAGNOSTIC_TAG = "MknoonCallPresentation"
 internal const val MKNOON_CALL_RINGTONE_DIAGNOSTIC_PREFIX = "MKNOON_CALL_RINGTONE_DIAG"
 
 internal enum class MknoonTelecomDisconnectSource(
@@ -274,7 +275,12 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             }?.let {
                 return@synchronized MknoonCallPresentationResult.DUPLICATE
             }
-            controller.present(payload)
+            controller.present(payload).also { result ->
+                android.util.Log.i(
+                    MKNOON_CALL_PRESENTATION_DIAGNOSTIC_TAG,
+                    "MKNOON_CALL_PRESENTATION_DIAG result=" + result.name,
+                )
+            }
         }
 
     fun presentAuthenticated(callHandle: String, expiresAtMs: Long): Boolean {
