@@ -138,7 +138,14 @@ internal class MknoonCallLifecycleController(
     private val onSettled: (UUID) -> Unit = {},
     private val onTerminated: (UUID, Long) -> Boolean = { _, _ -> true },
     private val onCleanupPending: (UUID) -> Unit = {},
-    private val onDeclineWithoutOwner: (PendingNativeCallDescriptor) -> Unit = {},
+    /**
+     * Plan 404: a natively declined call with no adopted Dart lifecycle. Asked
+     * before native cleanup; a `true` answer means a reply run will release
+     * the call foreground service, so cleanup must not stop it (device
+     * 2026-09-05 18:46Z: the STOP queued here tore the service down before
+     * the reply's admission command behind it was delivered).
+     */
+    private val onDeclineWithoutOwner: (PendingNativeCallDescriptor) -> Boolean = { false },
     private val diagnosticSink: MknoonCallLifecycleDiagnosticSink =
         MknoonCallLifecycleDiagnosticSink { _ -> },
     private val terminalAckTimeoutMs: Long = TERMINAL_ACK_TIMEOUT_MS,
@@ -1077,18 +1084,21 @@ internal class MknoonCallLifecycleController(
             cleanup.ringtoneStopAttempted = true
             runCatching { platform.stopIncomingRinger(nativeCallId) }
         }
-        performCleanup(cleanup)
-        if (event != null) emitIfAttached(event)
         if (
             type == PendingNativeCallEventType.DECLINE_REQUESTED &&
             firstDurableTerminal &&
             adoptedBefore == null &&
-            descriptorBefore != null
+            descriptorBefore != null &&
+            !cleanup.foregroundComplete &&
+            runCatching { onDeclineWithoutOwner(descriptorBefore) }.getOrDefault(false)
         ) {
             // Plan 404: no Dart lifecycle owns this call, so nobody would send
-            // the caller its reject; the headless decline reply does.
-            runCatching { onDeclineWithoutOwner(descriptorBefore) }
+            // the caller its reject; the headless decline reply does, and it
+            // keeps the foreground service until its run is finished.
+            cleanup.foregroundComplete = true
         }
+        performCleanup(cleanup)
+        if (event != null) emitIfAttached(event)
 
         cleanupState = if (cleanup.complete && cleanup.terminalPersisted) null else cleanup
         if (cleanupState != null) {

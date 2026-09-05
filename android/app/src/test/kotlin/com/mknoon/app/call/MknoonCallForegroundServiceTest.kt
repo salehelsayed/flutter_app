@@ -205,6 +205,40 @@ class MknoonCallForegroundServiceTest {
         assertTrue(runtime.stops.isEmpty())
     }
 
+    // Plan 404 (c): a declined headless call keeps its foreground service for
+    // the decline reply. The reply's admission command re-enters admission on
+    // the ringing service once the lifecycle is over; the reply worker's STOP
+    // then releases it exactly once.
+    @Test
+    fun `a declined headless call re-enters admission for its reply and stops once`() {
+        val runtime = RecordingForegroundRuntime()
+        val service = MknoonCallForegroundService(runtime = runtime)
+        val callId = UUID.fromString(CALL_ID)
+        val admission = serviceIntent(MknoonCallForegroundService.ACTION_START_ADMISSION, callId)
+        val ringing = serviceIntent(MknoonCallForegroundService.ACTION_START_RINGING, callId)
+        val stop = serviceIntent(MknoonCallForegroundService.ACTION_STOP, callId)
+
+        service.onStartCommand(admission, 0, 1)
+        service.onStartCommand(ringing, 0, 2)
+        assertEquals(listOf(callId), runtime.admissionStarts)
+        // Still ringing: a late admission command stays ignored.
+        service.onStartCommand(admission, 0, 3)
+        assertEquals(listOf(callId), runtime.admissionStarts)
+
+        runtime.lifecycleActive = false
+        assertEquals(Service.START_NOT_STICKY, service.onStartCommand(admission, 0, 4))
+        assertEquals(listOf(callId, callId), runtime.admissionStarts)
+        assertTrue(runtime.stops.isEmpty())
+        // A second reply command while already in admission does nothing more.
+        service.onStartCommand(admission, 0, 5)
+        assertEquals(listOf(callId, callId), runtime.admissionStarts)
+
+        service.onStartCommand(stop, 0, 6)
+        service.onStartCommand(stop, 0, 7)
+        assertEquals(listOf(callId), runtime.stops)
+        assertTrue(runtime.startFailures.isEmpty())
+    }
+
     private fun serviceIntent(action: String, nativeCallId: UUID): Intent =
         Intent(action).putExtra(
             MknoonCallForegroundService.EXTRA_NATIVE_CALL_ID,
@@ -220,6 +254,9 @@ private class RecordingForegroundRuntime : MknoonCallForegroundRuntime {
     val stops = mutableListOf<UUID>()
     val startFailures = mutableListOf<UUID>()
     var audioActive = false
+    var lifecycleActive = true
+
+    override fun isActiveLifecycle(nativeCallId: UUID): Boolean = lifecycleActive
 
     override fun isAudioActive(nativeCallId: UUID): Boolean = audioActive
 

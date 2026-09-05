@@ -1,0 +1,8 @@
+=== plan 404 (c2) Kotlin RED 2026-09-05T18:57:13Z ===
+141 tests completed, 2 failed
+BUILD FAILED in 12s
+gradle exit: 1
+testcase name="a declined headless call re-enters admission for its reply and stops once"
+failure message="java.lang.AssertionError: expected:&lt;[00000000-0000-4000-8000-000000000401, 00000000-0000-4000-8000-000000000401]&gt; but was:&lt;[00000000-0000-4000-8000-000
+testcase name="a native decline without a Dart owner schedules one headless decline reply"
+failure message="java.lang.AssertionError

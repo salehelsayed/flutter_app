@@ -72,7 +72,13 @@ internal class MknoonCallForegroundService(
 
         when (action) {
             ACTION_START_ADMISSION -> {
-                if (activeCallId == null) {
+                // Plan 404 (c): a ringing call that ended natively re-enters
+                // admission for its decline reply; the reply worker's STOP
+                // releases it (or the admission timeout does).
+                val replyAfterRinging = activeCallId == nativeCallId &&
+                    mode == Mode.RINGING &&
+                    runCatching { !target.isActiveLifecycle(nativeCallId) }.getOrDefault(false)
+                if (activeCallId == null || replyAfterRinging) {
                     if (!startSafely(startId, nativeCallId, target) {
                             target.startAdmission(nativeCallId)
                         }) {
@@ -82,7 +88,7 @@ internal class MknoonCallForegroundService(
                     mode = Mode.ADMISSION
                     scheduleAdmissionTimeout(nativeCallId, startId)
                 }
-                // A call that already rings or is active ignores a late
+                // A call that still rings or is active ignores a late
                 // admission command.
             }
             ACTION_START_RINGING -> {

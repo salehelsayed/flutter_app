@@ -347,6 +347,34 @@ class MknoonCallLifecycleControllerTest {
         )
         assertEquals(rig.payload.expiresAtMs, rig.declineReplies.single().expiresAtMs)
         assertEquals(rig.payload.wakeHandle, rig.declineReplies.single().wakeHandle)
+        // A reply nobody accepted releases the foreground service as usual.
+        assertTrue(rig.operations.contains("platform.stopForeground"))
+
+        // Plan 404 (c), device 2026-09-05 18:46Z: the STOP queued by cleanup
+        // tore the service down before the reply's START_ADMISSION behind it
+        // was delivered, so the reply ran at background priority (9 s). An
+        // accepted reply is asked before native cleanup and keeps the
+        // foreground service; the reply run releases it.
+        val acceptedRig = LifecycleRig().apply { declineReplyAccepted = true }
+        assertEquals(
+            MknoonCallPresentationResult.PRESENTED,
+            acceptedRig.controller.present(acceptedRig.payload),
+        )
+        assertTrue(
+            acceptedRig.controller.terminate(
+                acceptedRig.payload.nativeCallId,
+                PendingNativeCallEventType.DECLINE_REQUESTED,
+            ),
+        )
+        assertEquals(1, acceptedRig.declineReplies.size)
+        assertFalse(acceptedRig.operations.contains("platform.stopForeground"))
+        assertTrue(acceptedRig.operations.contains("platform.end"))
+        assertTrue(acceptedRig.operations.contains("platform.cancelNotification"))
+        assertTrue(acceptedRig.declineReplyAtOperation >= 0)
+        assertTrue(
+            acceptedRig.declineReplyAtOperation <= acceptedRig.operations.indexOf("platform.end"),
+        )
+        assertNull(acceptedRig.controller.activeNativeCallId())
 
         for (
             other in listOf(
@@ -1183,6 +1211,8 @@ internal class LifecycleRig(
     val settled = mutableListOf<UUID>()
     val cleanupPending = mutableListOf<UUID>()
     val declineReplies = mutableListOf<PendingNativeCallDescriptor>()
+    var declineReplyAccepted = false
+    var declineReplyAtOperation = -1
     var capabilityEnabled: Boolean = capabilityEnabled
     var recordAudioGranted: Boolean = recordAudioGranted
     val controller = MknoonCallLifecycleController(
@@ -1197,7 +1227,11 @@ internal class LifecycleRig(
         },
         onSettled = { nativeCallId -> settled += nativeCallId },
         onCleanupPending = { nativeCallId -> cleanupPending += nativeCallId },
-        onDeclineWithoutOwner = { descriptor -> declineReplies += descriptor },
+        onDeclineWithoutOwner = { descriptor ->
+            declineReplies += descriptor
+            declineReplyAtOperation = operations.size
+            declineReplyAccepted
+        },
         diagnosticSink = diagnosticSink,
     )
 }

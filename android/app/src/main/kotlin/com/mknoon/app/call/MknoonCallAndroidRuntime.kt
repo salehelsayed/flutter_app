@@ -9,6 +9,8 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
+import android.os.Looper
+import android.os.Handler
 import android.telecom.DisconnectCause
 import androidx.core.content.ContextCompat
 import androidx.core.telecom.CallAttributesCompat
@@ -154,6 +156,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         private const val STARTUP_CONVERGENCE_RETRY_MS = 250L
         private const val CLEANUP_RETRY_ATTEMPTS = 8
         private const val CLEANUP_RETRY_MS = 250L
+        private const val DECLINE_REPLY_RELEASE_BACKSTOP_MS = 30_000L
         private val AUTHENTICATED_HANDLE = Regex(
             "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
         )
@@ -178,6 +181,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     )
     private val preferences = applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val runtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val declineReplyHandler = Handler(Looper.getMainLooper())
 
     /**
      * Telecom registration waits on the platform callback. Below API 34
@@ -235,12 +239,12 @@ internal class MknoonCallRuntime private constructor(context: Context) {
      * background priority and the reply took 7 s to reach the network
      * (device 2026-09-05 18:23Z). The worker releases the service when done.
      */
-    private fun scheduleHeadlessDeclineReply(descriptor: PendingNativeCallDescriptor) {
+    private fun scheduleHeadlessDeclineReply(descriptor: PendingNativeCallDescriptor): Boolean {
         if (!HeadlessCallAdmissionWorkScheduler(applicationContext).enqueueDeclineReply(descriptor)) {
-            return
+            return false
         }
         if (!BuildConfig.ENABLE_ANDROID_NATIVE_CALLS || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return
+            return false
         }
         val intent = Intent(applicationContext, MknoonCallForegroundService::class.java)
             .setAction(MknoonCallForegroundService.ACTION_START_ADMISSION)
@@ -248,7 +252,17 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                 MknoonCallForegroundService.EXTRA_NATIVE_CALL_ID,
                 descriptor.nativeCallId.toString(),
             )
-        runCatching { applicationContext.startForegroundService(intent) }
+        val started = runCatching { applicationContext.startForegroundService(intent) }.isSuccess
+        if (started) {
+            // Backstop: a reply run that never reaches its release still frees
+            // the service (a STOP for an inactive call is a no-op).
+            val callId = descriptor.nativeCallId.toString()
+            declineReplyHandler.postDelayed(
+                { stopAdmissionForeground(callId) },
+                DECLINE_REPLY_RELEASE_BACKSTOP_MS,
+            )
+        }
+        return started
     }
 
     /** Releases the admission foreground state a decline reply run held. */
