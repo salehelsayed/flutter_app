@@ -1,0 +1,8 @@
+=== plan 402 (b) Pixel redeploy (headless wake binding) started 20260905T160636Z tree=764271e12+wip ===
+  (no logcat)
+Performing Streamed Install
+Success
+PIXEL 21071FDF600CSC OK 1.0.0-764271e12.d11.t260905180701 (verified)
+PIXEL PASS
+pixel deploy exit=0
+=== done 20260905T160753Z ===
