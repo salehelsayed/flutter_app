@@ -1,0 +1,9 @@
+=== plan 402 Pixel redeploy (Android standard call token) started 20260905T154541Z tree=450825ed6+wip ===
+Running Gradle task 'assembleDebug'...                             38.0s
+✓ Built build/app/outputs/flutter-apk/app-debug.apk
+Performing Streamed Install
+Success
+PIXEL 21071FDF600CSC OK 1.0.0-450825ed6.d10.t260905174555 (verified)
+PIXEL PASS
+pixel deploy exit=0
+=== done 20260905T154644Z ===
