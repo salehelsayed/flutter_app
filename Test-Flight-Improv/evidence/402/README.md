@@ -11,4 +11,3 @@
 | `go_wake_receipt_red_2026-09-05.txt` / `…_green_…` | (d) go node + bridge carry the wake outcome |
 | `dart_wake_receipt_red_2026-09-05.txt` / `…_green_…` / `dart_wake_receipt_affected_2026-09-05.txt` | (d) Dart client/service/reducer: dispatched wake rings the caller back |
 | `host_1to1_batch_wake_receipt_2026-09-05.txt` | closure lane after (b)(c)(d) |
-

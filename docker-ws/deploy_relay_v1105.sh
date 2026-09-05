@@ -20,7 +20,7 @@ echo "relay: $(systemctl is-active relay-server) NRestarts=$(systemctl show rela
 LIVE=$(sha256sum /usr/local/bin/relay-server | cut -c1-64); echo "live binary: $LIVE"
 UPLOADED=$(sha256sum /tmp/relay-server-v1105 | cut -c1-64); echo "uploaded binary: $UPLOADED"
 if [ "$UPLOADED" != "$EXPECTED_SHA" ]; then echo "ABORT: uploaded sha mismatch"; exit 2; fi
-if ! grep -a -q '1\.10\.4' /tmp/relay-server-v1105; then echo "ABORT: version probe failed"; exit 2; fi
+if ! grep -a -q '1\.10\.5' /tmp/relay-server-v1105; then echo "ABORT: version probe failed"; exit 2; fi
 curl -s localhost:2112/metrics | grep -aE '^relay_backend_durable|^relay_apns_voip_push_enabled'
 echo "--- install ---"
 BACKUP="/usr/local/bin/relay-server.pre-1.10.5-$STAMP"
