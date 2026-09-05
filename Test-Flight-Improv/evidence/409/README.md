@@ -45,3 +45,15 @@ call sites when only 3 accept it). Use `grep -c "error •"`.
 `dart format` on a whole directory reformatted 34 orbit files under the 3.47.2
 formatter, 31 of them untouched by this work. Format the exact files you
 changed, never a directory.
+
+## Device proof — 2026-09-06 00:49Z
+
+`device_proof_2026-09-06.txt`. The Orbit all-chats row shows the call label in
+place of the older message text, confirmed on the Pixel.
+
+The first look showed nothing and the capture held no `LOAD_ORBIT_DATA_START`.
+A layer census of the capture (FL 956, DB 238, GO 4, **UC 0**) is what made
+that absence meaningful — `flow_event_emitter.dart` does no layer filtering, so
+UC silence proved the code had not run rather than that logging was off. Cause:
+`loadOrbitData` runs on MOUNT, and the screens were open from before the
+deploy. A screen that was already open proves nothing about a new build.

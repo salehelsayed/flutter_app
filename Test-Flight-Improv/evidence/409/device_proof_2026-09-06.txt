@@ -1,0 +1,31 @@
+DEVICE PROOF — plan 409 (calls in the Orbit rows)
+Build fa12993bd / 1.0.0-fa12993bd.d32.t260906004021, bundleVersion 260906004021.
+Captures: docker-ws/deploy-captures/fresh-260906004303
+
+User confirmed the Orbit all-chats row shows the call label ("Missed voice
+call") in place of the older message text.
+
+00:49:06.295  LOAD_ORBIT_DATA_SUCCESS  count=1
+00:49:06.297  LOAD_ORBIT_DATA_START
+              (no ORBIT_CALL_ACTIVITY_SKIPPED — the call source was reached
+               and did not throw)
+
+=== the false trail, worth remembering ===
+The first look showed nothing, and the capture had NO LOAD_ORBIT_DATA_START.
+Concluding "Orbit was never opened" from that absence would have been unsound:
+the check that made it meaningful was a LAYER CENSUS of the capture —
+FL 956, DB 238, GO 4, CALL_SIGNALING_COMPOSITION 2, and **zero UC**. Since
+`flow_event_emitter.dart` does no layer filtering, UC silence proved the code
+had genuinely not run rather than that logging was off.
+
+Cause: `loadOrbitData` runs when OrbitWired MOUNTS. The screens were already
+open from before the deploy, so they were still rendering data loaded by the
+previous build. Restarting the app made the loader run immediately.
+
+Rule: after deploying a change to a load-on-mount surface, a screen that was
+already open proves nothing. Remount it before reading the result.
+
+Operator note: the restart above used `am force-stop`, which this project's
+notes forbid because a stopped app stops receiving FCM. Relaunching cleared it
+(`stopped=false` verified), but the correct route is the HOME intent followed
+by `am kill`.
