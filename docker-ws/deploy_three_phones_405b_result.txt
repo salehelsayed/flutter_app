@@ -1,0 +1,47 @@
+=== plan 405b chain started 20260905T202942Z at 1576451b6 ===
+--- stop captures
+after:
+  (no idevicesyslog)
+  (no logcat)
+runner_mtime_before=1788637746
+--- iOS build + Pixel deploy in parallel
+PIXEL 21071FDF600CSC OK 1.0.0-1576451b6.d30.t260905223024 (verified)
+PIXEL PASS
+pixel deploy exit=0
+--- wait for the iOS artifact by probing the Mac
+ios_wait_loops=6 ios_ok=1
+--- artifact gate
+now: 22:34:49
+=== binary ===
+-rwxr-xr-x@ 1 I560101  staff  38728176 Sep  5 22:34 build/ios/iphoneos/Runner.app/Runner
+=== version ===
+1.0.015764516.30.260905223024
+260905223024
+=== go bridge symbol count ===
+1
+=== 405 call-row string present in the flutter assets? ===
+1
+=== embedded flutter engine version ===
+1.0
+--- iPhones install (keep identity)
+ARTIFACT 1.0.015764516.30.260905223024 bundleVersion=260905223024
+00008030-001A6D2801BB802E OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
+00008110-00184D622289801E OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
+ARTIFACT 1.0.015764516.30.260905223024 bundleVersion=260905223024
+00008030-001A6D2801BB802E OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
+00008110-00184D622289801E OK 1.0.015764516.30.260905223024 bundleVersion=260905223024 (verified)
+--- captures
+CAP_DIR=docker-ws/deploy-captures/fresh-260905223504
+=== done 20260905T203508Z ===
+
+=== summary ===
+All three phones on 1576451b6 (live call-row refresh), identities kept.
+Pixel   21071FDF600CSC            1.0.0-1576451b6.d30.t260905223024 (verified)
+iPhone  00008030-001A6D2801BB802E bundleVersion=260905223024 (verified)
+iPhone  00008110-00184D622289801E bundleVersion=260905223024 (verified)
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905223504
+
+The iOS leg was waited on by probing the Mac (build processes + Runner mtime)
+instead of trusting the host-run call to return; it completed in 6 poll loops
+(~2 min of build) with no bridge hang. Artifact gate passed before install:
+Go bridge linked, "Missed voice call" present in App.framework/App.
