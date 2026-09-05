@@ -78,6 +78,8 @@ Two declines with the (c) build still took 9.2 s and 9.6 s tap-to-end (Pixel: wo
 
 2026-09-05 18:45Z (`docker-ws/deploy_pixel_404c_result.txt`, finding (c) fix, tree of `df894a010`): Pixel only, in place, `1.0.0-ff3ada35a.d24.t260905204414` (verified); iPhones unchanged; the same captures keep running; Pixel app killed.
 
+2026-09-05 19:00Z (`docker-ws/deploy_pixel_404d_result.txt`, finding (c2) fix, tree of `b5e6597c8`): Pixel only, in place, `1.0.0-9577caeca.d20.t260905205811` (verified); iPhones unchanged; captures `fresh-260905203527` keep running; Pixel app killed.
+
 ## Follow-ups (not in this plan)
 
 - App alive with Flutter attached but the call not adopted by Dart: the decline reply is scheduled but the runtime lease is held, so the run defers and no reject is sent; the foreground drain is expected to own such calls.
