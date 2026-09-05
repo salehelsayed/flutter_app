@@ -1,0 +1,10 @@
+=== build_ios_flowlog started 20260905T145423Z (plan 401 ringback, tree at bf6f37743) ===
+PROVENANCE sha=bf6f37743 dirty=3 build_name=1.0.0-bf6f37743.d3.flowlog.t260905165506 bundle_version=260905165506
+Building com.mknoon.app for device (ios-release)...
+Automatically signing iOS for device deployment using specified development team in Xcode project: 397R9Q4WMX
+Running Xcode build...                                          
+Xcode build done.                                           97.6s
+✓ Built build/ios/iphoneos/Runner.app (98.7MB)
+IOS BUILT 1.0.0-bf6f37743.d3.flowlog.t260905165506 bundleVersion=260905165506
+build exit=0
+=== done 20260905T145809Z ===

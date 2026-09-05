@@ -1,0 +1,29 @@
+=== plan 401 deploy started 20260905T145843Z — iOS 1.0.0-bf6f37743.d3.flowlog.t260905165506 (built), Pixel from the same tree ===
+--- iPhones (keep identity) and Pixel (in place) in parallel
+ios install exit=0
+ARTIFACT 1.0.0637743.3.260905165506 bundleVersion=260905165506
+00008030-001A6D2801BB802E OK 1.0.0637743.3.260905165506 bundleVersion=260905165506 (verified)
+00008110-00184D622289801E OK 1.0.0637743.3.260905165506 bundleVersion=260905165506 (verified)
+pixel deploy exit=0
+PROVENANCE sha=bf6f37743 dirty_files=6 build_name=1.0.0-bf6f37743.d6.t260905165844 date=2026-09-05 16:58:44
+PIXEL 21071FDF600CSC OK 1.0.0-bf6f37743.d6.t260905165844 (verified)
+PIXEL PASS
+--- captures
+started syslog capture 00008110-00184D622289801E pid=49226 -> docker-ws/deploy-captures/fresh-260905170004/iphone_00008110_syslog.txt
+started logcat capture 21071FDF600CSC pid=49242 -> docker-ws/deploy-captures/fresh-260905170004/pixel_logcat.txt
+49225 /opt/homebrew/bin/idevicesyslog -u 00008030-001A6D2801BB802E --process Runner
+49226 /opt/homebrew/bin/idevicesyslog -u 00008110-00184D622289801E --process Runner
+49242 adb -s 21071FDF600CSC logcat -v threadtime
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905170004
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905170004
+--- relaunch into captures
+== iPhone 00008030-001A6D2801BB802E: relaunch com.mknoon.app at 15:00:10
+   syslog capture restarted pid=49271 -> docker-ws/deploy-captures/fresh-260905170004/iphone_00008030_syslog.txt
+== iPhone 00008110-00184D622289801E: relaunch com.mknoon.app at 15:00:12
+   syslog capture restarted pid=49284 -> docker-ws/deploy-captures/fresh-260905170004/iphone_00008110_syslog.txt
+== Pixel 21071FDF600CSC: relaunch com.mknoon.app at 15:00:12
+--- capture status
+docker-ws/deploy-captures/fresh-260905170004/iphone_00008030_syslog.txt: 2800 lines, 404 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905170004/iphone_00008110_syslog.txt: 3277 lines, 407 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905170004/pixel_logcat.txt: 1410 lines, 396 [FLOW] lines
+=== done 20260905T150015Z ===
