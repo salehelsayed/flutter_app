@@ -140,6 +140,8 @@ final class ProductionCallSignalingGraph
     _tokenInvalidationSubscription = iosVoipTokenCoordinator
         ?.authorityInvalidations
         .listen((_) => unawaited(_handleIosTokenInvalidation()));
+    _tokenEpochAdvanceSubscription = iosVoipTokenCoordinator?.epochAdvances
+        .listen(_emitIosTokenEpochAdvanceResult);
     final Object? nativeLifecycle = _nativeCallLifecycleAdapter;
     if (nativeLifecycle is NativeCallLifecycleInvalidations) {
       _nativeInvalidationSubscription = nativeLifecycle.invalidations.listen(
@@ -176,6 +178,8 @@ final class ProductionCallSignalingGraph
   _mediaBundleSubscription;
   StreamSubscription<CallAudioControlState>? _audioSubscription;
   StreamSubscription<void>? _tokenInvalidationSubscription;
+  StreamSubscription<IosVoipTokenEpochAdvanceOutcome>?
+  _tokenEpochAdvanceSubscription;
   StreamSubscription<void>? _nativeInvalidationSubscription;
   final StreamController<ForegroundCallProjection?> _foregroundChanges =
       StreamController<ForegroundCallProjection?>.broadcast(sync: true);
@@ -718,6 +722,22 @@ final class ProductionCallSignalingGraph
     }
   }
 
+  /// Identifier-free record of a native refresh-epoch advance requested after
+  /// the relay rejected a VoIP token registration as stale.
+  void _emitIosTokenEpochAdvanceResult(
+    IosVoipTokenEpochAdvanceOutcome outcome,
+  ) {
+    try {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_VOIP_TOKEN_EPOCH_ADVANCE_RESULT',
+        details: <String, Object?>{'outcome': outcome.wireName},
+      );
+    } catch (_) {
+      // Diagnostics never change token authority.
+    }
+  }
+
   void _emitCapabilityAdvertisementResult({
     required String stage,
     required String outcome,
@@ -772,6 +792,11 @@ final class ProductionCallSignalingGraph
     _tokenInvalidationSubscription = null;
     if (tokenInvalidationSubscription != null) {
       await attempt(tokenInvalidationSubscription.cancel);
+    }
+    final tokenEpochAdvanceSubscription = _tokenEpochAdvanceSubscription;
+    _tokenEpochAdvanceSubscription = null;
+    if (tokenEpochAdvanceSubscription != null) {
+      await attempt(tokenEpochAdvanceSubscription.cancel);
     }
     final nativeInvalidationSubscription = _nativeInvalidationSubscription;
     _nativeInvalidationSubscription = null;

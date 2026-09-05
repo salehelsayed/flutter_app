@@ -1,0 +1,10 @@
+Checking for wireless devices...
+
+More than one device connected; please specify a device with the '-d <deviceId>' flag, or use '-d all' to act on all devices.
+
+Pixel 6 (mobile) • 21071FDF600CSC • android-arm64  • Android 16 (API 36)
+macOS (desktop)  • macos          • darwin-arm64   • macOS 26.6.2 25G83 darwin-arm64
+Chrome (web)     • chrome         • web-javascript • Google Chrome 152.0.7977.76
+exit=1
+
+--- summary: Flutter leg passed; trailing integration_test device leg unselected (3 devices, no FLUTTER_DEVICE_ID)

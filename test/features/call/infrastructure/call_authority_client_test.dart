@@ -323,6 +323,50 @@ void main() {
     });
   });
 
+  test('surfaces the safe relay error code on a bridge failure', () async {
+    bridge.responses['call_token_set_v1'] = const <String, Object?>{
+      'ok': false,
+      'errorCode': 'CALL_STALE_EPOCH',
+      'errorMessage': 'must not be emitted',
+    };
+
+    await expectLater(
+      client.publishToken(_iosVoipToken()),
+      throwsA(
+        isA<CallAuthorityException>()
+            .having(
+              (error) => error.code,
+              'code',
+              CallAuthorityErrorCode.bridgeFailure,
+            )
+            .having(
+              (error) => error.relayErrorCode,
+              'relayErrorCode',
+              'CALL_STALE_EPOCH',
+            )
+            .having((error) => error.isStaleEpoch, 'isStaleEpoch', isTrue)
+            .having(
+              (error) => '$error',
+              'toString',
+              'Call authority request failed: bridgeFailure',
+            ),
+      ),
+    );
+
+    bridge.responses['call_token_set_v1'] = const <String, Object?>{
+      'ok': false,
+      'errorCode': 'not a safe code!',
+    };
+    await expectLater(
+      client.publishToken(_iosVoipToken()),
+      throwsA(
+        isA<CallAuthorityException>()
+            .having((error) => error.relayErrorCode, 'relayErrorCode', isNull)
+            .having((error) => error.isStaleEpoch, 'isStaleEpoch', isFalse),
+      ),
+    );
+  });
+
   test('fails closed on malformed iOS token authority metadata', () async {
     bridge.responses['call_token_set_v1'] = const <String, Object?>{
       'ok': true,
@@ -390,3 +434,14 @@ void main() {
     );
   });
 }
+
+CallTokenRecord _iosVoipToken() => CallTokenRecord(
+  kind: CallTokenKind.iosVoip,
+  platform: CallEndpointPlatform.ios,
+  token: List<String>.filled(64, 'a').join(),
+  expiresAtMs: 10_000,
+  environment: 'sandbox',
+  topic: 'com.mknoon.app.voip',
+  capabilityVersion: 1,
+  refreshEpoch: 8,
+);

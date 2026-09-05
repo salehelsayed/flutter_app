@@ -37,9 +37,18 @@ enum CallAuthorityErrorCode {
 }
 
 final class CallAuthorityException implements Exception {
-  const CallAuthorityException(this.code);
+  const CallAuthorityException(this.code, {this.relayErrorCode});
+
+  /// Relay error code the relay refused the request with (`CALL_STALE_EPOCH`
+  /// etc.). Present only for a bridge failure that carried a safe,
+  /// fixed-vocabulary code; never free text.
+  static const String staleEpochRelayCode = 'CALL_STALE_EPOCH';
 
   final CallAuthorityErrorCode code;
+  final String? relayErrorCode;
+
+  /// The relay's refresh-epoch high-water rejected this registration epoch.
+  bool get isStaleEpoch => relayErrorCode == staleEpochRelayCode;
 
   @override
   String toString() => 'Call authority request failed: ${code.name}';
@@ -494,14 +503,15 @@ final class BridgeCallAuthorityClient implements CallAuthorityClient {
           .timeout(requestTimeout);
       final response = jsonDecode(raw);
       if (response is! Map<String, dynamic> || response['ok'] != true) {
-        _emitBridgeFailure(
-          operation: command,
-          code: response is Map<String, dynamic>
-              ? _safeBridgeErrorCode(response['errorCode'])
-              : 'MALFORMED_RESPONSE',
-        );
-        throw const CallAuthorityException(
+        final code = response is Map<String, dynamic>
+            ? _safeBridgeErrorCode(response['errorCode'])
+            : 'MALFORMED_RESPONSE';
+        _emitBridgeFailure(operation: command, code: code);
+        throw CallAuthorityException(
           CallAuthorityErrorCode.bridgeFailure,
+          relayErrorCode: code == 'UNKNOWN' || code == 'MALFORMED_RESPONSE'
+              ? null
+              : code,
         );
       }
       return response;

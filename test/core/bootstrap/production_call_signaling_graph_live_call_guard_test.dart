@@ -206,6 +206,53 @@ void main() {
     );
   });
 
+  test(
+    'relay stale epoch advances the native epoch and keeps the graph callable',
+    () async {
+      final fixture = await _createFixture();
+      await fixture.composition.start();
+      expect(fixture.composition.isStarted, isTrue);
+      fixture.tokenSet.reject = true;
+      fixture.tokenSet.advanceTo = 1_900_000_000;
+
+      await fixture.composition.onResume();
+
+      expect(fixture.composition.isStarted, isTrue);
+      expect(fixture.tokenSet.advanceCalls, 1);
+      final tokenSets = fixture.bridge.requests
+          .where((request) => request['cmd'] == 'call_token_set_v1')
+          .map(
+            (request) =>
+                (request['payload'] as Map<String, dynamic>)['refreshEpoch'],
+          )
+          .toList(growable: false);
+      expect(tokenSets, <Object?>[41, 41, 1_900_000_000]);
+      expect(fixture.bridge.commands, isNot(contains('call_token_revoke_v1')));
+      expect(
+        fixture.bridge.commands,
+        isNot(contains('call_endpoint_revoke_v1')),
+      );
+      expect(fixture.lifecycleMethods, isNot(contains('failClosed')));
+      expect(
+        _details(fixture.flowEvents, 'CALL_VOIP_TOKEN_EPOCH_ADVANCE_RESULT'),
+        <Map<String, Object?>>[
+          <String, Object?>{'outcome': 'advanced'},
+        ],
+      );
+      expect(
+        _details(
+          fixture.flowEvents,
+          'CALL_CAPABILITY_ADVERTISEMENT_RESULT',
+        ).last,
+        <String, Object?>{'stage': 'ready', 'outcome': 'ready'},
+      );
+      expect(
+        _details(fixture.flowEvents, 'CALL_SIGNALING_RESUME_RESULT').last,
+        containsPair('outcome', 'ready'),
+      );
+    },
+  );
+
   test('shutdown revokes endpoint and token', () async {
     final fixture = await _createFixture();
     await fixture.composition.start();
@@ -333,6 +380,11 @@ Future<void> _until(bool Function() predicate) async {
 final class _TokenSetScript {
   bool reject = false;
   int calls = 0;
+
+  /// When set, the fake native answers `advanceRefreshEpoch` with this epoch
+  /// and the relay accepts it (the rejection above applies to epoch 41 only).
+  int? advanceTo;
+  int advanceCalls = 0;
 }
 
 final class _Fixture {
@@ -379,7 +431,8 @@ Future<_Fixture> _createFixture() async {
   final bridge = _Bridge();
   bridge.responseHandlers['call_token_set_v1'] = (request) async {
     tokenSet.calls++;
-    if (tokenSet.reject) {
+    final epoch = (request['payload']! as Map<String, dynamic>)['refreshEpoch'];
+    if (tokenSet.reject && epoch == 41) {
       return const <String, Object?>{
         'ok': false,
         'errorCode': 'CALL_STALE_EPOCH',
@@ -464,14 +517,25 @@ Future<_Fixture> _createFixture() async {
           required clock,
           required publicationAllowed,
         }) => IosVoipTokenCoordinator(
-          invokeMethod: (method, arguments) async => <String, Object?>{
-            'version': 1,
-            'token': List<String>.filled(64, 'c').join(),
-            'environment': 'development',
-            'topic': 'com.mknoon.app.voip',
-            'capabilityVersion': 1,
-            'refreshEpoch': 41,
-            'invalidated': false,
+          invokeMethod: (method, arguments) async {
+            var epoch = 41;
+            if (method == 'advanceRefreshEpoch') {
+              tokenSet.advanceCalls++;
+              final advanceTo = tokenSet.advanceTo;
+              if (advanceTo == null) {
+                throw StateError('epoch advance unavailable');
+              }
+              epoch = advanceTo;
+            }
+            return <String, Object?>{
+              'version': 1,
+              'token': List<String>.filled(64, 'c').join(),
+              'environment': 'development',
+              'topic': 'com.mknoon.app.voip',
+              'capabilityVersion': 1,
+              'refreshEpoch': epoch,
+              'invalidated': false,
+            };
           },
           nativeEvents: tokenEvents.stream,
           authorityClient: authorityClient,

@@ -174,6 +174,36 @@ internal final class MknoonVoipTokenAuthority {
     }
   }
 
+  /// Moves the durable registration of the unchanged token to a strictly
+  /// newer refresh epoch after the relay refused the current one as stale
+  /// (its refresh-epoch high-water survives revokes). `minimum` lets one
+  /// advance jump past a high-water the client cannot see (wall-clock
+  /// seconds), so a device recovers in a single round trip regardless of how
+  /// far ahead the relay is. Refused, and nothing changes, unless the durable
+  /// snapshot is valid, not invalidated, and still at `expected`.
+  func advanceRefreshEpoch(expected: Int64, minimum: Int64) -> MknoonVoipTokenSnapshot? {
+    synchronized {
+      guard case let .valid(current) = readState(),
+            !current.invalidated,
+            current.refreshEpoch == expected,
+            current.refreshEpoch < Int64.max
+      else { return nil }
+      let next = max(current.refreshEpoch + 1, minimum)
+      let snapshot = MknoonVoipTokenSnapshot(
+        version: MknoonVoipTokenSnapshot.protocolVersion,
+        token: current.token,
+        environment: current.environment,
+        topic: current.topic,
+        capabilityVersion: MknoonVoipTokenSnapshot.capabilityVersion,
+        refreshEpoch: next,
+        invalidated: false
+      )
+      guard commit(snapshot) else { return nil }
+      eventHandler?(snapshot)
+      return snapshot
+    }
+  }
+
   /// Keeps the last exact epoch across process restart so Dart can revoke that
   /// generation without ever receiving or persisting a guessed environment.
   @discardableResult
@@ -280,13 +310,19 @@ internal final class MknoonVoipTokenBridge: NSObject, FlutterStreamHandler {
   private let authority: MknoonVoipTokenAuthority
   private let methodChannel: FlutterMethodChannel?
   private let eventChannel: FlutterEventChannel?
+  private let now: () -> Date
   private let subscriptionLock = NSLock()
   private let lock = NSLock()
   private var sink: FlutterEventSink?
   private var generation: Int64 = 0
 
-  init(authority: MknoonVoipTokenAuthority, messenger: FlutterBinaryMessenger?) {
+  init(
+    authority: MknoonVoipTokenAuthority,
+    messenger: FlutterBinaryMessenger?,
+    now: @escaping () -> Date = Date.init
+  ) {
     self.authority = authority
+    self.now = now
     if let messenger {
       methodChannel = FlutterMethodChannel(
         name: Self.methodChannelName,
@@ -314,15 +350,33 @@ internal final class MknoonVoipTokenBridge: NSObject, FlutterStreamHandler {
   }
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard call.method == "readCurrent" else {
+    switch call.method {
+    case "readCurrent":
+      guard Self.versionOnly(call.arguments) else {
+        result(FlutterError(code: "bad_args", message: "invalid VoIP token arguments", details: nil))
+        return
+      }
+      result(authority.current()?.wireValue)
+    case "advanceRefreshEpoch":
+      guard let expected = Self.expectedRefreshEpoch(call.arguments) else {
+        result(FlutterError(code: "bad_args", message: "invalid VoIP token arguments", details: nil))
+        return
+      }
+      let minimum = Int64(max(0, now().timeIntervalSince1970.rounded(.down)))
+      guard let advanced = authority.advanceRefreshEpoch(expected: expected, minimum: minimum) else {
+        result(
+          FlutterError(
+            code: "epoch_advance_refused",
+            message: "VoIP token refresh epoch was not advanced",
+            details: nil
+          )
+        )
+        return
+      }
+      result(advanced.wireValue)
+    default:
       result(FlutterMethodNotImplemented)
-      return
     }
-    guard Self.versionOnly(call.arguments) else {
-      result(FlutterError(code: "bad_args", message: "invalid VoIP token arguments", details: nil))
-      return
-    }
-    result(authority.current()?.wireValue)
   }
 
   func onListen(
@@ -380,14 +434,29 @@ internal final class MknoonVoipTokenBridge: NSObject, FlutterStreamHandler {
     guard let map = arguments as? [String: Any], Set(map.keys) == ["version"] else {
       return false
     }
-    guard let number = map["version"] as? NSNumber,
+    return integerValue(map["version"]) == 1
+  }
+
+  /// Strict `{version: 1, expectedRefreshEpoch: <positive integer>}`.
+  private static func expectedRefreshEpoch(_ arguments: Any?) -> Int64? {
+    guard let map = arguments as? [String: Any],
+          Set(map.keys) == ["version", "expectedRefreshEpoch"],
+          integerValue(map["version"]) == 1,
+          let expected = integerValue(map["expectedRefreshEpoch"]),
+          expected > 0
+    else { return nil }
+    return expected
+  }
+
+  private static func integerValue(_ value: Any?) -> Int64? {
+    guard let number = value as? NSNumber,
           CFGetTypeID(number) != CFBooleanGetTypeID()
-    else { return false }
+    else { return nil }
     switch String(cString: number.objCType) {
     case "c", "s", "i", "l", "q", "C", "S", "I", "L", "Q":
-      return number.int64Value == 1
+      return number.int64Value
     default:
-      return false
+      return nil
     }
   }
 }

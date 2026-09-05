@@ -23,3 +23,16 @@ Gates: `curated_1to1_lane_2026-09-04.txt` (Flutter leg 4165/4165; trailing devic
 `host_1to1_batch_2026-09-04.txt` (PASS, 191 paths), `kotlin_call_unit_sentinel_2026-09-04.txt` (BUILD SUCCESSFUL),
 `swift_runner_tests_2026-09-04.txt` (TEST SUCCEEDED). `affected` → 21 unit files 316/316. `completeness-check` PASS 1549/1549.
 `flutter analyze`: No issues found. `git diff --check`: clean.
+
+## Addendum 2026-09-05 — refresh-epoch advance on `CALL_STALE_EPOCH`
+
+| Row | RED | GREEN | Notes |
+|---|---|---|---|
+| TC-400-21 authority client relay code | getter missing (compile) | authority client 10/10 | `CallAuthorityException.relayErrorCode` / `isStaleEpoch` |
+| TC-400-22 advance once + re-publish | `Expected: true / Actual: false` | coordinator 24/24 | mutation (branch disabled) → RED; restored → GREEN |
+| TC-400-23 second rejection retryable | `Expected: [11, 12] / Actual: [11]` | 24/24 | |
+| TC-400-25 native failure retryable | advance calls `Expected: 1 / Actual: 0` | 24/24 | |
+| TC-400-26 refused answer | advance calls `Expected: 1 / Actual: 0` | 24/24 | |
+| TC-400-27 graph flow event | coordinator-side emission rejected by the privacy census | live-guard 7/7 | outcome stream → `CALL_VOIP_TOKEN_EPOCH_ADVANCE_RESULT` |
+| TC-400-28/29 Swift | build error `no member 'advanceRefreshEpoch'` | 27/27 (`swift_runner_tests_epoch_advance_2026-09-05.txt`) | |
+| TC-400-30 device | — | see `epoch_advance_device_proof_2026-09-05.txt` | iPhone 11 + production relay |

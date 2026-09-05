@@ -40,6 +40,20 @@ final class IosVoipTokenException implements Exception {
   String toString() => 'IosVoipTokenException(${code.name})';
 }
 
+/// Outcome of one native refresh-epoch advance requested after the relay
+/// rejected a registration as stale. Fixed cardinality; the graph maps it to
+/// an identifier-free diagnostic (this coordinator never emits diagnostics).
+enum IosVoipTokenEpochAdvanceOutcome {
+  advanced('advanced'),
+  refused('refused'),
+  nativeFailure('native_failure'),
+  relayRejected('relay_rejected');
+
+  const IosVoipTokenEpochAdvanceOutcome(this.wireName);
+
+  final String wireName;
+}
+
 final class IosVoipTokenSnapshot {
   const IosVoipTokenSnapshot._({
     required this.token,
@@ -204,6 +218,10 @@ final class IosVoipTokenCoordinator {
   }
 
   static const int protocolVersion = 1;
+
+  /// Native method that moves the durable PushKit registration to a fresh
+  /// refresh epoch after the relay rejected the current one as stale.
+  static const String advanceRefreshEpochMethod = 'advanceRefreshEpoch';
   static const String methodChannelName = 'mknoon/ios_voip_token';
   static const String eventChannelName = 'mknoon/ios_voip_token/events';
   static const int maxBufferedInitialSnapshots = 32;
@@ -220,6 +238,9 @@ final class IosVoipTokenCoordinator {
 
   final StreamController<void> _authorityInvalidations =
       StreamController<void>.broadcast(sync: true);
+
+  final StreamController<IosVoipTokenEpochAdvanceOutcome> _epochAdvances =
+      StreamController<IosVoipTokenEpochAdvanceOutcome>.broadcast(sync: true);
   StreamSubscription<Object?>? _nativeSubscription;
   Future<void> _tail = Future<void>.value();
   Future<void>? _startFuture;
@@ -244,6 +265,10 @@ final class IosVoipTokenCoordinator {
 
   Stream<void> get authorityInvalidations => _authorityInvalidations.stream;
 
+  /// One event per native refresh-epoch advance attempt (see
+  /// [IosVoipTokenEpochAdvanceOutcome]). Never carries token material.
+  Stream<IosVoipTokenEpochAdvanceOutcome> get epochAdvances =>
+      _epochAdvances.stream;
   Future<void> start() => _startFuture ??= _startOnce();
 
   Future<void> _startOnce() async {
@@ -478,53 +503,118 @@ final class IosVoipTokenCoordinator {
   Future<bool> _reconcileAuthority({bool refreshExisting = false}) async {
     if (_closed || _invalid) return false;
     if (!await _publicationAllowed() || _closed || _invalid) return false;
-    final snapshot = _snapshot;
-    if (snapshot == null) return false;
-    if (snapshot.invalidated) {
-      await _revokeEpoch(snapshot.refreshEpoch);
+    final initial = _snapshot;
+    if (initial == null) return false;
+    if (initial.invalidated) {
+      await _revokeEpoch(initial.refreshEpoch);
       _publishedSnapshot = null;
       _publishInvalidation();
       return false;
     }
+    IosVoipTokenSnapshot snapshot = initial;
     final prior = _publishedSnapshot;
     if (!refreshExisting && prior != null && prior.sameRegistration(snapshot)) {
       return true;
     }
-    try {
-      final publication = await _authorityClient.publishToken(
-        CallTokenRecord(
-          kind: CallTokenKind.iosVoip,
-          platform: CallEndpointPlatform.ios,
-          token: snapshot.token,
-          expiresAtMs: _boundedExpiryMs(),
-          environment: snapshot.relayEnvironment,
-          topic: snapshot.topic,
-          capabilityVersion: snapshot.capabilityVersion,
-          refreshEpoch: snapshot.refreshEpoch,
-        ),
-      );
-      if (!publication.accepted ||
-          publication.serverGeneration == null ||
-          publication.serverGeneration! <= 0 ||
-          publication.refreshEpoch != snapshot.refreshEpoch) {
-        throw const IosVoipTokenException(
-          IosVoipTokenErrorCode.authorityFailure,
+    var epochAdvanced = false;
+    while (true) {
+      try {
+        final publication = await _authorityClient.publishToken(
+          CallTokenRecord(
+            kind: CallTokenKind.iosVoip,
+            platform: CallEndpointPlatform.ios,
+            token: snapshot.token,
+            expiresAtMs: _boundedExpiryMs(),
+            environment: snapshot.relayEnvironment,
+            topic: snapshot.topic,
+            capabilityVersion: snapshot.capabilityVersion,
+            refreshEpoch: snapshot.refreshEpoch,
+          ),
         );
+        if (!publication.accepted ||
+            publication.serverGeneration == null ||
+            publication.serverGeneration! <= 0 ||
+            publication.refreshEpoch != snapshot.refreshEpoch) {
+          throw const IosVoipTokenException(
+            IosVoipTokenErrorCode.authorityFailure,
+          );
+        }
+        _publishedSnapshot = snapshot;
+        _revokedEpochs.remove(snapshot.refreshEpoch);
+        _relayRejectedEpochs.remove(snapshot.refreshEpoch);
+        _invalidationPublished = false;
+        if (prior != null && prior.refreshEpoch != snapshot.refreshEpoch) {
+          // Set is authoritative first; the stale-epoch CAS can only remove the
+          // prior generation and can never delete the just-published row.
+          await _revokeEpoch(prior.refreshEpoch, bestEffort: true);
+        }
+        return true;
+      } on CallAuthorityException catch (error) {
+        if (error.isStaleEpoch && !epochAdvanced) {
+          // The relay's refresh-epoch high-water refused this epoch (it
+          // survives revokes). Move the native registration to a fresh epoch
+          // once and re-publish the same token instead of failing closed.
+          epochAdvanced = true;
+          final advanced = await _advanceRefreshEpoch(snapshot);
+          if (advanced != null) {
+            snapshot = advanced;
+            continue;
+          }
+        } else if (error.isStaleEpoch) {
+          _reportEpochAdvance(IosVoipTokenEpochAdvanceOutcome.relayRejected);
+        }
+        await _failClosedAuthority(rejectedEpoch: snapshot.refreshEpoch);
+        return false;
+      } catch (_) {
+        await _failClosedAuthority(rejectedEpoch: snapshot.refreshEpoch);
+        return false;
       }
-      _publishedSnapshot = snapshot;
-      _revokedEpochs.remove(snapshot.refreshEpoch);
-      _relayRejectedEpochs.remove(snapshot.refreshEpoch);
-      _invalidationPublished = false;
-      if (prior != null && prior.refreshEpoch != snapshot.refreshEpoch) {
-        // Set is authoritative first; the stale-epoch CAS can only remove the
-        // prior generation and can never delete the just-published row.
-        await _revokeEpoch(prior.refreshEpoch, bestEffort: true);
-      }
-      return true;
-    } catch (_) {
-      await _failClosedAuthority(rejectedEpoch: snapshot.refreshEpoch);
-      return false;
     }
+  }
+
+  /// Asks native for a strictly newer refresh epoch for the exact rejected
+  /// registration. Any refusal, native failure, or non-monotonic answer
+  /// yields null and the caller fails closed (retryable, never latched).
+  Future<IosVoipTokenSnapshot?> _advanceRefreshEpoch(
+    IosVoipTokenSnapshot rejected,
+  ) async {
+    _relayRejectedEpochs.add(rejected.refreshEpoch);
+    Object? value;
+    try {
+      value = await _invokeMethod(advanceRefreshEpochMethod, <String, Object?>{
+        'version': protocolVersion,
+        'expectedRefreshEpoch': rejected.refreshEpoch,
+      });
+    } catch (_) {
+      _reportEpochAdvance(IosVoipTokenEpochAdvanceOutcome.nativeFailure);
+      return null;
+    }
+    IosVoipTokenSnapshot advanced;
+    try {
+      advanced = IosVoipTokenSnapshot.parse(value);
+    } catch (_) {
+      _reportEpochAdvance(IosVoipTokenEpochAdvanceOutcome.refused);
+      return null;
+    }
+    if (advanced.invalidated ||
+        advanced.refreshEpoch <= rejected.refreshEpoch ||
+        advanced.token != rejected.token ||
+        !advanced.sameMetadata(rejected)) {
+      _reportEpochAdvance(IosVoipTokenEpochAdvanceOutcome.refused);
+      return null;
+    }
+    try {
+      _acceptSnapshot(advanced);
+    } catch (_) {
+      _reportEpochAdvance(IosVoipTokenEpochAdvanceOutcome.refused);
+      return null;
+    }
+    _reportEpochAdvance(IosVoipTokenEpochAdvanceOutcome.advanced);
+    return advanced;
+  }
+
+  void _reportEpochAdvance(IosVoipTokenEpochAdvanceOutcome outcome) {
+    if (!_epochAdvances.isClosed) _epochAdvances.add(outcome);
   }
 
   int _boundedExpiryMs() {
@@ -533,7 +623,9 @@ final class IosVoipTokenCoordinator {
   }
 
   Future<void> _revokeEpoch(int refreshEpoch, {bool bestEffort = false}) async {
-    if (refreshEpoch <= 0 || _revokedEpochs.contains(refreshEpoch)) {
+    if (refreshEpoch <= 0 ||
+        _revokedEpochs.contains(refreshEpoch) ||
+        _relayRejectedEpochs.contains(refreshEpoch)) {
       return;
     }
     try {
@@ -648,6 +740,9 @@ final class IosVoipTokenCoordinator {
     } finally {
       if (!_authorityInvalidations.isClosed) {
         await _authorityInvalidations.close();
+      }
+      if (!_epochAdvances.isClosed) {
+        await _epochAdvances.close();
       }
     }
     if (error != null) Error.throwWithStackTrace(error, stackTrace!);

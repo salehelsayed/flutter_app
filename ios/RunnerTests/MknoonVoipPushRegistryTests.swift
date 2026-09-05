@@ -252,6 +252,104 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
     XCTAssertEqual(MknoonVoipTokenBridge.eventChannelName, "mknoon/ios_voip_token/events")
   }
 
+  func testAdvanceRefreshEpochRotatesOnlyTheExpectedEpochAndPersists() throws {
+    let backend = MemoryVoipTokenBackend()
+    let authority = MknoonVoipTokenAuthority(backend: backend)
+    var events: [MknoonVoipTokenSnapshot] = []
+    authority.setEventHandler { events.append($0) }
+    XCTAssertTrue(authority.update(
+      token: Data([0x01, 0xab]),
+      environment: "development",
+      topic: "com.mknoon.app.voip"
+    ))
+    XCTAssertEqual(events.count, 1)
+
+    let advanced = try XCTUnwrap(authority.advanceRefreshEpoch(expected: 1, minimum: 0))
+    XCTAssertEqual(advanced.refreshEpoch, 2)
+    XCTAssertEqual(advanced.token, "01ab")
+    XCTAssertEqual(advanced.environment, "development")
+    XCTAssertFalse(advanced.invalidated)
+    XCTAssertEqual(events.count, 2)
+    XCTAssertEqual(MknoonVoipTokenAuthority(backend: backend).current(), advanced)
+
+    // A stale expectation changes nothing and emits nothing.
+    XCTAssertNil(authority.advanceRefreshEpoch(expected: 1, minimum: 0))
+    XCTAssertEqual(authority.current()?.refreshEpoch, 2)
+    XCTAssertEqual(events.count, 2)
+
+    // The minimum lets one advance jump past a relay high-water it cannot see.
+    let jumped = try XCTUnwrap(authority.advanceRefreshEpoch(expected: 2, minimum: 1_900_000_000))
+    XCTAssertEqual(jumped.refreshEpoch, 1_900_000_000)
+    XCTAssertEqual(events.count, 3)
+
+    XCTAssertTrue(authority.invalidate())
+    XCTAssertNil(authority.advanceRefreshEpoch(expected: 1_900_000_000, minimum: 0))
+    XCTAssertEqual(authority.current()?.refreshEpoch, 1_900_000_000)
+
+    let durabilityBackend = MemoryVoipTokenBackend()
+    let durability = MknoonVoipTokenAuthority(backend: durabilityBackend)
+    XCTAssertTrue(durability.update(
+      token: Data([0x02]),
+      environment: "production",
+      topic: "com.mknoon.app.voip"
+    ))
+    durabilityBackend.failWrites = true
+    XCTAssertNil(durability.advanceRefreshEpoch(expected: 1, minimum: 0))
+    XCTAssertEqual(durability.current()?.refreshEpoch, 1)
+  }
+
+  func testTokenBridgeAdvanceRefreshEpochUsesStrictArgumentsAndReportsRefusal() throws {
+    let backend = MemoryVoipTokenBackend()
+    let authority = MknoonVoipTokenAuthority(backend: backend)
+    let bridge = MknoonVoipTokenBridge(
+      authority: authority,
+      messenger: nil,
+      now: { Date(timeIntervalSince1970: 1_900_000_000) }
+    )
+    XCTAssertTrue(authority.update(
+      token: Data([0xab, 0xcd]),
+      environment: "production",
+      topic: "com.mknoon.app.voip"
+    ))
+
+    var advanced: Any?
+    bridge.handle(
+      FlutterMethodCall(
+        methodName: "advanceRefreshEpoch",
+        arguments: ["version": 1, "expectedRefreshEpoch": 1]
+      )
+    ) { advanced = $0 }
+    let snapshot = try XCTUnwrap(advanced as? [String: Any])
+    XCTAssertEqual(snapshot["refreshEpoch"] as? Int64, 1_900_000_000)
+    XCTAssertEqual(snapshot["token"] as? String, "abcd")
+    XCTAssertEqual(snapshot["invalidated"] as? Bool, false)
+    XCTAssertEqual(authority.current()?.refreshEpoch, 1_900_000_000)
+
+    var refused: Any?
+    bridge.handle(
+      FlutterMethodCall(
+        methodName: "advanceRefreshEpoch",
+        arguments: ["version": 1, "expectedRefreshEpoch": 1]
+      )
+    ) { refused = $0 }
+    XCTAssertEqual((refused as? FlutterError)?.code, "epoch_advance_refused")
+    XCTAssertEqual(authority.current()?.refreshEpoch, 1_900_000_000)
+
+    for arguments in [
+      ["version": 1] as [String: Any],
+      ["version": 2, "expectedRefreshEpoch": 1_900_000_000],
+      ["version": 1, "expectedRefreshEpoch": 0],
+      ["version": 1, "expectedRefreshEpoch": "1"],
+    ] {
+      var malformed: Any?
+      bridge.handle(
+        FlutterMethodCall(methodName: "advanceRefreshEpoch", arguments: arguments)
+      ) { malformed = $0 }
+      XCTAssertEqual((malformed as? FlutterError)?.code, "bad_args", "\(arguments)")
+    }
+    XCTAssertEqual(authority.current()?.refreshEpoch, 1_900_000_000)
+  }
+
   func testTokenBridgeReplaysDurableUpdateThatArrivedBeforeListenExactlyOnce() {
     let authority = MknoonVoipTokenAuthority(backend: MemoryVoipTokenBackend())
     let bridge = MknoonVoipTokenBridge(authority: authority, messenger: nil)

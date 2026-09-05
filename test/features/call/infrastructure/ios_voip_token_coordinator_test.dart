@@ -395,6 +395,190 @@ void main() {
     },
   );
 
+  group('relay stale epoch recovery', () {
+    const stale = CallAuthorityException(
+      CallAuthorityErrorCode.bridgeFailure,
+      relayErrorCode: 'CALL_STALE_EPOCH',
+    );
+    late List<IosVoipTokenEpochAdvanceOutcome> outcomes;
+    List<String> advanceOutcomes() =>
+        outcomes.map((outcome) => outcome.wireName).toList(growable: false);
+    IosVoipTokenCoordinator observed(
+      _TokenNative native,
+      _Authority authority,
+    ) {
+      final coordinator = _coordinator(native, authority);
+      coordinator.epochAdvances.listen(outcomes.add);
+      return coordinator;
+    }
+
+    setUp(() {
+      outcomes = <IosVoipTokenEpochAdvanceOutcome>[];
+    });
+
+    test(
+      'relay stale epoch advances the native refresh epoch once and re-publishes',
+      () async {
+        final native = _TokenNative()
+          ..current = _snapshot(token: _tokenA, refreshEpoch: 11);
+        native.onAdvanceRefreshEpoch = (arguments) {
+          expect(arguments, <String, Object?>{
+            'version': 1,
+            'expectedRefreshEpoch': 11,
+          });
+          native.current = _snapshot(
+            token: _tokenA,
+            refreshEpoch: 1_900_000_000,
+          );
+          return native.current;
+        };
+        final authority = _Authority()..publishFailures.add(stale);
+        final coordinator = observed(native, authority);
+        final invalidations = <void>[];
+        final subscription = coordinator.authorityInvalidations.listen(
+          invalidations.add,
+        );
+
+        expect(await coordinator.publishForAuthenticatedGraph(), isTrue);
+
+        expect(
+          authority.publications.map((record) => record.refreshEpoch),
+          <int>[11, 1_900_000_000],
+        );
+        expect(authority.publications.last.token, _tokenA);
+        expect(native.advanceCalls, 1);
+        expect(invalidations, isEmpty);
+        expect(authority.revocations, isEmpty);
+        expect(advanceOutcomes(), <String>['advanced']);
+
+        await coordinator.close();
+        await subscription.cancel();
+        await native.events.close();
+        // Only the accepted epoch is ever withdrawn; the rejected one never is.
+        expect(authority.revocations, <({CallTokenKind kind, int? epoch})>[
+          (kind: CallTokenKind.iosVoip, epoch: 1_900_000_000),
+        ]);
+      },
+    );
+
+    test(
+      'a second stale rejection after the advance fails closed without latching',
+      () async {
+        final native = _TokenNative()
+          ..current = _snapshot(token: _tokenA, refreshEpoch: 11);
+        native.onAdvanceRefreshEpoch = (_) {
+          native.current = _snapshot(token: _tokenA, refreshEpoch: 12);
+          return native.current;
+        };
+        final authority = _Authority()
+          ..publishFailures.addAll(<Object>[stale, stale]);
+        final coordinator = observed(native, authority);
+        final invalidations = <void>[];
+        final subscription = coordinator.authorityInvalidations.listen(
+          invalidations.add,
+        );
+
+        expect(await coordinator.publishForAuthenticatedGraph(), isFalse);
+        await _settle();
+        expect(
+          authority.publications.map((record) => record.refreshEpoch),
+          <int>[11, 12],
+        );
+        expect(native.advanceCalls, 1);
+        expect(invalidations, hasLength(1));
+        expect(authority.revocations, isEmpty);
+        expect(advanceOutcomes(), <String>['advanced', 'relay_rejected']);
+
+        // The next publish retries the advanced epoch without another bump.
+        expect(await coordinator.publishForAuthenticatedGraph(), isTrue);
+        expect(
+          authority.publications.map((record) => record.refreshEpoch),
+          <int>[11, 12, 12],
+        );
+        expect(native.advanceCalls, 1);
+        expect(authority.revocations, isEmpty);
+
+        await coordinator.close();
+        await subscription.cancel();
+        await native.events.close();
+      },
+    );
+
+    test('a non-stale rejection never advances the epoch', () async {
+      final native = _TokenNative()
+        ..current = _snapshot(token: _tokenA, refreshEpoch: 11);
+      native.onAdvanceRefreshEpoch = (_) => fail('epoch must not advance');
+      final authority = _Authority()
+        ..publishFailures.add(
+          const CallAuthorityException(CallAuthorityErrorCode.bridgeFailure),
+        );
+      final coordinator = observed(native, authority);
+
+      expect(await coordinator.publishForAuthenticatedGraph(), isFalse);
+      expect(native.advanceCalls, 0);
+      expect(advanceOutcomes(), isEmpty);
+      expect(authority.revocations, isEmpty);
+
+      await coordinator.close();
+      await native.events.close();
+    });
+
+    test('native advance failure fails closed without latching', () async {
+      final native = _TokenNative()
+        ..current = _snapshot(token: _tokenA, refreshEpoch: 11);
+      native.onAdvanceRefreshEpoch = (_) =>
+          throw StateError('private native detail');
+      final authority = _Authority()..publishFailures.add(stale);
+      final coordinator = observed(native, authority);
+      final invalidations = <void>[];
+      final subscription = coordinator.authorityInvalidations.listen(
+        invalidations.add,
+      );
+
+      expect(await coordinator.publishForAuthenticatedGraph(), isFalse);
+      await _settle();
+      expect(native.advanceCalls, 1);
+      expect(invalidations, hasLength(1));
+      expect(authority.revocations, isEmpty);
+      expect(advanceOutcomes(), <String>['native_failure']);
+
+      expect(await coordinator.publishForAuthenticatedGraph(), isTrue);
+      expect(authority.publications.map((record) => record.refreshEpoch), <int>[
+        11,
+        11,
+      ]);
+
+      await coordinator.close();
+      await subscription.cancel();
+      await native.events.close();
+    });
+
+    test(
+      'a refused or non-monotonic native answer never re-publishes',
+      () async {
+        final native = _TokenNative()
+          ..current = _snapshot(token: _tokenA, refreshEpoch: 11);
+        native.onAdvanceRefreshEpoch = (_) =>
+            _snapshot(token: _tokenA, refreshEpoch: 11);
+        final authority = _Authority()..publishFailures.add(stale);
+        final coordinator = observed(native, authority);
+
+        expect(await coordinator.publishForAuthenticatedGraph(), isFalse);
+        expect(
+          authority.publications.map((record) => record.refreshEpoch),
+          <int>[11],
+        );
+        expect(native.advanceCalls, 1);
+        expect(advanceOutcomes(), <String>['refused']);
+        expect(authority.revocations, isEmpty);
+
+        await coordinator.close();
+        await native.events.close();
+        expect(authority.revocations, isEmpty);
+      },
+    );
+  });
+
   test('close releases a hung initial native read', () async {
     final readCurrent = Completer<Object?>();
     final timeout = Completer<void>();
@@ -696,14 +880,23 @@ final class _TokenNative {
       <({String method, Map<String, Object?> arguments})>[];
   Object? current;
   Future<Object?>? readResponse;
+  Object? Function(Map<String, Object?> arguments)? onAdvanceRefreshEpoch;
 
   Future<Object?> invoke(String method, Map<String, Object?> arguments) async {
     calls.add((method: method, arguments: arguments));
     if (method == 'readCurrent') {
       return await (readResponse ?? Future.value(current));
     }
+    if (method == 'advanceRefreshEpoch') {
+      final handler = onAdvanceRefreshEpoch;
+      if (handler == null) throw StateError('unsupported token method');
+      return handler(arguments);
+    }
     throw StateError('unsupported token method');
   }
+
+  int get advanceCalls =>
+      calls.where((call) => call.method == 'advanceRefreshEpoch').length;
 }
 
 final class _Authority implements CallAuthorityClient {

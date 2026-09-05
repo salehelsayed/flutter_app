@@ -1,0 +1,20 @@
+TC-400-30 — refresh-epoch advance on CALL_STALE_EPOCH, iPhone 11 (00008030-001A6D2801BB802E) vs production relay mknoun.xyz
+Build: 1.0.0-fb4732738.d10.flowlog.t260905014902 (bundleVersion 260905014902), installed keep-identity on iPhone 11 + 13 (both verified).
+Artifact gates: grep -a -c embedded.mobileprovision Runner = 1; advanceRefreshEpoch = 2; BridgeGenerateIdentity = 1.
+
+Relay state BEFORE (probe 2026-09-04 ~23:35Z, before the install): iPhone 11 token record refreshEpoch 3, environment "production"; token-generation refreshEpoch 3.
+After the keep-identity install/launch: token record refreshEpoch 4, generation high-water 4 (PushKit re-delivered the token on reinstall → native epoch bump, accepted).
+
+Induced stale epoch (23:53Z): DEL relay:call:v1:token:<iPhone11>:ios_voip → token exists=0, generation high-water stays 4.
+Relaunch (xcrun devicectl … --terminate-existing com.mknoon.app) at 23:53:49Z.
+
+Relay state AFTER (probe 23:55Z):
+  token exists=1
+  token record: refreshEpoch 1788566030 (wall-clock seconds), environment "sandbox", generation 3
+  token-generation: generation 3, refreshEpoch 1788566030
+  endpoint exists=1
+Interpretation: set(4) was CALL_STALE_EPOCH (record absent, high-water 4); the client advanced the native epoch to max(5, now) = 1788566030 and re-published the same token; the endpoint was advertised again. The "sandbox" label is plan 400 C (embedded-profile aps-environment) live on the dev-signed build.
+Syslog: the idevicesyslog capture started before the devicectl relaunch captured no Runner lines (known stall across devicectl operations); the relay records above are the closure evidence.
+
+Second induced stale epoch (23:55Z): DEL token record again (high-water 1788566030 stays) → relaunch → relay AFTER: token exists=1, refreshEpoch 1788566118 (sandbox), generation 4 / refreshEpoch 1788566118, endpoint exists=1. Recovery reproduced twice; each advance is one round trip (no loop).
+Syslog: captures attached ~4 s after the devicectl relaunch and hold only later runtime events (the token set/advance/endpoint set complete within the first seconds of start); the relay records are the closure evidence for TC-400-30.
