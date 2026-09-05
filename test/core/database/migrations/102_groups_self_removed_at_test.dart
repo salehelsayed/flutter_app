@@ -337,7 +337,7 @@ void main() {
 
       await runProductionOnUpgrade(db, 101, 102);
 
-      expect(currentIdentityDatabaseVersion, 117);
+      expect(currentIdentityDatabaseVersion, 118);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -363,7 +363,7 @@ void main() {
         expect(index109, index108 + 1);
         expect(index110, index109 + 1);
         expect(index111, index110 + 1);
-        expect(index111, registry.length - 7);
+        expect(index111, registry.length - 8);
         expect(registry[index102].name, '102_groups_self_removed_at');
         expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
         expect(registry[index104].name, '104_group_exit_diagnostics');

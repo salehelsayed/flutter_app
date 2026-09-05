@@ -10,11 +10,18 @@ import 'call_history_repository.dart';
 /// privacy-safe projection — direction, status, timestamps — and never a call
 /// handle, route, or signal.
 final class CallHistoryOrbitActivitySource implements OrbitCallActivitySource {
-  const CallHistoryOrbitActivitySource(this.loadLatestForContacts);
+  const CallHistoryOrbitActivitySource(
+    this.loadLatestForContacts,
+    this.loadUnreadCounts,
+  );
 
   /// Newest-first rows for the given contacts, batched by the caller.
   final Future<List<CallHistoryEntry>> Function(List<String> contactPeerIds)
   loadLatestForContacts;
+
+  /// 410: unread missed-call counts, batched the same way.
+  final Future<Map<String, int>> Function(List<String> contactPeerIds)
+  loadUnreadCounts;
 
   @override
   Future<Map<String, ConversationCallTimelineEntry>> latestCallsForContacts(
@@ -55,5 +62,17 @@ final class CallHistoryOrbitActivitySource implements OrbitCallActivitySource {
       );
     }
     return Map<String, ConversationCallTimelineEntry>.unmodifiable(latest);
+  }
+
+  @override
+  Future<Map<String, int>> unreadCallCountsForContacts(
+    Iterable<String> contactPeerIds,
+  ) async {
+    final wanted = contactPeerIds
+        .where((peerId) => peerId.trim().isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (wanted.isEmpty) return const <String, int>{};
+    return await loadUnreadCounts(wanted);
   }
 }

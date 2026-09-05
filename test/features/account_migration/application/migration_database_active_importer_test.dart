@@ -453,7 +453,7 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 117);
+        expect(currentIdentityDatabaseVersion, 118);
         expect(manifest.databaseVersion, 117);
         final result =
             await MigrationDatabaseActiveImporter(
@@ -548,8 +548,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 117);
-        expect(await _userVersion(productionStaged), 117);
+        expect(await _userVersion(productionActive), 118);
+        expect(await _userVersion(productionStaged), 118);
         final activeInventory =
             await MigrationDatabaseSchemaInventory.fromDatabase(
               productionActive,
@@ -674,8 +674,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 117);
-        expect(await _userVersion(productionStaged), 117);
+        expect(await _userVersion(productionActive), 118);
+        expect(await _userVersion(productionStaged), 118);
 
         const pendingMessageId = 'tc345-transfer-pending';
         const pendingAttachmentId = 'tc345-transfer-pending-media';
@@ -904,8 +904,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 117);
-        expect(await _userVersion(productionStaged), 117);
+        expect(await _userVersion(productionActive), 118);
+        expect(await _userVersion(productionStaged), 118);
 
         const incarnation = '34734734734734734734734734734734';
         const manifestHash =
@@ -1044,8 +1044,8 @@ CREATE TABLE identity (
         if (productionStaged.isOpen) await productionStaged.close();
       });
 
-      expect(await _userVersion(productionActive), 117);
-      expect(await _userVersion(productionStaged), 117);
+      expect(await _userVersion(productionActive), 118);
+      expect(await _userVersion(productionStaged), 118);
 
       const contactPeerId =
           '12D3KooWP7CwQswqLKZbwvYd9wrEynnL9F2aKVP1X9huNASBTuqj';

@@ -198,8 +198,11 @@ const _privacySha256 =
 // seams at the same application-owned boundary. VC2-05 extends that same
 // boundary with call-wake distribution, availability, and lifecycle wiring;
 // no DTR-18 owner moves.
+// 409/410 add one optional application-owned field, `orbitCallActivitySource`,
+// forwarded to the routes that can reach Orbit. It is a read-only projection
+// of local call history — no owner moves and no core shim appears.
 const _applicationRootNormalizedSha256 =
-    '886e78bafad90c2e82860288d4bb9820b512b9c590d70beabede49cb89976f61';
+    'ca72a72a4cd8aa658f22c9789a4de53f8b4eb8ed5024e694c9fead5bdd26b3a1';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -278,7 +281,10 @@ const _productionBootstrapNormalizedSha256 =
     // repairs move no owner and add no core shim.
     // UI-24 binds its default-off read-only observer and exact recipient/epoch
     // wake readiness at this app-owned boundary; no DTR-18 owner changes.
-    '7e885d69d0c60b93cfab9d2e0d0e2f0b17951f31e4026e660e3fb3d2999a9325';
+    // 409/410 build the Orbit call-activity source and the call-history read
+    // marker beside the existing conversation timeline source, from the SAME
+    // repository instance. Both are local-history reads; no owner moves.
+    '80e435ff27d19cb1d56f1d1b1f4fa91361c880375215d4b1da9e373b5670c554';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

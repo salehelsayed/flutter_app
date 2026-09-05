@@ -2527,6 +2527,10 @@ class _ConversationWiredState extends State<ConversationWired>
         messageRepo: widget.messageRepo,
         contactPeerId: _contact.peerId,
       );
+      // 410: one badge, one seam. Clearing messages but leaving missed calls
+      // unread would leave a row that says "waiting for you" after the user
+      // has plainly looked at it.
+      await widget.callTimelineSource?.markCallsRead(_contact.peerId);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

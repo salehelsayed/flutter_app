@@ -12,4 +12,10 @@ abstract interface class OrbitCallActivitySource {
   Future<Map<String, ConversationCallTimelineEntry>> latestCallsForContacts(
     Iterable<String> contactPeerIds,
   );
+
+  /// 410: unread missed-call counts, keyed by contact. Contacts with none are
+  /// OMITTED so the caller can merge without zero-writes.
+  Future<Map<String, int>> unreadCallCountsForContacts(
+    Iterable<String> contactPeerIds,
+  );
 }

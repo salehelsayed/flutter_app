@@ -382,5 +382,8 @@ class _CallTimelineSourceSentinel implements ConversationCallTimelineSource {
   ) async => const <ConversationCallTimelineEntry>[];
 
   @override
+  Future<void> markCallsRead(String contactPeerId) async {}
+
+  @override
   Stream<void> get changes => const Stream<void>.empty();
 }

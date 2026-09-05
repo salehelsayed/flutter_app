@@ -15966,6 +15966,9 @@ class _FakeCallTimelineSource implements ConversationCallTimelineSource {
   final StreamController<void> _changes = StreamController<void>.broadcast();
 
   @override
+  Future<void> markCallsRead(String contactPeerId) async {}
+
+  @override
   Stream<void> get changes => _changes.stream;
 
   void announceWritten() => _changes.add(null);

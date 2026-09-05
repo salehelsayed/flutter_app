@@ -19,6 +19,15 @@ final class CallHistoryRepositoryImpl implements CallHistoryRepository {
     return row == null ? null : CallHistoryEntry.fromMap(row);
   }
 
+  /// 410: unread missed-call counts for a batch of contacts.
+  Future<Map<String, int>> unreadCallCountsForContacts(
+    List<String> contactAccountPeerIds,
+  ) => loadUnreadCallCountsForContacts(database, contactAccountPeerIds);
+
+  /// 410: stamps this contact's unread calls as read when the chat is opened.
+  Future<int> markCallsRead(String contactAccountPeerId, DateTime readAt) =>
+      markCallHistoryRead(database, contactAccountPeerId, readAt);
+
   /// 409: newest-first rows for a batch of contacts, for the Orbit rows.
   Future<List<CallHistoryEntry>> latestForContacts(
     List<String> contactAccountPeerIds,

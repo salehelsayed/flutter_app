@@ -42,6 +42,10 @@ Future<List<OrbitFriend>> loadOrbitData({
       callActivitySource: callActivitySource,
       contactPeerIds: contacts.map((contact) => contact.peerId),
     );
+    final unreadCalls = await _loadUnreadCallCounts(
+      callActivitySource: callActivitySource,
+      contactPeerIds: contacts.map((contact) => contact.peerId),
+    );
     final friends = contacts
         .map(
           (contact) => _buildOrbitFriend(
@@ -51,6 +55,7 @@ Future<List<OrbitFriend>> loadOrbitData({
                 ConversationThreadSummary(contactPeerId: contact.peerId),
             descriptors: descriptors,
             latestCall: latestCalls[contact.peerId],
+            unreadCalls: unreadCalls[contact.peerId] ?? 0,
           ),
         )
         .toList(growable: false);
@@ -112,11 +117,16 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
       callActivitySource: callActivitySource,
       contactPeerIds: <String>[contactPeerId],
     );
+    final unreadCalls = await _loadUnreadCallCounts(
+      callActivitySource: callActivitySource,
+      contactPeerIds: <String>[contactPeerId],
+    );
     final friend = _buildOrbitFriend(
       contact: contact,
       summary: summary,
       descriptors: descriptors,
       latestCall: latestCalls[contactPeerId],
+      unreadCalls: unreadCalls[contactPeerId] ?? 0,
     );
 
     emitFlowEvent(
@@ -132,6 +142,27 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
       details: {'peerId': contactPeerId, 'error': e.toString()},
     );
     rethrow;
+  }
+}
+
+/// 410: unread missed-call counts, or an empty map.
+///
+/// Best effort for the same reason as the call activity itself: the badge is
+/// worth less than the roster being on screen at all.
+Future<Map<String, int>> _loadUnreadCallCounts({
+  required OrbitCallActivitySource? callActivitySource,
+  required Iterable<String> contactPeerIds,
+}) async {
+  if (callActivitySource == null) return const <String, int>{};
+  try {
+    return await callActivitySource.unreadCallCountsForContacts(contactPeerIds);
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'ORBIT_CALL_UNREAD_SKIPPED',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+    return const <String, int>{};
   }
 }
 
@@ -164,6 +195,7 @@ OrbitFriend _buildOrbitFriend({
   Map<String, MediaPreviewDescriptor> descriptors =
       const <String, MediaPreviewDescriptor>{},
   ConversationCallTimelineEntry? latestCall,
+  int unreadCalls = 0,
 }) {
   final latest = summary.latestMessage;
   final isDeleted = latest?.deletedAt != null;
@@ -178,7 +210,10 @@ OrbitFriend _buildOrbitFriend({
     messageCount: summary.messageCount,
     lastActivity: isDeleted ? null : latest?.text,
     lastMessageTimestamp: latest?.timestamp,
-    unreadCount: summary.unreadCount,
+    // 410: one badge for the whole conversation. A missed call the user has
+    // not seen counts exactly like an unread message, because from the row's
+    // point of view both mean "something here is waiting for you".
+    unreadCount: summary.unreadCount + unreadCalls,
     latestMedia: descriptor,
     isLatestDeleted: isDeleted,
     // Only a call NEWER than the latest message takes over the row, so the

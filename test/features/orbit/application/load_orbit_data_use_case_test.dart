@@ -205,11 +205,32 @@ ContactModel _makeContact(String peerId, {bool isArchived = false}) {
 
 /// 409: newest terminal call per contact, under test control.
 class FakeOrbitCallActivitySource implements OrbitCallActivitySource {
-  FakeOrbitCallActivitySource({this.calls = const {}, this.error});
+  FakeOrbitCallActivitySource({
+    this.calls = const {},
+    this.unread = const {},
+    this.error,
+    this.unreadError,
+  });
 
   final Map<String, ConversationCallTimelineEntry> calls;
+  final Map<String, int> unread;
   final Object? error;
+  final Object? unreadError;
   int callCount = 0;
+  int unreadCallCount = 0;
+
+  @override
+  Future<Map<String, int>> unreadCallCountsForContacts(
+    Iterable<String> contactPeerIds,
+  ) async {
+    unreadCallCount++;
+    if (unreadError != null) throw unreadError!;
+    final wanted = contactPeerIds.toSet();
+    return <String, int>{
+      for (final entry in unread.entries)
+        if (wanted.contains(entry.key)) entry.key: entry.value,
+    };
+  }
 
   @override
   Future<Map<String, ConversationCallTimelineEntry>> latestCallsForContacts(
@@ -767,6 +788,70 @@ void main() {
         1,
         reason: 'orbit batches; one query per contact would not scale',
       );
+    });
+  });
+
+  group('410 unread missed calls in the orbit badge', () {
+    test('TC-410-20 an unseen missed call raises the row badge', () async {
+      final result = await loadOrbitData(
+        contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
+        messageRepo: FakeMessageRepository(unreadCounts: {'peer-A': 2}),
+        callActivitySource: FakeOrbitCallActivitySource(unread: {'peer-A': 3}),
+      );
+
+      expect(
+        result.single.unreadCount,
+        5,
+        reason:
+            'one badge for the conversation: unread messages plus missed '
+            'calls the user has not seen',
+      );
+    });
+
+    test(
+      'TC-410-21 no unread calls leaves the message badge exactly as it was',
+      () async {
+        final result = await loadOrbitData(
+          contactRepo: FakeContactRepository(
+            contacts: [_makeContact('peer-A')],
+          ),
+          messageRepo: FakeMessageRepository(unreadCounts: {'peer-A': 2}),
+          callActivitySource: FakeOrbitCallActivitySource(),
+        );
+
+        expect(result.single.unreadCount, 2);
+      },
+    );
+
+    test(
+      'TC-410-22 a failing unread query never blocks orbit or the badge',
+      () async {
+        final result = await loadOrbitData(
+          contactRepo: FakeContactRepository(
+            contacts: [_makeContact('peer-A')],
+          ),
+          messageRepo: FakeMessageRepository(unreadCounts: {'peer-A': 2}),
+          callActivitySource: FakeOrbitCallActivitySource(
+            unreadError: StateError('call history unavailable'),
+          ),
+        );
+
+        expect(result.single.unreadCount, 2);
+      },
+    );
+
+    test('TC-410-23 the unread query is batched like the rest', () async {
+      final source = FakeOrbitCallActivitySource();
+
+      await loadOrbitData(
+        contactRepo: FakeContactRepository(
+          contacts: [_makeContact('peer-A'), _makeContact('peer-B')],
+        ),
+        messageRepo: FakeMessageRepository(),
+        callActivitySource: source,
+      );
+
+      expect(source.unreadCallCount, 1);
     });
   });
 }

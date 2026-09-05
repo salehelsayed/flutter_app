@@ -43,8 +43,8 @@ void main() {
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,
       );
-      expect(currentIdentityDatabaseVersion, 117);
-      expect(await _userVersion(db), 117);
+      expect(currentIdentityDatabaseVersion, 118);
+      expect(await _userVersion(db), 118);
       expect(await db.query(kCallHistoryTable), isEmpty);
 
       final columns = (await db.rawQuery(
@@ -62,6 +62,8 @@ void main() {
         'transport_route_class',
         'created_at',
         'updated_at',
+        // 410: v118 adds read state to the same table.
+        'read_at',
       ]);
       for (final forbidden in <String>[
         'sdp',
@@ -119,7 +121,12 @@ void main() {
         expect(entries, hasLength(1));
         expect(entries.single.name, '117_call_history');
         expect(entries.single.run, same(runCallHistoryMigration));
-        expect(registry.last, same(entries.single));
+        // 410: v118 (call read state) now follows, so v117 is second from
+        // last rather than last.
+        expect(
+          registry[registry.length - 2],
+          same(entries.single),
+        );
       }
     },
   );

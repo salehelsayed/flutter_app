@@ -9719,11 +9719,13 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         callTimelineSource: CallHistoryConversationTimelineSource(
           callHistoryRepository,
           changes: callHistoryProjected.stream,
+          markRead: callHistoryRepository.markCallsRead,
         ),
         // 409: the Orbit rows read the same local table, batched for the whole
         // roster rather than one query per contact.
         orbitCallActivitySource: CallHistoryOrbitActivitySource(
           callHistoryRepository.latestForContacts,
+          callHistoryRepository.unreadCallCountsForContacts,
         ),
         foregroundCallCapability: callSignalingComposition,
         resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,

@@ -102,6 +102,7 @@ import 'package:flutter_app/core/database/migrations/114_direct_linked_device_me
 import 'package:flutter_app/core/database/migrations/115_group_media_blob_custody.dart';
 import 'package:flutter_app/core/database/migrations/116_notification_completed_outcome_outbox.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
+import 'package:flutter_app/core/database/migrations/118_call_history_read_state.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
@@ -1482,7 +1483,7 @@ void main() {
     test(
       'production registries contain one ordered direct forwarded v97 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 117);
+        expect(currentIdentityDatabaseVersion, 118);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1502,7 +1503,7 @@ void main() {
     test(
       'production registries contain one ordered deletion journal v98 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 117);
+        expect(currentIdentityDatabaseVersion, 118);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1517,7 +1518,7 @@ void main() {
       },
     );
     test('VC2-02 production registry reaches v117 exactly once', () {
-      expect(currentIdentityDatabaseVersion, 117);
+      expect(currentIdentityDatabaseVersion, 118);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -1578,7 +1579,14 @@ void main() {
         expect(index116, index115 + 1);
         final index117 = registry.indexWhere((entry) => entry.version == 117);
         expect(index117, index116 + 1);
-        expect(index117, registry.length - 1);
+        final index118 = registry.indexWhere((entry) => entry.version == 118);
+        expect(index118, index117 + 1);
+        expect(index118, registry.length - 1);
+        expect(registry[index118].name, '118_call_history_read_state');
+        expect(
+          registry[index118].run,
+          same(runCallHistoryReadStateMigration),
+        );
         expect(registry[index100].name, '100_direct_private_media_lifecycle');
         expect(
           registry[index100].run,
@@ -2065,7 +2073,7 @@ void main() {
     test('production create and v95 upgrade registries include media library '
         'state v96', () async {
       // TC-228-13: v96 appears exactly once in both registry branches.
-      expect(currentIdentityDatabaseVersion, 117);
+      expect(currentIdentityDatabaseVersion, 118);
       expect(
         productionCreateMigrations.where((e) => e.version == 96).length,
         1,

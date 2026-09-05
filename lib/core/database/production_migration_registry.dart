@@ -117,6 +117,7 @@ import 'migrations/114_direct_linked_device_media_blob_fanout.dart';
 import 'migrations/115_group_media_blob_custody.dart';
 import 'migrations/116_notification_completed_outcome_outbox.dart';
 import 'migrations/117_call_history.dart';
+import 'migrations/118_call_history_read_state.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -675,6 +676,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     runNotificationCompletedOutcomeOutboxMigration,
   ),
   ProductionMigrationEntry(117, '117_call_history', runCallHistoryMigration),
+  ProductionMigrationEntry(
+    118,
+    '118_call_history_read_state',
+    runCallHistoryReadStateMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1223,6 +1229,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     runNotificationCompletedOutcomeOutboxMigration,
   ),
   ProductionMigrationEntry(117, '117_call_history', runCallHistoryMigration),
+  ProductionMigrationEntry(
+    118,
+    '118_call_history_read_state',
+    runCallHistoryReadStateMigration,
+  ),
 ]);
 
 /// Production onCreate callback: runs every create entry whose version is

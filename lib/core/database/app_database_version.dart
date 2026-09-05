@@ -69,4 +69,9 @@
 // backfilled because they cannot prove that a local effect completed.
 // VC2-02: DB v117 adds one privacy-safe local call-history row per terminal
 // call. Historical rows are not synthesized.
-const int currentIdentityDatabaseVersion = 117;
+// 410: DB v118 adds nullable `call_history.read_at` so a missed call can carry
+// read state the way a message already does. No default and no backfill: every
+// existing row starts UNREAD, which is the truthful state for a call the user
+// has not seen. A trigger guards the timestamp because SQLite cannot add a
+// CHECK through ALTER. v118 remains a one-way schema floor.
+const int currentIdentityDatabaseVersion = 118;

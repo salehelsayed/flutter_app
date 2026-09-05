@@ -13,10 +13,20 @@ final class CallHistoryConversationTimelineSource
   const CallHistoryConversationTimelineSource(
     this.repository, {
     Stream<void>? changes,
-  }) : _changes = changes;
+    Future<int> Function(String contactPeerId, DateTime readAt)? markRead,
+  }) : _changes = changes,
+       _markRead = markRead;
 
   final CallHistoryRepository repository;
   final Stream<void>? _changes;
+  final Future<int> Function(String contactPeerId, DateTime readAt)? _markRead;
+
+  @override
+  Future<void> markCallsRead(String contactPeerId) async {
+    final markRead = _markRead;
+    if (markRead == null || contactPeerId.trim().isEmpty) return;
+    await markRead(contactPeerId, DateTime.now().toUtc());
+  }
 
   @override
   Stream<void> get changes => _changes ?? const Stream<void>.empty();

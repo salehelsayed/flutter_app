@@ -99,8 +99,8 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 117);
-    expect(await _userVersion(db), 117);
+    expect(currentIdentityDatabaseVersion, 118);
+    expect(await _userVersion(db), 118);
 
     // Registered exactly once in both registries, immediately after v112.
     // 362: v114 now follows v113, so the ledger claim is positional.
@@ -180,7 +180,7 @@ void main() {
     await runDirectLinkedDeviceEventFanoutMigration(db);
     await runDirectLinkedDeviceEventFanoutMigration(db);
     await _expectExactSchema(db);
-    expect(await _userVersion(db), 117);
+    expect(await _userVersion(db), 118);
 
     // Author one real fanout-marked row set, then prove reopen preserves it
     // and that v113 is a one-way floor.
@@ -225,7 +225,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 117);
+    expect(await _userVersion(db), 118);
     expect(
       await db.query('direct_inbox_custody_outbox', orderBy: 'message_id'),
       markedCustody,
@@ -265,7 +265,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 117);
+    expect(await _userVersion(db), 118);
     expect(
       await db.query('direct_inbox_custody_outbox', orderBy: 'message_id'),
       markedCustody,
@@ -286,7 +286,7 @@ void main() {
     addTearDown(() async {
       if (fresh.isOpen) await fresh.close();
     });
-    expect(await _userVersion(fresh), 117);
+    expect(await _userVersion(fresh), 118);
     expect(
       await _columnNames(fresh, 'messages'),
       containsAll(_newMessageColumns),
