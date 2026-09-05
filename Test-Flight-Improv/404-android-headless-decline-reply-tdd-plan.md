@@ -1,6 +1,6 @@
 # Plan 404 — Android headless decline reply: a natively declined call answers the caller (TDD)
 
-Status: implemented 2026-09-05; first deploy 18:19Z refuted on device (reply rode the call id as handle), fixed 18:45Z (device proof pending the next deploy)
+Status: CLOSED 2026-09-05 — device-proven 19:00Z: two killed-app declines ended the iPhone call 2.5 s and 2.6 s after the tap (`evidence/404/decline_reply_device_proof_2026-09-05.txt`)
 Origin: user report 2026-09-05 — "when canceling the call from pixel, the ringback on iphone keeps going".
 Evidence: `Test-Flight-Improv/evidence/404/`
 
@@ -80,8 +80,13 @@ Two declines with the (c) build still took 9.2 s and 9.6 s tap-to-end (Pixel: wo
 
 2026-09-05 19:00Z (`docker-ws/deploy_pixel_404d_result.txt`, finding (c2) fix, tree of `b5e6597c8`): Pixel only, in place, `1.0.0-9577caeca.d20.t260905205811` (verified); iPhones unchanged; captures `fresh-260905203527` keep running; Pixel app killed.
 
+## Device proof — 2026-09-05 19:00Z
+
+`evidence/404/decline_reply_device_proof_2026-09-05.txt`: with (b)+(c2) on the Pixel, two declines of a headlessly presented call (app killed, phone locked) reached the iPhone as `remoteReject`/`declined` 2.5 s and 2.6 s after the tap (before (c2): 9.2 s and 9.6 s). Engine bring-up now matches the admission runs (database open 0.9 s after the worker start, node 1.6 s). Reference: a hang-up from the alive app after answering reaches the iPhone in 0.6 s; the remaining 2 s of the headless reply is the engine, SQLCipher, node start and the endpoint fetch.
+
 ## Follow-ups (not in this plan)
 
 - App alive with Flutter attached but the call not adopted by Dart: the decline reply is scheduled but the runtime lease is held, so the run defers and no reject is sent; the foreground drain is expected to own such calls.
 - A reply that reaches no custody is not retried (the worker runs once); the caller then times out as before.
+- Headless reply latency floor (~2.5 s): the caller's endpoint could be pinned at admission time and handed to the reply run, and the engine could be kept warm for the ringing window; both are separate plans.
 - iOS callees are unaffected (PushKit keeps Dart alive for the decline).

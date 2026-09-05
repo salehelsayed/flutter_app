@@ -1,0 +1,32 @@
+Plan 404 device proof — captures docker-ws/deploy-captures/fresh-260905203527/
+Pixel 1.0.0-9577caeca.d20.t260905205811 (tree of b5e6597c8: (b) mailbox handle + (c2) foreground service kept through the reply),
+iPhone 11 1.0.0-ff3ada35a.d14.flowlog.t260905203056. Pixel app killed, phone locked. Local time UTC+2; the Pixel clock runs ~1.2 s ahead of the iPhone.
+
+=== decline 1 ===
+Pixel  21:00:30.142 CALL_ANDROID_DISCONNECT source=explicit_end           (decline tapped)
+Pixel  21:00:30.194 WM-WorkerWrapper: Starting work (decline_reply)        +0.05 s
+Pixel  21:00:31.103 ENCRYPTED_DB_OPEN_START                                +0.96 s   (was +4.7 s before (c2))
+Pixel  21:00:31.714 P2P_NODE_START_REQUEST                                 +1.57 s   (was +7.1 s)
+Pixel  21:00:31.809 call_retrieve_v1 → 31.953
+Pixel  21:00:32.258 CALL_ENDPOINT_RESOLUTION_INPUT
+Pixel  21:00:32.311 call_store_v1 → 32.520 mailbox_store result=true
+Pixel  21:00:32.588 CALL_HEADLESS_DECLINE_REPLY_RESULT outcome=sent        +2.45 s
+Pixel  21:00:32.600 CALL_SIGNALING_LEG_RESULT direct_send result=true
+iPhone 21:00:31.370 ringback=stopped reason=terminal
+iPhone 21:00:31.388 CALL_STATE_TRANSITION remoteReject ended declined      (≈ 32.6 Pixel time → ≈ 2.5 s after the tap)
+
+=== decline 2 ===
+Pixel  21:00:53.258 CALL_ANDROID_DISCONNECT source=explicit_end
+Pixel  21:00:53.309 Starting work                                          +0.05 s
+Pixel  21:00:54.183 ENCRYPTED_DB_OPEN_START                                +0.93 s
+Pixel  21:00:54.941 P2P_NODE_START_REQUEST                                 +1.68 s
+Pixel  21:00:55.552 CALL_ENDPOINT_RESOLUTION_INPUT
+Pixel  21:00:55.610 call_store_v1 → 55.814 result=true
+Pixel  21:00:55.873 CALL_HEADLESS_DECLINE_REPLY_RESULT outcome=sent        +2.6 s
+Pixel  21:00:55.884 direct_send result=true
+iPhone 21:00:54.655 ringback=stopped reason=terminal
+iPhone 21:00:54.674 CALL_STATE_TRANSITION remoteReject ended declined      (≈ 55.9 Pixel time → ≈ 2.6 s after the tap)
+
+Before (c2), same build minus the foreground-service ordering (captures fresh-260905203527, 20:46:52 and 20:47:26): 9.2 s and 9.6 s.
+Reference, app alive after answering (20:48:05): the Pixel's hang-up reached the iPhone in 0.6 s.
+Remaining budget of the headless reply: WorkManager 0.05 s, engine + SQLCipher 0.9 s, identity + bridge + node 0.6 s, retrieve 0.15 s, endpoint resolution 0.3 s, mailbox store 0.2 s, direct send 0.1 s.
