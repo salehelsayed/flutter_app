@@ -1,0 +1,39 @@
+=== plan 402 (e) chain started 20260905T170852Z ===
+mutations applied
+=== MUTATION RED 2026-09-05T17:08:52Z: adapter drops wakeDispatched; reducer drops custody on wakeRequested ===
+00:00 +0 -1: /Volumes/CrucialX9/flutter_app/test/features/call/infrastructure/production_call_signaling_adapters_test.dart: ProductionCallControlSignalingAdapter the relay wake outcome reaches the executor result without a receipt of its own [E]
+  Expected: true
+    Actual: <false>
+00:00 +0 -1: /Volumes/CrucialX9/flutter_app/test/features/call/domain/call_state_machine_test.dart: VC2-02 pure reducer causal matrix a dispatched wake alerts the caller like a remote ring
+00:00 +0 -2: /Volumes/CrucialX9/flutter_app/test/features/call/domain/call_state_machine_test.dart: VC2-02 pure reducer causal matrix a dispatched wake alerts the caller like a remote ring [E]
+  Expected: true
+    Actual: <false>
+00:00 +0 -2: Some tests failed.
+restored
+mutation markers left: 0
+00:00 +2: All tests passed!
+d3ca67f80 fix(call): carry the wake outcome through the executor path
+--- stop captures
+  (no logcat)
+--- iOS build
+PROVENANCE sha=d3ca67f80 dirty=4 build_name=1.0.0-d3ca67f80.d4.flowlog.t260905190931 bundle_version=260905190931
+IOS BUILT 1.0.0-d3ca67f80.d4.flowlog.t260905190931 bundleVersion=260905190931
+ios build exit=0
+runner count(wakeReceipt)=1  count(callStoreV1)=1
+--- iPhones + Pixel in parallel
+ios install exit=0
+ARTIFACT 1.0.036780.4.260905190931 bundleVersion=260905190931
+00008030-001A6D2801BB802E OK 1.0.036780.4.260905190931 bundleVersion=260905190931 (verified)
+00008110-00184D622289801E OK 1.0.036780.4.260905190931 bundleVersion=260905190931 (verified)
+pixel deploy exit=0
+PIXEL 21071FDF600CSC OK 1.0.0-d3ca67f80.d8.t260905191154 (verified)
+PIXEL PASS
+--- captures
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905191258
+--- capture status
+docker-ws/deploy-captures/fresh-260905191258/iphone_00008030_syslog.txt: 2707 lines, 422 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905191258/iphone_00008110_syslog.txt: 2598 lines, 486 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905191258/pixel_logcat.txt: 1312 lines, 402 [FLOW] lines
+--- kill the Pixel app
+pid_after_kill=
+=== done 20260905T171315Z ===

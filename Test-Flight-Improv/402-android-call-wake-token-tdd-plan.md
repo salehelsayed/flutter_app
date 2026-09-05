@@ -71,6 +71,20 @@ User: (1) killed-app Pixel rings and now stops on hang-up, but the iPhone 11 hea
 
 Deploy order: relay v1.10.5 (`docker-ws/deploy_relay_v1105.sh`) BEFORE any phone build; then Pixel (c)+(d) and both iPhones (d, ringback on the wake path to a Pixel).
 
+## Device findings 2026-09-05 16:47Z–17:00Z — (d) shipped twice without effect, then found
+
+Two more reasons the caller never rang back, both invisible to per-layer tests:
+
+1. **The iPhone linked the previous Go framework.** `ensure_go_ios_bindings.sh` rebuilt `GoMknoon.xcframework` during the Xcode build (18:46:50, symbol present), but the GoMknoon Pod had already copied the older slice into the build products, so the Runner (18:47) carried `call_store_v1` and no `wakeReceipt`. The store request never opted in and the relay, correctly, omitted `wake`. Fix `d3af2c01f`: the flowlog, iOS-only and fresh-three-phones scripts run `scripts/ensure_go_ios_bindings.sh` before `flutter build ios`; `docker-ws/binding_probe.sh <literal>` proves what a build carries (Runner binary count, xcframework mtime, AAR .so count). Second iPhone build `1.0.0-8ac7078d3.d8.flowlog.t260905185610`: Runner count 1.
+2. **Production never ran the service's receipt dispatch.** With the binding right, the caller still logged only `mailboxStored`: the production adapter (`ProductionCallControlSignalingAdapter.send`) uses `CallSignalingService.transmit()` and the executor dispatches its own single follow-up, so `_dispatchReceipts` (where (d) put `wakeRequested`) is dead in production. Fix: `CallControlSendResult.wakeDispatched` (adapter maps it; visible in the send diagnostics), the executor's invite follow-up is `wakeRequested` instead of `mailboxStored` when the wake was dispatched, and the reducer confirms mailbox custody on `wakeRequested` before ringing; the store leg's `CALL_SIGNALING_LEG_RESULT` prints the wake value the relay answered.
+
+| Row | RED | GREEN | Evidence |
+|---|---|---|---|
+| executor `a dispatched wake turns the mailbox custody follow-up into ringing` | `No named parameter with the name 'wakeDispatched'` | 194 → 196 across executor, adapter, reducer, service, client, composition, coordinator | `dart_wake_executor_path_red_2026-09-05.txt`, `dart_wake_executor_path_green_2026-09-05.txt` |
+| adapter `the relay wake outcome reaches the executor result without a receipt of its own`; reducer custody on `wakeRequested` | mutation (mapping removed / custody removed) | same | `dart_wake_executor_path_mutation_red_2026-09-05.txt` |
+
+Lesson: a cross-layer feature needs one end-to-end proof on the production path (here: caller flow log shows `trigger: wakeRequested` → `ringing`), not seven green layers.
+
 ## Follow-ups (not in this plan)
 
 - Endpoint records expire 6 h after the last advertisement and are refreshed only on start/resume: a phone left locked longer loses its wake route on both platforms.
