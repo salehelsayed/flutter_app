@@ -38,6 +38,9 @@ type redisCallMeta struct {
 	ExpiresAtMs           int64  `json:"expiresAtMs"`
 	EventCount            int    `json:"eventCount"`
 	TotalBytes            int    `json:"totalBytes"`
+	// AckedEvents counts events the recipient acknowledged on this call. Old
+	// records decode as zero, which never marks a recipient attached.
+	AckedEvents int `json:"ackedEvents,omitempty"`
 }
 
 type redisCallTombstone struct {
@@ -473,6 +476,7 @@ func (s *redisCallControlStore) Ack(
 		// see no undelivered events.
 		meta.EventCount = keptCount
 		meta.TotalBytes = keptBytes
+		meta.AckedEvents += attemptAcked
 		metaRaw, err := marshalCallRecord(*meta)
 		if err != nil {
 			return err
@@ -560,7 +564,7 @@ func (s *redisCallControlStore) ClaimWake(
 	var selected *CallWakeRoute
 	claimed := false
 	err = s.watch(ctx, []string{
-		keys.meta, keys.ids, keys.claims, keys.tombstone, wakeKey, standardKey, voipKey,
+		keys.meta, keys.ids, keys.events, keys.claims, keys.tombstone, wakeKey, standardKey, voipKey,
 		routeKey, endpointKey,
 	}, func(tx *redis.Tx) error {
 		meta, err := readRedisCallJSON[redisCallMeta](ctx, tx, keys.meta)
@@ -656,6 +660,33 @@ func (s *redisCallControlStore) ClaimWake(
 					token = voip
 				}
 			}
+			if token != nil {
+				// A recipient that already drained every earlier event of this
+				// call runs live on it and drains the mailbox itself. A VoIP
+				// wake for a later control event would force CallKit to present
+				// a brand-new incoming call, so the event stays in the mailbox
+				// without a wake. Android data wakes present nothing by
+				// themselves and keep firing for every event.
+				attached, err := s.recipientAttachedTx(ctx, tx, keys, *meta, request.MessageID)
+				if err != nil {
+					return err
+				}
+				if attached {
+					if claimState == "" || claimState == redisCallWakeClaimed {
+						completedRaw, marshalErr := marshalCallRecord(newRedisCallWakeClaim(redisCallWakeCompleted))
+						if marshalErr != nil {
+							return marshalErr
+						}
+						_, commitErr := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+							pipe.HSet(ctx, keys.claims, request.MessageID, completedRaw)
+							pipe.PExpireAt(ctx, keys.claims, time.UnixMilli(meta.ExpiresAtMs))
+							return nil
+						})
+						return commitErr
+					}
+					return nil
+				}
+			}
 		case "android":
 			if standard != nil {
 				if standard.Kind != CallTokenKindStandard || !validStoredCallTokenShape(*standard) {
@@ -695,6 +726,36 @@ func (s *redisCallControlStore) ClaimWake(
 		return nil, false, callRedisError(err)
 	}
 	return selected, claimed, nil
+}
+
+// recipientAttachedTx reports whether the recipient has acknowledged at least
+// one event of this call and every event stored before messageID (the list
+// then holds at most that message). Such a recipient is live on the call and
+// needs no wake. A call's first event never counts: nothing was acknowledged.
+func (s *redisCallControlStore) recipientAttachedTx(
+	ctx context.Context,
+	tx *redis.Tx,
+	keys redisCallKeySet,
+	meta redisCallMeta,
+	messageID string,
+) (bool, error) {
+	if meta.AckedEvents <= 0 {
+		return false, nil
+	}
+	rows, err := tx.LRange(ctx, keys.events, 0, -1).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return false, err
+	}
+	for _, row := range rows {
+		var event CallMailboxEvent
+		if err := json.Unmarshal([]byte(row), &event); err != nil {
+			return false, ErrCallBackendUnavailable
+		}
+		if event.MessageID != messageID {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (s *redisCallControlStore) WakeCurrent(
