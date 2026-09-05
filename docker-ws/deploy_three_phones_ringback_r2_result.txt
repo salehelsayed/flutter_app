@@ -1,0 +1,29 @@
+=== plan 401 redeploy (ringback port on the lifecycle bridges) started 20260905T150529Z tree=d132a044b+wip ===
+--- stop previous captures
+after:
+  (no idevicesyslog)
+  (no logcat)
+--- iOS build
+PROVENANCE sha=d132a044b dirty=10 build_name=1.0.0-d132a044b.d10.flowlog.t260905170545 bundle_version=260905170545
+✓ Built build/ios/iphoneos/Runner.app (98.7MB)
+IOS BUILT 1.0.0-d132a044b.d10.flowlog.t260905170545 bundleVersion=260905170545
+ios build exit=0
+--- iPhones (keep identity) and Pixel (in place) in parallel
+ios install exit=0
+ARTIFACT 1.0.0132044.10.260905170545 bundleVersion=260905170545
+00008030-001A6D2801BB802E OK 1.0.0132044.10.260905170545 bundleVersion=260905170545 (verified)
+00008110-00184D622289801E OK 1.0.0132044.10.260905170545 bundleVersion=260905170545 (verified)
+pixel deploy exit=0
+PROVENANCE sha=845e144e9 dirty_files=5 build_name=1.0.0-845e144e9.d5.t260905170813 date=2026-09-05 17:08:13
+PIXEL 21071FDF600CSC OK 1.0.0-845e144e9.d5.t260905170813 (verified)
+PIXEL PASS
+--- captures
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260905170844
+--- relaunch into captures
+   syslog capture restarted pid=54218 -> docker-ws/deploy-captures/fresh-260905170844/iphone_00008110_syslog.txt
+== Pixel 21071FDF600CSC: relaunch com.mknoon.app at 15:08:53
+--- capture status
+docker-ws/deploy-captures/fresh-260905170844/iphone_00008030_syslog.txt: 2794 lines, 398 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905170844/iphone_00008110_syslog.txt: 3206 lines, 386 [FLOW] lines
+docker-ws/deploy-captures/fresh-260905170844/pixel_logcat.txt: 1426 lines, 402 [FLOW] lines
+=== done 20260905T150855Z ===
