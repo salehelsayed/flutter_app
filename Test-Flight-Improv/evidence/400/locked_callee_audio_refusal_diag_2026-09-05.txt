@@ -1,0 +1,6 @@
+12:34:34.737690 [MKNOON_CALLKIT_DIAG] adopt=ok phase=preStart
+12:34:34.739520 [MKNOON_CALLKIT_DIAG] ack=adopted through=1 ok=true
+12:34:38.354515 [MKNOON_CALLKIT_DIAG] answer=recorded
+12:34:38.447176 [MKNOON_CALLKIT_DIAG] activate_audio=refused reason=session_not_activated
+12:34:40.607384 [MKNOON_CALLKIT_DIAG] activate_audio=refused reason=session_not_activated
+... (37 x session_not_activated over 2.0 s, no audio_session=latched line: CallKit never called didActivate)

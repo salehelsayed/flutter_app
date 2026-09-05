@@ -1,0 +1,58 @@
+# Locked-callee device proof 2026-09-05 (user-driven; iPhone 13 locked, VoIP-woken, answered; iPhone 11 hung up)
+# builds: iPhones 1.0.0-52d06e039.d8.flowlog.t260905124526, relay v1.10.3; captures docker-ws/deploy-captures/fresh-260905124746
+
+## iPhone 13 (callee) native diag
+13:00:05.899684 [MKNOON_CALLKIT_DIAG] audio_session=configured stage=answer
+13:00:06.021002 [MKNOON_CALLKIT_DIAG] activate_audio=refused reason=session_not_activated
+13:00:06.085123 [MKNOON_CALLKIT_DIAG] activate_audio=refused reason=session_not_activated
+13:00:06.139268 [MKNOON_CALLKIT_DIAG] activate_audio=refused reason=session_not_activated
+13:00:06.192640 [MKNOON_CALLKIT_DIAG] activate_audio=refused reason=session_not_activated
+13:00:06.246126 [MKNOON_CALLKIT_DIAG] activate_audio=refused reason=session_not_activated
+13:00:06.316952 [MKNOON_CALLKIT_DIAG] activate_audio=refused reason=session_not_activated
+13:00:06.417692 [MKNOON_CALLKIT_DIAG] audio_session=latched
+13:00:06.420964 [MKNOON_CALLKIT_DIAG] activate_audio=claimed
+13:00:06.586998 [MKNOON_CALLKIT_DIAG] ack=none through=2 ok=true
+13:00:06.594395 [MKNOON_CALLKIT_DIAG] ack=none through=3 ok=true
+13:00:06.603502 [MKNOON_CALLKIT_DIAG] ack=none through=4 ok=true
+13:00:07.302132 [MKNOON_PUSHKIT_DIAG] delegate=metadata_not_required
+13:00:07.304822 [MKNOON_PUSHKIT_DIAG] presentation=duplicate
+13:00:07.616690 [MKNOON_PUSHKIT_DIAG] delegate=metadata_not_required
+13:00:07.619392 [MKNOON_PUSHKIT_DIAG] presentation=duplicate
+13:00:08.712803 [MKNOON_CALLKIT_DIAG] ack=none through=5 ok=true
+13:00:12.810280 [MKNOON_CALLKIT_DIAG] ack=none through=6 ok=true
+13:00:15.585116 [MKNOON_CALLKIT_DIAG] ack=none through=7 ok=true
+13:00:27.032132 [MKNOON_CALLKIT_DIAG] terminal=remoteCancelled
+13:00:27.032700 [MKNOON_CALLKIT_DIAG] result=remote_cancelled
+13:00:31.063966 [MKNOON_CALLKIT_DIAG] ack=terminal through=8 ok=true
+
+## iPhone 13 (callee) flow
+2026-09-05T11:00:02.994704Z CALL_STATE_TRANSITION {"trigger":"incomingValidated","state":"incomingValidating","endReason":"none"}
+2026-09-05T11:00:02.994745Z CALL_INCOMING_PRESENTATION_ATTEMPT {}
+2026-09-05T11:00:03.000702Z CALL_STATE_TRANSITION {"trigger":"systemUiPresented","state":"ringing","endReason":"none"}
+2026-09-05T11:00:03.000825Z CALL_CONTROL_SIGNAL_SEND_ATTEMPT {"type":"ringing"}
+2026-09-05T11:00:03.182420Z CALL_SIGNALING_WAKE_RESULT {"outcome":"drained","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}
+2026-09-05T11:00:03.663686Z CALL_SIGNALING_WAKE_RESULT {"outcome":"drained","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}
+2026-09-05T11:00:05.885767Z CALL_STATE_TRANSITION {"trigger":"nativeAction","state":"accepted","endReason":"none"}
+2026-09-05T11:00:06.481279Z CALL_AUDIO_START_RESULT {"status":"started"}
+2026-09-05T11:00:06.481444Z CALL_CONTROL_SIGNAL_SEND_ATTEMPT {"type":"accept"}
+2026-09-05T11:00:07.381645Z CALL_STATE_TRANSITION {"trigger":"remoteOffer","state":"negotiating","endReason":"none"}
+2026-09-05T11:00:07.744288Z CALL_STATE_TRANSITION {"trigger":"remoteIce","state":"negotiating","endReason":"none"}
+2026-09-05T11:00:07.792369Z CALL_STATE_TRANSITION {"trigger":"remoteIce","state":"negotiating","endReason":"none"}
+2026-09-05T11:00:07.842080Z CALL_SIGNALING_WAKE_RESULT {"outcome":"drained","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}
+2026-09-05T11:00:07.889044Z CALL_SIGNALING_WAKE_RESULT {"outcome":"drained","enabled":true,"started":true,"graphPresent":true,"outgoingAvailable":true}
+2026-09-05T11:00:08.714711Z CALL_STATE_TRANSITION {"trigger":"mediaConnected","state":"connected","endReason":"none"}
+2026-09-05T11:00:27.027627Z CALL_STATE_TRANSITION {"trigger":"remoteTerminate","state":"ended","endReason":"localHangup"}
+
+## iPhone 11 (caller) flow
+2026-09-05T11:00:02.381664Z CALL_STATE_TRANSITION {"trigger":"mailboxStored","state":"inviting","endReason":"none"}
+2026-09-05T11:00:03.145173Z CALL_STATE_TRANSITION {"trigger":"remoteRinging","state":"ringing","endReason":"none"}
+2026-09-05T11:00:06.619046Z CALL_STATE_TRANSITION {"trigger":"remoteAccept","state":"accepted","endReason":"none"}
+2026-09-05T11:00:06.717251Z CALL_AUDIO_START_RESULT {"status":"started"}
+2026-09-05T11:00:06.824069Z CALL_STATE_TRANSITION {"trigger":"negotiationReady","state":"negotiating","endReason":"none"}
+2026-09-05T11:00:07.702541Z CALL_STATE_TRANSITION {"trigger":"remoteAnswer","state":"negotiating","endReason":"none"}
+2026-09-05T11:00:07.865413Z CALL_STATE_TRANSITION {"trigger":"remoteIce","state":"negotiating","endReason":"none"}
+2026-09-05T11:00:07.904549Z CALL_STATE_TRANSITION {"trigger":"remoteIce","state":"negotiating","endReason":"none"}
+2026-09-05T11:00:08.509340Z CALL_STATE_TRANSITION {"trigger":"mediaConnected","state":"connected","endReason":"none"}
+2026-09-05T11:00:26.572418Z CALL_STATE_TRANSITION {"trigger":"end","state":"ended","endReason":"localHangup"}
+2026-09-05T11:00:26.573014Z CALL_CONTROL_SIGNAL_SEND_ATTEMPT {"type":"terminate"}
+2026-09-05T11:00:26.972556Z CALL_CONTROL_SIGNAL_SEND_RESULT {"type":"terminate","delivered":true,"directAccepted":true,"mailboxStored":false}

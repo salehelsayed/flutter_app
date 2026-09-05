@@ -50,3 +50,15 @@ Symptom (captures `docker-ws/deploy-captures/fresh-260905024353/`): iPhone 13 lo
 | 4 relay wakes only when needed | `call_wake_attached_recipient_test.go` ×3 | two VoIP routes for an attached recipient | 3/3 + full relay suite ok (`relay_wake_attached_recipient_2026-09-05.txt`) | `redisCallMeta.AckedEvents` (omitempty; old records → never attached); Android standard route unchanged. NOT DEPLOYED to the production relay (needs explicit approval) |
 
 Gates: affected union 258/258 (13 files); `flutter analyze` clean; arch graph `--incremental` refreshed; host `1to1` batch PASS 191 paths (`host_1to1_batch_locked_callee_2026-09-05.txt`); curated `1to1` lane Flutter leg 4186 passed / 11 skipped, trailing device leg unselected with three phones attached, as on 09-04 (`curated_1to1_lane_locked_callee_2026-09-05.txt`). Commits: relay `3e7c02d57`, app `c6817c873`.
+
+## Addendum 2026-09-05 (c) — answered call dropped: CallKit never activated the audio session
+
+After (b) the locked callee dropped ~2 s after answering (`CALL_AUDIO_START_RESULT audioSessionFailed` → `mediaFailed`). Native NSLog lines never reach the captures (all `<private>`), so CallKit diagnostics were moved to a public `os_log` helper (`mknoonCallKitDiag`, commit `52d06e039`); the next capture showed `activate_audio=refused reason=session_not_activated` ×37 and no `audio_session=latched` (`locked_callee_audio_refusal_diag_2026-09-05.txt`): CallKit never delivered `didActivate`, because the AVAudioSession category was configured only inside `didActivate`. Fix `058962862`: configure the session in the answer action (before fulfil) and the start action, as Apple's CallKit sample does.
+
+| Row | RED | GREEN | Notes |
+|---|---|---|---|
+| Swift `testAnswerConfiguresTheCallAudioSessionBeforeFulfilment` | `prepareCount` 0 != 1 | CallKit suite 46 tests, only the pre-existing concurrency test red | existing latch test now expects 2 (answer + activation) |
+| iOS adapter ordering tests ×2 (`…observed before its invite…`, `…handled before the native journal…`) | GREEN sentinels | 2/2 | Dart adoption is correct in both orderings; the refusal was native |
+| Device proof (user-driven) | — | `locked_callee_device_proof_2026-09-05.txt` | callee `audio_session=latched` 100 ms after answer, `mediaConnected` both sides, hang-up → callee `remoteTerminate`/`terminal=remoteCancelled` in 0.45 s, no second ring |
+
+Residual: during negotiation the caller's offer/ICE burst still produced two VoIP pushes to the attached callee (older events not yet drained → `recipientAttachedTx` false); CallKit answered `presentation=duplicate`, no ring. A burst-tolerant rule (attached = any acknowledged event) is a follow-up.
