@@ -1,0 +1,20 @@
+=== plan 410 deploy (unread badge for missed calls) ===
+finished 2026-09-05T23:20:06Z at d5bff5b28
+
+PIXEL   21071FDF600CSC              1.0.0-d5bff5b28.d32.t260906011739 (verified)
+IPHONE  00008030-001A6D2801BB802E   bundleVersion=260906011739 (verified)
+IPHONE  00008110-00184D622289801E   bundleVersion=260906011739 (verified)
+
+Identities kept; all three launched and verified on the first pass.
+CAPTURE_DIR=docker-ws/deploy-captures/fresh-260906012002
+
+Migration 118 runs on first launch of this build. `read_at` is nullable with no
+backfill, so every call already in history starts UNREAD — expect Orbit badges
+to be higher than they were until those conversations are opened. That is the
+intended behaviour, not a defect.
+
+Device checks:
+1. Miss a call to the Pixel, then look at Orbit WITHOUT opening the chat — the
+   row's badge rises by one.
+2. Open that conversation and go back — the badge clears.
+3. A contact with unread messages AND missed calls shows one combined number.
