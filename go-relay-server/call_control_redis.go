@@ -564,7 +564,7 @@ func (s *redisCallControlStore) ClaimWake(
 	var selected *CallWakeRoute
 	claimed := false
 	err = s.watch(ctx, []string{
-		keys.meta, keys.ids, keys.events, keys.claims, keys.tombstone, wakeKey, standardKey, voipKey,
+		keys.meta, keys.ids, keys.claims, keys.tombstone, wakeKey, standardKey, voipKey,
 		routeKey, endpointKey,
 	}, func(tx *redis.Tx) error {
 		meta, err := readRedisCallJSON[redisCallMeta](ctx, tx, keys.meta)
@@ -661,17 +661,15 @@ func (s *redisCallControlStore) ClaimWake(
 				}
 			}
 			if token != nil {
-				// A recipient that already drained every earlier event of this
-				// call runs live on it and drains the mailbox itself. A VoIP
-				// wake for a later control event would force CallKit to present
-				// a brand-new incoming call, so the event stays in the mailbox
-				// without a wake. Android data wakes present nothing by
-				// themselves and keep firing for every event.
-				attached, err := s.recipientAttachedTx(ctx, tx, keys, *meta, request.MessageID)
-				if err != nil {
-					return err
-				}
-				if attached {
+				// A recipient that acknowledged any event of this call runs
+				// live on it and drains the mailbox itself. A VoIP wake for a
+				// later control event would force CallKit to present a
+				// brand-new incoming call, so the event stays in the mailbox
+				// without a wake. Unread earlier events do not detach the
+				// recipient: a caller's offer/ICE burst outruns every drain.
+				// Android data wakes present nothing by themselves and keep
+				// firing for every event.
+				if recipientAttached(*meta) {
 					if claimState == "" || claimState == redisCallWakeClaimed {
 						completedRaw, marshalErr := marshalCallRecord(newRedisCallWakeClaim(redisCallWakeCompleted))
 						if marshalErr != nil {
@@ -728,34 +726,15 @@ func (s *redisCallControlStore) ClaimWake(
 	return selected, claimed, nil
 }
 
-// recipientAttachedTx reports whether the recipient has acknowledged at least
-// one event of this call and every event stored before messageID (the list
-// then holds at most that message). Such a recipient is live on the call and
-// needs no wake. A call's first event never counts: nothing was acknowledged.
-func (s *redisCallControlStore) recipientAttachedTx(
-	ctx context.Context,
-	tx *redis.Tx,
-	keys redisCallKeySet,
-	meta redisCallMeta,
-	messageID string,
-) (bool, error) {
-	if meta.AckedEvents <= 0 {
-		return false, nil
-	}
-	rows, err := tx.LRange(ctx, keys.events, 0, -1).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return false, err
-	}
-	for _, row := range rows {
-		var event CallMailboxEvent
-		if err := json.Unmarshal([]byte(row), &event); err != nil {
-			return false, ErrCallBackendUnavailable
-		}
-		if event.MessageID != messageID {
-			return false, nil
-		}
-	}
-	return true, nil
+// recipientAttached reports whether the recipient runs live on the call: it
+// acknowledged at least one of its events, so its runtime holds the call and
+// keeps draining the mailbox over its own connection. Pending events are not
+// consulted on purpose. A caller's offer/ICE burst stores several events
+// before the recipient drains the first, and waking once per burst event made
+// CallKit re-present the call (device proof 2026-09-05). Old meta records
+// decode AckedEvents as zero and never count as attached.
+func recipientAttached(meta redisCallMeta) bool {
+	return meta.AckedEvents > 0
 }
 
 func (s *redisCallControlStore) WakeCurrent(

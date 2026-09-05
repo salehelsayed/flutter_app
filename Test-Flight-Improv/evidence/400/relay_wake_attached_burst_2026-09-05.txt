@@ -1,0 +1,23 @@
+=== RED 2026-09-05T11:28:05Z — burst test against the 'nothing older pending' rule ===
+--- FAIL: TestCallStoreSkipsIOSVoIPWakeForAnAttachedRecipientDuringABurst (0.01s)
+    call_wake_attached_recipient_test.go:160: burst wake routes = []main.CallWakeRoute{main.CallWakeRoute{Kind:"ios_voip", Platform:"ios", Token:"ios-voip-call-token-fixture", Environment:"sandbox", T
+FAIL
+FAIL	github.com/mknoon/relay-server	0.017s
+FAIL
+
+=== GREEN 2026-09-05T11:28:18Z — attached = any acknowledged event ===
+=== RUN   TestCallStoreSkipsIOSVoIPWakeForAnAttachedRecipient
+--- PASS: TestCallStoreSkipsIOSVoIPWakeForAnAttachedRecipient (0.01s)
+=== RUN   TestCallStoreWakesIOSVoIPForEveryEventOfAnUnattachedRecipient
+--- PASS: TestCallStoreWakesIOSVoIPForEveryEventOfAnUnattachedRecipient (0.00s)
+=== RUN   TestCallStoreSkipsIOSVoIPWakeForAnAttachedRecipientDuringABurst
+--- PASS: TestCallStoreSkipsIOSVoIPWakeForAnAttachedRecipientDuringABurst (0.00s)
+=== RUN   TestCallStoreKeepsWakingAndroidForAnAttachedRecipient
+--- PASS: TestCallStoreKeepsWakingAndroidForAnAttachedRecipient (0.00s)
+PASS
+ok  	github.com/mknoon/relay-server	0.029s
+
+=== full suite 2026-09-05T11:28:22Z ===
+ok  	github.com/mknoon/relay-server	20.758s
+--- race (call tests)
+ok  	github.com/mknoon/relay-server	1.081s

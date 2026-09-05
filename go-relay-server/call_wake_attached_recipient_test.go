@@ -120,7 +120,9 @@ func TestCallStoreSkipsIOSVoIPWakeForAnAttachedRecipient(t *testing.T) {
 	callTestDrain(t, service, recipient, callTestMessageB)
 }
 
-func TestCallStoreWakesIOSVoIPAgainWhileEarlierEventsAreUnread(t *testing.T) {
+// A recipient that never acknowledged anything on the call is not attached:
+// every stored event still wakes it, unread or not.
+func TestCallStoreWakesIOSVoIPForEveryEventOfAnUnattachedRecipient(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	dispatcher := &callTestWakeDispatcher{}
 	service, _ := callTestService(t, now, dispatcher)
@@ -131,9 +133,34 @@ func TestCallStoreWakesIOSVoIPAgainWhileEarlierEventsAreUnread(t *testing.T) {
 	callTestStoreEvent(t, service, now, sender, recipient, callTestMessageA)
 	callTestStoreEvent(t, service, now, sender, recipient, callTestMessageB)
 	if len(dispatcher.routes) != 2 {
-		t.Fatalf("unread recipient wake routes = %#v, want two VoIP wakes", dispatcher.routes)
+		t.Fatalf("unattached recipient wake routes = %#v, want two VoIP wakes", dispatcher.routes)
 	}
 	callTestDrain(t, service, recipient, callTestMessageA, callTestMessageB)
+}
+
+// A caller's offer/ICE burst outruns any drain: the second burst event is
+// stored while the first is still unread. The recipient stays attached (it
+// acknowledged the invite, so its runtime holds the call and drains the
+// mailbox itself); a wake per burst event made CallKit present the call
+// again (device proof 2026-09-05: two VoIP pushes, presentation=duplicate).
+func TestCallStoreSkipsIOSVoIPWakeForAnAttachedRecipientDuringABurst(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	dispatcher := &callTestWakeDispatcher{}
+	service, _ := callTestService(t, now, dispatcher)
+	sender := callTestPeerID(t)
+	recipient := callTestPeerID(t)
+	authorizeIOSCallFixture(t, service, now, sender, recipient)
+
+	callTestStoreEvent(t, service, now, sender, recipient, callTestMessageA)
+	callTestDrain(t, service, recipient, callTestMessageA)
+
+	callTestStoreEvent(t, service, now, sender, recipient, callTestMessageB)
+	callTestStoreEvent(t, service, now, sender, recipient, callTestMessageC)
+	if len(dispatcher.routes) != 1 {
+		t.Fatalf("burst wake routes = %#v, want only the invite's VoIP wake", dispatcher.routes)
+	}
+	// Both burst events are still delivered through the mailbox.
+	callTestDrain(t, service, recipient, callTestMessageB, callTestMessageC)
 }
 
 // Android data-only wakes never present anything by themselves, so the

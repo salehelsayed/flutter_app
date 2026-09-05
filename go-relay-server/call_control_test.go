@@ -19,6 +19,7 @@ const (
 	callTestHandleC   = "20112233445566778899aabbccddeeff"
 	callTestMessageA  = "30112233445566778899aabbccddeeff"
 	callTestMessageB  = "40112233445566778899aabbccddeeff"
+	callTestMessageC  = "50112233445566778899aabbccddeeff"
 	callTestWake      = "50112233445566778899aabbccddeeff"
 	callTestVoIPTopic = "com.mknoon.test.voip"
 )
