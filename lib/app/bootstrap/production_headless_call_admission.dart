@@ -16,6 +16,10 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
+import 'package:flutter_app/core/notifications/headless_missed_call_notification.dart';
+import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
+import 'package:flutter_app/features/call/application/missed_call_notifier.dart';
+import 'package:flutter_app/features/call/application/headless_terminal_call_record.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
@@ -604,40 +608,53 @@ final class AndroidProductionHeadlessCallAdmissionBackend
     final receivedWakeHandles = ReceivedCallWakeHandleStoreImpl(
       secureKeyStore: _secureKeyStore,
     );
-    // 406: a killed-app call never reaches CallCoordinator, so this isolate
-    // is the only place its history row can be written. Without it the chat
-    // renders nothing for a call taken while the app was dead.
-    final callHistory = CallHistoryProjector(
-      CallHistoryRepositoryImpl(database),
+    // 406/408: a killed-app call never reaches CallCoordinator, so this
+    // isolate is the only place its row can be written AND the only place its
+    // missed-call card can be posted. Without both, the case where the user
+    // was least able to notice the call is the one that tells them least.
+    final callHistoryRepository = CallHistoryRepositoryImpl(database);
+    final callHistory = CallHistoryProjector(callHistoryRepository);
+    final headlessCard = HeadlessMissedCallNotification();
+    final missedCallNotifier = MissedCallNotifier(
+      post:
+          ({
+            required String contactAccountPeerId,
+            required String title,
+            required String body,
+          }) => headlessCard.show(
+            contactAccountPeerId: contactAccountPeerId,
+            title: title,
+            body: body,
+          ),
+      resolveContactName: (contactAccountPeerId) async {
+        final rows = await database.query(
+          'contacts',
+          columns: const <String>['username'],
+          where: 'peer_id = ?',
+          whereArgs: <Object?>[contactAccountPeerId],
+          limit: 1,
+        );
+        final username = rows.isEmpty ? null : rows.first['username'];
+        return username is String ? username : null;
+      },
+      // The app is dead: no conversation can be on screen, so nothing here
+      // can legitimately suppress the card.
+      isSuppressed: (_) async => false,
+      missedBody: localizedMissedCallBody(),
+      unknownCallerTitle: localizedMissedCallUnknownCaller(),
     );
     Future<void> recordTerminalCallHistory({
       required CallSignal terminal,
       required CallEndReason reason,
       CallSignal? invite,
-    }) async {
-      final startedAtMs = invite?.createdAtMs ?? terminal.createdAtMs;
-      // The terminal row can carry an earlier clock than the invite; history
-      // timestamps must stay monotonic or the entry refuses to construct.
-      final endedAtMs = terminal.createdAtMs < startedAtMs
-          ? startedAtMs
-          : terminal.createdAtMs;
-      await callHistory.projectTerminal(
-        CallSessionSnapshot.active(
-          callId: terminal.callId,
-          contactPeerId: terminal.senderAccountPeerId,
-          direction: CallDirection.incoming,
-          state: CallState.ended,
-          callerAccountPeerId: terminal.senderAccountPeerId,
-          callerDeviceId: terminal.senderDevicePeerId,
-          startedAt: DateTime.fromMillisecondsSinceEpoch(
-            startedAtMs,
-            isUtc: true,
-          ),
-          endedAt: DateTime.fromMillisecondsSinceEpoch(endedAtMs, isUtc: true),
-          endReason: reason,
-        ),
-      );
-    }
+    }) => recordHeadlessTerminalCall(
+      repository: callHistoryRepository,
+      projector: callHistory,
+      notifier: missedCallNotifier,
+      terminal: terminal,
+      reason: reason,
+      invite: invite,
+    );
 
     // Plan 404: the decline reply writes through the foreground's transport
     // shape (direct race + mailbox custody) without a coordinator lane.

@@ -175,6 +175,9 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/call/application/missed_call_notifier_test.dart"
   # 407: ring-time call mailbox drain.
   "test/features/call/application/ringing_call_mailbox_poller_test.dart"
+  # 408: killed-app missed-call card.
+  "test/core/notifications/headless_missed_call_notification_test.dart"
+  "test/features/call/application/headless_terminal_call_record_test.dart"
   "test/core/notifications/missed_call_notification_channel_test.dart"
   "test/features/conversation/presentation/widgets/conversation_header_test.dart"
   "test/features/conversation/presentation/navigation/conversation_route_transition_test.dart"
