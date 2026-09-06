@@ -6170,7 +6170,13 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             value: contactAccountPeerId,
           ),
         );
-        return visibility.maySuppress;
+        // 413: the call surface is a full-screen overlay above the WHOLE app,
+        // so a user who is in the app at all has already watched the call ring
+        // and end. Device 2026-09-06 00:15:42Z: a card posted nine seconds
+        // after CONV_FL_SCREEN_INIT because suppression was scoped to the one
+        // visible conversation. `maySuppress` stays in the expression for the
+        // same-conversation case its own authority owns.
+        return visibility.isForegroundActive || visibility.maySuppress;
       },
       missedBody: localizedMissedCallBody(),
       unknownCallerTitle: localizedMissedCallUnknownCaller(),

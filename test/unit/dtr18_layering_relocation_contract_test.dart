@@ -286,7 +286,10 @@ const _productionBootstrapNormalizedSha256 =
     // repository instance. 412 hands that source the post-projection change
     // stream the chat refresh already rides. All local-history reads; no owner
     // moves.
-    '242f1ee9174d671d8968dab2e5283c0213aecbd90a8d6397a40de451da6e9abc';
+    // 413 widens missed-call suppression to any foreground app state; the call
+    // overlay covers the whole app, so a conversation-scoped rule let a card
+    // post while the user was watching. Policy only; no owner moves.
+    'd3b6faa82d6c5d445520b3071023fe51e9e49730eafdf5fb4e351a59918f76ec';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
