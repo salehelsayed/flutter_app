@@ -1,0 +1,35 @@
+=== plan 413 chain started 20260906T001058Z at 1546258c4 ===
+--- stop captures
+after:
+  (no idevicesyslog)
+  (no logcat)
+runner_mtime_before=1788652540
+--- iOS build + Pixel deploy in parallel
+PIXEL 21071FDF600CSC OK 1.0.0-1546258c4.d34.t260906021114 (verified)
+PIXEL PASS
+pixel deploy exit=0
+--- wait for the iOS artifact by probing the Mac
+ios_wait_loops=3 ios_ok=1
+--- artifact gate
+now: 02:13:12
+=== binary ===
+-rwxr-xr-x@ 1 I560101  staff  38728176 Sep  6 02:13 build/ios/iphoneos/Runner.app/Runner
+=== version ===
+1.0.015462584.34.260906021114
+260906021114
+=== go bridge symbol count ===
+1
+=== 405 call-row string present in the flutter assets? ===
+1
+=== embedded flutter engine version ===
+1.0
+--- iPhones install (keep identity)
+ARTIFACT 1.0.015462584.34.260906021114 bundleVersion=260906021114
+00008030-001A6D2801BB802E OK 1.0.015462584.34.260906021114 bundleVersion=260906021114 (verified)
+00008110-00184D622289801E OK 1.0.015462584.34.260906021114 bundleVersion=260906021114 (verified)
+ARTIFACT 1.0.015462584.34.260906021114 bundleVersion=260906021114
+00008030-001A6D2801BB802E OK 1.0.015462584.34.260906021114 bundleVersion=260906021114 (verified)
+00008110-00184D622289801E OK 1.0.015462584.34.260906021114 bundleVersion=260906021114 (verified)
+--- captures
+CAP_DIR=docker-ws/deploy-captures/fresh-260906021326
+=== done 20260906T001330Z ===

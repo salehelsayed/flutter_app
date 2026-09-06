@@ -1,0 +1,44 @@
+DEVICE PROOF — plan 412 (a written call refreshes the Orbit ring)
+Build 1546258c4 / 1.0.0-1546258c4.d34.t260906021114 on the Pixel.
+
+=== the ring node carries the call-derived unread ===
+uiautomator dump, Pixel Orbit ring:
+
+  content-desc="Open chat with iphone-11, 1 unread message"
+
+That is the `orbit_node_unread_open_chat` branch, which the visualization emits
+only when `friend.unreadCount > 0`. Before this fix the same node read
+"Open chat with iphone-11" — the zero-unread branch — because Orbit had never
+re-read the roster since before the call existed.
+
+=== what was actually broken ===
+Orbit loads on MOUNT. Device 2026-09-06 00:02:38Z: a call ended and NO
+ORBIT_CALL_UNREAD_RESULT followed it, so the ring kept rendering a count taken
+before the call. The chat received a live refresh in plan 405; the ring never
+did. A missed call therefore could not light up a node while the user was
+looking at it, which is why the badge appeared absent through several rounds of
+testing.
+
+Fix: OrbitCallActivitySource exposes the same post-projection `changes` signal
+the chat refresh rides, and OrbitWired re-reads the whole roster on it.
+
+=== two earlier readings that were true but misleading ===
+1. `ORBIT_CALL_UNREAD_RESULT {contacts: 1, total: 1}` followed four seconds
+   later by CONV_FL_SCREEN_INIT + MARK_CONVERSATION_READ and then
+   {contacts: 0, total: 0}. The app restores into the last conversation on
+   relaunch, and opening a conversation clears call unread by design. A
+   uiautomator dump taken after that read the zero-unread label — consistent
+   with a cleared badge, NOT with a rendering fault.
+2. Every manual check involved opening the chat to read the call row, which is
+   itself the clearing action.
+
+Both readings were correct observations that supported a wrong conclusion. The
+diagnostic added in d1d537b98 (ORBIT_CALL_UNREAD_RESULT carrying contacts and
+total) is what finally separated "no data" from "never re-read".
+
+=== emulator ===
+Codex_API35 booted and ran the same build, but its only contact (TC256-A) is a
+stale test contact with no call endpoint — the header reads "Voice calling is
+unavailable right now" — and the app exposes no deep-link pairing path, only
+QR. So the emulator could not originate a call to the Pixel and was not usable
+as the caller.
