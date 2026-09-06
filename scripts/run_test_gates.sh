@@ -195,6 +195,7 @@ readonly ONE_TO_ONE_TESTS=(
   # 410: unread badge for missed calls.
   "test/core/database/migrations/118_call_history_read_state_test.dart"
   "test/core/database/helpers/call_history_unread_test.dart"
+  "test/features/orbit/presentation/widgets/orbit_call_unread_ring_test.dart"
   # 408: killed-app missed-call card.
   "test/core/notifications/headless_missed_call_notification_test.dart"
   "test/features/call/application/headless_terminal_call_record_test.dart"

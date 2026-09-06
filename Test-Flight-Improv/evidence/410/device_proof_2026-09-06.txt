@@ -1,0 +1,34 @@
+DEVICE + TEST PROOF — plan 410 (unread badge for missed calls)
+Build d1d537b98, captures docker-ws/deploy-captures/fresh-260906015624
+
+=== the badge is real; it was cleared, not missing ===
+01:57:15.440  ORBIT_CALL_UNREAD_RESULT  {contacts: 1, total: 1}
+01:57:15.441  LOAD_ORBIT_DATA_SUCCESS   {count: 1}
+01:57:19.990  CONV_FL_SCREEN_INIT                 <-- a conversation mounted
+01:57:19.962  MARK_CONVERSATION_READ   (and again at :20.20, :20.49, :20.50)
+01:57:23.398  ORBIT_CALL_UNREAD_RESULT  {contacts: 0, total: 0}
+
+One unread missed call existed and reached loadOrbitData. Four seconds later
+the app restored into the conversation, `_markAsRead` ran, and
+`markCallsRead` cleared it — the feature's own clearing path, working.
+
+A `uiautomator` dump taken AFTER that read `content-desc="Open chat with
+iphone-11"` (the zero-unread branch). That is consistent with an already
+cleared badge, NOT with a rendering fault. Reading it as a render bug would
+have been the wrong conclusion from a true observation.
+
+=== the link the device could not prove, closed by test ===
+The device could not hold `unread > 0` and an un-mounted conversation at the
+same time. TC-410-30..32 close exactly that link with no timing:
+- a call-ONLY unread survives `mergeInnerCircleItems` and draws
+  `UnreadOrbitIndicator` on the ring node;
+- messages and calls sum into ONE indicator (2 + 3 = 5);
+- zero unread draws nothing.
+
+=== why the badge kept looking absent all session ===
+Every check involved opening the conversation to read the chat row, and
+opening a conversation is precisely what clears the call unread. The app also
+restores into the last conversation on relaunch, so even a restart clears it
+before Orbit can be inspected.
+
+To see it on a device: miss a call, do NOT open that chat, and view the ring.
