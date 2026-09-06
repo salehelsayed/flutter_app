@@ -312,12 +312,13 @@ final class StrictDirectMediaBlobDownloadAckOwner {
     }
 
     try {
+      final expectedCustody = custody;
       final committed = await custodyRepository
           .runDirectMediaBlobCustodyLifecycle(() async {
             final current = await custodyRepository
                 .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id);
             if (current == null ||
-                !current.exactDatabaseProjectionMatches(custody!)) {
+                !current.exactDatabaseProjectionMatches(expectedCustody)) {
               return false;
             }
             // Re-authorize immediately before decrypt work: post-claim path
@@ -360,7 +361,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
             final didCommit = await incomingRepository
                 .commitIncomingDirectMediaBlobLocalPath(
                   expectedAttachment: attachment,
-                  expectedCustody: custody,
+                  expectedCustody: expectedCustody,
                   localPath: relativePath,
                   sourceRelayPeerId: sourceRelayPeerId,
                   updatedAt: commitAt.toIso8601String(),

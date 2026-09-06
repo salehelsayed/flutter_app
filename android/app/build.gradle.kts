@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
@@ -232,7 +233,13 @@ if (hasGoogleServicesConfig && !disableGoogleServicesForDisposableProof) {
 
 android {
     namespace = "com.mknoon.app"
-    compileSdk = flutter.compileSdkVersion
+    // core-telecom requires Android 16 QPR2 headers. Keep runtime targeting
+    // separate below so this does not opt users into new Android behavior.
+    compileSdk {
+        version = release(36) {
+            minorApiLevel = 1
+        }
+    }
     ndkVersion = flutter.ndkVersion
 
     buildFeatures {
@@ -243,10 +250,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
     }
 
     signingConfigs {
@@ -362,6 +365,12 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_11)
+    }
+}
+
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
@@ -419,7 +428,7 @@ if (enableVc204AndroidProof) {
 // A valid AAR is a non-empty zip; 1 KB threshold catches 0-byte stubs.
 fun isValidAar(f: File): Boolean = f.exists() && f.length() > 1024
 
-tasks.register("buildGoAar") {
+tasks.register<Exec>("buildGoAar") {
     val aar = file("libs/GoMknoon.aar")
     val sourcesJar = file("libs/GoMknoon-sources.jar")
     val goRoot = rootProject.file("../go-mknoon")
@@ -446,12 +455,9 @@ tasks.register("buildGoAar") {
     // Always execute the cheap deterministic digest check. The ensure script
     // invokes gomobile only when source or toolchain identity has changed.
     outputs.upToDateWhen { false }
+    workingDir = rootProject.projectDir
+    commandLine("/bin/bash", ensureBindingsScript.absolutePath)
     doLast {
-        @Suppress("DEPRECATION")
-        exec {
-            workingDir = rootProject.projectDir
-            commandLine("/bin/bash", ensureBindingsScript.absolutePath)
-        }
         if (!isValidAar(aar)) {
             aar.delete()
             throw GradleException(
@@ -466,6 +472,15 @@ tasks.register("buildGoAar") {
 
 tasks.named("preBuild") {
     dependsOn("buildGoAar")
+}
+
+// AGP 9 packages assets for host tests. Flutter 3.47 does not yet connect
+// these packaging tasks to the task that produces Flutter's assets.
+tasks.matching {
+    it.name.startsWith("package") && it.name.endsWith("UnitTestForUnitTest")
+}.configureEach {
+    val variantName = name.removePrefix("package").removeSuffix("UnitTestForUnitTest")
+    dependsOn("copyFlutterAssets$variantName")
 }
 
 if (!hasReleaseSigning && !allowDebugSigningInRelease) {

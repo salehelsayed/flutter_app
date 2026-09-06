@@ -19,6 +19,8 @@ class RecoveryStringResourcesSourceTest {
             "call_notification_title",
             "call_notification_person",
             "call_notification_incoming",
+            "call_notification_admission",
+            "call_admission_channel_name",
             "call_notification_ongoing",
             "call_notification_answer",
             "call_notification_decline",

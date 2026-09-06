@@ -99,29 +99,32 @@ class _PassPostAlongSheetState extends State<PassPostAlongSheet> {
                     final isSelected = _selectedPeerIds.contains(
                       contact.peerId,
                     );
-                    return CheckboxListTile(
-                      value: isSelected,
-                      activeColor: const Color(0xFF8FD6B5),
-                      checkColor: const Color(0xFF11161D),
-                      tileColor: const Color(0xFF171A20),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(18),
+                    return Material(
+                      type: MaterialType.transparency,
+                      child: CheckboxListTile(
+                        value: isSelected,
+                        activeColor: const Color(0xFF8FD6B5),
+                        checkColor: const Color(0xFF11161D),
+                        tileColor: const Color(0xFF171A20),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        title: Text(
+                          contact.username,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        onChanged: _isSubmitting
+                            ? null
+                            : (selected) {
+                                setState(() {
+                                  if (selected == true) {
+                                    _selectedPeerIds.add(contact.peerId);
+                                  } else {
+                                    _selectedPeerIds.remove(contact.peerId);
+                                  }
+                                });
+                              },
                       ),
-                      title: Text(
-                        contact.username,
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                      onChanged: _isSubmitting
-                          ? null
-                          : (selected) {
-                              setState(() {
-                                if (selected == true) {
-                                  _selectedPeerIds.add(contact.peerId);
-                                } else {
-                                  _selectedPeerIds.remove(contact.peerId);
-                                }
-                              });
-                            },
                     );
                   },
                 ),

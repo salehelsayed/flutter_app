@@ -18,26 +18,8 @@
 		6F73C00173A0000000000001 /* NotificationPreviewResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F73C00173A0000000000002 /* NotificationPreviewResolverTests.swift */; };
 		6F73C00273A0000000000001 /* NotificationPreviewResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F73C00273A0000000000002 /* NotificationPreviewResolver.swift */; };
 		6F74D00173A1000000000001 /* NotificationTapUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F74D00273A1000000000001 /* NotificationTapUITests.swift */; };
-		C205D00173A9000000000001 /* VC205CallLifecycleUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C205D00273A9000000000001 /* VC205CallLifecycleUITests.swift */; };
-		B269D00173A5000000000001 /* GroupMediaBackgroundRecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B269D00173A5000000000002 /* GroupMediaBackgroundRecoveryUITests.swift */; };
-		C333A00173A6000000000001 /* IosNotificationRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333A00173A6000000000002 /* IosNotificationRecovery.swift */; };
-		C333A00273A6000000000001 /* IosNotificationRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333A00173A6000000000002 /* IosNotificationRecovery.swift */; };
-		C333B00173A6000000000001 /* IosNotificationRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */; };
-		C333B00273A6000000000001 /* IosNotificationRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */; };
-		C333C00173A6000000000001 /* IosNotificationRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333C00173A6000000000002 /* IosNotificationRecoveryTests.swift */; };
-		D371A00173A7000000000001 /* IosAppVisibilitySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */; };
-		D371A00273A7000000000001 /* IosAppVisibilityCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */; };
-		D371A00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift */; };
-		D371A00473A7000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D371B00473A7000000000001 /* PrivacyInfo.xcprivacy */; };
-		D371A00573A7000000000001 /* app_visibility_snapshot_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = D371B00573A7000000000001 /* app_visibility_snapshot_v1.json */; };
-		E373000173A8000000000001 /* IosLocalNotificationFinalEffect.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100173A8000000000001 /* IosLocalNotificationFinalEffect.swift */; };
-		E373000273A8000000000001 /* NseMailboxWakeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100273A8000000000001 /* NseMailboxWakeCoordinator.swift */; };
-		E373000373A8000000000001 /* NseInboxCandidateAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100373A8000000000001 /* NseInboxCandidateAdapter.swift */; };
-		E373000473A8000000000001 /* NseInboxCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100473A8000000000001 /* NseInboxCredential.swift */; };
-		E373000573A8000000000001 /* IosNseMailboxWakeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100573A8000000000001 /* IosNseMailboxWakeCoordinatorTests.swift */; };
-		E373000673A8000000000001 /* ios_nse_mailbox_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = E373100673A8000000000001 /* ios_nse_mailbox_v1.json */; };
-		E373000773A8000000000001 /* local_notification_ledger_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = E373100773A8000000000001 /* local_notification_ledger_v1.json */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
+		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
 		8947AEE5CF6A83D4C8860F66 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 790BEFCD1A48E573CB47B8A8 /* Pods_Runner.framework */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
@@ -46,10 +28,29 @@
 		A258A00173A4000000000001 /* IosReceiverBootstrapHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258A00173A4000000000002 /* IosReceiverBootstrapHandoff.swift */; };
 		A258B00173A4000000000001 /* IosReceiverBootstrapHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258B00173A4000000000002 /* IosReceiverBootstrapHandoffTests.swift */; };
 		A9E1F9A8B9EA89AF4D091A90 /* Pods_NotificationService.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D7511F7CC6C3F71F16E8DD52 /* Pods_NotificationService.framework */; };
+		B269D00173A5000000000001 /* GroupMediaBackgroundRecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B269D00173A5000000000002 /* GroupMediaBackgroundRecoveryUITests.swift */; };
+		C205D00173A9000000000001 /* VC205CallLifecycleUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C205D00273A9000000000001 /* VC205CallLifecycleUITests.swift */; };
+		C333A00173A6000000000001 /* IosNotificationRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333A00173A6000000000002 /* IosNotificationRecovery.swift */; };
+		C333A00273A6000000000001 /* IosNotificationRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333A00173A6000000000002 /* IosNotificationRecovery.swift */; };
+		C333B00173A6000000000001 /* IosNotificationRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */; };
+		C333B00273A6000000000001 /* IosNotificationRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */; };
+		C333C00173A6000000000001 /* IosNotificationRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333C00173A6000000000002 /* IosNotificationRecoveryTests.swift */; };
 		D23405010000000000000001 /* PrivateMediaProtectionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23405010000000000000002 /* PrivateMediaProtectionCoordinatorTests.swift */; };
 		D23405010000000000000011 /* PrivateMediaProtectionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */; };
+		D371A00173A7000000000001 /* IosAppVisibilitySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */; };
+		D371A00273A7000000000001 /* IosAppVisibilityCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */; };
+		D371A00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D371B00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift */; };
+		D371A00473A7000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D371B00473A7000000000001 /* PrivacyInfo.xcprivacy */; };
+		D371A00573A7000000000001 /* app_visibility_snapshot_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = D371B00573A7000000000001 /* app_visibility_snapshot_v1.json */; };
 		E227A00173A0000000000001 /* ReceivedMediaEgressCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E227A00173A0000000000002 /* ReceivedMediaEgressCoordinator.swift */; };
 		E227B00173A0000000000001 /* ReceivedMediaEgressCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E227B00173A0000000000002 /* ReceivedMediaEgressCoordinatorTests.swift */; };
+		E373000173A8000000000001 /* IosLocalNotificationFinalEffect.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100173A8000000000001 /* IosLocalNotificationFinalEffect.swift */; };
+		E373000273A8000000000001 /* NseMailboxWakeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100273A8000000000001 /* NseMailboxWakeCoordinator.swift */; };
+		E373000373A8000000000001 /* NseInboxCandidateAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100373A8000000000001 /* NseInboxCandidateAdapter.swift */; };
+		E373000473A8000000000001 /* NseInboxCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100473A8000000000001 /* NseInboxCredential.swift */; };
+		E373000573A8000000000001 /* IosNseMailboxWakeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100573A8000000000001 /* IosNseMailboxWakeCoordinatorTests.swift */; };
+		E373000673A8000000000001 /* ios_nse_mailbox_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = E373100673A8000000000001 /* ios_nse_mailbox_v1.json */; };
+		E373000773A8000000000001 /* local_notification_ledger_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = E373100773A8000000000001 /* local_notification_ledger_v1.json */; };
 		F10C6A2E0B4C44E2A0C0A001 /* GoBridgeCriticalTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10C6A2E0B4C44E2A0C0A002 /* GoBridgeCriticalTaskTests.swift */; };
 		F191A00173A0000000000001 /* ForegroundPushForwardPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F191A00173A0000000000002 /* ForegroundPushForwardPolicy.swift */; };
 		F191B00173A0000000000001 /* ForegroundPushForwardPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F191B00173A0000000000002 /* ForegroundPushForwardPolicyTests.swift */; };
@@ -145,25 +146,9 @@
 		6F73C00273A0000000000002 /* NotificationPreviewResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NotificationPreviewResolver.swift; path = ../NotificationService/NotificationPreviewResolver.swift; sourceTree = "<group>"; };
 		6F74D00273A1000000000001 /* NotificationTapUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationTapUITests.swift; sourceTree = "<group>"; };
 		6F74D00373A1000000000001 /* RunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		B269D00173A5000000000002 /* GroupMediaBackgroundRecoveryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupMediaBackgroundRecoveryUITests.swift; sourceTree = "<group>"; };
-		C205D00273A9000000000001 /* VC205CallLifecycleUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VC205CallLifecycleUITests.swift; sourceTree = "<group>"; };
-		C333A00173A6000000000002 /* IosNotificationRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IosNotificationRecovery.swift; path = ../NotificationService/IosNotificationRecovery.swift; sourceTree = "<group>"; };
-		C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationRecoveryCoordinator.swift; sourceTree = "<group>"; };
-		C333C00173A6000000000002 /* IosNotificationRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationRecoveryTests.swift; sourceTree = "<group>"; };
-		D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IosAppVisibilitySnapshot.swift; path = ../NotificationService/IosAppVisibilitySnapshot.swift; sourceTree = "<group>"; };
-		D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosAppVisibilityCoordinator.swift; sourceTree = "<group>"; };
-		D371B00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosAppVisibilitySnapshotTests.swift; sourceTree = "<group>"; };
-		D371B00473A7000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		D371B00573A7000000000001 /* app_visibility_snapshot_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = app_visibility_snapshot_v1.json; path = ../../test/shared/fixtures/app_visibility_snapshot_v1.json; sourceTree = "<group>"; };
-		E373100173A8000000000001 /* IosLocalNotificationFinalEffect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IosLocalNotificationFinalEffect.swift; path = ../NotificationService/IosLocalNotificationFinalEffect.swift; sourceTree = "<group>"; };
-		E373100273A8000000000001 /* NseMailboxWakeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NseMailboxWakeCoordinator.swift; path = ../NotificationService/NseMailboxWakeCoordinator.swift; sourceTree = "<group>"; };
-		E373100373A8000000000001 /* NseInboxCandidateAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NseInboxCandidateAdapter.swift; path = ../NotificationService/NseInboxCandidateAdapter.swift; sourceTree = "<group>"; };
-		E373100473A8000000000001 /* NseInboxCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NseInboxCredential.swift; path = ../NotificationService/NseInboxCredential.swift; sourceTree = "<group>"; };
-		E373100573A8000000000001 /* IosNseMailboxWakeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNseMailboxWakeCoordinatorTests.swift; sourceTree = "<group>"; };
-		E373100673A8000000000001 /* ios_nse_mailbox_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = ios_nse_mailbox_v1.json; path = ../../test/shared/fixtures/ios_nse_mailbox_v1.json; sourceTree = "<group>"; };
-		E373100773A8000000000001 /* local_notification_ledger_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = local_notification_ledger_v1.json; path = ../../test/shared/fixtures/local_notification_ledger_v1.json; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		78E0A7A72DC9AD7400C4905E /* FlutterGeneratedPluginSwiftPackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = FlutterGeneratedPluginSwiftPackage; path = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage; sourceTree = "<group>"; };
 		790BEFCD1A48E573CB47B8A8 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Debug.xcconfig; path = Flutter/Debug.xcconfig; sourceTree = "<group>"; };
@@ -180,12 +165,29 @@
 		A6F5A2268673135A7EB8756C /* Pods-NotificationService.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NotificationService.profile.xcconfig"; path = "Target Support Files/Pods-NotificationService/Pods-NotificationService.profile.xcconfig"; sourceTree = "<group>"; };
 		A738F5EA98B49F043A6EBC7C /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		B17D000173A2000000000001 /* BuildMetadata.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = BuildMetadata.xcconfig; path = Flutter/BuildMetadata.xcconfig; sourceTree = "<group>"; };
+		B269D00173A5000000000002 /* GroupMediaBackgroundRecoveryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupMediaBackgroundRecoveryUITests.swift; sourceTree = "<group>"; };
+		C205D00273A9000000000001 /* VC205CallLifecycleUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VC205CallLifecycleUITests.swift; sourceTree = "<group>"; };
+		C333A00173A6000000000002 /* IosNotificationRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IosNotificationRecovery.swift; path = ../NotificationService/IosNotificationRecovery.swift; sourceTree = "<group>"; };
+		C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationRecoveryCoordinator.swift; sourceTree = "<group>"; };
+		C333C00173A6000000000002 /* IosNotificationRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationRecoveryTests.swift; sourceTree = "<group>"; };
 		D23405010000000000000002 /* PrivateMediaProtectionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateMediaProtectionCoordinatorTests.swift; sourceTree = "<group>"; };
 		D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateMediaProtectionCoordinator.swift; sourceTree = "<group>"; };
+		D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IosAppVisibilitySnapshot.swift; path = ../NotificationService/IosAppVisibilitySnapshot.swift; sourceTree = "<group>"; };
+		D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosAppVisibilityCoordinator.swift; sourceTree = "<group>"; };
+		D371B00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosAppVisibilitySnapshotTests.swift; sourceTree = "<group>"; };
+		D371B00473A7000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		D371B00573A7000000000001 /* app_visibility_snapshot_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = app_visibility_snapshot_v1.json; path = ../../test/shared/fixtures/app_visibility_snapshot_v1.json; sourceTree = "<group>"; };
 		D7511F7CC6C3F71F16E8DD52 /* Pods_NotificationService.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_NotificationService.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		D99E1571747EBA531C83D687 /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
 		E227A00173A0000000000002 /* ReceivedMediaEgressCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedMediaEgressCoordinator.swift; sourceTree = "<group>"; };
 		E227B00173A0000000000002 /* ReceivedMediaEgressCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedMediaEgressCoordinatorTests.swift; sourceTree = "<group>"; };
+		E373100173A8000000000001 /* IosLocalNotificationFinalEffect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IosLocalNotificationFinalEffect.swift; path = ../NotificationService/IosLocalNotificationFinalEffect.swift; sourceTree = "<group>"; };
+		E373100273A8000000000001 /* NseMailboxWakeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NseMailboxWakeCoordinator.swift; path = ../NotificationService/NseMailboxWakeCoordinator.swift; sourceTree = "<group>"; };
+		E373100373A8000000000001 /* NseInboxCandidateAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NseInboxCandidateAdapter.swift; path = ../NotificationService/NseInboxCandidateAdapter.swift; sourceTree = "<group>"; };
+		E373100473A8000000000001 /* NseInboxCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NseInboxCredential.swift; path = ../NotificationService/NseInboxCredential.swift; sourceTree = "<group>"; };
+		E373100573A8000000000001 /* IosNseMailboxWakeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNseMailboxWakeCoordinatorTests.swift; sourceTree = "<group>"; };
+		E373100673A8000000000001 /* ios_nse_mailbox_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = ios_nse_mailbox_v1.json; path = ../../test/shared/fixtures/ios_nse_mailbox_v1.json; sourceTree = "<group>"; };
+		E373100773A8000000000001 /* local_notification_ledger_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = local_notification_ledger_v1.json; path = ../../test/shared/fixtures/local_notification_ledger_v1.json; sourceTree = "<group>"; };
 		F10C6A2E0B4C44E2A0C0A002 /* GoBridgeCriticalTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoBridgeCriticalTaskTests.swift; sourceTree = "<group>"; };
 		F191A00173A0000000000002 /* ForegroundPushForwardPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundPushForwardPolicy.swift; sourceTree = "<group>"; };
 		F191B00173A0000000000002 /* ForegroundPushForwardPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundPushForwardPolicyTests.swift; sourceTree = "<group>"; };
@@ -275,6 +277,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
 				8947AEE5CF6A83D4C8860F66 /* Pods_Runner.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -352,6 +355,7 @@
 		9740EEB11CF90186004384FC /* Flutter */ = {
 			isa = PBXGroup;
 			children = (
+				78E0A7A72DC9AD7400C4905E /* FlutterGeneratedPluginSwiftPackage */,
 				3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */,
 				B17D000173A2000000000001 /* BuildMetadata.xcconfig */,
 				9740EEB21CF90195004384FC /* Debug.xcconfig */,
@@ -526,7 +530,6 @@
 				698216D42F5E3A0A00B87A6B /* Embed Foundation Extensions */,
 				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
 				E41BB9EACDDF9C432CC45709 /* [CP] Embed Pods Frameworks */,
-				32EC7B6BD558407563BD2974 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -535,6 +538,9 @@
 				6F73B00473A0000000000001 /* PBXTargetDependency */,
 			);
 			name = Runner;
+			packageProductDependencies = (
+				78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */,
+			);
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
 			productType = "com.apple.product-type.application";
@@ -581,6 +587,9 @@
 				Base,
 			);
 			mainGroup = 97C146E51CF9000F007C117D;
+			packageReferences = (
+				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
+			);
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -642,23 +651,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		32EC7B6BD558407563BD2974 /* [CP] Copy Pods Resources */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			name = "[CP] Copy Pods Resources";
-			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
 		3B06AD1E1E4923F5004D2608 /* Thin Binary */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -988,8 +980,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MKNOON_RUNNER_CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				MKNOON_RUNNER_BUNDLE_IDENTIFIER = com.mknoon.app;
+				MKNOON_RUNNER_CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				MKNOON_VOIP_ENVIRONMENT = development;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_RUNNER_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1083,10 +1075,10 @@
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension;
+				MKNOON_SHARE_EXTENSION_CODE_SIGN_ENTITLEMENTS = "Share Extension/Share Extension.entitlements";
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
-				MKNOON_SHARE_EXTENSION_CODE_SIGN_ENTITLEMENTS = "Share Extension/Share Extension.entitlements";
-				MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1130,9 +1122,9 @@
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
-				MTL_FAST_MATH = YES;
-				MKNOON_SHARE_EXTENSION_CODE_SIGN_ENTITLEMENTS = "Share Extension/Share Extension.entitlements";
 				MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension;
+				MKNOON_SHARE_EXTENSION_CODE_SIGN_ENTITLEMENTS = "Share Extension/Share Extension.entitlements";
+				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1174,9 +1166,9 @@
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
-				MTL_FAST_MATH = YES;
-				MKNOON_SHARE_EXTENSION_CODE_SIGN_ENTITLEMENTS = "Share Extension/Share Extension.entitlements";
 				MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension;
+				MKNOON_SHARE_EXTENSION_CODE_SIGN_ENTITLEMENTS = "Share Extension/Share Extension.entitlements";
+				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_SHARE_EXTENSION_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1220,10 +1212,10 @@
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				MKNOON_NOTIFICATION_SERVICE_BUNDLE_IDENTIFIER = com.mknoon.app.NotificationService;
+				MKNOON_NOTIFICATION_SERVICE_CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
-				MKNOON_NOTIFICATION_SERVICE_CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
-				MKNOON_NOTIFICATION_SERVICE_BUNDLE_IDENTIFIER = com.mknoon.app.NotificationService;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_NOTIFICATION_SERVICE_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1269,9 +1261,9 @@
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
-				MTL_FAST_MATH = YES;
-				MKNOON_NOTIFICATION_SERVICE_CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
 				MKNOON_NOTIFICATION_SERVICE_BUNDLE_IDENTIFIER = com.mknoon.app.NotificationService;
+				MKNOON_NOTIFICATION_SERVICE_CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_NOTIFICATION_SERVICE_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1315,9 +1307,9 @@
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
-				MTL_FAST_MATH = YES;
-				MKNOON_NOTIFICATION_SERVICE_CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
 				MKNOON_NOTIFICATION_SERVICE_BUNDLE_IDENTIFIER = com.mknoon.app.NotificationService;
+				MKNOON_NOTIFICATION_SERVICE_CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_NOTIFICATION_SERVICE_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1346,8 +1338,8 @@
 					"@loader_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				MKNOON_RUNNER_UI_TESTS_CODE_SIGN_ENTITLEMENTS = "";
 				MKNOON_RUNNER_UI_TESTS_BUNDLE_IDENTIFIER = com.mknoon.app.RunnerUITests;
+				MKNOON_RUNNER_UI_TESTS_CODE_SIGN_ENTITLEMENTS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_RUNNER_UI_TESTS_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -1373,8 +1365,8 @@
 					"@loader_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				MKNOON_RUNNER_UI_TESTS_CODE_SIGN_ENTITLEMENTS = "";
 				MKNOON_RUNNER_UI_TESTS_BUNDLE_IDENTIFIER = com.mknoon.app.RunnerUITests;
+				MKNOON_RUNNER_UI_TESTS_CODE_SIGN_ENTITLEMENTS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_RUNNER_UI_TESTS_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
@@ -1398,8 +1390,8 @@
 					"@loader_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				MKNOON_RUNNER_UI_TESTS_CODE_SIGN_ENTITLEMENTS = "";
 				MKNOON_RUNNER_UI_TESTS_BUNDLE_IDENTIFIER = com.mknoon.app.RunnerUITests;
+				MKNOON_RUNNER_UI_TESTS_CODE_SIGN_ENTITLEMENTS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_RUNNER_UI_TESTS_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
@@ -1536,8 +1528,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MKNOON_RUNNER_CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				MKNOON_RUNNER_BUNDLE_IDENTIFIER = com.mknoon.app;
+				MKNOON_RUNNER_CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				MKNOON_VOIP_ENVIRONMENT = development;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_RUNNER_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1565,8 +1557,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MKNOON_RUNNER_CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				MKNOON_RUNNER_BUNDLE_IDENTIFIER = com.mknoon.app;
+				MKNOON_RUNNER_CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;
 				MKNOON_VOIP_ENVIRONMENT = production;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MKNOON_RUNNER_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1640,6 +1632,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = FlutterGeneratedPluginSwiftPackage;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 97C146E61CF9000F007C117D /* Project object */;
 }

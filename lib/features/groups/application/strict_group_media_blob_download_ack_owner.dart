@@ -223,6 +223,7 @@ final class StrictGroupMediaBlobDownloadAckOwner {
       }
       sourceRelayPeerId = result['custodyRelayPeerId'] as String;
 
+      final expectedCustody = custody;
       final committed = await repository.runGroupMediaBlobCustodyLifecycle(
         () async {
           final currentCustody = await _loadExactIncomingCustody(
@@ -231,7 +232,7 @@ final class StrictGroupMediaBlobDownloadAckOwner {
             groupId: groupId,
           );
           if (currentCustody == null ||
-              !currentCustody.exactDatabaseProjectionMatches(custody!)) {
+              !currentCustody.exactDatabaseProjectionMatches(expectedCustody)) {
             return false;
           }
           final decryptedPath = await callBlobDecrypt(
@@ -265,7 +266,7 @@ final class StrictGroupMediaBlobDownloadAckOwner {
           final didCommit = await repository
               .commitIncomingGroupMediaBlobLocalPath(
                 expectedAttachment: currentAttachment,
-                expectedCustody: custody,
+                expectedCustody: expectedCustody,
                 localPath: relativePath,
                 sourceRelayPeerId: sourceRelayPeerId!,
                 updatedAt: commitAt.toIso8601String(),

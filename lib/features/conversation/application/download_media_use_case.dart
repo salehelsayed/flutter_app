@@ -1035,7 +1035,8 @@ Future<MediaAttachment?> downloadMedia({
           messageId: attachment.messageId,
         );
         if (claimed == null) return null;
-        final began = await directPrivateDownloadRepo!
+        final downloadRepository = directPrivateDownloadRepo!;
+        final began = await downloadRepository
             .beginDirectPrivateMediaDownloadWithinLock(
               attachment.id,
               messageId: attachment.messageId,
@@ -1054,7 +1055,7 @@ Future<MediaAttachment?> downloadMedia({
           attachment: attachment,
         );
         if (reloaded == null) {
-          await directPrivateDownloadRepo
+          await downloadRepository
               .recordDirectPrivateMediaDownloadFailureWithinLock(
                 attachment.id,
                 messageId: attachment.messageId,
@@ -3353,7 +3354,8 @@ Future<MediaAttachment?> downloadMedia({
                 );
                 return false;
               }
-              final qualified = await directPrivateDownloadRepo!
+              final downloadRepository = directPrivateDownloadRepo!;
+              final qualified = await downloadRepository
                   .qualifyDirectPrivateMediaDownloadClaimWithinLock(
                     attachment.id,
                     messageId: attachment.messageId,
@@ -3374,7 +3376,7 @@ Future<MediaAttachment?> downloadMedia({
                 );
                 return false;
               }
-              final committed = await directPrivateDownloadRepo
+              final committed = await downloadRepository
                   .commitDirectPrivateMediaDownloadLocalPathWithinLock(
                     attachment.id,
                     messageId: attachment.messageId,

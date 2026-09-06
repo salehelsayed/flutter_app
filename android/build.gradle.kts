@@ -1,4 +1,6 @@
+import com.android.build.api.variant.LibraryAndroidComponentsExtension
 import com.android.build.gradle.LibraryExtension
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 allprojects {
@@ -59,6 +61,16 @@ subprojects {
     }
 
     plugins.withId("com.android.library") {
+        if (name == "bonsoir_android") {
+            // Bonsoir 5.x pins SDK 33, below its AndroidX dependencies' SDK 34
+            // minimum. AGP 8.13 checks this for library modules as well.
+            extensions.configure<LibraryAndroidComponentsExtension> {
+                finalizeDsl { library ->
+                    library.compileSdk = maxOf(library.compileSdk ?: 0, 34)
+                }
+            }
+        }
+
         // Eagerly set JVM 11 — works for plugins that don't override compileOptions.
         extensions.findByType(LibraryExtension::class.java)?.compileOptions {
             sourceCompatibility = JavaVersion.VERSION_11
@@ -81,8 +93,10 @@ subprojects {
                 // Already finalised — Java stays at the eagerly-set JVM 11.
             }
             tasks.withType<KotlinCompile>().configureEach {
-                kotlinOptions {
-                    jvmTarget = libExt.compileOptions.targetCompatibility.toString()
+                compilerOptions {
+                    jvmTarget.set(
+                        JvmTarget.fromTarget(libExt.compileOptions.targetCompatibility.toString()),
+                    )
                 }
             }
         }

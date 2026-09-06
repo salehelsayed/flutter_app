@@ -16,10 +16,19 @@ analyzer:
     # so analyzing the copies produces false missing-import failures after the
     # required native gate. Source files remain covered in their real location.
     - build/**
+    # Swift Package Manager checkouts include upstream Dart examples whose
+    # dependencies are outside this app's workspace.
+    - SourcePackages/**
     # This is the upstream plugin's standalone demo package. Its own example
     # dependencies are deliberately not part of the app workspace; the
     # vendored plugin library and tests remain in the root analysis scope.
     - third_party/sqflite_sqlcipher/example/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 linter:
   # The lint rules applied to this project can be customized in the

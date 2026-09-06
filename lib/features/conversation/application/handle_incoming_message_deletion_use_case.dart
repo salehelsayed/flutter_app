@@ -275,14 +275,16 @@ handleIncomingMessageDeletion({
         // can have won this lease behind it. Re-reading here is what stops the
         // absent-target branch from inserting an orphan tombstone for a contact
         // that no longer exists.
-        if (await contactRepo.getContact(payload!.senderPeerId) == null) {
+        final deletionPayload = payload!;
+        if (await contactRepo.getContact(deletionPayload.senderPeerId) ==
+            null) {
           emitFlowEvent(
             layer: 'FL',
             event: 'CHAT_MSG_DELETE_RECEIVE_CONTACT_REVOKED',
             details: {
-              'messageId': payload.messageId.length > 8
-                  ? payload.messageId.substring(0, 8)
-                  : payload.messageId,
+              'messageId': deletionPayload.messageId.length > 8
+                  ? deletionPayload.messageId.substring(0, 8)
+                  : deletionPayload.messageId,
             },
           );
           return null;
@@ -307,17 +309,17 @@ handleIncomingMessageDeletion({
           applied = linkedApplyRepository != null
               ? await linkedApplyRepository
                     .applyIncomingDirectMessageDeletionWithTransportAuthority(
-                      messageId: payload.messageId,
-                      senderPeerId: payload.senderPeerId,
-                      deletedAt: payload.timestamp,
+                      messageId: deletionPayload.messageId,
+                      senderPeerId: deletionPayload.senderPeerId,
+                      deletedAt: deletionPayload.timestamp,
                       transport: message.transport,
                       authenticatedTransportPeerId: message.from,
                     )
               : await directDeletionRepository
                     .applyIncomingDirectMessageDeletion(
-                      messageId: payload.messageId,
-                      senderPeerId: payload.senderPeerId,
-                      deletedAt: payload.timestamp,
+                      messageId: deletionPayload.messageId,
+                      senderPeerId: deletionPayload.senderPeerId,
+                      deletedAt: deletionPayload.timestamp,
                       transport: message.transport,
                     );
         } catch (error) {
