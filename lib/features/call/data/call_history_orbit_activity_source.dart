@@ -12,8 +12,16 @@ import 'call_history_repository.dart';
 final class CallHistoryOrbitActivitySource implements OrbitCallActivitySource {
   const CallHistoryOrbitActivitySource(
     this.loadLatestForContacts,
-    this.loadUnreadCounts,
-  );
+    this.loadUnreadCounts, {
+    Stream<void>? changes,
+  }) : _changes = changes;
+
+  final Stream<void>? _changes;
+
+  /// 412: the same post-projection signal the chat refresh rides. A source
+  /// built without it leaves Orbit load-on-mount, which is what it was.
+  @override
+  Stream<void> get changes => _changes ?? const Stream<void>.empty();
 
   /// Newest-first rows for the given contacts, batched by the caller.
   final Future<List<CallHistoryEntry>> Function(List<String> contactPeerIds)

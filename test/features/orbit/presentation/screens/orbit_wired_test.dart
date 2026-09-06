@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
+import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/l10n/app_localizations_ar.dart';
 import 'package:flutter_app/l10n/app_localizations_en.dart';
@@ -292,6 +294,8 @@ void main() {
   /// testing Navigator.pop() behavior.
   Widget buildOrbitWired({
     ContactRequestListener? contactRequestListener,
+
+    OrbitCallActivitySource? callActivitySource,
     ChatMessageListener? chatMessageListener,
     _FakeGroupMessageListener? groupMessageListener,
     FakeReactionRepository? reactionRepository,
@@ -347,6 +351,7 @@ void main() {
 
     final orbitWidget = OrbitWired(
       key: orbitKey,
+      callActivitySource: callActivitySource,
       identityRepo: identityRepo,
       contactRepo: effectiveContactRepo,
       contactRequestRepo: contactRequestRepo,
@@ -9069,6 +9074,32 @@ void main() {
       },
     );
   });
+
+  testWidgets('TC-412-01 a terminal call refreshes the ring without a remount', (
+    tester,
+  ) async {
+    // 412: a terminal call must refresh the ring; Orbit otherwise loads only
+    // on mount.
+    final callActivityController = StreamController<void>.broadcast();
+    addTearDown(callActivityController.close);
+    final source = _CountingCallActivitySource(callActivityController.stream);
+
+    await tester.pumpWidget(buildOrbitWired(callActivitySource: source));
+    await pumpOrbitFrames(tester);
+    final loadsAfterMount = source.unreadQueries;
+    expect(loadsAfterMount, greaterThan(0), reason: 'mount loads once');
+
+    // Device 2026-09-06 00:02:38Z: a call ended and no ORBIT_CALL_UNREAD_RESULT
+    // followed, so the ring kept a count read before the call existed.
+    callActivityController.add(null);
+    await pumpOrbitFrames(tester);
+
+    expect(
+      source.unreadQueries,
+      greaterThan(loadsAfterMount),
+      reason: 'the written call must re-read the roster, not wait for a mount',
+    );
+  });
 }
 
 /// Identity repo whose [loadIdentity] resolves slowly — holds a deferred
@@ -9748,5 +9779,29 @@ class _FaultingMembersGroupRepository extends InMemoryGroupRepository {
       throw StateError('member read failed');
     }
     return super.getMembers(groupId);
+  }
+}
+
+/// 412: counts how often Orbit re-reads call activity.
+class _CountingCallActivitySource implements OrbitCallActivitySource {
+  _CountingCallActivitySource(this._changes);
+
+  final Stream<void> _changes;
+  int unreadQueries = 0;
+
+  @override
+  Stream<void> get changes => _changes;
+
+  @override
+  Future<Map<String, ConversationCallTimelineEntry>> latestCallsForContacts(
+    Iterable<String> contactPeerIds,
+  ) async => const <String, ConversationCallTimelineEntry>{};
+
+  @override
+  Future<Map<String, int>> unreadCallCountsForContacts(
+    Iterable<String> contactPeerIds,
+  ) async {
+    unreadQueries++;
+    return const <String, int>{};
   }
 }

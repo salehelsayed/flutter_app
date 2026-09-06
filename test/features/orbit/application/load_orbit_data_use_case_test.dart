@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -219,6 +220,12 @@ class FakeOrbitCallActivitySource implements OrbitCallActivitySource {
   final Object? unreadError;
   int callCount = 0;
   int unreadCallCount = 0;
+
+  final StreamController<void> changeController =
+      StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get changes => changeController.stream;
 
   @override
   Future<Map<String, int>> unreadCallCountsForContacts(

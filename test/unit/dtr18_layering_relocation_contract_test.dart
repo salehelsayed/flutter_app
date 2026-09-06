@@ -283,8 +283,10 @@ const _productionBootstrapNormalizedSha256 =
     // wake readiness at this app-owned boundary; no DTR-18 owner changes.
     // 409/410 build the Orbit call-activity source and the call-history read
     // marker beside the existing conversation timeline source, from the SAME
-    // repository instance. Both are local-history reads; no owner moves.
-    '80e435ff27d19cb1d56f1d1b1f4fa91361c880375215d4b1da9e373b5670c554';
+    // repository instance. 412 hands that source the post-projection change
+    // stream the chat refresh already rides. All local-history reads; no owner
+    // moves.
+    '242f1ee9174d671d8968dab2e5283c0213aecbd90a8d6397a40de451da6e9abc';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

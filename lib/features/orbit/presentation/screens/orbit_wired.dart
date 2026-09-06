@@ -298,6 +298,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   IdentityModel? _identity;
   Uint8List? _avatarBytes;
   List<OrbitFriend> _activeFriends = [];
+  StreamSubscription<void>? _callActivitySubscription;
   List<OrbitFriend> _archivedFriends = [];
   List<OrbitGroup> _activeGroups = [];
   List<OrbitGroup> _archivedGroups = [];
@@ -583,6 +584,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _loadQualityPreference();
     _loadVideoQualityPreference();
     _loadOrbitData();
+    _bindCallActivityChanges();
     _loadGroupData();
     _loadIntroReviewSeenKeys();
     _loadPendingGroupInvites();
@@ -848,6 +850,25 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  /// 412: a terminal call must refresh the ring.
+  ///
+  /// Orbit loads on MOUNT, so before this a missed call could never light up
+  /// a node while the user was looking at it — device 2026-09-06 00:02:38Z
+  /// logged a call ending with no `ORBIT_CALL_UNREAD_RESULT` after it. This is
+  /// the same post-projection signal the chat refresh rides, and it is bound
+  /// to the whole-roster load because a call changes a row's badge, its
+  /// preview and its position at once.
+  void _bindCallActivityChanges() {
+    _callActivitySubscription?.cancel();
+    _callActivitySubscription = null;
+    final source = widget.callActivitySource;
+    if (source == null) return;
+    _callActivitySubscription = source.changes.listen(
+      (_) => unawaited(_loadOrbitData()),
+      onError: (_) {},
+    );
   }
 
   Future<void> _loadOrbitData() async {
@@ -3010,6 +3031,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   @override
   void dispose() {
     _chatSubscription?.cancel();
+    _callActivitySubscription?.cancel();
     // 202: drop any pending coalesced refresh so its timer never fires after
     // teardown (TC-202-09d).
     _orbitRefreshCoalesceTimer?.cancel();

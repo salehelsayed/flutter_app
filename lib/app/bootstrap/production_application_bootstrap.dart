@@ -9726,6 +9726,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         orbitCallActivitySource: CallHistoryOrbitActivitySource(
           callHistoryRepository.latestForContacts,
           callHistoryRepository.unreadCallCountsForContacts,
+          changes: callHistoryProjected.stream,
         ),
         foregroundCallCapability: callSignalingComposition,
         resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,

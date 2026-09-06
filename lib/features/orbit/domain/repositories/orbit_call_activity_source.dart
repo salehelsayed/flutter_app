@@ -18,4 +18,13 @@ abstract interface class OrbitCallActivitySource {
   Future<Map<String, int>> unreadCallCountsForContacts(
     Iterable<String> contactPeerIds,
   );
+
+  /// 412: emits once per terminal call written locally.
+  ///
+  /// Orbit loads on MOUNT. Device 2026-09-06 00:02:38Z: a call ended and no
+  /// `ORBIT_CALL_UNREAD_RESULT` followed, so the ring kept rendering a count
+  /// read before the call existed and a missed call could never light it up
+  /// while the user was looking. The chat got this signal in 405; the ring
+  /// needs the same one.
+  Stream<void> get changes;
 }
