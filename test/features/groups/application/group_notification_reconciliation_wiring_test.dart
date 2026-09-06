@@ -796,6 +796,13 @@ final class _GenerationNotificationService
   }) async {}
 
   @override
+  Future<void> showMissedCallNotification({
+    required String contactAccountPeerId,
+    required String title,
+    required String body,
+  }) async {}
+
+  @override
   Future<String?> consumeInitialPayload() async => null;
 
   @override

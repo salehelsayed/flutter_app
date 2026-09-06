@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:synchronized/synchronized.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/domain/wake_token_store.dart';
 
@@ -21,6 +22,7 @@ class IssueWakeTokensUseCase {
   IssueWakeTokensUseCase({
     required this.wakeTokenStore,
     required this.registerWakeTokens,
+    this.onTokensRegistered,
     String Function()? mintToken,
   }) : _mint = mintToken ?? _defaultMintToken;
 
@@ -30,12 +32,21 @@ class IssueWakeTokensUseCase {
   /// relay accepted it; false when unsupported (old relay) or it failed.
   final Future<bool> Function(List<String> tokens) registerWakeTokens;
 
+  /// Schedules authenticated distribution after the relay accepts the set.
+  final Future<void> Function(Map<String, String> tokens)? onTokensRegistered;
+
   final String Function() _mint;
+  final Lock _issueLock = Lock();
 
   /// Ensures every contact in [contactPeerIds] has a minted+persisted wake-token,
   /// then (re-)registers the full set with the relay. Returns the relay's
   /// acceptance (false = unsupported/failed → graceful degrade). Never throws.
-  Future<bool> issueForContacts(List<String> contactPeerIds) async {
+  Future<bool> issueForContacts(List<String> contactPeerIds) {
+    final snapshot = List<String>.unmodifiable(contactPeerIds);
+    return _issueLock.synchronized(() => _issueForContacts(snapshot));
+  }
+
+  Future<bool> _issueForContacts(List<String> contactPeerIds) async {
     final activeSet = contactPeerIds.where((c) => c.isNotEmpty).toSet();
     final tokens = Map<String, String>.from(await wakeTokenStore.readTokens());
     var changed = false;
@@ -82,6 +93,8 @@ class IssueWakeTokensUseCase {
         event: 'WAKE_TOKEN_REGISTER_UNSUPPORTED',
         details: {'count': tokens.length},
       );
+    } else {
+      await onTokensRegistered?.call(Map<String, String>.unmodifiable(tokens));
     }
     return ok;
   }

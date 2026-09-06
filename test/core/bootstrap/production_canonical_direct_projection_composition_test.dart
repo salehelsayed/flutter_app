@@ -3,6 +3,7 @@ import 'package:flutter_app/app/bootstrap/production_canonical_direct_projection
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/107_direct_notification_durability.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
@@ -19,6 +20,7 @@ import 'package:flutter_app/features/conversation/domain/models/direct_notificat
 import 'package:flutter_app/features/conversation/domain/models/direct_notification_read_acknowledgement.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_notification_reconciliation_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_notification_display_outbox_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_notification_reaction_terminal_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_notification_read_acknowledgement_repository.dart';
@@ -599,7 +601,109 @@ void main() {
       expect(harness.displayOutbox.entry, isNull);
     },
   );
+
+  for (final (mediaType, body) in <(String, String)>[
+    ('image', 'Photo'),
+    ('video', 'Video'),
+    ('audio', 'Voice message'),
+    ('file', 'File'),
+  ]) {
+    test(
+      'durable direct $mediaType body loads persisted attachment metadata',
+      () async {
+        final previousPlatform = debugDefaultTargetPlatformOverride;
+        final originalGate = recentRemoteNotificationGate;
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        debugSetRecentRemoteNotificationGate(
+          _TrackingRecentRemoteNotificationGate(hasProof: false),
+        );
+        addTearDown(() {
+          debugDefaultTargetPlatformOverride = previousPlatform;
+          debugSetRecentRemoteNotificationGate(originalGate);
+        });
+        final harness = await _DurableDirectProjectionHarness.create(
+          messageId: 'message-media-$mediaType',
+          messageText: '',
+          attachments: <MediaAttachment>[
+            _attachment('message-media-$mediaType', mediaType),
+            // A same-parent group row must not influence the direct preview.
+            _attachment(
+              'message-media-$mediaType',
+              'file',
+              owner: MediaOwnerLane.group,
+            ),
+          ],
+        );
+        addTearDown(harness.dispose);
+
+        await harness.composition.owner.retryNow();
+        await harness.composition.owner.retryNow();
+
+        expect(harness.service.shown, hasLength(1));
+        expect(harness.service.shown.single.messageText, body);
+        expect(harness.service.shown.single.snapshot!.historyLines, <String>[
+          body,
+        ]);
+        expect(harness.displayOutbox.entry, isNull);
+      },
+    );
+  }
+
+  for (final durableMetadata in <bool>[false, true]) {
+    test(
+      'direct media reconciliation restores native body (durable=$durableMetadata)',
+      () async {
+        const messageId = 'message-media-reconciliation';
+        final correlation = _correlation(
+          NotificationCompletedOutcomeProducerKind.directMessage,
+          messageId,
+        );
+        final harness = await _Harness.create(
+          ConversationNotificationContentMetadata(
+            kind: ConversationNotificationContentKind.message,
+            eventIdentity: durableMetadata ? correlation : messageId,
+            generation: durableMetadata
+                ? durableLocalNotificationContentGeneration(correlation)
+                : 'old-generation',
+          ),
+          attachments: <MediaAttachment>[_attachment(messageId, 'audio')],
+        );
+        addTearDown(harness.dispose);
+        harness.messages.seed(<ConversationMessage>[
+          _message(
+            id: messageId,
+            timestamp: '2026-08-16T10:00:00.000Z',
+            incoming: true,
+          ).copyWith(text: ''),
+        ]);
+
+        await harness.composition.owner.retryNow();
+
+        expect(harness.service.replacements, hasLength(1));
+        expect(
+          harness.service.replacements.single.messageText,
+          'Voice message',
+        );
+        expect(harness.reconciliation.entry, isNull);
+      },
+    );
+  }
 }
+
+MediaAttachment _attachment(
+  String messageId,
+  String mediaType, {
+  MediaOwnerLane owner = MediaOwnerLane.direct,
+}) => MediaAttachment(
+  id: 'attachment-$mediaType-${owner.name}',
+  messageId: messageId,
+  mime: '$mediaType/test',
+  size: 12,
+  mediaType: mediaType,
+  downloadStatus: 'pending',
+  createdAt: '2026-08-16T10:00:00.000Z',
+  ownerLane: owner,
+);
 
 String _correlation(
   NotificationCompletedOutcomeProducerKind producerKind,
@@ -662,8 +766,9 @@ final class _Harness {
   final ProductionCanonicalDirectProjectionComposition composition;
 
   static Future<_Harness> create(
-    ConversationNotificationContentMetadata metadata,
-  ) async {
+    ConversationNotificationContentMetadata metadata, {
+    List<MediaAttachment> attachments = const <MediaAttachment>[],
+  }) async {
     final database = await databaseFactoryFfi.openDatabase(
       inMemoryDatabasePath,
     );
@@ -712,7 +817,8 @@ final class _Harness {
         contactRepository: contacts,
         messageRepository: messages,
         reactionRepository: reactions,
-        mediaAttachmentRepository: FakeMediaAttachmentRepository(),
+        mediaAttachmentRepository: FakeMediaAttachmentRepository()
+          ..seed(attachments),
         displayOutbox: _EmptyDisplayOutbox(),
         reconciliationOutbox: reconciliation,
         reactionTerminal: terminals,
@@ -1294,6 +1400,8 @@ final class _DurableDirectProjectionHarness {
 
   static Future<_DurableDirectProjectionHarness> create({
     required String messageId,
+    String? messageText,
+    List<MediaAttachment> attachments = const <MediaAttachment>[],
   }) async {
     const timestamp = '2026-08-16T12:30:00.000Z';
     final database = await databaseFactoryFfi.openDatabase(
@@ -1340,7 +1448,11 @@ final class _DurableDirectProjectionHarness {
     await database.insert('direct_notification_display_outbox', entry.toMap());
     final messages = _CountingMessageRepository()
       ..seed(<ConversationMessage>[
-        _message(id: messageId, timestamp: timestamp, incoming: true),
+        _message(
+          id: messageId,
+          timestamp: timestamp,
+          incoming: true,
+        ).copyWith(text: messageText),
       ]);
     final contacts = FakeContactRepository()
       ..seed(const <ContactModel>[
@@ -1367,7 +1479,8 @@ final class _DurableDirectProjectionHarness {
         contactRepository: contacts,
         messageRepository: messages,
         reactionRepository: FakeReactionRepository(),
-        mediaAttachmentRepository: FakeMediaAttachmentRepository(),
+        mediaAttachmentRepository: FakeMediaAttachmentRepository()
+          ..seed(attachments),
         displayOutbox: displayOutbox,
         reconciliationOutbox: _ReconciliationOutbox(null),
         reactionTerminal: _ReactionTerminalRepository(),

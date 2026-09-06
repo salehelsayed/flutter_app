@@ -3,22 +3,17 @@ import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/domain/wake_token_store.dart';
 
-/// FDC-09 §12 / CV-14 (217 §C2) — the SINGLE production emission gate.
+/// Enables recipient-issued authorization for reaction push notifications.
 ///
-/// The sender-side `wt` emission ships DARK: it is a compile-time
-/// `--dart-define` defaulting OFF. The whole fleet must saturate on
-/// receiver-tolerant builds (which land 217's receive leg) BEFORE this is
-/// flipped, or a new sender would emit `wt` to un-saturated pre-217 receivers
-/// and drop their contact_request. Both this factory AND the wake-token wiring
-/// in `main.dart` call it — a test asserting emission-off (A17) MUST import THIS
-/// function (never a test-local `bool.fromEnvironment` copy, which would pass
-/// regardless of the production default and be a fake lock).
+/// Ordinary builds advertise reaction-push support, so they must distribute
+/// the tokens that authorize those pushes. An explicit false define remains
+/// available for a compatibility rollback.
 bool shouldEmitWakeToken() =>
-    const bool.fromEnvironment('MKNOON_EMIT_WAKE_TOKEN', defaultValue: false);
+    const bool.fromEnvironment('MKNOON_EMIT_WAKE_TOKEN', defaultValue: true);
 
 /// Builds the read-only per-send wake-token resolver used by `sendContactRequest`.
 ///
-/// When emission is gated OFF (the dark-landing default), the resolver yields
+/// When emission is explicitly gated OFF, the resolver yields
 /// `null` for every peer, so no `wt` is ever emitted. When ON, it reads the
 /// recipient-minted token this node issued for [peerId] from [wakeTokenStore]
 /// (the send half of the CV-14 loop — this node distributing to its contact the

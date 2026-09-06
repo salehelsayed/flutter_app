@@ -37,8 +37,9 @@ class KeyExchangeRetrier {
     SecureKeyStore? secureKeyStore,
     this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     KeyExchangeRetryCoordinator? coordinator,
+    Future<void> Function()? beforeRetry,
     // FDC-09 §12 / CV-14: read-only wake-token resolver for the backfill drain
-    // (emission-gated OFF by default). Never mints/registers.
+    // (an explicit rollback define may disable emission). Never mints/registers.
     Future<String?> Function(String peerId)? resolveWakeToken,
     LoadPendingCallWakeHandleContactIds? loadPendingCallWakeHandleContactIds,
     ResolveCallWakeHandle? resolveCallWakeHandle,
@@ -46,18 +47,21 @@ class KeyExchangeRetrier {
   }) : _coordinator =
            coordinator ??
            KeyExchangeRetryCoordinator(
-             performRetry: () => retryIncompleteKeyExchanges(
-               contactRepo: contactRepo,
-               identityRepo: identityRepo,
-               p2pService: p2pService,
-               bridge: bridge,
-               secureKeyStore: secureKeyStore,
-               resolveWakeToken: resolveWakeToken,
-               loadPendingCallWakeHandleContactIds:
-                   loadPendingCallWakeHandleContactIds,
-               resolveCallWakeHandle: resolveCallWakeHandle,
-               onCallWakeHandleDistributed: onCallWakeHandleDistributed,
-             ),
+             performRetry: () async {
+               await beforeRetry?.call();
+               return retryIncompleteKeyExchanges(
+                 contactRepo: contactRepo,
+                 identityRepo: identityRepo,
+                 p2pService: p2pService,
+                 bridge: bridge,
+                 secureKeyStore: secureKeyStore,
+                 resolveWakeToken: resolveWakeToken,
+                 loadPendingCallWakeHandleContactIds:
+                     loadPendingCallWakeHandleContactIds,
+                 resolveCallWakeHandle: resolveCallWakeHandle,
+                 onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+               );
+             },
            );
 
   /// Starts listening for state transitions.

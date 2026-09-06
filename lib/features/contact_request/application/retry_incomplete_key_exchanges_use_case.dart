@@ -109,6 +109,16 @@ Future<int> retryIncompleteKeyExchanges({
 
   for (final contact in eligible) {
     try {
+      final wakeToken = await resolveWakeToken?.call(contact.peerId);
+      final hasWakeToken = wakeToken != null && wakeToken.isNotEmpty;
+      if (!hasWakeToken &&
+          contact.mlKemPublicKey != null &&
+          !reannouncePending.contains(contact.peerId) &&
+          !callWakeHandlePending.contains(contact.peerId)) {
+        // Missing registration or an explicit emission rollback must keep
+        // wake-only custody pending; an unrelated key send cannot settle it.
+        continue;
+      }
       final result = await sendContactRequest(
         p2pService: p2pService,
         identityRepo: identityRepo,
@@ -116,7 +126,9 @@ Future<int> retryIncompleteKeyExchanges({
         targetPeerId: contact.peerId,
         recipientPublicKey: contact.publicKey,
         intent: ContactRequestSendIntent.keyExchangeRetry,
-        resolveWakeToken: resolveWakeToken,
+        resolveWakeToken: resolveWakeToken == null
+            ? null
+            : (_) async => wakeToken,
         resolveCallWakeHandle: resolveCallWakeHandle,
         onCallWakeHandleDistributed: onCallWakeHandleDistributed,
       );
@@ -144,11 +156,15 @@ Future<int> retryIncompleteKeyExchanges({
         // FDC-09 §12 / CV-14 wake-token distribution drain — its OWN block, keyed
         // off the DISTINCT wake marker. Drain a peerId only after its send
         // succeeded; a partial failure keeps the remainder for the next trigger.
-        if (markerStore != null && wakeTokenPending.contains(contact.peerId)) {
-          wakeTokenPending = wakeTokenPending
-              .where((peerId) => peerId != contact.peerId)
-              .toList();
-          await writeWakeTokenPendingMarker(markerStore, wakeTokenPending);
+        if (markerStore != null &&
+            hasWakeToken &&
+            wakeTokenPending.contains(contact.peerId)) {
+          await completeWakeTokenDistribution(
+            secureKeyStore: markerStore,
+            peerId: contact.peerId,
+            token: wakeToken,
+          );
+          wakeTokenPending = await readWakeTokenPendingMarker(markerStore);
           emitFlowEvent(
             layer: 'FL',
             event: 'WAKE_TOKEN_DISTRIBUTED',

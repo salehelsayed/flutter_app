@@ -2416,7 +2416,7 @@ type InboxStore struct {
 	ackCustodyAdmissionEnabled bool
 	// FDC-09 §12 access-token wake gate (always non-nil; fail-open until a
 	// recipient registers a set).
-	wakeTokens *memoryWakeTokenStore
+	wakeTokens wakeTokenStore
 	// Plan 256: typed direct-reaction wake is separately default-off. Ordinary
 	// inbox custody and ordinary push eligibility are unchanged by this flag.
 	directReactionPushEnabled bool
@@ -2489,27 +2489,27 @@ func NewInboxStoreWithBackendAndCapacity(
 		capacity:                   capacity,
 		now:                        time.Now,
 		ackCustodyAdmissionEnabled: loadAckCustodyAdmissionEnabledFromEnv(),
-		wakeTokens:                 newMemoryWakeTokenStore(),
+		wakeTokens:                 wakeTokenStoreForInbox(backend),
 	}
 }
 
 // RegisterWakeTokens registers the recipient's authorized opaque wake-token set
 // (FDC-09 §12). The subject is the AUTHENTICATED stream peer (the dispatch arm
 // passes remotePeer) — a peer registers only ITS OWN authorized set.
-func (is *InboxStore) RegisterWakeTokens(peerId string, tokens []string) {
+func (is *InboxStore) RegisterWakeTokens(peerId string, tokens []string) error {
 	if is.wakeTokens == nil {
-		return
+		return errors.New("wake authorization backend unavailable")
 	}
-	is.wakeTokens.RegisterWakeTokens(peerId, tokens)
+	return is.wakeTokens.RegisterWakeTokens(peerId, tokens)
 }
 
 // ClearWakeTokens drops a recipient's authorized wake-token set (e.g. on
 // unregister_token — no orphaned wake authorization).
-func (is *InboxStore) ClearWakeTokens(peerId string) {
+func (is *InboxStore) ClearWakeTokens(peerId string) error {
 	if is.wakeTokens == nil {
-		return
+		return errors.New("wake authorization backend unavailable")
 	}
-	is.wakeTokens.ClearWakeTokens(peerId)
+	return is.wakeTokens.ClearWakeTokens(peerId)
 }
 
 type wakeOutcomePreflightFallbackKind uint8
@@ -2721,8 +2721,7 @@ func (is *InboxStore) directWakeOutcomeProducer(
 			return 0, "", "", false
 		}
 		authorized := is.wakeTokens != nil &&
-			is.wakeTokens.HasRegisteredSet(toPeerID) &&
-			is.wakeTokens.IsAuthorized(toPeerID, entry.WakeToken)
+			is.wakeTokens.AuthorizesWake(toPeerID, entry.WakeToken, true)
 		if !authorized {
 			return 0, "", "", false
 		}
@@ -2781,8 +2780,7 @@ func (is *InboxStore) launchStoredDirectPush(toPeerId string, entry inboxMessage
 		// fail open. The recipient must have explicitly registered a set and the
 		// presented opaque token must be a member of it.
 		authorized := is.wakeTokens != nil &&
-			is.wakeTokens.HasRegisteredSet(toPeerId) &&
-			is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken)
+			is.wakeTokens.AuthorizesWake(toPeerId, entry.WakeToken, true)
 		if !authorized {
 			pushSentCounter.WithLabelValues("reaction_unauthorized").Inc()
 			return
@@ -2837,8 +2835,8 @@ func (is *InboxStore) launchStoredDirectPush(toPeerId string, entry inboxMessage
 			// Strict custody is already per recipient. The absent-set behavior stays
 			// rollout-safe/fail-open, while an explicitly registered set is
 			// authoritative regardless of the legacy global enforcement switch.
-			if is.wakeTokens != nil && is.wakeTokens.HasRegisteredSet(toPeerId) &&
-				!is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken) {
+			if is.wakeTokens != nil &&
+				!is.wakeTokens.AuthorizesWake(toPeerId, entry.WakeToken, false) {
 				groupReactionWakeCounter.WithLabelValues("unauthorized_wake").Inc()
 				log.Printf("[GROUP_REACTION_WAKE] outcome=unauthorized_wake")
 				return
@@ -4489,8 +4487,12 @@ func HandleInboxStream(
 			log.Printf("[PUSH] outcome=unregistration_failed")
 			resp = inboxResponse{Status: "ERROR", Error: "Push token deletion failed"}
 		} else {
-			inbox.ClearWakeTokens(remotePeer) // FDC-09 §12: no orphaned wake authorization
-			resp = inboxResponse{Status: "OK"}
+			if err := inbox.ClearWakeTokens(remotePeer); err != nil {
+				log.Printf("[WAKE_AUTH] outcome=deletion_failed")
+				resp = inboxResponse{Status: "ERROR", Error: "Wake authorization deletion failed"}
+			} else {
+				resp = inboxResponse{Status: "OK"}
+			}
 		}
 
 	case "register_wake_tokens":
@@ -4498,8 +4500,12 @@ func HandleInboxStream(
 		// for its contacts (anti-spam — only a contact presenting a member token can
 		// wake it). Subject = the AUTHENTICATED stream peer (remotePeer), never a
 		// request field. An empty set clears the gate (back to fail-open).
-		inbox.RegisterWakeTokens(remotePeer, req.WakeTokens)
-		resp = inboxResponse{Status: "OK"}
+		if err := inbox.RegisterWakeTokens(remotePeer, req.WakeTokens); err != nil {
+			log.Printf("[WAKE_AUTH] outcome=registration_failed")
+			resp = inboxResponse{Status: "ERROR", Error: "Wake authorization persistence failed"}
+		} else {
+			resp = inboxResponse{Status: "OK"}
+		}
 
 	case wakeOutcomeAction:
 		outcome, err := decodeWakeOutcomeRequest(requestBytes)

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+
 /// FDC-09 §12 / CV-14 (217 §A2 / A15) — coalesces stream-triggered wake-token
 /// re-issue into AT MOST ONE mint+register per short window.
 ///
@@ -35,7 +37,15 @@ class WakeTokenReissueCoalescer {
     _pending = false;
     // Fire-and-forget: a re-issue failure degrades gracefully (NET-REL-07); the
     // next trigger re-arms.
-    unawaited(_reissue());
+    unawaited(
+      Future<void>.sync(_reissue).catchError((Object error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'WAKE_TOKEN_REISSUE_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
+        );
+      }),
+    );
   }
 
   /// Coalesce a re-issue on every event of [stream].

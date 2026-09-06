@@ -36,6 +36,38 @@ void main() {
   });
 
   group('KeyExchangeRetrier', () {
+    test(
+      'reconnect prepares authorization before attempting key distribution',
+      () {
+        fakeAsync((fake) {
+          var preparations = 0;
+          retrier = KeyExchangeRetrier(
+            p2pService: p2pService,
+            contactRepo: contactRepo,
+            identityRepo: identityRepo,
+            bridge: bridge,
+            beforeRetry: () async {
+              expect(identityRepo.loadIdentityCallCount, 0);
+              preparations++;
+            },
+          );
+          retrier.start();
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/p2p-circuit/addr1'],
+            ),
+          );
+          fake.flushMicrotasks();
+          fake.elapse(const Duration(seconds: 5));
+          fake.flushMicrotasks();
+          expect(preparations, 1);
+          expect(identityRepo.loadIdentityCallCount, 1);
+        });
+      },
+    );
+
     test('start subscribes to stateStream', () {
       retrier.start();
 

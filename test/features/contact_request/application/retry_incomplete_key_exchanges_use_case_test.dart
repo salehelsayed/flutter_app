@@ -7,6 +7,8 @@ import 'package:flutter_app/features/contact_request/application/send_contact_re
 import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/push/application/wake_token_reissue_coalescer.dart';
+import 'package:flutter_app/features/push/application/wake_token_wiring.dart';
+import 'package:flutter_app/features/push/infrastructure/wake_token_store_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -423,6 +425,97 @@ void main() {
 
   group('217 CV-14 wake-token backfill drain', () {
     test(
+      'ordinary build signs and encrypts a previously issued token for an existing contact',
+      () async {
+        const peerId = 'existing-peer-1234567890';
+        const token = 'recipient-issued-token';
+        contactRepo.seed([
+          _makeContact(peerId, mlKemPublicKey: 'complete-key'),
+        ]);
+        final secure = FakeSecureKeyStore();
+        final tokens = WakeTokenStoreImpl(secureKeyStore: secure);
+        await tokens.writeTokens({peerId: token});
+        await reconcileWakeTokenDistribution(
+          secureKeyStore: secure,
+          registeredTokens: await tokens.readTokens(),
+        );
+        expect(
+          await retryIncompleteKeyExchanges(
+            contactRepo: contactRepo,
+            identityRepo: identityRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+            secureKeyStore: secure,
+            resolveWakeToken: buildWakeTokenResolver(tokens),
+          ),
+          1,
+        );
+        final requests = bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .toList();
+        final signed = requests.singleWhere(
+          (request) => request['cmd'] == 'payload.sign',
+        );
+        expect(jsonDecode(signed['payload']['data'] as String)['wt'], token);
+        expect(
+          requests.any((request) => request['cmd'] == 'contactrequest.encrypt'),
+          isTrue,
+        );
+        expect(await readWakeTokenPendingMarker(secure), isEmpty);
+      },
+    );
+
+    for (final resolverCase in ['absent', 'null', 'empty']) {
+      test(
+        '$resolverCase resolver retains wake-only backfill without sending',
+        () async {
+          const peerId = 'existing-peer-1234567890';
+          contactRepo.seed([
+            _makeContact(peerId, mlKemPublicKey: 'complete-key'),
+          ]);
+          final secure = FakeSecureKeyStore();
+          await writeWakeTokenPendingMarker(secure, [peerId]);
+          expect(
+            await retryIncompleteKeyExchanges(
+              contactRepo: contactRepo,
+              identityRepo: identityRepo,
+              p2pService: p2pService,
+              bridge: bridge,
+              secureKeyStore: secure,
+              resolveWakeToken: resolverCase == 'absent'
+                  ? null
+                  : (_) async => resolverCase == 'null' ? null : '',
+            ),
+            0,
+          );
+          expect(await readWakeTokenPendingMarker(secure), [peerId]);
+          expect(bridge.sendCallCount, 0);
+        },
+      );
+    }
+
+    test(
+      'a successful key exchange without a token keeps wake custody pending',
+      () async {
+        const peerId = 'missing-key-peer-1234567890';
+        contactRepo.seed([_makeContact(peerId)]);
+        final secure = FakeSecureKeyStore();
+        await writeWakeTokenPendingMarker(secure, [peerId]);
+        expect(
+          await retryIncompleteKeyExchanges(
+            contactRepo: contactRepo,
+            identityRepo: identityRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+            secureKeyStore: secure,
+          ),
+          1,
+        );
+        expect(await readWakeTokenPendingMarker(secure), [peerId]);
+      },
+    );
+
+    test(
       'A10: wake_token_pending (distinct key) contacts drained only after send '
       'success; partial failure keeps the remainder',
       () async {
@@ -461,6 +554,7 @@ void main() {
           p2pService: p2pService,
           bridge: failingBridge,
           secureKeyStore: secureKeyStore,
+          resolveWakeToken: (peerId) async => 'issued-token-$peerId',
         );
 
         // wake-b drained on success; wake-a retained for the next trigger.

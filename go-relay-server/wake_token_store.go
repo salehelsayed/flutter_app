@@ -2,6 +2,23 @@ package main
 
 import "sync"
 
+// Registrations share the inbox's durability boundary. Tokens themselves are
+// never persisted: the Redis implementation stores recipient-bound digests.
+type wakeTokenStore interface {
+	RegisterWakeTokens(string, []string) error
+	ClearWakeTokens(string) error
+	HasRegisteredSet(string) bool
+	IsAuthorized(string, string) bool
+	AuthorizesWake(peerID, token string, requireRegistered bool) bool
+}
+
+func wakeTokenStoreForInbox(backend InboxBackend) wakeTokenStore {
+	if durable, ok := backend.(*redisInboxBackend); ok {
+		return &redisWakeTokenStore{client: durable.client, prefix: durable.prefix}
+	}
+	return newMemoryWakeTokenStore()
+}
+
 // --- In-memory wake-token store (FDC-09 §12 access-token anti-spam gate) ---
 //
 // Holds, per recipient, the SET of opaque wake-tokens that recipient has
@@ -17,9 +34,9 @@ import "sync"
 // the rollout safe: until both halves are live (recipients register sets AND
 // senders present tokens), no recipient has a set and every wake fails open.
 //
-// In-memory like memoryPushTokenStore; durability (survive a relay bounce) is
-// FDC-10's gap. A lost set fails OPEN (back to existing push), so a bounce never
-// silences contacts.
+// This implementation is for the explicitly in-memory inbox. Redis inboxes
+// use redisWakeTokenStore, because direct reactions require a registered set
+// and must retain that authorization while the recipient is offline.
 // wakeTokenGateEnforced controls whether the §12 access-token wake gate actually
 // SUPPRESSES unauthorized wakes (vs. recording sets but always pushing). It is
 // OFF BY DEFAULT and MUST stay off until the SEND-SIDE token presentation ships —
@@ -44,12 +61,12 @@ func newMemoryWakeTokenStore() *memoryWakeTokenStore {
 
 // RegisterWakeTokens REPLACES the recipient's authorized wake-token set. An empty
 // list clears the set (back to fail-open). Empty token strings are ignored.
-func (s *memoryWakeTokenStore) RegisterWakeTokens(peerId string, tokens []string) {
+func (s *memoryWakeTokenStore) RegisterWakeTokens(peerId string, tokens []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(tokens) == 0 {
 		delete(s.tokens, peerId)
-		return
+		return nil
 	}
 	set := make(map[string]struct{}, len(tokens))
 	for _, t := range tokens {
@@ -59,9 +76,10 @@ func (s *memoryWakeTokenStore) RegisterWakeTokens(peerId string, tokens []string
 	}
 	if len(set) == 0 {
 		delete(s.tokens, peerId)
-		return
+		return nil
 	}
 	s.tokens[peerId] = set
+	return nil
 }
 
 // HasRegisteredSet reports whether the recipient has opted in to the wake gate.
@@ -77,11 +95,17 @@ func (s *memoryWakeTokenStore) HasRegisteredSet(peerId string) bool {
 // ONLY a member token authorizes the wake — an absent or non-member token is
 // blocked (the §12 anti-spam enforcement).
 func (s *memoryWakeTokenStore) IsAuthorized(peerId, token string) bool {
+	return s.AuthorizesWake(peerId, token, false)
+}
+
+// Read registration and membership under one lock, so a concurrent clear
+// cannot turn a strict reaction check into the legacy fail-open policy.
+func (s *memoryWakeTokenStore) AuthorizesWake(peerId, token string, requireRegistered bool) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	set, ok := s.tokens[peerId]
 	if !ok || len(set) == 0 {
-		return true // fail-open: recipient has not opted in to the wake gate
+		return !requireRegistered
 	}
 	_, authorized := set[token]
 	return authorized
@@ -89,8 +113,9 @@ func (s *memoryWakeTokenStore) IsAuthorized(peerId, token string) bool {
 
 // ClearWakeTokens removes a recipient's authorized set (e.g. on unregister_token)
 // so no orphaned wake authorization survives a deregistration.
-func (s *memoryWakeTokenStore) ClearWakeTokens(peerId string) {
+func (s *memoryWakeTokenStore) ClearWakeTokens(peerId string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.tokens, peerId)
+	return nil
 }

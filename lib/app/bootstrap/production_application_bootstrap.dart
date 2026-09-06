@@ -288,6 +288,7 @@ import 'package:flutter_app/features/posts/application/pending_post_delivery_ret
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
+import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
@@ -5857,13 +5858,44 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // a TOTAL callback wrapper (a throwing/old relay degrades to false, never
     // spams — NET-REL-07). The register set is not relay-durable, so this re-runs
     // on each node-start (StartupRouter) + coalesced contact-change bursts.
+    Future<void> Function()? retryWakeTokenDistribution;
     final issueWakeTokensUseCase = IssueWakeTokensUseCase(
       wakeTokenStore: wakeTokenStore,
       registerWakeTokens: (tokens) =>
           registerWakeTokensViaBridge(bridge, tokens),
+      onTokensRegistered: (tokens) async {
+        if (!shouldEmitWakeToken()) return;
+        await reconcileWakeTokenDistribution(
+          secureKeyStore: secureKeyStore,
+          registeredTokens: tokens,
+        );
+      },
     );
-    // Read-only per-send resolver — null-yielding (DARK) unless a build passes
-    // --dart-define=MKNOON_EMIT_WAKE_TOKEN=true (§C2). Never mints/registers.
+    Future<bool> issueWakeTokensForContacts(
+      List<String> contacts, {
+      bool startDistribution = true,
+    }) async {
+      final accepted = await issueWakeTokensUseCase.issueForContacts(contacts);
+      if (accepted && startDistribution && shouldEmitWakeToken()) {
+        final retry = retryWakeTokenDistribution;
+        if (retry != null &&
+            (await readWakeTokenPendingMarker(secureKeyStore)).isNotEmpty) {
+          unawaited(
+            retry().catchError((Object error) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'WAKE_TOKEN_DISTRIBUTION_RETRY_ERROR',
+                details: {'errorType': error.runtimeType.toString()},
+              );
+            }),
+          );
+        }
+      }
+      return accepted;
+    }
+
+    // The signed, encrypted contact-update path distributes recipient-issued
+    // authorization. The resolver never mints or registers during a send.
     final wakeTokenResolver = buildWakeTokenResolver(wakeTokenStore);
     // Coalesce contact-add / key-rotation bursts into ONE re-issue per window
     // (INV-5: register once-per-cycle, never per-event).
@@ -5872,7 +5904,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         final contacts = await contactRepository.getActiveContacts();
         // Exclude BLOCKED contacts (getActiveContacts filters archived only) so a
         // blocked peer's token is pruned (reconcile-down) and never re-registered.
-        await issueWakeTokensUseCase.issueForContacts(
+        await issueWakeTokensForContacts(
           contacts
               .where((c) => !c.isBlocked)
               .map((c) => c.peerId)
@@ -9152,9 +9184,19 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       secureKeyStore: secureKeyStore,
       accountMigrationNetworkGate:
           accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
-      // FDC-09 §12 / CV-14: the backfill drain distributes wake-tokens (DARK until
-      // the emission define flips) — read-only, never mints/registers.
+      // The existing contact-update retry also drains durable wake-token
+      // backfill for contacts whose ML-KEM exchange already completed.
       resolveWakeToken: wakeTokenResolver,
+      beforeRetry: () async {
+        final contacts = await contactRepository.getActiveContacts();
+        await issueWakeTokensForContacts(
+          contacts
+              .where((contact) => !contact.isBlocked)
+              .map((contact) => contact.peerId)
+              .toList(growable: false),
+          startDistribution: false,
+        );
+      },
       loadPendingCallWakeHandleContactIds: () async =>
           (await issuedCallWakeHandleStore.readAll())
               .where(
@@ -9165,6 +9207,13 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       onCallWakeHandleDistributed:
           callSignalingComposition.onCallWakeHandleDistributed,
     );
+
+    retryWakeTokenDistribution = () async {
+      await keyExchangeRetrier.retryNow(
+        trigger: 'wake_token_registered',
+        requireFresh: true,
+      );
+    };
 
     final liveServiceStartupSteps = AccountMigrationRuntimeStartupSteps();
     final liveServiceForwardingSubscriptions = <StreamSubscription<dynamic>>[];
@@ -9743,7 +9792,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         contactRequestListener: contactRequestListener,
         // FDC-09 §12 / CV-14 (217 §A1): once-per-cycle mint+register hook, invoked
         // by StartupRouter after node-start with all active contact peerIds.
-        issueWakeTokensForContacts: issueWakeTokensUseCase.issueForContacts,
+        issueWakeTokensForContacts: issueWakeTokensForContacts,
         contactRequestPresentationGate: contactRequestPresentationGate,
         messageRepository: messageRepository,
         postRepository: postRepository,

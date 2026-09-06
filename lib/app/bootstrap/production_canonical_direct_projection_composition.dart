@@ -846,6 +846,28 @@ buildProductionCanonicalDirectProjectionComposition(
     }
   }
 
+  Future<String> loadDirectMessageNotificationBody(
+    ConversationMessage message,
+  ) async {
+    // Canonical parent reads do not hydrate media. The native body needs the
+    // same lane-qualified metadata as the history snapshot, including on iOS
+    // where Android's expanded history cannot supply the missing preview.
+    final needsAttachmentMetadata =
+        !message.privateMediaPolicy.requiresRedaction &&
+        message.text.trim().isEmpty;
+    final attachments = needsAttachmentMetadata
+        ? await dependencies.mediaAttachmentRepository.getAttachmentsForMessage(
+            message.id,
+            owner: MediaOwnerLane.direct,
+          )
+        : message.media;
+    return notificationBodyForMessage(
+      message.text,
+      attachments,
+      privateMediaPolicy: message.privateMediaPolicy,
+    );
+  }
+
   Future<CanonicalConversationNotificationReplacement?>
   loadDirectCanonicalReplacement(
     String peerId,
@@ -886,11 +908,7 @@ buildProductionCanonicalDirectProjectionComposition(
       final message = materialized.message;
       return CanonicalConversationNotificationReplacement(
         senderUsername: contact.username,
-        messageText: notificationBodyForMessage(
-          message.text,
-          message.media,
-          privateMediaPolicy: message.privateMediaPolicy,
-        ),
+        messageText: await loadDirectMessageNotificationBody(message),
         routePayload: NotificationRouteTarget.conversation(
           peerId,
           messageId: message.id,
@@ -906,11 +924,7 @@ buildProductionCanonicalDirectProjectionComposition(
     if (newestMessage != null) {
       return CanonicalConversationNotificationReplacement(
         senderUsername: contact.username,
-        messageText: notificationBodyForMessage(
-          newestMessage.text,
-          newestMessage.media,
-          privateMediaPolicy: newestMessage.privateMediaPolicy,
-        ),
+        messageText: await loadDirectMessageNotificationBody(newestMessage),
         routePayload: NotificationRouteTarget.conversation(
           peerId,
           messageId: newestMessage.id,
@@ -1125,11 +1139,7 @@ buildProductionCanonicalDirectProjectionComposition(
               messageId: entry.messageId,
             ).toPayload(),
             senderUsername: contact.username,
-            messageText: notificationBodyForMessage(
-              message.text,
-              message.media,
-              privateMediaPolicy: message.privateMediaPolicy,
-            ),
+            messageText: await loadDirectMessageNotificationBody(message),
             messageId: entry.messageId,
             notificationEventIdentity: entry.eventId,
             notificationEventType: 'new_message',
