@@ -54,7 +54,13 @@ fi
 # today; aps-environment=production in Runner.entitlements is what actually
 # selects the production APNs environment.
 echo "== Building iOS App Store IPA (release)"
-if ! scripts/build_ios_appstore_ipa.sh --dart-define=PRODUCTION_APNS=true; then
+# Go binding freshness: the GoMknoon Pod copies the xcframework slice while the
+# Pods project builds, BEFORE the Runner target's ensure phase can rebuild it,
+# so a changed go-mknoon source links one build late. Refresh first — the
+# 2026-08-29 store run failed the bridge binary gate below for exactly this.
+if ! scripts/ensure_go_ios_bindings.sh; then
+  note "IOS FAILED(go bindings)"; FAILED=1
+elif ! scripts/build_ios_appstore_ipa.sh --dart-define=PRODUCTION_APNS=true; then
   note "IOS FAILED(build)"; FAILED=1
 else
   IPA=$(find build/ios/ipa -maxdepth 1 -type f -name '*.ipa' 2>/dev/null | head -1)
