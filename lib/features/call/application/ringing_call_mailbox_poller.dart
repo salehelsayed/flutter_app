@@ -1,24 +1,6 @@
 import 'dart:async';
 
 import '../domain/call_session_snapshot.dart';
-import '../domain/call_state.dart';
-
-/// 407: drains the call mailbox while a call is ringing.
-///
-/// The relay deliberately sends no wake push to a recipient it considers
-/// attached — one that acked an earlier event of the same call, so its live
-/// connection is assumed to carry the rest (`recipientAttached`,
-/// `go-relay-server/call_control_redis.go:736`). That rule exists to stop a
-/// caller's offer/ICE burst re-presenting the call once per event, and it is
-/// right for the common case.
-///
-/// It has no fallback when the live path does not land. Device 2026-09-05
-/// 21:21:05Z: the caller cancelled, the terminate stored with `wake: "none"`,
-/// and all three direct legs failed, so the ringing iPhone never learned the
-/// call was over and rang for nine more seconds until the user declined by
-/// hand. Polling during the ring closes that hole wherever the live path
-/// fails, not only for this one cause, and costs one mailbox read every
-/// [interval] for the ring's bounded lifetime.
 
 /// Cancels one scheduled poll. Kept as a value so tests can drive ticks
 /// without a real timer.
@@ -42,6 +24,10 @@ RingingCallMailboxPollHandle _defaultSchedule(
   return RingingCallMailboxPollHandle(timer.cancel);
 }
 
+/// Drains throughout the canonical call lifecycle. The relay suppresses iOS
+/// wakes after the first acknowledgement, including for SDP, ICE and hang-up.
+/// Keeping one non-overlapping poll alive preserves that fallback even when
+/// direct signaling fails after ringing or the native call hides the app UI.
 final class RingingCallMailboxPoller {
   RingingCallMailboxPoller({
     required Future<void> Function() drain,
@@ -57,13 +43,11 @@ final class RingingCallMailboxPoller {
   RingingCallMailboxPollHandle? _handle;
   bool _draining = false;
 
-  /// Feed every session snapshot. Polling runs only while the call rings, in
-  /// either direction: a callee's `reject` can be skipped for an attached
-  /// caller exactly as a caller's `terminate` was skipped here.
+  /// Feed canonical snapshots independently of foreground presentation.
   void onSession(CallSessionSnapshot? snapshot) {
-    final ringing = snapshot != null && snapshot.state == CallState.ringing;
-    if (ringing) {
-      // Already polling this ring: restarting would reset the interval on
+    final live = snapshot != null && !snapshot.isIdle && !snapshot.isTerminal;
+    if (live) {
+      // Already polling this call: restarting would reset the interval on
       // every unrelated snapshot and could starve the drain entirely.
       _handle ??= _schedule(interval, _onTick);
       return;

@@ -69,6 +69,115 @@ Future<void> _flushAsync([int turns = 8]) async {
 }
 
 void main() {
+  test(
+    'processed remote ICE does not exhaust capacity across restarts',
+    () async {
+      const reducer = CallReducer();
+      final harness = _Harness(
+        snapshot: _snapshot(
+          CallState.accepted,
+          direction: CallDirection.incoming,
+        ),
+      );
+      addTearDown(harness.executor.close);
+
+      Future<CallReduction> dispatch(CallEvent event) async {
+        final reduction = reducer.reduce(harness.snapshot, event);
+        harness.snapshot = reduction.snapshot;
+        for (final effect in reduction.effects) {
+          final followUp = await harness.executor.execute(
+            effect,
+            harness.snapshot,
+          );
+          if (followUp != null) await dispatch(followUp);
+        }
+        return reduction;
+      }
+
+      CallEvent event(CallEventType type, String id) => CallEvent(
+        type: type,
+        eventId: id,
+        occurredAt: _now,
+        callId: _callId,
+        candidateId: type == CallEventType.remoteIce ? id : null,
+      );
+
+      for (var generation = 0; generation < 4; generation++) {
+        if (generation > 0) {
+          harness.engine.restartGeneration = generation;
+          final restartId = 'restart-$generation';
+          harness.materialStore.store(
+            _material(
+              eventId: restartId,
+              type: CallNegotiationMaterialType.iceRestart,
+              generation: generation,
+              payload: const <String, Object?>{},
+            ),
+          );
+          await dispatch(event(CallEventType.remoteIceRestart, restartId));
+        }
+
+        // Exercise both executor-buffered and immediately applied candidates.
+        for (var index = 0; index < 24; index++) {
+          if (index == 2) {
+            final offerId = 'offer-$generation';
+            harness.materialStore.store(
+              _material(
+                eventId: offerId,
+                type: CallNegotiationMaterialType.offer,
+                generation: generation,
+                payload: <String, Object?>{
+                  'description': 'offer-$generation',
+                  'fingerprint': _fingerprint,
+                },
+              ),
+            );
+            await dispatch(event(CallEventType.remoteOffer, offerId));
+          }
+          final candidateId = 'candidate-$generation-$index';
+          harness.materialStore.store(
+            _material(
+              eventId: candidateId,
+              type: CallNegotiationMaterialType.ice,
+              generation: generation,
+              payload: <String, Object?>{
+                'candidate': candidateId,
+                'media_id': 'audio',
+                'media_line_index': 0,
+              },
+            ),
+          );
+          final admitted = await dispatch(
+            event(CallEventType.remoteIce, candidateId),
+          );
+          expect(
+            admitted.decision,
+            CallEventDecision.applied,
+            reason: candidateId,
+          );
+        }
+        await dispatch(
+          event(CallEventType.mediaConnected, 'connected-$generation'),
+        );
+        expect(harness.snapshot.state, CallState.connected);
+      }
+
+      expect(
+        harness.engine.addedCandidates.expand((batch) => batch),
+        hasLength(96),
+      );
+      expect(harness.snapshot.pendingCandidateIds, isEmpty);
+      final replay = await dispatch(
+        event(CallEventType.remoteIce, 'candidate-3-23'),
+      );
+      expect(replay.reason, CallReductionReason.duplicateEvent);
+      expect(
+        harness.engine.addedCandidates.expand((batch) => batch),
+        hasLength(96),
+      );
+    },
+  );
+
   test('state gates prevent early SDP, ICE, restart, and media work', () async {
     final harness = _Harness(snapshot: _snapshot(CallState.ringing));
     addTearDown(harness.executor.close);
@@ -1677,6 +1786,7 @@ final class _FakeEngine implements CallEngine {
   Completer<void>? closeGate;
   int snapshotCalls = 0;
   int restartGeneration = 1;
+  int _iceGeneration = 0;
   List<CallIceServer> lastRestartServers = const <CallIceServer>[];
 
   int get descriptionWorkCount =>
@@ -1701,7 +1811,7 @@ final class _FakeEngine implements CallEngine {
   bool get isClosed => closeCalls > 0;
 
   @override
-  int get iceGeneration => 0;
+  int get iceGeneration => _iceGeneration;
 
   @override
   Future<void> createConnection(
@@ -1755,7 +1865,7 @@ final class _FakeEngine implements CallEngine {
     log.add('engine.restart');
     lastRestartServers = List<CallIceServer>.of(iceServers);
     if (restartError case final code?) throw CallEngineException(code);
-    return restartGeneration;
+    return _iceGeneration = restartGeneration;
   }
 
   @override

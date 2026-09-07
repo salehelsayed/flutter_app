@@ -9,6 +9,7 @@ import 'package:flutter_app/features/call/application/call_history_projector.dar
 import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
 import 'package:flutter_app/features/call/application/handle_incoming_call_signal.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
+import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
@@ -22,6 +23,8 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final class _History implements CallHistoryRepository {
+  final List<CallHistoryEntry> entries = <CallHistoryEntry>[];
+
   @override
   Future<CallHistoryEntry?> getByCallId(CallId callId) async => null;
 
@@ -30,7 +33,9 @@ final class _History implements CallHistoryRepository {
       const <CallHistoryEntry>[];
 
   @override
-  Future<void> upsertTerminal(CallHistoryEntry entry) async {}
+  Future<void> upsertTerminal(CallHistoryEntry entry) async {
+    entries.add(entry);
+  }
 }
 
 final class _Crypto implements CallEnvelopeCrypto {
@@ -100,6 +105,30 @@ final class _Presenter implements IncomingCallPresenter {
 
   @override
   Future<void> dismiss(IncomingCallPresentation presentation) async {}
+}
+
+final class _NativeLifecycle implements ProvisionalNativeIncomingCallLifecycle {
+  final List<String> cancelledHandles = <String>[];
+
+  @override
+  Future<void> remoteCancel(String callHandle) async {
+    cancelledHandles.add(callHandle);
+  }
+
+  @override
+  Future<void> authenticationFailed(String callHandle) async {}
+
+  @override
+  Future<void> expire(String callHandle) async {}
+
+  @override
+  Future<void> revokeOpaqueContact(String callHandle) async {}
+
+  @override
+  Future<void> updateAuthenticatedContact({
+    required String callHandle,
+    required String displayName,
+  }) async {}
 }
 
 final class _Mailbox implements CallMailboxClient {
@@ -246,6 +275,147 @@ final class _MailboxBackedControlPort implements CallControlSignalingPort {
 }
 
 void main() {
+  for (final route in <CallRouteClass>[
+    CallRouteClass.direct,
+    CallRouteClass.ephemeralMailbox,
+  ]) {
+    test('${route.name} old-generation hang-up ends a reconnecting caller '
+        'and cleans up exactly once', () async {
+      final now = DateTime.utc(2026, 8, 30, 12);
+      final nowMs = now.millisecondsSinceEpoch;
+      final callId = CallId.parse('22222222-2222-4222-8222-222222222222');
+      const handle = '33333333-3333-4333-8333-333333333333';
+      final codec = SecureCallEnvelopeCodec(
+        crypto: _Crypto(),
+        nowMs: () => nowMs,
+      );
+      final context = CallSignalingContextStore();
+      final native = _NativeLifecycle();
+      final history = _History();
+      final cleaned = <CallSessionSnapshot>[];
+      final caller = CallCoordinator(
+        reducer: const CallReducer(),
+        cleanupCoordinator: CallCleanupCoordinator(<CallCleanupStep>[
+          CallCleanupStep('call_resources', (snapshot) async {
+            cleaned.add(snapshot);
+            context.purge(snapshot.callId!);
+          }, requiredForTerminalAck: true),
+        ]),
+        historyProjector: CallHistoryProjector(history),
+        clock: () => now,
+        idSource: () => callId,
+      );
+      addTearDown(caller.dispose);
+      final handler = HandleIncomingCallSignal(
+        codec: codec,
+        coordinator: caller,
+        trustedRosterProvider: const _Roster(),
+        localAuthorityProvider: () async => const CallLocalDeviceAuthority(
+          accountPeerId: 'recipient-account',
+          devicePeerId: 'recipient-device',
+          mlKemSecretKey: 'recipient-mlkem-secret',
+        ),
+        incomingCallPresenter: _Presenter(),
+        networkEffectsAllowed: () => true,
+        signalingContextObserver: context,
+        provisionalNativeLifecycle: native,
+      );
+      Future<IncomingCallSignalFrame> frame(CallSignalType event) async {
+        final signal = CallSignal.create(
+          callId: callId,
+          messageId: event == CallSignalType.accept
+              ? '11111111-1111-4111-8111-111111111111'
+              : '44444444-4444-4444-8444-444444444444',
+          event: event,
+          senderAccountPeerId: 'sender-account',
+          senderDevicePeerId: 'sender-device',
+          recipientAccountPeerId: 'recipient-account',
+          recipientDevicePeerId: 'recipient-device',
+          senderSequence: event == CallSignalType.accept ? 1 : 2,
+          iceGeneration: 0,
+          createdAtMs: nowMs,
+          expiresAtMs: nowMs + 45_000,
+          payload: event == CallSignalType.terminate
+              ? const <String, Object?>{'reason': 'local_hangup'}
+              : const <String, Object?>{},
+        );
+        return IncomingCallSignalFrame(
+          envelopeJson: await codec.encode(
+            signal: signal,
+            callHandle: handle,
+            recipientMlKemPublicKey: 'recipient-mlkem-public',
+            senderSigningPrivateKey: 'sender-signing-key',
+          ),
+          authenticatedTransportPeerId: 'sender-device',
+          route: route,
+          expectedCallHandle: handle,
+          expectedMessageId: signal.messageId,
+          expectedExpiresAtMs: signal.expiresAtMs,
+          expectedRecipientDevicePeerId: 'recipient-device',
+        );
+      }
+
+      await caller.placeCall(
+        contactPeerId: 'sender-account',
+        localAccountPeerId: 'recipient-account',
+        localDeviceId: 'recipient-device',
+      );
+      context.storeOutgoing(
+        callId: callId,
+        callHandle: handle,
+        localAccountPeerId: 'recipient-account',
+        localDevicePeerId: 'recipient-device',
+        remoteAccountPeerId: 'sender-account',
+        remoteDevicePeerId: 'sender-device',
+      );
+      Future<void> dispatch(CallEventType type) async {
+        final result = await caller.dispatch(
+          CallEvent(
+            type: type,
+            eventId: type.name,
+            occurredAt: now,
+            callId: callId,
+          ),
+        );
+        expect(result.decision, CallEventDecision.applied);
+      }
+
+      await dispatch(CallEventType.outgoingInviteReady);
+      expect(
+        await handler.handle(await frame(CallSignalType.accept)),
+        IncomingCallSignalOutcome.accepted,
+      );
+      await dispatch(CallEventType.negotiationReady);
+      await dispatch(CallEventType.mediaConnected);
+      await dispatch(CallEventType.mediaLost);
+      // The local caller has reserved restart generation 1, but the receiver
+      // hangs up at generation 0 before the restart announcement reaches it.
+      context.reserveNextMetadata(callId, iceGeneration: 1);
+      expect(caller.activeSession?.state, CallState.reconnecting);
+
+      final terminate = await frame(CallSignalType.terminate);
+      expect(
+        await handler.handle(terminate),
+        IncomingCallSignalOutcome.accepted,
+      );
+      expect(caller.activeSession, isNull);
+      expect(native.cancelledHandles, <String>[handle]);
+      expect(cleaned, hasLength(1));
+      expect(cleaned.single.endReason, CallEndReason.localHangup);
+      expect(context.read(callId), isNull);
+      expect(caller.terminalCleanupAckReady(callId), isTrue);
+      expect(history.entries.single.terminalReason, CallEndReason.localHangup);
+
+      expect(
+        await handler.handle(terminate),
+        IncomingCallSignalOutcome.duplicate,
+      );
+      expect(native.cancelledHandles, <String>[handle]);
+      expect(cleaned, hasLength(1));
+      expect(history.entries, hasLength(1));
+    });
+  }
+
   test(
     'authenticated direct and mailbox duplicate converge on one session and UI',
     () async {

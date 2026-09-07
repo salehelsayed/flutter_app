@@ -521,7 +521,8 @@ final class ProductionCallSignalingGraph
   @override
   Future<void> onBackgrounded() async {
     if (_nativeCallLifecycleAdapter != null) {
-      _publishForeground(null);
+      // Composition hides the Flutter surface. Keep the canonical projection
+      // so its mailbox poller and live-call refresh guard retain this call.
       return;
     }
     final session = coordinator.activeSession;

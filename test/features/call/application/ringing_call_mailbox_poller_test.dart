@@ -96,12 +96,12 @@ void main() {
     expect(rig.scheduler.started, 1);
   });
 
-  test('TC-407-04 leaving the ringing state stops the timer', () {
+  test('TC-407-04 ending the call stops the timer', () {
     final rig = build();
     rig.poller.onSession(snapshot());
     expect(rig.scheduler.cancelled, 0);
 
-    rig.poller.onSession(snapshot(state: CallState.connected));
+    rig.poller.onSession(snapshot(state: CallState.ended));
 
     expect(rig.scheduler.cancelled, 1);
   });
@@ -115,14 +115,36 @@ void main() {
     expect(rig.scheduler.cancelled, 1);
   });
 
-  test('TC-407-06 a non-ringing session never starts a timer', () {
+  test('TC-407-06 idle and ended sessions never start a timer', () {
     final rig = build();
 
-    rig.poller.onSession(snapshot(state: CallState.connected));
+    rig.poller.onSession(CallSessionSnapshot.idle(now: DateTime.utc(2026)));
     rig.poller.onSession(snapshot(state: CallState.ended));
 
     expect(rig.scheduler.started, 0);
   });
+
+  test(
+    'acceptance, negotiation and recovery retain one mailbox drain',
+    () async {
+      final rig = build();
+      rig.poller.onSession(snapshot());
+      for (final state in [
+        CallState.accepted,
+        CallState.negotiating,
+        CallState.connected,
+        CallState.reconnecting,
+      ]) {
+        rig.poller.onSession(snapshot(state: state));
+        rig.scheduler.tick();
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(rig.drains, [1, 2, 3, 4]);
+      expect(rig.scheduler.started, 1);
+      expect(rig.scheduler.cancelled, 0);
+      rig.poller.dispose();
+    },
+  );
 
   test('TC-407-07 staying ringing does not restart the timer', () {
     final rig = build();

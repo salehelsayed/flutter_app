@@ -13,6 +13,8 @@ import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/call_audio_route_adapter.dart';
+import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
+import 'package:flutter_app/features/call/infrastructure/webrtc_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _nowMs = 2_000_000;
@@ -3061,6 +3063,90 @@ void main() {
   );
 
   test(
+    'native routes and inventory changes reach the engine and close with the adapter',
+    () async {
+      Map<String, Object?> audioState(String route, List<String> routes) => {
+        'version': 1,
+        'active': true,
+        'muted': false,
+        'route': route,
+        'availableRoutes': routes,
+      };
+      final native = _NativeHarness()
+        ..attachResult = _emptyBatch()
+        ..audioState = audioState('earpiece', ['earpiece', 'speaker']);
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator, {_callId: _callHandle});
+      final engine = FlutterWebRtcCallEngine(
+        adapter: _RouteProjectionWebRtcAdapter(),
+        audioRoutePort: adapter,
+      );
+      final changes = <CallAudioOutputRoute>[];
+      var closed = false;
+      final subscription = engine.outputRouteChanges.listen(
+        changes.add,
+        onDone: () => closed = true,
+      );
+
+      await adapter.start();
+      expect(await adapter.present(_presentation()), isTrue);
+      expect(await engine.supportedOutputRoutes(), [
+        CallAudioOutputRoute.earpiece,
+        CallAudioOutputRoute.speaker,
+      ]);
+      expect(changes, [CallAudioOutputRoute.earpiece]);
+
+      Future<void> emitRoute(int sequence) async {
+        native.events.add(
+          _batch([_event(sequence, 'native-route-$sequence', 'routeChanged')]),
+        );
+        await _until(
+          () => native
+              .callsOf('acknowledge')
+              .any((call) => call.arguments['throughSequence'] == sequence),
+        );
+      }
+
+      native.audioState = audioState('bluetooth', ['bluetooth', 'speaker']);
+      await emitRoute(1);
+      expect(changes.last, CallAudioOutputRoute.bluetooth);
+      expect(adapter.selectedRoute, CallAudioOutputRoute.bluetooth);
+
+      // A headset becomes selectable without changing the current output.
+      native.audioState = audioState('bluetooth', [
+        'bluetooth',
+        'speaker',
+        'wired_headset',
+      ]);
+      await emitRoute(2);
+      expect(changes, [
+        CallAudioOutputRoute.earpiece,
+        CallAudioOutputRoute.bluetooth,
+        CallAudioOutputRoute.bluetooth,
+      ]);
+      expect(
+        await engine.supportedOutputRoutes(),
+        contains(CallAudioOutputRoute.wiredHeadset),
+      );
+
+      await emitRoute(3);
+      expect(changes, hasLength(3), reason: 'unchanged reads must not loop');
+      native.audioState = audioState('earpiece', ['earpiece', 'speaker']);
+      await emitRoute(4);
+      expect(changes.last, CallAudioOutputRoute.earpiece);
+      expect(native.callsOf('requestRoute'), isEmpty);
+
+      await engine.close();
+      expect(closed, isFalse, reason: 'native adapter is process-owned');
+      await adapter.close();
+      expect(closed, isTrue);
+      await subscription.cancel();
+      await coordinator.dispose();
+      await native.events.close();
+    },
+  );
+
+  test(
     'audio, route, end, and close stay coarse and delegate exactly once',
     () async {
       final native = _NativeHarness()
@@ -3831,6 +3917,18 @@ Future<void> _settle() async {
   for (var turn = 0; turn < 8; turn++) {
     await Future<void>.delayed(Duration.zero);
   }
+}
+
+final class _RouteProjectionWebRtcAdapter
+    implements WebRtcPeerConnectionAdapter {
+  @override
+  Stream<WebRtcPeerConnectionEvent> get events => const Stream.empty();
+
+  @override
+  Future<void> close() async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 final class _NativeInvocation {

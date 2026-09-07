@@ -21,6 +21,7 @@ enum CallEventType {
   remoteOffer,
   remoteAnswer,
   remoteIce,
+  iceCandidateHandled,
   remoteIceRestart,
   remoteTerminate,
   directAccepted,

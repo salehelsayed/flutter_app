@@ -322,11 +322,24 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         return _followUp(CallEventType.negotiationFailed, snapshot);
       }
       _pendingRemoteCandidates.addLast(candidate);
-      return null;
+      return _candidateHandled(snapshot);
     }
-    if (candidate.iceGeneration < remoteGeneration) return null;
-    await engine.addIceCandidates(<CallIceCandidate>[candidate]);
-    return null;
+    if (candidate.iceGeneration == remoteGeneration) {
+      await engine.addIceCandidates(<CallIceCandidate>[candidate]);
+    }
+    return _candidateHandled(snapshot);
+  }
+
+  CallEvent? _candidateHandled(CallSessionSnapshot snapshot) {
+    if (snapshot.pendingCandidateIds.isEmpty) return null;
+    // This effect's immutable snapshot ends with the candidate it admitted.
+    // The executor now owns it in its bounded pre-SDP queue, has delivered it,
+    // or has discarded an obsolete generation. None remains reducer-pending.
+    return _followUp(
+      CallEventType.iceCandidateHandled,
+      snapshot,
+      candidateId: snapshot.pendingCandidateIds.last,
+    );
   }
 
   Future<CallEvent?> _restartIce(CallSessionSnapshot snapshot) async {
@@ -844,12 +857,14 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     CallEventType type,
     CallSessionSnapshot snapshot, {
     CallEndReason? endReason,
+    String? candidateId,
   }) => CallEvent(
     type: type,
     eventId: 'call-negotiation-${type.name}-${_nextEventSequence++}',
     occurredAt: clock(),
     callId: snapshot.callId,
     endReason: endReason,
+    candidateId: candidateId,
   );
 
   Future<void> close() {

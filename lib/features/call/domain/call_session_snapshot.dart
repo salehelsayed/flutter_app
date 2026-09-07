@@ -44,8 +44,10 @@ final class CallSessionSnapshot {
     required this.mailboxCustodyConfirmed,
     required List<String> recentEventIds,
     required List<String> pendingCandidateIds,
+    required List<String> recentCandidateIds,
   }) : recentEventIds = List<String>.unmodifiable(recentEventIds),
-       pendingCandidateIds = List<String>.unmodifiable(pendingCandidateIds);
+       pendingCandidateIds = List<String>.unmodifiable(pendingCandidateIds),
+       recentCandidateIds = List<String>.unmodifiable(recentCandidateIds);
 
   factory CallSessionSnapshot.idle({required DateTime now}) =>
       CallSessionSnapshot._(
@@ -67,6 +69,7 @@ final class CallSessionSnapshot {
         mailboxCustodyConfirmed: false,
         recentEventIds: const <String>[],
         pendingCandidateIds: const <String>[],
+        recentCandidateIds: const <String>[],
       );
 
   factory CallSessionSnapshot.active({
@@ -88,6 +91,7 @@ final class CallSessionSnapshot {
     bool mailboxCustodyConfirmed = false,
     List<String> recentEventIds = const <String>[],
     List<String> pendingCandidateIds = const <String>[],
+    List<String> recentCandidateIds = const <String>[],
   }) {
     if (state == CallState.idle) {
       throw ArgumentError.value(state, 'state', 'active call cannot be idle');
@@ -119,6 +123,7 @@ final class CallSessionSnapshot {
       mailboxCustodyConfirmed: mailboxCustodyConfirmed,
       recentEventIds: recentEventIds,
       pendingCandidateIds: pendingCandidateIds,
+      recentCandidateIds: recentCandidateIds,
     );
   }
 
@@ -139,7 +144,12 @@ final class CallSessionSnapshot {
   final bool incomingValidated;
   final bool mailboxCustodyConfirmed;
   final List<String> recentEventIds;
+
+  /// Candidates awaiting handoff to the bounded media executor.
   final List<String> pendingCandidateIds;
+
+  /// Bounded deduplication history, independent of pending work capacity.
+  final List<String> recentCandidateIds;
 
   bool get isIdle => state == CallState.idle;
   bool get isTerminal => state == CallState.ended;
@@ -164,6 +174,7 @@ final class CallSessionSnapshot {
     bool? mailboxCustodyConfirmed,
     List<String>? recentEventIds,
     List<String>? pendingCandidateIds,
+    List<String>? recentCandidateIds,
   }) => CallSessionSnapshot._(
     state: state ?? this.state,
     observedAt: (observedAt ?? this.observedAt).toUtc(),
@@ -196,6 +207,7 @@ final class CallSessionSnapshot {
         mailboxCustodyConfirmed ?? this.mailboxCustodyConfirmed,
     recentEventIds: recentEventIds ?? this.recentEventIds,
     pendingCandidateIds: pendingCandidateIds ?? this.pendingCandidateIds,
+    recentCandidateIds: recentCandidateIds ?? this.recentCandidateIds,
   );
 
   Map<String, Object?> toDiagnosticMap() => <String, Object?>{

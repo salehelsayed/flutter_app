@@ -188,6 +188,88 @@ void main() {
     },
   );
 
+  for (final terminal in <CallSignalType>[
+    CallSignalType.reject,
+    CallSignalType.terminate,
+  ]) {
+    test('${terminal.name} from the peer before our restart preserves the '
+        'current ICE generation and binding checks', () {
+      const handle = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      final store = CallSignalingContextStore();
+      store.captureAuthenticated(
+        signal: _incoming(callId: _callA, senderSequence: 2),
+        callHandle: handle,
+      );
+      store.reserveNextMetadata(_callA, iceGeneration: 1);
+      final signal = _incoming(
+        callId: _callA,
+        senderSequence: 3,
+        event: terminal,
+        payload: const <String, Object?>{'reason': 'remote_hangup'},
+      );
+
+      for (final field in <String>[
+        'sender_account_peer_id',
+        'sender_device_peer_id',
+        'recipient_account_peer_id',
+        'recipient_device_peer_id',
+      ]) {
+        expect(
+          () => store.captureAuthenticated(
+            signal: CallSignal.fromMap(<String, Object?>{
+              ...signal.toMap(),
+              field: 'unbound-peer',
+            }),
+            callHandle: handle,
+          ),
+          throwsA(
+            isA<CallSignalingContextException>().having(
+              (error) => error.code,
+              'code',
+              CallSignalingContextErrorCode.bindingConflict,
+            ),
+          ),
+        );
+      }
+      expect(
+        () => store.captureAuthenticated(
+          signal: signal,
+          callHandle: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        ),
+        throwsA(
+          isA<CallSignalingContextException>().having(
+            (error) => error.code,
+            'code',
+            CallSignalingContextErrorCode.bindingConflict,
+          ),
+        ),
+      );
+
+      store.captureAuthenticated(signal: signal, callHandle: handle);
+
+      expect(store.read(_callA)?.remoteSenderSequence, 3);
+      expect(store.read(_callA)?.iceGeneration, 1);
+      expect(
+        () => store.captureAuthenticated(
+          signal: _incoming(
+            callId: _callA,
+            senderSequence: 1,
+            event: terminal,
+            payload: const <String, Object?>{'reason': 'remote_hangup'},
+          ),
+          callHandle: handle,
+        ),
+        throwsA(
+          isA<CallSignalingContextException>().having(
+            (error) => error.code,
+            'code',
+            CallSignalingContextErrorCode.nonMonotonicMetadata,
+          ),
+        ),
+      );
+    });
+  }
+
   test('pinned endpoints are per call, bounded, and purged with the call', () {
     final store = CallSignalingContextStore(maxContexts: 2);
     ResolvedCallEndpoint endpoint(String device) => ResolvedCallEndpoint(

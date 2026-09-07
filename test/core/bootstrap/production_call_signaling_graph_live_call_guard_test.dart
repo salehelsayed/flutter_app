@@ -80,6 +80,74 @@ void main() {
   );
 
   test(
+    'backgrounding during a failed refresh retains the native call',
+    () async {
+      final fixture = await _createFixture();
+      await fixture.composition.start();
+      final graph = fixture.graphs.single;
+      await _ringIncoming(graph);
+      final session = graph.coordinator.activeSession!;
+      final refreshEntered = Completer<void>();
+      final refreshResponse = Completer<Map<String, Object?>>();
+      fixture.bridge.responseHandlers['call_endpoint_set_v1'] = (_) {
+        refreshEntered.complete();
+        return refreshResponse.future;
+      };
+
+      final refresh = fixture.composition.onContactEligibilityChanged();
+      await refreshEntered.future;
+      await fixture.composition.onBackgrounded();
+      expect(fixture.composition.current, isNull);
+      refreshResponse.complete(const <String, Object?>{'ok': false});
+      await refresh;
+
+      expect(fixture.composition.isStarted, isTrue);
+      expect(graph.coordinator.activeSession, same(session));
+      expect(graph.current?.session, same(session));
+      expect(session.isTerminal, isFalse);
+      expect(fixture.composition.current, isNull);
+      expect(fixture.lifecycleMethods, isNot(contains('failClosed')));
+      expect(
+        fixture.bridge.commands,
+        isNot(contains('call_endpoint_revoke_v1')),
+      );
+      expect(
+        _details(fixture.flowEvents, 'CALL_SIGNALING_RECONCILE_RESULT').last,
+        containsPair('outcome', 'advertisement_deferred'),
+      );
+    },
+  );
+
+  test(
+    'background native call keeps polling without another session event',
+    () async {
+      final fixture = await _createFixture();
+      await fixture.composition.start();
+      final graph = fixture.graphs.single;
+      await _ringIncoming(graph);
+      await fixture.composition.onBackgrounded();
+      final polled = Completer<void>();
+      fixture.bridge.responseHandlers['call_retrieve_v1'] = (_) async {
+        if (!polled.isCompleted) polled.complete();
+        return const <String, Object?>{
+          'ok': true,
+          'events': <Object?>[],
+          'receiptAtMs': 1,
+          'expiresAtMs': 1,
+          'hasMore': false,
+        };
+      };
+
+      // No resume, wake, media callback, or additional coordinator event can
+      // restart the timer: this must be the poll retained across backgrounding.
+      await polled.future.timeout(const Duration(seconds: 5));
+
+      expect(fixture.composition.current, isNull);
+      expect(graph.coordinator.activeSession?.isTerminal, isFalse);
+    },
+  );
+
+  test(
     'token authority invalidation during a live call defers withdrawal until the call ends',
     () async {
       final fixture = await _createFixture();

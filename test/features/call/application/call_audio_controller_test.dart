@@ -295,6 +295,36 @@ void main() {
       await subscription.cancel();
     });
 
+    test(
+      'route observed during startup refreshes after initial controls',
+      () async {
+        final harness = _Harness();
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        harness.engine
+          ..supportedRoutesEntered = entered
+          ..supportedRoutesGate = release;
+        final starting = harness.start();
+        await entered.future;
+        harness.engine.emitDeviceRouteChange(
+          route: CallAudioOutputRoute.bluetooth,
+        );
+        expect(harness.engine.snapshotCalls, 0);
+
+        release.complete();
+        expect((await starting).status, CallAudioStartStatus.started);
+        await harness.controller.settle();
+
+        expect(
+          harness.controller.state.selectedRoute,
+          CallAudioOutputRoute.bluetooth,
+        );
+        expect(harness.engine.snapshotCalls, 1);
+        expect(harness.engine.selectRouteCalls, 0);
+        await harness.controller.close();
+      },
+    );
+
     test('device route changes refresh the active coarse projection', () async {
       final harness = _Harness();
       final states = <CallAudioControlState>[];
@@ -963,9 +993,11 @@ final class _FakeCallEngine
     _endControl();
   }
 
-  void emitDeviceRouteChange() {
-    outputRoute = CallAudioOutputRoute.systemDefault;
-    _outputRouteChanges.add(CallAudioOutputRoute.systemDefault);
+  void emitDeviceRouteChange({
+    CallAudioOutputRoute route = CallAudioOutputRoute.systemDefault,
+  }) {
+    outputRoute = route;
+    _outputRouteChanges.add(route);
   }
 
   @override

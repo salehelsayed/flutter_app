@@ -159,12 +159,9 @@ final class CallSignalingComposition
   final Completer<void> _terminalSignal = Completer<void>();
   ForegroundCallProjection? _foregroundCurrent;
 
-  /// 407: while a call rings, the relay may deliberately send no wake (it
-  /// treats a recipient that acked an earlier event of the call as attached)
-  /// and the live leg can still fail. Polling the mailbox for the ring's
-  /// bounded lifetime is the only thing that closes that window.
+  /// Native calls keep receiving mailbox control even with no visible overlay.
   late final RingingCallMailboxPoller _ringingPoller = RingingCallMailboxPoller(
-    drain: _drainCallMailboxForRing,
+    drain: _drainCallMailboxForLiveCall,
   );
   CallId? _presentedIncomingCallId;
   int _foregroundGeneration = 0;
@@ -693,7 +690,7 @@ final class CallSignalingComposition
     if (inFlight != null) return inFlight;
     if (_terminal) return Future<void>.value();
     _terminal = true;
-    // 407: stop the ring poll before anything it reads can be torn down.
+    // Stop polling before anything it reads can be torn down.
     _ringingPoller.dispose();
     _publishOutgoingCallAvailability();
     if (!_terminalSignal.isCompleted) _terminalSignal.complete();
@@ -721,6 +718,7 @@ final class CallSignalingComposition
   }
 
   Future<void> _bindForegroundGraph(CallSignalingGraphLifecycle graph) async {
+    _ringingPoller.onSession(null);
     await _foregroundSubscription?.cancel();
     await _callabilityInvalidationSubscription?.cancel();
     await _deferredAdvertisementRetrySubscription?.cancel();
@@ -762,6 +760,7 @@ final class CallSignalingComposition
           _acceptForegroundProjection(graph, projection, generation),
       onError: (_) {
         if (identical(_graph, graph) && generation == _foregroundGeneration) {
+          _ringingPoller.onSession(null);
           _publishForeground(null);
         }
       },
@@ -772,6 +771,7 @@ final class CallSignalingComposition
     if (_boundGraph != null && !identical(_boundGraph, graph)) {
       return;
     }
+    _ringingPoller.onSession(null);
     _boundGraph = null;
     _foregroundGeneration++;
     _foregroundGraph = null;
@@ -800,6 +800,9 @@ final class CallSignalingComposition
     }
     final session = projection?.session;
     final callId = session?.callId;
+    // The graph carries canonical state even when native presentation or
+    // backgrounding hides it from Flutter. Visibility must not stop delivery.
+    _ringingPoller.onSession(_started && !_terminal ? session : null);
     if (!_started ||
         !_foregroundAllowed ||
         projection == null ||
@@ -837,14 +840,11 @@ final class CallSignalingComposition
 
   void _publishForeground(ForegroundCallProjection? projection) {
     _foregroundCurrent = projection;
-    _ringingPoller.onSession(projection?.session);
     if (!_foregroundChanges.isClosed) _foregroundChanges.add(projection);
   }
 
-  /// The ring-time drain. Deliberately narrower than [onCallWake]: it never
-  /// starts the graph, so a poll can only read a mailbox the ringing call
-  /// already proves is live.
-  Future<void> _drainCallMailboxForRing() async {
+  /// Unlike [onCallWake], polling never starts a graph or changes visibility.
+  Future<void> _drainCallMailboxForLiveCall() async {
     if (!isEnabled || _terminal || !_started) return;
     final graph = _graph;
     if (graph is! CallSignalingWakeDrain) return;

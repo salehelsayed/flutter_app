@@ -258,6 +258,31 @@ final class CallReducer {
           );
       }
     }
+    if (event.type == CallEventType.iceCandidateHandled) {
+      final candidateId = event.candidateId;
+      if (candidateId == null) {
+        return _unchanged(
+          snapshot,
+          CallEventDecision.rejected,
+          CallReductionReason.malformedEvent,
+        );
+      }
+      if (!snapshot.pendingCandidateIds.contains(candidateId)) {
+        return _stateMismatch(snapshot);
+      }
+      return _apply(
+        snapshot.copyWith(
+          pendingCandidateIds: snapshot.pendingCandidateIds
+              .where((id) => id != candidateId)
+              .toList(growable: false),
+          recentCandidateIds: _appendEvent(
+            snapshot.recentCandidateIds,
+            candidateId,
+          ),
+        ),
+        event,
+      );
+    }
     if (event.type == CallEventType.remoteIce) {
       if (!_canAcceptCandidate(snapshot.state)) {
         return _unchanged(
@@ -657,7 +682,8 @@ final class CallReducer {
         CallReductionReason.malformedEvent,
       );
     }
-    if (snapshot.pendingCandidateIds.contains(candidateId)) {
+    if (snapshot.pendingCandidateIds.contains(candidateId) ||
+        snapshot.recentCandidateIds.contains(candidateId)) {
       return _unchanged(
         snapshot,
         CallEventDecision.ignored,

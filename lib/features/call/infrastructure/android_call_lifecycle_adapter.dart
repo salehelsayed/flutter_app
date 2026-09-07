@@ -76,7 +76,8 @@ abstract interface class NativeCallLifecycleAdapter
     implements
         IncomingCallPresenter,
         CallForegroundAudioSession,
-        CallAudioRoutePort {
+        CallAudioRoutePort,
+        CallAudioOutputRouteChangeSource {
   Future<void> start();
 
   /// Finishes an exact retained terminal before a new coordinator placement
@@ -234,6 +235,8 @@ final class AndroidCallLifecycleAdapter
   final StreamController<bool> _muteChanges = StreamController<bool>.broadcast(
     sync: true,
   );
+  final StreamController<CallAudioOutputRoute> _outputRouteChanges =
+      StreamController<CallAudioOutputRoute>.broadcast(sync: true);
   final Map<int, _NativeEvent> _events = <int, _NativeEvent>{};
   final Map<int, _NativeEvent> _observedEvents = <int, _NativeEvent>{};
   final Map<String, int> _eventIds = <String, int>{};
@@ -270,6 +273,10 @@ final class AndroidCallLifecycleAdapter
   /// Emits only authoritative, coarse native mute changes. Native event
   /// payloads and call authority never cross this boundary.
   Stream<bool> get muteChanges => _muteChanges.stream;
+
+  @override
+  Stream<CallAudioOutputRoute> get outputRouteChanges =>
+      _outputRouteChanges.stream;
 
   /// Installs the one application-owned bridge from authoritative Telecom
   /// mute state to the existing call-scoped audio controller. A `false`
@@ -1664,9 +1671,18 @@ final class AndroidCallLifecycleAdapter
     bool publishNativeActiveChange = false,
   }) {
     final wasActive = _ownsSession;
+    final routeChanged =
+        _selectedRoute != state.route ||
+        _availableRoutes.length != state.availableRoutes.length ||
+        !_availableRoutes.every(state.availableRoutes.contains);
     _selectedRoute = state.route;
     _availableRoutes = state.availableRoutes;
     _ownsSession = state.active;
+    // Inventory changes matter even when the selected route stays the same:
+    // a newly available headset must appear in the foreground route picker.
+    if (routeChanged && !_closed && !_invalid) {
+      _outputRouteChanges.add(state.route);
+    }
     if (publishNativeActiveChange) {
       if (wasActive != state.active && !_interruptions.isClosed) {
         _interruptions.add(
@@ -1816,6 +1832,7 @@ final class AndroidCallLifecycleAdapter
     await _invokeBoolean('detach', _versionArguments());
     if (!_interruptions.isClosed) await _interruptions.close();
     if (!_muteChanges.isClosed) await _muteChanges.close();
+    if (!_outputRouteChanges.isClosed) await _outputRouteChanges.close();
   }
 
   static Map<String, Object?> _versionArguments() => const <String, Object?>{

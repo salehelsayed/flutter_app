@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -389,6 +390,70 @@ ForegroundCallProjection _projection({
 );
 
 void main() {
+  test(
+    'mailbox polling follows native calls through hidden and background states',
+    () {
+      fakeAsync((time) {
+        final events = <String>[];
+        final graph = _Graph(events);
+        final composition = CallSignalingComposition(
+          featureFlags: _enabledFlags(),
+          platform: CallEndpointPlatform.ios,
+          awaitReadiness: () async {},
+          buildGraph: () async => graph,
+        );
+        unawaited(composition.start());
+        time.flushMicrotasks();
+        graph.emitForeground(
+          _projection(
+            direction: CallDirection.incoming,
+            incomingValidated: true,
+          ),
+        );
+        // Native presentation never called composition.present().
+        expect(composition.current, isNull);
+        events.clear();
+        time.elapse(const Duration(seconds: 2));
+        expect(events, ['call_mailbox_drain']);
+
+        graph.emitForeground(
+          _projection(
+            state: CallState.accepted,
+            direction: CallDirection.incoming,
+            incomingValidated: true,
+          ),
+        );
+        unawaited(composition.onBackgrounded());
+        time.flushMicrotasks();
+        events.clear();
+        for (final state in [
+          CallState.negotiating,
+          CallState.connected,
+          CallState.reconnecting,
+        ]) {
+          graph.emitForeground(
+            _projection(
+              state: state,
+              direction: CallDirection.incoming,
+              incomingValidated: true,
+            ),
+          );
+          expect(composition.current, isNull);
+          time.elapse(const Duration(seconds: 2));
+        }
+        expect(events, List.filled(3, 'call_mailbox_drain'));
+
+        graph.emitForeground(null);
+        events.clear();
+        time.elapse(const Duration(seconds: 4));
+        expect(events, isEmpty);
+        unawaited(composition.shutdown());
+        time.flushMicrotasks();
+        expect(time.periodicTimerCount, 0);
+      });
+    },
+  );
+
   setUpAll(sqfliteFfiInit);
 
   test(
@@ -3209,7 +3274,7 @@ void main() {
       expect(foregroundShutdown, greaterThan(nativeBackgroundGuard));
       expect(
         graph.substring(nativeBackgroundGuard, foregroundShutdown),
-        contains('_publishForeground(null);\n      return;'),
+        contains('return;\n    }'),
       );
       expect(flags, contains("'voice_call_android_native_enabled': false"));
       expect(flags, contains("'voice_call_ios_native_enabled': false"));

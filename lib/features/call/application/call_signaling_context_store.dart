@@ -220,11 +220,17 @@ final class CallSignalingContextStore
           existing.remoteHighWaterEvent != null &&
           _isNegotiationSignal(existing.remoteHighWaterEvent!);
       final generationRegressed = signal.iceGeneration < existing.iceGeneration;
+      // A peer can hang up before receiving our latest ICE restart. Terminal
+      // authority belongs to the bound call, not one negotiation generation;
+      // binding and sender ordering checks still apply below.
+      final terminalSignal =
+          signal.event == CallSignalType.reject ||
+          signal.event == CallSignalType.terminate;
       final generationAdvancedWithoutNewerSequence =
           signal.iceGeneration > existing.iceGeneration &&
           signal.senderSequence <= existing.remoteSenderSequence;
       if ((senderSequenceRegressed && !reorderableNegotiationSignal) ||
-          generationRegressed ||
+          (generationRegressed && !terminalSignal) ||
           generationAdvancedWithoutNewerSequence) {
         throw const CallSignalingContextException(
           CallSignalingContextErrorCode.nonMonotonicMetadata,

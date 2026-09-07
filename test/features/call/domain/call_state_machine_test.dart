@@ -432,6 +432,84 @@ void main() {
       expect(overflow.snapshot.pendingCandidateIds, hasLength(2));
     });
 
+    test(
+      'candidate completion releases capacity and preserves deduplication',
+      () {
+        const reducer = CallReducer(
+          policy: CallReducerPolicy(
+            recentEventCapacity: 3,
+            candidateQueueCapacity: 2,
+          ),
+        );
+        var snapshot = _reduce(<CallEvent>[
+          _event(CallEventType.place),
+          _event(CallEventType.outgoingInviteReady),
+          _event(CallEventType.remoteAccept),
+        ]);
+
+        CallReduction dispatch(CallEventType type, String eventId, String id) {
+          final result = reducer.reduce(
+            snapshot,
+            _event(type, eventId: eventId, candidateId: id),
+          );
+          snapshot = result.snapshot;
+          return result;
+        }
+
+        dispatch(CallEventType.remoteIce, 'pending-event', 'pending');
+        for (var index = 0; index < 70; index++) {
+          final id = 'candidate-$index';
+          expect(
+            dispatch(CallEventType.remoteIce, 'ice-$index', id).decision,
+            CallEventDecision.applied,
+          );
+          expect(snapshot.pendingCandidateIds, <String>['pending', id]);
+          expect(
+            dispatch(
+              CallEventType.iceCandidateHandled,
+              'done-$index',
+              id,
+            ).decision,
+            CallEventDecision.applied,
+          );
+          expect(snapshot.pendingCandidateIds, <String>['pending']);
+        }
+        expect(snapshot.recentCandidateIds, <String>[
+          'candidate-67',
+          'candidate-68',
+          'candidate-69',
+        ]);
+        expect(
+          dispatch(
+            CallEventType.remoteIce,
+            'new-event-same-id',
+            'candidate-69',
+          ).reason,
+          CallReductionReason.duplicateEvent,
+        );
+        // The original event has left the replay window, but its candidate is
+        // still in flight and cannot be admitted a second time.
+        expect(snapshot.recentEventIds, isNot(contains('pending-event')));
+        expect(
+          dispatch(CallEventType.remoteIce, 'pending-replay', 'pending').reason,
+          CallReductionReason.duplicateEvent,
+        );
+        dispatch(CallEventType.remoteIce, 'fills-capacity', 'another-pending');
+        expect(
+          dispatch(
+            CallEventType.remoteIce,
+            'overflow-event',
+            'overflow',
+          ).reason,
+          CallReductionReason.candidateQueueFull,
+        );
+        expect(snapshot.pendingCandidateIds, <String>[
+          'pending',
+          'another-pending',
+        ]);
+      },
+    );
+
     test('terminal reduction requests cleanup once and terminal dominates', () {
       const reducer = CallReducer();
       var snapshot = _reduce(<CallEvent>[

@@ -91,6 +91,7 @@ final class IosCallLifecycleAdapter
     implements
         NativeCallLifecycleInvalidations,
         NativeCallLifecycleAdapter,
+        CallAudioOutputRouteChangeSource,
         ProvisionalNativeIncomingCallLifecycle {
   IosCallLifecycleAdapter({
     required IosCallMethodInvoker invokeMethod,
@@ -145,6 +146,10 @@ final class IosCallLifecycleAdapter
       _delegate.interruptions;
 
   Stream<bool> get muteChanges => _delegate.muteChanges;
+
+  @override
+  Stream<CallAudioOutputRoute> get outputRouteChanges =>
+      _delegate.outputRouteChanges;
 
   @override
   bool get ownsSession => _delegate.ownsSession;

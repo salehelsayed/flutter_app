@@ -244,6 +244,7 @@ final class CallAudioController {
   bool _audioSessionActivationAttempted = false;
   bool _interruptionSubscriptionCancelled = false;
   bool _interrupted = false;
+  bool _pendingOutputRouteRefresh = false;
 
   CallAudioControlState get state => _state;
 
@@ -368,6 +369,10 @@ final class CallAudioController {
     }
 
     _started = true;
+    if (_pendingOutputRouteRefresh) {
+      _pendingOutputRouteRefresh = false;
+      _onOutputRouteChanged(CallAudioOutputRoute.systemDefault);
+    }
     return CallAudioStartResult(
       status: CallAudioStartStatus.started,
       state: _state,
@@ -675,7 +680,13 @@ final class CallAudioController {
   }
 
   void _onOutputRouteChanged(CallAudioOutputRoute _) {
-    if (!_started || _closeRequested) return;
+    if (_closeRequested) return;
+    if (!_started) {
+      // Native activation and the initial inventory read can reveal the
+      // actual route before start has published its initial control state.
+      _pendingOutputRouteRefresh = true;
+      return;
+    }
     unawaited(
       _enqueueCommand<CallAudioControlState>(() async {
         if (!_canControl) return _state;

@@ -5,6 +5,7 @@ import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/handle_incoming_call_signal.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
+import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
@@ -21,6 +22,50 @@ final _callId = CallId.parse('22222222-2222-4222-8222-222222222222');
 final _now = DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true);
 
 void main() {
+  test(
+    'iOS forwards native route inventory changes and closes the stream',
+    () async {
+      final native = _LifecycleNative();
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator);
+      final CallAudioOutputRouteChangeSource source = adapter;
+      final routes = <CallAudioOutputRoute>[];
+      var closed = false;
+      final subscription = source.outputRouteChanges.listen(
+        routes.add,
+        onDone: () => closed = true,
+      );
+      await _bindRinging(adapter, coordinator);
+      await adapter.supportedOutputRoutes();
+      expect(routes, [CallAudioOutputRoute.systemDefault]);
+
+      native.audioState = <String, Object?>{
+        'version': 1,
+        'active': false,
+        'muted': false,
+        'route': 'system_default',
+        'availableRoutes': <Object?>['system_default', 'speaker', 'bluetooth'],
+      };
+      native.emit('routeChanged');
+      await _until(() => routes.length == 2);
+      expect(
+        await adapter.supportedOutputRoutes(),
+        contains(CallAudioOutputRoute.bluetooth),
+      );
+      expect(routes, [
+        CallAudioOutputRoute.systemDefault,
+        CallAudioOutputRoute.systemDefault,
+      ]);
+      expect(native.callsOf('requestRoute'), isEmpty);
+
+      await adapter.close();
+      expect(closed, isTrue);
+      await subscription.cancel();
+      await coordinator.dispose();
+      await native.events.close();
+    },
+  );
+
   test('iOS native authorization is default-off and requires every gate', () {
     const enabled = <String, bool>{
       'voice_call_capability_v1': true,
