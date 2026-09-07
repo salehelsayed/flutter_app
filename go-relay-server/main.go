@@ -19,11 +19,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
-	ma "github.com/multiformats/go-multiaddr"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const version = "1.10.5"
+const version = "1.10.6"
 
 func main() {
 	// Handle subcommands
@@ -58,24 +57,16 @@ func main() {
 
 	limitsCfg := loadServerLimitsFromEnv()
 
-	// Announce addresses — what peers see from the outside
-	announceAddrs := []ma.Multiaddr{
-		ma.StringCast(fmt.Sprintf("/dns4/%s/tcp/%d/wss", serverCfg.ServerDNS, serverCfg.WSSPort)),
-		ma.StringCast(fmt.Sprintf("/ip4/%s/tcp/%d", serverCfg.ServerIP4, serverCfg.TCPPort)),
-		ma.StringCast(fmt.Sprintf("/dns4/%s/udp/%d/quic-v1", serverCfg.ServerDNS, serverCfg.QUICPort)),
+	addressPlan, err := buildRelayAddressPlan(serverCfg)
+	if err != nil {
+		log.Fatalf("Invalid relay address configuration: %v", err)
 	}
 
 	// Create the libp2p host
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
-		libp2p.ListenAddrStrings(
-			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d/ws", serverCfg.WSPort),
-			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", serverCfg.TCPPort),
-			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", serverCfg.QUICPort),
-		),
-		libp2p.AddrsFactory(func([]ma.Multiaddr) []ma.Multiaddr {
-			return announceAddrs
-		}),
+		libp2p.ListenAddrs(addressPlan.listen...),
+		libp2p.AddrsFactory(addressPlan.advertisedAddresses),
 		libp2p.EnableRelayService(
 			relay.WithResources(relayResourcesFromServerLimits(limitsCfg)),
 		),
@@ -84,6 +75,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create libp2p host: %v", err)
 	}
+	if err := addressPlan.verifyIPv6Listeners(h.Network().ListenAddresses()); err != nil {
+		_ = h.Close()
+		log.Fatalf("Failed to activate relay IPv6: %v", err)
+	}
+	announceAddrs := h.Addrs()
 
 	// Initialize subsystems
 	fcmPath := os.Getenv("FIREBASE_SERVICE_ACCOUNT")

@@ -317,18 +317,24 @@ func TestR3Deadline_RelayRecoveryCandidatesShareDeadline(t *testing.T) {
 	relayOne := newR3PeerID(t)
 	relayTwo := newR3PeerID(t)
 	topologies := []struct {
-		name      string
-		addresses []string
+		name                 string
+		addresses            []string
+		wantAttempts         int
+		wantAddressesPerDial int
 	}{
 		{
-			name: "one relay two addresses",
+			name:                 "one relay two addresses",
+			wantAttempts:         1,
+			wantAddressesPerDial: 2,
 			addresses: []string{
 				r3RelayAddress(relayOne, 19101),
 				r3RelayAddress(relayOne, 19102),
 			},
 		},
 		{
-			name: "two relays one address",
+			name:                 "two relays one address",
+			wantAttempts:         2,
+			wantAddressesPerDial: 1,
 			addresses: []string{
 				r3RelayAddress(relayOne, 19103),
 				r3RelayAddress(relayTwo, 19104),
@@ -352,8 +358,8 @@ func TestR3Deadline_RelayRecoveryCandidatesShareDeadline(t *testing.T) {
 					t.Fatal("relay candidate context has no deadline")
 				}
 				observed = append(observed, deadline)
-				if len(ai.Addrs) != 1 {
-					t.Fatalf("candidate has %d circuit addresses, want 1", len(ai.Addrs))
+				if len(ai.Addrs) != tc.wantAddressesPerDial {
+					t.Fatalf("candidate has %d circuit addresses, want %d", len(ai.Addrs), tc.wantAddressesPerDial)
 				}
 				allowed, _ := network.GetAllowLimitedConn(ctx)
 				if !allowed {
@@ -365,8 +371,8 @@ func TestR3Deadline_RelayRecoveryCandidatesShareDeadline(t *testing.T) {
 			if err := n.recoverPeerForSendWithContext(ctx, n.Host(), target, target.String()); err == nil {
 				t.Fatal("expected all scripted relay candidates to fail")
 			}
-			if len(observed) != 2 {
-				t.Fatalf("candidate attempts = %d, want 2", len(observed))
+			if len(observed) != tc.wantAttempts {
+				t.Fatalf("candidate attempts = %d, want %d", len(observed), tc.wantAttempts)
 			}
 			for index, got := range observed {
 				if !got.Equal(commandDeadline) {
@@ -405,18 +411,21 @@ func TestR3Deadline_RendezvousCandidatesShareCommandDeadline(t *testing.T) {
 	relayOne := newR3PeerID(t)
 	relayTwo := newR3PeerID(t)
 	topologies := []struct {
-		name      string
-		addresses []string
+		name         string
+		addresses    []string
+		wantAttempts int
 	}{
 		{
-			name: "one relay two addresses",
+			name:         "one relay two addresses",
+			wantAttempts: 1,
 			addresses: []string{
 				r3RelayAddress(relayOne, 19201),
 				r3RelayAddress(relayOne, 19202),
 			},
 		},
 		{
-			name: "two relays one address",
+			name:         "two relays one address",
+			wantAttempts: 2,
 			addresses: []string{
 				r3RelayAddress(relayOne, 19203),
 				r3RelayAddress(relayTwo, 19204),
@@ -443,8 +452,8 @@ func TestR3Deadline_RendezvousCandidatesShareCommandDeadline(t *testing.T) {
 			if _, err := n.RendezvousDiscoverWithTimeout("r3-deadline", tc.addresses, 1000); err == nil {
 				t.Fatal("expected deadline-install failures across all candidates")
 			}
-			if len(openDeadlines) != 2 || len(streams) != 2 {
-				t.Fatalf("open attempts/streams = %d/%d, want 2/2", len(openDeadlines), len(streams))
+			if len(openDeadlines) != tc.wantAttempts || len(streams) != tc.wantAttempts {
+				t.Fatalf("open attempts/streams = %d/%d, want %d/%d", len(openDeadlines), len(streams), tc.wantAttempts, tc.wantAttempts)
 			}
 			for index, stream := range streams {
 				if !openDeadlines[index].Equal(openDeadlines[0]) {

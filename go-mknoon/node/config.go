@@ -180,9 +180,8 @@ func RelayAddress() string {
 // relay #2, its distinct WSS+QUIC addresses are appended here (or injected via
 // NodeConfig.RelayAddresses) to extend the pool to multiple peers.
 //
-// WSS (DefaultRelayAddress) is listed FIRST so it remains the surviving address
-// when EnableMultiRelayRouting is off — limitRelayAddresses truncates to the
-// first address, order-preserving, with no sort.
+// Disabling EnableMultiRelayRouting keeps both transports for the first peer;
+// libp2p resolves each /dns/ address and ranks the complete candidate set.
 func DefaultRelayAddresses() []string {
 	return []string{DefaultRelayAddress, DefaultQUICRelay}
 }

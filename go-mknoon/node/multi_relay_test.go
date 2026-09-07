@@ -119,48 +119,30 @@ func TestRelaySelector_ForEach_FallsBackToSecondRelay(t *testing.T) {
 }
 
 func TestRelaySelector_ForEach_FallsBackAcrossAddressesForSameRelay(t *testing.T) {
-	seedAddr := generateFakeRelayAddr(t, 19024)
-	maddr, err := ma.NewMultiaddr(seedAddr)
-	if err != nil {
-		t.Fatalf("NewMultiaddr(%q): %v", seedAddr, err)
-	}
-	info, err := peer.AddrInfoFromP2pAddr(maddr)
-	if err != nil {
-		t.Fatalf("AddrInfoFromP2pAddr(%q): %v", seedAddr, err)
-	}
-	peerID := info.ID.String()
+	pid := generatePeerIDStr(t)
+	other := generateFakeRelayAddr(t, 19024)
 	addrs := []string{
-		fmt.Sprintf("/ip4/127.0.0.1/udp/19025/quic-v1/p2p/%s", peerID),
-		fmt.Sprintf("/ip4/127.0.0.1/tcp/19026/ws/p2p/%s", peerID),
+		fmt.Sprintf("/ip6/2001:db8::1/udp/4002/quic-v1/p2p/%s", pid),
+		other,
+		fmt.Sprintf("/ip4/192.0.2.1/tcp/4001/ws/p2p/%s", pid),
 	}
-
 	rs := NewRelaySelector(addrs)
-	if rs.Len() != 1 {
-		t.Fatalf("Len() = %d, want one grouped relay peer", rs.Len())
-	}
-
-	attempts := make([]string, 0, 2)
-	err = rs.ForEach(func(relay RelayInfo) error {
-		if len(relay.Addrs) != 1 {
-			t.Fatalf("relay attempt got %d addrs, want one", len(relay.Addrs))
+	calls := 0
+	err := rs.ForEach(func(relay RelayInfo) error {
+		calls++
+		if calls == 1 {
+			if relay.ID.String() != pid || len(relay.Addrs) != 2 {
+				t.Fatalf("first peer must keep both alternatives: %v", relay)
+			}
+			return errors.New("all addresses for first peer failed")
 		}
-		attempts = append(attempts, relay.Addrs[0].String())
-		if len(attempts) == 1 {
-			return errors.New("first transport failed")
+		if relay.ID.String() == pid || len(relay.Addrs) != 1 {
+			t.Fatalf("next attempt must be a distinct peer: %v", relay)
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("ForEach: %v", err)
-	}
-	if len(attempts) != 2 {
-		t.Fatalf("attempts = %d, want 2 (%v)", len(attempts), attempts)
-	}
-	if attempts[0] != "/ip4/127.0.0.1/udp/19025/quic-v1" {
-		t.Fatalf("first attempt = %q, want QUIC address", attempts[0])
-	}
-	if attempts[1] != "/ip4/127.0.0.1/tcp/19026/ws" {
-		t.Fatalf("second attempt = %q, want WSS address", attempts[1])
+	if err != nil || calls != 2 {
+		t.Fatalf("peer failover: calls=%d err=%v", calls, err)
 	}
 }
 

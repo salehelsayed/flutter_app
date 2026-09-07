@@ -271,6 +271,12 @@ func mediaDownloadResultFromStream(s *mediaStream, mime string, size int64) Medi
 }
 
 func (n *Node) openMediaStreamForRelay(operation string, relay RelayInfo) (*mediaStream, error) {
+	return n.openMediaStreamForRelayWithDial(operation, relay, true)
+}
+
+// Explicit same-peer protocol retries reuse an authenticated connection. They
+// must not restart the entire address race or acquire another dial budget.
+func (n *Node) openMediaStreamForRelayWithDial(operation string, relay RelayInfo, allowDial bool) (*mediaStream, error) {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -283,18 +289,22 @@ func (n *Node) openMediaStreamForRelay(operation string, relay RelayInfo) (*medi
 	ctx, cancel := context.WithTimeout(n.ctx, MediaTimeout)
 
 	connectStart := time.Now()
-	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-		cancel()
-		n.emitEvent("media:stream_open_timing", mediaEventDetails(&mediaStream{
-			operation:       operation,
-			sourcePeerId:    relay.ID.String(),
-			streamTransport: "unknown",
-		}, map[string]interface{}{
-			"connectMs": time.Since(connectStart).Milliseconds(),
-			"totalMs":   time.Since(totalStart).Milliseconds(),
-			"outcome":   "connect_failed",
-		}))
-		return nil, fmt.Errorf("connect to relay: %w", err)
+	if allowDial {
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			cancel()
+			n.emitEvent("media:stream_open_timing", mediaEventDetails(&mediaStream{
+				operation:       operation,
+				sourcePeerId:    relay.ID.String(),
+				streamTransport: "unknown",
+			}, map[string]interface{}{
+				"connectMs": time.Since(connectStart).Milliseconds(),
+				"totalMs":   time.Since(totalStart).Milliseconds(),
+				"outcome":   "connect_failed",
+			}))
+			return nil, fmt.Errorf("connect to relay: %w", err)
+		}
+	} else {
+		ctx = network.WithNoDial(ctx, "media-protocol-retry")
 	}
 	connectMs := time.Since(connectStart).Milliseconds()
 
@@ -496,8 +506,8 @@ func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []s
 // MediaDownload downloads a blob from the relay's media store.
 func (n *Node) MediaDownload(id, outputPath string) (MediaDownloadResult, error) {
 	rs := n.buildRelaySelector(nil)
-	return n.mediaDownloadAcrossRelays(rs, func(relay RelayInfo) (MediaDownloadResult, bool, error) {
-		ms, err := n.openMediaStreamForRelay("download", relay)
+	return n.mediaDownloadAcrossRelays(rs, func(relay RelayInfo, allowDial bool) (MediaDownloadResult, bool, error) {
+		ms, err := n.openMediaStreamForRelayWithDial("download", relay, allowDial)
 		if err != nil {
 			return MediaDownloadResult{}, true, err
 		}
@@ -507,7 +517,7 @@ func (n *Node) MediaDownload(id, outputPath string) (MediaDownloadResult, error)
 
 func (n *Node) mediaDownloadAcrossRelays(
 	rs *RelaySelector,
-	attempt func(RelayInfo) (MediaDownloadResult, bool, error),
+	attempt func(RelayInfo, bool) (MediaDownloadResult, bool, error),
 ) (MediaDownloadResult, error) {
 	relays := rs.Relays()
 	if len(relays) == 0 {
@@ -516,9 +526,8 @@ func (n *Node) mediaDownloadAcrossRelays(
 
 	var lastErr error
 	for i, relay := range relays {
-		candidates := relayInfoAttemptCandidates(relay)
-		for j, candidate := range candidates {
-			result, retry, err := attempt(candidate)
+		for j := 0; j < max(1, len(relay.Addrs)); j++ {
+			result, retry, err := attempt(relay, j == 0)
 			if err == nil {
 				return result, nil
 			}
@@ -527,7 +536,7 @@ func (n *Node) mediaDownloadAcrossRelays(
 				return MediaDownloadResult{}, err
 			}
 			log.Printf("[MEDIA] Relay %d/%d addr %d/%d (%s) media download failed, trying next eligible relay: %v",
-				i+1, len(relays), j+1, len(candidates), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
+				i+1, len(relays), j+1, max(1, len(relay.Addrs)), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
 		}
 	}
 
@@ -907,8 +916,8 @@ func (n *Node) MediaUploadCustody(
 	var lastResult MediaCustodyResult
 	var lastErr error
 	for _, relay := range relays {
-		for _, candidate := range relayInfoAttemptCandidates(relay) {
-			result, disposition, attemptErr := n.mediaUploadCustodyToRelay(candidate, file, expected, toPeerID)
+		for attempt := 0; attempt < max(1, len(relay.Addrs)); attempt++ {
+			result, disposition, attemptErr := n.mediaUploadCustodyToRelay(relay, file, expected, toPeerID, attempt == 0)
 			lastResult, lastErr = result, attemptErr
 			if attemptErr == nil {
 				return result, nil
@@ -962,8 +971,9 @@ func (n *Node) mediaUploadCustodyToRelay(
 	file *os.File,
 	expected mediaCustodyExpectedProof,
 	toPeerID string,
+	allowDial bool,
 ) (MediaCustodyResult, mediaCustodyAttemptDisposition, error) {
-	ms, err := n.openMediaStreamForRelay("upload_custody", relay)
+	ms, err := n.openMediaStreamForRelayWithDial("upload_custody", relay, allowDial)
 	if err != nil {
 		result, resultErr := mediaCustodyFailure(MediaCustodyUnsupportedCode, err.Error(), relay.ID.String())
 		return result, mediaCustodyAttemptTrySibling, resultErr
@@ -1176,8 +1186,8 @@ func (n *Node) MediaDownloadCustody(
 	var lastResult MediaDownloadResult
 	var lastErr error
 	for _, relay := range relays {
-		for _, candidate := range relayInfoAttemptCandidates(relay) {
-			result, retrySibling, retryPeer, err := n.mediaDownloadCustodyFromRelay(candidate, outputPath, expected)
+		for attempt := 0; attempt < max(1, len(relay.Addrs)); attempt++ {
+			result, retrySibling, retryPeer, err := n.mediaDownloadCustodyFromRelay(relay, outputPath, expected, attempt == 0)
 			if err == nil {
 				return result, nil
 			}
@@ -1216,8 +1226,9 @@ func (n *Node) mediaDownloadCustodyFromRelay(
 	relay RelayInfo,
 	outputPath string,
 	expected mediaCustodyExpectedProof,
+	allowDial bool,
 ) (MediaDownloadResult, bool, bool, error) {
-	ms, err := n.openMediaStreamForRelay("download_custody", relay)
+	ms, err := n.openMediaStreamForRelayWithDial("download_custody", relay, allowDial)
 	if err != nil {
 		return MediaDownloadResult{
 			ErrorCode: MediaCustodyUnsupportedCode, ErrorMessage: err.Error(), CustodyRelayPeerId: relay.ID.String(),
@@ -1389,8 +1400,10 @@ func (n *Node) MediaAckCustody(
 	}
 	var lastErr error
 	var lastResult MediaCustodyResult
-	for _, candidate := range relayInfoAttemptCandidates(*target) {
-		ms, openErr := n.openMediaStreamForRelay("ack_custody", candidate)
+	// Preserve the strict same-peer retry bound for cleanup-pending responses.
+	// Every attempt carries all addresses; only the first may dial.
+	for attempt := 0; attempt < max(1, len(target.Addrs)); attempt++ {
+		ms, openErr := n.openMediaStreamForRelayWithDial("ack_custody", *target, attempt == 0)
 		if openErr != nil {
 			lastResult, lastErr = mediaCustodyFailure(MediaCustodyUnsupportedCode, openErr.Error(), custodyRelayPeerID)
 			continue

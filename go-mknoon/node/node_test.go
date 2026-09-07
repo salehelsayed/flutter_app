@@ -766,51 +766,36 @@ func TestPersonalRendezvousRefreshInterval_IsSafelyBelowTTL(t *testing.T) {
 }
 
 func TestWarmRelayConnectionWithTimeout_FallsBackAcrossSamePeerAddresses(t *testing.T) {
-	seedAddr := generateFakeRelayAddr(t, 19021)
-	seedMaddr, err := ma.NewMultiaddr(seedAddr)
+	pid, err := peer.Decode(generatePeerIDStr(t))
 	if err != nil {
-		t.Fatalf("NewMultiaddr(%q): %v", seedAddr, err)
+		t.Fatal(err)
 	}
-	seedInfo, err := peer.AddrInfoFromP2pAddr(seedMaddr)
-	if err != nil {
-		t.Fatalf("AddrInfoFromP2pAddr(%q): %v", seedAddr, err)
+	addrs := []ma.Multiaddr{
+		ma.StringCast("/ip6/2001:db8::1/udp/4002/quic-v1"),
+		ma.StringCast("/ip4/192.0.2.1/udp/4002/quic-v1"),
+		ma.StringCast("/dns/relay.example/tcp/4001/wss"),
 	}
-	peerID := seedInfo.ID.String()
-	firstAddr := fmt.Sprintf("/ip4/127.0.0.1/udp/19022/quic-v1/p2p/%s", peerID)
-	secondAddr := fmt.Sprintf("/ip4/127.0.0.1/tcp/19023/ws/p2p/%s", peerID)
-	relay := NewRelaySelector([]string{firstAddr, secondAddr}).Relays()[0]
-
 	n := NewNode()
 	n.ctx, n.cancel = context.WithCancel(context.Background())
 	defer n.cancel()
-
-	attempts := make([]string, 0, 2)
+	calls := 0
 	n.connectRelayHook = func(ctx context.Context, info peer.AddrInfo) error {
-		if len(info.Addrs) != 1 {
-			t.Fatalf("connect attempt got %d addrs, want one", len(info.Addrs))
+		calls++
+		if info.ID != pid || len(info.Addrs) != len(addrs) {
+			t.Fatalf("swarm must receive one peer with all alternatives: %v", info)
 		}
-		attempts = append(attempts, info.Addrs[0].String())
-		if len(attempts) == 1 {
-			return errors.New("first transport failed")
+		for i, addr := range addrs {
+			if !info.Addrs[i].Equal(addr) {
+				t.Fatalf("candidate[%d] = %s, want %s", i, info.Addrs[i], addr)
+			}
 		}
 		return nil
 	}
-
-	if err := n.warmRelayConnectionWithTimeout(peer.AddrInfo{
-		ID:    relay.ID,
-		Addrs: relay.Addrs,
-	}, time.Second); err != nil {
+	if err := n.warmRelayConnectionWithTimeout(peer.AddrInfo{ID: pid, Addrs: addrs}, time.Second); err != nil {
 		t.Fatalf("warmRelayConnectionWithTimeout: %v", err)
 	}
-
-	if len(attempts) != 2 {
-		t.Fatalf("connect attempts = %d, want 2 (%v)", len(attempts), attempts)
-	}
-	if attempts[0] != "/ip4/127.0.0.1/udp/19022/quic-v1" {
-		t.Fatalf("first attempt = %q, want QUIC address", attempts[0])
-	}
-	if attempts[1] != "/ip4/127.0.0.1/tcp/19023/ws" {
-		t.Fatalf("second attempt = %q, want WSS address", attempts[1])
+	if calls != 1 {
+		t.Fatalf("connect calls = %d, want one shared dial", calls)
 	}
 }
 

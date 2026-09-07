@@ -275,7 +275,7 @@ func TestMediaDownloadTriesNextRelayOnNotFound(t *testing.T) {
 	n := &Node{}
 
 	var attempts []string
-	result, err := n.mediaDownloadAcrossRelays(rs, func(relay RelayInfo) (MediaDownloadResult, bool, error) {
+	result, err := n.mediaDownloadAcrossRelays(rs, func(relay RelayInfo, allowDial bool) (MediaDownloadResult, bool, error) {
 		attempts = append(attempts, relay.ID.String())
 		if relay.ID == firstRelay {
 			return MediaDownloadResult{}, true, errors.New("download failed: not found")
@@ -303,7 +303,7 @@ func TestMediaDownloadDoesNotTryNextRelayOnNotAuthorized(t *testing.T) {
 	n := &Node{}
 
 	var attempts []string
-	_, err := n.mediaDownloadAcrossRelays(rs, func(relay RelayInfo) (MediaDownloadResult, bool, error) {
+	_, err := n.mediaDownloadAcrossRelays(rs, func(relay RelayInfo, allowDial bool) (MediaDownloadResult, bool, error) {
 		attempts = append(attempts, relay.ID.String())
 		return MediaDownloadResult{}, false, errors.New("download failed: not authorized")
 	})

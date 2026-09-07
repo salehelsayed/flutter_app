@@ -789,35 +789,25 @@ func (n *Node) warmRelayConnectionWithTimeout(info peer.AddrInfo, timeout time.D
 	}
 
 	start := time.Now()
-	var lastErr error
-	candidates := relayConnectCandidates(info)
-	for i, candidate := range candidates {
-		ctx, cancel := context.WithTimeout(n.ctx, timeout)
-		ctx = network.WithDialPeerTimeout(ctx, timeout)
-		err := n.connectRelay(ctx, candidate)
-		cancel()
-		if err == nil {
-			n.emitEvent("relay:warm_timing", map[string]interface{}{
-				"elapsedMs": time.Since(start).Milliseconds(),
-				"outcome":   "success",
-				"relayId":   info.ID.String()[:min(20, len(info.ID.String()))],
-			})
-			log.Printf("[NODE] Warmed relay connection: %s", info.ID.String()[:min(20, len(info.ID.String()))])
-			return nil
-		}
-		lastErr = err
-		if ctx.Err() == context.DeadlineExceeded {
-			n.emitTimeoutFired("DialTimeout", timeout, start)
-		}
-		if len(candidates) > 1 {
-			log.Printf(
-				"[NODE] relay address dial FAILED (%s, addr %d/%d): %v",
-				info.ID.String()[:min(20, len(info.ID.String()))],
-				i+1,
-				len(candidates),
-				err,
-			)
-		}
+	// Give the swarm the complete same-peer address set. Its default dial
+	// ranker resolves DNS and races IPv6/IPv4 and QUIC/TCP (including WSS).
+	// A separate Connect per address would serialize fallback and multiply
+	// the caller's budget by the number of addresses.
+	ctx, cancel := context.WithTimeout(n.ctx, timeout)
+	defer cancel()
+	ctx = network.WithDialPeerTimeout(ctx, timeout)
+	err := n.connectRelay(ctx, info)
+	if err == nil {
+		n.emitEvent("relay:warm_timing", map[string]interface{}{
+			"elapsedMs": time.Since(start).Milliseconds(),
+			"outcome":   "success",
+			"relayId":   info.ID.String()[:min(20, len(info.ID.String()))],
+		})
+		log.Printf("[NODE] Warmed relay connection: %s", info.ID.String()[:min(20, len(info.ID.String()))])
+		return nil
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		n.emitTimeoutFired("DialTimeout", timeout, start)
 	}
 
 	n.emitEvent("relay:warm_timing", map[string]interface{}{
@@ -825,22 +815,7 @@ func (n *Node) warmRelayConnectionWithTimeout(info peer.AddrInfo, timeout time.D
 		"outcome":   "failed",
 		"relayId":   info.ID.String()[:min(20, len(info.ID.String()))],
 	})
-	return fmt.Errorf("dial relay: %w", lastErr)
-}
-
-func relayConnectCandidates(info peer.AddrInfo) []peer.AddrInfo {
-	if len(info.Addrs) <= 1 {
-		return []peer.AddrInfo{info}
-	}
-
-	candidates := make([]peer.AddrInfo, 0, len(info.Addrs))
-	for _, addr := range info.Addrs {
-		candidates = append(candidates, peer.AddrInfo{
-			ID:    info.ID,
-			Addrs: []ma.Multiaddr{addr},
-		})
-	}
-	return candidates
+	return fmt.Errorf("dial relay: %w", err)
 }
 
 func (n *Node) connectRelay(ctx context.Context, info peer.AddrInfo) error {

@@ -81,9 +81,9 @@ func (rs *RelaySelector) First() (RelayInfo, error) {
 	return rs.relays[0], nil
 }
 
-// ForEach calls fn for each relay address in configured order. If a relay has
-// multiple transport addresses, each address is tried before moving to the next
-// relay peer. If fn returns nil, iteration stops and ForEach returns nil. If
+// ForEach calls fn for each relay peer in configured order, with all of that
+// peer's addresses available for libp2p's Happy Eyeballs dialing. If fn returns
+// nil, iteration stops and ForEach returns nil. If
 // all relays fail, the last error is returned with context about the number of
 // relays tried.
 func (rs *RelaySelector) ForEach(fn func(relay RelayInfo) error) error {
@@ -113,8 +113,7 @@ func (rs *RelaySelector) ForEach(fn func(relay RelayInfo) error) error {
 	return fmt.Errorf("all %d relays failed, last error: %w", len(relays), lastErr)
 }
 
-// FanOut calls fn for every relay in order, trying same-peer transport
-// addresses until that relay succeeds or all of its addresses fail.
+// FanOut calls fn for every relay with its complete address set.
 // Returns nil if at least one relay succeeds, otherwise returns the last error.
 func (rs *RelaySelector) FanOut(fn func(relay RelayInfo) error) error {
 	rs.mu.RLock()
@@ -181,7 +180,7 @@ func fanOutRelay(relay RelayInfo, index int, relayCount int, fn func(relay Relay
 	return lastErr
 }
 
-// ForEachWithResult calls fn for each relay address in configured order. If fn
+// ForEachWithResult calls fn for each relay peer in configured order. If fn
 // returns a non-nil result and nil error, iteration stops and the result is
 // returned. If all relays fail, the last error is returned.
 func ForEachWithResult[T any](rs *RelaySelector, fn func(relay RelayInfo) (T, error)) (T, error) {
@@ -213,18 +212,10 @@ func ForEachWithResult[T any](rs *RelaySelector, fn func(relay RelayInfo) (T, er
 }
 
 func relayInfoAttemptCandidates(relay RelayInfo) []RelayInfo {
-	if len(relay.Addrs) <= 1 {
-		return []RelayInfo{relay}
-	}
-
-	candidates := make([]RelayInfo, 0, len(relay.Addrs))
-	for _, addr := range relay.Addrs {
-		candidates = append(candidates, RelayInfo{
-			ID:    relay.ID,
-			Addrs: []ma.Multiaddr{addr},
-		})
-	}
-	return candidates
+	// Address fallback belongs to the swarm, which can race families and
+	// transports under one deadline. Retrying the operation per address would
+	// serialize dials and could repeat a request after a protocol-level error.
+	return []RelayInfo{relay}
 }
 
 // buildRelaySelector creates a RelaySelector from the provided addresses,

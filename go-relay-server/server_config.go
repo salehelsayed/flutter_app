@@ -8,19 +8,22 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 const (
-	relayPrivateKeyEnv  = "RELAY_PRIVATE_KEY"
-	relayServerDNSEnv   = "RELAY_SERVER_DNS"
-	relayServerIPEnv    = "RELAY_SERVER_IP"
-	relayWSPortEnv      = "RELAY_WS_PORT"
-	relayTCPPortEnv     = "RELAY_TCP_PORT"
-	relayWSSPortEnv     = "RELAY_WSS_PORT"
-	relayQUICPortEnv    = "RELAY_QUIC_PORT"
-	relayDataDirEnv     = "RELAY_DATA_DIR"
-	defaultRelayDataDir = "/data"
+	relayPrivateKeyEnv    = "RELAY_PRIVATE_KEY"
+	relayServerDNSEnv     = "RELAY_SERVER_DNS"
+	relayServerIPEnv      = "RELAY_SERVER_IP"
+	relayServerIP6Env     = "RELAY_SERVER_IP6"
+	relayServerDNSIPv6Env = "RELAY_SERVER_DNS_IPV6"
+	relayWSPortEnv        = "RELAY_WS_PORT"
+	relayTCPPortEnv       = "RELAY_TCP_PORT"
+	relayWSSPortEnv       = "RELAY_WSS_PORT"
+	relayQUICPortEnv      = "RELAY_QUIC_PORT"
+	relayDataDirEnv       = "RELAY_DATA_DIR"
+	defaultRelayDataDir   = "/data"
 )
 
 // defaultPrivateKeyRaw is the original hardcoded Ed25519 key.
@@ -36,13 +39,15 @@ var defaultPrivateKeyRaw = []byte{
 
 // ServerConfig holds network identity and addressing configuration.
 type ServerConfig struct {
-	PrivateKey []byte
-	ServerDNS  string
-	ServerIP4  string
-	WSPort     int
-	TCPPort    int
-	WSSPort    int
-	QUICPort   int
+	PrivateKey    []byte
+	ServerDNS     string
+	ServerIP4     string
+	ServerIP6     string
+	ServerDNSIPv6 bool
+	WSPort        int
+	TCPPort       int
+	WSSPort       int
+	QUICPort      int
 }
 
 // StorageConfig holds media/profile data roots.
@@ -75,10 +80,18 @@ func loadServerConfigFromEnv() ServerConfig {
 		PrivateKey: defaults.PrivateKey,
 		ServerDNS:  envStrOrDefault(relayServerDNSEnv, defaults.ServerDNS),
 		ServerIP4:  envStrOrDefault(relayServerIPEnv, defaults.ServerIP4),
+		ServerIP6:  strings.TrimSpace(os.Getenv(relayServerIP6Env)),
 		WSPort:     envIntOrDefault(relayWSPortEnv, defaults.WSPort),
 		TCPPort:    envIntOrDefault(relayTCPPortEnv, defaults.TCPPort),
 		WSSPort:    envIntOrDefault(relayWSSPortEnv, defaults.WSSPort),
 		QUICPort:   envIntOrDefault(relayQUICPortEnv, defaults.QUICPort),
+	}
+	if raw := strings.TrimSpace(os.Getenv(relayServerDNSIPv6Env)); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			log.Fatalf("Invalid %s: expected a boolean", relayServerDNSIPv6Env)
+		}
+		cfg.ServerDNSIPv6 = enabled
 	}
 
 	if raw := strings.TrimSpace(os.Getenv(relayPrivateKeyEnv)); raw != "" {
