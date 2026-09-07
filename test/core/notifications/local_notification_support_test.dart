@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 /// One entry of a `getNotificationChannels` platform reply.
@@ -199,6 +200,37 @@ void main() {
       expect(android.enableVibration, isFalse);
       expect(android.onlyAlertOnce, isTrue);
       expect(android.silent, isTrue);
+    },
+  );
+
+  test(
+    'reaction without unread messages has one expanded line and no unread badge',
+    () {
+      for (final snapshot in <ConversationNotificationSnapshot?>[
+        null,
+        ConversationNotificationSnapshot(
+          historyLines: const [],
+          totalUnreadMessageCount: 0,
+        ),
+      ]) {
+        final details = mknoonConversationNotificationDetails(
+          conversationKey: 'peer-reaction',
+          silent: true,
+          preservePrimaryAndroidChannel: true,
+          snapshot: snapshot,
+          currentReactionBody: 'Reacted 😂 to your message',
+        );
+        final android = details.android as AndroidNotificationDetails;
+        final style = android.styleInformation as InboxStyleInformation;
+        expect(style.lines, const <String>['Reacted 😂 to your message']);
+        expect(android.number, isNull);
+        expect(android.channelId, mknoonMessagesChannelId);
+        expect(android.playSound, isFalse);
+        expect(android.onlyAlertOnce, isTrue);
+        final ios = details.iOS as DarwinNotificationDetails;
+        expect(ios.threadIdentifier, 'peer-reaction');
+        expect(ios.presentSound, isFalse);
+      }
     },
   );
 

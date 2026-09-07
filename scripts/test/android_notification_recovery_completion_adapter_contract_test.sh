@@ -136,11 +136,19 @@ assert "final forceKey = '$latestRetryAttempt';" in source
 assert "final forceKey = '$latestRetryAttempt:$jobId';" not in source
 assert "if (forcedKeys.add(forceKey)) {" not in source
 
-unregister = source.index("await _terminateRecipient();", source.index("recipient-route-unregister.json"))
+unregister = source.index("await _stopRecipientAfterRouteUnregister();", source.index("recipient-route-unregister.json"))
 fresh_marker = source.index("final routeAbsenceMarker =", unregister)
 seed = source.index("await _sendUiMessageFromSender(routeAbsenceMarker);", fresh_marker)
 probe = source.index("await _captureRouteAbsenceProbe(routeAbsenceMarker);", seed)
 assert unregister < fresh_marker < seed < probe
+stop_start = source.index("Future<void> _stopRecipientAfterRouteUnregister() async {")
+stop_end = source.index("\n  }", stop_start)
+stop_body = source[stop_start:stop_end]
+stop_app = stop_body.index("'stop-app'")
+absent = stop_body.index("await _waitForProcessAndActivityAbsent(recipientId);", stop_app)
+assert stop_app < absent
+assert "'force-stop'" not in stop_body
+assert "'kill'" not in stop_body
 assert "_captureRouteAbsenceProbe(secondMarker)" not in source
 assert "decoded['status'] == 'failed'" in source
 assert "if (receipt['status'] != 'complete')" in source

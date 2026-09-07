@@ -178,6 +178,155 @@ void main() {
     },
   );
 
+  for (final incoming in <bool>[false, true]) {
+    for (final pausePreparation in <bool>[false, true]) {
+      test(
+        '${incoming ? 'answer' : 'offer'} is not sent after close during ${pausePreparation ? 'preparation' : 'local description'}',
+        () async {
+          final harness = _Harness(
+            snapshot: _snapshot(
+              CallState.negotiating,
+              direction: incoming
+                  ? CallDirection.incoming
+                  : CallDirection.outgoing,
+            ),
+          );
+          final gate = Completer<void>();
+          if (pausePreparation) {
+            harness.preparer.gate = gate;
+          } else {
+            harness.engine.localDescriptionGate = gate;
+          }
+          if (incoming) {
+            harness.materialStore.store(
+              _material(
+                eventId: 'accepted-event',
+                type: CallNegotiationMaterialType.offer,
+                payload: {
+                  'description': 'remote-offer',
+                  'fingerprint': _fingerprint,
+                },
+              ),
+            );
+          }
+          final preparing = harness.executor.execute(
+            CallEffect(
+              incoming
+                  ? CallEffectType.deliverOffer
+                  : CallEffectType.startNegotiation,
+            ),
+            harness.snapshot,
+          );
+          await _flushAsync();
+          expect(
+            harness.calls,
+            contains(pausePreparation ? 'media.prepare' : 'engine.local'),
+          );
+          await harness.executor.close();
+          gate.complete();
+          await preparing;
+          expect(harness.signaling.descriptions, isEmpty);
+          if (pausePreparation) {
+            expect(harness.engine.descriptionWorkCount, 0);
+          }
+        },
+      );
+    }
+  }
+
+  test(
+    'offer-first restart recovers twice and late announcements do not strand the receiver',
+    () async {
+      final harness = _Harness(
+        snapshot: _snapshot(
+          CallState.connected,
+          direction: CallDirection.incoming,
+        ),
+      );
+      addTearDown(harness.executor.close);
+      const reducer = CallReducer();
+      for (final generation in [1, 2]) {
+        final offerId = 'restart-offer-$generation';
+        harness.engine.restartGeneration = generation;
+        harness.engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.connecting,
+          ready: false,
+        );
+        harness.materialStore.store(
+          _material(
+            eventId: offerId,
+            type: CallNegotiationMaterialType.offer,
+            generation: generation,
+            payload: {
+              'description': 'restart-sdp-$generation',
+              'fingerprint': _fingerprint,
+            },
+          ),
+        );
+        final reduction = reducer.reduce(
+          harness.snapshot,
+          CallEvent(
+            type: CallEventType.remoteOffer,
+            eventId: offerId,
+            occurredAt: _now,
+            callId: _callId,
+          ),
+        );
+        expect(reduction.decision, CallEventDecision.applied);
+        expect(reduction.snapshot.state, CallState.reconnecting);
+        harness.snapshot = reduction.snapshot;
+        final effect = reduction.effects.singleWhere(
+          (e) => e.type == CallEffectType.deliverOffer,
+        );
+        expect(
+          await harness.executor.execute(effect, harness.snapshot),
+          isNull,
+        );
+        expect(harness.engine.restartCalls, generation);
+        expect(harness.signaling.descriptions.last.$3, generation);
+
+        harness.engine.connectionSnapshot = _connectionSnapshot(
+          state: CallConnectionState.connected,
+          ready: true,
+        );
+        harness.engine.emitEvent(_engineEvent(CallConnectionState.connected));
+        await _flushAsync();
+        final recovered = harness.dispatched.last;
+        expect(recovered.type, CallEventType.mediaRecovered);
+        harness.snapshot = reducer.reduce(harness.snapshot, recovered).snapshot;
+        expect(harness.snapshot.state, CallState.connected);
+
+        final restartId = 'late-announcement-$generation';
+        harness.materialStore.store(
+          _material(
+            eventId: restartId,
+            type: CallNegotiationMaterialType.iceRestart,
+            generation: generation,
+            payload: {},
+          ),
+        );
+        final late = reducer.reduce(
+          harness.snapshot,
+          CallEvent(
+            type: CallEventType.remoteIceRestart,
+            eventId: restartId,
+            occurredAt: _now,
+            callId: _callId,
+          ),
+        );
+        harness.snapshot = late.snapshot;
+        final followUp = await harness.executor.execute(
+          const CallEffect(CallEffectType.restartIce),
+          harness.snapshot,
+        );
+        expect(followUp?.type, CallEventType.mediaRecovered);
+        harness.snapshot = reducer.reduce(harness.snapshot, followUp!).snapshot;
+        expect(harness.snapshot.state, CallState.connected);
+        expect(harness.engine.restartCalls, generation);
+      }
+    },
+  );
+
   test('state gates prevent early SDP, ICE, restart, and media work', () async {
     final harness = _Harness(snapshot: _snapshot(CallState.ringing));
     addTearDown(harness.executor.close);
@@ -1680,6 +1829,7 @@ final class _FakePreparer implements CallNegotiationMediaPreparer {
   final List<String> log;
   int calls = 0;
   CallNegotiationPortException? error;
+  Completer<void>? gate;
 
   @override
   Future<void> prepareLocallyAcceptedMedia({
@@ -1688,6 +1838,7 @@ final class _FakePreparer implements CallNegotiationMediaPreparer {
   }) async {
     calls++;
     log.add('media.prepare');
+    if (gate != null) await gate!.future;
     if (error case final error?) throw error;
   }
 }
@@ -1784,6 +1935,7 @@ final class _FakeEngine implements CallEngine {
   int closeCalls = 0;
   bool failClose = false;
   Completer<void>? closeGate;
+  Completer<void>? localDescriptionGate;
   int snapshotCalls = 0;
   int restartGeneration = 1;
   int _iceGeneration = 0;
@@ -1837,6 +1989,7 @@ final class _FakeEngine implements CallEngine {
   @override
   Future<void> setLocalDescription(CallSessionDescription description) async {
     log.add('engine.local');
+    if (localDescriptionGate != null) await localDescriptionGate!.future;
     localDescriptions.add(description);
     final candidate = candidateOnSetLocal;
     if (candidate != null) _candidates.add(candidate);

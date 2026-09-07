@@ -72,6 +72,16 @@ typedef CallAppliedStateTransitionObserver =
       CallEndReason? endReason,
     );
 
+/// One bounded terminal request can interrupt a reduction preparing media.
+/// The request is still reduced on the coordinator lane, before later effects.
+final class _CallPreparationInterruption {
+  _CallPreparationInterruption(this.callId);
+
+  final CallId callId;
+  final requested = Completer<CallEvent>();
+  final result = Completer<CallReduction>();
+}
+
 /// Owns one serial call lane. Reducer effects, timers, cleanup, and history are
 /// executed outside the pure reducer and cannot mutate a terminal snapshot.
 final class CallCoordinator {
@@ -138,6 +148,7 @@ final class CallCoordinator {
   bool _disposing = false;
   Future<void>? _disposeInFlight;
   int _internalFailureCount = 0;
+  _CallPreparationInterruption? _preparationInterruption;
 
   Stream<CallSessionSnapshot> get snapshots => _snapshots.stream;
   CallSessionSnapshot? get activeSession => _active;
@@ -187,12 +198,20 @@ final class CallCoordinator {
     );
   }
 
-  Future<CallReduction> dispatch(CallEvent event) {
+  /// [onApplied] observes admission before effects finish. Native Answer uses
+  /// this to acknowledge the action without waiting for microphone permission.
+  /// The returned future still waits for the complete reduction and its effects.
+  Future<CallReduction> dispatch(
+    CallEvent event, {
+    void Function(CallReduction reduction)? onApplied,
+  }) {
     if (_disposed || _disposing) {
       return Future<CallReduction>.error(
         StateError('call coordinator is disposed'),
       );
     }
+    final interrupted = _interruptPreparation(event);
+    if (interrupted != null) return interrupted;
     if (_pendingEvents >= maxPendingEvents) {
       return Future<CallReduction>.error(const CallEventQueueFullException());
     }
@@ -200,7 +219,7 @@ final class CallCoordinator {
     final completer = Completer<CallReduction>();
     _tail = _tail.then<void>((_) async {
       try {
-        completer.complete(await _dispatchNow(event));
+        completer.complete(await _dispatchNow(event, onApplied: onApplied));
       } catch (error, stackTrace) {
         completer.completeError(error, stackTrace);
       } finally {
@@ -210,7 +229,40 @@ final class CallCoordinator {
     return completer.future;
   }
 
-  Future<CallReduction> _dispatchNow(CallEvent event) async {
+  Future<CallReduction>? _interruptPreparation(CallEvent event) {
+    final interruption = _preparationInterruption;
+    final current = _active;
+    if (interruption == null ||
+        interruption.requested.isCompleted ||
+        current == null ||
+        current.isTerminal ||
+        current.callId != interruption.callId) {
+      return null;
+    }
+    final reduction = reducer.reduce(current, event);
+    if (reduction.decision != CallEventDecision.applied ||
+        !reduction.snapshot.isTerminal) {
+      return null;
+    }
+    interruption.requested.complete(event);
+    return interruption.result.future;
+  }
+
+  Future<void> _finishPreparationInterruption(
+    _CallPreparationInterruption interruption,
+  ) async {
+    final event = await interruption.requested.future;
+    try {
+      interruption.result.complete(await _dispatchNow(event));
+    } catch (error, stackTrace) {
+      interruption.result.completeError(error, stackTrace);
+    }
+  }
+
+  Future<CallReduction> _dispatchNow(
+    CallEvent event, {
+    void Function(CallReduction reduction)? onApplied,
+  }) async {
     final eventCallId = event.callId;
     if (eventCallId != null && _terminalIds.contains(eventCallId)) {
       return CallReduction.coordinatorDecision(
@@ -273,7 +325,11 @@ final class CallCoordinator {
     }
 
     final base = _active ?? CallSessionSnapshot.idle(now: clock());
-    return _applyReduction(reducer.reduce(base, event), trigger: event.type);
+    return _applyReduction(
+      reducer.reduce(base, event),
+      trigger: event.type,
+      onApplied: onApplied,
+    );
   }
 
   Future<CallReduction> _rejectBusy(
@@ -300,11 +356,20 @@ final class CallCoordinator {
   Future<CallReduction> _applyReduction(
     CallReduction reduction, {
     required CallEventType trigger,
+    void Function(CallReduction reduction)? onApplied,
   }) async {
     if (reduction.decision != CallEventDecision.applied) return reduction;
     final snapshot = reduction.snapshot;
     _active = snapshot;
     _last = snapshot;
+    final previousInterruption = _preparationInterruption;
+    final interruption =
+        reduction.effects.any(
+          (effect) => _isMediaPreparationEffect(effect.type),
+        )
+        ? _CallPreparationInterruption(snapshot.callId!)
+        : null;
+    if (interruption != null) _preparationInterruption = interruption;
     try {
       onAppliedStateTransition?.call(
         trigger,
@@ -315,6 +380,11 @@ final class CallCoordinator {
       // Identifier-free diagnostics cannot change reducer application.
     }
     _snapshots.add(snapshot);
+    try {
+      onApplied?.call(reduction);
+    } catch (_) {
+      // An admission observer cannot change canonical call handling.
+    }
 
     Object? firstEffectError;
     StackTrace? firstEffectStack;
@@ -322,6 +392,10 @@ final class CallCoordinator {
     try {
       for (final effect in reduction.effects) {
         try {
+          if (interruption?.requested.isCompleted == true) {
+            await _finishPreparationInterruption(interruption!);
+            break;
+          }
           if (snapshot.isTerminal && _isTerminalDelivery(effect.type)) {
             terminalDeliveries.add(
               _executeTerminalDelivery(effect, snapshot).catchError((
@@ -334,12 +408,20 @@ final class CallCoordinator {
             );
             continue;
           }
-          await _executeEffect(effect, snapshot);
+          await _executeEffect(effect, snapshot, interruption: interruption);
+          if (interruption?.requested.isCompleted == true) {
+            await _finishPreparationInterruption(interruption!);
+            break;
+          }
           if (_active?.callId != snapshot.callId ||
               _active?.state != snapshot.state) {
             break;
           }
         } catch (error, stackTrace) {
+          if (interruption?.requested.isCompleted == true) {
+            await _finishPreparationInterruption(interruption!);
+            break;
+          }
           firstEffectError ??= error;
           firstEffectStack ??= stackTrace;
           if (!snapshot.isTerminal) {
@@ -353,6 +435,9 @@ final class CallCoordinator {
         }
       }
     } finally {
+      if (interruption != null) {
+        _preparationInterruption = previousInterruption;
+      }
       if (snapshot.isTerminal) {
         _cancelTimers();
         try {
@@ -390,8 +475,9 @@ final class CallCoordinator {
 
   Future<void> _executeEffect(
     CallEffect effect,
-    CallSessionSnapshot snapshot,
-  ) async {
+    CallSessionSnapshot snapshot, {
+    _CallPreparationInterruption? interruption,
+  }) async {
     switch (effect.type) {
       case CallEffectType.scheduleNoAnswerTimeout:
         _scheduleTimer(effect, snapshot, CallTimeoutKind.noAnswer);
@@ -412,13 +498,22 @@ final class CallCoordinator {
       case CallEffectType.projectHistory:
         return;
       default:
-        final followUp = await effectExecutor
+        final execution = effectExecutor
             .execute(effect, snapshot)
             .timeout(
               _isMediaPreparationEffect(effect.type)
                   ? mediaPreparationTimeout
                   : effectTimeout,
             );
+        final followUp = await (interruption == null
+            ? execution
+            : Future.any<CallEvent?>(<Future<CallEvent?>>[
+                execution,
+                interruption.requested.future.then<CallEvent?>((_) => null),
+              ]));
+        // Cleanup retires the media bundle and fences late engine completion.
+        // A late preparation must never send Accept or advance another call.
+        if (interruption?.requested.isCompleted == true) return;
         if (followUp != null) await _dispatchNow(followUp);
     }
   }
@@ -516,6 +611,14 @@ final class CallCoordinator {
   /// There are at most the fixed effect-keyed timers in [_timers], so this
   /// cannot grow with caller traffic and cannot be rejected by queue pressure.
   Future<void> _enqueueTimerEvent(CallEvent event) {
+    final interrupted = _interruptPreparation(event);
+    if (interrupted != null) {
+      return interrupted.then<void>((_) {}).catchError((Object _) {
+        _reportInternalFailure(
+          CallCoordinatorInternalFailure.timerDispatchFailed,
+        );
+      });
+    }
     final scheduled = _tail.then<void>((_) async {
       if (_disposed) return;
       try {
@@ -578,6 +681,26 @@ final class CallCoordinator {
     Object? shutdownError;
     StackTrace? shutdownStack;
     try {
+      final preparing = _active;
+      if (preparing != null) {
+        final interrupted = _interruptPreparation(
+          CallEvent(
+            type: CallEventType.appShutdown,
+            eventId: 'dispose-preparation-${preparing.callId!.value}',
+            occurredAt: clock(),
+            callId: preparing.callId,
+            contactPeerId: preparing.contactPeerId,
+          ),
+        );
+        if (interrupted != null) {
+          try {
+            await interrupted;
+          } catch (error, stackTrace) {
+            shutdownError = error;
+            shutdownStack = stackTrace;
+          }
+        }
+      }
       final serialized = _tail.then<void>((_) async {
         final current = _active;
         if (current == null || current.isTerminal) return;

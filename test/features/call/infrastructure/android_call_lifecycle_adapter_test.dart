@@ -2447,11 +2447,10 @@ void main() {
             .any((call) => call.arguments['throughSequence'] == 4),
       );
 
-      expect(
-        interruptions,
-        <bool>[true, false],
-        reason: 'serialized Dart commands must not echo as interruptions',
-      );
+      expect(interruptions, <bool>[
+        true,
+        false,
+      ], reason: 'serialized Dart commands must not echo as interruptions');
 
       await adapter.close();
       await interruptionSubscription.cancel();
@@ -2730,7 +2729,7 @@ void main() {
   );
 
   test(
-    'does not acknowledge an answer whose coordinator dispatch fails',
+    'acknowledges an admitted answer even when media subsequently fails',
     () async {
       final native = _NativeHarness()
         ..attachResult = _batch(<Map<String, Object?>>[
@@ -2750,12 +2749,17 @@ void main() {
 
       await _showSystemUi(coordinator);
       await _until(() => coordinator.lastSnapshot?.isTerminal == true);
+      await _until(
+        () => native
+            .callsOf('acknowledge')
+            .any((call) => call.arguments['throughSequence'] == 2),
+      );
 
       expect(
         native
             .callsOf('acknowledge')
             .any((call) => call.arguments['throughSequence'] == 2),
-        isFalse,
+        isTrue,
       );
 
       await adapter.close();

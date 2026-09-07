@@ -549,6 +549,9 @@ void main() {
         suspendLocalNotificationLedgerClaims: (binding) async {
           trace.add('suspend:${binding ?? 'none'}');
         },
+        rebindRemoteAnnouncements: (binding) async {
+          trace.add('remote:${binding ?? 'none'}');
+        },
         publishSharedBinding: (binding) async {
           trace.add('shared:${binding ?? 'none'}');
           await publishCanonicalRuntimeSharedBinding(
@@ -565,13 +568,18 @@ void main() {
       final startup = await coordinator.loadStartupBinding();
       expect(startup.hasAccount, isFalse);
       final provisional = startup.leaseBinding;
-      expect(trace, <String>['shared:none', 'ledger:$provisional']);
+      expect(trace, <String>[
+        'remote:none',
+        'shared:none',
+        'ledger:$provisional',
+      ]);
       trace.clear();
 
       final binding = await coordinator.publishAccount('peer-a');
       expect(isCanonicalRuntimeOpaqueBinding(binding), isTrue);
       expect(trace, <String>[
         'suspend:none',
+        'remote:$binding',
         'shared:$binding',
         'ledger:$binding',
       ]);
@@ -586,6 +594,7 @@ void main() {
       expect(trace, <String>[
         'suspend:$binding',
         'shared:none',
+        'remote:none',
         'ledger:$provisional',
       ]);
       expect(
@@ -597,6 +606,100 @@ void main() {
       final upperHex = List<String>.filled(64, 'A').join();
       expect(isCanonicalRuntimeOpaqueBinding(' v1:$lowerHex'), isFalse);
       expect(isCanonicalRuntimeOpaqueBinding('v1:$upperHex'), isFalse);
+    },
+  );
+
+  test('remote proof reset failure cannot publish another account', () async {
+    final primary = _MemorySecureKeyStore();
+    final sharedBindings = <String?>[];
+    var rejectReset = false;
+    final coordinator = CanonicalRuntimeBindingCoordinator(
+      secureKeyStore: primary,
+      rebindRemoteAnnouncements: (_) async {
+        if (rejectReset) throw StateError('remote proof reset failed');
+      },
+      publishSharedBinding: (binding) async => sharedBindings.add(binding),
+      createInstallationId: () => 'remote-proof-installation',
+    );
+    final original = await coordinator.publishAccount('account-a');
+    rejectReset = true;
+
+    await expectLater(
+      coordinator.publishAccount('account-b'),
+      throwsStateError,
+    );
+
+    expect(await coordinator.readCurrentAccountBinding(), original);
+    expect(sharedBindings, [original]);
+  });
+
+  for (final hasAccount in [false, true]) {
+    test(
+      'startup reconciles remote proof before claims ($hasAccount)',
+      () async {
+        final primary = _MemorySecureKeyStore();
+        final binding = 'v1:${List<String>.filled(64, 'e').join()}';
+        if (hasAccount) {
+          await primary.write(
+            canonicalRuntimeAccountBindingStorageKey,
+            binding,
+          );
+        }
+        final trace = <String>[];
+        var rejectReset = true;
+        final coordinator = CanonicalRuntimeBindingCoordinator(
+          secureKeyStore: primary,
+          rebindRemoteAnnouncements: (current) async {
+            expect(current, hasAccount ? binding : isNull);
+            trace.add('remote');
+            if (rejectReset) throw StateError('remote proof reset failed');
+          },
+          publishSharedBinding: (_) async => trace.add('shared'),
+          rebindLocalNotificationLedger: (_) async => trace.add('ledger'),
+          createInstallationId: () => 'remote-proof-installation',
+        );
+
+        await expectLater(coordinator.loadStartupBinding(), throwsStateError);
+        expect(trace, ['remote']);
+        rejectReset = false;
+        trace.clear();
+        final startup = await coordinator.loadStartupBinding();
+        expect(startup.hasAccount, hasAccount);
+        expect(trace, ['remote', 'shared', 'ledger']);
+      },
+    );
+  }
+
+  test(
+    'logout reset failure retries before notification claims resume',
+    () async {
+      final primary = _MemorySecureKeyStore();
+      final trace = <String>[];
+      var rejectReset = false;
+      final coordinator = CanonicalRuntimeBindingCoordinator(
+        secureKeyStore: primary,
+        rebindRemoteAnnouncements: (binding) async {
+          trace.add('remote:${binding ?? 'none'}');
+          if (rejectReset) throw StateError('remote proof reset failed');
+        },
+        publishSharedBinding: (binding) async {
+          trace.add('shared:${binding ?? 'none'}');
+        },
+        rebindLocalNotificationLedger: (_) async => trace.add('ledger'),
+        createInstallationId: () => 'remote-proof-installation',
+      );
+      await coordinator.publishAccount('account-a');
+      rejectReset = true;
+      trace.clear();
+
+      await expectLater(coordinator.retireAccount(), throwsStateError);
+
+      expect(await coordinator.readCurrentAccountBinding(), isNull);
+      expect(trace, ['shared:none', 'remote:none']);
+      rejectReset = false;
+      trace.clear();
+      expect((await coordinator.loadStartupBinding()).hasAccount, isFalse);
+      expect(trace, ['remote:none', 'shared:none', 'ledger']);
     },
   );
 

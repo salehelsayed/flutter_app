@@ -3317,7 +3317,17 @@ void main() {
               return '''{"ok":true,"plaintext":"{\\"id\\":\\"reaction-state-1\\",\\"messageId\\":\\"message-1\\",\\"emoji\\":\\"👍\\",\\"action\\":\\"add\\",\\"senderPeerId\\":\\"peer-alice\\",\\"timestamp\\":\\"2026-07-12T09:00:00.000Z\\",\\"eventId\\":\\"transition-1\\"}"}''';
             });
         debugSetBackgroundGroupReactionLocalStateResolver((_) async {
-          return const BackgroundGroupReactionLocalState(
+          return BackgroundGroupReactionLocalState(
+            snapshot: ConversationNotificationSnapshot(
+              historyLines: const <String>[
+                'oldest unread',
+                'older unread',
+                'middle unread',
+                'newer unread',
+                'newest unread',
+              ],
+              totalUnreadMessageCount: 17,
+            ),
             previewContext: GroupReactionNotificationContext(
               groupId: 'group-team',
               groupName: 'Team Chat',
@@ -3364,7 +3374,21 @@ void main() {
           payload?.metadata.kind,
           ConversationNotificationContentKind.reaction,
         );
-        expect((showArgs['platformSpecifics'] as Map)['autoCancel'], isFalse);
+        final specifics = showArgs['platformSpecifics'] as Map;
+        expect(specifics['autoCancel'], isFalse);
+        expect(specifics['number'], 17);
+        expect(
+          (specifics['styleInformation'] as Map)['lines'],
+          const <String>[
+            'older unread',
+            'middle unread',
+            'newer unread',
+            'newest unread',
+            'Alice reacted to your message',
+          ],
+          reason:
+              'the authenticated background group path must show its current reaction in expanded style',
+        );
       },
     );
 
@@ -7260,21 +7284,21 @@ void main() {
               return null;
             });
 
-        await firebaseMessagingBackgroundHandler(
-          const RemoteMessage(
-            data: <String, dynamic>{
-              'type': 'group_reaction',
-              'groupId': 'group-reaction-overlay',
-              'group_id': 'group-reaction-overlay',
-              'event_id': 'reaction-overlay-event',
-              'target_message_id': 'reaction-target-message',
-              'reactor_peer_id': 'peer-reactor',
-              'action': 'add',
-              'payload':
-                  'group:group-reaction-overlay|message:reaction-target-message',
-            },
-          ),
+        const reaction = RemoteMessage(
+          data: <String, dynamic>{
+            'type': 'group_reaction',
+            'groupId': 'group-reaction-overlay',
+            'group_id': 'group-reaction-overlay',
+            'event_id': 'reaction-overlay-event',
+            'target_message_id': 'reaction-target-message',
+            'reactor_peer_id': 'peer-reactor',
+            'action': 'add',
+            'payload':
+                'group:group-reaction-overlay|message:reaction-target-message',
+          },
         );
+        await firebaseMessagingBackgroundHandler(reaction);
+        await firebaseMessagingBackgroundHandler(reaction);
 
         final shows = log.where((call) => call.method == 'show').toList();
         expect(shows, hasLength(1), reason: events.toString());
@@ -7283,7 +7307,43 @@ void main() {
         expect(specifics['number'], 1);
         expect((specifics['styleInformation'] as Map)['lines'], <String>[
           'Alice: pending message',
+          'Alice reacted to your message',
         ]);
+        expect(specifics['playSound'], isTrue);
+        await firebaseMessagingBackgroundHandler(
+          RemoteMessage(
+            data: <String, dynamic>{
+              ...reaction.data,
+              'event_id': 'reaction-overlay-next',
+            },
+          ),
+        );
+        final updates = log.where((call) => call.method == 'show').toList();
+        expect(updates, hasLength(2));
+        final update = updates.last.arguments as Map;
+        final updateSpecifics = update['platformSpecifics'] as Map;
+        expect(update['id'], (show.arguments as Map)['id']);
+        expect(updateSpecifics['playSound'], isFalse);
+        expect(updateSpecifics['onlyAlertOnce'], isTrue);
+        expect(updateSpecifics['number'], 1);
+        expect(
+          (updateSpecifics['styleInformation'] as Map)['lines'],
+          const <String>[
+            'Alice: pending message',
+            'Alice reacted to your message',
+          ],
+        );
+        final projected = await overlay.project(
+          conversationKey: 'group:group-reaction-overlay',
+          canonicalSnapshot: null,
+        );
+        expect(projected?.totalUnreadMessageCount, 1);
+        expect(
+          projected?.historyLines,
+          const <String>['Alice: pending message'],
+          reason:
+              'the reaction line is presentation-only, never pending ordinary history',
+        );
       },
     );
 

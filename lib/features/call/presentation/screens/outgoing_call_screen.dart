@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Foreground-only outgoing call presentation.
 ///
@@ -24,6 +25,7 @@ class OutgoingCallScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return ColoredBox(
       color: colors.surfaceBase,
@@ -62,7 +64,7 @@ class OutgoingCallScreen extends StatelessWidget {
               ),
               const Spacer(),
               IconButton(
-                tooltip: 'Cancel call',
+                tooltip: l10n.call_cancel,
                 onPressed: onCancel,
                 icon: const Icon(Icons.call_end_rounded),
                 color: Colors.white,
@@ -74,7 +76,7 @@ class OutgoingCallScreen extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                'Cancel',
+                l10n.btn_cancel,
                 style: TextStyle(
                   color: colors.textSecondary,
                   fontSize: 13,

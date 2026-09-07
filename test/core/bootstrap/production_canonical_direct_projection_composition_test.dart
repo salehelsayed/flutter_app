@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/app/bootstrap/production_canonical_direct_projection_composition.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
@@ -602,6 +604,236 @@ void main() {
     },
   );
 
+  test(
+    'production direct reaction adopts exact proof through interrupted settlement',
+    () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      final originalGate = recentRemoteNotificationGate;
+      final gate = _TrackingRecentRemoteNotificationGate(hasProof: true);
+      final replacementGate = _TrackingRecentRemoteNotificationGate(
+        hasProof: true,
+      );
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      debugSetRecentRemoteNotificationGate(gate);
+      addTearDown(() {
+        debugDefaultTargetPlatformOverride = previousPlatform;
+        debugSetRecentRemoteNotificationGate(originalGate);
+      });
+      final harness = await _DurableDirectProjectionHarness.create(
+        messageId: 'authored-reaction-target',
+        reactionId: 'reaction-remote-settlement',
+      );
+      addTearDown(harness.dispose);
+      harness.registry.onSettle = () {
+        if (harness.registry.settlements == 1) {
+          throw StateError('settlement interrupted');
+        }
+        debugSetRecentRemoteNotificationGate(replacementGate);
+      };
+      gate.beforeExactConsume = () async {
+        expect(harness.registry.settlements, 2);
+        expect(harness.displayOutbox.entry, isNull);
+        expect(
+          await harness.database.query('direct_notification_display_outbox'),
+          isEmpty,
+        );
+      };
+
+      await harness.composition.owner.retryNow();
+      expect(harness.service.shown, isEmpty);
+      expect(harness.service.durableContexts, hasLength(1));
+      expect(
+        harness.service.durableContexts.single.remotePresentationEstablished,
+        isTrue,
+      );
+      expect(gate.exactProbes, 1);
+      expect(gate.exactProbeIdentities, <(String, String)>[
+        (_peerId, 'reaction-remote-settlement'),
+      ]);
+      expect(gate.consumes, 0);
+      expect(gate.exactConsumes, 0);
+      expect(gate.hasProof, isTrue);
+      expect(harness.displayOutbox.entry, isNotNull);
+
+      await harness.composition.owner.retryNow();
+      expect(harness.service.shown, isEmpty);
+      expect(harness.service.durableContexts, hasLength(1));
+      expect(gate.exactProbes, 1);
+      expect(gate.exactConsumes, 1);
+      expect(gate.marks, 0);
+      expect(gate.hasProof, isFalse);
+      expect(replacementGate.exactConsumes, 0);
+      expect(replacementGate.hasProof, isTrue);
+      expect(harness.displayOutbox.entry, isNull);
+    },
+  );
+
+  for (final (name, sourcePayload, sourceEvent, matches)
+      in <(String, String, String, bool)>[
+        ('matching event', _peerId, 'incoming-reaction', true),
+        ('other reaction', _peerId, 'other-reaction', false),
+        ('other conversation', 'other-peer', 'incoming-reaction', false),
+      ]) {
+    test('direct reaction exact NSE sidecar adoption: $name', () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      final originalGate = recentRemoteNotificationGate;
+      final directory = await Directory.systemTemp.createTemp(
+        'reaction-proof-',
+      );
+      final gate = RecentRemoteNotificationGate(
+        filePath: '${directory.path}/dart-gate.json',
+        appGroupSidecarDirProvider: () async => directory,
+      );
+      final marker = File(
+        '${directory.path}/RecentRemoteShown/'
+        '${gate.sidecarMarkerName(sourcePayload, sourceEvent)}',
+      );
+      await marker.parent.create(recursive: true);
+      await marker.writeAsString('');
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      debugSetRecentRemoteNotificationGate(gate);
+      addTearDown(() async {
+        debugDefaultTargetPlatformOverride = previousPlatform;
+        debugSetRecentRemoteNotificationGate(originalGate);
+        await directory.delete(recursive: true);
+      });
+      final harness = await _DurableDirectProjectionHarness.create(
+        messageId: 'authored-target',
+        reactionId: 'incoming-reaction',
+      );
+      addTearDown(harness.dispose);
+
+      await harness.composition.owner.retryNow();
+
+      expect(harness.service.shown, hasLength(matches ? 0 : 1));
+      expect(
+        harness.service.durableContexts.single.remotePresentationEstablished,
+        matches,
+      );
+      expect(await marker.exists(), !matches);
+      expect(harness.displayOutbox.entry, isNull);
+    });
+  }
+
+  for (final (kind, reactionId) in <(String, String?)>[
+    ('message', null),
+    ('reaction', 'reaction-delayed'),
+  ]) {
+    test(
+      'canonical direct $kind retirement cleans exact proof only after settlement',
+      () async {
+        final previousPlatform = debugDefaultTargetPlatformOverride;
+        final originalGate = recentRemoteNotificationGate;
+        final gate = _TrackingRecentRemoteNotificationGate(hasProof: true);
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        debugSetRecentRemoteNotificationGate(gate);
+        addTearDown(() {
+          debugDefaultTargetPlatformOverride = previousPlatform;
+          debugSetRecentRemoteNotificationGate(originalGate);
+        });
+        final harness = await _DurableDirectProjectionHarness.create(
+          messageId: 'retired-message',
+          reactionId: reactionId,
+        );
+        addTearDown(harness.dispose);
+        final retired = harness.displayOutbox.entry!.copyWith(
+          lastErrorCode:
+              DirectNotificationDisplayOutboxErrorCode.stateUnavailable,
+          lastAttemptAt: DirectNotificationDisplayOutboxErrorCode
+              .canonicalRetirementAttemptMarker,
+        );
+        harness.displayOutbox.entry = retired;
+        await harness.database.update(
+          'direct_notification_display_outbox',
+          retired.toMap(),
+          where: 'event_id = ?',
+          whereArgs: <Object?>[retired.eventId],
+        );
+        harness.registry.onSettle = () {
+          if (harness.registry.settlements == 1) {
+            throw StateError('retirement settlement interrupted');
+          }
+        };
+        gate.beforeExactConsume = () async {
+          expect(harness.displayOutbox.entry, isNull);
+          expect(harness.registry.settlements, 2);
+        };
+        await harness.composition.owner.retryNow();
+        expect(gate.exactProbes, 0);
+        expect(gate.exactConsumes, 0);
+        expect(gate.hasProof, isTrue);
+        await harness.composition.owner.retryNow();
+        expect(gate.exactConsumes, 1);
+        expect(gate.exactConsumeIdentities, <(String, String)>[
+          (_peerId, reactionId ?? 'retired-message'),
+        ]);
+        expect(gate.hasProof, isFalse);
+        expect(harness.displayOutbox.entry, isNull);
+      },
+    );
+
+    test('pending direct $kind adopts NSE proof after 13 hours', () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      final originalGate = recentRemoteNotificationGate;
+      final directory = await Directory.systemTemp.createTemp(
+        'delayed-direct-proof-',
+      );
+      final gate = RecentRemoteNotificationGate(
+        filePath: '${directory.path}/dart-gate.json',
+        appGroupSidecarDirProvider: () async => directory,
+      );
+      final eventId = reactionId ?? 'delayed-message';
+      final marker = File(
+        '${directory.path}/RecentRemoteShown/'
+        '${gate.sidecarMarkerName(_peerId, eventId)}',
+      );
+      await marker.parent.create(recursive: true);
+      await marker.writeAsString('');
+      await marker.setLastModified(
+        DateTime.now().subtract(const Duration(hours: 13)),
+      );
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      debugSetRecentRemoteNotificationGate(gate);
+      addTearDown(() async {
+        debugDefaultTargetPlatformOverride = previousPlatform;
+        debugSetRecentRemoteNotificationGate(originalGate);
+        await directory.delete(recursive: true);
+      });
+      final harness = await _DurableDirectProjectionHarness.create(
+        messageId: 'delayed-message',
+        reactionId: reactionId,
+      );
+      addTearDown(harness.dispose);
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'unrelated-peer',
+          messageId: 'unrelated-event',
+        ),
+        isFalse,
+      );
+      expect(
+        await gate.hasRecentExactAnnouncement(
+          payload: _peerId,
+          messageId: eventId,
+        ),
+        isFalse,
+      );
+
+      await harness.composition.owner.retryNow();
+      await harness.composition.owner.retryNow();
+
+      expect(harness.service.shown, isEmpty);
+      expect(harness.service.durableContexts, hasLength(1));
+      expect(
+        harness.service.durableContexts.single.remotePresentationEstablished,
+        isTrue,
+      );
+      expect(harness.registry.settlements, 1);
+      expect(harness.displayOutbox.entry, isNull);
+      expect(await marker.exists(), isFalse);
+    });
+  }
+
   for (final (mediaType, body) in <(String, String)>[
     ('image', 'Photo'),
     ('video', 'Video'),
@@ -1163,8 +1395,10 @@ final class _TrackingRecentRemoteNotificationGate
   bool hasProof;
   int probes = 0;
   int exactProbes = 0;
+  final exactProbeIdentities = <(String, String)>[];
   int consumes = 0;
   int exactConsumes = 0;
+  final exactConsumeIdentities = <(String, String)>[];
   int marks = 0;
   Future<void> Function()? beforeExactConsume;
 
@@ -1178,11 +1412,12 @@ final class _TrackingRecentRemoteNotificationGate
   }
 
   @override
-  Future<bool> hasRecentExactAnnouncement({
+  Future<bool> hasExactPendingAnnouncement({
     required String payload,
     required String messageId,
   }) async {
     exactProbes += 1;
+    exactProbeIdentities.add((payload, messageId));
     return hasProof;
   }
 
@@ -1198,12 +1433,13 @@ final class _TrackingRecentRemoteNotificationGate
   }
 
   @override
-  Future<bool> consumeIfRecentExactAnnouncement({
+  Future<bool> consumeExactPendingAnnouncement({
     required String payload,
     required String messageId,
   }) async {
     await beforeExactConsume?.call();
     exactConsumes += 1;
+    exactConsumeIdentities.add((payload, messageId));
     final result = hasProof;
     hasProof = false;
     return result;
@@ -1343,6 +1579,11 @@ class _NoopDurableEffectRegistry
 }
 
 final class _SettlingDurableEffectRegistry extends _NoopDurableEffectRegistry {
+  _SettlingDurableEffectRegistry({
+    this.producerKind = LocalNotificationProducerKind.directMessage,
+  });
+
+  final LocalNotificationProducerKind producerKind;
   int settlements = 0;
   void Function()? onSettle;
 
@@ -1361,7 +1602,7 @@ final class _SettlingDurableEffectRegistry extends _NoopDurableEffectRegistry {
       eventCorrelation: eventCorrelation,
       conversationDigest:
           'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      producerKind: LocalNotificationProducerKind.directMessage,
+      producerKind: producerKind,
       sourceCustody: LocalNotificationSourceCustody.sqlReady,
       readState: LocalNotificationReadState.unread,
       presentationState: LocalNotificationPresentationState.osPosted,
@@ -1400,6 +1641,7 @@ final class _DurableDirectProjectionHarness {
 
   static Future<_DurableDirectProjectionHarness> create({
     required String messageId,
+    String? reactionId,
     String? messageText,
     List<MediaAttachment> attachments = const <MediaAttachment>[],
   }) async {
@@ -1427,31 +1669,62 @@ final class _DurableDirectProjectionHarness {
         is_blocked INTEGER NOT NULL DEFAULT 0
       )
     ''');
+    if (reactionId != null) {
+      await database.execute('''
+        CREATE TABLE message_reactions (
+          id TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL,
+          sender_peer_id TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          removed_at TEXT
+        )
+      ''');
+      await database.insert('message_reactions', <String, Object?>{
+        'id': reactionId,
+        'message_id': messageId,
+        'sender_peer_id': _peerId,
+        'timestamp': timestamp,
+      });
+    }
     await runDirectNotificationDurabilityMigration(database);
     await database.insert('messages', <String, Object?>{
       'id': messageId,
       'contact_peer_id': _peerId,
-      'sender_peer_id': _peerId,
+      'sender_peer_id': reactionId == null ? _peerId : 'self-peer',
       'timestamp': timestamp,
-      'is_incoming': 1,
+      'is_incoming': reactionId == null ? 1 : 0,
     });
-    final entry = DirectNotificationDisplayOutboxEntry.message(
-      eventId: messageId,
-      peerId: _peerId,
-      messageId: messageId,
-      actorPeerId: _peerId,
-      eventTimestamp: timestamp,
-      readiness: DirectNotificationDisplayOutboxReadiness.ready,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    );
+    final entry = reactionId == null
+        ? DirectNotificationDisplayOutboxEntry.message(
+            eventId: messageId,
+            peerId: _peerId,
+            messageId: messageId,
+            actorPeerId: _peerId,
+            eventTimestamp: timestamp,
+            readiness: DirectNotificationDisplayOutboxReadiness.ready,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          )
+        : DirectNotificationDisplayOutboxEntry.reaction(
+            eventId: 'terminal:$reactionId',
+            peerId: _peerId,
+            messageId: messageId,
+            actorPeerId: _peerId,
+            eventTimestamp: timestamp,
+            reactionId: reactionId,
+            reactionAction: 'add',
+            reactionTombstone: false,
+            readiness: DirectNotificationDisplayOutboxReadiness.ready,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          );
     await database.insert('direct_notification_display_outbox', entry.toMap());
     final messages = _CountingMessageRepository()
       ..seed(<ConversationMessage>[
         _message(
           id: messageId,
           timestamp: timestamp,
-          incoming: true,
+          incoming: reactionId == null,
         ).copyWith(text: messageText),
       ]);
     final contacts = FakeContactRepository()
@@ -1469,7 +1742,24 @@ final class _DurableDirectProjectionHarness {
       entry,
       settlementDatabase: database,
     );
-    final registry = _SettlingDurableEffectRegistry();
+    final registry = _SettlingDurableEffectRegistry(
+      producerKind: reactionId == null
+          ? LocalNotificationProducerKind.directMessage
+          : LocalNotificationProducerKind.directReaction,
+    );
+    final reactions = FakeReactionRepository();
+    if (reactionId != null) {
+      await reactions.saveReaction(
+        MessageReaction(
+          id: reactionId,
+          messageId: messageId,
+          emoji: '❤️',
+          senderPeerId: _peerId,
+          timestamp: timestamp,
+          createdAt: timestamp,
+        ),
+      );
+    }
     final service = _RemoteAdoptionNotificationService(terminal: true);
     final composition = buildProductionCanonicalDirectProjectionComposition(
       ProductionCanonicalDirectProjectionDependencies(
@@ -1478,7 +1768,7 @@ final class _DurableDirectProjectionHarness {
         appVisibility: FixedAppVisibility(),
         contactRepository: contacts,
         messageRepository: messages,
-        reactionRepository: FakeReactionRepository(),
+        reactionRepository: reactions,
         mediaAttachmentRepository: FakeMediaAttachmentRepository()
           ..seed(attachments),
         displayOutbox: displayOutbox,

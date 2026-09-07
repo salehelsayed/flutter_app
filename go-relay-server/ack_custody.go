@@ -1022,6 +1022,8 @@ func (is *InboxStore) StoreAckCustody(
 		if handled {
 			is.recordStoredWithoutPush(toPeerID, storedEntry)
 			switch admissionStatus {
+			case wakeOutcomeAdmissionAndroidRich:
+				is.launchAndroidRichWakeAdmission(admission)
 			case wakeOutcomeAdmissionDelayed, wakeOutcomeAdmissionSuppressed:
 			case wakeOutcomeAdmissionCapacityFallback, wakeOutcomeAdmissionImmediateFallback:
 				is.launchDirectPushForWakeAdmission(toPeerID, storedEntry, admission)

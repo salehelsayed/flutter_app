@@ -596,7 +596,8 @@ final class ProductionCallSignalingGraph
     if (session == null || callId == null || session.isTerminal) {
       _clearConnectionSnapshotReader();
       _unbindAudio();
-      _publishForeground(null);
+      // Session snapshots already retired the surface or published its end
+      // notice. Disposing media must not erase that notice immediately.
       return;
     }
     if (bundle != null && bundle.callId != callId) return;

@@ -1461,7 +1461,7 @@ class GroupMessageListener {
       probeRecentRemoteNotificationAnnouncement:
           ({required payload, String? messageId}) => messageId == null
           ? Future<bool>.value(false)
-          : remoteNotificationGate.hasRecentExactAnnouncement(
+          : remoteNotificationGate.hasExactPendingAnnouncement(
               payload: payload,
               messageId: messageId,
             ),
@@ -1472,7 +1472,7 @@ class GroupMessageListener {
                 messageId: messageId,
               ),
       consumeEstablishedRemotePresentationProof: () =>
-          remoteNotificationGate.consumeIfRecentExactAnnouncement(
+          remoteNotificationGate.consumeExactPendingAnnouncement(
             payload: remoteAnnouncementPayload,
             messageId: message.id,
           ),
@@ -1598,6 +1598,11 @@ class GroupMessageListener {
       return const GroupNotificationDisplayProjectionResult.retryLater();
     }
 
+    final remoteNotificationGate = _remoteNotificationGate;
+    final remoteAnnouncementPayload = NotificationRouteTarget.group(
+      entry.groupId,
+      messageId: entry.messageId,
+    ).toPayload();
     var sqlHandoffCompleted = false;
     var terminalEntry = entry;
     final durableContext = DurableLocalNotificationEffectContext(
@@ -1643,10 +1648,7 @@ class GroupMessageListener {
       appVisibility: visibility,
       forceSilent: isIosMailboxAlertSilentReplayContext,
       contactPeerId: 'group:${entry.groupId}',
-      routePayload: NotificationRouteTarget.group(
-        entry.groupId,
-        messageId: entry.messageId,
-      ).toPayload(),
+      routePayload: remoteAnnouncementPayload,
       senderUsername: 'Mknoon',
       messageText: 'Mknoon',
       messageId: entry.messageId,
@@ -1669,6 +1671,12 @@ class GroupMessageListener {
       backgroundDuplicateGuardDelay: Duration.zero,
       durableEffectContext: durableContext,
     );
+    if (sqlHandoffCompleted) {
+      await remoteNotificationGate.consumeExactPendingAnnouncement(
+        payload: remoteAnnouncementPayload,
+        messageId: entry.messageId,
+      );
+    }
     return _projectionForDurablePresentation(
       result: result,
       sqlHandoffCompleted: sqlHandoffCompleted,

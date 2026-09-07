@@ -99,6 +99,7 @@ const _callHandle = '33333333-3333-4333-8333-333333333333';
 CallSignal _signal({
   String messageId = '11111111-1111-4111-8111-111111111111',
   int senderSequence = 1,
+  int iceGeneration = 0,
   String event = 'invite',
   Map<String, Object?> payload = const <String, Object?>{},
   int createdAtMs = _nowMs,
@@ -113,7 +114,7 @@ CallSignal _signal({
     recipientAccountPeerId: _recipientAccount,
     recipientDevicePeerId: _recipientDevice,
     senderSequence: senderSequence,
-    iceGeneration: 0,
+    iceGeneration: iceGeneration,
     createdAtMs: createdAtMs,
     expiresAtMs: expiresAtMs,
     payload: payload,
@@ -424,6 +425,73 @@ void main() {
         throwsA(
           isA<CallEnvelopeException>().having(
             (error) => error.code,
+            'code',
+            CallEnvelopeErrorCode.nonMonotonicSequence,
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'restart announcement can follow its offer without admitting stale generations or duplicates',
+    () async {
+      Future<String> encode(CallSignal signal) => codec.encode(
+        signal: signal,
+        callHandle: _callHandle,
+        recipientMlKemPublicKey: 'recipient-mlkem-public',
+        senderSigningPrivateKey: _signingKey,
+      );
+      final offer = await encode(
+        _signal(
+          senderSequence: 11,
+          iceGeneration: 1,
+          event: 'offer',
+          payload: {'description': 'v=0', 'fingerprint': 'sha-256 AA:BB'},
+        ),
+      );
+      final restart = await encode(
+        _signal(
+          messageId: '88888888-8888-4888-8888-888888888888',
+          senderSequence: 10,
+          iceGeneration: 1,
+          event: 'ice_restart',
+        ),
+      );
+      (await codec.decode(
+        envelopeJson: offer,
+        authority: _authority(),
+      )).commitReplay();
+      final admitted = await codec.decode(
+        envelopeJson: restart,
+        authority: _authority(),
+      );
+      expect(admitted.signal.event, CallSignalType.iceRestart);
+      admitted.commitReplay();
+      await expectLater(
+        codec.decode(envelopeJson: restart, authority: _authority()),
+        throwsA(
+          isA<CallEnvelopeException>().having(
+            (e) => e.code,
+            'code',
+            CallEnvelopeErrorCode.replay,
+          ),
+        ),
+      );
+
+      final stale = await encode(
+        _signal(
+          messageId: '99999999-9999-4999-8999-999999999999',
+          senderSequence: 9,
+          iceGeneration: 0,
+          event: 'ice_restart',
+        ),
+      );
+      await expectLater(
+        codec.decode(envelopeJson: stale, authority: _authority()),
+        throwsA(
+          isA<CallEnvelopeException>().having(
+            (e) => e.code,
             'code',
             CallEnvelopeErrorCode.nonMonotonicSequence,
           ),

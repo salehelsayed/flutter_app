@@ -1,0 +1,14 @@
+# Notification delay investigation — final device proof
+
+All authorized live device cases are complete and capture sessions stopped. Final Android pair builds114; USB iPhone11 build260907113535. Same test accounts retained throughout. No private phone was controlled.
+
+- Android direct/group ordinary texts passed on validated shared Wi-Fi and native cellular, with Pixel process absent before FCM and exact fresh OS cards before reopening. Additional reactions passed on both networks. Cold debug-app processing remained about12seconds in direct cases, separate from upstream delay.
+- Shared-Wi-Fi iPhone idle delays were reproduced before app reopening: reaction~123seconds, accepted group text~65seconds; both ended at APNs keepalive failure/reconnect and stored-message delivery. Warm controls delivered promptly.
+- Appium MCP became usable after reusing already signed installed WDA with a corrected readiness timeout; no Xcode build loop. Existing iPhone group invitation accepted, group text/reaction/voice/photo/video and notification tap routing all passed with actual OS and exact Notification Center content.
+- Same iPhone on Pixel cellular hotspot received direct text promptly after571seconds idle. Group20seconds later also passed, qualifying as warm preservation after direct reset the connection timer. Same IPv6 TCP5223/en0 APNs flow family; upstream network differed. This narrows a connection-path cause without uniquely identifying router/ISP/Apple or explaining the separate external Android report. Native iPhone cellular radio unavailable because both USB test iPhones have no SIM.
+- Final relay deployment received fresh Android process-absent direct/group text OS proofs plus designated physicalPixel→iPhone group text9E3D-D3FC before reopening. Healthy iPhone direct/group catch-up completed12:36:32.503331 and no new app notification appeared through12:38:12 (>99seconds).
+
+Main reports: `android-network-matrix.md`, `ios-accepted-group-matrix.md`, `hotspot/results.md`, `postdeploy-relay2-results.md`. Parent root owns relay/provider proof, source/test gates and independent APNs forensic report.
+
+
+Closure: owned Pixel/emulator/iPhone log captures77752/77753/77754 stopped and verified absent at 2026-09-07T12:39:59.024928+00:00. Pixel restored to Wi-Fi1/mobileData0/hotspotOff with validated Wi-Fi110; original hotspot configuration unchanged. Root restored iPhone original Wi-Fi, forgot temporary hotspot association, backgrounded app and deleted owned Appium session. Accounts retained; Android114 remains installed on both Android targets and iPhone260907113535 retained. Private coordination credential file removed and two owned evidence files redacted. Final healthy iPhone catch-up produced zero new app notifications through12:38:12UTC (>99s after completion). Detailed state: `closure-state.json` in the parent delay-investigation directory.

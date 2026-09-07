@@ -55,6 +55,7 @@ dependencies:
   # to center-square avatars after compress (flutter_image_compress cannot crop).
   image: ^4.8.0
   crypto: ^3.0.6
+  synchronized: ^3.4.0
   ffi: ^2.1.5
   clock: ^1.1.1
   url_launcher: ^6.2.5

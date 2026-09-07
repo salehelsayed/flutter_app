@@ -3796,4 +3796,54 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get missed_call_notification_unknown_caller => 'شخص ما';
+
+  @override
+  String get call_ended => 'انتهت المكالمة';
+
+  @override
+  String get call_dismiss_status => 'إغلاق حالة المكالمة';
+
+  @override
+  String get call_cancel => 'إلغاء المكالمة';
+
+  @override
+  String get call_answer => 'رد';
+
+  @override
+  String get call_answer_unavailable => 'الرد غير متاح';
+
+  @override
+  String get call_decline_unavailable => 'الرفض غير متاح';
+
+  @override
+  String get call_controls => 'عناصر التحكم بالمكالمة';
+
+  @override
+  String call_audio_output(String route) {
+    return 'مخرج الصوت: $route';
+  }
+
+  @override
+  String get call_speaker => 'مكبر الصوت';
+
+  @override
+  String get call_speaker_off => 'إيقاف مكبر الصوت';
+
+  @override
+  String get call_end => 'إنهاء المكالمة';
+
+  @override
+  String get call_end_action => 'إنهاء';
+
+  @override
+  String get call_audio_route_system_default => 'إعداد النظام الافتراضي';
+
+  @override
+  String get call_audio_route_earpiece => 'سماعة الأذن';
+
+  @override
+  String get call_audio_route_wired_headset => 'سماعة رأس سلكية';
+
+  @override
+  String get call_audio_route_bluetooth => 'بلوتوث';
 }

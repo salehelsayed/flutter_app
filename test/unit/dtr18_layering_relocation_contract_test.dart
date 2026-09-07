@@ -289,7 +289,13 @@ const _productionBootstrapNormalizedSha256 =
     // 413 widens missed-call suppression to any foreground app state; the call
     // overlay covers the whole app, so a conversation-scoped rule let a card
     // post while the user was watching. Policy only; no owner moves.
-    'd3b6faa82d6c5d445520b3071023fe51e9e49730eafdf5fb4e351a59918f76ec';
+    // Notification recovery distributes recipient-issued wake tokens through
+    // the existing contact-update retrier at this composition boundary. The
+    // durable pending marker and post-registration callback move no owner.
+    // Account reconciliation now binds exact remote proofs before publishing
+    // shared identity, with iOS gate setup before deferred Firebase startup.
+    // This changes initialization order within the existing bootstrap owner.
+    'd11873880a88e6132609f516cc8776725c06785b62306a76b6fce791037a82ec';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

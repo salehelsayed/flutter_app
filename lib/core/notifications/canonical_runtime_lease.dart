@@ -353,6 +353,8 @@ typedef CanonicalRuntimeLedgerClaimsSuspend =
     Future<void> Function(String? opaqueBinding);
 typedef CanonicalRuntimeSharedBindingPublish =
     Future<void> Function(String? opaqueBinding);
+typedef CanonicalRuntimeRemoteAnnouncementRebind =
+    Future<void> Function(String? opaqueBinding);
 
 /// Owns the device-local installation secret and opaque account digest.
 /// Recovery work remains disabled by default and is enabled only by a caller
@@ -366,6 +368,7 @@ final class CanonicalRuntimeBindingCoordinator {
     CanonicalRuntimeLedgerRebind? rebindLocalNotificationLedger,
     CanonicalRuntimeLedgerClaimsSuspend? suspendLocalNotificationLedgerClaims,
     CanonicalRuntimeSharedBindingPublish? publishSharedBinding,
+    CanonicalRuntimeRemoteAnnouncementRebind? rebindRemoteAnnouncements,
     String Function()? createInstallationId,
     bool recoveryGraphRegistered = false,
   }) : _secureKeyStore = secureKeyStore,
@@ -376,6 +379,7 @@ final class CanonicalRuntimeBindingCoordinator {
        _suspendLocalNotificationLedgerClaims =
            suspendLocalNotificationLedgerClaims,
        _publishSharedBinding = publishSharedBinding,
+       _rebindRemoteAnnouncements = rebindRemoteAnnouncements,
        _createInstallationId = createInstallationId ?? const Uuid().v4,
        _recoveryGraphRegistered = recoveryGraphRegistered;
 
@@ -387,6 +391,7 @@ final class CanonicalRuntimeBindingCoordinator {
   final CanonicalRuntimeLedgerClaimsSuspend?
   _suspendLocalNotificationLedgerClaims;
   final CanonicalRuntimeSharedBindingPublish? _publishSharedBinding;
+  final CanonicalRuntimeRemoteAnnouncementRebind? _rebindRemoteAnnouncements;
   final String Function() _createInstallationId;
   final bool _recoveryGraphRegistered;
 
@@ -396,6 +401,7 @@ final class CanonicalRuntimeBindingCoordinator {
       canonicalRuntimeAccountBindingStorageKey,
     ))?.trim();
     if (isCanonicalRuntimeOpaqueBinding(persisted)) {
+      await _rebindRemoteAnnouncements?.call(persisted);
       await _publishSharedBinding?.call(persisted);
       await _rebindLocalNotificationLedger?.call(persisted);
       await _rebindDerivedOverlayBestEffort(
@@ -411,6 +417,7 @@ final class CanonicalRuntimeBindingCoordinator {
       await _secureKeyStore.delete(canonicalRuntimeAccountBindingStorageKey);
     }
     final provisional = _derive(installationId, accountPeerId: null);
+    await _rebindRemoteAnnouncements?.call(null);
     await _publishSharedBinding?.call(null);
     // A no-account binding is still an opaque, installation-local fence. It
     // clears old account records without teaching the ledger about raw account
@@ -438,6 +445,9 @@ final class CanonicalRuntimeBindingCoordinator {
     );
     final previous = await readCurrentAccountBinding();
     await _suspendLocalNotificationLedgerClaims?.call(previous);
+    // Exact remote presentation proof can outlive a session. Retire the old
+    // account's proof before granting notification authority to the new one.
+    await _rebindRemoteAnnouncements?.call(binding);
     await _writeAndVerify(canonicalRuntimeAccountBindingStorageKey, binding);
     await _publishCurrentRecoveryReadiness(binding);
     await _leaseGateway?.rebind(binding);
@@ -509,6 +519,7 @@ final class CanonicalRuntimeBindingCoordinator {
     final provisional = _derive(installationId, accountPeerId: null);
     await _leaseGateway?.rebind(provisional);
     await _publishSharedBinding?.call(null);
+    await _rebindRemoteAnnouncements?.call(null);
     await _rebindLocalNotificationLedger?.call(provisional);
     await _rebindDerivedOverlayBestEffort(null, operation: 'retire_account');
     return provisional;

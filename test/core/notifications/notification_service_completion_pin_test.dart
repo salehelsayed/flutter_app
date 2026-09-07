@@ -107,10 +107,13 @@ void main() {
       expect(gateSource, contains('didFinish = true'));
       expect(gateSource, contains('publishState()'));
       expect(gateSource, contains('takeState()'));
+      // Empty alert text makes iOS restore the provider's original content.
+      // The sanitizer must retain fixed non-sensitive text while removing
+      // sound and all provider-controlled presentation metadata.
       for (final assignment in <String>[
-        'content.title = ""',
+        'content.title = "Mknoon"',
         'content.subtitle = ""',
-        'content.body = ""',
+        'content.body = "Open the app to view updates."',
         'content.attachments = []',
         'content.badge = nil',
         'content.sound = nil',

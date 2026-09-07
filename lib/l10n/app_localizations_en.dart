@@ -3737,4 +3737,54 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get missed_call_notification_unknown_caller => 'Someone';
+
+  @override
+  String get call_ended => 'Call ended';
+
+  @override
+  String get call_dismiss_status => 'Dismiss call status';
+
+  @override
+  String get call_cancel => 'Cancel call';
+
+  @override
+  String get call_answer => 'Answer';
+
+  @override
+  String get call_answer_unavailable => 'Answer unavailable';
+
+  @override
+  String get call_decline_unavailable => 'Decline unavailable';
+
+  @override
+  String get call_controls => 'Call controls';
+
+  @override
+  String call_audio_output(String route) {
+    return 'Audio output: $route';
+  }
+
+  @override
+  String get call_speaker => 'Speaker';
+
+  @override
+  String get call_speaker_off => 'Turn speaker off';
+
+  @override
+  String get call_end => 'End call';
+
+  @override
+  String get call_end_action => 'End';
+
+  @override
+  String get call_audio_route_system_default => 'System default';
+
+  @override
+  String get call_audio_route_earpiece => 'Earpiece';
+
+  @override
+  String get call_audio_route_wired_headset => 'Wired headset';
+
+  @override
+  String get call_audio_route_bluetooth => 'Bluetooth';
 }

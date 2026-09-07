@@ -6235,6 +6235,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Someone'**
   String get missed_call_notification_unknown_caller;
+
+  /// No description provided for @call_ended.
+  ///
+  /// In en, this message translates to:
+  /// **'Call ended'**
+  String get call_ended;
+
+  /// No description provided for @call_dismiss_status.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss call status'**
+  String get call_dismiss_status;
+
+  /// No description provided for @call_cancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel call'**
+  String get call_cancel;
+
+  /// No description provided for @call_answer.
+  ///
+  /// In en, this message translates to:
+  /// **'Answer'**
+  String get call_answer;
+
+  /// No description provided for @call_answer_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Answer unavailable'**
+  String get call_answer_unavailable;
+
+  /// No description provided for @call_decline_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline unavailable'**
+  String get call_decline_unavailable;
+
+  /// No description provided for @call_controls.
+  ///
+  /// In en, this message translates to:
+  /// **'Call controls'**
+  String get call_controls;
+
+  /// No description provided for @call_audio_output.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio output: {route}'**
+  String call_audio_output(String route);
+
+  /// No description provided for @call_speaker.
+  ///
+  /// In en, this message translates to:
+  /// **'Speaker'**
+  String get call_speaker;
+
+  /// No description provided for @call_speaker_off.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn speaker off'**
+  String get call_speaker_off;
+
+  /// No description provided for @call_end.
+  ///
+  /// In en, this message translates to:
+  /// **'End call'**
+  String get call_end;
+
+  /// No description provided for @call_end_action.
+  ///
+  /// In en, this message translates to:
+  /// **'End'**
+  String get call_end_action;
+
+  /// No description provided for @call_audio_route_system_default.
+  ///
+  /// In en, this message translates to:
+  /// **'System default'**
+  String get call_audio_route_system_default;
+
+  /// No description provided for @call_audio_route_earpiece.
+  ///
+  /// In en, this message translates to:
+  /// **'Earpiece'**
+  String get call_audio_route_earpiece;
+
+  /// No description provided for @call_audio_route_wired_headset.
+  ///
+  /// In en, this message translates to:
+  /// **'Wired headset'**
+  String get call_audio_route_wired_headset;
+
+  /// No description provided for @call_audio_route_bluetooth.
+  ///
+  /// In en, this message translates to:
+  /// **'Bluetooth'**
+  String get call_audio_route_bluetooth;
 }
 
 class _AppLocalizationsDelegate

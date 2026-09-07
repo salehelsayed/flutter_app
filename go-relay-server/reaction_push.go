@@ -526,9 +526,7 @@ func buildGroupReactionPushMessage(
 			Headers: map[string]string{
 				"apns-priority":  "10",
 				"apns-push-type": "alert",
-				// D1b: per-group on purpose (one stable card per group);
-				// the iOS in-transit collapse loss is a documented open
-				// half of C2 while this holds.
+				// Retry identity is per event; ThreadID owns visual grouping.
 				"apns-collapse-id": apnsCollapseIdentity,
 			},
 			Payload: &messaging.APNSPayload{
@@ -598,8 +596,10 @@ func buildReactionPushMessage(token, authenticatedFromPeerID, message string) *m
 		Token: token,
 		Data:  data,
 		Android: &messaging.AndroidConfig{
-			Priority:    "high",
-			CollapseKey: identity,
+			// Distinct reactions must stay non-collapsible: per-event keys
+			// exceed FCM's four outstanding collapse keys per device. The
+			// encrypted data retains event_id for recipient-side deduplication.
+			Priority: "high",
 		},
 		APNS: &messaging.APNSConfig{
 			Headers: map[string]string{

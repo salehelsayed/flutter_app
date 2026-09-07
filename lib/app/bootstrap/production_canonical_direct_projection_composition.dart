@@ -1076,6 +1076,11 @@ buildProductionCanonicalDirectProjectionComposition(
       }
       if (entry.hasCanonicalRetirementProof) {
         if (durableAttempt == null) return null;
+        final retirementGate = recentRemoteNotificationGate;
+        final retiredRemoteEventId =
+            entry.eventKind == DirectNotificationDisplayOutboxKind.reaction
+            ? entry.reactionId
+            : entry.messageId;
         final presentation = await maybeShowNotification(
           notificationService: dependencies.notificationService,
           appVisibility: dependencies.appVisibility,
@@ -1099,6 +1104,15 @@ buildProductionCanonicalDirectProjectionComposition(
           presentation: presentation,
           durableAttempt: durableAttempt,
           sqlReadyRevision: terminalEntry.revision,
+          consumeRemotePresentationProof: retiredRemoteEventId == null
+              ? null
+              : () => retirementGate.consumeExactPendingAnnouncement(
+                  payload: NotificationRouteTarget.conversation(
+                    entry.peerId,
+                    messageId: entry.messageId,
+                  ).toPayload(),
+                  messageId: retiredRemoteEventId,
+                ),
         );
       }
       final contact = await dependencies.contactRepository.getContact(
@@ -1159,13 +1173,13 @@ buildProductionCanonicalDirectProjectionComposition(
                 ({required payload, String? messageId}) async {
                   if (messageId == null) return false;
                   final established = await attemptRemoteGate
-                      .hasRecentExactAnnouncement(
+                      .hasExactPendingAnnouncement(
                         payload: payload,
                         messageId: messageId,
                       );
                   if (established) {
                     consumeRemotePresentationProof = () =>
-                        attemptRemoteGate.consumeIfRecentExactAnnouncement(
+                        attemptRemoteGate.consumeExactPendingAnnouncement(
                           payload: payload,
                           messageId: messageId,
                         );
@@ -1210,6 +1224,8 @@ buildProductionCanonicalDirectProjectionComposition(
               reaction.id != entry.reactionId ||
               reaction.timestamp != entry.eventTimestamp;
           if (ineligible && durableAttempt == null) return null;
+          final attemptRemoteGate = recentRemoteNotificationGate;
+          ConsumeDirectRemotePresentationProof? consumeRemotePresentationProof;
           final presentation = await maybeShowNotification(
             notificationService: dependencies.notificationService,
             appVisibility: dependencies.appVisibility,
@@ -1235,24 +1251,39 @@ buildProductionCanonicalDirectProjectionComposition(
                   pendingNotificationOverlay:
                       dependencies.pendingNotificationOverlay,
                 ),
+            probeRecentRemoteNotificationAnnouncement:
+                ({required payload, String? messageId}) async {
+                  if (messageId == null) return false;
+                  final established = await attemptRemoteGate
+                      .hasExactPendingAnnouncement(
+                        payload: payload,
+                        messageId: messageId,
+                      );
+                  if (established) {
+                    consumeRemotePresentationProof = () =>
+                        attemptRemoteGate.consumeExactPendingAnnouncement(
+                          payload: payload,
+                          messageId: messageId,
+                        );
+                  }
+                  return established;
+                },
             consumeRecentRemoteNotificationAnnouncement:
                 ({required payload, String? messageId}) =>
-                    recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+                    attemptRemoteGate.consumeIfRecentAnnouncement(
                       payload: payload,
                       messageId: messageId,
                     ),
             markRecentRemoteNotificationAnnouncement:
-                ({required payload, String? messageId}) =>
-                    recentRemoteNotificationGate.markAnnouncement(
-                      payload: payload,
-                      messageId: messageId,
-                    ),
+                ({required payload, String? messageId}) => attemptRemoteGate
+                    .markAnnouncement(payload: payload, messageId: messageId),
             durableEffectContext: durableAttempt?.context,
           );
           return finishDirectNotificationProjection(
             presentation: presentation,
             durableAttempt: durableAttempt,
             sqlReadyRevision: terminalEntry.revision,
+            consumeRemotePresentationProof: consumeRemotePresentationProof,
           );
         default:
           return null;

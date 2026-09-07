@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:synchronized/synchronized.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -43,6 +44,7 @@ void _defaultRecentRemoteGateLoadError(Object error, StackTrace stack) {
 
 class RecentRemoteNotificationGate {
   final String? _explicitFilePath;
+  final Lock _durableProofLock = Lock();
   final Duration ttl;
   final Duration messageTtl;
   final DateTime Function() _now;
@@ -60,11 +62,10 @@ class RecentRemoteNotificationGate {
   // never double-hit the platform channel).
   Future<String>? _resolvedPathFuture;
 
-  // 04-P0 / SI-5: resolved-once app-group sidecar dir + a one-time stale-marker
-  // prune so the dir cannot grow unbounded if the Dart isolate never consumes
-  // an NSE-written marker.
+  // Native sidecars identify exact events and survive until their canonical
+  // owner retires them. Recent compatibility checks must not delete pending
+  // durable presentation proof merely because the app stayed closed.
   Future<String?>? _resolvedSidecarDirFuture;
-  bool _sidecarPruneDone = false;
 
   RecentRemoteNotificationGate({
     String? filePath,
@@ -195,12 +196,15 @@ class RecentRemoteNotificationGate {
   /// per-message marker into the shared app-group container. Honor it (and
   /// consume it) when present within the 12h message TTL, so the duplicate Dart
   /// banner is suppressed even though the Dart isolate never saw the push.
-  Future<bool> _consumeSidecarMarker(String payload, String messageId) async {
+  Future<bool> _consumeSidecarMarker(
+    String payload,
+    String messageId, {
+    bool requireRecent = true,
+  }) async {
     final dirPath = await _resolveSidecarDir();
     if (dirPath == null) {
       return false;
     }
-    await _pruneStaleSidecarsOnce(dirPath);
     try {
       final file = File('$dirPath/${sidecarMarkerName(payload, messageId)}');
       if (!await file.exists()) {
@@ -209,8 +213,11 @@ class RecentRemoteNotificationGate {
       final ageMs =
           _now().millisecondsSinceEpoch -
           (await file.lastModified()).millisecondsSinceEpoch;
+      if (requireRecent && ageMs > messageTtl.inMilliseconds) {
+        return false;
+      }
       await file.delete();
-      return ageMs <= messageTtl.inMilliseconds;
+      return true;
     } catch (_) {
       return false;
     }
@@ -224,22 +231,25 @@ class RecentRemoteNotificationGate {
   }
 
   Future<int?> _recentSidecarTimestamp(String payload, String messageId) async {
+    final timestamp = await _sidecarTimestamp(payload, messageId);
+    if (timestamp == null ||
+        _now().millisecondsSinceEpoch - timestamp > messageTtl.inMilliseconds) {
+      return null;
+    }
+    return timestamp;
+  }
+
+  Future<int?> _sidecarTimestamp(String payload, String messageId) async {
     final dirPath = await _resolveSidecarDir();
     if (dirPath == null) {
       return null;
     }
-    await _pruneStaleSidecarsOnce(dirPath);
     try {
       final file = File('$dirPath/${sidecarMarkerName(payload, messageId)}');
       if (!await file.exists()) {
         return null;
       }
-      final modifiedAtMs = (await file.lastModified()).millisecondsSinceEpoch;
-      final ageMs = _now().millisecondsSinceEpoch - modifiedAtMs;
-      if (ageMs <= messageTtl.inMilliseconds) {
-        return modifiedAtMs;
-      }
-      await file.delete();
+      return (await file.lastModified()).millisecondsSinceEpoch;
     } catch (_) {}
     return null;
   }
@@ -269,31 +279,6 @@ class RecentRemoteNotificationGate {
       );
       if (await file.exists()) {
         await file.delete();
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _pruneStaleSidecarsOnce(String dirPath) async {
-    if (_sidecarPruneDone) {
-      return;
-    }
-    _sidecarPruneDone = true;
-    try {
-      final dir = Directory(dirPath);
-      if (!await dir.exists()) {
-        return;
-      }
-      final cutoffMs =
-          _now().millisecondsSinceEpoch - messageTtl.inMilliseconds;
-      await for (final entity in dir.list()) {
-        if (entity is! File) {
-          continue;
-        }
-        try {
-          if ((await entity.lastModified()).millisecondsSinceEpoch < cutoffMs) {
-            await entity.delete();
-          }
-        } catch (_) {}
       }
     } catch (_) {}
   }
@@ -385,7 +370,114 @@ class RecentRemoteNotificationGate {
     return _hasRecentSidecarMarker(normalizedPayload, normalizedMessageId);
   }
 
-  /// Consumes proof for exactly one message identity.
+  /// Reads exact native proof for an authenticated, canonically pending event.
+  ///
+  /// Only durable owners may use this age-independent path. The caller must
+  /// validate the account, conversation and event against canonical custody,
+  /// and retire the exact proof after durable settlement. Broad payload hints
+  /// never establish this authority. Compatibility APIs retain their TTL.
+  Future<bool> hasExactPendingAnnouncement({
+    required String payload,
+    required String messageId,
+  }) async {
+    final normalizedPayload = _normalizePayload(payload);
+    final normalizedMessageId = _normalizePayload(messageId);
+    if (normalizedPayload == null || normalizedMessageId == null) {
+      return false;
+    }
+    final entries = await _loadEntries();
+    return entries.containsKey(
+          _messageKey(normalizedPayload, normalizedMessageId),
+        ) ||
+        await _sidecarTimestamp(normalizedPayload, normalizedMessageId) != null;
+  }
+
+  /// Retires only the exact proof whose canonical custody has settled.
+  Future<bool> consumeExactPendingAnnouncement({
+    required String payload,
+    required String messageId,
+  }) => _durableProofLock.synchronized(() async {
+    final normalizedPayload = _normalizePayload(payload);
+    final normalizedMessageId = _normalizePayload(messageId);
+    if (normalizedPayload == null || normalizedMessageId == null) {
+      return false;
+    }
+    final targetName = sidecarMarkerName(
+      normalizedPayload,
+      normalizedMessageId,
+    );
+    final aliases = await _aliasOrigins(targetName);
+    final retiredNames = {targetName, ...aliases};
+    final entries = await _loadEntries();
+    final before = entries.length;
+    entries.removeWhere(
+      (key, _) =>
+          retiredNames.contains(sha256.convert(utf8.encode(key)).toString()),
+    );
+    // Keep alias provenance until both storage representations have retired.
+    // A failed deletion can then be retried by the canonically retired owner.
+    await _writeEntriesOrThrow(entries);
+    final directory = await _resolveSidecarDir();
+    var consumedSidecar = false;
+    if (_appGroupSidecarDirProvider != null && directory == null) {
+      throw StateError('exact presentation proof directory is unavailable');
+    }
+    if (directory != null) {
+      for (final name in retiredNames) {
+        final marker = File('$directory/$name');
+        if (await marker.exists()) {
+          await marker.delete();
+          consumedSidecar = true;
+        }
+      }
+    }
+    final aliasRoot = await _aliasRoot();
+    for (final name in retiredNames) {
+      final directory = Directory('${aliasRoot.path}/$name');
+      if (await directory.exists()) await directory.delete(recursive: true);
+    }
+    return before != entries.length || consumedSidecar;
+  });
+
+  Future<Directory> _aliasRoot() async =>
+      Directory('${await _resolveFilePath()}.aliases');
+
+  Future<Set<String>> _aliasOrigins(String targetName) async {
+    final root = await _aliasRoot();
+    final origins = <String>{};
+    final visited = <String>{};
+    Future<void> visit(String name) async {
+      if (!visited.add(name)) return;
+      final directory = Directory('${root.path}/$name');
+      if (!await directory.exists()) return;
+      await for (final entry in directory.list(followLinks: false)) {
+        final sourceName = entry.path.split(Platform.pathSeparator).last;
+        if (entry is! File || !RegExp(r'^[a-f0-9]{64}$').hasMatch(sourceName)) {
+          continue;
+        }
+        origins.add(sourceName);
+        await visit(sourceName);
+      }
+    }
+
+    await visit(targetName);
+    origins.remove(targetName);
+    return origins;
+  }
+
+  Future<void> _persistAliasOrigin(String sourceKey, String targetKey) async {
+    final root = await _aliasRoot();
+    final targetName = sha256.convert(utf8.encode(targetKey)).toString();
+    final sourceName = sha256.convert(utf8.encode(sourceKey)).toString();
+    final directory = Directory('${root.path}/$targetName');
+    await directory.create(recursive: true);
+    // One immutable, empty file per proven origin avoids lost updates when
+    // separate gate instances promote different aliases to the same target.
+    final origin = File('${directory.path}/$sourceName');
+    await origin.writeAsString('', flush: true);
+  }
+
+  /// Consumes recent proof for exactly one message identity.
   ///
   /// Both the exact Dart-map key and its exact NSE sidecar are removed so the
   /// operation remains one-shot when both processes recorded the same remote
@@ -424,7 +516,7 @@ class RecentRemoteNotificationGate {
     required String sourceMessageId,
     required String targetPayload,
     required String targetMessageId,
-  }) async {
+  }) => _durableProofLock.synchronized(() async {
     final normalizedSourcePayload = _normalizePayload(sourcePayload);
     final normalizedSourceMessageId = _normalizePayload(sourceMessageId);
     final normalizedTargetPayload = _normalizePayload(targetPayload);
@@ -447,22 +539,58 @@ class RecentRemoteNotificationGate {
     );
     final sourceTimestamp =
         entries[sourceKey] ??
-        await _recentSidecarTimestamp(
+        await _sidecarTimestamp(
           normalizedSourcePayload,
           normalizedSourceMessageId,
         );
     if (sourceTimestamp == null) {
       return false;
     }
-    if (sourceKey == targetKey || entries.containsKey(targetKey)) {
+    if (sourceKey == targetKey) {
       return true;
     }
 
+    // Persist the origin before publishing target proof. If promotion or SQL
+    // reconciliation is interrupted, a fresh gate can still retire both once
+    // the canonical owner settles. The source remains usable until then.
+    await _persistAliasOrigin(sourceKey, targetKey);
+    await _persistExactSidecarAlias(
+      normalizedTargetPayload,
+      normalizedTargetMessageId,
+      sourceTimestamp,
+    );
     await _writeEntriesAtomicallyOrThrow(<String, int>{
       ...entries,
-      targetKey: sourceTimestamp,
+      targetKey: entries[targetKey] ?? sourceTimestamp,
     });
     return true;
+  });
+
+  Future<void> _persistExactSidecarAlias(
+    String payload,
+    String messageId,
+    int timestamp,
+  ) async {
+    final directory = await _resolveSidecarDir();
+    if (directory == null) return;
+    final target = File('$directory/${sidecarMarkerName(payload, messageId)}');
+    if (await target.exists()) return;
+    await target.parent.create(recursive: true);
+    final temporary = File(
+      '$directory/.alias-$pid-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    try {
+      await temporary.writeAsString('', flush: true);
+      await temporary.setLastModified(
+        DateTime.fromMillisecondsSinceEpoch(timestamp),
+      );
+      await temporary.rename(target.path);
+    } catch (_) {
+      try {
+        if (await temporary.exists()) await temporary.delete();
+      } catch (_) {}
+      rethrow;
+    }
   }
 
   Future<bool> consumeIfRecentAnnouncement({
@@ -499,6 +627,61 @@ class RecentRemoteNotificationGate {
     }
     return false;
   }
+
+  /// Reconciles retained proof with the canonical opaque account binding.
+  /// An existing account's first upgrade preserves its pending native proof;
+  /// subsequent account changes and no-account startup retire every old proof.
+  /// Reset failures propagate so callers cannot publish a new account over
+  /// stale proof. The companion binding makes retries survive process death.
+  Future<void> rebindAccount(
+    String? opaqueBinding,
+  ) => _durableProofLock.synchronized(() async {
+    final binding = opaqueBinding?.trim();
+    if (binding != null && binding.isEmpty) {
+      throw ArgumentError.value(opaqueBinding, 'opaqueBinding');
+    }
+    final path = await _resolveFilePath();
+    final accountFile = File('$path.account');
+    final hasPrevious = await accountFile.exists();
+    String? previous;
+    if (hasPrevious) {
+      final decoded = jsonDecode(await accountFile.readAsString());
+      if (decoded is! Map<String, dynamic> ||
+          !decoded.containsKey('binding') ||
+          (decoded['binding'] != null && decoded['binding'] is! String)) {
+        throw const FormatException('invalid presentation proof account');
+      }
+      previous = decoded['binding'] as String?;
+    }
+    if (hasPrevious && previous == binding && binding != null) return;
+    if (binding == null || (hasPrevious && previous != binding)) {
+      final sidecarDirectory = await _resolveSidecarDir();
+      if (_appGroupSidecarDirProvider != null && sidecarDirectory == null) {
+        throw StateError('exact presentation proof directory is unavailable');
+      }
+      if (sidecarDirectory != null) {
+        final directory = Directory(sidecarDirectory);
+        if (await directory.exists()) await directory.delete(recursive: true);
+      }
+      final aliases = await _aliasRoot();
+      if (await aliases.exists()) await aliases.delete(recursive: true);
+      final entries = File(path);
+      if (await entries.exists()) await entries.delete();
+    }
+    await accountFile.parent.create(recursive: true);
+    final temporary = File(
+      '$path.account-$pid-${DateTime.now().microsecondsSinceEpoch}.tmp',
+    );
+    try {
+      await temporary.writeAsString(
+        jsonEncode({'binding': binding}),
+        flush: true,
+      );
+      await temporary.rename(accountFile.path);
+    } finally {
+      if (await temporary.exists()) await temporary.delete();
+    }
+  });
 
   Future<void> clear() async {
     try {

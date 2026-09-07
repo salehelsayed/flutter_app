@@ -11,6 +11,7 @@ import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
+import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_signaling_runtime.dart';
@@ -45,13 +46,40 @@ final class _ThrowingRuntimeHistory implements CallHistoryRepository {
   }
 }
 
-CallCoordinator _coordinator() => CallCoordinator(
+CallCoordinator _coordinator({
+  CallEffectExecutor effects = const NoopCallEffectExecutor(),
+}) => CallCoordinator(
   reducer: const CallReducer(),
   cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
   historyProjector: CallHistoryProjector(_History()),
+  effectExecutor: effects,
   clock: () => DateTime.utc(2026, 8, 30),
   idSource: () => CallId.parse('11111111-1111-4111-8111-111111111111'),
 );
+
+final class _PendingMediaEffects implements CallEffectExecutor {
+  final preparing = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<CallEvent?> execute(
+    CallEffect effect,
+    CallSessionSnapshot snapshot,
+  ) async {
+    if (effect.type == CallEffectType.startNegotiation) {
+      preparing.complete();
+      await release.future;
+      return CallEvent(
+        type: CallEventType.negotiationReady,
+        eventId: 'late-negotiation',
+        occurredAt: _runtimeNow,
+        callId: snapshot.callId,
+        contactPeerId: snapshot.contactPeerId,
+      );
+    }
+    return null;
+  }
+}
 
 final class _Mailbox implements CallMailboxClient {
   final List<CallMailboxRetrieveResult> pages = <CallMailboxRetrieveResult>[];
@@ -252,8 +280,9 @@ _runtimeWithRealHandler({
   required Stream<ChatMessage> directStream,
   required _Mailbox mailbox,
   required _RuntimeCrypto crypto,
+  CallEffectExecutor effects = const NoopCallEffectExecutor(),
 }) async {
-  final coordinator = _coordinator();
+  final coordinator = _coordinator(effects: effects);
   final presenter = _RuntimePresenter();
   final signalingContexts = CallSignalingContextStore();
   final outcomes = <IncomingCallSignalOutcome>[];
@@ -295,6 +324,122 @@ _runtimeWithRealHandler({
 }
 
 void main() {
+  for (final useMailbox in <bool>[false, true]) {
+    test(
+      '${useMailbox ? 'mailbox' : 'direct'} hang-up interrupts admitted accept preparation',
+      () async {
+        final stream = StreamController<ChatMessage>.broadcast();
+        addTearDown(stream.close);
+        final mailbox = _Mailbox();
+        final effects = _PendingMediaEffects();
+        final built = await _runtimeWithRealHandler(
+          directStream: stream.stream,
+          mailbox: mailbox,
+          crypto: _RuntimeCrypto(),
+          effects: effects,
+        );
+        addTearDown(() {
+          if (!effects.release.isCompleted) effects.release.complete();
+          return built.runtime.shutdown();
+        });
+        await built.runtime.start();
+        final accept = _runtimeSignal(
+          messageId: '44444444-4444-4444-8444-444444444444',
+          event: CallSignalType.accept,
+          sequence: 1,
+        );
+        await built.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.place,
+            eventId: 'outgoing',
+            occurredAt: _runtimeNow,
+            callId: accept.callId,
+            contactPeerId: 'sender-account',
+            localAccountPeerId: 'recipient-account',
+            localDeviceId: 'recipient-device',
+            remoteAccountPeerId: 'sender-account',
+          ),
+        );
+        await built.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.outgoingInviteReady,
+            eventId: 'outgoing-ready',
+            occurredAt: _runtimeNow,
+            callId: accept.callId,
+            contactPeerId: 'sender-account',
+          ),
+        );
+        final terminate = _runtimeSignal(
+          messageId: '55555555-5555-4555-8555-555555555555',
+          event: CallSignalType.terminate,
+          sequence: 2,
+          payload: const <String, Object?>{'reason': 'remote_hangup'},
+        );
+        Future<void> deliver(CallSignal signal) async {
+          final envelope = await built.codec.encode(
+            signal: signal,
+            callHandle: '33333333-3333-4333-8333-333333333333',
+            recipientMlKemPublicKey: 'recipient-mlkem-public',
+            senderSigningPrivateKey: 'sender-signing-key',
+          );
+          if (useMailbox) {
+            mailbox.pages.add(
+              CallMailboxRetrieveResult(
+                events: <CallMailboxEvent>[
+                  CallMailboxEvent(
+                    callHandle: '33333333-3333-4333-8333-333333333333',
+                    messageId: signal.messageId,
+                    envelopeJson: envelope,
+                    authenticatedSenderDevicePeerId: 'sender-device',
+                    recipientDevicePeerId: 'recipient-device',
+                    receiptAtMs: _runtimeNowMs,
+                    expiresAtMs: signal.expiresAtMs,
+                  ),
+                ],
+                receiptAtMs: _runtimeNowMs,
+                expiresAtMs: signal.expiresAtMs,
+                hasMore: false,
+              ),
+            );
+            await built.runtime.onResume();
+          } else {
+            stream.add(
+              ChatMessage(
+                from: 'sender-device',
+                to: 'recipient-device',
+                content: envelope,
+                timestamp: '2026-08-30T00:00:00.000Z',
+                isIncoming: true,
+                transport: 'direct',
+              ),
+            );
+            await Future<void>.delayed(Duration.zero);
+            await built.runtime.settle();
+          }
+        }
+
+        await deliver(accept).timeout(const Duration(seconds: 1));
+        await effects.preparing.future;
+        expect(effects.release.isCompleted, isFalse);
+        await deliver(terminate).timeout(const Duration(seconds: 1));
+        expect(built.coordinator.activeSession, isNull);
+        expect(built.coordinator.lastSnapshot?.isTerminal, isTrue);
+        expect(built.outcomes, <IncomingCallSignalOutcome>[
+          IncomingCallSignalOutcome.accepted,
+          IncomingCallSignalOutcome.accepted,
+        ]);
+        if (useMailbox) expect(mailbox.acks, 2);
+        effects.release.complete();
+        await Future<void>.delayed(Duration.zero);
+        expect(built.coordinator.activeSession, isNull);
+        expect(
+          built.coordinator.lastSnapshot?.recentEventIds,
+          isNot(contains('late-negotiation')),
+        );
+      },
+    );
+  }
+
   test(
     'migration readiness precedes listener and cold-start mailbox drain',
     () async {

@@ -91,6 +91,10 @@ final class _RecordingExecutor implements CallEffectExecutor {
 }
 
 final class _ImmediateAcceptExecutor implements CallEffectExecutor {
+  _ImmediateAcceptExecutor({this.receipt = CallEventType.remoteAccept});
+
+  final CallEventType receipt;
+
   @override
   Future<CallEvent?> execute(
     CallEffect effect,
@@ -100,12 +104,24 @@ final class _ImmediateAcceptExecutor implements CallEffectExecutor {
       CallEventType.outgoingInviteReady,
       eventId: 'invite-ready',
     ),
-    CallEffectType.sendInvite => _event(
-      CallEventType.remoteAccept,
-      eventId: 'immediate-accept',
-    ),
+    CallEffectType.sendInvite => _event(receipt, eventId: 'immediate-receipt'),
     _ => null,
   };
+}
+
+final class _FailingPreparationExecutor implements CallEffectExecutor {
+  _FailingPreparationExecutor(this.onPreparation);
+
+  final void Function() onPreparation;
+
+  @override
+  Future<CallEvent?> execute(CallEffect effect, CallSessionSnapshot snapshot) {
+    if (effect.type == CallEffectType.startNegotiation) {
+      onPreparation();
+      throw StateError('preparation failed while hang-up was admitted');
+    }
+    return Future<CallEvent?>.value();
+  }
 }
 
 CallCoordinator _coordinator({
@@ -181,6 +197,178 @@ final class _FakeTimerScheduler implements CallTimerScheduler {
 }
 
 void main() {
+  test('preparation failure cannot strand an admitted hang-up', () async {
+    final history = _MemoryHistoryRepository();
+    late final CallCoordinator coordinator;
+    late final Future<CallReduction> hangup;
+    coordinator = _coordinator(
+      history: history,
+      executor: _FailingPreparationExecutor(() {
+        hangup = coordinator.dispatch(_event(CallEventType.end));
+      }),
+    );
+    addTearDown(coordinator.dispose);
+    await coordinator.dispatch(_event(CallEventType.place));
+    await coordinator.dispatch(_event(CallEventType.outgoingInviteReady));
+    await coordinator.dispatch(_event(CallEventType.remoteAccept));
+    expect(
+      (await hangup.timeout(const Duration(seconds: 1))).decision,
+      CallEventDecision.applied,
+    );
+    expect(coordinator.activeSession, isNull);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.localHangup);
+    expect(history.rows, hasLength(1));
+  });
+
+  for (final deadline in <(Duration, CallEndReason)>[
+    (const Duration(seconds: 30), CallEndReason.noAnswer),
+    (const Duration(seconds: 45), CallEndReason.expired),
+  ]) {
+    test(
+      'wake receipt preserves the ${deadline.$1.inSeconds}s deadline',
+      () async {
+        final history = _MemoryHistoryRepository();
+        final timers = _FakeTimerScheduler();
+        final coordinator = _coordinator(
+          history: history,
+          executor: _ImmediateAcceptExecutor(
+            receipt: CallEventType.wakeRequested,
+          ),
+          timerScheduler: timers,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.placeCall(
+          contactPeerId: 'contact-a',
+          localAccountPeerId: 'local-account',
+          localDeviceId: 'local-device',
+        );
+        expect(coordinator.activeSession?.state, CallState.ringing);
+        await timers.fire(deadline.$1);
+
+        expect(coordinator.activeSession, isNull);
+        expect(coordinator.lastSnapshot?.endReason, deadline.$2);
+        expect(history.rows, hasLength(1));
+      },
+    );
+  }
+
+  for (final terminal in <CallEventType>[
+    CallEventType.end,
+    CallEventType.remoteTerminate,
+    CallEventType.appShutdown,
+  ]) {
+    test(
+      '${terminal.name} interrupts acceptance before permission resolves',
+      () async {
+        final gate = Completer<void>();
+        final executor = _RecordingExecutor(
+          gate: gate,
+          blockedEffect: CallEffectType.prepareAcceptedMedia,
+        );
+        final history = _MemoryHistoryRepository();
+        var cleanups = 0;
+        final coordinator = _coordinator(
+          history: history,
+          executor: executor,
+          cleanup: CallCleanupCoordinator([
+            CallCleanupStep('media', (_) async => cleanups++),
+          ]),
+        );
+        addTearDown(coordinator.dispose);
+        await coordinator.dispatch(
+          _event(
+            CallEventType.remoteInvite,
+            expiresAt: _now.add(const Duration(seconds: 45)),
+          ),
+        );
+        await coordinator.dispatch(_event(CallEventType.incomingValidated));
+        await coordinator.dispatch(_event(CallEventType.systemUiPresented));
+        final admission = Completer<CallReduction>();
+        final answer = coordinator.dispatch(
+          _event(CallEventType.answer),
+          onApplied: admission.complete,
+        );
+        expect((await admission.future).snapshot.state, CallState.accepted);
+        await Future<void>.delayed(Duration.zero);
+        expect(executor.effects, contains(CallEffectType.prepareAcceptedMedia));
+
+        await coordinator
+            .dispatch(_event(terminal))
+            .timeout(const Duration(seconds: 1));
+        await answer;
+        expect(gate.isCompleted, isFalse);
+        expect(coordinator.activeSession, isNull);
+        expect(cleanups, 1);
+        expect(history.rows, hasLength(1));
+        expect(executor.effects, isNot(contains(CallEffectType.sendAccept)));
+
+        gate.complete();
+        await Future<void>.delayed(Duration.zero);
+        expect(coordinator.activeSession, isNull);
+        expect(executor.effects, isNot(contains(CallEffectType.sendAccept)));
+        expect(cleanups, 1);
+      },
+    );
+  }
+
+  test('negotiation deadline interrupts blocked media preparation', () async {
+    final gate = Completer<void>();
+    final timers = _FakeTimerScheduler();
+    final history = _MemoryHistoryRepository();
+    final coordinator = _coordinator(
+      history: history,
+      timerScheduler: timers,
+      maxPendingEvents: 1,
+      executor: _RecordingExecutor(
+        gate: gate,
+        blockedEffect: CallEffectType.startNegotiation,
+      ),
+    );
+    addTearDown(coordinator.dispose);
+    await coordinator.dispatch(_event(CallEventType.place));
+    await coordinator.dispatch(_event(CallEventType.outgoingInviteReady));
+    final accept = coordinator.dispatch(_event(CallEventType.remoteAccept));
+    await Future<void>.delayed(Duration.zero);
+
+    await timers
+        .fire(const Duration(seconds: 30))
+        .timeout(const Duration(seconds: 1));
+    await accept;
+    expect(gate.isCompleted, isFalse);
+    expect(coordinator.activeSession, isNull);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.mediaFailed);
+    gate.completeError(StateError('late preparation failure'));
+    await Future<void>.delayed(Duration.zero);
+    expect(history.rows, hasLength(1));
+  });
+
+  test(
+    'dispose interrupts blocked media without waiting for its timeout',
+    () async {
+      final gate = Completer<void>();
+      final history = _MemoryHistoryRepository();
+      final coordinator = _coordinator(
+        history: history,
+        executor: _RecordingExecutor(
+          gate: gate,
+          blockedEffect: CallEffectType.startNegotiation,
+        ),
+      );
+      await coordinator.dispatch(_event(CallEventType.place));
+      await coordinator.dispatch(_event(CallEventType.outgoingInviteReady));
+      final accept = coordinator.dispatch(_event(CallEventType.remoteAccept));
+      await Future<void>.delayed(Duration.zero);
+
+      await coordinator.dispose().timeout(const Duration(seconds: 1));
+      await accept;
+      expect(gate.isCompleted, isFalse);
+      expect(coordinator.lastSnapshot?.endReason, CallEndReason.appShutdown);
+      gate.complete();
+      await Future<void>.delayed(Duration.zero);
+    },
+  );
+
   test(
     'applied transition observer reports fixed reducer enums only',
     () async {

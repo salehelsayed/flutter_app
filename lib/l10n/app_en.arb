@@ -1923,5 +1923,22 @@
   "call_row_failed": "Call failed",
   "call_row_with_duration": "{label} · {duration}",
   "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}},
-  "missed_call_notification_unknown_caller": "Someone"
+  "missed_call_notification_unknown_caller": "Someone",
+  "call_ended": "Call ended",
+  "call_dismiss_status": "Dismiss call status",
+  "call_cancel": "Cancel call",
+  "call_answer": "Answer",
+  "call_answer_unavailable": "Answer unavailable",
+  "call_decline_unavailable": "Decline unavailable",
+  "call_controls": "Call controls",
+  "call_audio_output": "Audio output: {route}",
+  "call_speaker": "Speaker",
+  "call_speaker_off": "Turn speaker off",
+  "call_end": "End call",
+  "call_end_action": "End",
+  "call_audio_route_system_default": "System default",
+  "call_audio_route_earpiece": "Earpiece",
+  "call_audio_route_wired_headset": "Wired headset",
+  "call_audio_route_bluetooth": "Bluetooth",
+  "@call_audio_output": {"placeholders": {"route": {"type": "String"}}}
 }

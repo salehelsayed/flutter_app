@@ -1133,6 +1133,7 @@ cat >"$plan398_fake_bin/go" <<'PY'
 #!/usr/bin/env python3
 import os
 import pathlib
+import re
 import sys
 
 args = sys.argv[1:]
@@ -1141,9 +1142,17 @@ try:
 except (ValueError, IndexError):
     raise SystemExit(93)
 output.parent.mkdir(parents=True, exist_ok=True)
+version = re.search(
+    r'^const version = "([A-Za-z0-9._-]+)"$',
+    pathlib.Path("main.go").read_text(),
+    re.M,
+)
+if version is None:
+    raise SystemExit(97)
 output.write_bytes(
     ("plan398 deterministic linux relay " +
-     os.environ.get("PLAN398_TEST_BUILD_VARIANT", "v1") + "\n").encode()
+     os.environ.get("PLAN398_TEST_BUILD_VARIANT", "v1") + "\n" +
+     "relay-server v" + version.group(1) + "\n").encode()
 )
 output.chmod(0o755)
 PY
@@ -1212,7 +1221,11 @@ command = shlex.split(sys.argv[-1])
 if command == ["systemctl", "is-active", "relay-server"]:
     print("active")
 elif command == ["/usr/local/bin/relay-server", "version"]:
-    print("relay-server v1.9.0")
+    installed_lines = installed.read_text().splitlines()
+    if installed_lines[0] == "plan398 prior relay fixture":
+        print("relay-server v1.9.0")
+    else:
+        print(installed_lines[1])
 elif command == ["systemctl", "show", "relay-server", "--property=MainPID", "--value"]:
     print("4242")
 elif command == ["sha256sum", "/usr/local/bin/relay-server"]:

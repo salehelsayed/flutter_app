@@ -242,12 +242,14 @@ final class CallSignalingRuntime {
       _disposed = true;
       await _directSubscription?.cancel();
       _directSubscription = null;
+      // Interrupt pending media preparation before waiting for a handler
+      // whose coordinator dispatch may itself be waiting for that work.
+      await _coordinator.dispose();
       try {
         await _serialTail;
       } catch (_) {
-        // Coordinator shutdown must still terminalize an active call.
+        // Already-dispatched work cannot prevent coordinator shutdown.
       }
-      await _coordinator.dispose();
     } finally {
       _disposed = true;
       _shuttingDown = false;

@@ -404,7 +404,7 @@ void main() {
   );
 
   test(
-    'answer waits for didActivate without blocking its native latch',
+    'answer is acknowledged while media still waits for didActivate',
     () async {
       final native = _LifecycleNative();
       final effects = _ActivatingEffects();
@@ -415,6 +415,11 @@ void main() {
 
       native.emit('answer');
       await _until(() => native.callsOf('activateAudio').isNotEmpty);
+      await _until(
+        () => native
+            .callsOf('acknowledge')
+            .any((call) => call.arguments['throughSequence'] == 2),
+      );
 
       expect(effects.mediaStarts, 1);
       expect(
@@ -426,7 +431,7 @@ void main() {
         native
             .callsOf('acknowledge')
             .any((call) => call.arguments['throughSequence'] == 2),
-        isFalse,
+        isTrue,
       );
 
       native.didActivate();
@@ -439,6 +444,51 @@ void main() {
 
       expect(coordinator.activeSession?.state, CallState.accepted);
       expect(adapter.ownsSession, isTrue);
+
+      await adapter.close();
+      await coordinator.dispose();
+      await native.events.close();
+    },
+  );
+
+  test(
+    'native End interrupts an acknowledged answer waiting for permission',
+    () async {
+      final permission = Completer<void>();
+      final native = _LifecycleNative();
+      final effects = _ActivatingEffects()
+        ..beforeActivation = permission.future;
+      final coordinator = _coordinator(effects: effects);
+      final adapter = _adapter(native, coordinator);
+      effects.adapter = adapter;
+      await _bindRinging(adapter, coordinator);
+
+      native.emit('answer');
+      await _until(
+        () => native
+            .callsOf('acknowledge')
+            .any((call) => call.arguments['throughSequence'] == 2),
+      );
+      expect(permission.isCompleted, isFalse);
+      expect(effects.acceptSignals, 0);
+
+      native.emit('end');
+      await _until(() => coordinator.lastSnapshot?.isTerminal == true);
+      await _until(
+        () => native
+            .callsOf('acknowledge')
+            .any(
+              (call) =>
+                  call.arguments['throughSequence'] == 3 &&
+                  call.arguments['disposition'] == 'TERMINAL',
+            ),
+      );
+      expect(permission.isCompleted, isFalse);
+      permission.complete();
+      native.didActivate();
+      await Future<void>.delayed(Duration.zero);
+      expect(effects.acceptSignals, 0);
+      expect(coordinator.activeSession, isNull);
 
       await adapter.close();
       await coordinator.dispose();
@@ -958,8 +1008,10 @@ final class _LifecycleNative {
 
 final class _ActivatingEffects implements CallEffectExecutor {
   late IosCallLifecycleAdapter adapter;
+  Future<void>? beforeActivation;
   int mediaStarts = 0;
   int mediaReady = 0;
+  int acceptSignals = 0;
 
   @override
   Future<CallEvent?> execute(
@@ -968,9 +1020,11 @@ final class _ActivatingEffects implements CallEffectExecutor {
   ) async {
     if (effect.type == CallEffectType.prepareAcceptedMedia) {
       mediaStarts++;
+      await beforeActivation;
       await adapter.activateAudio();
       mediaReady++;
     }
+    if (effect.type == CallEffectType.sendAccept) acceptSignals++;
     return null;
   }
 }

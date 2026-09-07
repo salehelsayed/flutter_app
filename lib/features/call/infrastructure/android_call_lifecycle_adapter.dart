@@ -1365,7 +1365,10 @@ final class AndroidCallLifecycleAdapter
             _ => null,
           };
     try {
-      final reduction = await _coordinator.dispatch(
+      final admission = action == CallNativeAction.answer
+          ? Completer<CallReduction>()
+          : null;
+      final dispatch = _coordinator.dispatch(
         CallEvent(
           type: CallEventType.nativeAction,
           eventId: event.eventId,
@@ -1375,7 +1378,15 @@ final class AndroidCallLifecycleAdapter
           nativeAction: action,
           endReason: endReason,
         ),
+        onApplied: admission?.complete,
       );
+      // Answer is durably consumed when the reducer accepts it. Permission and
+      // media readiness remain coordinator work; they must not hold the native
+      // journal lane or the CallKit answer watchdog open. Future.any also owns
+      // any later effect failure, which the coordinator terminalizes itself.
+      final reduction = await (admission == null
+          ? dispatch
+          : Future.any<CallReduction>([admission.future, dispatch]));
       final accepted =
           reduction.decision == CallEventDecision.applied ||
           (reduction.decision == CallEventDecision.ignored &&

@@ -1,0 +1,77 @@
+{
+  "updated_utc": "2026-09-07T12:24:50.148632+00:00",
+  "source_manifest": "android-rich-source-manifest.json",
+  "source_matches_manifest": true,
+  "toolchain": "go1.25.0",
+  "scope": "go-relay-server module",
+  "gates": [
+    {
+      "command": "GOTOOLCHAIN=go1.25.0 GOMAXPROCS=4 go test -count=1 -p=1 -json ./...",
+      "log": "android-rich-relay-full.jsonl",
+      "exit_code": 0,
+      "test_and_subtest_counts": {
+        "pass": 1118,
+        "fail": 0,
+        "skip": 1
+      },
+      "packages": [
+        {
+          "Package": "github.com/mknoon/relay-server",
+          "Action": "pass",
+          "Elapsed": 45.4
+        }
+      ]
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.0 GOMAXPROCS=4 go test -race -count=1 -p=1 -json ./...",
+      "log": "android-rich-relay-race.jsonl",
+      "exit_code": 0,
+      "test_and_subtest_counts": {
+        "pass": 1118,
+        "fail": 0,
+        "skip": 1
+      },
+      "packages": [
+        {
+          "Package": "github.com/mknoon/relay-server",
+          "Action": "pass",
+          "Elapsed": 54.016
+        }
+      ]
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.0 GOMAXPROCS=4 go vet -p=1 ./...",
+      "log": "android-rich-relay-vet.log",
+      "exit_code": 0,
+      "output_bytes": 0
+    }
+  ],
+  "skip": {
+    "test": "TestBuildChatPushMessage_TopLevelNotification",
+    "reason": "Incumbent explicit placeholder skip: top-level notification payload coverage belongs to later notification work, not Section4. Active ordinary projection and new recovery tests assert Android data-only behavior."
+  },
+  "focused": [
+    {
+      "log": "android-rich-focused-green.log",
+      "passed_test_and_subtest_records": 45
+    },
+    {
+      "log": "android-rich-size-fallback-green.log",
+      "passed_test_and_subtest_records": 10
+    }
+  ],
+  "affected_log": "android-rich-affected-final.log",
+  "graph_refresh_log": "android-rich-graph-refresh.log",
+  "deployed_by_worker": false,
+  "candidate": {
+    "created_utc": "2026-09-07T12:25:09.415254+00:00",
+    "path": "/Volumes/CrucialX9/flutter_app/build/notification-latency-20260907/relay-android-rich-recovery-linux-amd64",
+    "sha256": "746107033681ea47c8d02d9869befa6b5e31ff0f550e3979a63e188d0abf3f94",
+    "bytes": 52746502,
+    "build_exit_code": 0,
+    "command": "GOTOOLCHAIN=go1.25.0 GOMAXPROCS=4 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1 go build -trimpath -p=1 -o ../build/notification-latency-20260907/relay-android-rich-recovery-linux-amd64 .",
+    "metadata_log": "android-rich-linux-build-info.log",
+    "source_manifest": "android-rich-source-manifest.json",
+    "deployed_by_worker": false
+  }
+}

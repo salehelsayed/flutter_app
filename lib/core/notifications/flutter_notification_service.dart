@@ -435,6 +435,10 @@ class FlutterNotificationService
             preservePrimaryAndroidChannel: preservePrimaryAndroidChannel,
             autoCancel: metadata == null,
             snapshot: snapshot,
+            currentReactionBody:
+                contentKind == ConversationNotificationContentKind.reaction
+                ? messageText
+                : null,
           ),
           payload: nativePayload,
         );
@@ -757,6 +761,11 @@ class FlutterNotificationService
               preservePrimaryAndroidChannel: preservePrimaryAndroidChannel,
               autoCancel: false,
               snapshot: replacement.snapshot,
+              currentReactionBody:
+                  replacement.contentKind ==
+                      ConversationNotificationContentKind.reaction
+                  ? replacement.messageText
+                  : null,
             ),
             payload: payload,
           );

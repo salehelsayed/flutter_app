@@ -145,12 +145,25 @@ NotificationDetails mknoonConversationNotificationDetails({
   bool preservePrimaryAndroidChannel = false,
   bool autoCancel = true,
   ConversationNotificationSnapshot? snapshot,
+  String? currentReactionBody,
 }) {
   final useSilentAndroidChannel = silent && !preservePrimaryAndroidChannel;
   final historyLines = snapshot?.historyLines
       .where((line) => line.trim().isNotEmpty)
       .take(5)
       .toList(growable: false);
+  // Android replaces the collapsed body with InboxStyle lines when expanded.
+  // A reaction is not canonical unread history, so reserve the final visible
+  // line for its current body without changing the snapshot or unread count.
+  final hasReactionBody = currentReactionBody?.trim().isNotEmpty == true;
+  final expandedLines = hasReactionBody
+      ? <String>[
+          ...?historyLines?.skip(
+            historyLines.length > 4 ? historyLines.length - 4 : 0,
+          ),
+          currentReactionBody!,
+        ]
+      : historyLines;
   final unreadMessageCount = snapshot?.totalUnreadMessageCount;
   return NotificationDetails(
     android: AndroidNotificationDetails(
@@ -179,9 +192,9 @@ NotificationDetails mknoonConversationNotificationDetails({
       number: unreadMessageCount != null && unreadMessageCount > 0
           ? unreadMessageCount
           : null,
-      styleInformation: historyLines == null || historyLines.isEmpty
+      styleInformation: expandedLines == null || expandedLines.isEmpty
           ? null
-          : InboxStyleInformation(historyLines),
+          : InboxStyleInformation(expandedLines),
     ),
     iOS: DarwinNotificationDetails(
       presentSound: !silent,

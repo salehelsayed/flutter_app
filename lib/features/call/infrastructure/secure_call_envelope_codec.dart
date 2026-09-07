@@ -311,7 +311,8 @@ final class InMemoryBoundedCallReplayProtectionStore
         signal.senderSequence < priorHighWater.sequence) {
       // Negotiation frames use independent authenticated transport streams.
       // Admit a small same-generation reorder window (for example ICE N+1
-      // racing ahead of SDP N), while control signals and stale generations
+      // racing ahead of SDP N or an offer overtaking its restart announcement),
+      // while terminal/acceptance signals and stale generations
       // retain strict sender ordering.
       final distance = priorHighWater.sequence - signal.senderSequence;
       final reorderable =
@@ -361,7 +362,10 @@ final class InMemoryBoundedCallReplayProtectionStore
   }
 
   static bool _isNegotiationSignal(CallSignalType event) => switch (event) {
-    CallSignalType.offer || CallSignalType.answer || CallSignalType.ice => true,
+    CallSignalType.offer ||
+    CallSignalType.answer ||
+    CallSignalType.ice ||
+    CallSignalType.iceRestart => true,
     _ => false,
   };
 }

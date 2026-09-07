@@ -1,0 +1,39 @@
+{
+  "status": "ok",
+  "started_at_utc": "2026-09-07T12:39:29.636534+00:00",
+  "finished_at_utc": "2026-09-07T12:39:29.938594+00:00",
+  "service": "relay-server",
+  "service_main_pid": 1043663,
+  "operations": [
+    "SCAN",
+    "PTTL"
+  ],
+  "consistent_snapshot": false,
+  "due_index_count_is_not_job_count": true,
+  "families": {
+    "android_rich_completed": {
+      "distinct_keys_observed": 3,
+      "expiring_keys": 3,
+      "persistent_keys": 0,
+      "disappeared_before_ttl_read": 0,
+      "minimum_positive_ttl_ms": 604427037,
+      "maximum_positive_ttl_ms": 604570456
+    },
+    "android_rich_material": {
+      "distinct_keys_observed": 0,
+      "expiring_keys": 0,
+      "persistent_keys": 0,
+      "disappeared_before_ttl_read": 0,
+      "minimum_positive_ttl_ms": null,
+      "maximum_positive_ttl_ms": null
+    },
+    "wake_outcome_due_index": {
+      "distinct_keys_observed": 0,
+      "expiring_keys": 0,
+      "persistent_keys": 0,
+      "disappeared_before_ttl_read": 0,
+      "minimum_positive_ttl_ms": null,
+      "maximum_positive_ttl_ms": null
+    }
+  }
+}

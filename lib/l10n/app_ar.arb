@@ -1785,5 +1785,22 @@
   "call_row_failed": "فشلت المكالمة",
   "call_row_with_duration": "{label} · {duration}",
   "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}},
-  "missed_call_notification_unknown_caller": "شخص ما"
+  "missed_call_notification_unknown_caller": "شخص ما",
+  "call_ended": "انتهت المكالمة",
+  "call_dismiss_status": "إغلاق حالة المكالمة",
+  "call_cancel": "إلغاء المكالمة",
+  "call_answer": "رد",
+  "call_answer_unavailable": "الرد غير متاح",
+  "call_decline_unavailable": "الرفض غير متاح",
+  "call_controls": "عناصر التحكم بالمكالمة",
+  "call_audio_output": "مخرج الصوت: {route}",
+  "call_speaker": "مكبر الصوت",
+  "call_speaker_off": "إيقاف مكبر الصوت",
+  "call_end": "إنهاء المكالمة",
+  "call_end_action": "إنهاء",
+  "call_audio_route_system_default": "إعداد النظام الافتراضي",
+  "call_audio_route_earpiece": "سماعة الأذن",
+  "call_audio_route_wired_headset": "سماعة رأس سلكية",
+  "call_audio_route_bluetooth": "بلوتوث",
+  "@call_audio_output": {"placeholders": {"route": {"type": "String"}}}
 }

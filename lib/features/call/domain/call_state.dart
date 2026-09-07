@@ -436,7 +436,6 @@ final class CallReducer {
             event,
             CallState.inviting,
             effects: <CallEffect>[
-              const CallEffect(CallEffectType.sendInvite),
               CallEffect(
                 CallEffectType.scheduleNoAnswerTimeout,
                 delay: policy.noAnswerTimeout,
@@ -445,13 +444,19 @@ final class CallReducer {
                 CallEffectType.scheduleInviteExpiry,
                 delay: policy.inviteLifetime,
               ),
+              const CallEffect(CallEffectType.sendInvite),
             ],
           );
         }
         return _stateMismatch(snapshot);
       case CallState.inviting:
         if (event.type == CallEventType.remoteRinging) {
-          return _transition(snapshot, event, CallState.ringing);
+          return _transition(
+            snapshot,
+            event,
+            CallState.ringing,
+            ringingAt: event.occurredAt,
+          );
         }
         if (event.type == CallEventType.remoteAccept) {
           return _transition(
@@ -595,6 +600,24 @@ final class CallReducer {
         }
         return _stateMismatch(snapshot);
       case CallState.connected:
+        if (event.type == CallEventType.remoteOffer &&
+            snapshot.direction == CallDirection.incoming) {
+          // Independent signaling paths can deliver the caller's restart
+          // offer before its announcement or this peer's media-loss callback.
+          // The negotiation executor verifies and mirrors its ICE generation.
+          return _transition(
+            snapshot,
+            event,
+            CallState.reconnecting,
+            effects: <CallEffect>[
+              CallEffect(
+                CallEffectType.scheduleReconnectTimeout,
+                delay: policy.reconnectTimeout,
+              ),
+              const CallEffect(CallEffectType.deliverOffer),
+            ],
+          );
+        }
         if (event.type == CallEventType.mediaLost) {
           // The caller owns ICE restarts so two simultaneous restarts can
           // never collide. The callee asks the caller to restart instead.

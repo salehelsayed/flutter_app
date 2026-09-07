@@ -551,7 +551,96 @@ void main() {
     );
 
     test(
-      'iOS durable remote adoption is limited to an exact direct message effect',
+      'iOS durable direct reaction preserves exact remote proof across failed SQL handoff',
+      () async {
+        final previousPlatform = debugDefaultTargetPlatformOverride;
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        addTearDown(
+          () => debugDefaultTargetPlatformOverride = previousPlatform,
+        );
+        const peerId = 'peer-reaction-remote-adoption';
+        const reactionId = 'reaction-already-shown';
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.direct,
+          value: peerId,
+        )!;
+        final service = _DurableBoundaryNotificationService(log: <String>[]);
+        final visibility = _SequencedVisibility(<AppVisibilityEvaluation>[
+          _exactForegroundEvaluation(maySuppress: false, revision: 1),
+          _exactForegroundEvaluation(maySuppress: false, revision: 2),
+          _exactForegroundEvaluation(maySuppress: false, revision: 3),
+          _exactForegroundEvaluation(maySuppress: false, revision: 4),
+        ]);
+        var sqlAvailable = false;
+        var proofPresent = true;
+        var probes = 0;
+        var consumes = 0;
+        var legacyConsumes = 0;
+        final context = DurableLocalNotificationEffectContext(
+          currentOpaqueBinding: 'v1:${'a' * 64}',
+          eventCorrelation: 'e' * 64,
+          conversationDigest: identity.digest,
+          producerKind: LocalNotificationProducerKind.directReaction,
+          sourceCustody: LocalNotificationSourceCustody.sqlReady,
+          presentationOwner: LocalNotificationPresentationOwner.mainApp,
+          readFinalCanonicalDisposition: () async =>
+              DurableLocalNotificationCanonicalDisposition.eligible,
+          onEffectTerminal: (_) async {
+            if (!sqlAvailable) throw StateError('SQL handoff interrupted');
+          },
+          terminalObserverCompletesSqlHandoff: true,
+        );
+
+        Future<void> retry() async {
+          await subject.maybeShowNotification(
+            notificationService: service,
+            appVisibility: visibility,
+            contactPeerId: peerId,
+            routePayload: '$peerId|message:authored-target',
+            senderUsername: 'Alice',
+            messageText: 'Reacted to your message',
+            messageId: reactionId,
+            notificationEventIdentity: context.eventCorrelation,
+            notificationEventType: 'message_reaction',
+            durableEffectContext: context,
+            probeRecentRemoteNotificationAnnouncement:
+                ({required String payload, String? messageId}) async {
+                  expect(payload, '$peerId|message:authored-target');
+                  expect(messageId, reactionId);
+                  probes += 1;
+                  return proofPresent;
+                },
+            consumeRecentRemoteNotificationAnnouncement:
+                ({required String payload, String? messageId}) async {
+                  legacyConsumes += 1;
+                  return proofPresent;
+                },
+            consumeEstablishedRemotePresentationProof: () async {
+              expect(sqlAvailable, isTrue);
+              consumes += 1;
+              proofPresent = false;
+              return true;
+            },
+            backgroundDuplicateGuardDelay: Duration.zero,
+          );
+        }
+
+        await retry();
+        expect(service.nativeCalls, 0);
+        expect(proofPresent, isTrue);
+        expect(consumes, 0);
+        sqlAvailable = true;
+        await retry();
+        expect(service.nativeCalls, 0);
+        expect(probes, 2);
+        expect(legacyConsumes, 0);
+        expect(consumes, 1);
+        expect(proofPresent, isFalse);
+      },
+    );
+
+    test(
+      'iOS durable remote adoption requires matching event and producer kinds',
       () async {
         final previousPlatform = debugDefaultTargetPlatformOverride;
         debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
@@ -571,11 +660,29 @@ void main() {
               })
             >[
               (
-                name: 'reaction',
+                name: 'reaction with message producer',
+                contactPeerId: 'peer-remote-adoption-scope',
+                eventType: 'message_reaction',
+                producerKind: LocalNotificationProducerKind.directMessage,
+                messageId: 'reaction-1',
+                proofFound: true,
+                expectedProbes: 0,
+              ),
+              (
+                name: 'reaction proof miss',
                 contactPeerId: 'peer-remote-adoption-scope',
                 eventType: 'message_reaction',
                 producerKind: LocalNotificationProducerKind.directReaction,
-                messageId: 'reaction-1',
+                messageId: 'reaction-2',
+                proofFound: false,
+                expectedProbes: 1,
+              ),
+              (
+                name: 'group reaction remains excluded',
+                contactPeerId: 'group:remote-adoption-scope',
+                eventType: 'message_reaction',
+                producerKind: LocalNotificationProducerKind.groupReaction,
+                messageId: 'group-reaction-1',
                 proofFound: true,
                 expectedProbes: 0,
               ),

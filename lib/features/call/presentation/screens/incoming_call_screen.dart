@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Foreground-only incoming call presentation.
 ///
@@ -28,6 +29,7 @@ class IncomingCallScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
 
     return ColoredBox(
       color: colors.surfaceBase,
@@ -69,16 +71,20 @@ class IncomingCallScreen extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   _IncomingAction(
-                    tooltip: _canRespond ? 'Decline' : 'Decline unavailable',
-                    label: 'Decline',
+                    tooltip: _canRespond
+                        ? l10n.contact_request_decline
+                        : l10n.call_decline_unavailable,
+                    label: l10n.contact_request_decline,
                     icon: Icons.call_end_rounded,
                     backgroundColor: const Color(0xFFE5484D),
                     enabled: _canRespond,
                     onPressed: onDecline,
                   ),
                   _IncomingAction(
-                    tooltip: _canRespond ? 'Answer' : 'Answer unavailable',
-                    label: 'Answer',
+                    tooltip: _canRespond
+                        ? l10n.call_answer
+                        : l10n.call_answer_unavailable,
+                    label: l10n.call_answer,
                     icon: Icons.call_rounded,
                     backgroundColor: colors.accent,
                     enabled: _canRespond,

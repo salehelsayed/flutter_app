@@ -1,0 +1,68 @@
+{
+  "deviceCounterexample": "Android112 direct expanded reaction passed; group initial flags0 and settled SILENT records both had current reaction body but InboxStyle lines contained only older ordinary unread text.",
+  "deviceEvidence": [
+    "android-layout-112/group-reaction-initial.txt",
+    "android-layout-112/group-reaction-settled.txt",
+    "android-layout-112/group-expanded-final.png",
+    "android-layout-112/pixel-proof.log"
+  ],
+  "rootCause": "Firebase background_message_handler publishes directly through the plugin, bypassing FlutterNotificationService; its helper call did not pass currentReactionBody despite correct contentKind=reaction.",
+  "change": "Four-line rendering-only argument at the real background renderer. Existing helper keeps latest four ordinary lines plus current reaction under the five-line cap; canonical state/count, IDs, group authorization, durable publication and visibility are unchanged.",
+  "changedPaths": [
+    "lib/features/push/application/background_message_handler.dart",
+    "test/features/push/application/background_message_handler_test.dart"
+  ],
+  "causalRed": "2 production background-handler tests failed for missing reaction lines, including headless group crypto and pending-overlay history.",
+  "focusedResult": "148 tests passed in6seconds: background handler, notification service, local notification helper.",
+  "analyzerResult": "No new issues; two pre-existing unawaited_return_in_try_block warnings at current3065/3096. Full production source equalsHEAD except four-line rendering argument; baseline proof JSON retained.",
+  "affectedQueryId": "2f667193fc5c40cd",
+  "preservationCoverage": [
+    "canonical count17 stays17",
+    "pending count1/history remains ordinary-only",
+    "five-line cap",
+    "exact duplicate no secondshow",
+    "new reaction same-ID silent update retains currentreactionline",
+    "existing ordinary/group/private/visibility/error tests pass"
+  ],
+  "deviceVerdict": "Passed on Android114; see finalDeviceVerification",
+  "subsequentCounterexample": "Final bounded helper-reference audit found generation-checked silent rebuild also omitted currentReactionBody. Real group canonical reaction replacement candidates make this path reaction-capable. Separate direct/group generation-regression causal red failed with ordinary-only expanded lines.",
+  "subsequentFix": "FlutterNotificationService.replaceConversationNotificationGeneration now passes reaction body only for replacement.contentKind=reaction, preserving exact generation metadata and silent same-ID replacement.",
+  "finalFocusedResult": "59 service/helper tests passed after generation fix; analyzer clean. Previous148 background/service/helper tests passed before this additional caller fix; background source unchanged since.",
+  "finalAffectedQueryId": "5799d9bdbab84dd3",
+  "finalCallers": [
+    "lib/core/notifications/flutter_notification_service.dart:432 normal publication",
+    "lib/core/notifications/flutter_notification_service.dart:758 exact-generation replacement",
+    "lib/features/push/application/background_message_handler.dart:1435 background publication"
+  ],
+  "finalDeviceVerification": {
+    "buildNumber": 114,
+    "apkSha256": "f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec",
+    "targets": [
+      "21071FDF600CSC",
+      "emulator-5554"
+    ],
+    "group": {
+      "initial": "passed",
+      "settledExpandedCard": "passed",
+      "initialPostUtc": "2026-09-07T10:47:52.634Z",
+      "settledEvidenceUtc": "2026-09-07T10:48:33.822Z",
+      "receiverRemainedBackground": true,
+      "ordinaryUnreadAndReactionLinesPresent": true,
+      "silentReplacementPreservedReaction": true
+    },
+    "direct": {
+      "initial": "passed",
+      "settledExpandedCard": "passed",
+      "initialPostUtc": "2026-09-07T10:49:26.064Z",
+      "settledEvidenceUtc": "2026-09-07T10:50:18.156Z",
+      "receiverRemainedBackground": true,
+      "ordinaryUnreadAndReactionLinesPresent": true,
+      "soundClaim": "Repeated-reaction rendering case was silent; no new audible-alert claim"
+    },
+    "accountsPreserved": true,
+    "capturesStoppedUtc": "2026-09-07T10:51:17.971591+00:00",
+    "report": "android-reaction-layout-device-results.md",
+    "historical112GroupFailureRetained": true,
+    "build113InstalledButNotExercised": true
+  }
+}

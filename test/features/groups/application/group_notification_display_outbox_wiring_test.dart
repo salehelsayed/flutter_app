@@ -78,6 +78,7 @@ final class _MemoryNotificationDisplayOutbox
   final List<NotificationCompletedOutcomeCandidate?> completionOutcomes = [];
   Future<void> Function(GroupNotificationDisplayOutboxEntry entry)? onStage;
   Future<void> Function(GroupNotificationDisplayOutboxEntry entry)? onComplete;
+  Future<void> Function(GroupNotificationDisplayOutboxEntry entry)? onRetire;
   bool rejectRetryCas = false;
   int reconcileFailuresRemaining = 0;
 
@@ -267,6 +268,7 @@ final class _MemoryNotificationDisplayOutbox
     GroupNotificationDisplayOutboxEntry expected, {
     String? durableEventCorrelation,
   }) async {
+    await onRetire?.call(expected);
     final current = entries[expected.eventId];
     if (current == null ||
         current.revision != expected.revision ||
@@ -1551,11 +1553,9 @@ void main() {
       acknowledged.outbox.seedReady(_readyMessageEntry(acknowledgedMessage));
       await acknowledged.listener.retryPendingNotificationDisplays();
       expect(acknowledged.notifications.showAttempts, 0);
-      expect(
-        acknowledged.outbox.completionOutcomes,
-        const [null],
-        reason: 'delivery/read acknowledgement is not completed-effect proof',
-      );
+      expect(acknowledged.outbox.completionOutcomes, const [
+        null,
+      ], reason: 'delivery/read acknowledgement is not completed-effect proof');
 
       final compatibility = await _buildFixture(
         completedOutcomeProducerEnabled: true,
@@ -1932,6 +1932,98 @@ void main() {
       expect(fixture.notifications.shown, isEmpty);
     },
   );
+
+  for (final failFirstRetirement in [false, true]) {
+    test('iOS group replay adopts 13-hour native proof and consumes only after retirement '
+        '(retirement retry: $failFirstRetirement)', () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previousPlatform);
+      const messageId = 'ios-long-idle-group-replay';
+      const routePayload = 'group:$_groupId|message:$messageId';
+      const otherId = 'ios-long-idle-unrelated';
+      const otherPayload = 'group:$_groupId|message:$otherId';
+      final now = DateTime.utc(2026, 9, 7, 12);
+      final gateDirectory = await Directory.systemTemp.createTemp(
+        'group-display-ios-long-idle-',
+      );
+      addTearDown(() => gateDirectory.delete(recursive: true));
+      final sidecarDirectory = await Directory(
+        '${gateDirectory.path}/RecentRemoteShown',
+      ).create();
+      final remoteGate = RecentRemoteNotificationGate(
+        filePath: '${gateDirectory.path}/recent-remote.json',
+        appGroupSidecarDirProvider: () async => gateDirectory,
+        now: () => now,
+      );
+      final marker = File(
+        '${sidecarDirectory.path}/${remoteGate.sidecarMarkerName(routePayload, messageId)}',
+      );
+      final otherMarker = File(
+        '${sidecarDirectory.path}/${remoteGate.sidecarMarkerName(otherPayload, otherId)}',
+      );
+      for (final file in [marker, otherMarker]) {
+        await file.writeAsString('');
+        await file.setLastModified(now.subtract(const Duration(hours: 13)));
+      }
+      expect(
+        await remoteGate.hasRecentExactAnnouncement(
+          payload: routePayload,
+          messageId: messageId,
+        ),
+        isFalse,
+      );
+      expect(await marker.exists(), isTrue);
+      final fixture = await _buildFixture(remoteNotificationGate: remoteGate);
+      addTearDown(fixture.listener.dispose);
+      var retirementAttempts = 0;
+      fixture.outbox.onRetire = (entry) async {
+        expect(entry.eventId, messageId);
+        expect(fixture.outbox.entries[messageId], isNotNull);
+        expect(
+          await marker.exists(),
+          isTrue,
+          reason: 'native proof must survive until durable custody retires',
+        );
+        retirementAttempts++;
+        if (failFirstRetirement && retirementAttempts == 1) {
+          throw StateError('transient retirement failure');
+        }
+      };
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'messageId': messageId,
+        'text': 'Opened after thirteen hours away',
+        'timestamp': now.subtract(const Duration(hours: 13)).toIso8601String(),
+      });
+      expect(await fixture.messageRepo.getMessage(messageId), isNotNull);
+      expect(fixture.notifications.showAttempts, 0);
+      if (failFirstRetirement) {
+        expect(fixture.outbox.entries[messageId], isNotNull);
+        expect(await marker.exists(), isTrue);
+        await fixture.listener.retryPendingNotificationDisplays();
+      }
+      expect(retirementAttempts, failFirstRetirement ? 2 : 1);
+      expect(fixture.outbox.entries[messageId], isNull);
+      expect(await marker.exists(), isFalse);
+      expect(
+        await remoteGate.hasExactPendingAnnouncement(
+          payload: routePayload,
+          messageId: messageId,
+        ),
+        isFalse,
+      );
+      expect(await otherMarker.exists(), isTrue);
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.notifications.shown, isEmpty);
+      await fixture.listener.retryPendingNotificationDisplays();
+      expect(fixture.notifications.showAttempts, 0);
+    });
+  }
 
   test(
     'iOS deferred remote gate wiring is observed by an already-constructed group listener',
@@ -2373,8 +2465,8 @@ void main() {
           payload: aliasPayload,
           messageId: aliasId,
         ),
-        isTrue,
-        reason: 'promotion itself is non-destructive at the proven alias',
+        isFalse,
+        reason: 'successful canonical settlement also retires its proven alias',
       );
       expect(
         await remoteGate.hasRecentAnnouncement(
@@ -2390,6 +2482,140 @@ void main() {
         ),
         isFalse,
       );
+    },
+  );
+
+  test(
+    'iOS 13-hour native alias proof settles only the proven canonical group message',
+    () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previousPlatform);
+      final gateDirectory = await Directory.systemTemp.createTemp(
+        'group-display-ios-long-idle-alias-',
+      );
+      addTearDown(() => gateDirectory.delete(recursive: true));
+      final sidecarDirectory = await Directory(
+        '${gateDirectory.path}/RecentRemoteShown',
+      ).create();
+      final now = DateTime.utc(2026, 9, 7, 12);
+      final remoteGate = RecentRemoteNotificationGate(
+        filePath: '${gateDirectory.path}/recent-remote.json',
+        appGroupSidecarDirProvider: () async => gateDirectory,
+        now: () => now,
+      );
+      final fixture = await _buildFixture(remoteNotificationGate: remoteGate);
+      addTearDown(fixture.listener.dispose);
+      final timestamp = now.subtract(const Duration(hours: 13));
+      final canonical = GroupMessage(
+        id: 'canonical-long-idle-c',
+        groupId: _groupId,
+        senderPeerId: _senderPeerId,
+        senderUsername: 'Sender',
+        text: 'One old logical message under two transport identities',
+        timestamp: timestamp,
+        logicalDeliveryId: 'logical-long-idle-a-c',
+        isIncoming: true,
+        createdAt: timestamp,
+      );
+      await fixture.messageRepo.saveMessage(canonical);
+      fixture.outbox.entries[canonical.id] = _readyMessageEntry(
+        canonical,
+      ).copyWith(readiness: GroupNotificationDisplayOutboxReadiness.notReady);
+      const aliasId = 'alias-long-idle-a';
+      const aliasPayload = 'group:$_groupId|message:$aliasId';
+      const canonicalPayload = 'group:$_groupId|message:canonical-long-idle-c';
+      final sourceMarker = File(
+        '${sidecarDirectory.path}/${remoteGate.sidecarMarkerName(aliasPayload, aliasId)}',
+      );
+      await sourceMarker.writeAsString('');
+      await sourceMarker.setLastModified(timestamp);
+      var retirementAttempts = 0;
+      fixture.outbox.onRetire = (entry) async {
+        expect(entry.eventId, canonical.id);
+        expect(
+          await remoteGate.hasExactPendingAnnouncement(
+            payload: canonicalPayload,
+            messageId: canonical.id,
+          ),
+          isTrue,
+        );
+        expect(await sourceMarker.exists(), isTrue);
+        if (++retirementAttempts == 1) {
+          throw StateError('transient alias retirement failure');
+        }
+      };
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': canonical.text,
+        'timestamp': timestamp.toIso8601String(),
+        'messageId': aliasId,
+        'logicalDeliveryId': canonical.logicalDeliveryId,
+      }, rethrowOnError: true);
+
+      expect(retirementAttempts, 1);
+      expect(fixture.outbox.entries[canonical.id], isNotNull);
+      expect(await sourceMarker.exists(), isTrue);
+      expect(
+        await remoteGate.hasExactPendingAnnouncement(
+          payload: canonicalPayload,
+          messageId: canonical.id,
+        ),
+        isTrue,
+      );
+      final restartedGate = RecentRemoteNotificationGate(
+        filePath: '${gateDirectory.path}/recent-remote.json',
+        appGroupSidecarDirProvider: () async => gateDirectory,
+        now: () => now,
+      );
+      final restartedFixture = await _buildFixture(
+        messageRepo: fixture.messageRepo,
+        outbox: fixture.outbox,
+        notifications: fixture.notifications,
+        remoteNotificationGate: restartedGate,
+      );
+      addTearDown(restartedFixture.listener.dispose);
+      await restartedFixture.listener.retryPendingNotificationDisplays();
+
+      expect(retirementAttempts, 2);
+      expect(fixture.outbox.entries[aliasId], isNull);
+      expect(fixture.outbox.entries[canonical.id], isNull);
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.notifications.shown, isEmpty);
+      expect(
+        await remoteGate.hasExactPendingAnnouncement(
+          payload: canonicalPayload,
+          messageId: canonical.id,
+        ),
+        isFalse,
+        reason: 'settlement consumes the canonical proof exactly once',
+      );
+      expect(
+        await remoteGate.hasExactPendingAnnouncement(
+          payload: aliasPayload,
+          messageId: aliasId,
+        ),
+        isFalse,
+        reason: 'restarted settlement consumes persisted alias provenance',
+      );
+      expect(await sourceMarker.exists(), isFalse);
+      for (final (payload, id) in [
+        (aliasPayload, aliasId),
+        (canonicalPayload, canonical.id),
+      ]) {
+        expect(
+          await remoteGate.hasRecentExactAnnouncement(
+            payload: payload,
+            messageId: id,
+          ),
+          isFalse,
+          reason: 'canonical adoption must not renew the compatibility TTL',
+        );
+      }
     },
   );
 
@@ -2467,7 +2693,7 @@ void main() {
         rethrowOnError: true,
       );
 
-      expect(sourceMarker.existsSync(), isTrue);
+      expect(sourceMarker.existsSync(), isFalse);
       expect(fixture.outbox.entries[aliasId], isNull);
       expect(fixture.outbox.entries[canonical.id], isNull);
       expect(fixture.notifications.showAttempts, 0);
@@ -2577,6 +2803,13 @@ void main() {
         await remoteGate.hasRecentAnnouncement(
           payload: canonicalPayload,
           messageId: canonical.id,
+        ),
+        isFalse,
+      );
+      expect(
+        await remoteGate.hasRecentAnnouncement(
+          payload: aliasPayload,
+          messageId: aliasId,
         ),
         isFalse,
       );
@@ -3140,6 +3373,70 @@ void main() {
         GroupNotificationDisplayOutboxErrorCode.stateUnavailable,
       );
       expect(fixture.notifications.shown, isEmpty);
+    },
+  );
+
+  test(
+    'canonical-retired group message consumes 13-hour native proof only after durable retirement',
+    () async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previousPlatform);
+      const messageId = 'canonical-retired-long-idle-message';
+      const payload = 'group:$_groupId|message:$messageId';
+      final now = DateTime.utc(2026, 9, 7, 12);
+      final gateDirectory = await Directory.systemTemp.createTemp(
+        'group-display-ios-retired-long-idle-',
+      );
+      addTearDown(() => gateDirectory.delete(recursive: true));
+      final sidecarDirectory = await Directory(
+        '${gateDirectory.path}/RecentRemoteShown',
+      ).create();
+      final remoteGate = RecentRemoteNotificationGate(
+        filePath: '${gateDirectory.path}/recent-remote.json',
+        appGroupSidecarDirProvider: () async => gateDirectory,
+        now: () => now,
+      );
+      final marker = File(
+        '${sidecarDirectory.path}/${remoteGate.sidecarMarkerName(payload, messageId)}',
+      );
+      await marker.writeAsString('');
+      await marker.setLastModified(now.subtract(const Duration(hours: 13)));
+      final fixture = await _buildFixture(remoteNotificationGate: remoteGate);
+      addTearDown(fixture.listener.dispose);
+      final correlation = tryComputeNotificationCompletedOutcomeCorrelation(
+        physicalPeerId: _physicalPeerId,
+        producerKind: NotificationCompletedOutcomeProducerKind.groupMessage,
+        eventKey: messageId,
+      )!;
+      fixture.outbox.seedReady(
+        _readyMessageEntry(_incomingMessage(id: messageId)).copyWith(
+          lastAttemptAt:
+              '$kGroupNotificationDisplayCanonicalRetiredMarker:$correlation',
+        ),
+      );
+      var retirementAttempts = 0;
+      fixture.outbox.onRetire = (entry) async {
+        expect(entry.eventId, messageId);
+        expect(await marker.exists(), isTrue);
+        expect(fixture.outbox.entries[messageId], isNotNull);
+        if (++retirementAttempts == 1) {
+          throw StateError('transient canonical retirement failure');
+        }
+      };
+
+      await fixture.listener.retryPendingNotificationDisplays();
+      expect(retirementAttempts, 1);
+      expect(fixture.outbox.entries[messageId], isNotNull);
+      expect(await marker.exists(), isTrue);
+      expect(fixture.notifications.showAttempts, 0);
+
+      await fixture.listener.retryPendingNotificationDisplays();
+      expect(retirementAttempts, 2);
+      expect(fixture.outbox.entries, isEmpty);
+      expect(await marker.exists(), isFalse);
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.outbox.completionOutcomes, const [null, null]);
     },
   );
 

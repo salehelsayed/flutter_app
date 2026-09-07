@@ -1,0 +1,65 @@
+{
+  "checkedUTC": "2026-09-07T12:39:58.011956+00:00",
+  "devices": {
+    "21071FDF600CSC": {
+      "adbState": "device",
+      "version": [
+        "versionCode=114 minSdk=24 targetSdk=36",
+        "versionName=1.0.0-807874437-notification260907-r4"
+      ],
+      "accountPreservationEvidence": "Same established peer conversations used successfully in final postdeploy sends; no reset or uninstall performed.",
+      "wifiOn": "1",
+      "mobileData": "0",
+      "tetheringUpstreamWanted": false,
+      "activeDefaultNetwork": "Active default network: 110",
+      "validatedWifi": true
+    },
+    "emulator-5554": {
+      "adbState": "device",
+      "version": [
+        "versionCode=114 minSdk=24 targetSdk=36",
+        "versionName=1.0.0-807874437-notification260907-r4"
+      ],
+      "accountPreservationEvidence": "Same established peer conversations used successfully in final postdeploy sends; no reset or uninstall performed."
+    }
+  },
+  "iPhone": {
+    "device": "00008030-001A6D2801BB802E",
+    "version": "260907113535",
+    "originalWifiRestoredByRootUTC": "2026-09-07T12:31:09Z",
+    "ownedAppiumSessionDeletedByRootUTC": "2026-09-07T12:39:09Z",
+    "appBackgroundedByRoot": true
+  },
+  "captureStopUTC": "2026-09-07T12:39:59.024928+00:00",
+  "ownedCaptures": [
+    {
+      "pid": 77752,
+      "command": "adb -s 21071FDF600CSC logcat -v threadtime -T 1",
+      "stillRunning": false
+    },
+    {
+      "pid": 77753,
+      "command": "adb -s emulator-5554 logcat -v threadtime -T 1",
+      "stillRunning": false
+    },
+    {
+      "pid": 77754,
+      "command": "idevicesyslog -u 00008030-001A6D2801BB802E --no-colors",
+      "stillRunning": false
+    }
+  ],
+  "captureFiles": {
+    "pixel-logcat.log": {
+      "bytes": 33918781,
+      "lastLine": "09-07 14:39:59.288  1541  1683 I system_server: Background young concurrent mark compact GC freed 7308KB AllocSpace bytes, 5(100KB) LOS objects, 87% free, 63MB/512MB, paused 1.141ms,7.161ms total 66.032ms"
+    },
+    "emulator-logcat.log": {
+      "bytes": 20232244,
+      "lastLine": "09-07 14:39:58.379 31877 31878 I artd    : GetBestInfo no usable artifacts"
+    },
+    "iphone11-syslog-unfiltered.log": {
+      "bytes": 1989921481,
+      "lastLine": "[disconnected:00008030-001A6D2801BB802E]"
+    }
+  }
+}

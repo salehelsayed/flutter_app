@@ -148,7 +148,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
   }
 
   var establishedRemotePresentation = false;
-  final mayAdoptEstablishedIosMessagePresentation =
+  final mayAdoptEstablishedIosPresentation =
       defaultTargetPlatform == TargetPlatform.iOS &&
       durableEffectContext != null &&
       messageId?.trim().isNotEmpty == true &&
@@ -157,13 +157,15 @@ Future<NotificationPresentationResult> maybeShowNotification({
               contactPeerId.trim().startsWith('group:') &&
               durableEffectContext.producerKind ==
                   LocalNotificationProducerKind.groupMessage ||
-          notificationEventType == 'new_message' &&
-              visibilityIdentity?.lane ==
-                  AppVisibilityConversationLane.direct &&
-              durableEffectContext.producerKind ==
-                  LocalNotificationProducerKind.directMessage);
+          visibilityIdentity?.lane == AppVisibilityConversationLane.direct &&
+              (notificationEventType == 'new_message' &&
+                      durableEffectContext.producerKind ==
+                          LocalNotificationProducerKind.directMessage ||
+                  notificationEventType == 'message_reaction' &&
+                      durableEffectContext.producerKind ==
+                          LocalNotificationProducerKind.directReaction));
   final readRecentRemoteNotificationAnnouncement =
-      mayAdoptEstablishedIosMessagePresentation
+      mayAdoptEstablishedIosPresentation
       ? probeRecentRemoteNotificationAnnouncement
       : consumeRecentRemoteNotificationAnnouncement;
   if (readRecentRemoteNotificationAnnouncement != null) {
@@ -180,7 +182,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
     if (shouldSuppress) {
       emitFlowEvent(
         layer: 'FL',
-        event: mayAdoptEstablishedIosMessagePresentation
+        event: mayAdoptEstablishedIosPresentation
             ? 'NOTIFICATION_REMOTE_PRESENTATION_ADOPT'
             : durableEffectContext == null
             ? 'NOTIFICATION_SUPPRESSED'
@@ -196,13 +198,12 @@ Future<NotificationPresentationResult> maybeShowNotification({
       if (durableEffectContext == null) {
         return NotificationPresentationResult.terminalWithoutOutcome;
       }
-      if (mayAdoptEstablishedIosMessagePresentation) {
+      if (mayAdoptEstablishedIosPresentation) {
         establishedRemotePresentation = true;
       }
       // Every durable hit continues into the ledger. The exact iOS group path
-      // and direct-message path persist a remote-adoption attempt; legacy hits
-      // still reconcile only against an existing terminal sibling and never
-      // early-return here.
+      // and direct message/reaction paths persist a remote-adoption attempt;
+      // legacy hits still reconcile against an existing terminal sibling.
     }
   }
 

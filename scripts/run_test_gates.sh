@@ -48,6 +48,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/call/application/call_signaling_service_test.dart"
   "test/features/call/application/handle_incoming_call_signal_test.dart"
   "test/features/call/data/call_history_repository_test.dart"
+  "test/features/call/data/call_history_conversation_timeline_source_test.dart"
   "test/features/call/infrastructure/call_authority_client_test.dart"
   "test/features/call/infrastructure/call_mailbox_client_test.dart"
   "test/features/call/infrastructure/bridge_call_direct_transport_test.dart"

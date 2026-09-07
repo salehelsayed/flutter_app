@@ -97,7 +97,9 @@ expected_text = r"""
 com.mknoon.app.DroppedPushRecoveryStoreTest|testTC37502FixedAndDeletedTriggersShareOneCrashSafeAudibleDisposition
 com.mknoon.app.DroppedPushRecoveryWorkSchedulerTest|testTC37503FixedWakeUsesExistingUniqueExpeditedChain
 com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest|testTC37503WorkerAdoptsCurrentTriggerAcrossRetryProcessDeathAndPeriodicContinuation
+com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest|immediate retry re-signals the warm owner with the authoritative generation
 com.mknoon.app.MknoonFirebaseMessagingServiceTest|testTC37501ExactFixedWakeInterceptsAndAllOtherShapesDelegateOnce
+com.mknoon.app.MknoonFirebaseMessagingServiceTest|VC2-04 call wake has a separate strict ingress and never enters ordinary recovery
 com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-375-06 native read back advertises exact fixed consumer version kind and disposition
 com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|ADB script pins a device and supports handoff and process death
 com.mknoon.app.CanonicalRuntimeH0ProbeSourceTest|TC-393 arm-only fixed wake phase cannot inject production ingress
@@ -164,9 +166,9 @@ com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 default off 
 com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 shared deleted batch seam commits resnapshots and schedules before caller work
 """
 expected = [line for line in expected_text.strip().splitlines() if line]
-if len(expected) != 68 or len(set(expected)) != 68:
+if len(expected) != 70 or len(set(expected)) != 70:
     raise SystemExit(
-        "the frozen Plan 374/375/393 JUnit manifest must contain 68 unique methods"
+        "the frozen Plan 374/375/393 JUnit manifest must contain 70 unique methods"
     )
 
 xml_files = [result_dir / f"TEST-{name}.xml" for name in selected_classes]
@@ -213,8 +215,8 @@ for row in sorted(observed):
     print(row)
 PY
 
-[[ "$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')" -eq 68 ]] ||
-  fail "the parsed JUnit method manifest did not contain exactly 68 methods"
+[[ "$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')" -eq 70 ]] ||
+  fail "the parsed JUnit method manifest did not contain exactly 70 methods"
 [[ "$(rg -c '\|TC-374-(05|08) ' "$OBSERVED_MANIFEST")" -eq 7 ]] ||
   fail "the seven planned native TC-374 methods were not observed exactly once"
 [[ "$(rg -c '\|(testTC375|TC-375-)' "$OBSERVED_MANIFEST")" -eq 5 ]] ||
@@ -346,5 +348,5 @@ readonly BRIDGE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/Dr
 [[ "$(rg -F -c '"headlessAcknowledgeRecovery" ->' "$BRIDGE_SOURCE")" -eq 1 ]] ||
   fail "native bridge must expose one headless acknowledgement method"
 
-printf 'PASS: Plan 374/375/393 Android native suite selected 9 classes / 68 methods; artifacts: %s\n' \
+printf 'PASS: Plan 374/375/393 Android native suite selected 9 classes / 70 methods; artifacts: %s\n' \
   "$RESULT_DIR"

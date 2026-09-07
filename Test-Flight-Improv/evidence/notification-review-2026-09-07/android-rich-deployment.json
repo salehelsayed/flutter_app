@@ -1,0 +1,56 @@
+{
+  "deployed": true,
+  "deployedAtUtc": "2026-09-07T12:28:08Z",
+  "service": "relay-server",
+  "server": "13.60.15.36",
+  "sha256": "746107033681ea47c8d02d9869befa6b5e31ff0f550e3979a63e188d0abf3f94",
+  "previousSha256": "62d462fffec3a8f8c6694888c3200de2fb753790c95047f994df16360ff135fd",
+  "backupPath": "/usr/local/bin/relay-server.pre-android-rich-retry-20260907T122807Z",
+  "mainPid": 1043663,
+  "durableBackend": true,
+  "automaticRestarts": 0,
+  "execMainStatus": 0,
+  "candidate": "android-rich-candidate.json",
+  "validation": "android-rich-validation.json",
+  "sourceManifest": "android-rich-source-manifest.json",
+  "script": "build/notification-latency-20260907/deploy-android-rich-retry.sh",
+  "scope": "New eligible Android rich encrypted-message custody in direct, protected-direct, group-topic and strict-group routes. Existing iOS and opaque behavior preserved.",
+  "backfillsOldCustody": false,
+  "rollbackCaveat": "Old binary preserves custody and registrations but cannot preserve progress for newly admitted Android-rich retries. No destructive migration.",
+  "livePostDeploymentChecks": "passed",
+  "redisBaseline": {
+    "capturedUtc": "2026-09-07T12:26:06Z",
+    "completedMarkers": 0,
+    "materialKeys": 0,
+    "dueIndexKeys": 0
+  },
+  "androidDirectAndGroupProcessAbsent": "both exact OS cards passed before reopening",
+  "iosPhysicalSenderGroup": "9E3D-D3FC active alert/sound before reopen",
+  "iosHealthyResumeUtc": "2026-09-07T12:36:32.503331Z",
+  "iosNoDuplicateThroughUtc": "2026-09-07T12:38:12Z",
+  "redisAfterAndroidPair": {
+    "completedMarkers": 2,
+    "materialKeys": 0,
+    "dueIndexKeys": 0
+  },
+  "redisFinal": {
+    "completedMarkers": 3,
+    "allExpiringWithinOriginalSevenDays": true,
+    "materialKeys": 0,
+    "dueIndexKeys": 0
+  },
+  "deviceCapturesStoppedUtc": "2026-09-07T12:39:59.024928Z",
+  "relayCaptureStoppedUtc": "2026-09-07T12:40:02.037158Z",
+  "originalNetworksRestored": true,
+  "testAccountsPreserved": true,
+  "finalHealth": {
+    "MainPID": "1043663",
+    "NRestarts": "0",
+    "ExecMainStatus": "0",
+    "ActiveState": "active",
+    "SubState": "running",
+    "sha256": "746107033681ea47c8d02d9869befa6b5e31ff0f550e3979a63e188d0abf3f94",
+    "durableBackend": true,
+    "checkedAtUtc": "2026-09-07T12:40:33.167854+00:00"
+  }
+}

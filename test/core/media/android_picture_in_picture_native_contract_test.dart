@@ -979,6 +979,8 @@ void main() {
     },
   );
 
+  // The subprocess inventories the full device-proof corpus and can exceed
+  // the default 30 seconds during the concurrent host gate.
   test('PiP proof discovery paths have exact classifications', () async {
     const expected = <String, String>{
       'integration_test/received_video_picture_in_picture_proof_test.dart':
@@ -1008,7 +1010,7 @@ void main() {
       expect(matching, hasLength(1), reason: entry.key);
       expect(matching.single, startsWith('${entry.value}\t${entry.key}\t'));
     }
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('full regression PiP retries preserve prior proof artifacts', () {
     final fullRegressionRunner = File(

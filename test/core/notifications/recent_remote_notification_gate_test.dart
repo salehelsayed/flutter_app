@@ -776,6 +776,417 @@ void main() {
       },
     );
 
+    test(
+      'pending exact proof survives compatibility expiry and sibling reads',
+      () async {
+        const payload = 'peer-delayed';
+        const eventId = 'reaction-delayed';
+        final marker = File(
+          '${sidecarDir.path}/${markerName('message:$payload|$eventId')}',
+        );
+        await writeMarker(
+          'message:$payload|$eventId',
+          now.subtract(const Duration(hours: 13)),
+        );
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'unrelated-peer',
+            messageId: 'unrelated-event',
+          ),
+          isFalse,
+        );
+        expect(
+          await gate.hasRecentExactAnnouncement(
+            payload: payload,
+            messageId: eventId,
+          ),
+          isFalse,
+        );
+        expect(
+          await gate.consumeIfRecentExactAnnouncement(
+            payload: payload,
+            messageId: eventId,
+          ),
+          isFalse,
+        );
+        expect(marker.existsSync(), isTrue);
+        expect(
+          await gate.hasExactPendingAnnouncement(
+            payload: payload,
+            messageId: eventId,
+          ),
+          isTrue,
+        );
+        expect(
+          await gate.hasExactPendingAnnouncement(
+            payload: payload,
+            messageId: 'other-event',
+          ),
+          isFalse,
+        );
+        expect(
+          await gate.consumeExactPendingAnnouncement(
+            payload: 'other-peer',
+            messageId: eventId,
+          ),
+          isFalse,
+        );
+        expect(marker.existsSync(), isTrue);
+        expect(
+          await gate.consumeExactPendingAnnouncement(
+            payload: payload,
+            messageId: eventId,
+          ),
+          isTrue,
+        );
+        expect(marker.existsSync(), isFalse);
+        expect(
+          await gate.hasExactPendingAnnouncement(
+            payload: payload,
+            messageId: eventId,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'pending exact APIs never consume a broad conversation hint',
+      () async {
+        await gate.markAnnouncement(payload: 'peer-broad');
+        expect(
+          await gate.hasExactPendingAnnouncement(
+            payload: 'peer-broad',
+            messageId: 'event',
+          ),
+          isFalse,
+        );
+        expect(
+          await gate.consumeExactPendingAnnouncement(
+            payload: 'peer-broad',
+            messageId: 'event',
+          ),
+          isFalse,
+        );
+        expect(await gate.consumeIfRecentPayload('peer-broad'), isTrue);
+        await gate.markAnnouncement(payload: 'peer-broad');
+        now = now.add(const Duration(seconds: 31));
+        expect(await gate.consumeIfRecentPayload('peer-broad'), isFalse);
+      },
+    );
+
+    test('aged exact alias remains durable without renewing recent TTL', () async {
+      const sourcePayload = 'group:delayed|message:provider-id';
+      const targetPayload = 'group:delayed|message:canonical-id';
+      final source = File(
+        '${sidecarDir.path}/${markerName('message:$sourcePayload|provider-id')}',
+      );
+      final target = File(
+        '${sidecarDir.path}/${markerName('message:$targetPayload|canonical-id')}',
+      );
+      final originalTime = now.subtract(const Duration(hours: 13));
+      await writeMarker('message:$sourcePayload|provider-id', originalTime);
+      // A failed target write keeps the source available to the pending owner.
+      await Directory(target.path).create();
+      Future<bool> promote() => gate.promoteExactAnnouncementAlias(
+        sourcePayload: sourcePayload,
+        sourceMessageId: 'provider-id',
+        targetPayload: targetPayload,
+        targetMessageId: 'canonical-id',
+      );
+      await expectLater(promote(), throwsA(isA<FileSystemException>()));
+      expect(source.existsSync(), isTrue);
+      await Directory(target.path).delete();
+      expect(await promote(), isTrue);
+      expect(target.lastModifiedSync(), originalTime.toLocal());
+      expect(
+        await gate.hasRecentExactAnnouncement(
+          payload: targetPayload,
+          messageId: 'canonical-id',
+        ),
+        isFalse,
+      );
+      now = now.add(const Duration(days: 2));
+      expect(
+        await gate.hasExactPendingAnnouncement(
+          payload: targetPayload,
+          messageId: 'canonical-id',
+        ),
+        isTrue,
+      );
+      expect(
+        await gate.consumeExactPendingAnnouncement(
+          payload: targetPayload,
+          messageId: 'canonical-id',
+        ),
+        isTrue,
+      );
+      expect(target.existsSync(), isFalse);
+      expect(source.existsSync(), isFalse);
+    });
+
+    test(
+      'canonical retirement cleans multiple alias proofs after gate restart',
+      () async {
+        const targetPayload = 'group:multi|message:canonical';
+        const sources = ['alias-a', 'alias-b'];
+        for (final source in sources) {
+          await writeMarker('message:group:multi|message:$source|$source', now);
+        }
+        await writeMarker(
+          'message:group:other|message:unrelated|unrelated',
+          now,
+        );
+        await Future.wait(
+          sources.map(
+            (source) =>
+                RecentRemoteNotificationGate(
+                  filePath: gate.filePath,
+                  now: () => now,
+                  appGroupSidecarDirProvider: () async => container,
+                ).promoteExactAnnouncementAlias(
+                  sourcePayload: 'group:multi|message:$source',
+                  sourceMessageId: source,
+                  targetPayload: targetPayload,
+                  targetMessageId: 'canonical',
+                ),
+          ),
+        );
+        for (final source in sources) {
+          expect(
+            await gate.hasExactPendingAnnouncement(
+              payload: 'group:multi|message:$source',
+              messageId: source,
+            ),
+            isTrue,
+          );
+        }
+        final restarted = RecentRemoteNotificationGate(
+          filePath: gate.filePath,
+          now: () => now,
+          appGroupSidecarDirProvider: () async => container,
+        );
+        expect(
+          await restarted.consumeExactPendingAnnouncement(
+            payload: targetPayload,
+            messageId: 'canonical',
+          ),
+          isTrue,
+        );
+        for (final source in sources) {
+          expect(
+            await restarted.hasExactPendingAnnouncement(
+              payload: 'group:multi|message:$source',
+              messageId: source,
+            ),
+            isFalse,
+          );
+        }
+        expect(
+          await restarted.hasExactPendingAnnouncement(
+            payload: 'group:other|message:unrelated',
+            messageId: 'unrelated',
+          ),
+          isTrue,
+        );
+        expect(
+          await restarted.consumeExactPendingAnnouncement(
+            payload: targetPayload,
+            messageId: 'canonical',
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'account binding preserves migration and restart then clears old proofs',
+      () async {
+        const payload = 'group:shared|message:canonical';
+        const source = 'group:shared|message:alias';
+        await writeMarker(
+          'message:$source|alias',
+          now.subtract(const Duration(hours: 13)),
+        );
+        await gate.promoteExactAnnouncementAlias(
+          sourcePayload: source,
+          sourceMessageId: 'alias',
+          targetPayload: payload,
+          targetMessageId: 'canonical',
+        );
+        await gate.markPayload('peer-hint');
+        await gate.rebindAccount('opaque-account-a');
+        expect(
+          await gate.hasExactPendingAnnouncement(
+            payload: payload,
+            messageId: 'canonical',
+          ),
+          isTrue,
+          reason:
+              'the initial existing-account upgrade retains pending native proof',
+        );
+        final restarted = RecentRemoteNotificationGate(
+          filePath: gate.filePath,
+          now: () => now,
+          appGroupSidecarDirProvider: () async => container,
+        );
+        await restarted.rebindAccount('opaque-account-a');
+        expect(
+          await restarted.hasExactPendingAnnouncement(
+            payload: payload,
+            messageId: 'canonical',
+          ),
+          isTrue,
+        );
+        await restarted.rebindAccount('opaque-account-b');
+        expect(
+          await restarted.hasExactPendingAnnouncement(
+            payload: payload,
+            messageId: 'canonical',
+          ),
+          isFalse,
+        );
+        expect(
+          await restarted.hasExactPendingAnnouncement(
+            payload: source,
+            messageId: 'alias',
+          ),
+          isFalse,
+        );
+        expect(await restarted.hasRecentPayload('peer-hint'), isFalse);
+        expect(Directory('${gate.filePath}.aliases').existsSync(), isFalse);
+        // A new account may receive the same group/event route independently.
+        await sidecarDir.create();
+        await writeMarker('message:$payload|canonical', now);
+        await restarted.rebindAccount('opaque-account-b');
+        expect(
+          await restarted.hasExactPendingAnnouncement(
+            payload: payload,
+            messageId: 'canonical',
+          ),
+          isTrue,
+        );
+        await restarted.rebindAccount(null);
+        expect(
+          await restarted.hasExactPendingAnnouncement(
+            payload: payload,
+            messageId: 'canonical',
+          ),
+          isFalse,
+        );
+        // Retired startup remains a clearing boundary even if a late old NSE wrote.
+        await sidecarDir.create();
+        await writeMarker('message:$payload|canonical', now);
+        await restarted.rebindAccount(null);
+        expect(
+          await restarted.hasExactPendingAnnouncement(
+            payload: payload,
+            messageId: 'canonical',
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'account reset fails before accepting a changed binding then retries',
+      () async {
+        await gate.rebindAccount('opaque-account-a');
+        await writeMarker('message:peer-a|event-a', now);
+        var directoryAvailable = false;
+        final unavailable = RecentRemoteNotificationGate(
+          filePath: gate.filePath,
+          now: () => now,
+          appGroupSidecarDirProvider: () async {
+            if (!directoryAvailable) throw StateError('app group unavailable');
+            return container;
+          },
+        );
+        await expectLater(
+          unavailable.rebindAccount('opaque-account-b'),
+          throwsStateError,
+        );
+        expect(
+          jsonDecode(
+            await File('${gate.filePath}.account').readAsString(),
+          )['binding'],
+          'opaque-account-a',
+        );
+        expect(
+          await gate.hasExactPendingAnnouncement(
+            payload: 'peer-a',
+            messageId: 'event-a',
+          ),
+          isTrue,
+        );
+        directoryAvailable = true;
+        await unavailable.rebindAccount('opaque-account-b');
+        expect(
+          await unavailable.hasExactPendingAnnouncement(
+            payload: 'peer-a',
+            messageId: 'event-a',
+          ),
+          isFalse,
+        );
+        expect(
+          jsonDecode(
+            await File('${gate.filePath}.account').readAsString(),
+          )['binding'],
+          'opaque-account-b',
+        );
+      },
+    );
+
+    test('alias provenance survives interrupted sidecar retirement', () async {
+      const source = 'group:retry|message:alias';
+      const target = 'group:retry|message:canonical';
+      await writeMarker('message:$source|alias', now);
+      await gate.promoteExactAnnouncementAlias(
+        sourcePayload: source,
+        sourceMessageId: 'alias',
+        targetPayload: target,
+        targetMessageId: 'canonical',
+      );
+      final unavailable = RecentRemoteNotificationGate(
+        filePath: gate.filePath,
+        now: () => now,
+        appGroupSidecarDirProvider: () async => throw StateError('unavailable'),
+      );
+      await expectLater(
+        unavailable.consumeExactPendingAnnouncement(
+          payload: target,
+          messageId: 'canonical',
+        ),
+        throwsStateError,
+      );
+      expect(
+        await gate.hasExactPendingAnnouncement(
+          payload: source,
+          messageId: 'alias',
+        ),
+        isTrue,
+      );
+      final restarted = RecentRemoteNotificationGate(
+        filePath: gate.filePath,
+        now: () => now,
+        appGroupSidecarDirProvider: () async => container,
+      );
+      expect(
+        await restarted.consumeExactPendingAnnouncement(
+          payload: target,
+          messageId: 'canonical',
+        ),
+        isTrue,
+      );
+      expect(
+        await restarted.hasExactPendingAnnouncement(
+          payload: source,
+          messageId: 'alias',
+        ),
+        isFalse,
+      );
+    });
+
     test('honors the 12h message TTL on sidecar markers', () async {
       await writeMarker(
         'message:peer-x|m-1',

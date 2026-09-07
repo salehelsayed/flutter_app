@@ -2944,8 +2944,8 @@ func TestBuildReactionPush_TimeoutFallbackNeverSaysNewMessage(t *testing.T) {
 	if len(wantIdentity) > 64 {
 		t.Fatalf("bounded identity length = %d, exceeds APNs limit", len(wantIdentity))
 	}
-	if msg.Android == nil || msg.Android.CollapseKey != wantIdentity {
-		t.Fatalf("Android collapse key = %#v, want %q", msg.Android, wantIdentity)
+	if msg.Android == nil || msg.Android.CollapseKey != "" {
+		t.Fatalf("Android reaction must omit collapse key: %#v", msg.Android)
 	}
 }
 

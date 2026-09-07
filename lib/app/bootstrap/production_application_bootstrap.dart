@@ -565,6 +565,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     );
     StartupTiming.instance.mark('share_launch_probe_complete');
 
+    // Account reconciliation must see the NSE's shared exact-event proofs,
+    // including on startup before deferred Firebase initialization.
+    if (!kIsWeb && Platform.isIOS && !isGroupMediaIosDisposableProfile) {
+      configureRecentRemoteNotificationGateForIos();
+    }
+
     // Initialize Firebase (mobile only — not available on desktop)
     final bool isDesktop =
         !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
@@ -591,13 +597,6 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               );
         }
 
-        // 04-P0 / SI-5 (iOS): wire the recent-remote gate to also consume the NSE's
-        // app-group sidecar dedupe markers, and persist the app-group container path
-        // so the FCM background isolate can read it too.
-        if (!kIsWeb && Platform.isIOS && !isGroupMediaIosDisposableProfile) {
-          configureRecentRemoteNotificationGateForIos();
-          unawaited(persistAppGroupContainerPathForGate());
-        }
         StartupTiming.instance.mark('firebase_ready');
       },
       onError: (error, _) => debugPrint('Firebase init skipped: $error'),
@@ -682,6 +681,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 : null,
             rebindPendingNotificationOverlay:
                 pendingNotificationOverlayBindingPublisher?.rebind,
+            rebindRemoteAnnouncements: (binding) =>
+                recentRemoteNotificationGate.rebindAccount(binding),
             publishSharedBinding: sharedPushKeyStore == null
                 ? null
                 : (binding) => publishCanonicalRuntimeSharedBinding(

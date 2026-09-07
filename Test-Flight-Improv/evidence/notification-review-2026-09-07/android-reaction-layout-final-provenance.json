@@ -1,0 +1,33 @@
+{
+  "recordedAtUtc": "2026-09-07T10:45:44.586002+00:00",
+  "artifact": "/Volumes/CrucialX9/flutter_app/build/app/outputs/flutter-apk/app-debug.apk",
+  "sha256": "f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec",
+  "packageIdentity": "package: name='com.mknoon.app' versionCode='114' versionName='1.0.0-807874437-notification260907-r4' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'",
+  "mode": "debug",
+  "targetAbi": "arm64-v8a",
+  "sourceRevision": "807874437317d6325e3de357a043aafce87a8601",
+  "modifiedProductionSourceSha256": {
+    "lib/app/bootstrap/production_application_bootstrap.dart": "52b0587f87ce4863cacfe1c1cc86b1226824650dec35f9ee72adec2468639e39",
+    "lib/app/bootstrap/production_canonical_direct_projection_composition.dart": "f7c0fc0b4f3327883518576510acf5b31c0b026e83d4254957fe330f14271928",
+    "lib/core/notifications/canonical_runtime_lease.dart": "e63e1b9e4f03a5cf5b110215a7c038c3a606dd7c2f934283d8be1d1dc3dcf3be",
+    "lib/core/notifications/flutter_notification_service.dart": "b0f0f3973677687d3b349fb9a78a8812dbd08727575b065838af0261b76f786c",
+    "lib/core/notifications/local_notification_support.dart": "891a6124a320421be172a029a95a43f677bdf0f9778fc3fb9c7f4235338e3a24",
+    "lib/core/notifications/recent_remote_notification_gate.dart": "acf3a99aa80b419ffdf1be3116af053679e259ce7859088e1e5e29f5a6e5d52c",
+    "lib/features/call/presentation/foreground_call_overlay.dart": "7e61b00fc44a6d1aa14160acf63a1d1ee5945e501bace23917ce6136c3d7f3bd",
+    "lib/features/call/presentation/screens/incoming_call_screen.dart": "895fac1485f2cfb58fa6ebcb4e12a905e3e91d18ffe2409b5c890190c5441fb7",
+    "lib/features/call/presentation/screens/outgoing_call_screen.dart": "bd325a69ea87bbe36dc7a825c3722b3669a07cf60babe0967d9cafcf221f5588",
+    "lib/features/call/presentation/widgets/call_controls.dart": "db6daaa3dc939f8606f6ce18dd6d260084635187a1408a6dc36f1789729ebf6d",
+    "lib/features/groups/application/group_message_listener.dart": "f64fe6b583fe0b92d2d4518564cde83e7426799cc4fcdfa60d15b02e85a070f1",
+    "lib/features/push/application/background_message_handler.dart": "0b7da5c49c08192f75da32bcc84d4d58478f4981f7f25e5448628c59d30a2c19",
+    "lib/features/push/application/show_notification_use_case.dart": "1738ef5e55088ca272aa600739d25ef2b3407a4384959e0c8083a74be4b1b249",
+    "lib/l10n/app_ar.arb": "26b59a638ba4850cc2cad98967519659ab9b462bca35bf04a2f7877bd82cc0d1",
+    "lib/l10n/app_de.arb": "a9f6c150e31bbf955c28685e4d9dd581ed6b01019832f5ab45ed198619e17b44",
+    "lib/l10n/app_en.arb": "ca10939b92b9eda8a59ba6c8a30896968905dbc5d10ff24cb2f885b266f06863",
+    "lib/l10n/app_localizations.dart": "6ba20634fc732f86af56b664391bf16e19bbc356566c1fbb8433cc5615e656e0",
+    "lib/l10n/app_localizations_ar.dart": "f2d35789b2b5ad65c2804b72e868e875b5c86584f3b7609702392783e4acacfc",
+    "lib/l10n/app_localizations_de.dart": "6382251061d005f728c313426f93c8453ae0c63544b36764da147ade2ae5a9f3",
+    "lib/l10n/app_localizations_en.dart": "88e8a10acd996678d88e6e228f3463c13938a1bb4e46a6634cd7e8baca609101"
+  },
+  "pendingSourceChanges": false,
+  "androidOnlyFollowup": "Expanded reaction cards include current reaction from initial service publication, Firebase background handler and generation-checked silent replacement without modifying canonical unread state. No iOS notification details changed."
+}

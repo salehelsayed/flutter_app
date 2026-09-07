@@ -267,7 +267,8 @@ final class MknoonCallNativeBridgeTests: XCTestCase {
     let remoteBridge = MknoonCallNativeBridge(controller: remote.controller, messenger: nil)
     XCTAssertEqual(invoke(remoteBridge, "remoteCancel", identity(handle)) as? Bool, true)
     XCTAssertEqual(remote.store.snapshot()?.terminalEvent?.type, .remoteCancelled)
-    XCTAssertEqual(remote.provider.endReports.last?.1, .remoteEnded)
+    // Cancelling this still-unanswered presentation must record a missed call.
+    XCTAssertEqual(remote.provider.endReports.last?.1, .unanswered)
 
     let expired = makeBridgeRig()
     expired.controller.presentIncoming(payload()) { _ in }

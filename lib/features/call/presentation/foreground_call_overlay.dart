@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../application/call_audio_controller.dart';
 import '../application/foreground_call_capability.dart';
@@ -453,6 +454,7 @@ class _TerminalCallNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     return ColoredBox(
       key: const ValueKey('foreground-call-terminal-notice'),
       color: colors.surfaceBase,
@@ -469,7 +471,7 @@ class _TerminalCallNotice extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               Text(
-                'Call ended',
+                l10n.call_ended,
                 style: TextStyle(
                   color: colors.textPrimary,
                   fontSize: 28,
@@ -489,10 +491,10 @@ class _TerminalCallNotice extends StatelessWidget {
               ),
               const SizedBox(height: 28),
               Tooltip(
-                message: 'Dismiss call status',
+                message: l10n.call_dismiss_status,
                 child: FilledButton(
                   onPressed: onDismiss,
-                  child: const Text('Dismiss'),
+                  child: Text(l10n.pinned_dismiss),
                 ),
               ),
             ],

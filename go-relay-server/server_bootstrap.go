@@ -185,6 +185,9 @@ func newControlPlaneStores(
 			time.Now,
 		)
 		wakeOutcomeCoordinator.sendGroup = push.sendGroupWakeOutcomeThroughGateway
+		wakeOutcomeCoordinator.sendAndroidRich = func(ctx context.Context, claim wakeOutcomeClaim) pushDeliveryResult {
+			return push.sendAndroidRichRecovery(ctx, wakeOutcomeBackend, claim)
+		}
 		callControlBackend := newRedisCallControlStore(client, cfg.RedisPrefix)
 		var iosCallWakeDispatcher CallWakeDispatcher
 		if apnsVoIPConfig.Enabled {

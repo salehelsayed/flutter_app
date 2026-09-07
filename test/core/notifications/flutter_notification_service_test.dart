@@ -545,6 +545,84 @@ void main() {
     },
   );
 
+  for (final conversationKey in <String>[
+    'peer-reaction-history',
+    'group:reaction-history',
+  ]) {
+    test(
+      'expanded reaction card keeps current body and canonical unread history: $conversationKey',
+      () async {
+        final service = buildService();
+        await service.initialize();
+        const history = <String>[
+          'first unread',
+          'second unread',
+          'third unread',
+          'fourth unread',
+          'fifth unread',
+        ];
+        final snapshot = ConversationNotificationSnapshot(
+          historyLines: history,
+          totalUnreadMessageCount: 17,
+        );
+        const reactionBody = 'Reacted 😂 to your message';
+        Future<void> showReaction() => service.showMessageNotification(
+          contactPeerId: conversationKey,
+          senderUsername: 'Alice',
+          messageText: reactionBody,
+          contentKind: ConversationNotificationContentKind.reaction,
+          contentEventIdentity: 'reaction-event',
+          snapshot: snapshot,
+        );
+        await showReaction();
+        final reactionShows = log
+            .where((call) => call.method == 'show')
+            .toList();
+        expect(reactionShows, hasLength(1));
+        final reactionArgs = reactionShows.single.arguments as Map;
+        final reactionDetails = reactionArgs['platformSpecifics'] as Map;
+        expect(reactionArgs['body'], reactionBody);
+        expect(
+          (reactionDetails['styleInformation'] as Map)['lines'],
+          <String>[...history.skip(1), reactionBody],
+          reason:
+              'Android expanded InboxStyle must include the current reaction as well as unread messages',
+        );
+        expect(
+          reactionDetails['number'],
+          17,
+          reason: 'a reaction is not an unread ordinary message',
+        );
+        expect(
+          snapshot.historyLines,
+          history,
+          reason: 'presentation must not mutate canonical history',
+        );
+        expect(reactionDetails['playSound'], isTrue);
+        await showReaction();
+        expect(
+          log.where((call) => call.method == 'show'),
+          hasLength(1),
+          reason: 'the same reaction still cannot publish a second card',
+        );
+        await service.showMessageNotification(
+          contactPeerId: conversationKey,
+          senderUsername: 'Alice',
+          messageText: 'fifth unread',
+          contentKind: ConversationNotificationContentKind.message,
+          contentEventIdentity: 'ordinary-event',
+          snapshot: snapshot,
+        );
+        final ordinaryArgs =
+            log.lastWhere((call) => call.method == 'show').arguments as Map;
+        final ordinaryDetails = ordinaryArgs['platformSpecifics'] as Map;
+        expect(ordinaryArgs['id'], reactionArgs['id']);
+        expect((ordinaryDetails['styleInformation'] as Map)['lines'], history);
+        expect(ordinaryDetails['number'], 17);
+      },
+    );
+  }
+
   test(
     'showMessageNotification forwards explicit group anchor payload overrides',
     () async {
@@ -1334,6 +1412,86 @@ void main() {
       expect(log, hasLength(operationCount));
     },
   );
+
+  for (final key in <String>[
+    'peer-reaction-rebuild',
+    'group:reaction-rebuild',
+  ]) {
+    test(
+      'canonical reaction rebuild preserves expanded current body: $key',
+      () async {
+        final generations = ['before', 'rebuilt', 'stale-unused'];
+        final service = buildService(
+          generationFactory: () => generations.removeAt(0),
+        );
+        await service.initialize();
+        await service.showMessageNotification(
+          contactPeerId: key,
+          senderUsername: 'Alice',
+          messageText: 'ordinary unread',
+          contentKind: ConversationNotificationContentKind.message,
+          contentEventIdentity: 'ordinary-event',
+        );
+        final initial =
+            log.lastWhere((call) => call.method == 'show').arguments as Map;
+        final snapshot = ConversationNotificationSnapshot(
+          historyLines: const <String>['older unread', 'ordinary unread'],
+          totalUnreadMessageCount: 9,
+        );
+        final replacement = CanonicalConversationNotificationReplacement(
+          senderUsername: 'Alice',
+          messageText: 'Alice reacted to your video',
+          routePayload: key,
+          contentKind: ConversationNotificationContentKind.reaction,
+          eventIdentity: 'canonical-reaction-event',
+          snapshot: snapshot,
+        );
+        expect(
+          await service.replaceConversationNotificationGeneration(
+            key,
+            'before',
+            replacement,
+          ),
+          isTrue,
+        );
+        final rebuilt =
+            log.lastWhere((call) => call.method == 'show').arguments as Map;
+        final details = rebuilt['platformSpecifics'] as Map;
+        expect(rebuilt['id'], initial['id']);
+        expect(rebuilt['body'], replacement.messageText);
+        expect((details['styleInformation'] as Map)['lines'], const <String>[
+          'older unread',
+          'ordinary unread',
+          'Alice reacted to your video',
+        ]);
+        expect(details['number'], 9);
+        expect(details['playSound'], isFalse);
+        expect(details['onlyAlertOnce'], isTrue);
+        final payload = decodeConversationNotificationPayload(
+          rebuilt['payload'] as String?,
+        );
+        expect(
+          payload?.metadata.kind,
+          ConversationNotificationContentKind.reaction,
+        );
+        expect(payload?.metadata.eventIdentity, 'canonical-reaction-event');
+        expect(payload?.metadata.generation, 'rebuilt');
+        expect(
+          await service.replaceConversationNotificationGeneration(
+            key,
+            'before',
+            replacement,
+          ),
+          isFalse,
+        );
+        expect(log.where((call) => call.method == 'show'), hasLength(2));
+        expect(snapshot.historyLines, const <String>[
+          'older unread',
+          'ordinary unread',
+        ]);
+      },
+    );
+  }
 
   test(
     'an old Android tap cannot dismiss a newer stable-id generation',

@@ -454,6 +454,47 @@ void main() {
     },
   );
 
+  test(
+    'production media disposal preserves the terminal notice projection',
+    () async {
+      final fixture = await _createProductionSpeakerRouteFixture();
+      final graph = fixture.graph;
+      final coordinator = graph.coordinator;
+      for (final type in [
+        CallEventType.incomingValidated,
+        CallEventType.systemUiPresented,
+        CallEventType.answer,
+      ]) {
+        await coordinator.dispatch(
+          CallEvent(
+            type: type,
+            eventId: 'notice-${type.name}',
+            occurredAt: coordinator.clock(),
+            callId: _callA,
+          ),
+        );
+      }
+      final projections = <ForegroundCallProjection?>[];
+      final subscription = graph.changes.listen(projections.add);
+      await coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.negotiationFailed,
+          eventId: 'notice-failure',
+          occurredAt: coordinator.clock(),
+          callId: _callA,
+          endReason: CallEndReason.mediaFailed,
+        ),
+      );
+
+      expect(graph.mediaOwner.currentAudioController(_callA), isNull);
+      expect(graph.current, isNull);
+      expect(projections, hasLength(1));
+      expect(projections.single?.session.endReason, CallEndReason.mediaFailed);
+      await subscription.cancel();
+      await graph.shutdown();
+    },
+  );
+
   setUpAll(sqfliteFfiInit);
 
   test(
@@ -3709,7 +3750,12 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
   );
   final coordinator = CallCoordinator(
     reducer: const CallReducer(),
-    cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+    cleanupCoordinator: CallCleanupCoordinator([
+      CallCleanupStep(
+        'call_media',
+        (snapshot) => mediaOwner.closeCall(snapshot.callId!),
+      ),
+    ]),
     historyProjector: CallHistoryProjector(_UnusedCallHistoryRepository()),
     clock: () => now,
     idSource: () => _callA,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../../core/utils/flow_event_emitter.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
@@ -290,9 +292,24 @@ final class HandleIncomingCallSignal {
         // the OS records the authoritative remote-cancel reason instead.
         await _remoteCancelSafely(admitted.callHandle);
       }
-      final reduction = await _coordinator.dispatch(
+      // Media preparation can wait for permission or TURN. Once admitted,
+      // release the inbound lane so a subsequent remote hang-up can interrupt
+      // it. The coordinator still owns effect failures and terminal cleanup.
+      final admission =
+          signal.event == CallSignalType.accept ||
+              signal.event == CallSignalType.offer
+          ? Completer<CallReduction>()
+          : null;
+      final dispatch = _coordinator.dispatch(
         _toCoordinatorEvent(signal, frame.route),
+        onApplied: admission?.complete,
       );
+      final reduction = await (admission == null
+          ? dispatch
+          : Future.any<CallReduction>(<Future<CallReduction>>[
+              admission.future,
+              dispatch,
+            ]));
       _settleNegotiationMaterial(stagedMaterial, reduction);
       final initialOutcome = _outcome(reduction);
       if (signal.event != CallSignalType.invite) {

@@ -1,0 +1,33 @@
+# Independent Android rich-message provider recovery review
+
+Reviewed current production changes in `go-relay-server/android_rich_push_recovery.go`, `wake_outcome.go`, `inbox.go`, `ack_custody.go`, and `server_bootstrap.go`, plus the focused `text_push_retry_recovery_test.go`. Host regression agent owns implementation and execution. This review did not change production code or run competing builds/tests.
+
+## Findings
+
+The initially proposed completed-record retention would have occupied the existing 512 active-obligation slots for seven days. That caused successful traffic alone to exhaust durable retry admission. The implementation now removes completed Android-rich records from the active hash and writes separate fixed-value completion markers with TTL capped by the original custody expiry. The focused capacity regression drives 520 accepted events while retaining an unrelated pending obligation. This concrete review finding is addressed in the current source.
+
+No additional blocking source defect was found in the reviewed batch. The host agent subsequently reported the full module green: 1,118 test/subtest pass records, one incumbent skip, zero failures; its race sweep was still running at this review update. Execution remains owned by that agent.
+
+## Verified source and causal test boundaries
+
+- Public direct, protected-direct, strict-group, and group storage paths admit filtered notification material, hashed obligation state, and original message custody in their existing Redis transaction. Provider work starts after commit. Admission validates route generation/digest and canonical recipient/event identity; rejected admission tests assert no partial message, material, or state write.
+- Notification recovery material has a separate expiring key. Direct/protected/strict custody ACK can remove the original inbox record without removing provider retry material. The eight legacy/encrypted-backend integration cases recreate state, provider service, and coordinator after three failed provider attempts, then require one accepted retry without a second sender event or recipient reopen. Group history has no corresponding ACK operation; its integration leg proves automatic restart recovery.
+- Retry resolves the current private route at send time. It never persists a provider token or route lease with retry material. Direct/group ciphertext and routing metadata are allowlisted; unknown fields, plaintext-body additions, wrong recipients, bad digest, malformed/trailing JSON, missing material, and expired material cannot reach the provider. Only the already-filtered encrypted data projection is retained.
+- The private resolver's inspection factory returns its sentinel before provider execution. Actual recovery builds high-priority, data-only Android messages. iOS selection suppresses this Android obligation; an opaque privacy-mode change submits no retained rich payload and remains bounded by expiry. Existing iOS/opaque dispatch paths remain separate.
+- Accepted, permanent, and suppressed terminal results remove the active record, due entry, and material while writing the exact completion marker atomically. Retryable failures retain material and reschedule. Tests verify failed settlement retains claimed material; receiver completion cannot steal an active provider claim.
+- Token-rotation tests distinguish transient failure, permanent error on a concurrently replaced token, and permanent error on the still-current token. The old-token permanent CAS loss remains retryable; only revocation of the current token terminates it. Terminal jobs do not send again on later coordinator runs.
+- Duplicate admission after inbox eviction and coordinator recreation is suppressed by the completion marker without recreating material or active state. Its TTL uses the original expiry, rather than extending retention from completion time.
+
+## Limits of this proof
+
+Provider acceptance is the terminal transport outcome; these host tests do not prove Android OS display. Completion-marker count follows accepted traffic within the original retention horizon (at most seven days), while the active obligation cap remains 512 per peer. If 512 jobs are concurrently pending, the existing capacity fallback still performs an immediate bounded send rather than evicting a pending obligation. This is a time-bounded storage design, not a fixed maximum count for completed markers.
+
+The device latency observations and iPhone APNs keepalive/reconnect findings are separate evidence. This relay change addresses exhausted provider attempts for Android ordinary-message notifications; it does not claim to repair the observed iPhone courier keepalive delay.
+
+## Final provider-size fallback and strict-group preservation check
+
+The final one-line production adjustment at `android_rich_push_recovery.go:217` enables the existing routing-only size rescue in the shared gateway. `inbox.go:1144` enters that rescue only after explicit provider payload-size rejection, sends the reduced object exactly once, and returns its outcome without recursion or consuming more of the ordinary transient loop. The reduced data contains required routing fields and `preview_unavailable`; it does not retain ciphertext or plaintext preview text. Acceptance is terminal. A failed rescue remains retryable unless the current token is definitively revoked. Such a retryable result can schedule a later Android recovery attempt; the guarantee is one rescue per explicit size rejection, not one provider attempt for the lifetime of an unavailable service.
+
+`TestAndroidRichRecoveryPreservesProviderSizeFallback` at `text_push_retry_recovery_test.go:598` requires exactly one original send plus one successful reduced send and verifies durable terminal cleanup. The incumbent `TestRelayNotificationClosure_ProviderTooLargeGetsOneStrictFallback` at `push_payload_closure_test.go:233` asserts two sends even when the rescue fails and preserves the separate iOS group source/collapse assertions. The new Android-only factory leaves iOS provider ambiguity/admission behavior unchanged.
+
+The strict-group path also preserves the original gates. `group_content_push.go:107` builds the same `buildGroupPushMessage` and delegates to the shared selected-route gateway; it has no additional sender-authentication or payload-size gate. The original eligibility/feature/wake-token checks in `inbox.go:2903` match the new producer/preflight checks. The upstream protected custody authentication remains in place. Group dispatch claims and added platform projection fields apply only to iOS, so the new Android admission does not bypass an Android gate.

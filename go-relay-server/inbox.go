@@ -2562,6 +2562,8 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 		case InboxStoreResultStored:
 			is.recordStoredWithoutPush(toPeerId, entry)
 			switch admissionStatus {
+			case wakeOutcomeAdmissionAndroidRich:
+				is.launchAndroidRichWakeAdmission(admission)
 			case wakeOutcomeAdmissionDelayed, wakeOutcomeAdmissionSuppressed:
 				// Delayed obligations and completed/existing authority suppress the
 				// incumbent immediate provider call.
@@ -2687,6 +2689,25 @@ func (is *InboxStore) preflightDirectWakeOutcome(
 	}
 	fallback.kind = wakeOutcomePreflightSelectedRoute
 	fallback.route = copyPushRouteLease(*route)
+	var androidDraft *messaging.Message
+	switch producer {
+	case wakeOutcomeProducerDirectMessage:
+		if extractChatPushMetadata(entry.Message).RouteType == "new_message" {
+			androidDraft = buildPushMessage("", entry.From, entry.Message)
+		}
+	case wakeOutcomeProducerGroupMessage:
+		if metadata, recognized, eligible := extractGroupContentPushMetadata(entry.Message); recognized && eligible {
+			androidDraft = buildGroupPushMessage("", metadata.GroupID, metadata.SenderTransportPeerID, metadata.MessageID, entry.Message)
+		}
+	}
+	if admission, admitted := is.push.newAndroidRichAdmission(toPeerID, *route, androidDraft, entry.Timestamp, directWakeOutcomeExpiryMs(entry)); admitted {
+		return fallback, admission, true
+	}
+	if producer == wakeOutcomeProducerGroupMessage {
+		// Strict group content previously used the immediate producer. Only the
+		// Android rich extension above joins durable admission; preserve iOS/opaque.
+		return fallback, wakeOutcomeAdmission{}, false
+	}
 	if verifiedEventKey != "" {
 		admission, admitted := newWakeOutcomeAdmissionForEvent(
 			toPeerID,
@@ -2728,6 +2749,13 @@ func (is *InboxStore) directWakeOutcomeProducer(
 		return wakeOutcomeProducerDirectReaction, directReactionCapability, reaction.EventID, true
 	}
 
+	if metadata, recognized, eligible := extractGroupContentPushMetadata(entry.Message); recognized {
+		if !eligible || !is.groupContentPushEnabled || (is.wakeTokens != nil && wakeTokenGateEnforced &&
+			!is.wakeTokens.IsAuthorized(toPeerID, entry.WakeToken)) {
+			return 0, "", "", false
+		}
+		return wakeOutcomeProducerGroupMessage, "", metadata.MessageID, true
+	}
 	metadata := extractChatPushMetadata(entry.Message)
 	if !metadata.ShouldNotify || (is.wakeTokens != nil && wakeTokenGateEnforced &&
 		!is.wakeTokens.IsAuthorized(toPeerID, entry.WakeToken)) {
@@ -2958,7 +2986,12 @@ func (is *InboxStore) launchStoredDirectPushAfterPreflight(
 		}
 	case wakeOutcomePreflightSelectedRoute:
 		route := copyPushRouteLease(fallback.route)
-		if producer == wakeOutcomeProducerDirectReaction {
+		if producer == wakeOutcomeProducerGroupMessage {
+			metadata, recognized, eligible := extractGroupContentPushMetadata(entry.Message)
+			if recognized && eligible {
+				go is.push.sendGroupContentNotificationForRoute(context.Background(), toPeerID, route, metadata, entry.Message)
+			}
+		} else if producer == wakeOutcomeProducerDirectReaction {
 			go is.push.sendReactionNotificationForRoute(
 				context.Background(),
 				toPeerID,
@@ -2987,6 +3020,10 @@ func (is *InboxStore) launchDirectPushForWakeAdmission(
 	if is == nil || is.push == nil {
 		return
 	}
+	if len(admission.androidRichMaterial) > 0 {
+		is.push.launchAndroidRichCapacityFallback(toPeerID, admission.androidRichMaterial)
+		return
+	}
 	route := admission.Route()
 	go is.push.sendOpaqueWakeThroughGateway(
 		context.Background(),
@@ -2994,6 +3031,12 @@ func (is *InboxStore) launchDirectPushForWakeAdmission(
 		route,
 		admission.policy,
 	)
+}
+
+func (is *InboxStore) launchAndroidRichWakeAdmission(admission wakeOutcomeAdmission) {
+	if backend, ok := is.backend.(*redisInboxBackend); ok && is.push != nil {
+		is.push.launchAndroidRichAdmission(backend.wakeOutcomes, admission)
+	}
 }
 
 func (is *InboxStore) Capacity() int {
@@ -3409,6 +3452,10 @@ func (s *GroupInboxStore) groupWakeOutcomeAdmissions(
 				eventExpiresAtMs,
 			)
 		}
+		if !admitted && producer == wakeOutcomeProducerGroupMessage {
+			admission, admitted = s.push.newAndroidRichAdmission(recipientPeerID, *route,
+				buildGroupPushMessage("", groupID, from, extractMessageId(message), message), storedAtMs, eventExpiresAtMs)
+		}
 		if admitted && producer == wakeOutcomeProducerGroupMessage {
 			identity, validIdentity := newGroupMessageDispatchAdmissionIdentity(
 				recipientPeerID,
@@ -3612,7 +3659,17 @@ func (s *GroupInboxStore) fanOutPush(
 		seen[peerID] = struct{}{}
 		if dispatch, preflighted := wakeDispatches[peerID]; preflighted {
 			if dispatch.hasAdmission {
+				if dispatch.status == wakeOutcomeAdmissionAndroidRich {
+					if backend, ok := s.backend.(*redisGroupInboxBackend); ok {
+						s.push.launchAndroidRichAdmission(backend.wakeOutcomes, dispatch.admission)
+					}
+					continue
+				}
 				if suppressImmediateWake(dispatch) {
+					continue
+				}
+				if len(dispatch.admission.androidRichMaterial) > 0 {
+					s.push.launchAndroidRichCapacityFallback(peerID, dispatch.admission.androidRichMaterial)
 					continue
 				}
 				go s.push.sendGroupOpaqueWakeThroughGateway(

@@ -572,8 +572,15 @@ expect_error 'not supported for gate: groups' \
   ./scripts/run_test_gates.sh groups --reporter=json
 expect_error 'not supported for gate: groups' \
   ./scripts/run_test_gates.sh groups --dart-only
-expect_error 'not supported for host scope: 1to1' \
+# The exact host-only 1:1 lane supports batching independently of the public
+# curated gate, whose mixed-device controls remain rejected above.
+one_to_one_batch_dry="$(
   ./scripts/run_host_test_gates.sh 1to1 --batch-flutter --dry-run
+)"
+grep -Fq 'Host test planned-item inventory: 1to1' <<<"$one_to_one_batch_dry" ||
+  fail '1to1 host batching changed the selected curated host inventory'
+grep -Fq 'Batch execution shape: 1 Flutter invocation' <<<"$one_to_one_batch_dry" ||
+  fail '1to1 host batching did not retain one exact-path Flutter invocation'
 expect_error 'not supported for host scope: 1to1' \
   ./scripts/run_host_test_gates.sh 1to1 --dart-only --dry-run
 

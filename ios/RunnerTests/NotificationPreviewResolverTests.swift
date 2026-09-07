@@ -137,8 +137,8 @@ final class NotificationPreviewResolverTests: XCTestCase {
         ),
         name
       )
-      XCTAssertEqual(content.title, "", name)
-      XCTAssertEqual(content.body, "", name)
+      XCTAssertEqual(content.title, "Mknoon", name)
+      XCTAssertEqual(content.body, "Open the app to view updates.", name)
       XCTAssertNil(content.badge, name)
       XCTAssertNil(content.sound, name)
       if #available(iOS 15.0, *) {
@@ -187,8 +187,8 @@ final class NotificationPreviewResolverTests: XCTestCase {
     differentRequestContent.body = "Trusted body"
     differentRequestContent.sound = .default
     sanitizeNotificationContentForUnresolvedExpiry(differentRequestContent)
-    XCTAssertEqual(differentRequestContent.title, "")
-    XCTAssertEqual(differentRequestContent.body, "")
+    XCTAssertEqual(differentRequestContent.title, "Mknoon")
+    XCTAssertEqual(differentRequestContent.body, "Open the app to view updates.")
     XCTAssertNil(differentRequestContent.sound)
     if #available(iOS 15.0, *) {
       XCTAssertEqual(differentRequestContent.interruptionLevel, .passive)
@@ -2451,9 +2451,9 @@ final class NotificationPreviewResolverTests: XCTestCase {
 
     sanitizeNotificationContentForUnresolvedExpiry(content)
 
-    XCTAssertEqual(content.title, "")
+    XCTAssertEqual(content.title, "Mknoon")
     XCTAssertEqual(content.subtitle, "")
-    XCTAssertEqual(content.body, "")
+    XCTAssertEqual(content.body, "Open the app to view updates.")
     XCTAssertTrue(content.attachments.isEmpty)
     XCTAssertNil(content.badge)
     XCTAssertNil(content.sound)
@@ -2653,9 +2653,9 @@ final class NotificationPreviewResolverTests: XCTestCase {
       if applied { shownMarkerCalls += 1 }
       XCTAssertFalse(applied, item.0)
       XCTAssertEqual(shownMarkerCalls, 0, item.0)
-      XCTAssertEqual(content.title, "", item.0)
+      XCTAssertEqual(content.title, "Mknoon", item.0)
       XCTAssertEqual(content.subtitle, "", item.0)
-      XCTAssertEqual(content.body, "", item.0)
+      XCTAssertEqual(content.body, "Open the app to view updates.", item.0)
       XCTAssertTrue(content.attachments.isEmpty, item.0)
       XCTAssertNil(content.badge, item.0)
       XCTAssertNil(content.sound, item.0)

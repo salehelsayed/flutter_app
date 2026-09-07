@@ -1,0 +1,11 @@
+# Independent group acceptance and later reopen audit
+
+Reviewed the unfiltered `iphone11-syslog-unfiltered.log`; raw phone times are UTC+2. The times below are UTC without the approximately 40 ms host-clock correction, which does not affect this identity/count audit. Bounded source extract: `ios-group-accept-and-later-local-identity.log`.
+
+At initial group acceptance, the app submitted 16 local notification updates from 11:50:48.047777 through 11:50:57.286724. Every update used the same OS request identity, `5B74-D46D`. SpringBoard processed 16 corresponding presentation records: the first had sound enabled; the following 15 had `hasSound: 0` and `shouldPlaySound: 0`. There was exactly one actual `Play sound for notification` event, at 11:50:48.419263. The later `Play sound did finish` entry is completion of that same sound, not another alert.
+
+The device operator reports acceptance at 11:50:44.339–45.259 and the invitation still showing a disabled/spinning control at 11:50:58. The group conversation/history was confirmed later. Thus these updates occurred during acceptance/catch-up, before a confirmed visible conversation. They are consistent with accumulating newly accepted history into one local card, with one initial audible notification and silent subsequent updates. The log does not expose enough message identity/content to prove each historical event's relation to prior passive pending-group cards; it does not establish a duplicate-message defect.
+
+During the entire 11:57 UTC minute, the same unfiltered capture contains no new `com.mknoon.app` local or remote notification request addition. The app reports a healthy resume at 11:57:10.206201. Consequently, the later notification-center generic cards cannot be attributed to fresh local notification creation in this reopen minute. Root's corrected visual reading identifies those cards as approximately **3 hours** old, not 3 minutes old.
+
+This audit does not claim historical card removal or per-message deduplication from a shared OS request ID. It finds one audible acceptance/catch-up alert, silent updates to that same card, and no observed second request on the later controlled reopen. No source change is justified by this bounded log evidence.

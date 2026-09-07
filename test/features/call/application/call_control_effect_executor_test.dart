@@ -81,6 +81,79 @@ CallSignal _authenticatedInvite(CallId callId) => CallSignal.create(
 
 void main() {
   test(
+    'direct ringing preserves a cancel behind unsettled mailbox custody',
+    () async {
+      final custody = Completer<void>();
+      final port = _Port(
+        result: CallControlSendResult(
+          directAccepted: true,
+          mailboxStored: false,
+          directRoute: CallRouteClass.direct,
+          mailboxStoreSettled: custody.future,
+        ),
+      );
+      final store = CallSignalingContextStore();
+      var mailboxCancellations = 0;
+      late CallControlEffectExecutor control;
+      final coordinator = CallCoordinator(
+        reducer: const CallReducer(),
+        cleanupCoordinator: CallCleanupCoordinator([
+          CallCleanupStep('context', (snapshot) async {
+            await control.retireOutgoingPreconnectInvite(snapshot);
+            store.purge(snapshot.callId!);
+          }),
+        ]),
+        historyProjector: CallHistoryProjector(_History()),
+        effectExecutor: control = _executor(
+          port,
+          store,
+          cancelOutgoingMailboxInvite:
+              ({required recipientDevicePeerId, required callHandle}) async {
+                mailboxCancellations++;
+                return true;
+              },
+        ),
+        clock: () => _now,
+        idSource: () => _callId,
+      );
+      addTearDown(coordinator.dispose);
+      await coordinator.placeCall(
+        contactPeerId: 'remote-account',
+        localAccountPeerId: 'local-account',
+        localDeviceId: 'local-device',
+      );
+      await coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.remoteRinging,
+          eventId: 'ring',
+          occurredAt: _now,
+          callId: _callId,
+        ),
+      );
+      expect(coordinator.activeSession?.ringingAt, _now);
+      final cancel = coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.cancel,
+          eventId: 'cancel',
+          occurredAt: _now,
+          callId: _callId,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(store.read(_callId), isNotNull);
+      custody.complete();
+      await cancel;
+
+      expect(mailboxCancellations, 0);
+      expect(port.signals.map((signal) => signal.event), [
+        CallSignalType.invite,
+        CallSignalType.terminate,
+      ]);
+      expect(store.read(_callId), isNull);
+    },
+  );
+
+  test(
     'one canonical coordinator consumes prepare and custody follow-ups in lane',
     () async {
       final port = _Port(

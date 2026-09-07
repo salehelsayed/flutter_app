@@ -1785,13 +1785,14 @@ void main() {
 
       _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
 
+      await pumpFrames(tester, count: 5);
+      expect(inboxGate.isCompleted, isFalse);
+      expect(operationLog, isNot(contains('bridge:bg:end')));
+      inboxGate.complete();
       await pumpUntilAsyncWorkSettles(
         tester,
         () => operationLog.contains('bridge:bg:end'),
       );
-      expect(inboxGate.isCompleted, isFalse);
-      inboxGate.complete();
-      await pumpFrames(tester, count: 5);
 
       _expectOrdered(operationLog, 'uploadMediaFn', 'bridge:group:publish');
       _expectOrdered(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Foreground audio controls driven by the current engine projection.
 ///
@@ -37,27 +38,29 @@ class CallControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     final muteTooltip = isMuteAvailable
-        ? (isMuted ? 'Unmute' : 'Mute')
+        ? (isMuted ? l10n.media_viewer_unmute : l10n.media_viewer_mute)
         : _truthfulMuteUnavailableMessage;
     final speakerTooltip = isSpeakerAvailable
-        ? (isSpeakerOn ? 'Turn speaker off' : 'Speaker')
+        ? (isSpeakerOn ? l10n.call_speaker_off : l10n.call_speaker)
         : _truthfulSpeakerUnavailableMessage;
     final statusMessage = _truthfulAudioStatusMessage;
+    final outputLabel = l10n.call_audio_output(_selectedRouteLabel(l10n));
 
     return Semantics(
       container: true,
       explicitChildNodes: true,
-      label: 'Call controls',
+      label: l10n.call_controls,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Semantics(
             liveRegion: true,
-            label: 'Audio output: $_selectedRouteLabel',
+            label: outputLabel,
             excludeSemantics: true,
             child: Text(
-              'Audio output: $_selectedRouteLabel',
+              outputLabel,
               style: TextStyle(
                 color: colors.textSecondary,
                 fontSize: 13,
@@ -84,7 +87,9 @@ class CallControls extends StatelessWidget {
             children: [
               _Control(
                 tooltip: muteTooltip,
-                label: isMuted ? 'Unmute' : 'Mute',
+                label: isMuted
+                    ? l10n.media_viewer_unmute
+                    : l10n.media_viewer_mute,
                 icon: isMuted ? Icons.mic_off_rounded : Icons.mic_none_rounded,
                 backgroundColor: isMuteAvailable
                     ? (isMuted ? colors.accent : colors.surfaceRaised)
@@ -102,7 +107,7 @@ class CallControls extends StatelessWidget {
               ),
               _Control(
                 tooltip: speakerTooltip,
-                label: 'Speaker',
+                label: l10n.call_speaker,
                 icon: isSpeakerOn
                     ? Icons.volume_up_rounded
                     : Icons.volume_down_outlined,
@@ -121,8 +126,8 @@ class CallControls extends StatelessWidget {
                       ),
               ),
               _Control(
-                tooltip: 'End call',
-                label: 'End',
+                tooltip: l10n.call_end,
+                label: l10n.call_end_action,
                 icon: Icons.call_end_rounded,
                 backgroundColor: const Color(0xFFE5484D),
                 foregroundColor: Colors.white,
@@ -135,12 +140,12 @@ class CallControls extends StatelessWidget {
     );
   }
 
-  String get _selectedRouteLabel => switch (selectedRoute) {
-    CallAudioOutputRoute.systemDefault => 'System default',
-    CallAudioOutputRoute.earpiece => 'Earpiece',
-    CallAudioOutputRoute.speaker => 'Speaker',
-    CallAudioOutputRoute.wiredHeadset => 'Wired headset',
-    CallAudioOutputRoute.bluetooth => 'Bluetooth',
+  String _selectedRouteLabel(AppLocalizations l10n) => switch (selectedRoute) {
+    CallAudioOutputRoute.systemDefault => l10n.call_audio_route_system_default,
+    CallAudioOutputRoute.earpiece => l10n.call_audio_route_earpiece,
+    CallAudioOutputRoute.speaker => l10n.call_speaker,
+    CallAudioOutputRoute.wiredHeadset => l10n.call_audio_route_wired_headset,
+    CallAudioOutputRoute.bluetooth => l10n.call_audio_route_bluetooth,
   };
 
   String? get _truthfulAudioStatusMessage {

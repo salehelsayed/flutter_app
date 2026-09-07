@@ -249,7 +249,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
       _mailboxRetirementRequired.remove(callId);
       _mailboxStoreSettlements.remove(callId);
       _mailboxStoredInvites.remove(callId);
-      return Future<void>.value();
+      return _awaitPreconnectTerminal(callId);
     }
     if (_mailboxStoredInvites.remove(callId)) {
       // The relay took the invite into the callee's mailbox and woke the

@@ -96,6 +96,7 @@ type wakeOutcomeAdmission struct {
 	route                            pushRouteLease
 	storedAtMs                       int64
 	eventExpiresAtMs                 int64
+	androidRichMaterial              []byte
 }
 
 func (a wakeOutcomeAdmission) RecipientPeerID() string { return a.recipientPeerID }
@@ -109,6 +110,7 @@ const (
 	wakeOutcomeAdmissionSuppressed        wakeOutcomeAdmissionStatus = "suppressed"
 	wakeOutcomeAdmissionCapacityFallback  wakeOutcomeAdmissionStatus = "capacity_fallback"
 	wakeOutcomeAdmissionImmediateFallback wakeOutcomeAdmissionStatus = "immediate_fallback"
+	wakeOutcomeAdmissionAndroidRich       wakeOutcomeAdmissionStatus = "android_rich"
 )
 
 type wakeOutcomeAdmissionResult struct {
@@ -428,11 +430,15 @@ type redisWakeOutcomeRecord struct {
 	ExpiresAtMs                      int64                  `json:"expires_at_ms"`
 	Policy                           wakeOutcomeRoutePolicy `json:"policy"`
 	GroupMessageDispatchAdmissionKey string                 `json:"group_message_dispatch_admission_key,omitempty"`
+	AndroidRichDigest                string                 `json:"android_rich_digest,omitempty"`
 }
 
 func (record redisWakeOutcomeRecord) validate() error {
 	if record.Revision == 0 || record.RetryCount < 0 || record.ExpiresAtMs <= 0 || !record.Policy.valid() {
 		return errors.New("wake outcome record metadata is invalid")
+	}
+	if record.AndroidRichDigest != "" && (!isCanonicalWakeOutcomeCorrelation(record.AndroidRichDigest) || record.Policy != wakeOutcomePolicyNone) {
+		return errors.New("Android notification recovery record is invalid")
 	}
 	if record.GroupMessageDispatchAdmissionKey != "" &&
 		!canonicalGroupMessageDispatchAdmissionStorageKey(record.GroupMessageDispatchAdmissionKey) {
@@ -659,11 +665,20 @@ func (s *redisWakeOutcomeStore) complete(
 	stateKey := s.stateKey(authenticatedPeerID)
 	dueKey := s.dueKey()
 	var result wakeOutcomeCompletionStatus
-	err := withRedisWatchRetryKeys(s.client, []string{stateKey, dueKey}, func(tx *redis.Tx) error {
+	err := withRedisWatchRetryKeys(s.client, []string{stateKey, dueKey, s.androidRichCompletedKey(authenticatedPeerID, correlation)}, func(tx *redis.Tx) error {
 		if err := s.validateDueIndexType(context.Background(), tx); err != nil {
 			return err
 		}
 		nowMs := s.nowTime().UnixMilli()
+		completed, err := s.androidRichCompleted(tx, authenticatedPeerID, correlation)
+		if err != nil {
+			return err
+		}
+		if completed {
+			result = wakeOutcomeCompletionIdempotent
+			return nil
+		}
+		var richCompletionExpiry int64
 		records, expired, dirty, err := s.loadLiveRecords(tx, authenticatedPeerID, nowMs)
 		if err != nil {
 			return err
@@ -684,8 +699,13 @@ func (s *redisWakeOutcomeStore) complete(
 				record.DueAtMs = 0
 				record.ClaimUntilMs = 0
 				record.ClaimToken = ""
-				record.ExpiresAtMs = s.nowTime().Add(wakeOutcomeRetention).UnixMilli()
-				records[correlation] = record
+				if record.AndroidRichDigest != "" {
+					richCompletionExpiry = record.ExpiresAtMs
+					delete(records, correlation)
+				} else {
+					record.ExpiresAtMs = s.nowTime().Add(wakeOutcomeRetention).UnixMilli()
+					records[correlation] = record
+				}
 				dirty = true
 				result = wakeOutcomeCompletionRecorded
 				expired = append(expired, wakeOutcomeDueMember(authenticatedPeerID, correlation))
@@ -709,6 +729,9 @@ func (s *redisWakeOutcomeStore) complete(
 			if err := queueWakeOutcomeHash(context.Background(), pipe, stateKey, records); err != nil {
 				return err
 			}
+			if richCompletionExpiry > 0 {
+				s.queueAndroidRichCompleted(context.Background(), pipe, authenticatedPeerID, correlation, richCompletionExpiry, nowMs)
+			}
 			queueWakeOutcomeDueRemovals(context.Background(), pipe, dueKey, expired)
 			return nil
 		})
@@ -728,22 +751,42 @@ type wakeOutcomePreparedState struct {
 	dirty          bool
 	dueAtMs        int64
 	status         wakeOutcomeAdmissionStatus
+	androidRichRaw []byte
+	materialExpiry int64
 }
 
 func (s *redisWakeOutcomeStore) admissionWatchKeys(admission wakeOutcomeAdmission) ([]string, error) {
+	expectedRouteKey := s.prefix + "push-token-directory:" + encodeRedisComponent(admission.recipientPeerID)
+	if len(admission.androidRichMaterial) > 0 && admission.route.Generation == 0 {
+		expectedRouteKey = s.prefix + "push:" + encodeRedisComponent(admission.recipientPeerID)
+	}
 	if admission.recipientPeerID == "" || !isCanonicalWakeOutcomeCorrelation(admission.correlation) ||
-		admission.route.lookupKey != s.prefix+"push-token-directory:"+encodeRedisComponent(admission.recipientPeerID) {
+		admission.route.lookupKey != expectedRouteKey {
 		return nil, errWakeOutcomeRouteChanged
 	}
-	return uniqueRedisKeys(
+	keys := uniqueRedisKeys(
 		s.stateKey(admission.recipientPeerID),
 		s.dueKey(),
 		admission.route.lookupKey,
 		s.prefix+"push-token-state",
-	), nil
+	)
+	if len(admission.androidRichMaterial) > 0 {
+		keys = append(keys, s.androidRichMaterialKey(admission.recipientPeerID, admission.correlation), s.androidRichCompletedKey(admission.recipientPeerID, admission.correlation))
+	}
+	return keys, nil
 }
 
 func (s *redisWakeOutcomeStore) routeMatchesAdmission(
+	tx *redis.Tx,
+	admission wakeOutcomeAdmission,
+) (bool, error) {
+	if len(admission.androidRichMaterial) > 0 {
+		return s.androidRichRouteMatchesAdmission(tx, admission)
+	}
+	return s.encryptedRouteMatchesAdmission(tx, admission)
+}
+
+func (s *redisWakeOutcomeStore) encryptedRouteMatchesAdmission(
 	tx *redis.Tx,
 	admission wakeOutcomeAdmission,
 ) (bool, error) {
@@ -799,6 +842,16 @@ func (s *redisWakeOutcomeStore) prepareAdmission(
 	prepared.records = records
 	prepared.expiredMembers = expired
 	prepared.dirty = dirty
+	if len(admission.androidRichMaterial) > 0 {
+		completed, err := s.androidRichCompleted(tx, admission.recipientPeerID, admission.correlation)
+		if err != nil {
+			return prepared, err
+		}
+		if completed {
+			prepared.status = wakeOutcomeAdmissionSuppressed
+			return prepared, nil
+		}
+	}
 	if _, exists := records[admission.correlation]; exists {
 		prepared.status = wakeOutcomeAdmissionSuppressed
 		return prepared, nil
@@ -812,6 +865,9 @@ func (s *redisWakeOutcomeStore) prepareAdmission(
 		expiresAtMs = admission.eventExpiresAtMs
 	}
 	dueAtMs := admission.storedAtMs + wakeOutcomeDebounce.Milliseconds()
+	if len(admission.androidRichMaterial) > 0 {
+		dueAtMs = nowMs // Keep the initial Android send immediate.
+	}
 	if expiresAtMs <= nowMs {
 		prepared.status = wakeOutcomeAdmissionSuppressed
 		return prepared, nil
@@ -828,9 +884,25 @@ func (s *redisWakeOutcomeStore) prepareAdmission(
 		ExpiresAtMs: expiresAtMs, Policy: admission.policy,
 		GroupMessageDispatchAdmissionKey: admission.groupMessageDispatchAdmissionKey,
 	}
+	if len(admission.androidRichMaterial) > 0 {
+		var material androidRichPushMaterial
+		if len(admission.androidRichMaterial) > maxAndroidRichMaterialBytes ||
+			json.Unmarshal(admission.androidRichMaterial, &material) != nil ||
+			material.validate(admission.recipientPeerID, admission.correlation) != nil || material.ExpiresAtMs != expiresAtMs {
+			return prepared, errors.New("Android recovery material is invalid at custody admission")
+		}
+		record := records[admission.correlation]
+		record.AndroidRichDigest = androidRichMaterialDigest(admission.androidRichMaterial)
+		records[admission.correlation] = record
+		prepared.androidRichRaw = admission.androidRichMaterial
+		prepared.materialExpiry = expiresAtMs
+	}
 	prepared.dirty = true
 	prepared.dueAtMs = dueAtMs
 	prepared.status = wakeOutcomeAdmissionDelayed
+	if len(admission.androidRichMaterial) > 0 {
+		prepared.status = wakeOutcomeAdmissionAndroidRich
+	}
 	return prepared, nil
 }
 
@@ -840,6 +912,10 @@ func queueWakeOutcomePreparedState(
 	store *redisWakeOutcomeStore,
 	prepared wakeOutcomePreparedState,
 ) error {
+	if len(prepared.androidRichRaw) > 0 {
+		pipe.Set(ctx, store.androidRichMaterialKey(prepared.peerID, prepared.correlation), prepared.androidRichRaw,
+			androidRichMaterialTTL(prepared.materialExpiry, store.nowTime().UnixMilli()))
+	}
 	if prepared.dirty {
 		if err := queueWakeOutcomeHash(ctx, pipe, store.stateKey(prepared.peerID), prepared.records); err != nil {
 			return err
@@ -1281,6 +1357,7 @@ type wakeOutcomeClaim struct {
 	token                            string
 	revision                         uint64
 	groupMessageDispatchAdmissionKey string
+	androidRichDigest                string
 }
 
 func (s *redisWakeOutcomeStore) newClaimToken() (string, error) {
@@ -1387,6 +1464,7 @@ func (s *redisWakeOutcomeStore) claimOne(
 				peerID: peerID, correlation: correlation, policy: record.Policy,
 				token: token, revision: record.Revision,
 				groupMessageDispatchAdmissionKey: record.GroupMessageDispatchAdmissionKey,
+				androidRichDigest:                record.AndroidRichDigest,
 			}
 		}
 		if !dirty {
@@ -1428,7 +1506,7 @@ func (s *redisWakeOutcomeStore) settle(
 ) error {
 	stateKey := s.stateKey(claim.peerID)
 	member := wakeOutcomeDueMember(claim.peerID, claim.correlation)
-	return withRedisWatchRetryKeys(s.client, []string{stateKey, s.dueKey()}, func(tx *redis.Tx) error {
+	return withRedisWatchRetryKeys(s.client, []string{stateKey, s.dueKey(), s.androidRichCompletedKey(claim.peerID, claim.correlation)}, func(tx *redis.Tx) error {
 		if err := s.validateDueIndexType(context.Background(), tx); err != nil {
 			return err
 		}
@@ -1445,14 +1523,20 @@ func (s *redisWakeOutcomeStore) settle(
 			return errors.New("wake outcome revision overflow")
 		}
 		record.Revision++
+		var richCompletionExpiry int64
 		switch result {
 		case pushDeliveryAccepted, pushDeliveryPermanent, pushDeliverySuppressed:
 			record.State = wakeOutcomeStateCompleted
 			record.DueAtMs = 0
 			record.ClaimUntilMs = 0
 			record.ClaimToken = ""
-			record.ExpiresAtMs = now.Add(wakeOutcomeRetention).UnixMilli()
-			records[claim.correlation] = record
+			if record.AndroidRichDigest != "" {
+				richCompletionExpiry = record.ExpiresAtMs
+				delete(records, claim.correlation)
+			} else {
+				record.ExpiresAtMs = now.Add(wakeOutcomeRetention).UnixMilli()
+				records[claim.correlation] = record
+			}
 			expired = append(expired, member)
 		case pushDeliveryRetryable:
 			record.RetryCount++
@@ -1479,6 +1563,9 @@ func (s *redisWakeOutcomeStore) settle(
 					return err
 				}
 			}
+			if richCompletionExpiry > 0 {
+				s.queueAndroidRichCompleted(context.Background(), pipe, claim.peerID, claim.correlation, richCompletionExpiry, now.UnixMilli())
+			}
 			queueWakeOutcomeDueRemovals(context.Background(), pipe, s.dueKey(), expired)
 			if pending, ok := records[claim.correlation]; ok && pending.State == wakeOutcomeStatePending {
 				pipe.ZAdd(context.Background(), s.dueKey(), redis.Z{
@@ -1500,12 +1587,13 @@ type wakeOutcomeGroupSendFunc func(
 ) pushDeliveryResult
 
 type wakeOutcomeCoordinator struct {
-	backend   *redisWakeOutcomeStore
-	send      wakeOutcomeSendFunc
-	sendGroup wakeOutcomeGroupSendFunc
-	now       func() time.Time
-	startOnce sync.Once
-	runMu     sync.Mutex
+	backend         *redisWakeOutcomeStore
+	send            wakeOutcomeSendFunc
+	sendGroup       wakeOutcomeGroupSendFunc
+	sendAndroidRich func(context.Context, wakeOutcomeClaim) pushDeliveryResult
+	now             func() time.Time
+	startOnce       sync.Once
+	runMu           sync.Mutex
 }
 
 func newWakeOutcomeCoordinator(
@@ -1564,30 +1652,34 @@ func (c *wakeOutcomeCoordinator) RunDue(ctx context.Context) error {
 		if !claimed {
 			continue
 		}
-		result := pushDeliveryRetryable
-		if claim.groupMessageDispatchAdmissionKey != "" {
-			// A keyed group claim may use only the exact group provider
-			// admission callback. Missing wiring is retryable/fail-closed; it
-			// must never reopen the generic mailbox-wake bypass.
-			if c.sendGroup != nil {
-				providerCtx, cancel := context.WithTimeout(ctx, wakeOutcomeProviderTimeout)
-				result = c.sendGroup(
-					providerCtx,
-					claim.peerID,
-					claim.policy,
-					claim.groupMessageDispatchAdmissionKey,
-				)
-				cancel()
-			}
-		} else if c.send != nil {
-			providerCtx, cancel := context.WithTimeout(ctx, wakeOutcomeProviderTimeout)
-			result = c.send(providerCtx, claim.peerID, claim.policy)
-			cancel()
-		}
-		if err := c.backend.settle(claim, result, c.now()); err != nil &&
+		if err := c.runClaim(ctx, claim); err != nil &&
 			!errors.Is(err, errWakeOutcomeClaimChanged) {
 			return err
 		}
 	}
 	return nil
+}
+
+// Both immediate Android dispatch and the existing due worker use this exact
+// provider deadline and settlement boundary. There is no second retry queue.
+func (c *wakeOutcomeCoordinator) runClaim(ctx context.Context, claim wakeOutcomeClaim) error {
+	result := pushDeliveryRetryable
+	providerCtx, cancel := context.WithTimeout(ctx, wakeOutcomeProviderTimeout)
+	defer cancel()
+	switch {
+	case claim.androidRichDigest != "":
+		if c.sendAndroidRich != nil {
+			result = c.sendAndroidRich(providerCtx, claim)
+		}
+	case claim.groupMessageDispatchAdmissionKey != "":
+		// Keep the existing iOS group provider-admission boundary intact.
+		if c.sendGroup != nil {
+			result = c.sendGroup(providerCtx, claim.peerID, claim.policy, claim.groupMessageDispatchAdmissionKey)
+		}
+	default:
+		if c.send != nil {
+			result = c.send(providerCtx, claim.peerID, claim.policy)
+		}
+	}
+	return c.backend.settle(claim, result, c.now())
 }

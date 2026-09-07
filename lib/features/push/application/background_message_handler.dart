@@ -1438,6 +1438,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
                 preservePrimaryAndroidChannel: preservePrimaryAndroidChannel,
                 autoCancel: contentMetadata == null,
                 snapshot: fallback.snapshot,
+                currentReactionBody:
+                    contentKind == ConversationNotificationContentKind.reaction
+                    ? fallback.body
+                    : null,
               )
             : mknoonGenericNotificationDetails(
                 androidTag: groupInviteAndroidTag,

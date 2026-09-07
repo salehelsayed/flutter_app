@@ -148,9 +148,14 @@ final class NotificationServiceCompletionGate {
 func sanitizeNotificationContentForUnresolvedExpiry(
   _ content: UNMutableNotificationContent
 ) {
-  content.title = ""
+  // Without Apple's notification-filtering entitlement, an empty alert makes
+  // iOS discard ALL extension changes and deliver the provider's original
+  // content, including its sound. Keep fixed, non-sensitive text so that the
+  // silent/passive replacement is honored. This does not authorize a message
+  // preview or claim that the rejected event was shown.
+  content.title = "Mknoon"
   content.subtitle = ""
-  content.body = ""
+  content.body = "Open the app to view updates."
   content.attachments = []
   content.badge = nil
   content.sound = nil

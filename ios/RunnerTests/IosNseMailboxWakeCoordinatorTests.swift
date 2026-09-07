@@ -2162,9 +2162,12 @@ final class IosNseMailboxWakeCoordinatorTests: XCTestCase {
     message: String = ""
   ) {
     XCTAssertNotNil(content, message)
-    XCTAssertEqual(content?.title, "", message)
+    // A valid neutral alert preserves silent/passive handoff on devices
+    // without the notification-filtering entitlement. Empty alert text makes
+    // iOS restore the original remote alert instead.
+    XCTAssertEqual(content?.title, "Mknoon", message)
     XCTAssertEqual(content?.subtitle, "", message)
-    XCTAssertEqual(content?.body, "", message)
+    XCTAssertEqual(content?.body, "Open the app to view updates.", message)
     XCTAssertEqual(content?.categoryIdentifier, "", message)
     XCTAssertEqual(content?.threadIdentifier, "", message)
     XCTAssertEqual(content?.attachments.count, 0, message)

@@ -600,10 +600,12 @@ assert_privacy_manifest() {
 
 assert_shared_entitlements() {
   local entitlement="$1"
+  local expected_aps_environment="$2"
   [[ -s "$entitlement" ]] || fail "entitlements file is missing: $entitlement"
   plutil -lint "$entitlement"
-  plutil -convert json -o - "$entitlement" | jq -e '
-    .["aps-environment"] == "production" and
+  plutil -convert json -o - "$entitlement" | jq -e \
+    --arg aps "$expected_aps_environment" '
+    .["aps-environment"] == $aps and
     .["com.apple.security.application-groups"] == ["group.com.mknoon.app.share"] and
     .["keychain-access-groups"] == ["$(AppIdentifierPrefix)group.com.mknoon.app.share"]
   ' >/dev/null
@@ -707,9 +709,37 @@ verify_built_products() {
 
   readonly ENTITLEMENTS_LOG="$RESULT_DIR/embedded-nse-entitlements.log"
   {
-    assert_shared_entitlements "$RUNNER_ENTITLEMENTS"
-    assert_shared_entitlements "$NSE_ENTITLEMENTS"
-    cmp "$RUNNER_ENTITLEMENTS" "$NSE_ENTITLEMENTS"
+    assert_shared_entitlements "$RUNNER_ENTITLEMENTS" '$(MKNOON_VOIP_ENVIRONMENT)'
+    assert_shared_entitlements "$NSE_ENTITLEMENTS" production
+    cmp \
+      <(plutil -convert json -o - "$RUNNER_ENTITLEMENTS" | jq -S 'del(.["aps-environment"])') \
+      <(plutil -convert json -o - "$NSE_ENTITLEMENTS" | jq -S 'del(.["aps-environment"])')
+    python3 - "$IOS_PROJECT" <<'PY'
+import json
+import subprocess
+import sys
+
+project = json.loads(subprocess.check_output([
+    "plutil", "-convert", "json", "-o", "-", sys.argv[1]
+]))
+objects = project["objects"]
+runners = [
+    value for value in objects.values()
+    if value.get("isa") == "PBXNativeTarget" and value.get("name") == "Runner"
+]
+if len(runners) != 1:
+    raise SystemExit("expected exactly one Runner target")
+config_ids = objects[runners[0]["buildConfigurationList"]]["buildConfigurations"]
+observed = {
+    objects[config_id]["name"]:
+        objects[config_id]["buildSettings"].get("MKNOON_VOIP_ENVIRONMENT")
+    for config_id in config_ids
+}
+expected = {"Debug": "development", "Profile": "development", "Release": "production"}
+if observed != expected:
+    raise SystemExit(f"Runner APNs environment configuration drifted: {observed!r}")
+print("PASS: Runner APNs environment follows exact Debug/Profile/Release configuration")
+PY
     [[ "$(rg -F -c 'MKNOON_RUNNER_CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;' "$IOS_PROJECT" || true)" -eq 3 ]]
     [[ "$(rg -F -c 'MKNOON_NOTIFICATION_SERVICE_CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;' "$IOS_PROJECT" || true)" -eq 3 ]]
     printf 'PASS: Runner and embedded NSE share the exact app-group/keychain entitlements\n'

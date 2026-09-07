@@ -1785,5 +1785,22 @@
   "call_row_failed": "Anruf fehlgeschlagen",
   "call_row_with_duration": "{label} · {duration}",
   "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}},
-  "missed_call_notification_unknown_caller": "Jemand"
+  "missed_call_notification_unknown_caller": "Jemand",
+  "call_ended": "Anruf beendet",
+  "call_dismiss_status": "Anrufstatus schließen",
+  "call_cancel": "Anruf abbrechen",
+  "call_answer": "Annehmen",
+  "call_answer_unavailable": "Annehmen nicht verfügbar",
+  "call_decline_unavailable": "Ablehnen nicht verfügbar",
+  "call_controls": "Anrufsteuerung",
+  "call_audio_output": "Audioausgabe: {route}",
+  "call_speaker": "Lautsprecher",
+  "call_speaker_off": "Lautsprecher ausschalten",
+  "call_end": "Anruf beenden",
+  "call_end_action": "Beenden",
+  "call_audio_route_system_default": "Systemstandard",
+  "call_audio_route_earpiece": "Hörmuschel",
+  "call_audio_route_wired_headset": "Kabelgebundenes Headset",
+  "call_audio_route_bluetooth": "Bluetooth",
+  "@call_audio_output": {"placeholders": {"route": {"type": "String"}}}
 }

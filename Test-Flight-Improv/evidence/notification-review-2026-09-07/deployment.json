@@ -1,0 +1,116 @@
+{
+  "approvedByUser": true,
+  "uploaded": true,
+  "deployed": true,
+  "deployedAtUtc": "2026-09-07T10:12:25Z",
+  "server": "13.60.15.36",
+  "service": "relay-server",
+  "binaryPath": "/usr/local/bin/relay-server",
+  "sha256": "62d462fffec3a8f8c6694888c3200de2fb753790c95047f994df16360ff135fd",
+  "previousSha256": "10e4bd449208940d061ad05a0ddfda8103200315be8da56ab7c31f7aac2223f1",
+  "backupPath": "/usr/local/bin/relay-server.pre-notification-20260907T101225Z",
+  "script": "build/notification-review-20260907/deploy-relay.sh",
+  "health": {
+    "active": true,
+    "subState": "running",
+    "automaticRestarts": 0,
+    "execMainStatus": 0,
+    "mainPid": 1042055,
+    "durableBackend": true,
+    "before": {
+      "pendingInboxMessages": 112,
+      "pushRegistrations": 2322
+    },
+    "afterFirstInventoryRefresh": {
+      "pendingInboxMessages": 112,
+      "pushRegistrations": 2322
+    },
+    "afterSmoke": {
+      "pendingInboxMessages": 113,
+      "pushRegistrations": 2322,
+      "providerSuccesses": 2
+    },
+    "postClientFollowup": {
+      "checkedAtUtc": "2026-09-07T10:44:47.598902Z",
+      "active": true,
+      "mainPid": 1042055,
+      "automaticRestarts": 0,
+      "durableBackend": true,
+      "pendingInboxMessages": 118,
+      "pushRegistrations": 2322,
+      "providerSuccesses": 6,
+      "sha256Verified": true
+    }
+  },
+  "wakePersistence": {
+    "keyCount": 3,
+    "allWithoutExpiry": true,
+    "allNonemptyDigestArrayLength": true,
+    "samples": [
+      {
+        "ttlSeconds": -1,
+        "storedBytes": 135,
+        "digestCountFromLength": 2
+      },
+      {
+        "ttlSeconds": -1,
+        "storedBytes": 135,
+        "digestCountFromLength": 2
+      },
+      {
+        "ttlSeconds": -1,
+        "storedBytes": 135,
+        "digestCountFromLength": 2
+      }
+    ],
+    "operations": [
+      "SCAN",
+      "TTL",
+      "STRLEN"
+    ],
+    "secretsOrKeysPrinted": false
+  },
+  "deviceChecks": {
+    "androidReactionBackgroundDelivery": "passed",
+    "iosReactionBackgroundPresentationAndSound": "passed: OS alert decision and sound-play callback observed; physically audible sound was not independently assessed",
+    "iosHealthyResumeUtc": "2026-09-07T10:17:25.452Z",
+    "iosNoDuplicateThroughUtc": "2026-09-07T10:18:08.128Z",
+    "iosSenderToIngressSecondsApprox": 19.4,
+    "capturesStoppedUtc": "2026-09-07T10:18:32.165Z",
+    "androidExpandedReactionText": "passed on Android114: direct and group initial/settled expanded cards retain current reaction and ordinary unread history before receiver reopening"
+  },
+  "privatePhoneUpdated": false,
+  "clientReleaseDistributed": false,
+  "recordedAtUtc": "2026-09-07T10:51:17.971591+00:00",
+  "androidRenderingFollowup": {
+    "buildNumber": 114,
+    "apkSha256": "f80e83093fb5e711a48fd919834b903162a366def4fbe0f786c7f5f9aceebcec",
+    "targets": [
+      "21071FDF600CSC",
+      "emulator-5554"
+    ],
+    "group": {
+      "initial": "passed",
+      "settledExpandedCard": "passed",
+      "initialPostUtc": "2026-09-07T10:47:52.634Z",
+      "settledEvidenceUtc": "2026-09-07T10:48:33.822Z",
+      "receiverRemainedBackground": true,
+      "ordinaryUnreadAndReactionLinesPresent": true,
+      "silentReplacementPreservedReaction": true
+    },
+    "direct": {
+      "initial": "passed",
+      "settledExpandedCard": "passed",
+      "initialPostUtc": "2026-09-07T10:49:26.064Z",
+      "settledEvidenceUtc": "2026-09-07T10:50:18.156Z",
+      "receiverRemainedBackground": true,
+      "ordinaryUnreadAndReactionLinesPresent": true,
+      "soundClaim": "Repeated-reaction rendering case was silent; no new audible-alert claim"
+    },
+    "accountsPreserved": true,
+    "capturesStoppedUtc": "2026-09-07T10:51:17.971591+00:00",
+    "report": "android-reaction-layout-device-results.md",
+    "historical112GroupFailureRetained": true,
+    "build113InstalledButNotExercised": true
+  }
+}

@@ -214,10 +214,12 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
 
     await _prepareMedia(snapshot);
     final offer = await engine.createOffer();
+    if (_closed) return null;
     if (!_isAuthenticatedDescription(offer, CallSessionDescriptionType.offer)) {
       return _followUp(CallEventType.negotiationFailed, snapshot);
     }
     await engine.setLocalDescription(offer);
+    if (_closed) return null;
     await signaling.sendDescription(
       callId: callId,
       description: offer,
@@ -250,6 +252,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         material.iceGeneration,
       );
       if (mirrored != null) return mirrored;
+      if (_closed) return null;
     }
     final offer = _descriptionFromMaterial(
       material,
@@ -261,8 +264,11 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
 
     await _prepareMedia(snapshot);
     await engine.setRemoteDescription(offer);
+    if (_closed) return null;
     await _acceptRemoteDescription(material.iceGeneration);
+    if (_closed) return null;
     final answer = await engine.createAnswer();
+    if (_closed) return null;
     if (!_isAuthenticatedDescription(
       answer,
       CallSessionDescriptionType.answer,
@@ -270,6 +276,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       return _followUp(CallEventType.negotiationFailed, snapshot);
     }
     await engine.setLocalDescription(answer);
+    if (_closed) return null;
     await signaling.sendDescription(
       callId: snapshot.callId!,
       description: answer,
@@ -361,6 +368,14 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       // generation so the caller's new offer applies; a repeated or stale
       // announcement is a no-op.
       if (material == null || material.iceGeneration <= engine.iceGeneration) {
+        // An offer can complete recovery before its delayed announcement.
+        // The reducer has entered reconnecting for that announcement; restore
+        // connected only if the existing media actually proves readiness.
+        if (material != null &&
+            snapshot.state == CallState.reconnecting &&
+            (await engine.snapshot()).isMediaReady) {
+          return _followUp(CallEventType.mediaRecovered, snapshot);
+        }
         return null;
       }
       return _mirrorAnnouncedRestart(snapshot, material.iceGeneration);
@@ -391,6 +406,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     CallSessionSnapshot snapshot,
     int announcedGeneration,
   ) async {
+    _closedMediaReadinessPhases.remove((
+      snapshot.callId!,
+      CallEventType.mediaRecovered,
+    ));
     final generation = await engine.restartIce(
       iceServers: await _unexpiredStagedIceServers(snapshot.callId!),
     );
@@ -456,6 +475,11 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       snapshot: snapshot,
       configuration: configuration,
     );
+    if (_closed) {
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.mediaUnavailable,
+      );
+    }
     _mediaPrepared.add(callId);
   }
 
