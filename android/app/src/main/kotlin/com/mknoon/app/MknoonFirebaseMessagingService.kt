@@ -71,13 +71,35 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        val appDiagnostics = com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(this)
+        val appTrace = java.util.UUID.randomUUID().toString()
+        appDiagnostics.record("push", "receive", "ok", values = mapOf("direction" to "incoming"), traceId = appTrace)
         if (message.data["w"] == "call") {
+            val diagnostics = com.mknoon.app.call.MknoonCallDiagnostics.get(this)
+            val trace = message.data["diagnostics"]?.takeIf { it.length <= 128 }?.let { raw ->
+                runCatching {
+                    val metadata = org.json.JSONObject(raw)
+                    metadata.getString("traceId").takeIf {
+                        metadata.length() == 2 && metadata.getInt("schemaVersion") == 1 &&
+                            com.mknoon.app.call.MknoonCallDiagnosticSpool.uuid(it) &&
+                            it.lowercase() != com.mknoon.app.call.MknoonCallDiagnosticSpool.canonical(message.data["c"] ?: "")
+                    }
+                }.getOrNull()
+            }
             val parsed = CallPayloadParser(nowMs = ::callWakeNowMs).parse(
-                entries = message.data.entries.map { it.key to it.value },
+                // Android ArrayMap reuses its iterator entry: copy each pair
+                // before filtering so diagnostic removal cannot alter authority.
+                entries = message.data.entries.map { it.key to it.value }.filter { it.first != "diagnostics" },
                 hasNotification = message.notification != null,
             )
             if (parsed is CallPayloadParseResult.Accepted) {
+                appDiagnostics.record("push", "parse", "ok", traceId = appTrace)
+                if (trace != null) diagnostics.bind(parsed.payload.callHandle, trace)
+                diagnostics.record(parsed.payload.callHandle, "push", "receive", "ok", context = mapOf("role" to "callee"))
                 dispatchValidatedCallWake(parsed.payload)
+            } else {
+                appDiagnostics.record("push", "parse", "rejected", "invalid_payload", traceId = appTrace)
+                diagnostics.record(stage = "push", action = "parse", outcome = "rejected", reason = "rejected_payload")
             }
             // `w=call` reserves this namespace even when the rest of the
             // payload is malformed. It must never enter ordinary FlutterFire
@@ -85,7 +107,9 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
             return
         }
         if (!isExactFixedOpaqueWake(message)) {
+            appDiagnostics.record("push", "process", "started", traceId = appTrace)
             delegateRichMessageToFlutterFire(message)
+            appDiagnostics.record("push", "process", "ok", traceId = appTrace)
             return
         }
         // An exact fixed wake never enters FlutterFire rich staging and never
@@ -95,9 +119,10 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
         val committed = productionRecoverySeam().recordGenericRecoveryTrigger(
             DroppedPushRecoveryStore.TriggerKind.FIXED_WAKE,
         ) { generation ->
-            postRecoveryNotification(generation, silent = true)
+            postRecoveryNotification(generation, silent = true, appTrace = appTrace)
         }
         emitPlan393FixedWakeIngressDiagnostic(committed)
+        appDiagnostics.record("push", "commit", if (committed == null) "blocked" else "ok", if (committed == null) "authority_rejected" else "none", mapOf("committed" to (committed != null)), traceId = appTrace)
         committed?.let { signalWarmRuntimeRecovery(it.generation) }
     }
 
@@ -165,6 +190,7 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
     }
 
     override fun onDeletedMessages() {
+        com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(this).record("push", "recover", "pending", "unknown", traceId = java.util.UUID.randomUUID().toString())
         super.onDeletedMessages()
 
         // The shared seam keeps scheduling and notification publication inside
@@ -204,7 +230,7 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
         DroppedPushRecoveryProcessSignalRegistry.signal(generation)
     }
 
-    private fun postRecoveryNotification(generation: Long, silent: Boolean) {
+    private fun postRecoveryNotification(generation: Long, silent: Boolean, appTrace: String = java.util.UUID.randomUUID().toString()) {
         val manager = getSystemService(NotificationManager::class.java)
         ensureRecoveryNotificationChannel(this)
 
@@ -266,5 +292,7 @@ open class MknoonFirebaseMessagingService : FlutterFirebaseMessagingService() {
             RECOVERY_NOTIFICATION_ID,
             notificationBuilder.build(),
         )
+        // notify returning means a post was requested, not that a banner was seen.
+        com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(this).record("push", "presentation", "pending", traceId = appTrace)
     }
 }

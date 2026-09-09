@@ -18,6 +18,9 @@ import 'direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'messages_db_helpers.dart';
 
 const String _table = 'direct_inbox_custody_outbox';
+final _legacyDiagnosticTraceId = RegExp(
+  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+);
 
 const int kDirectInboxCustodyOutboxCapacity = 512;
 const int kDirectInboxCustodyOutboxMaxLoadBatch = 50;
@@ -147,15 +150,16 @@ Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingDirectTextInboxCustody(
 Future<List<Map<String, Object?>>> dbLoadDirectInboxCustodyOutbox(
   DatabaseExecutor db, {
   int limit = kDirectInboxCustodyOutboxMaxLoadBatch,
-}) {
+}) async {
   if (limit <= 0) return Future<List<Map<String, Object?>>>.value(const []);
   final boundedLimit = math.min(limit, kDirectInboxCustodyOutboxMaxLoadBatch);
-  return db.rawQuery(
+  final rows = await db.rawQuery(
     'SELECT * FROM $_table '
     'ORDER BY last_attempt_at ASC, created_at ASC, '
     'recipient_peer_id ASC, message_id ASC LIMIT ?',
     <Object?>[boundedLimit],
   );
+  return _repairLegacyDiagnosticCustodyRows(db, rows);
 }
 
 Future<Map<String, Object?>?> dbLoadDirectInboxCustodyOutboxForMessage(
@@ -169,7 +173,8 @@ Future<Map<String, Object?>?> dbLoadDirectInboxCustodyOutboxForMessage(
     whereArgs: <Object?>[recipientPeerId, messageId],
     limit: 1,
   );
-  return rows.isEmpty ? null : rows.single;
+  final repaired = await _repairLegacyDiagnosticCustodyRows(db, rows);
+  return repaired.isEmpty ? null : repaired.single;
 }
 
 /// Loads the immutable v108 owner for [messageId] without trusting the
@@ -196,7 +201,149 @@ Future<Map<String, Object?>?> dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
       rows.any((row) => row['contact_account_peer_id'] != null)) {
     throw StateError('Ambiguous direct inbox custody owner for message');
   }
-  return rows.isEmpty ? null : rows.single;
+  final repaired = await _repairLegacyDiagnosticCustodyRows(db, rows);
+  return repaired.isEmpty ? null : repaired.single;
+}
+
+/// Build 113 put the diagnostic UUID outside ciphertext. That exact shape can
+/// never acquire protected relay custody. Repair only unchanged scalar text
+/// owners and their matching pending parent, together, before exposing retry
+/// authority. Ciphertext, identity, incarnation and all delivery state survive.
+/// Old in-flight handles remain fenced by the changed exact envelope bytes.
+Future<List<Map<String, Object?>>> _repairLegacyDiagnosticCustodyRows(
+  DatabaseExecutor db,
+  List<Map<String, Object?>> rows,
+) async {
+  if (db is! Database ||
+      !rows.any((row) => _legacyDiagnosticEnvelope(row) != null)) {
+    return rows;
+  }
+  return dbWriteTransaction(db, (txn) async {
+    final result = <Map<String, Object?>>[];
+    for (final observed in rows) {
+      final currentRows = await txn.query(
+        _table,
+        where: 'recipient_peer_id = ? AND message_id = ?',
+        whereArgs: [observed['recipient_peer_id'], observed['message_id']],
+        limit: 1,
+      );
+      if (currentRows.isEmpty) continue;
+      final current = currentRows.single;
+      final envelope = _legacyDiagnosticEnvelope(current);
+      if (envelope == null ||
+          current['incarnation_id'] != observed['incarnation_id'] ||
+          current['wire_envelope'] != observed['wire_envelope']) {
+        result.add(current);
+        continue;
+      }
+      final parents = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: [current['message_id']],
+        limit: 1,
+      );
+      final parent = parents.isEmpty ? null : parents.single;
+      final owners = await txn.query(
+        _table,
+        columns: ['incarnation_id'],
+        where: 'message_id = ?',
+        whereArgs: [current['message_id']],
+        limit: 2,
+      );
+      final media = await txn.query(
+        'media_attachments',
+        columns: ['id'],
+        where: 'message_id = ? AND owner_lane = ?',
+        whereArgs: [current['message_id'], MediaOwnerLane.direct.dbValue],
+        limit: 1,
+      );
+      if (parent == null || owners.length != 1 ||
+          parent['contact_peer_id'] != current['recipient_peer_id'] ||
+          parent['sender_peer_id'] != envelope['senderPeerId'] ||
+          parent['wire_envelope'] != current['wire_envelope'] ||
+          _asInt(parent['is_incoming']) != 0 ||
+          !const {
+            'queued',
+            'sending',
+            'sent',
+            'failed',
+            'inboxed',
+          }.contains(parent['status']) ||
+          parent['read_at'] != null ||
+          parent['edited_at'] != null ||
+          parent['deleted_at'] != null ||
+          parent['hidden_at'] != null ||
+          parent['direct_event_fanout_generation_id'] != null ||
+          parent['direct_media_custody_intent_id'] != null ||
+          _asInt(parent['private_media_policy_version']) != 0 ||
+          parent['private_media_mode'] != 'ordinary' ||
+          media.isNotEmpty) {
+        result.add(current);
+        continue;
+      }
+      final repaired = jsonEncode(envelope..remove('diagnosticTraceId'));
+      final ownerChanged = await txn.update(
+        _table,
+        {'wire_envelope': repaired},
+        where:
+            'recipient_peer_id = ? AND message_id = ? '
+            'AND incarnation_id = ? AND wire_envelope = ?',
+        whereArgs: [
+          current['recipient_peer_id'],
+          current['message_id'],
+          current['incarnation_id'],
+          current['wire_envelope'],
+        ],
+      );
+      final parentChanged = await txn.update(
+        'messages',
+        {'wire_envelope': repaired},
+        where: 'id = ? AND wire_envelope = ?',
+        whereArgs: [current['message_id'], current['wire_envelope']],
+      );
+      if (ownerChanged != 1 || parentChanged != 1) {
+        throw StateError('legacy diagnostic custody repair lost authority');
+      }
+      result.add({...current, 'wire_envelope': repaired});
+    }
+    return result;
+  });
+}
+
+Map<String, dynamic>? _legacyDiagnosticEnvelope(Map<String, Object?> row) {
+  if (row['contact_account_peer_id'] != null ||
+      row['media_blob_manifest_hash'] != null ||
+      row['media_blob_expires_at_ms'] != null) {
+    return null;
+  }
+  final wire = row['wire_envelope'];
+  if (wire is! String || !wire.contains('"diagnosticTraceId"')) return null;
+  try {
+    final decoded = jsonDecode(wire);
+    if (decoded is! Map<String, dynamic> ||
+        decoded.length != 6 ||
+        decoded['type'] != 'chat_message' ||
+        decoded['version'] != '2' ||
+        decoded['id'] != row['message_id'] ||
+        !_isNonBlankString(decoded['senderPeerId']) ||
+        decoded['diagnosticTraceId'] is! String ||
+        !_legacyDiagnosticTraceId.hasMatch(
+          decoded['diagnosticTraceId'] as String,
+        )) {
+      return null;
+    }
+    final encrypted = decoded['encrypted'];
+    if (encrypted is! Map<String, dynamic> ||
+        encrypted.length != 3 ||
+        !_isNonBlankString(encrypted['kem']) ||
+        !_isNonBlankString(encrypted['ciphertext']) ||
+        !_isNonBlankString(encrypted['nonce'])) {
+      return null;
+    }
+    return decoded;
+  } on FormatException {
+    return null;
+  }
 }
 
 /// Retains the row and records one bounded failure classification only while

@@ -542,7 +542,7 @@ final class _Campaign {
       'start',
       '-W',
       '-n',
-      '$packageName/.MainActivity',
+      '$packageName/com.mknoon.app.MainActivity',
     ], allowFailure: true);
     final output = '${result.stdout}\n${result.stderr}';
     if (result.exitCode != 0 ||

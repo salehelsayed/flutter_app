@@ -10,6 +10,107 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
   private let call = "123e4567-e89b-42d3-a456-426614174000"
   private let contact = "223e4567-e89b-42d3-a456-426614174001"
 
+  func testColdDisabledLaunchKeepsMandatoryPushReceiverWithoutTokenPublication() throws {
+    let driver = FakeVoipRegistrationDriver()
+    let backend = MemoryVoipTokenBackend()
+    let reporter = DeferredIncomingReporter()
+    var runtimeWakeCount = 0
+    let registry = MknoonVoipPushRegistry(
+      controller: reporter,
+      parser: VoipPayloadParser(nowMs: { self.now }),
+      tokenAuthority: MknoonVoipTokenAuthority(backend: backend),
+      capability: RegistryCallCapability(enabled: false),
+      registrationDriver: driver,
+      runtimeWake: { runtimeWakeCount += 1 }
+    )
+
+    XCTAssertTrue(registry.start())
+    XCTAssertTrue(driver.delegate === registry,
+                  "a PushKit launch needs its receiver even when calls were disabled")
+    XCTAssertTrue(driver.enabled)
+    XCTAssertFalse(registry.acceptUpdatedVoipToken(Data([0xab])))
+    XCTAssertNil(backend.data)
+    var completions = 0
+    XCTAssertTrue(driver.deliverMandatoryPush(validPayload()) { completions += 1 })
+    XCTAssertTrue(reporter.payloads.isEmpty)
+    XCTAssertEqual(reporter.requiredCompliancePolicies, [.legacyRequired])
+    XCTAssertEqual(completions, 0)
+    XCTAssertEqual(runtimeWakeCount, 0)
+    reporter.completeRequiredComplianceReport()
+    XCTAssertEqual(completions, 1)
+  }
+
+  func testDisableRetainsQueuedMandatoryPushReceiverAndReenableRestoresCachedToken() throws {
+    let driver = FakeVoipRegistrationDriver()
+    let capability = RegistryCallCapability(enabled: true)
+    let authority = MknoonVoipTokenAuthority(backend: MemoryVoipTokenBackend())
+    let reporter = DeferredIncomingReporter()
+    let registry = MknoonVoipPushRegistry(
+      controller: reporter,
+      parser: VoipPayloadParser(nowMs: { self.now }),
+      tokenAuthority: authority,
+      capability: capability,
+      registrationDriver: driver,
+      environmentProvider: FixedVoipEnvironment("development"),
+      bundleIdentifier: { "com.mknoon.app" }
+    )
+    XCTAssertTrue(registry.start())
+    XCTAssertTrue(registry.acceptUpdatedVoipToken(Data([0xab])))
+    capability.enabled = false
+    XCTAssertTrue(registry.applyCapability(false))
+    XCTAssertTrue(driver.delegate === registry,
+                  "capability withdrawal must not remove a queued push's callback")
+    XCTAssertEqual(driver.disableCount, 0)
+    XCTAssertTrue(try XCTUnwrap(authority.current()).invalidated)
+    var completions = 0
+    XCTAssertTrue(driver.deliverMandatoryPush(validPayload()) { completions += 1 })
+    XCTAssertTrue(reporter.payloads.isEmpty)
+    XCTAssertEqual(reporter.requiredCompliancePolicies, [.legacyRequired])
+    reporter.completeRequiredComplianceReport()
+    XCTAssertEqual(completions, 1)
+    driver.cachedToken = Data([0xab])
+    capability.enabled = true
+    XCTAssertTrue(registry.applyCapability(true))
+    XCTAssertFalse(try XCTUnwrap(authority.current()).invalidated,
+                   "an unchanged OS token may not generate another callback")
+    XCTAssertEqual(authority.current()?.token, "ab")
+  }
+
+  func testRequestedDisableRejectsLateAdmissionAndTokenWhenDurableCapabilityStaysEnabled() throws {
+    let driver = FakeVoipRegistrationDriver()
+    let capability = RegistryCallCapability(enabled: true)
+    let authority = MknoonVoipTokenAuthority(backend: MemoryVoipTokenBackend())
+    let reporter = DeferredIncomingReporter()
+    var runtimeWakeCount = 0
+    let registry = MknoonVoipPushRegistry(
+      controller: reporter,
+      parser: VoipPayloadParser(nowMs: { self.now }),
+      tokenAuthority: authority,
+      capability: capability,
+      registrationDriver: driver,
+      environmentProvider: FixedVoipEnvironment("development"),
+      bundleIdentifier: { "com.mknoon.app" },
+      runtimeWake: { runtimeWakeCount += 1 }
+    )
+    XCTAssertTrue(registry.start())
+    XCTAssertTrue(registry.acceptUpdatedVoipToken(Data([0xab])))
+    // The controller invokes the handler before persistence, and a failed
+    // persistence write leaves this durable getter true.
+    XCTAssertTrue(registry.applyCapability(false))
+    XCTAssertTrue(capability.enabled)
+    XCTAssertTrue(registry.start(), "restarting delivery must preserve the requested-disable latch")
+    XCTAssertFalse(registry.acceptUpdatedVoipToken(Data([0xcd])))
+    XCTAssertTrue(try XCTUnwrap(authority.current()).invalidated)
+    var completions = 0
+    XCTAssertTrue(driver.deliverMandatoryPush(validPayload()) { completions += 1 })
+    XCTAssertTrue(reporter.payloads.isEmpty, "late push must not reach admission")
+    XCTAssertEqual(reporter.requiredCompliancePolicies, [.legacyRequired])
+    XCTAssertEqual(runtimeWakeCount, 0)
+    XCTAssertEqual(completions, 0)
+    reporter.completeRequiredComplianceReport()
+    XCTAssertEqual(completions, 1)
+  }
+
   func testTokenUpdateDuplicateRotationAndInvalidationPersistExactEpoch() throws {
     let backend = MemoryVoipTokenBackend()
     let authority = MknoonVoipTokenAuthority(backend: backend)
@@ -159,10 +260,11 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
       diagnosticSink: { absentDiagnostics.append($0) }
     )
     XCTAssertTrue(absentRegistry.applyCapability(false))
-    XCTAssertEqual(absentDriver.disableCount, 1)
+    XCTAssertEqual(absentDriver.disableCount, 0)
+    XCTAssertTrue(absentDriver.enabled)
     XCTAssertEqual(absentBackend.replaceCount, 0)
     XCTAssertEqual(absentDiagnostics, [
-      .registration(enabled: false),
+      .registration(enabled: true),
       .tokenInvalidation(accepted: true),
     ])
 
@@ -178,11 +280,12 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
       diagnosticSink: { corruptDiagnostics.append($0) }
     )
     XCTAssertFalse(corruptRegistry.applyCapability(false))
-    XCTAssertEqual(corruptDriver.disableCount, 1)
+    XCTAssertEqual(corruptDriver.disableCount, 0)
+    XCTAssertTrue(corruptDriver.enabled)
     XCTAssertEqual(corruptBackend.data, corruptData)
     XCTAssertEqual(corruptBackend.replaceCount, 0)
     XCTAssertEqual(corruptDiagnostics, [
-      .registration(enabled: false),
+      .registration(enabled: true),
       .tokenInvalidation(accepted: false),
     ])
   }
@@ -613,10 +716,38 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
     XCTAssertEqual(diagnostics, [
       .registration(enabled: true),
       .tokenUpdate(accepted: true),
-      .registration(enabled: false),
+      .registration(enabled: true),
       .tokenInvalidation(accepted: true),
     ])
     XCTAssertTrue(try XCTUnwrap(authority.current()).invalidated)
+    XCTAssertEqual(authority.current()?.invalidationReason, .callsDisabled)
+    XCTAssertNotNil(authority.current()?.operationId)
+  }
+
+  func testPushKitInvalidationRetainsItsDistinctOriginAcrossRestart() throws {
+    let backend = MemoryVoipTokenBackend()
+    let authority = MknoonVoipTokenAuthority(backend: backend)
+    XCTAssertTrue(authority.update(token: Data([0xab]), environment: "development", topic: "com.mknoon.app.voip"))
+    let registry = MknoonVoipPushRegistry(controller: DeferredIncomingReporter(), tokenAuthority: authority,
+                                         capability: RegistryCallCapability(enabled: true),
+                                         registrationDriver: FakeVoipRegistrationDriver())
+    registry.pushRegistry(PKPushRegistry(queue: .main), didInvalidatePushTokenFor: .voIP)
+    let retained = try XCTUnwrap(MknoonVoipTokenAuthority(backend: backend).current())
+    XCTAssertEqual(retained.invalidationReason, .pushkitTokenInvalidated)
+    XCTAssertNotNil(retained.operationId)
+    XCTAssertEqual(retained.token, "")
+  }
+
+  func testOptionalDiagnosticCorruptionDoesNotRejectValidTokenSnapshot() throws {
+    let data = try JSONSerialization.data(withJSONObject: [
+      "version": 1, "token": "ab", "environment": "development", "topic": "com.mknoon.app.voip",
+      "capabilityVersion": 1, "refreshEpoch": 1, "invalidated": false,
+      "invalidationReason": ["private": "malformed"], "operationId": 42,
+      "parentOperationId": "not-a-uuid",
+    ])
+    let snapshot = try JSONDecoder().decode(MknoonVoipTokenSnapshot.self, from: data)
+    XCTAssertEqual(snapshot.token, "ab")
+    XCTAssertNil(snapshot.invalidationReason); XCTAssertNil(snapshot.operationId); XCTAssertNil(snapshot.parentOperationId)
   }
 
   func testUpdatedVoipTokenRejectsDisabledOrInvalidContextWithoutPersistence() {
@@ -850,7 +981,7 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
     return data
   }
 
-  func testPersistedKillSwitchControlsRegistrationInvalidationAndDelivery() throws {
+  func testPersistedKillSwitchPreservesReceiverButControlsInvalidationAndDelivery() throws {
     let reporter = DeferredIncomingReporter()
     let authority = MknoonVoipTokenAuthority(backend: MemoryVoipTokenBackend())
     let capability = RegistryCallCapability(enabled: false)
@@ -868,13 +999,13 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
     )
 
     XCTAssertTrue(registry.start())
-    XCTAssertFalse(driver.enabled)
-    XCTAssertEqual(driver.enableCount, 0, "default-false must not register PushKit")
+    XCTAssertTrue(driver.enabled)
+    XCTAssertEqual(driver.enableCount, 1, "disabled cold launch must retain required-push reporting")
 
     capability.enabled = true
     XCTAssertTrue(registry.applyCapability(true))
     XCTAssertTrue(driver.enabled)
-    XCTAssertEqual(driver.enableCount, 1)
+    XCTAssertEqual(driver.enableCount, 2)
     XCTAssertTrue(authority.update(
       token: Data([0xab]),
       environment: "development",
@@ -884,8 +1015,8 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
 
     capability.enabled = false
     XCTAssertTrue(registry.applyCapability(false))
-    XCTAssertFalse(driver.enabled)
-    XCTAssertGreaterThanOrEqual(driver.disableCount, 1)
+    XCTAssertTrue(driver.enabled)
+    XCTAssertEqual(driver.disableCount, 0)
     let invalidated = try XCTUnwrap(authority.current())
     XCTAssertTrue(invalidated.invalidated)
     XCTAssertEqual(invalidated.token, "")
@@ -896,11 +1027,11 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
       dictionary: validPayload(),
       reportRequired: false
     ) { completionCount += 1 }
-    XCTAssertEqual(completionCount, 0)
-    XCTAssertEqual(reporter.payloads.count, 1)
-    XCTAssertEqual(reporter.reportPolicies, [.notRequired])
+    XCTAssertEqual(completionCount, 1)
+    XCTAssertTrue(reporter.payloads.isEmpty)
+    XCTAssertTrue(reporter.reportPolicies.isEmpty)
+    XCTAssertEqual(reporter.requiredComplianceReportCount, 0)
     XCTAssertEqual(runtimeWakeCount, 0)
-    reporter.complete(.disabled)
     XCTAssertEqual(completionCount, 1)
 
     capability.enabled = true
@@ -986,6 +1117,13 @@ final class FakeVoipRegistrationDriver: MknoonVoipPushRegistrationDriving {
   private(set) var enableCount = 0
   private(set) var disableCount = 0
   weak var delegate: PKPushRegistryDelegate?
+  var cachedToken: Data?
+
+  func deliverMandatoryPush(_ payload: [AnyHashable: Any], completion: @escaping () -> Void) -> Bool {
+    guard enabled, let receiver = delegate as? MknoonVoipPushRegistry else { return false }
+    receiver.handlePush(dictionary: payload, reportPolicy: .legacyRequired, completion: completion)
+    return true
+  }
 
   func enable(delegate: PKPushRegistryDelegate) {
     self.delegate = delegate

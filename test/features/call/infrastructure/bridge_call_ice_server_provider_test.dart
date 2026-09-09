@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/infrastructure/bridge_call_ice_server_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -31,6 +32,48 @@ final class _Bridge implements Bridge {
 void main() {
   final now = DateTime.utc(2026, 8, 30, 12);
   final callId = CallId.parse('22222222-2222-4222-8222-222222222222');
+
+  test(
+    'TURN diagnostics distinguish refused malformed and timed out credentials',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final trace = diagnostics.beginAttempt()!;
+      diagnostics.bindCall(callId: callId.value, traceId: trace);
+      for (final response in <Map<String, dynamic>?>[
+        {'ok': false},
+        {'ok': true, 'username': 'private-credential'},
+        null,
+      ]) {
+        final provider = BridgeCallIceServerProvider(
+          bridge: _Bridge(),
+          clock: () => now,
+          requestTimeout: const Duration(milliseconds: 1),
+          fetch: (_) async =>
+              response ?? await Completer<Map<String, dynamic>>().future,
+        );
+        expect(await provider.read(callId), isEmpty);
+      }
+      final events = (await diagnostics.eventsForTesting())
+          .where((event) => event['stage'] == 'turn')
+          .toList();
+      expect(events.where((event) => event['outcome'] == 'ok'), isEmpty);
+      expect(
+        events
+            .where((event) => event['outcome'] == 'failed')
+            .map((event) => event['reason']),
+        ['turn_credential_failed', 'malformed_response', 'timeout'],
+      );
+      expect(events, everyElement(containsPair('traceId', trace)));
+      expect(
+        await diagnostics.exportPreview(),
+        isNot(contains('private-credential')),
+      );
+    },
+  );
 
   test(
     'maps one authenticated unexpired TURN bundle without caching it',

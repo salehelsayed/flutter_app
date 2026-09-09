@@ -5448,8 +5448,106 @@ func TestBlobDecryptWrongKeyFails(t *testing.T) {
 	if dec["ok"] == true {
 		t.Fatalf("BlobDecrypt succeeded with the wrong key — AES-GCM auth must reject")
 	}
-	if code, _ := dec["errorCode"].(string); code != "DECRYPT_ERROR" {
-		t.Fatalf("expected DECRYPT_ERROR, got %v", dec)
+	if code, _ := dec["errorCode"].(string); code != "DECRYPT_AUTH_ERROR" {
+		t.Fatalf("expected DECRYPT_AUTH_ERROR, got %v", dec)
+	}
+}
+
+func TestBlobDecryptOperationalFailureCanRetryValidCiphertext(t *testing.T) {
+	key, err := mcrypto.GenerateSymmetricKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "private-blob.bin")
+	plaintext := []byte("synthetic private media fixture")
+	if err := os.WriteFile(src, plaintext, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cipherPath, nonce, err := mcrypto.EncryptFile(src, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, _ := json.Marshal(map[string]string{"filePath": cipherPath, "keyBase64": key, "nonce": nonce})
+	// A directory blocks plaintext output on every host, independent of the
+	// executing user's permissions. The encrypted bytes remain valid.
+	if err := os.Mkdir(cipherPath+".dec", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	response := parseJSON(t, BlobDecrypt(string(params)))
+	assertNotOk(t, response, "DECRYPT_IO_ERROR")
+	if response["errorMessage"] != "encrypted media file operation failed" {
+		t.Fatalf("I/O response must contain only the fixed safe message")
+	}
+	if _, exposed := response["decryptedPath"]; exposed {
+		t.Fatal("failed decryption exposed an output path")
+	}
+	if err := os.Remove(cipherPath + ".dec"); err != nil {
+		t.Fatal(err)
+	}
+	response = parseJSON(t, BlobDecrypt(string(params)))
+	assertOk(t, response)
+	recovered, err := os.ReadFile(response["decryptedPath"].(string))
+	if err != nil || !bytes.Equal(recovered, plaintext) {
+		t.Fatal("same ciphertext did not recover after the output obstruction was removed")
+	}
+}
+
+func TestBlobDecryptFailureCodesRemainFailClosed(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x31}, 32))
+	nonce := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 12))
+	for _, tc := range []struct {
+		name, key, nonce, code, message string
+	}{
+		{"missing_input_file", key, nonce, "DECRYPT_IO_ERROR", "encrypted media file operation failed"},
+		{"invalid_key_base64", "!", nonce, "DECRYPT_METADATA_ERROR", "invalid encrypted media metadata"},
+		{"empty_key", "", nonce, "DECRYPT_METADATA_ERROR", "invalid encrypted media metadata"},
+		{"short_key", base64.StdEncoding.EncodeToString([]byte{1}), nonce, "DECRYPT_METADATA_ERROR", "invalid encrypted media metadata"},
+		{"invalid_nonce_base64", key, "!", "DECRYPT_METADATA_ERROR", "invalid encrypted media metadata"},
+		{"empty_nonce", key, "", "DECRYPT_METADATA_ERROR", "invalid encrypted media metadata"},
+		{"short_nonce", key, base64.StdEncoding.EncodeToString(make([]byte, 11)), "DECRYPT_METADATA_ERROR", "invalid encrypted media metadata"},
+		{"long_nonce", key, base64.StdEncoding.EncodeToString(make([]byte, 13)), "DECRYPT_METADATA_ERROR", "invalid encrypted media metadata"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params, _ := json.Marshal(map[string]string{"filePath": filepath.Join(t.TempDir(), "absent-private-file"), "keyBase64": tc.key, "nonce": tc.nonce})
+			response := parseJSON(t, BlobDecrypt(string(params)))
+			assertNotOk(t, response, tc.code)
+			if response["errorMessage"] != tc.message {
+				t.Fatal("failure response must contain only the fixed safe message")
+			}
+			if _, exposed := response["decryptedPath"]; exposed {
+				t.Fatal("failed decryption exposed an output path")
+			}
+		})
+	}
+	t.Run("tampered_authentication_tag", func(t *testing.T) {
+		src := filepath.Join(t.TempDir(), "blob.bin")
+		if err := os.WriteFile(src, []byte("synthetic authenticated bytes"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cipherPath, validNonce, err := mcrypto.EncryptFile(src, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ciphertext, err := os.ReadFile(cipherPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ciphertext[len(ciphertext)-1] ^= 1
+		if err := os.WriteFile(cipherPath, ciphertext, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		params, _ := json.Marshal(map[string]string{"filePath": cipherPath, "keyBase64": key, "nonce": validNonce})
+		response := parseJSON(t, BlobDecrypt(string(params)))
+		assertNotOk(t, response, "DECRYPT_AUTH_ERROR")
+		if response["errorMessage"] != "encrypted media authentication failed" {
+			t.Fatal("authentication response must contain only the fixed safe message")
+		}
+		if _, err := os.Stat(cipherPath + ".dec"); !os.IsNotExist(err) {
+			t.Fatal("rejected ciphertext must never write plaintext")
+		}
+	})
+	for _, params := range []string{"{", `{}`, `{"filePath":12}`} {
+		assertNotOk(t, parseJSON(t, BlobDecrypt(params)), "INVALID_INPUT")
 	}
 }
 

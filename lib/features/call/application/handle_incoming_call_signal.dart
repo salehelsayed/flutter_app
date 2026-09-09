@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../../core/utils/flow_event_emitter.dart';
+import '../diagnostics/call_diagnostics.dart';
 import '../domain/call_end_reason.dart';
 import '../domain/call_event.dart';
 import '../domain/call_id.dart';
@@ -240,6 +241,52 @@ final class HandleIncomingCallSignal {
         expectedRecipientDevicePeerId: frame.expectedRecipientDevicePeerId,
       );
       final signal = admitted.signal;
+      final diagnostics = CallDiagnostics.instance;
+      final existingTrace = diagnostics.traceForCall(
+        callId: signal.callId.value,
+        callHandle: admitted.callHandle,
+      );
+      final traceId =
+          existingTrace ??
+          (signal.event == CallSignalType.invite
+              ? diagnostics.beginAttempt(role: 'callee')
+              : null);
+      if (traceId != null) {
+        diagnostics.bindCall(
+          callId: signal.callId.value,
+          callHandle: admitted.callHandle,
+          traceId: traceId,
+          role:
+              signal.event == CallSignalType.invite ||
+                  _coordinator.activeSession?.direction ==
+                      CallDirection.incoming
+              ? 'callee'
+              : 'caller',
+        );
+        diagnostics.record(
+          stage: 'signaling',
+          action: 'receive',
+          outcome: 'ok',
+          traceId: traceId,
+        );
+        if (signal.event == CallSignalType.invite && existingTrace == null) {
+          final callHandle = admitted.callHandle;
+          unawaited(
+            diagnostics.resolveTraceForCall(callHandle: callHandle).then((
+              resolved,
+            ) {
+              if (resolved != null) {
+                diagnostics.bindCall(
+                  callId: signal.callId.value,
+                  callHandle: callHandle,
+                  traceId: resolved,
+                  role: 'callee',
+                );
+              }
+            }),
+          );
+        }
+      }
 
       if (signal.event == CallSignalType.invite && frame.terminalFollows) {
         // Ringing now would announce a call that is already over. The
@@ -362,6 +409,12 @@ final class HandleIncomingCallSignal {
         event: 'CALL_INCOMING_PRESENTATION_ATTEMPT',
         details: const <String, Object?>{},
       );
+      diagnostics.record(
+        stage: 'presentation',
+        action: 'present',
+        outcome: 'started',
+        traceId: traceId,
+      );
       var presented = false;
       var presentationThrew = false;
       try {
@@ -377,6 +430,13 @@ final class HandleIncomingCallSignal {
           'presented': presented,
           'threw': presentationThrew,
         },
+      );
+      diagnostics.record(
+        stage: 'presentation',
+        action: 'present',
+        outcome: presented ? 'ok' : 'failed',
+        reason: presented ? 'none' : 'native_lifecycle_failed',
+        traceId: traceId,
       );
       final now = _coordinator.clock();
       final activeAfterPresentation = _coordinator.activeSession;
@@ -423,7 +483,9 @@ final class HandleIncomingCallSignal {
             contactPeerId: signal.senderAccountPeerId,
             remoteAccountPeerId: signal.senderAccountPeerId,
             remoteDeviceId: signal.senderDevicePeerId,
-            endReason: CallEndReason.permissionDenied,
+            // A refused or failed native surface does not establish that
+            // microphone permission was denied.
+            endReason: CallEndReason.signalingFailed,
           ),
         );
         admitted.commitReplay();

@@ -189,6 +189,7 @@ type CallWakeRoute struct {
 // CallWakePayload contains only recipient-generated opaque values and relay
 // time. It cannot carry an account/device identity or encrypted envelope.
 type CallWakePayload struct {
+	Diagnostics *callDiagnosticPush
 	CallHandle  string
 	WakeHandle  string
 	ExpiresAtMs int64
@@ -251,6 +252,7 @@ func (libp2pCallEndpointSignatureVerifier) VerifyCallEndpoint(
 }
 
 type CallControlService struct {
+	diagnostics                 *callDiagnosticStore
 	backend                     *redisCallControlStore
 	dispatcher                  CallWakeDispatcher
 	now                         func() time.Time
@@ -310,6 +312,14 @@ func (s *CallControlService) Store(
 	receipt, err := s.backend.Store(ctx, authenticatedSender, request, now)
 	if err != nil {
 		return CallStoreReceipt{}, err
+	}
+	if span := callDiagnosticSpanFromContext(ctx); span != nil {
+		span.store.bindCommitted(authenticatedSender, request.RecipientDevicePeerID, request.CallHandle, &span.diagnostics)
+		outcome := "ok"
+		if receipt.StoreStatus == CallStoreStatusDuplicate {
+			outcome = "duplicate"
+		}
+		span.emit("signaling", "commit", outcome, "none", map[string]any{"storeCommitted": true, "eventCount": receipt.EventCount})
 	}
 	if (receipt.StoreStatus != CallStoreStatusStored && receipt.StoreStatus != CallStoreStatusDuplicate) ||
 		s.dispatcher == nil {
@@ -393,7 +403,15 @@ func (s *CallControlService) Store(
 		dispatchErr = s.dispatcher.DispatchCallWake(dispatchCtx, *route, CallWakePayload{
 			CallHandle: request.CallHandle, WakeHandle: request.WakeHandle,
 			ExpiresAtMs: receipt.ExpiresAtMs,
+			Diagnostics: s.diagnostics.pushTrace(request.RecipientDevicePeerID, request.CallHandle),
 		})
+	}
+	if span := callDiagnosticSpanFromContext(ctx); span != nil {
+		outcome, reason := "ok", "none"
+		if dispatchErr != nil {
+			outcome, reason = "failed", "wake_failed"
+		}
+		span.emit("push", "finish", outcome, reason, nil)
 	}
 	if dispatchErr == nil {
 		receipt.WakeStatus = CallWakeStatusDispatched

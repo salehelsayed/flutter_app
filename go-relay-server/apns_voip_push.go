@@ -574,9 +574,15 @@ func (d *apnsVoIPCallWakeDispatcher) dispatchThrough(
 			recordAPNSVoIPPushOutcome(apnsVoIPMetricExpired)
 			return ErrCallBackendUnavailable
 		}
+		callDiagnosticProvider(dispatchCtx, "ios", networkAttempt+rateLimitRetries, true, nil)
 		response, sendErr := provider.Send(dispatchCtx, request)
 		outcome, retryable, invalid := classifyAPNSVoIPResult(response, sendErr)
 		recordAPNSVoIPPushOutcome(outcome)
+		diagnosticErr := sendErr
+		if outcome != apnsVoIPMetricSent && diagnosticErr == nil {
+			diagnosticErr = ErrCallBackendUnavailable
+		}
+		callDiagnosticProvider(dispatchCtx, "ios", networkAttempt+rateLimitRetries, false, diagnosticErr)
 		if outcome == apnsVoIPMetricSent {
 			return nil
 		}
@@ -637,11 +643,12 @@ func buildAPNSVoIPPayload(payload CallWakePayload, now time.Time) ([]byte, error
 		APS struct {
 			ContentAvailable int `json:"content-available"`
 		} `json:"aps"`
-		Version    string `json:"v"`
-		WakeType   string `json:"w"`
-		CallHandle string `json:"c"`
-		WakeHandle string `json:"h"`
-		ExpiresAt  string `json:"e"`
+		Diagnostics *callDiagnosticPush `json:"diagnostics,omitempty"`
+		Version     string              `json:"v"`
+		WakeType    string              `json:"w"`
+		CallHandle  string              `json:"c"`
+		WakeHandle  string              `json:"h"`
+		ExpiresAt   string              `json:"e"`
 	}{
 		Version: "1", WakeType: "call", CallHandle: payload.CallHandle,
 		WakeHandle: payload.WakeHandle, ExpiresAt: strconv.FormatInt(payload.ExpiresAtMs, 10),
@@ -650,6 +657,13 @@ func buildAPNSVoIPPayload(payload CallWakePayload, now time.Time) ([]byte, error
 	raw, err := json.Marshal(wire)
 	if err != nil || len(raw) > apnsVoIPPayloadMaxBytes {
 		return nil, ErrCallInvalidRequest
+	}
+	if payload.Diagnostics != nil && payload.Diagnostics.SchemaVersion == 1 && diagnosticUUID.MatchString(payload.Diagnostics.TraceID) {
+		wire.Diagnostics = payload.Diagnostics
+		raw, err = json.Marshal(wire)
+		if err != nil || len(raw) > apnsVoIPPayloadMaxBytes+128 {
+			return nil, ErrCallInvalidRequest
+		}
 	}
 	return raw, nil
 }

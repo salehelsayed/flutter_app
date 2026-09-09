@@ -573,7 +573,8 @@ void main() {
     expect(failedCas, contains("fromStatus: 'sending'"));
     expect(failedCas, contains("toStatus: 'failed'"));
     expect(retriableSettlement, contains('.settleOutgoingOrdinaryTransport('));
-    expect(retriableSettlement, contains("transport: 'inbox'"));
+    expect(retriableSettlement, contains('transport: message.transport'));
+    expect(retriableSettlement, isNot(contains("transport: 'inbox'")));
     expect(retriableSettlement, isNot(contains('saveMessage(')));
 
     final feed = _methodBody(

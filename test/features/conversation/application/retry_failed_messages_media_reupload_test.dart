@@ -1642,7 +1642,7 @@ void main() {
     );
 
     test(
-      'already-inbox cached-envelope success also cleans media staging',
+      'failed inbox-route envelope reacquires custody before cleaning staging',
       () async {
         final msg = _makeFailedMsg(
           id: 'msg-already-inbox-cleanup',
@@ -1672,7 +1672,7 @@ void main() {
         );
 
         expect(count, 1);
-        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 1);
         expect(deletedDirs, [msg.id]);
         expect((await messageRepo.getMessage(msg.id))?.status, 'inboxed');
       },

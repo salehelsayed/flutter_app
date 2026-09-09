@@ -273,11 +273,39 @@ final class _FakeRtpTransceiver implements webrtc.RTCRtpTransceiver {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+final class _RecordingAudioTrack implements webrtc.MediaStreamTrack {
+  final enabledWrites = <bool>[];
+
+  @override
+  String get kind => 'audio';
+
+  @override
+  set enabled(bool enabled) => enabledWrites.add(enabled);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _AudioSender implements webrtc.RTCRtpSender {
+  _AudioSender(this.track);
+
+  @override
+  final webrtc.MediaStreamTrack track;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 final class _RetryablePeerConnection implements webrtc.RTCPeerConnection {
   int closeCalls = 0;
   int disposeCalls = 0;
   bool failDispose = false;
   Completer<void>? disposeGate;
+  Completer<List<webrtc.RTCRtpSender>>? sendersGate;
+
+  @override
+  Future<List<webrtc.RTCRtpSender>> getSenders() async =>
+      sendersGate?.future ?? <webrtc.RTCRtpSender>[];
 
   @override
   Future<void> close() async {
@@ -400,6 +428,55 @@ void main() {
       'optional': <Map<String, dynamic>>[],
     });
   });
+
+  test(
+    'closing during sender lookup prevents late microphone enable',
+    () async {
+      final peer = _RetryablePeerConnection();
+      final adapterUnderTest = FlutterWebRtcPeerConnectionAdapter(
+        configureAndroidAudioFocus: () async {},
+        peerConnectionFactory: (_) async => peer,
+      );
+      await adapterUnderTest.create(
+        const WebRtcPeerConnectionConfiguration(
+          iceTransportPolicy: WebRtcIceTransportPolicy.all,
+          receiveAudio: true,
+          receiveVideo: false,
+          captureAudio: false,
+          captureVideo: false,
+          iceServers: <CallIceServer>[],
+        ),
+      );
+      final track = _RecordingAudioTrack();
+      peer.sendersGate = Completer<List<webrtc.RTCRtpSender>>()
+        ..complete(<webrtc.RTCRtpSender>[_AudioSender(track)]);
+      await adapterUnderTest.setLocalAudioEnabled(false);
+      expect(track.enabledWrites, <bool>[false]);
+      final senders = Completer<List<webrtc.RTCRtpSender>>();
+      peer.sendersGate = senders;
+      final enabling = adapterUnderTest.setLocalAudioEnabled(true);
+
+      await adapterUnderTest.close();
+      Object? failure;
+      final result = enabling.catchError((Object error) {
+        failure = error;
+      });
+      senders.complete(<webrtc.RTCRtpSender>[_AudioSender(track)]);
+      await result;
+
+      expect(track.enabledWrites, <bool>[false]);
+      expect(
+        failure,
+        isA<WebRtcAdapterException>().having(
+          (error) => error.reason,
+          'reason',
+          WebRtcFailureReason.closed,
+        ),
+      );
+      expect(peer.closeCalls, 1);
+      expect(peer.disposeCalls, 1);
+    },
+  );
 
   test(
     'adapter retries only a failed peer release without reopening authority',
@@ -1230,6 +1307,45 @@ void main() {
         (await engine.snapshot()).outputRoute,
         CallAudioOutputRoute.speaker,
       );
+    });
+
+    test('engine fences routes before waiting for peer release', () async {
+      final enumeration = Completer<List<CallAudioOutputRoute>>();
+      final speakerValues = <bool>[];
+      final routePort = CallAudioRouteAdapter(
+        enumerateOutputs: () => enumeration.future,
+        selectOutput: (_) async {},
+        setSpeakerphone: (enabled) async => speakerValues.add(enabled),
+      );
+      final peerCloseGate = Completer<void>();
+      final delayedAdapter = _RecordingWebRtcAdapter()
+        ..closeGate = peerCloseGate;
+      final engineUnderTest = FlutterWebRtcCallEngine(
+        adapter: delayedAdapter,
+        audioRoutePort: routePort,
+      );
+      await _createAudioConnection(engineUnderTest);
+      final selection = engineUnderTest.selectOutputRoute(
+        CallAudioOutputRoute.speaker,
+      );
+      Object? failure;
+      final selectionResult = selection.catchError((Object error) {
+        failure = error;
+      });
+
+      final closing = engineUnderTest.close();
+      enumeration.complete(const <CallAudioOutputRoute>[]);
+      await selectionResult;
+
+      try {
+        expect(speakerValues, isEmpty);
+        expect(failure, isA<CallAudioRouteException>());
+        expect(routePort.selectedRoute, CallAudioOutputRoute.systemDefault);
+      } finally {
+        peerCloseGate.complete();
+        await closing;
+        await delayedAdapter.dispose();
+      }
     });
 
     test(

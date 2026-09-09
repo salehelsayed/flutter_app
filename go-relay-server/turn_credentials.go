@@ -396,7 +396,9 @@ func handleTurnCredentialRequest(
 		})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), turnCredentialIssueTimeout)
+	span := callDiagnosticSpanFromStream(stream)
+	span.emit("turn", "mint", "started", "none", nil)
+	ctx, cancel := context.WithTimeout(callDiagnosticWithContext(context.Background(), span), turnCredentialIssueTimeout)
 	defer cancel()
 	bundle, err := issuer.Issue(ctx, authenticatedSubject)
 	if err != nil {
@@ -469,8 +471,18 @@ func writeTurnCredentialResponse(stream io.Writer, response turnCredentialRespon
 		return
 	}
 	defer clear(data)
-	if err := writeFrame(stream, data); err != nil {
+	span := callDiagnosticSpanFromStream(stream)
+	if response.Status == "OK" {
+		span.emit("turn", "mint", "ok", "none", nil)
+	} else {
+		span.emit("turn", "mint", "failed", diagnosticReason(response.ErrorCode), nil)
+	}
+	err = writeFrame(stream, data)
+	if err != nil {
 		recordTurnCredentialOutcome("write_error")
+		span.emit("turn", "response", "failed", "write_failed", map[string]any{"responseWritten": false})
+	} else {
+		span.emit("turn", "response", "ok", "none", map[string]any{"responseWritten": true})
 	}
 }
 

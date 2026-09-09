@@ -160,6 +160,110 @@ func TestTurnCredentialsV1_TypedUnsupportedFiniteFailureAndRelayFailover(t *test
 	})
 }
 
+func TestTurnCredentialsV1_StalledFirstRelayLeavesTimeForHealthyFallback(t *testing.T) {
+	slowRelay, slowRequests, slowClosed := startStalledTurnCredentialsRelayFixture(t)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	healthyRelay, healthyRequests := startTurnCredentialsRelayFixture(t, validTurnCredentialsResponse(now, "fallback"))
+	n := turnCredentialsNode(t, slowRelay, healthyRelay)
+	result := make(chan turnCredentialFetchResult, 1)
+	go func() {
+		bundle, err := n.TurnCredentialsV1()
+		result <- turnCredentialFetchResult{bundle: bundle, err: err}
+	}()
+
+	select {
+	case <-slowRequests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first relay did not receive the credential request")
+	}
+	// Flutter abandons this native request after five seconds. The first
+	// unresponsive peer must leave time for a later authenticated response.
+	select {
+	case got := <-result:
+		if got.err != nil || got.bundle.Schema != "turn_credentials" {
+			t.Fatal("healthy fallback did not supply credentials")
+		}
+	case <-time.After(4500 * time.Millisecond):
+		t.Fatal("stalled first relay exhausted the Flutter credential deadline before fallback")
+	}
+	select {
+	case <-healthyRequests:
+	default:
+		t.Fatal("healthy fallback was not attempted")
+	}
+	select {
+	case <-slowClosed:
+	case <-time.After(time.Second):
+		t.Fatal("abandoned first-relay stream remained open after fallback")
+	}
+}
+
+func TestTurnCredentialsV1_CanceledRequestInterruptsBlockedResponse(t *testing.T) {
+	relay, requests, closed := startStalledTurnCredentialsRelayFixture(t)
+	n := turnCredentialsNode(t, relay)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan turnCredentialFetchResult, 1)
+	go func() {
+		bundle, err := requestTurnCredentialsV1(ctx, n.host, RelayInfo{
+			ID: relay.ID(), Addrs: relay.Addrs(),
+		}, time.Now())
+		result <- turnCredentialFetchResult{bundle: bundle, err: err}
+	}()
+	select {
+	case <-requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("relay did not receive the credential request")
+	}
+	cancel()
+	select {
+	case got := <-result:
+		if !errors.Is(got.err, ErrTurnCredentialsUnavailable) || got.bundle.Username != "" {
+			t.Fatal("canceled request returned credentials or an unexpected failure")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("cancellation did not interrupt the blocked credential response")
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("canceled credential stream was not released")
+	}
+}
+
+func TestTurnCredentialsV1_AllStalledRelaysFinishInsideBridgeDeadline(t *testing.T) {
+	first, firstRequests, firstClosed := startStalledTurnCredentialsRelayFixture(t)
+	second, secondRequests, secondClosed := startStalledTurnCredentialsRelayFixture(t)
+	n := turnCredentialsNode(t, first, second)
+	result := make(chan turnCredentialFetchResult, 1)
+	go func() {
+		bundle, err := n.TurnCredentialsV1()
+		result <- turnCredentialFetchResult{bundle: bundle, err: err}
+	}()
+	select {
+	case got := <-result:
+		if !errors.Is(got.err, ErrTurnCredentialsUnavailable) || got.bundle.Username != "" {
+			t.Fatal("stalled relays returned credentials or an unexpected failure")
+		}
+	case <-time.After(4500 * time.Millisecond):
+		t.Fatal("per-relay timeouts exceeded the shared native credential budget")
+	}
+	for _, requests := range []<-chan struct{}{firstRequests, secondRequests} {
+		select {
+		case <-requests:
+		default:
+			t.Fatal("a stalled relay starved a later configured peer")
+		}
+	}
+	for _, closed := range []<-chan struct{}{firstClosed, secondClosed} {
+		select {
+		case <-closed:
+		case <-time.After(time.Second):
+			t.Fatal("credential deadline left an abandoned stream open")
+		}
+	}
+}
+
 func TestTurnCredentialLeaseManager_PrefetchReplacementAndHealthyAllocationSurvival(t *testing.T) {
 	clock := &turnCredentialTestClock{now: time.Unix(1_800_000_000, 0)}
 	first := turnCredentialLeaseFixture(clock.now, "first")
@@ -325,6 +429,29 @@ func startTurnCredentialsRelayFixture(t *testing.T, response string) (host.Host,
 		_ = writeFrame(stream, []byte(response))
 	})
 	return relayHost, requests
+}
+
+func startStalledTurnCredentialsRelayFixture(t *testing.T) (host.Host, <-chan struct{}, <-chan struct{}) {
+	t.Helper()
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatal("failed to start stalled relay fixture")
+	}
+	t.Cleanup(func() { _ = relayHost.Close() })
+	requests := make(chan struct{}, 1)
+	closed := make(chan struct{}, 1)
+	relayHost.SetStreamHandler(InboxProtocol, func(stream network.Stream) {
+		defer stream.Close()
+		if _, err := readFrame(stream); err != nil {
+			return
+		}
+		requests <- struct{}{}
+		// No response is issued. The client's deadline/cancellation must reset
+		// the stream and unblock this read without shutting down either host.
+		_, _ = readFrame(stream)
+		closed <- struct{}{}
+	})
+	return relayHost, requests, closed
 }
 
 func turnCredentialsNode(t *testing.T, relays ...host.Host) *Node {

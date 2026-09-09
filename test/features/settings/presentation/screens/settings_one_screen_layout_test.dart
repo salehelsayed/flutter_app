@@ -68,6 +68,7 @@ void main() {
           onOpenPhotoQualitySheet: () {},
           onOpenVideoQualitySheet: () {},
           onOpenRecoverySheet: () {},
+          onOpenSafetySupport: () {},
           currentBackgroundPreference: backgroundPreference,
           currentQuality: ImageQualityPreference.compressed,
           currentVideoQuality: ImageQualityPreference.compressed,
@@ -139,6 +140,10 @@ void main() {
     }
     expect(find.byKey(const ValueKey('settings-my-qr-tile')), findsOneWidget);
     expect(find.byKey(const ValueKey('settings-scan-tile')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('settings-safety-support-action')),
+      findsOneWidget,
+    );
 
     expect(pageScrollPosition(tester).maxScrollExtent, 0.0);
     expect(tester.takeException(), isNull);

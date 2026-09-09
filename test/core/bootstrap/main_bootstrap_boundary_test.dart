@@ -9,6 +9,7 @@ const _mainPath = 'lib/main.dart';
 const _runnerPath = 'lib/app/bootstrap/application_bootstrap.dart';
 const _productionPath =
     'lib/app/bootstrap/production_application_bootstrap.dart';
+const _diagnosticsPath = 'lib/app/bootstrap/production_app_diagnostics.dart';
 const _productionHeadlessPath =
     'lib/app/bootstrap/production_headless_canonical_recovery.dart';
 const _productionHeadlessCallPath =
@@ -60,29 +61,81 @@ void main() {
     expect(body, isA<BlockFunctionBody>());
     final block = (body as BlockFunctionBody).block;
 
-    // Keep the supported entrypoint exact: framework initialization and the
-    // iOS receipt acknowledgement must precede the one live delegation.
+    // Framework initialization remains outside the observation boundary. The
+    // one awaited wrapper contains only the original receipt preflight and
+    // production delegation, in that order.
     expect(
       block.statements,
-      hasLength(3),
+      hasLength(2),
       reason:
-          'the supported main() must contain only its two preflight steps '
-          'and live delegation',
+          'main() must contain only framework initialization and the awaited '
+          'production diagnostics wrapper',
     );
     expect(
       block.statements[0].toSource(),
       'WidgetsFlutterBinding.ensureInitialized();',
     );
+    expect(block.statements[1], isA<ExpressionStatement>());
+    final wrapperExpression =
+        (block.statements[1] as ExpressionStatement).expression;
+    expect(wrapperExpression, isA<AwaitExpression>());
+    final wrapperCall = (wrapperExpression as AwaitExpression).expression;
+    expect(wrapperCall, isA<MethodInvocation>());
+    final wrapper = wrapperCall as MethodInvocation;
+    expect(wrapper.target, isNull);
+    expect(wrapper.methodName.name, 'runWithProductionAppDiagnostics');
+    expect(wrapper.typeArguments, isNull);
+    expect(wrapper.argumentList.arguments, hasLength(1));
+    final launch = wrapper.argumentList.arguments.single;
+    expect(launch, isA<FunctionExpression>());
+    final launchCallback = launch as FunctionExpression;
+    expect(launchCallback.parameters?.parameters, isEmpty);
+    expect(launchCallback.body, isA<BlockFunctionBody>());
+    expect(launchCallback.body.isAsynchronous, isTrue);
+    expect(launchCallback.body.isGenerator, isFalse);
+    final launchStatements =
+        (launchCallback.body as BlockFunctionBody).block.statements;
     expect(
-      block.statements[1].toSource(),
+      launchStatements,
+      hasLength(2),
+      reason:
+          'the observation callback must preserve only receipt preflight and '
+          'the single live bootstrap delegation',
+    );
+    expect(
+      launchStatements[0].toSource(),
       'await DebugE2ECompositionRoot.'
       'acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured();',
     );
+    expect(launchStatements[1], isA<ExpressionStatement>());
+    final delegationExpression =
+        (launchStatements[1] as ExpressionStatement).expression;
+    expect(delegationExpression, isA<AwaitExpression>());
+    final delegationCall = (delegationExpression as AwaitExpression).expression;
+    expect(delegationCall, isA<MethodInvocation>());
+    final delegation = delegationCall as MethodInvocation;
+    expect(delegation.target, isNull);
+    expect(delegation.methodName.name, 'runApplicationBootstrap');
+    expect(delegation.typeArguments, isNull);
+    final arguments = delegation.argumentList.arguments;
+    expect(arguments, hasLength(2));
+    expect(arguments, everyElement(isA<NamedExpression>()));
     expect(
-      block.statements[2].toSource(),
-      contains('await runApplicationBootstrap('),
+      arguments.cast<NamedExpression>().map(
+        (argument) => argument.name.label.name,
+      ),
+      orderedEquals(['bootstrapFactory', 'host']),
+    );
+    expect(
+      (arguments[0] as NamedExpression).expression.toSource(),
+      'ProductionApplicationBootstrap.new',
+    );
+    expect(
+      (arguments[1] as NamedExpression).expression.toSource(),
+      'const FlutterApplicationHost()',
     );
     final bodySource = body.toSource();
+    expect(_occurrences(bodySource, 'runWithProductionAppDiagnostics('), 1);
     expect(_occurrences(bodySource, 'runApplicationBootstrap('), 1);
     expect(bodySource, contains('await runApplicationBootstrap('));
     expect(bodySource, contains('bootstrapFactory:'));
@@ -127,6 +180,7 @@ void main() {
       equals({
         _runnerPath,
         _productionPath,
+        _diagnosticsPath,
         _productionHeadlessPath,
         _productionHeadlessCallPath,
         _h0ProbePath,
@@ -161,16 +215,26 @@ void main() {
     }
 
     // Exact owner and cycle checks follow the live-entrypoint assertions.
-    for (final path in const [_runnerPath, _productionPath, _rootPath]) {
+    for (final path in const [
+      _runnerPath,
+      _productionPath,
+      _diagnosticsPath,
+      _rootPath,
+    ]) {
       expect(File(path).existsSync(), isTrue, reason: 'missing $path');
     }
     final production = File(_productionPath).readAsStringSync();
+    final diagnostics = File(_diagnosticsPath).readAsStringSync();
     final root = File(_rootPath).readAsStringSync();
     expect(
       production,
       isNot(contains("import 'package:flutter_app/main.dart'")),
     );
     expect(root, isNot(contains("import 'package:flutter_app/main.dart'")));
+    expect(
+      diagnostics,
+      isNot(contains("import 'package:flutter_app/main.dart'")),
+    );
     expect(_occurrences(root, 'class MyApp '), 1);
     expect(_occurrences(root, 'class _MyAppState '), 1);
     expect(

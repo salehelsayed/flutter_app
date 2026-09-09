@@ -1,5 +1,72 @@
 import '../domain/call_engine.dart';
 
+/// Packet-counter progress contains no statistics identifiers or addresses.
+final class CallRtpProgressSample {
+  const CallRtpProgressSample({required this.inbound, required this.outbound});
+  final bool inbound;
+  final bool outbound;
+}
+
+/// Compares consecutive valid aggregate audio counters. A first sample,
+/// missing statistics, or counter reset cannot prove new packet flow.
+final class CallRtpProgressSampler {
+  (int, int)? _inbound;
+  (int, int)? _outbound;
+
+  CallRtpProgressSample sample(Iterable<CallStatsRecord> records) {
+    (int, int)? inbound;
+    (int, int)? outbound;
+    for (final record in records) {
+      if (record.values['kind'] != 'audio' &&
+          record.values['mediaType'] != 'audio') {
+        continue;
+      }
+      final isInbound = record.type == 'inbound-rtp';
+      if (!isInbound && record.type != 'outbound-rtp') continue;
+      final packets = _counter(
+        record.values[isInbound ? 'packetsReceived' : 'packetsSent'],
+      );
+      final bytes = _counter(
+        record.values[isInbound ? 'bytesReceived' : 'bytesSent'],
+      );
+      if (packets == null || bytes == null) continue;
+      if (isInbound) {
+        inbound = ((inbound?.$1 ?? 0) + packets, (inbound?.$2 ?? 0) + bytes);
+      } else {
+        outbound = ((outbound?.$1 ?? 0) + packets, (outbound?.$2 ?? 0) + bytes);
+      }
+    }
+    bool advanced((int, int)? previous, (int, int)? current) =>
+        previous != null &&
+        current != null &&
+        current.$1 > previous.$1 &&
+        current.$2 > previous.$2;
+    final result = CallRtpProgressSample(
+      inbound: advanced(_inbound, inbound),
+      outbound: advanced(_outbound, outbound),
+    );
+    _inbound = inbound;
+    _outbound = outbound;
+    return result;
+  }
+
+  static int? _counter(Object? value) {
+    final number = value is num
+        ? value
+        : value is String
+        ? num.tryParse(value)
+        : null;
+    if (number == null ||
+        !number.isFinite ||
+        number < 0 ||
+        number > 9007199254740991 ||
+        number != number.truncateToDouble()) {
+      return null;
+    }
+    return number.toInt();
+  }
+}
+
 /// A plugin-independent copy of one WebRTC statistics row.
 ///
 /// Only fixed fields needed for readiness and coarse route classification are

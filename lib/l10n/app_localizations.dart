@@ -6331,6 +6331,246 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Bluetooth'**
   String get call_audio_route_bluetooth;
+
+  /// No description provided for @settings_diagnostics_section.
+  ///
+  /// In en, this message translates to:
+  /// **'SUPPORT'**
+  String get settings_diagnostics_section;
+
+  /// No description provided for @settings_call_diagnostics_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Call diagnostics'**
+  String get settings_call_diagnostics_title;
+
+  /// No description provided for @settings_call_diagnostics_switch.
+  ///
+  /// In en, this message translates to:
+  /// **'Share call diagnostics'**
+  String get settings_call_diagnostics_switch;
+
+  /// No description provided for @settings_call_diagnostics_summary.
+  ///
+  /// In en, this message translates to:
+  /// **'Help diagnose successful and failed calls. When enabled, reports are sent automatically when this phone is online.'**
+  String get settings_call_diagnostics_summary;
+
+  /// No description provided for @settings_call_diagnostics_details.
+  ///
+  /// In en, this message translates to:
+  /// **'Includes call stages, failure reasons, timing, app version, and connection and packet-flow status. No audio, messages, contact or device IDs, tokens, or network addresses.'**
+  String get settings_call_diagnostics_details;
+
+  /// No description provided for @settings_app_diagnostics_title.
+  ///
+  /// In en, this message translates to:
+  /// **'App diagnostics'**
+  String get settings_app_diagnostics_title;
+
+  /// No description provided for @settings_app_diagnostics_switch.
+  ///
+  /// In en, this message translates to:
+  /// **'Share app diagnostics'**
+  String get settings_app_diagnostics_switch;
+
+  /// No description provided for @settings_app_diagnostics_summary.
+  ///
+  /// In en, this message translates to:
+  /// **'Help identify problems with messages, private media, notifications, and app startup. Reports upload automatically when this phone is online.'**
+  String get settings_app_diagnostics_summary;
+
+  /// No description provided for @settings_app_diagnostics_details.
+  ///
+  /// In en, this message translates to:
+  /// **'Includes operation stages, fixed error categories, timing, app version, crash and freeze reports, and reporting health. No messages, images, audio, keys, contact or device IDs, tokens, or network addresses. Copy a support code to help us locate a problem.'**
+  String get settings_app_diagnostics_details;
+
+  /// No description provided for @settings_diagnostics_sharing_on.
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing on'**
+  String get settings_diagnostics_sharing_on;
+
+  /// No description provided for @settings_diagnostics_off.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get settings_diagnostics_off;
+
+  /// No description provided for @settings_diagnostics_status_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagnostic status is temporarily unavailable.'**
+  String get settings_diagnostics_status_unavailable;
+
+  /// No description provided for @settings_diagnostics_storage_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Reports cannot be saved on this phone. Try turning sharing off and on.'**
+  String get settings_diagnostics_storage_failed;
+
+  /// No description provided for @settings_diagnostics_setup_pending.
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing setup is pending. Reports will upload when it completes.'**
+  String get settings_diagnostics_setup_pending;
+
+  /// No description provided for @settings_diagnostics_disable_pending.
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing is off on this phone. The server update is pending.'**
+  String get settings_diagnostics_disable_pending;
+
+  /// No description provided for @settings_diagnostics_ready.
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing is ready.'**
+  String get settings_diagnostics_ready;
+
+  /// No description provided for @settings_diagnostics_disabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing is off.'**
+  String get settings_diagnostics_disabled;
+
+  /// No description provided for @settings_diagnostics_queued_events.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 event waiting to upload} other{{count} events waiting to upload}}'**
+  String settings_diagnostics_queued_events(int count);
+
+  /// No description provided for @settings_diagnostics_last_upload.
+  ///
+  /// In en, this message translates to:
+  /// **'Last upload: {date} at {time}'**
+  String settings_diagnostics_last_upload(DateTime date, DateTime time);
+
+  /// No description provided for @settings_diagnostics_dropped_events.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 event was dropped. Reports may be incomplete.} other{{count} events were dropped. Reports may be incomplete.}}'**
+  String settings_diagnostics_dropped_events(int count);
+
+  /// No description provided for @settings_diagnostics_retry_pending.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload is waiting to retry.'**
+  String get settings_diagnostics_retry_pending;
+
+  /// No description provided for @settings_diagnostics_update_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not update diagnostics. Please try again.'**
+  String get settings_diagnostics_update_failed;
+
+  /// Diagnostic report retention, currently7local days and14server days; sharing default disclosure.
+  ///
+  /// In en, this message translates to:
+  /// **'Reports are kept on this phone for up to {localDays} days and on the server for up to {serverDays} days. Sharing is on by default. You can turn it off at any time.'**
+  String settings_diagnostics_retention(int localDays, int serverDays);
+
+  /// No description provided for @settings_diagnostics_support_code_copied.
+  ///
+  /// In en, this message translates to:
+  /// **'Support code copied. Share it when reporting a problem.'**
+  String get settings_diagnostics_support_code_copied;
+
+  /// No description provided for @settings_diagnostics_copy_support_code.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy support code'**
+  String get settings_diagnostics_copy_support_code;
+
+  /// No description provided for @settings_diagnostics_preview_report.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview support report'**
+  String get settings_diagnostics_preview_report;
+
+  /// No description provided for @settings_diagnostics_report_copied.
+  ///
+  /// In en, this message translates to:
+  /// **'Support report copied'**
+  String get settings_diagnostics_report_copied;
+
+  /// No description provided for @settings_diagnostics_copy_report.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy support report'**
+  String get settings_diagnostics_copy_report;
+
+  /// No description provided for @settings_diagnostics_cleared.
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing is off and local reports are cleared'**
+  String get settings_diagnostics_cleared;
+
+  /// No description provided for @settings_diagnostics_disable_and_clear.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off and clear reports'**
+  String get settings_diagnostics_disable_and_clear;
+
+  /// No description provided for @settings_safety_support_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Safety & support'**
+  String get settings_safety_support_title;
+
+  /// No description provided for @settings_safety_support_description.
+  ///
+  /// In en, this message translates to:
+  /// **'Report abuse or child-safety concerns to the mknoon developer. Use the address below or open your email app to write a report.'**
+  String get settings_safety_support_description;
+
+  /// No description provided for @settings_safety_support_email.
+  ///
+  /// In en, this message translates to:
+  /// **'Write email'**
+  String get settings_safety_support_email;
+
+  /// No description provided for @settings_safety_support_copy_email.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy email address'**
+  String get settings_safety_support_copy_email;
+
+  /// No description provided for @settings_safety_support_copied.
+  ///
+  /// In en, this message translates to:
+  /// **'Email address copied.'**
+  String get settings_safety_support_copied;
+
+  /// No description provided for @settings_safety_support_copy_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t copy the address. You can select it above and copy it manually.'**
+  String get settings_safety_support_copy_failed;
+
+  /// No description provided for @settings_safety_support_email_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t open an email app. Copy the address and contact us using your preferred email service.'**
+  String get settings_safety_support_email_unavailable;
+
+  /// No description provided for @settings_safety_support_browser_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t open a browser. You can copy the policy link below and open it yourself.'**
+  String get settings_safety_support_browser_unavailable;
+
+  /// No description provided for @settings_safety_support_guidance.
+  ///
+  /// In en, this message translates to:
+  /// **'Describe the concern. Do not send suspected child sexual abuse material, private keys, or recovery phrases.'**
+  String get settings_safety_support_guidance;
+
+  /// No description provided for @settings_safety_support_standards.
+  ///
+  /// In en, this message translates to:
+  /// **'Child safety standards'**
+  String get settings_safety_support_standards;
 }
 
 class _AppLocalizationsDelegate

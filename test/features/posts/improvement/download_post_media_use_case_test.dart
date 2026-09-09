@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -127,7 +128,13 @@ void main() {
         mediaFileManager: mediaFileManager,
         attachment: row,
       ),
-      throwsA(isA<StateError>()),
+      throwsA(
+        isA<BlobDecryptOperationalException>().having(
+          (error) => error.code,
+          'safe ambiguous failure code',
+          'UNKNOWN_ERROR',
+        ),
+      ),
     );
 
     expect(bridge.commandLog, contains('blob:decrypt'));

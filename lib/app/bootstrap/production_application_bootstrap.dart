@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -23,6 +24,8 @@ import 'package:flutter_app/app/bootstrap/production_canonical_group_replay_comp
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 import 'package:flutter_app/features/call/application/missed_call_notifier.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
+import 'package:flutter_app/features/call/diagnostics/production_call_diagnostics.dart';
 import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
 import 'package:flutter_app/features/call/data/call_history_orbit_activity_source.dart';
 import 'package:flutter_app/features/call/data/call_history_conversation_timeline_source.dart';
@@ -5291,6 +5294,20 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create and initialize the bridge (Go native)
     bridge = GoBridgeClient();
+    AppDiagnostics.instance.attachTransport(
+      bridge: bridge,
+      networkAllowed: () => allowsAccountRuntimeNetworkSideEffects(
+        'app_diagnostics',
+      ),
+    );
+    unawaited(
+      initializeProductionCallDiagnostics(
+        bridge: bridge,
+        networkAllowed: () => allowsAccountRuntimeNetworkSideEffects(
+          'call_diagnostics',
+        ),
+      ),
+    );
     // Declared before the drain composition so its per-kick live read can
     // reference the one shared platform readiness resolver; assigned below
     // with the platform readers, before any drain kick can run.
@@ -9287,6 +9304,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       await liveServiceStartupSteps.runAsync('bridge_initialize', () async {
         await bridge.initialize();
         StartupTiming.instance.mark('bridge_initialized');
+        unawaited(CallDiagnostics.instance.flush());
       });
       await liveServiceStartupSteps.runAsync(
         'notification_service_initialize',

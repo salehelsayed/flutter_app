@@ -58,6 +58,43 @@ internal final class MknoonCallNativeBridge: NSObject, FlutterStreamHandler {
   }
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    var arguments = call.arguments as? [String: Any]
+    let metadata = arguments?.removeValue(forKey: "diagnostics") as? [String: Any] ?? [:]
+    var context = MknoonCallDiagnosticSpool.context(metadata)
+    if context["operationId"] == nil { context["operationId"] = UUID().uuidString.lowercased() }
+    let handle = arguments?["callHandle"] as? String
+    let cleaned: Any?
+    if let arguments { cleaned = arguments } else { cleaned = call.arguments }
+    let stage: String
+    let action: String
+    switch call.method {
+    case "answer": stage = "answer"; action = "accept"
+    case "activateAudio": stage = "audio"; action = "activate"
+    case "deactivateAudio": stage = "audio"; action = "stop"
+    case "setCapabilityEnabled": stage = "authority"; action = "configure"
+    case "presentAuthenticated", "registerOutgoingAuthenticated": stage = "presentation"; action = "present"
+    case "end", "failClosed", "remoteCancel", "expire": stage = "cleanup"; action = "finish"
+    default:
+      handleCore(FlutterMethodCall(methodName: call.method, arguments: cleaned), result: result)
+      return
+    }
+    let captured = context
+    if let handle, let trace = context["traceId"] as? String { MknoonCallDiagnostics.shared.bind(handle: handle, traceId: trace, context: context) }
+    let reason = context["reason"] as? String ?? "none"
+    MknoonCallDiagnostics.shared.record(handle: handle, stage: stage, action: action, outcome: "started", reason: reason, context: context)
+    MknoonCallDiagnosticScope.withContext(context) {
+      handleCore(FlutterMethodCall(methodName: call.method, arguments: cleaned)) { value in
+        let accepted = value as? Bool
+        MknoonCallDiagnostics.shared.record(handle: handle, stage: stage, action: action,
+                                            outcome: value is FlutterError ? "failed" : accepted == false ? "rejected" : "ok",
+                                            reason: accepted == false && stage == "answer" ? "native_answer_refused" : reason,
+                                            values: accepted.map { ["accepted": $0] } ?? [:], context: captured)
+        result(value)
+      }
+    }
+  }
+
+  private func handleCore(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "setCapabilityEnabled":
       setCapability(call.arguments, result)

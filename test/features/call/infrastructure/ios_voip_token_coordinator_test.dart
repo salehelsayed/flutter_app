@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_voip_token_coordinator.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -24,6 +25,113 @@ Map<String, Object?> _snapshot({
 };
 
 void main() {
+  test(
+    'native stream failure correlates the exact relay revocation with its cause',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final native = _TokenNative()
+        ..current = _snapshot(token: _tokenA, refreshEpoch: 11);
+      final authority = _Authority();
+      final coordinator = _coordinator(native, authority);
+      addTearDown(coordinator.close);
+      expect(await coordinator.publishForAuthenticatedGraph(), isTrue);
+      native.events.addError(StateError('private-native-error'));
+      await _until(() => authority.revocations.isNotEmpty);
+      expect(coordinator.invalidationDiagnosticReason, 'native_stream_failed');
+      expect(
+        authority.revocationContexts.single?['operationId'],
+        coordinator.invalidationDiagnosticOperationId,
+      );
+      expect(
+        authority.revocationContexts.single?['cause'],
+        'native_stream_failed',
+      );
+      expect(
+        (await diagnostics.exportPreview()).contains('private-native-error'),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'PushKit invalidation keeps the native operation as parent of relay withdrawal',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final native = _TokenNative()
+        ..current = _snapshot(token: _tokenA, refreshEpoch: 11);
+      final authority = _Authority();
+      final coordinator = _coordinator(native, authority);
+      addTearDown(coordinator.close);
+      expect(await coordinator.publishForAuthenticatedGraph(), isTrue);
+      const parent = '11111111-2222-4333-8444-555555555555';
+      native.events.add({
+        ..._snapshot(token: '', refreshEpoch: 11, invalidated: true),
+        'invalidationReason': 'pushkit_token_invalidated',
+        'operationId': parent,
+      });
+      await _settle();
+      expect(
+        coordinator.invalidationDiagnosticReason,
+        'pushkit_token_invalidated',
+      );
+      expect(coordinator.invalidationDiagnosticOperationId, isNotNull);
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.any(
+          (event) =>
+              event['action'] == 'invalidate' &&
+              event['reason'] == 'pushkit_token_invalidated' &&
+              event['parentOperationId'] == parent &&
+              event['operationId'] ==
+                  coordinator.invalidationDiagnosticOperationId,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'optional native diagnostic origin preserves authority validation and legacy snapshots',
+    () {
+      final raw = _snapshot(token: '', refreshEpoch: 8, invalidated: true);
+      final legacy = IosVoipTokenSnapshot.parse(raw);
+      expect(legacy.invalidationReason, 'unknown');
+      const operation = '11111111-2222-4333-8444-555555555555';
+      final enriched = IosVoipTokenSnapshot.parse({
+        ...raw,
+        'invalidationReason': 'pushkit_token_invalidated',
+        'operationId': operation,
+      });
+      expect(enriched.invalidated, isTrue);
+      expect(enriched.refreshEpoch, legacy.refreshEpoch);
+      expect(enriched.invalidationReason, 'pushkit_token_invalidated');
+      expect(enriched.operationId, operation);
+      final malformedMetadata = IosVoipTokenSnapshot.parse({
+        ...raw,
+        'invalidationReason': 'private-unrecognized-error',
+        'operationId': 'private-handle',
+      });
+      expect(malformedMetadata.invalidationReason, 'unknown');
+      expect(malformedMetadata.operationId, isNull);
+      expect(
+        () => IosVoipTokenSnapshot.parse({
+          ...raw,
+          'refreshEpoch': -1,
+          'invalidationReason': 'pushkit_token_invalidated',
+        }),
+        throwsA(isA<IosVoipTokenException>()),
+      );
+    },
+  );
+
   test('publishes, suppresses duplicate events, rotates with prior-epoch CAS, '
       'and invalidates only iOS VoIP', () async {
     final native = _TokenNative()
@@ -905,6 +1013,7 @@ final class _Authority implements CallAuthorityClient {
       <({CallTokenKind kind, int? epoch})>[];
   final Map<int, int> _generations = <int, int>{};
   final List<bool> revokeResults = <bool>[];
+  final List<Map<String, Object?>?> revocationContexts = [];
   final List<Object> publishFailures = <Object>[];
 
   @override
@@ -930,6 +1039,7 @@ final class _Authority implements CallAuthorityClient {
   @override
   Future<bool> revokeToken(CallTokenKind kind, {int? refreshEpoch}) async {
     revocations.add((kind: kind, epoch: refreshEpoch));
+    revocationContexts.add(CallDiagnostics.instance.contextForWire());
     return revokeResults.isEmpty ? true : revokeResults.removeAt(0);
   }
 

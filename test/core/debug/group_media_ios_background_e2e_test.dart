@@ -1675,11 +1675,11 @@ void main() {
         'lib/debug/debug_e2e_composition_root.dart',
       ).readAsStringSync();
       expect(
-        mainSource,
-        contains(
-          'runApplicationBootstrap(\n'
-          '    bootstrapFactory: ProductionApplicationBootstrap.new,',
-        ),
+        RegExp(
+          r'\bawait\s+runApplicationBootstrap\s*\(\s*'
+          r'bootstrapFactory:\s*ProductionApplicationBootstrap\.new\s*,',
+        ).allMatches(mainSource),
+        hasLength(1),
         reason: 'the public entrypoint must delegate before composition starts',
       );
       final reset = productionSource.indexOf(

@@ -28,6 +28,8 @@ class PushRegistrationCoordinator {
   StreamSubscription<String>? _tokenRefreshSubscription;
   Timer? _retryTimer;
   Future<void>? _inFlightAttempt;
+  int _tokenRefreshGeneration = 0;
+  int? _inFlightTokenRefreshGeneration;
   _PushRegistrationHealthAuthority? _inFlightAuthority;
   Future<void> _healthOperationTail = Future<void>.value();
   _PushPermissionState _permissionState = _PushPermissionState.unknown;
@@ -62,6 +64,7 @@ class PushRegistrationCoordinator {
 
     _started = true;
     _tokenRefreshSubscription = tokenRefreshStream.listen((_) {
+      _tokenRefreshGeneration++;
       logPushDiagnostic('token_refresh_event');
       emitFlowEvent(
         layer: 'FL',
@@ -138,16 +141,18 @@ class PushRegistrationCoordinator {
     final inFlightAttempt = _inFlightAttempt;
     if (inFlightAttempt != null) {
       final inFlightAuthority = _inFlightAuthority;
+      final inFlightTokenGeneration = _inFlightTokenRefreshGeneration;
       await inFlightAttempt;
-      if (inFlightAuthority == authority ||
+      if ((inFlightAuthority == authority &&
+              inFlightTokenGeneration == _tokenRefreshGeneration) ||
           !_isCurrentHealthAuthority(authority) ||
           _disposed ||
           !isEnabled()) {
         return;
       }
-      // A trigger observed a new binding while an old-account attempt was in
-      // flight. Let the fenced attempt settle, then register for the latest
-      // authority instead of dropping the cutover trigger.
+      // A changed token or account binding cannot be covered by the older
+      // attempt. Retry after it settles; overlapping refreshes join that one
+      // follow-up and register the latest token without concurrent writes.
       await _attemptRegistration(
         checkPermission: checkPermission,
         trigger: trigger,
@@ -161,6 +166,7 @@ class PushRegistrationCoordinator {
       authority: authority,
     );
     _inFlightAuthority = authority;
+    _inFlightTokenRefreshGeneration = _tokenRefreshGeneration;
     _inFlightAttempt = attempt;
     try {
       await attempt;
@@ -168,6 +174,7 @@ class PushRegistrationCoordinator {
       if (identical(_inFlightAttempt, attempt)) {
         _inFlightAttempt = null;
         _inFlightAuthority = null;
+        _inFlightTokenRefreshGeneration = null;
       }
     }
   }

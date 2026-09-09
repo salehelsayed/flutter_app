@@ -7,6 +7,22 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../integration_test/support/android_notification_payload_campaign.dart';
 
 void main() {
+  test('isolated package launch uses the fully qualified native activity', () {
+    final source = File(
+      'integration_test/scripts/notification_android_payload_campaign.dart',
+    ).readAsStringSync();
+    final start = source.indexOf('Future<void> _launch(String device) async {');
+    final end = source.indexOf('Future<_Identity> _identity(', start);
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final launch = source.substring(start, end);
+
+    // applicationId selects the installed package; the native activity class
+    // stays in com.mknoon.app for disposable builds with a different ID.
+    expect(launch, contains(r"'$packageName/com.mknoon.app.MainActivity'"));
+    expect(launch, isNot(contains(r"'$packageName/.MainActivity'")));
+  });
+
   test('channel-disabled leg keeps the silent channel OPEN so a leak shows', () {
     final source = File(
       'integration_test/scripts/notification_android_payload_campaign.dart',

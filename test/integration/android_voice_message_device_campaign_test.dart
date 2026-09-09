@@ -139,6 +139,25 @@ void main() {
   });
 
   test(
+    'live contact commands are consumed without restarting their processes',
+    () {
+      final source = File(
+        'integration_test/scripts/android_voice_message_device_campaign.dart',
+      ).readAsStringSync();
+      final exchange = source
+          .split('Future<void> _exchangeContacts(')
+          .last
+          .split('Future<void> _stageContactBootstrap(')
+          .first;
+      expect(exchange, contains('await _stageContactBootstrap(sender, receiver)'));
+      expect(exchange, contains('await _stageContactBootstrap(receiver, sender)'));
+      expect(exchange, contains('_waitForGenericStep(sender,'));
+      expect(exchange, contains('_waitForGenericStep(receiver,'));
+      expect(exchange, isNot(contains('_launch(')));
+    },
+  );
+
+  test(
     'host adapter consumes one guarded APK and contains no build invocation',
     () {
       final source = File(

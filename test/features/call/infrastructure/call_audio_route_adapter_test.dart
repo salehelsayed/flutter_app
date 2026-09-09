@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/call_audio_route_adapter.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -50,6 +52,80 @@ void main() {
     expect(speakerValues, <bool>[true, false]);
     expect(selectedRoutes, <String>['bluetooth']);
     expect(adapter.selectedRoute, CallAudioOutputRoute.systemDefault);
+  });
+
+  test('closing during enumeration prevents a late speaker change', () async {
+    final enumeration = Completer<List<CallAudioOutputRoute>>();
+    final speakerValues = <bool>[];
+    final adapter = CallAudioRouteAdapter(
+      enumerateOutputs: () => enumeration.future,
+      selectOutput: (_) async {},
+      setSpeakerphone: (enabled) async => speakerValues.add(enabled),
+    );
+    final selection = adapter.selectOutputRoute(CallAudioOutputRoute.speaker);
+
+    await adapter.close();
+    Object? failure;
+    final result = selection.catchError((Object error) {
+      failure = error;
+    });
+    enumeration.complete(const <CallAudioOutputRoute>[]);
+    await result;
+
+    expect(speakerValues, isEmpty);
+    expect(adapter.selectedRoute, CallAudioOutputRoute.systemDefault);
+    expect(failure, isA<CallAudioRouteException>());
+  });
+
+  test('late route completion does not restore closed selection', () async {
+    final selectionStarted = Completer<void>();
+    final selectionGate = Completer<void>();
+    final adapter = CallAudioRouteAdapter(
+      enumerateOutputs: () async => const <CallAudioOutputRoute>[
+        CallAudioOutputRoute.bluetooth,
+      ],
+      selectOutput: (_) async {
+        selectionStarted.complete();
+        await selectionGate.future;
+      },
+      setSpeakerphone: null,
+    );
+    final selection = adapter.selectOutputRoute(CallAudioOutputRoute.bluetooth);
+    await selectionStarted.future;
+
+    await adapter.close();
+    Object? failure;
+    final result = selection.catchError((Object error) {
+      failure = error;
+    });
+    selectionGate.complete();
+    await result;
+
+    expect(adapter.selectedRoute, CallAudioOutputRoute.systemDefault);
+    expect(failure, isA<CallAudioRouteException>());
+  });
+
+  test('closed adapter rejects new route work before enumeration', () async {
+    var enumerations = 0;
+    final adapter = CallAudioRouteAdapter(
+      enumerateOutputs: () async {
+        enumerations++;
+        return const <CallAudioOutputRoute>[];
+      },
+      selectOutput: (_) async {},
+      setSpeakerphone: (_) async {},
+    );
+    await adapter.close();
+
+    await expectLater(
+      adapter.supportedOutputRoutes(),
+      throwsA(isA<CallAudioRouteException>()),
+    );
+    await expectLater(
+      adapter.selectOutputRoute(CallAudioOutputRoute.speaker),
+      throwsA(isA<CallAudioRouteException>()),
+    );
+    expect(enumerations, 0);
   });
 
   test(

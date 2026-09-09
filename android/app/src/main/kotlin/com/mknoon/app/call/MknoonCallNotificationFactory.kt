@@ -139,9 +139,12 @@ internal class MknoonCallNotificationFactory(
                     ).build(),
                 )
         }
+        // A user tap may always open the app. Full-screen permission controls
+        // only automatic presentation; this open action never answers the call.
+        val openIncoming = pendingIntents.fullScreen(nativeCallId)
+        builder.setContentIntent(openIncoming)
         if (fullScreenAllowed) {
-            val fullScreen = pendingIntents.fullScreen(nativeCallId)
-            builder.setFullScreenIntent(fullScreen, true).setContentIntent(fullScreen)
+            builder.setFullScreenIntent(openIncoming, true)
         }
         return builder.build()
     }

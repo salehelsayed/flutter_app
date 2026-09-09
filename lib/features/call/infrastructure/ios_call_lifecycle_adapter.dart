@@ -1,3 +1,4 @@
+import '../diagnostics/call_diagnostics.dart';
 import 'dart:async';
 
 import '../application/call_audio_controller.dart';
@@ -321,11 +322,12 @@ final class IosCallLifecycleAdapter
   /// withdrawn. Literal native success is required because a false result can
   /// mean either the persisted capability or PushKit registration failed to
   /// converge.
-  Future<void> disableCapability() => _invokeRequired(
-    'setCapabilityEnabled',
-    const <String, Object?>{'version': protocolVersion, 'enabled': false},
-    valid: true,
-  );
+  Future<void> disableCapability() =>
+      _invokeRequired('setCapabilityEnabled', <String, Object?>{
+        'version': protocolVersion,
+        'enabled': false,
+        'diagnostics': ?CallDiagnostics.instance.contextForWire(),
+      }, valid: true);
 
   /// Forces the native iOS boundary closed when token authority is withdrawn.
   /// The production graph closes this adapter immediately afterwards; this

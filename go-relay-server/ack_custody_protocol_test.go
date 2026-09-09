@@ -217,6 +217,45 @@ func TestRelayNotificationClosure_AckCustodyEligibilityIsNarrow(t *testing.T) {
 	}
 }
 
+func TestAckCustodyDiagnosticMetadataMustStayInsideCiphertext(t *testing.T) {
+	server := miniredis.RunT(t)
+	backend := newAckCustodyRedisBackend(t, server, "ack-diagnostic-envelope:", 32)
+	inbox := NewInboxStoreWithBackendAndCapacity(backend, NewPushServiceWithBackend(newMemoryPushTokenStore()), 32)
+	inbox.SetAckCustodyAdmissionEnabled(true)
+	env := setupInboxStreamEnv(t, inbox, NewGroupInboxStore(500, 7*24*time.Hour))
+	sender, recipient := env.sender.ID().String(), env.recipient.ID().String()
+
+	// Build 113 added this field outside encryption. Even a well-formed UUID
+	// changes the strict v108 wire contract and cannot acquire inbox custody.
+	message := ackCustodyTextEnvelope("diagnostic-message", sender, "opaque-ciphertext-with-diagnostics")
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(message), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	envelope["diagnosticTraceId"] = "07cdbd8a-ae03-42de-8dbb-3e688e107967"
+	withOuterTrace, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := sendAckCustodyStoreRequest(t, env, recipient, ackCustodyDirectTextKind, ackCustodyContract, string(withOuterTrace))
+	if rejected.Status != "ERROR" || rejected.ErrorCode != ackCustodyErrorIneligible {
+		t.Fatalf("outer diagnostics response = %#v, want CUSTODY_INELIGIBLE", rejected)
+	}
+	if backend.CountAckCustody(recipient) != 0 || backend.Count(recipient) != 0 {
+		t.Fatal("rejected diagnostics envelope acquired protected or legacy custody")
+	}
+
+	// Keep precisely the same message identity and opaque encrypted bytes;
+	// diagnostics in plaintext inside that ciphertext do not extend the wire.
+	accepted := sendAckCustodyStoreRequest(t, env, recipient, ackCustodyDirectTextKind, ackCustodyContract, message)
+	if accepted.Status != "OK" || accepted.StoreStatus != string(InboxStoreResultStored) || accepted.CustodyContract != ackCustodyContract {
+		t.Fatalf("encrypted-only diagnostics response = %#v, want protected receipt", accepted)
+	}
+	if backend.CountAckCustody(recipient) != 1 || backend.Count(recipient) != 1 {
+		t.Fatal("accepted envelope must acquire one protected row and one legacy shadow")
+	}
+}
+
 func TestRelayNotificationClosure_GroupProtectedCustodyKinds(t *testing.T) {
 	server := miniredis.RunT(t)
 	backend := newAckCustodyRedisBackend(t, server, "ack-group-363:", 32)

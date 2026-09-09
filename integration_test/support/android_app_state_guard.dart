@@ -1505,7 +1505,8 @@ final class AndroidAppStateGuard {
       'start',
       '-W',
       '-n',
-      '$packageName/.MainActivity',
+      // Disposable application IDs keep the production activity namespace.
+      '$packageName/com.mknoon.app.MainActivity',
     ], allowFailure: true);
     if (launch.exitCode != 0 || '${launch.stdout}'.contains('Error:')) {
       throw StateError('original app process could not be relaunched');

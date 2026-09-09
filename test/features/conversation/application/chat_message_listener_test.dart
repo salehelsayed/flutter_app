@@ -698,6 +698,7 @@ void main() {
       })?
       sendDeliveryReceipt,
       DirectTransportAuthorityResolver? transportAuthority,
+      Future<void> Function()? retryNotificationDisplays,
     }) {
       return ChatMessageListener(
         chatMessageStream: const Stream<ChatMessage>.empty(),
@@ -708,6 +709,7 @@ void main() {
         downloadProfilePictureFn: _noopDownloadProfilePicture,
         sendDeliveryReceipt: sendDeliveryReceipt,
         transportAuthority: transportAuthority,
+        retryNotificationDisplays: retryNotificationDisplays,
       );
     }
 
@@ -1091,6 +1093,79 @@ void main() {
         equals({'nonce': 'nonce-dup', 'ok': true}),
       );
     });
+
+    for (final scenario in ['stored', 'duplicate', 'archived']) {
+      for (final failure in ['synchronous', 'asynchronous', 'pending']) {
+        test(
+          '$scenario receipt survives $failure notification retry',
+          () async {
+            const senderPeerId = 'notification-retry-test-peer';
+            const messageId = 'notification-retry-test-message';
+            if (scenario == 'duplicate') {
+              messageRepo = _FakeMessageRepository(existingIds: {messageId});
+            }
+            contactRepo.seedContact(
+              _makeContact(
+                senderPeerId,
+              ).copyWith(isArchived: scenario == 'archived'),
+            );
+            final bridge = _FakeBridge();
+            final retryStarted = Completer<void>();
+            final releaseRetry = Completer<void>();
+            final listener = createListener(
+              bridge: bridge,
+              retryNotificationDisplays: () {
+                retryStarted.complete();
+                if (failure == 'synchronous') {
+                  throw StateError('isolated notification sink failure');
+                }
+                if (failure == 'asynchronous') {
+                  return Future<void>.error(
+                    StateError('isolated notification sink failure'),
+                  );
+                }
+                return releaseRetry.future;
+              },
+            );
+            addTearDown(listener.dispose);
+            addTearDown(() {
+              if (!releaseRetry.isCompleted) releaseRetry.complete();
+            });
+            ChatMessageProcessOutcome? completed;
+            final processing = listener
+                .processIncomingMessage(
+                  _makeChatMessage(
+                    from: senderPeerId,
+                    id: messageId,
+                    confirmNonce: 'notification-retry-test-nonce',
+                  ),
+                )
+                .then((outcome) => completed = outcome);
+            await retryStarted.future;
+            await pumpEventQueue();
+
+            expect(
+              completed?.state,
+              scenario == 'duplicate'
+                  ? ChatMessageProcessState.duplicate
+                  : ChatMessageProcessState.stored,
+              reason: 'durable receipt must not wait for notification display',
+            );
+            expect(
+              bridge.requests
+                  .where((request) => request['cmd'] == 'message:confirm')
+                  .map((request) => request['payload']),
+              [
+                {'nonce': 'notification-retry-test-nonce', 'ok': true},
+              ],
+            );
+            expect(await messageRepo.getMessage(messageId), isNotNull);
+            releaseRetry.complete();
+            await processing;
+          },
+        );
+      }
+    }
 
     test('confirms ignored edit direct chat nonce with ok=true', () async {
       const senderPeerId = 'sender-peer-confirm-ignored-edit';
@@ -2731,7 +2806,7 @@ void main() {
           durableBranchEnd,
         );
         expect(
-          durableBranchBody.contains('retryNotificationDisplays?.call('),
+          durableBranchBody.contains('_retryNotificationDisplaysAfterCommit('),
           isFalse,
           reason:
               'a durably superseded private replay must produce zero display '
@@ -2752,7 +2827,7 @@ void main() {
         expect(
           listenerSource
               .substring(duplicateBranch, duplicateBranch + 400)
-              .contains('retryNotificationDisplays?.call('),
+              .contains('_retryNotificationDisplaysAfterCommit('),
           isTrue,
         );
       },

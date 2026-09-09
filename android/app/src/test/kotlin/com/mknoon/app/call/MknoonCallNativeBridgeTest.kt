@@ -20,6 +20,19 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class MknoonCallNativeBridgeTest {
+    @Test fun `shared wire context survives native capability wrapper without changing authority fields`() {
+        for (wire in nativeDiagnosticWireContexts().values) {
+            val rig = LifecycleRig()
+            var captured: Map<String, Any?>? = null
+            val bridge = MknoonCallNativeBridge(controller = rig.controller, messenger = null,
+                capabilitySetter = { captured = MknoonCallDiagnosticScope.current(); true })
+            val result = CapturingCallBridgeResult()
+            bridge.onMethodCall(MethodCall("setCapabilityEnabled", mapOf("version" to 1, "enabled" to false, "diagnostics" to wire)), result)
+            assertEquals(true, result.value)
+            assertEquals(wire - "cause" + ("reason" to requireNotNull(wire["cause"])), captured)
+            assertTrue(MknoonCallDiagnosticScope.current().isEmpty())
+        }
+    }
     @Test
     fun `cold attach returns the exact empty compatibility envelope`() {
         val rig = LifecycleRig()
@@ -282,6 +295,113 @@ class MknoonCallNativeBridgeTest {
             assertEquals("bad_args", result.errorCode)
         }
         assertEquals(1, registrarCalls)
+    }
+
+    @Test
+    fun `Dart answer persists native acceptance before incoming audio can activate`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val bridge = MknoonCallNativeBridge(rig.controller, messenger = null)
+        val arguments = mapOf("version" to 1, "callHandle" to rig.payload.callHandle)
+        assertBridgeSuccess(bridge, "adopt", arguments, expected = true)
+        assertBridgeSuccess(
+            bridge,
+            "acknowledge",
+            acknowledgementArguments(
+                rig,
+                requireNotNull(rig.store.lastDescriptor).highestSequence,
+                "ADOPTED",
+            ),
+            expected = true,
+        )
+        assertBridgeSuccess(bridge, "activateAudio", arguments, expected = false)
+        assertEquals(0, rig.platform.startMicrophoneCalls)
+        rig.platform.onAnswer = {
+            assertTrue(requireNotNull(rig.store.lastDescriptor).answerRequested)
+            assertEquals(0, rig.platform.startMicrophoneCalls)
+        }
+
+        assertBridgeSuccess(bridge, "answer", arguments, expected = true)
+
+        assertEquals(1, rig.platform.answerCalls)
+        assertEquals(0, rig.platform.startMicrophoneCalls)
+        assertEquals(
+            listOf(PendingNativeCallEventType.ANSWER_REQUESTED),
+            requireNotNull(rig.store.lastDescriptor).events.map { it.type },
+        )
+        assertBridgeSuccess(bridge, "activateAudio", arguments, expected = true)
+        assertEquals(1, rig.platform.startMicrophoneCalls)
+        assertBridgeSuccess(bridge, "answer", arguments, expected = false)
+        assertEquals(1, rig.platform.answerCalls)
+    }
+
+    @Test
+    fun `Dart answer rejects malformed and unbound handles without native effects`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val bridge = MknoonCallNativeBridge(rig.controller, messenger = null)
+        val before = rig.store.lastDescriptor
+        val arguments = mapOf("version" to 1, "callHandle" to rig.payload.callHandle)
+
+        for (malformed in listOf(
+            null,
+            mapOf("nativeCallId" to rig.payload.nativeCallId.toString()),
+            arguments - "version",
+            arguments + ("version" to 2),
+            arguments + ("extra" to true),
+            arguments + ("callHandle" to 42),
+            arguments + ("callHandle" to "unbound-call-handle"),
+        )) {
+            val result = CapturingCallBridgeResult()
+            bridge.onMethodCall(MethodCall("answer", malformed), result)
+            assertEquals("bad_args", result.errorCode)
+            assertFalse(result.notImplemented)
+            assertEquals(before, rig.store.lastDescriptor)
+        }
+        assertEquals(0, rig.platform.answerCalls)
+        assertEquals(0, rig.platform.startMicrophoneCalls)
+    }
+
+    @Test
+    fun `Dart answer cannot bypass a refused durable answer event`() {
+        val rig = LifecycleRig()
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        val bridge = MknoonCallNativeBridge(rig.controller, messenger = null)
+        rig.store.appendFailuresRemaining = 1
+
+        assertBridgeSuccess(
+            bridge,
+            "answer",
+            mapOf("version" to 1, "callHandle" to rig.payload.callHandle),
+            expected = false,
+        )
+
+        assertFalse(requireNotNull(rig.store.lastDescriptor).answerRequested)
+        assertEquals(0, rig.platform.answerCalls)
+        assertEquals(0, rig.platform.startMicrophoneCalls)
+    }
+
+    @Test
+    fun `Dart answer preserves expired and terminated call refusal`() {
+        for (reason in listOf(
+            PendingNativeCallEventType.EXPIRED,
+            PendingNativeCallEventType.REMOTE_CANCELLED,
+        )) {
+            val rig = LifecycleRig()
+            assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+            val bridge = MknoonCallNativeBridge(rig.controller, messenger = null)
+            assertTrue(rig.controller.terminate(rig.payload.nativeCallId, reason))
+
+            assertBridgeSuccess(
+                bridge,
+                "answer",
+                mapOf("version" to 1, "callHandle" to rig.payload.callHandle),
+                expected = false,
+            )
+
+            assertEquals(0, rig.platform.answerCalls)
+            assertEquals(0, rig.platform.startMicrophoneCalls)
+        }
     }
 
     @Test

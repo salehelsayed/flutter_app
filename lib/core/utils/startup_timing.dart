@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../diagnostics/app_diagnostics.dart';
 
 /// Lightweight startup timing utility.
 /// Captures durations between key startup milestones.
@@ -11,6 +12,13 @@ class StartupTiming {
 
   void mark(String name) {
     _marks[name] = DateTime.now();
+    AppDiagnostics.instance.record(
+      feature: 'startup',
+      stage: 'process',
+      outcome: 'ok',
+      traceId: AppDiagnostics.instance.supportCode,
+      values: {'phase': name, 'durationMs': sinceProcessStartMs() ?? 0},
+    );
     if (kDebugMode) {
       final sinceAppStart = _marks['app_start'] != null
           ? DateTime.now().difference(_marks['app_start']!).inMilliseconds

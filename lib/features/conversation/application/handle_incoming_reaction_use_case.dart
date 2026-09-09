@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
@@ -393,7 +395,7 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
       payload: payload,
       targetMessage: targetMessage,
     );
-    await retryNotificationDisplays?.call();
+    _retryNotificationDisplaysAfterCommit(retryNotificationDisplays);
     if (applyResult == ReactionAddApplyResult.stale) {
       _emitStaleReaction(payload);
     } else {
@@ -426,11 +428,11 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   // 30s-per-conversation tone debounce (so rapid react/unreact never spams a
   // sound). Reached ONLY on a fresh ADD upsert — the remove and stale-ignored
   // branches return earlier, so un-reacts/duplicates stay silent.
-  // The durable reaction commit already happened, but the presentation must
-  // still be observed here so a throw cannot escape an unawaited future and
-  // silently bypass retry custody owned by the production composition.
+  // Canonical state and display custody already committed. Observe display
+  // errors separately so publication/transport completion cannot wait on the
+  // notification sink; the existing projection owner retains its retry work.
   if (retryNotificationDisplays != null) {
-    await retryNotificationDisplays();
+    _retryNotificationDisplaysAfterCommit(retryNotificationDisplays);
   } else if (notificationService != null &&
       appVisibility != null &&
       isLocallyAuthoredNotificationTarget) {
@@ -467,6 +469,21 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   }
 
   return (HandleReactionResult.success, ReactionChange.upsert(reaction));
+}
+
+void _retryNotificationDisplaysAfterCommit(Future<void> Function()? retry) {
+  if (retry == null) return;
+  unawaited(() async {
+    try {
+      await retry();
+    } catch (_) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'REACTION_NOTIFICATION_PROJECTION_ERROR',
+        details: {'reason': 'display_retry_failed'},
+      );
+    }
+  }());
 }
 
 bool _targetWasAuthoredByLocalRecipient({

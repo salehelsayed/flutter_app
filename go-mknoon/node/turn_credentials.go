@@ -27,6 +27,9 @@ const (
 	turnCredentialsMaxFieldBytes = 4096
 	turnCredentialsMaxURLs       = 16
 	turnCredentialsMaxRetryAfter = 15 * time.Minute
+	// Flutter's callP2PTurnCredentialsV1 bridge deadline is five seconds. Keep
+	// the whole native operation inside it, including fallback and stream I/O.
+	turnCredentialsRequestTimeout = 4 * time.Second
 )
 
 var (
@@ -85,13 +88,13 @@ type turnCredentialsWireResponse struct {
 
 // TurnCredentialsV1 requests an authenticated action-only credential bundle.
 // The relay derives the subject from the libp2p stream; the request therefore
-// carries no claimed identity or payload. Every configured relay is tried in
-// order, while received invalid/unsupported/finite failures stay privacy-safe.
+// carries no claimed identity or payload. Configured relays are tried in order
+// within one shared deadline; received failures stay privacy-safe.
 func (n *Node) TurnCredentialsV1() (TurnCredentialBundle, error) {
 	return n.turnCredentialsV1At(time.Now)
 }
 
-func (n *Node) turnCredentialsV1At(now func() time.Time) (TurnCredentialBundle, error) {
+func (n *Node) turnCredentialsV1At(now func() time.Time, diagnostics ...*CallDiagnosticContext) (TurnCredentialBundle, error) {
 	n.mu.RLock()
 	h := n.host
 	ctx := n.ctx
@@ -99,21 +102,40 @@ func (n *Node) turnCredentialsV1At(now func() time.Time) (TurnCredentialBundle, 
 	if h == nil || ctx == nil {
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
 	}
+	ctx, cancel := context.WithTimeout(ctx, turnCredentialsRequestTimeout)
+	defer cancel()
 
 	relays := n.buildRelaySelector(nil).Relays()
 	if len(relays) == 0 {
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
 	}
 
+	deadline, _ := ctx.Deadline()
 	var lastErr error
-	for _, relay := range relays {
-		for _, candidate := range relayInfoAttemptCandidates(relay) {
-			bundle, err := requestTurnCredentialsV1(ctx, h, candidate, now())
-			if err == nil {
-				return bundle, nil
-			}
-			lastErr = preferTurnCredentialError(lastErr, err)
+	for i, relay := range relays {
+		if ctx.Err() != nil {
+			break
 		}
+		// Reserve a fair share for each remaining peer. An unresponsive first
+		// relay must not consume the bridge deadline before fallback can run.
+		// Keep each peer's addresses together for the swarm's family/transport
+		// racing, and issue at most one credential request to that peer.
+		attemptTimeout := time.Until(deadline) / time.Duration(len(relays)-i)
+		if attemptTimeout <= 0 {
+			break
+		}
+		attemptCtx, attemptCancel := context.WithTimeout(ctx, attemptTimeout)
+		diagnostic := n.diagnosticForRelay(relay.ID, diagnostics)
+		bundle, err := requestTurnCredentialsV1(attemptCtx, h, relay, now(), diagnostic)
+		if diagnostic != nil && errors.Is(err, errTurnDiagnosticUnsupported) {
+			n.setDiagnosticRelay(relay.ID, false)
+			bundle, err = requestTurnCredentialsV1(attemptCtx, h, relay, now())
+		}
+		attemptCancel()
+		if err == nil {
+			return bundle, nil
+		}
+		lastErr = preferTurnCredentialError(lastErr, err)
 	}
 	if lastErr == nil {
 		lastErr = ErrTurnCredentialsUnavailable
@@ -126,6 +148,7 @@ func requestTurnCredentialsV1(
 	h host.Host,
 	relay RelayInfo,
 	now time.Time,
+	diagnostics ...*CallDiagnosticContext,
 ) (TurnCredentialBundle, error) {
 	ctx, cancel := context.WithTimeout(parent, RelayProbeTimeout)
 	defer cancel()
@@ -139,20 +162,31 @@ func requestTurnCredentialsV1(
 	}
 	streamOK := false
 	defer finishStream(stream, &streamOK)
-	setStreamDeadline(stream, RelayProbeTimeout)
+	// A fresh relative stream deadline would extend the dial/request budget.
+	// Context cancellation also needs to interrupt a blocked libp2p read.
+	deadline, _ := ctx.Deadline()
+	if err := stream.SetDeadline(deadline); err != nil {
+		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
+	}
+	stopReset := context.AfterFunc(ctx, func() { _ = stream.Reset() })
+	defer stopReset()
 
 	requestBytes, err := json.Marshal(inboxRequest{Action: turnCredentialsV1Action})
-	if err != nil {
+	requestBytes = diagnosticWrapRequest(requestBytes, diagnosticContext(diagnostics))
+	if err != nil || ctx.Err() != nil {
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
 	}
 	if err := writeFrame(stream, requestBytes); err != nil {
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
 	}
 	responseBytes, err := readFrame(stream)
-	if err != nil {
+	if err != nil || ctx.Err() != nil {
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
 	}
 	streamOK = true
+	if diagnosticContext(diagnostics) != nil && diagnosticUnsupported(responseBytes) {
+		return TurnCredentialBundle{}, errTurnDiagnosticUnsupported
+	}
 	return parseTurnCredentialsV1Response(responseBytes, now)
 }
 
@@ -599,3 +633,10 @@ func waitForTurnCredentialRetry(ctx context.Context, delay time.Duration) error 
 		return nil
 	}
 }
+
+// TurnCredentialsWithDiagnosticsV1 preserves the same overall deadline and credential response.
+func (n *Node) TurnCredentialsWithDiagnosticsV1(d *CallDiagnosticContext) (TurnCredentialBundle, error) {
+	return n.turnCredentialsV1At(time.Now, d)
+}
+
+var errTurnDiagnosticUnsupported = errors.New("diagnostic wrapper unsupported")

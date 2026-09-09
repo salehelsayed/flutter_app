@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'dart:io';
 import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
 import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
@@ -1639,12 +1640,32 @@ class _TerminalComposerUploadProjection
   );
 }
 
-final class _RecordingOutgoingCallCapability implements OutgoingCallCapability {
+final class _CallContactUpdateListener extends ChatMessageListener {
+  _CallContactUpdateListener({
+    required super.messageRepo,
+    required super.contactRepo,
+  }) : super(chatMessageStream: const Stream<ChatMessage>.empty());
+
+  final updates = StreamController<ContactModel>.broadcast(sync: true);
+
+  @override
+  Stream<ContactModel> get contactUpdatedStream => updates.stream;
+
+  @override
+  void dispose() {
+    updates.close();
+    super.dispose();
+  }
+}
+
+final class _RecordingOutgoingCallCapability
+    implements OutgoingCallCapability, OutgoingCallReadinessRecovery {
   _RecordingOutgoingCallCapability({
     required this.isOutgoingCallAvailable,
     required this.result,
     this.contactOutgoingAvailable = true,
     this.error,
+    this.onRecover,
   });
 
   @override
@@ -1652,6 +1673,17 @@ final class _RecordingOutgoingCallCapability implements OutgoingCallCapability {
   final OutgoingCallStartResult result;
   bool contactOutgoingAvailable;
   final Object? error;
+  final Future<bool> Function()? onRecover;
+  int recoveryCalls = 0;
+
+  @override
+  Future<bool> recoverOutgoingCallReadiness() async {
+    recoveryCalls++;
+    final recovered = await onRecover?.call() ?? false;
+    if (recovered) isOutgoingCallAvailable = true;
+    return recovered;
+  }
+
   Completer<bool>? nextAvailabilityCompleter;
   Completer<OutgoingCallStartResult>? startCompleter;
   final List<String> peerIds = <String>[];
@@ -2274,6 +2306,227 @@ void main() {
         find.text('Voice calling is unavailable right now'),
         findsOneWidget,
       );
+      expect(capability.peerIds, isEmpty);
+    },
+  );
+
+  for (final completion in [
+    'ready',
+    'timeout',
+    'disposed',
+    'backgrounded',
+    'blocked',
+  ]) {
+    testWidgets('explicit call recovery from unavailable graph: $completion', (
+      tester,
+    ) async {
+      final messageRepo = FakeMessageRepository();
+      final recovery = Completer<bool>();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: false,
+        result: OutgoingCallStartResult.started,
+        onRecover: () => recovery.future,
+      );
+      addTearDown(capability.close);
+      final listener = _CallContactUpdateListener(
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      addTearDown(listener.dispose);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: listener,
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+      expect(capability.recoveryCalls, 0);
+      expect(capability.availabilityPeerIds, isEmpty);
+      await tester.tap(
+        find.byTooltip('Voice calling is unavailable right now'),
+      );
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.call_outlined), warnIfMissed: false);
+      expect(capability.recoveryCalls, 1);
+      expect(capability.peerIds, isEmpty);
+      if (completion == 'timeout') {
+        await tester.pump(const Duration(seconds: 11));
+        await tester.pump();
+        expect(find.byTooltip('Starting voice call'), findsNothing);
+      } else if (completion == 'disposed') {
+        await tester.pumpWidget(const SizedBox.shrink());
+      } else if (completion == 'blocked') {
+        listener.updates.add(makeContact().copyWith(isBlocked: true));
+        await tester.pump();
+      } else if (completion == 'backgrounded') {
+        for (final state in [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden,
+          AppLifecycleState.paused,
+          AppLifecycleState.hidden,
+          AppLifecycleState.inactive,
+          AppLifecycleState.resumed,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+        }
+      }
+      recovery.complete(true);
+      await tester.pump();
+      await tester.pump();
+      expect(
+        capability.peerIds,
+        completion == 'ready' ? <String>[makeContact().peerId] : isEmpty,
+      );
+      expect(capability.recoveryCalls, 1);
+    });
+  }
+
+  testWidgets(
+    'call diagnostics capture a tap while the graph is unavailable without probing or placing',
+    (tester) async {
+      late CallDiagnostics diagnostics;
+      await tester.runAsync(() async {
+        diagnostics = await CallDiagnostics.installForTesting();
+      });
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final messageRepo = FakeMessageRepository();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: false,
+        result: OutgoingCallStartResult.started,
+      );
+      addTearDown(capability.close);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+      await tester.runAsync(
+        () => tester.tap(
+          find.byTooltip('Voice calling is unavailable right now'),
+        ),
+      );
+      await tester.pump();
+      expect(capability.availabilityPeerIds, isEmpty);
+      expect(capability.peerIds, isEmpty);
+      final events = await tester.runAsync(diagnostics.eventsForTesting);
+      expect(
+        events!.where(
+          (event) => event['stage'] == 'attempt' && event['action'] == 'start',
+        ),
+        hasLength(1),
+      );
+      expect(
+        events.any(
+          (event) =>
+              event['outcome'] == 'preflight_failed' &&
+              event['reason'] == 'graph_unavailable',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'VC2-03 retries cached unavailable endpoint on the next explicit call tap',
+    (tester) async {
+      final messageRepo = FakeMessageRepository();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        contactOutgoingAvailable: false,
+        result: OutgoingCallStartResult.started,
+      );
+      addTearDown(capability.close);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+      expect(capability.availabilityPeerIds, <String>[makeContact().peerId]);
+      expect(capability.peerIds, isEmpty);
+
+      // The remote endpoint becomes available without a local lifecycle,
+      // contact, or graph event. Nothing may place a call before this tap.
+      capability.contactOutgoingAvailable = true;
+      await tester.pump();
+      expect(capability.peerIds, isEmpty);
+      await tester.tap(
+        find.byTooltip('Voice calling is unavailable right now'),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(capability.availabilityPeerIds, <String>[
+        makeContact().peerId,
+        makeContact().peerId,
+      ]);
+      expect(capability.peerIds, <String>[makeContact().peerId]);
+      expect(find.byTooltip('Start voice call'), findsOneWidget);
+      expect(find.text('Voice calling is unavailable right now'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'VC2-03 bounds a stalled authority recheck without starting a call',
+    (tester) async {
+      final messageRepo = FakeMessageRepository();
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        contactOutgoingAvailable: false,
+        result: OutgoingCallStartResult.started,
+      );
+      addTearDown(capability.close);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+      final recheck = Completer<bool>();
+      capability.nextAvailabilityCompleter = recheck;
+      await tester.tap(
+        find.byTooltip('Voice calling is unavailable right now'),
+      );
+      await tester.pump();
+      expect(find.byTooltip('Starting voice call'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.call_outlined), warnIfMissed: false);
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pump();
+
+      expect(capability.availabilityPeerIds, hasLength(2));
+      expect(capability.peerIds, isEmpty);
+      expect(find.byTooltip('Starting voice call'), findsNothing);
+      expect(
+        find.text('Voice calling is unavailable right now'),
+        findsOneWidget,
+      );
+      // A late recovery result cannot place a call after the user's bounded
+      // attempt has already ended.
+      recheck.complete(true);
+      await tester.pump();
       expect(capability.peerIds, isEmpty);
     },
   );

@@ -12,6 +12,7 @@ import 'package:flutter_app/features/settings/presentation/screens/settings_wire
 import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/safety_support_sheet.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -100,6 +101,25 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  testWidgets('Settings help opens the reporting contact and safety policy', (
+    tester,
+  ) async {
+    await pumpWired(tester);
+
+    await openSheet(tester, 'settings-safety-support-action');
+
+    expect(find.byType(SafetySupportSheet), findsOneWidget);
+    expect(find.text('Safety & support'), findsOneWidget);
+    expect(find.text('saleh.m.elsayed@proton.me'), findsOneWidget);
+    expect(find.text('https://mknoon.space/child-safety'), findsOneWidget);
+    expect(find.byKey(const ValueKey('safety-support-email')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byTooltip('Close'));
+    await settleSheetClose(tester);
+    expect(find.byType(SafetySupportSheet), findsNothing);
+  });
 
   testWidgets(
     'T1 background row opens sheet with 4 options, selection marked',

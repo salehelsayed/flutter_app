@@ -122,6 +122,49 @@ void main() {
       });
     });
 
+    test(
+      'refresh during an in-flight registration registers the latest token',
+      () {
+        fakeAsync((async) {
+          final refreshController = StreamController<String>.broadcast(
+            sync: true,
+          );
+          final firstAttempt = Completer<RegisterPushTokenResult>();
+          var currentToken = 'isolated-old-token';
+          final registeredTokens = <String>[];
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async => true,
+            registerPushToken: () {
+              registeredTokens.add(currentToken);
+              return registeredTokens.length == 1
+                  ? firstAttempt.future
+                  : Future.value(RegisterPushTokenResult.success);
+            },
+            tokenRefreshStream: refreshController.stream,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          expect(registeredTokens, ['isolated-old-token']);
+
+          for (final token in ['isolated-new-token', 'isolated-latest-token']) {
+            currentToken = token;
+            refreshController.add(token);
+            async.flushMicrotasks();
+          }
+          expect(registeredTokens, ['isolated-old-token']);
+          firstAttempt.complete(RegisterPushTokenResult.success);
+          async.flushMicrotasks();
+          expect(registeredTokens, [
+            'isolated-old-token',
+            'isolated-latest-token',
+          ]);
+          expect(async.pendingTimers, isEmpty);
+          coordinator.dispose();
+          refreshController.close();
+        });
+      },
+    );
+
     test('account migration block does not schedule registration retry', () {
       fakeAsync((async) {
         final refreshController = StreamController<String>.broadcast(

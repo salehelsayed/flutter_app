@@ -113,7 +113,7 @@ void main() {
     );
 
     test(
-      'already-inbox row → inboxed (NOT delivered) with no send and retained envelope',
+      'failed inbox-route row re-establishes custody and retains its envelope',
       () async {
         messageRepo.seed([
           _failedOutgoing(
@@ -136,13 +136,12 @@ void main() {
         );
 
         expect(retried, 1);
-        // Already in the relay inbox — no send is performed.
-        expect(p2pService.storeInInboxCallCount, 0);
+        // A failed row's route is not proof of relay custody.
+        expect(p2pService.storeInInboxCallCount, 1);
         final row = await messageRepo.getMessage('m2');
         expect(row, isNotNull);
         expect(row!.status, 'inboxed');
-        expect(row.wireEnvelope, isNotNull);
-        expect(row.wireEnvelope, isNotEmpty);
+        expect(row.wireEnvelope, _safeV2Envelope);
       },
     );
   });

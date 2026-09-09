@@ -647,6 +647,7 @@ final class AndroidForegroundWebRtcCanonicalEndpoint {
         ? directSelected
         : _telemetry.expectedRelayTransportSelected;
     if (!permissionGranted || !audioOnly || !mediaReady || !transportProven) {
+      _telemetry.probe?.recordConnectedReadinessFailure();
       throw StateError('canonical connected media readiness is incomplete');
     }
   }

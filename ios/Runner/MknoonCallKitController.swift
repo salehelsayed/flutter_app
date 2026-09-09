@@ -277,7 +277,62 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   private struct IncomingReportWaiter {
     let coalesced: Bool
+    var reportedForPush = false
     let completion: (MknoonCallPresentationResult) -> Void
+  }
+
+  /// Retained by the primary CallKit callback as well as the controller so
+  /// teardown cannot discard the completions of coalesced PushKit deliveries.
+  private final class IncomingReportBatch {
+    var waiters: [IncomingReportWaiter]
+
+    init(_ waiter: IncomingReportWaiter) { waiters = [waiter] }
+
+    func takeWaiters() -> [IncomingReportWaiter] {
+      defer { waiters.removeAll() }
+      return waiters
+    }
+  }
+
+  /// A coalesced push needs the application presentation result and its own
+  /// CallKit report callback, in either order, before completing PushKit.
+  private final class CoalescedPushReportCompletion {
+    private let lock = NSLock()
+    private var result: MknoonCallPresentationResult?
+    private var reportClaimed = false
+    private var reportFinished = false
+    private var completion: ((MknoonCallPresentationResult) -> Void)?
+
+    init(_ completion: @escaping (MknoonCallPresentationResult) -> Void) {
+      self.completion = completion
+    }
+
+    func resolve(_ result: MknoonCallPresentationResult) {
+      lock.lock()
+      if self.result == nil { self.result = result }
+      let ready = takeReadyCompletion()
+      lock.unlock()
+      ready?()
+    }
+
+    func reportCompleted(after cleanup: () -> Void) {
+      lock.lock()
+      guard !reportClaimed else { lock.unlock(); return }
+      reportClaimed = true
+      lock.unlock()
+      cleanup()
+      lock.lock()
+      reportFinished = true
+      let ready = takeReadyCompletion()
+      lock.unlock()
+      ready?()
+    }
+
+    private func takeReadyCompletion() -> (() -> Void)? {
+      guard reportFinished, let result, let completion else { return nil }
+      self.completion = nil
+      return { completion(result) }
+    }
   }
 
   /// Matches Dart's authenticated-envelope future clock-skew allowance. Raw
@@ -290,6 +345,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private let contacts: OpaqueCallContactResolver
   private let audio: MknoonCallAudioManaging
   private let capability: NativeCallCapabilityPersisting
+  private var capabilityDisabledInProcess = false
   private let nowMs: () -> Int64
   private let notificationCenter: NotificationCenter
   private let ringback: MknoonCallRingbackPlaying
@@ -303,7 +359,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private var mutedCallIds: Set<UUID> = []
   private var audioActivatedCallIds: Set<UUID> = []
   private var mediaClaimedCallIds: Set<UUID> = []
-  private var incomingReportWaiters: [UUID: [IncomingReportWaiter]] = [:]
+  private var incomingReportWaiters: [UUID: IncomingReportBatch] = [:]
   private var expiryWorkItem: DispatchWorkItem?
   /// An answered call whose answer the runtime never consumed is a phantom:
   /// CallKit shows it connected while nothing signals or carries media behind
@@ -397,16 +453,20 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   func setCapabilityEnabled(_ enabled: Bool) -> Bool {
     synchronized {
+      // A failed durable write cannot leave native admission enabled after
+      // withdrawal. Only a successful explicit enable clears this fence.
+      capabilityDisabledInProcess = true
       if enabled {
         // Preserve the enable contract: durability must precede registration.
         guard capability.setEnabled(true) else { return false }
-        return capabilityChangeHandler?(true) ?? true
+        guard capabilityChangeHandler?(true) ?? true else { return false }
+        capabilityDisabledInProcess = false
+        return true
       }
 
-      // Disable live delivery first. The production handler unregisters
-      // PushKit before invalidating its token, so even a false result has
-      // already withdrawn desired push types. Persistence and current-call
-      // termination are then attempted independently.
+      // Withdraw call admission/token authority while retaining the PushKit
+      // receiver for already queued mandatory deliveries. Persistence and
+      // current-call termination are attempted independently.
       let deliveryDisabled = capabilityChangeHandler?(false) ?? true
       let persisted = capability.setEnabled(false)
       let currentTerminated = store.snapshot() == nil
@@ -415,7 +475,9 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     }
   }
 
-  func isCapabilityEnabled() -> Bool { synchronized { capability.enabled } }
+  func isCapabilityEnabled() -> Bool { synchronized { callsEnabled } }
+
+  private var callsEnabled: Bool { !capabilityDisabledInProcess && capability.enabled }
 
   func presentIncoming(
     _ payload: VoipWakePayload,
@@ -442,11 +504,11 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     completion: @escaping (MknoonCallPresentationResult) -> Void
   ) {
     let decision: PendingNativeCallCreateResult = synchronized {
-      guard capability.enabled else { return .persistenceFailure }
+      guard callsEnabled else { return .persistenceFailure }
       expirePendingIfNecessary()
       return store.create(payload)
     }
-    guard capability.enabled else {
+    guard isCapabilityEnabled() else {
       completeRejectedIncoming(
         .disabled,
         payload: payload,
@@ -470,7 +532,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
          descriptor.presented,
          descriptor.nativeCallId == payload.nativeCallId,
          descriptor.callHandle == payload.callHandle {
-        completeRegisteredOutgoingReturnWake(
+        completeRegisteredCallWake(
           .busy,
           descriptor: descriptor,
           completion: completion
@@ -484,6 +546,15 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         )
       }
     case let .duplicate(descriptor):
+      if reportPolicy == .legacyRequired, let descriptor,
+         descriptor.terminalEvent == nil, descriptor.presented,
+         descriptor.nativeCallId == payload.nativeCallId,
+         descriptor.callHandle == payload.callHandle {
+        completeRegisteredCallWake(
+          .duplicate, descriptor: descriptor, completion: completion
+        )
+        return
+      }
       guard let descriptor, descriptor.terminalEvent == nil, !descriptor.presented else {
         completeRejectedIncoming(
           .duplicate,
@@ -547,6 +618,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     expiresAtMs: Int64,
     completion: @escaping (Bool) -> Void
   ) {
+    guard isCapabilityEnabled() else { completion(false); return }
     guard let callId = UUID(uuidString: callHandle),
           callId.uuidString.lowercased() == callHandle,
           OpaqueCallContactResolver.validHandle(callHandle)
@@ -596,7 +668,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
             && $0.terminalEvent == nil
             && $0.presented
         } == true
-      let accepted = result == .presented || acceptedDuplicate
+      let accepted = self.isCapabilityEnabled() && (result == .presented || acceptedDuplicate)
       mknoonCallKitDiag(
         "[MKNOON_CALLKIT_DIAG] result=" + (accepted ? "presented" : "rejected")
           + " presentation=" + String(describing: result)
@@ -611,7 +683,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     completion: @escaping (Bool) -> Void
   ) {
     let decision: MknoonOutgoingRegistrationDecision = synchronized {
-      guard capability.enabled,
+      guard callsEnabled,
             let callId = UUID(uuidString: callHandle),
             callId.uuidString.lowercased() == callHandle
       else { return .rejected }
@@ -650,15 +722,23 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       action.isVideo = false
       transactionRequester.request(CXTransaction(action: action)) { [weak self] error in
         guard let self else { completion(false); return }
-        if error == nil {
+        let succeeded: Bool = self.synchronized {
+          guard error == nil else {
+            _ = self.record(callId, .nativeFailure)
+            return false
+          }
+          let live = self.store.snapshot()
+          guard self.callsEnabled, live?.nativeCallId == callId, live?.terminalEvent == nil else {
+            self.provider.reportCall(with: callId, endedAt: Date(), reason: .failed)
+            _ = self.terminate(callId, type: .nativeFailure, reason: .failed)
+            return false
+          }
+          guard self.record(callId, .presented) else { return false }
           self.provider.reportOutgoingCall(with: callId, startedConnectingAt: Date())
-          let succeeded = self.record(callId, .presented)
-          if succeeded { self.scheduleExpiry(payload) }
-          completion(succeeded)
-        } else {
-          _ = self.record(callId, .nativeFailure)
-          completion(false)
+          self.scheduleExpiry(payload)
+          return true
         }
+        completion(succeeded)
       }
     }
   }
@@ -700,6 +780,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     disposition: PendingNativeCallAcknowledgement
   ) -> Bool {
     synchronized {
+      guard disposition != .adopted || callsEnabled else { return false }
       let acknowledged = store.acknowledge(
         nativeCallId: nativeCallId,
         highestConsumedSequence: sequence,
@@ -718,7 +799,8 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   func adopt(_ nativeCallId: UUID) -> Bool {
     synchronized {
-      guard let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
+      guard callsEnabled,
+            let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
             descriptor.terminalEvent == nil
       else {
         mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] adopt=refused")
@@ -731,6 +813,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   func activateAudio(_ nativeCallId: UUID) -> Bool {
     synchronized {
+      guard callsEnabled else { return false }
       guard let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId else {
         mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] activate_audio=refused reason=no_matching_descriptor")
         return false
@@ -861,9 +944,9 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       }
       switch state {
       case "ringing", "connecting":
-        return descriptor.terminalEvent == nil
+        return callsEnabled && descriptor.terminalEvent == nil
       case "active", "connected":
-        guard descriptor.terminalEvent == nil else { return false }
+        guard callsEnabled, descriptor.terminalEvent == nil else { return false }
         guard store.markConnected(nativeCallId: nativeCallId) else {
           failClosedAfterPersistenceFailure(nativeCallId)
           return false
@@ -900,7 +983,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   func requestRoute(_ nativeCallId: UUID, route: String) -> Bool {
     synchronized {
-      guard store.snapshot()?.nativeCallId == nativeCallId,
+      guard callsEnabled, store.snapshot()?.nativeCallId == nativeCallId,
             audioActivatedCallIds.contains(nativeCallId),
             audio.routeState().available.contains(route),
             audio.requestRoute(route)
@@ -959,8 +1042,18 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   }
 
   func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
-    synchronized { configureCallAudioSession(stage: "start") }
-    action.fulfill()
+    let accepted = synchronized {
+      guard callsEnabled, let descriptor = store.snapshot(),
+            descriptor.nativeCallId == action.callUUID,
+            descriptor.direction == .outgoing, descriptor.terminalEvent == nil
+      else { return false }
+      guard configureCallAudioSession(stage: "start") else {
+        _ = terminate(action.callUUID, type: .nativeFailure, reason: .failed)
+        return false
+      }
+      return true
+    }
+    if accepted { action.fulfill() } else { action.fail() }
   }
 
   /// Configures the call audio session before an answer or start action is
@@ -968,18 +1061,20 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   /// the app configured; on a first call nothing was configured yet, and the
   /// activation (and `didActivate`) never came, so media could not start.
   /// This only sets the category; activation stays with CallKit.
-  private func configureCallAudioSession(stage: String) {
+  private func configureCallAudioSession(stage: String) -> Bool {
     do {
       try audio.prepareForCallKitActivation()
       mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] audio_session=configured stage=" + stage)
+      return true
     } catch {
       mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] audio_session=configure_failed stage=" + stage)
+      return false
     }
   }
 
   func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
     synchronized {
-      guard let descriptor = store.snapshot(), descriptor.terminalEvent == nil,
+      guard callsEnabled, let descriptor = store.snapshot(), descriptor.terminalEvent == nil,
             canLatchCallKitAudio(for: descriptor)
       else {
         mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] audio_session=activated_unlatched")
@@ -1018,6 +1113,8 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   func provider(_ provider: CXProvider, timedOutPerforming action: CXAction) {
     action.fail()
     guard let callAction = action as? CXCallAction else { return }
+    MknoonCallDiagnostics.shared.record(handle: callAction.callUUID.uuidString.lowercased(), stage: "answer",
+                                        action: "accept", outcome: "timeout", reason: "action_timeout")
     synchronized {
       _ = terminate(callAction.callUUID, type: .nativeFailure, reason: .failed)
     }
@@ -1035,7 +1132,10 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       answeredCallIds.insert(nativeCallId)
       scheduleAnswerAdoptionBound(nativeCallId)
       mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] answer=recorded")
-      configureCallAudioSession(stage: "answer")
+      guard configureCallAudioSession(stage: "answer") else {
+        _ = terminate(nativeCallId, type: .nativeFailure, reason: .failed)
+        return false
+      }
       return true
     }
   }
@@ -1075,7 +1175,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   /// records `answerRequested` and fulfils the action.
   func answerFromDart(_ nativeCallId: UUID, completion: @escaping (Bool) -> Void) {
     let eligible: Bool = synchronized {
-      guard let descriptor = store.snapshot(),
+      guard callsEnabled, let descriptor = store.snapshot(),
             descriptor.nativeCallId == nativeCallId,
             descriptor.terminalEvent == nil,
             descriptor.direction == .incoming
@@ -1084,8 +1184,8 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     }
     guard eligible else { completion(false); return }
     let action = CXAnswerCallAction(call: nativeCallId)
-    transactionRequester.request(CXTransaction(action: action)) { error in
-      completion(error == nil)
+    transactionRequester.request(CXTransaction(action: action)) { [weak self] error in
+      completion(error == nil && self?.isCapabilityEnabled() == true)
     }
   }
 
@@ -1126,7 +1226,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   /// terminal path and the media claim silence it without Dart's help.
   func startRingback(_ nativeCallId: UUID) -> Bool {
     synchronized {
-      guard let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
+      guard callsEnabled, let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
             descriptor.direction == .outgoing, descriptor.terminalEvent == nil,
             !mediaClaimedCallIds.contains(nativeCallId)
       else {
@@ -1152,6 +1252,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   }
 
   private func playRingbackLocked() -> Bool {
+    guard callsEnabled else { return false }
     let started = ringback.start()
     ringbackPlaying = started
     if !started { ringbackCallId = nil }
@@ -1185,7 +1286,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   func recordAudioActivatedForTests(_ nativeCallId: UUID) -> Bool {
     synchronized {
-      guard let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
+      guard callsEnabled, let descriptor = store.snapshot(), descriptor.nativeCallId == nativeCallId,
             canLatchCallKitAudio(for: descriptor) else { return false }
       do { try audio.prepareForCallKitActivation() } catch { return false }
       audioActivatedCallIds.insert(nativeCallId)
@@ -1238,6 +1339,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       else { return }
       switch type {
       case .began:
+        pauseRingbackLocked()
         if audioActivatedCallIds.remove(descriptor.nativeCallId) != nil {
           mediaClaimedCallIds.remove(descriptor.nativeCallId)
           guard record(descriptor.nativeCallId, .audioDeactivated) else {
@@ -1262,6 +1364,9 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   @objc private func mediaServicesReset(_ notification: Notification) {
     synchronized {
       guard let descriptor = store.snapshot(), descriptor.terminalEvent == nil else { return }
+      // Reset orphaned playback state while retaining the call's request.
+      // Only a later CallKit activation may recreate and resume the tone.
+      pauseRingbackLocked()
       audioActivatedCallIds.remove(descriptor.nativeCallId)
       mediaClaimedCallIds.remove(descriptor.nativeCallId)
       guard record(descriptor.nativeCallId, .audioDeactivated),
@@ -1279,17 +1384,23 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     reportRequired: Bool,
     completion: @escaping (MknoonCallPresentationResult) -> Void
   ) {
-    let shouldReport = synchronized {
-      if incomingReportWaiters[payload.nativeCallId] != nil {
-        incomingReportWaiters[payload.nativeCallId]?.append(
-          IncomingReportWaiter(coalesced: true, completion: completion)
+    let pushCompletion = reportRequired ? CoalescedPushReportCompletion(completion) : nil
+    let reportingProvider = provider
+    let (shouldReport, batch) = synchronized {
+      if let pending = incomingReportWaiters[payload.nativeCallId] {
+        pending.waiters.append(
+          IncomingReportWaiter(coalesced: true, reportedForPush: reportRequired) { result in
+            if let pushCompletion { pushCompletion.resolve(result) }
+            else { completion(result) }
+          }
         )
-        return false
+        return (false, pending)
       }
-      incomingReportWaiters[payload.nativeCallId] = [
-        IncomingReportWaiter(coalesced: false, completion: completion),
-      ]
-      return true
+      let pending = IncomingReportBatch(
+        IncomingReportWaiter(coalesced: false, completion: completion)
+      )
+      incomingReportWaiters[payload.nativeCallId] = pending
+      return (true, pending)
     }
     let update = incomingUpdate(for: payload)
     guard shouldReport else {
@@ -1309,12 +1420,20 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       guard reportRequired else { return }
       provider.reportNewIncomingCall(with: payload.nativeCallId, update: update) {
         [weak self] error in
-        guard let self, error == nil else { return }
-        self.synchronized {
-          let live = self.store.snapshot()
-          if live == nil || live?.nativeCallId != payload.nativeCallId
-            || live?.terminalEvent != nil {
-            self.endCallKitOnce(payload.nativeCallId, reason: .failed)
+        pushCompletion?.reportCompleted {
+          guard error == nil else { return }
+          guard let self else {
+            reportingProvider.reportCall(with: payload.nativeCallId, endedAt: Date(), reason: .failed)
+            return
+          }
+          self.synchronized {
+            let live = self.store.snapshot()
+            if !self.callsEnabled || live == nil || live?.nativeCallId != payload.nativeCallId
+              || live?.terminalEvent != nil {
+              // This successful report may recreate a surface already ended
+              // by terminal cleanup, so the earlier end-once fence is stale.
+              reportingProvider.reportCall(with: payload.nativeCallId, endedAt: Date(), reason: .failed)
+            }
           }
         }
       }
@@ -1324,14 +1443,25 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     provider.reportNewIncomingCall(with: payload.nativeCallId, update: update) {
       [weak self] error in
       guard let self else {
-        completion(.callKitFailure)
+        if error == nil {
+          reportingProvider.reportCall(with: payload.nativeCallId, endedAt: Date(), reason: .failed)
+        }
+        for waiter in batch.takeWaiters() { waiter.completion(.callKitFailure) }
         return
       }
       let outcome: (MknoonCallPresentationResult, [IncomingReportWaiter]) = self.synchronized {
-        let adoptedExistingCall = acceptsAlreadyReportedCall
+        let ownConcurrentReport = batch.waiters.contains { $0.coalesced && $0.reportedForPush }
+        let adoptedExistingCall = (acceptsAlreadyReportedCall || ownConcurrentReport)
           && error.map(Self.isAlreadyReportedCallError) == true
         let result: MknoonCallPresentationResult
-        if let error, !adoptedExistingCall {
+        let live = self.store.snapshot()
+        if !self.callsEnabled || live?.nativeCallId != payload.nativeCallId || live?.terminalEvent != nil {
+          if error == nil {
+            reportingProvider.reportCall(with: payload.nativeCallId, endedAt: Date(), reason: .failed)
+          }
+          _ = self.terminate(payload.nativeCallId, type: .nativeFailure, reason: .failed)
+          result = self.callsEnabled ? .callKitFailure : .disabled
+        } else if let error, !adoptedExistingCall {
           _ = error
           _ = self.terminate(payload.nativeCallId, type: .nativeFailure, reason: .failed)
           result = .callKitFailure
@@ -1342,10 +1472,8 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
           self.scheduleExpiry(payload)
           result = adoptedExistingCall ? .duplicate : .presented
         }
-        let waiters = self.incomingReportWaiters.removeValue(
-          forKey: payload.nativeCallId
-        ) ?? [IncomingReportWaiter(coalesced: false, completion: completion)]
-        return (result, waiters)
+        self.incomingReportWaiters.removeValue(forKey: payload.nativeCallId)
+        return (result, batch.takeWaiters())
       }
       for waiter in outcome.1 {
         let result = outcome.0 == .presented && waiter.coalesced
@@ -1386,20 +1514,31 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     }
   }
 
-  private func completeRegisteredOutgoingReturnWake(
+  private func completeRegisteredCallWake(
     _ result: MknoonCallPresentationResult,
     descriptor: PendingNativeCallDescriptor,
     completion: @escaping (MknoonCallPresentationResult) -> Void
   ) {
+    let reportingProvider = provider
+    let delivery = CoalescedPushReportCompletion(completion)
+    delivery.resolve(result)
     provider.reportNewIncomingCall(
       with: descriptor.nativeCallId,
       update: incomingUpdate(for: descriptor)
-    ) { _ in
-      // The legacy PushKit contract requires a CallKit report attempt. When
-      // this wake is return signaling for the already-presented outgoing
-      // call, both success and already-exists mean the same CallKit call
-      // remains authoritative; neither outcome may terminalize it.
-      completion(result)
+    ) { [weak self] error in
+      delivery.reportCompleted {
+        guard error == nil else { return }
+        guard let self else {
+          reportingProvider.reportCall(with: descriptor.nativeCallId, endedAt: Date(), reason: .failed)
+          return
+        }
+        self.synchronized {
+          let live = self.store.snapshot()
+          if !self.callsEnabled || live?.nativeCallId != descriptor.nativeCallId || live?.terminalEvent != nil {
+            reportingProvider.reportCall(with: descriptor.nativeCallId, endedAt: Date(), reason: .failed)
+          }
+        }
+      }
     }
   }
 
@@ -1492,18 +1631,33 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
 
   @discardableResult
   private func record(_ nativeCallId: UUID, _ type: PendingNativeCallEventType) -> Bool {
+    // A retained descriptor is not live authority after withdrawal, even if
+    // persistence later recovers. Terminal cleanup and audio release remain
+    // writable while every nonterminal transition stays fenced.
+    guard callsEnabled || type.isTerminal || type == .audioDeactivated else { return false }
     switch store.append(nativeCallId: nativeCallId, type: type) {
     case let .appended(_, event):
+      MknoonCallDiagnostics.shared.journal(nativeCallId.uuidString.lowercased(), type)
       eventHandler?(event)
       return true
     case .ignoredAfterTerminal:
+      MknoonCallDiagnostics.shared.record(handle: nativeCallId.uuidString.lowercased(), stage: type == .answerRequested ? "answer" : "runtime",
+                                          action: "commit", outcome: "rejected", reason: "native_answer_refused", values: ["terminal": true, "nativeCommitted": false])
       return type.isTerminal
-    case .notFound, .capacityReached, .persistenceFailure:
+    case .notFound:
+      MknoonCallDiagnostics.shared.record(handle: nativeCallId.uuidString.lowercased(), stage: "runtime", action: "commit", outcome: "not_found", reason: "native_lifecycle_failed")
+      return false
+    case .capacityReached:
+      MknoonCallDiagnostics.shared.record(handle: nativeCallId.uuidString.lowercased(), stage: "runtime", action: "commit", outcome: "failed", reason: "quota_exceeded")
+      return false
+    case .persistenceFailure:
+      MknoonCallDiagnostics.shared.record(handle: nativeCallId.uuidString.lowercased(), stage: "runtime", action: "commit", outcome: "failed", reason: "native_persistence_failed")
       return false
     }
   }
 
   private func recordMute(_ nativeCallId: UUID, muted: Bool) -> Bool {
+    guard callsEnabled else { return false }
     switch store.append(nativeCallId: nativeCallId, type: .muteChanged, muted: muted) {
     case let .appended(_, event):
       eventHandler?(event)
@@ -1562,6 +1716,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   }
 
   private func failClosedAfterPersistenceFailure(_ nativeCallId: UUID) {
+    capabilityDisabledInProcess = true
     _ = capability.setEnabled(false)
     // Never call out under the controller lock: the handler hops to the main
     // queue synchronously, and the main queue may be waiting for this lock.

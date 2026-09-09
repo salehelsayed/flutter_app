@@ -142,6 +142,28 @@ final class AndroidForegroundWebRtcAudioCampaignResult {
     },
   );
 
+  /// A selected relay's endpoint/media/cleanup checks are useful evidence, but
+  /// cannot satisfy the complete direct + UDP + TCP campaign contract.
+  factory AndroidForegroundWebRtcAudioCampaignResult.relayProbePassed(
+    AndroidForegroundWebRtcAudioRelayMode mode,
+  ) => AndroidForegroundWebRtcAudioCampaignResult._(
+    processExitCode: 78,
+    json: <String, Object?>{
+      'status': 'BLOCKED',
+      'assertionsAttempted': androidForegroundWebRtcAudioAssertionCount,
+      'artifactPresent': false,
+      'printOnly': false,
+      'blocker': 'selectedTransportOnly',
+      'exitCode': 78,
+      'selectedTransport': mode.name,
+      'selectedTransportStatus': 'PASS',
+      'fullCampaignCompleted': false,
+      'detail':
+          'Selected ${mode.name} endpoint media, controls and cleanup checks '
+          'passed; the complete campaign and cross-mode artifact were not run.',
+    },
+  );
+
   factory AndroidForegroundWebRtcAudioCampaignResult.fail({
     required String blocker,
     required String detail,
@@ -170,6 +192,21 @@ runAndroidForegroundWebRtcAudioCampaign({
   Map<String, String>? environment,
 }) async {
   final env = environment ?? Platform.environment;
+  final requestedProbe = env['SIMS_FOREGROUND_WEBRTC_RELAY_PROBE']?.trim();
+  final relayProbe = switch (requestedProbe) {
+    'turnUdp' => AndroidForegroundWebRtcAudioRelayMode.turnUdp,
+    'turnTcp' => AndroidForegroundWebRtcAudioRelayMode.turnTcp,
+    _ => null,
+  };
+  if (requestedProbe != null &&
+      requestedProbe.isNotEmpty &&
+      relayProbe == null) {
+    return AndroidForegroundWebRtcAudioCampaignResult.blocked(
+      blocker: 'environment',
+      detail: 'The selected relay probe must name turnUdp or turnTcp.',
+      artifactPresent: false,
+    );
+  }
   if (artifactPath == null ||
       artifactPath.trim().isEmpty ||
       FileSystemEntity.typeSync(artifactPath, followLinks: true) !=
@@ -245,6 +282,12 @@ runAndroidForegroundWebRtcAudioCampaign({
   }
 
   try {
+    if (relayProbe != null) {
+      await host.runRelayProbe(relayProbe);
+      return AndroidForegroundWebRtcAudioCampaignResult.relayProbePassed(
+        relayProbe,
+      );
+    }
     return AndroidForegroundWebRtcAudioCampaignResult.pass(await host.run());
   } on _AudioProofBlocked catch (blocked) {
     return AndroidForegroundWebRtcAudioCampaignResult.blocked(
@@ -335,6 +378,18 @@ final class _AndroidForegroundWebRtcAudioHost {
     );
     try {
       return await _runWithTargetPairLease();
+    } finally {
+      await lease.release();
+    }
+  }
+
+  Future<void> runRelayProbe(AndroidForegroundWebRtcAudioRelayMode mode) async {
+    final lease = await _AndroidForegroundWebRtcAudioTargetPairLease.acquire(
+      devices: _devices,
+      scenarioId: simsAndroidForegroundWebRtcAudioScenarioId,
+    );
+    try {
+      await _runTransportCase(mode: mode);
     } finally {
       await lease.release();
     }
@@ -1013,7 +1068,8 @@ final class _AndroidForegroundWebRtcAudioHost {
       'start',
       '-W',
       '-n',
-      '$packageName/.MainActivity',
+      // Application-ID overrides do not change the app's Kotlin namespace.
+      '$packageName/com.mknoon.app.MainActivity',
     ]);
     if (launch.exitCode != 0) {
       throw const _AudioProofBlocked(

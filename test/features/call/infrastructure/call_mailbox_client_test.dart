@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -38,6 +39,123 @@ void main() {
     bridge = _FakeBridge();
     client = BridgeCallMailboxClient(bridge: bridge);
   });
+
+  test(
+    'idle mailbox polls do not crowd out correlated call diagnostics',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      bridge.responses['call_retrieve_v1'] = <String, Object?>{
+        'ok': true,
+        'receiptAtMs': 2000,
+        'expiresAtMs': 45000,
+        'hasMore': false,
+        'events': <Object?>[],
+      };
+      await client.retrieve();
+      expect(
+        (await diagnostics.eventsForTesting()).where(
+          (event) => event['action'] == 'retrieve',
+        ),
+        isEmpty,
+      );
+      expect(
+        (bridge.requests.single['payload'] as Map).containsKey('diagnostics'),
+        isFalse,
+      );
+      final trace = diagnostics.beginAttempt(role: 'callee')!;
+      const handle = '11111111-2222-4333-8444-555555555555';
+      diagnostics.bindCall(callHandle: handle, traceId: trace, role: 'callee');
+      await client.retrieve(callHandle: handle);
+      expect(
+        (await diagnostics.eventsForTesting()).where(
+          (event) => event['action'] == 'retrieve',
+        ),
+        everyElement(containsPair('traceId', trace)),
+      );
+      expect(
+        (await diagnostics.eventsForTesting()).where(
+          (event) => event['action'] == 'retrieve',
+        ),
+        hasLength(2),
+      );
+    },
+  );
+
+  test(
+    'opt-in correlates store metadata without changing encrypted payload or exporting authority',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final traceId = diagnostics.beginAttempt()!;
+      const handle = '11111111-2222-4333-8444-555555555555';
+      diagnostics.bindCall(callHandle: handle, traceId: traceId);
+      bridge.responses['call_store_v1'] = <String, Object?>{
+        'ok': true,
+        'storeStatus': 'stored',
+        'receiptAtMs': 1000,
+        'expiresAtMs': 45000,
+        'eventCount': 1,
+        'totalBytes': 512,
+        'pendingHandles': 1,
+      };
+      const envelope = '{"ciphertext":"private-encrypted-envelope"}';
+      await client.store(
+        const CallMailboxStoreRequest(
+          recipientDevicePeerId: 'private-recipient',
+          callHandle: handle,
+          messageId: 'private-message-id',
+          envelopeJson: envelope,
+          expiresAtMs: 45000,
+          wakeHandle: 'private-wake-handle',
+        ),
+      );
+      final payload = bridge.requests.single['payload'] as Map;
+      expect(payload['envelope'], envelope);
+      expect((payload['diagnostics'] as Map)['traceId'], traceId);
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.any(
+          (event) =>
+              event['action'] == 'store' &&
+              event['outcome'] == 'ok' &&
+              event['traceId'] == traceId,
+        ),
+        isTrue,
+      );
+      final exported = jsonEncode(events);
+      for (final forbidden in [
+        handle,
+        'private-recipient',
+        'private-encrypted-envelope',
+        'private-wake-handle',
+      ]) {
+        expect(exported, isNot(contains(forbidden)));
+      }
+      await diagnostics.setEnabled(false);
+      bridge.requests.clear();
+      await client.store(
+        const CallMailboxStoreRequest(
+          recipientDevicePeerId: 'private-recipient',
+          callHandle: handle,
+          messageId: 'private-message-id',
+          envelopeJson: envelope,
+          expiresAtMs: 45000,
+          wakeHandle: 'private-wake-handle',
+        ),
+      );
+      expect(
+        (bridge.requests.single['payload'] as Map).containsKey('diagnostics'),
+        isFalse,
+      );
+    },
+  );
 
   test('stores through the dedicated call_store_v1 action', () async {
     bridge.responses['call_store_v1'] = <String, Object?>{

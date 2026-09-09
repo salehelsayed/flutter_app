@@ -661,7 +661,7 @@ final class _AndroidDirectMediaBlobCustodyHost {
     'start',
     '-W',
     '-n',
-    '$packageName/.MainActivity',
+    '$packageName/com.mknoon.app.MainActivity',
   ], mutate: true).then<void>((_) {});
 
   Future<int> _requiredPid(_Party party) async {

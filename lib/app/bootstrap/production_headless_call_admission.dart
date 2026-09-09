@@ -20,8 +20,6 @@ import 'package:flutter_app/core/notifications/headless_missed_call_notification
 import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 import 'package:flutter_app/features/call/application/missed_call_notifier.dart';
 import 'package:flutter_app/features/call/application/headless_terminal_call_record.dart';
-import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
-import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
@@ -94,7 +92,9 @@ typedef HeadlessCallHistoryRecorder =
 /// reservations are rolled back so the foreground canonical owner can
 /// authenticate and consume the same rows after native presentation.
 final class MailboxProductionHeadlessCallAdmissionSession
-    implements ProductionHeadlessCallAdmissionSession {
+    implements
+        ProductionHeadlessCallAdmissionSession,
+        HeadlessCallAdmissionDiagnosticSource {
   MailboxProductionHeadlessCallAdmissionSession({
     required CallMailboxClient mailboxClient,
     required AuthenticateHeadlessMailboxEvent authenticateEvent,
@@ -116,6 +116,10 @@ final class MailboxProductionHeadlessCallAdmissionSession
   Future<HeadlessCallAdmissionCleanup>? _cleanup;
 
   @override
+  String? get diagnosticCause => _diagnosticCause;
+  String? _diagnosticCause;
+
+  @override
   Future<HeadlessCallAdmissionDisposition> evaluate(
     HeadlessCallAdmissionInvocation invocation,
   ) => _evaluation ??= switch (invocation.mode) {
@@ -133,9 +137,13 @@ final class MailboxProductionHeadlessCallAdmissionSession
         limit: BridgeCallMailboxClient.maxRetrieveEvents,
       );
     } catch (_) {
+      _diagnosticCause = 'transport_failed';
       return HeadlessCallAdmissionDisposition.deferred;
     }
-    if (page.hasMore) return HeadlessCallAdmissionDisposition.deferred;
+    if (page.hasMore) {
+      _diagnosticCause = 'unavailable';
+      return HeadlessCallAdmissionDisposition.deferred;
+    }
     if (page.events.isEmpty) {
       return HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked;
     }
@@ -213,7 +221,10 @@ final class MailboxProductionHeadlessCallAdmissionSession
         return HeadlessCallAdmissionDisposition.terminal;
       }
       // An unjudged row may be the terminate; never ring past it.
-      if (deferredRows) return HeadlessCallAdmissionDisposition.deferred;
+      if (deferredRows) {
+        _diagnosticCause = 'authority_unreachable';
+        return HeadlessCallAdmissionDisposition.deferred;
+      }
       if (boundInvites == 1 && companionInvites == 0) {
         return HeadlessCallAdmissionDisposition.admitted;
       }
@@ -221,8 +232,10 @@ final class MailboxProductionHeadlessCallAdmissionSession
         // The wake's own row is gone; the invite already had its own wake.
         return HeadlessCallAdmissionDisposition.emptyOrAlreadyAcked;
       }
+      _diagnosticCause = 'authority_rejected';
       return HeadlessCallAdmissionDisposition.permanentReject;
     } catch (_) {
+      _diagnosticCause = 'adoption_failed';
       return HeadlessCallAdmissionDisposition.deferred;
     } finally {
       for (final reservation in reservations.reversed) {
@@ -401,6 +414,11 @@ abstract interface class ProductionHeadlessCallAdmissionSession {
   Future<HeadlessCallAdmissionCleanup> close();
 }
 
+/// Diagnostic metadata only; never participates in admission or lease gates.
+abstract interface class HeadlessCallAdmissionDiagnosticSource {
+  String? get diagnosticCause;
+}
+
 abstract interface class ProductionHeadlessCallAdmissionBackend {
   Future<ProductionHeadlessCallAdmissionSession?> acquire(
     HeadlessCallAdmissionInvocation invocation,
@@ -427,28 +445,57 @@ final class ProductionHeadlessCallAdmissionRunner {
     required HeadlessCallAdmissionInvocation invocation,
     required bool Function() isStopRequested,
   }) async {
+    HeadlessCallAdmissionDiagnosticSource? diagnosticSource =
+        _backend is HeadlessCallAdmissionDiagnosticSource
+        ? _backend as HeadlessCallAdmissionDiagnosticSource
+        : null;
+    var failureCause = 'unknown';
     try {
       final now = _nowMs();
-      if (isStopRequested() ||
+      final stoppedBeforeAcquire = isStopRequested();
+      if (stoppedBeforeAcquire ||
           now < 0 ||
           invocation.expiresAtMs <= now ||
           invocation.expiresAtMs - now > maximumFutureLifetimeMs) {
-        return _deferred(await _backend.emergencyCleanup());
+        return _deferred(
+          await _backend.emergencyCleanup(),
+          diagnosticCause: stoppedBeforeAcquire
+              ? 'canceled'
+              : (invocation.expiresAtMs <= now ? 'expired' : 'invalid_request'),
+        );
       }
       final session = await _backend.acquire(invocation);
-      if (session == null || isStopRequested()) {
-        return _deferred(await _backend.emergencyCleanup());
+      if (session == null) {
+        return _deferred(
+          await _backend.emergencyCleanup(),
+          diagnosticCause: _readDiagnosticCause(diagnosticSource),
+        );
       }
+      if (isStopRequested()) {
+        return _deferred(
+          await _backend.emergencyCleanup(),
+          diagnosticCause: 'canceled',
+        );
+      }
+      diagnosticSource = session is HeadlessCallAdmissionDiagnosticSource
+          ? session as HeadlessCallAdmissionDiagnosticSource
+          : null;
+      failureCause = 'adoption_failed';
       final disposition = await session.evaluate(invocation);
+      failureCause = 'cleanup_failed';
       final cleanup = await session.close();
       if (!cleanup.databaseClosed || !cleanup.leaseReleased) {
         return _deferred(cleanup);
       }
       final completedAt = _nowMs();
-      if (isStopRequested() ||
+      final stoppedAfterEvaluation = isStopRequested();
+      if (stoppedAfterEvaluation ||
           completedAt < 0 ||
           completedAt >= invocation.expiresAtMs) {
-        return _deferred(cleanup);
+        return _deferred(
+          cleanup,
+          diagnosticCause: stoppedAfterEvaluation ? 'canceled' : 'expired',
+        );
       }
       return HeadlessCallAdmissionRunReport(
         disposition: disposition,
@@ -456,6 +503,7 @@ final class ProductionHeadlessCallAdmissionRunner {
             disposition != HeadlessCallAdmissionDisposition.deferred,
         databaseClosed: true,
         leaseReleased: true,
+        diagnosticCause: _readDiagnosticCause(diagnosticSource),
       );
     } catch (_) {
       HeadlessCallAdmissionCleanup cleanup;
@@ -467,17 +515,36 @@ final class ProductionHeadlessCallAdmissionRunner {
           leaseReleased: false,
         );
       }
-      return _deferred(cleanup);
+      return _deferred(
+        cleanup,
+        diagnosticCause: failureCause == 'cleanup_failed'
+            ? failureCause
+            : _readDiagnosticCause(diagnosticSource) ?? failureCause,
+      );
+    }
+  }
+
+  static String? _readDiagnosticCause(
+    HeadlessCallAdmissionDiagnosticSource? source,
+  ) {
+    try {
+      return source?.diagnosticCause;
+    } catch (_) {
+      return null;
     }
   }
 
   static HeadlessCallAdmissionRunReport _deferred(
-    HeadlessCallAdmissionCleanup cleanup,
-  ) => HeadlessCallAdmissionRunReport(
+    HeadlessCallAdmissionCleanup cleanup, {
+    String? diagnosticCause,
+  }) => HeadlessCallAdmissionRunReport(
     disposition: HeadlessCallAdmissionDisposition.deferred,
     requiredPersistenceComplete: false,
     databaseClosed: cleanup.databaseClosed,
     leaseReleased: cleanup.leaseReleased,
+    diagnosticCause: !cleanup.databaseClosed || !cleanup.leaseReleased
+        ? 'cleanup_failed'
+        : diagnosticCause,
   );
 }
 
@@ -487,14 +554,19 @@ final class ProductionHeadlessCallAdmissionRunner {
 /// canonical adoption; only the rows of a call the caller already ended are
 /// acknowledged, so an ended call stops occupying a relay pending-call slot.
 final class AndroidProductionHeadlessCallAdmissionBackend
-    implements ProductionHeadlessCallAdmissionBackend {
+    implements
+        ProductionHeadlessCallAdmissionBackend,
+        HeadlessCallAdmissionDiagnosticSource {
   AndroidProductionHeadlessCallAdmissionBackend({
     SecureKeyStore? secureKeyStore,
     CanonicalRuntimeLeaseGateway? leaseGateway,
-  }) : _secureKeyStore = secureKeyStore ?? FlutterSecureKeyStore(),
-       _writableSession = CanonicalWritableRuntimeSession(
-         gateway: leaseGateway ?? MethodChannelCanonicalRuntimeLeaseGateway(),
-       ) {
+  }) : _secureKeyStore = secureKeyStore ?? FlutterSecureKeyStore() {
+    _writableSession = CanonicalWritableRuntimeSession(
+      gateway: _DiagnosticAdmissionLeaseGateway(
+        leaseGateway ?? MethodChannelCanonicalRuntimeLeaseGateway(),
+        (cause) => _diagnosticCause = cause,
+      ),
+    );
     _bindingCoordinator = CanonicalRuntimeBindingCoordinator(
       secureKeyStore: _secureKeyStore,
     );
@@ -507,7 +579,7 @@ final class AndroidProductionHeadlessCallAdmissionBackend
   }
 
   final SecureKeyStore _secureKeyStore;
-  final CanonicalWritableRuntimeSession _writableSession;
+  late final CanonicalWritableRuntimeSession _writableSession;
   late final CanonicalRuntimeBindingCoordinator _bindingCoordinator;
   late final SecureKeyStoreAccountMigrationAuthorityRepository
   _migrationAuthority;
@@ -518,14 +590,25 @@ final class AndroidProductionHeadlessCallAdmissionBackend
   Future<HeadlessCallAdmissionCleanup>? _cleanupInFlight;
 
   @override
+  String? get diagnosticCause => _diagnosticCause;
+  String? _diagnosticCause;
+
+  @override
   Future<ProductionHeadlessCallAdmissionSession?> acquire(
     HeadlessCallAdmissionInvocation invocation,
   ) async {
+    _diagnosticCause = null;
     if (_activeSession != null || _writableSession.hasWritableLease) {
+      _diagnosticCause = 'busy';
       return null;
     }
     final binding = await _bindingCoordinator.readCurrentAccountBinding();
-    if (binding == null) return null;
+    if (binding == null) {
+      // In stage=admission this describes missing local account binding,
+      // before any remote caller or envelope authority has been examined.
+      _diagnosticCause = 'authority_invalid';
+      return null;
+    }
     final database = await _writableSession.acquireThenOpen<Database>(
       binding: binding,
       openDatabase: () =>
@@ -809,6 +892,45 @@ final class AndroidProductionHeadlessCallAdmissionBackend
         databaseClosed: _database?.isOpen != true,
         leaseReleased: !_writableSession.hasWritableLease,
       );
+}
+
+/// Observes the one existing acquisition; every authority method/result is
+/// forwarded unchanged. No bindings, payloads or exception text are recorded.
+final class _DiagnosticAdmissionLeaseGateway
+    implements CanonicalRuntimeLeaseGateway {
+  _DiagnosticAdmissionLeaseGateway(this._delegate, this._onCause);
+  final CanonicalRuntimeLeaseGateway _delegate;
+  final void Function(String cause) _onCause;
+
+  @override
+  Future<CanonicalRuntimeLeaseSnapshot> acquire(String binding) async {
+    final CanonicalRuntimeLeaseSnapshot snapshot;
+    try {
+      snapshot = await _delegate.acquire(binding);
+    } catch (_) {
+      _onCause('bridge_unavailable');
+      rethrow;
+    }
+    if (snapshot.state != CanonicalRuntimeLeaseState.active) {
+      _onCause('graph_not_owner');
+    }
+    return snapshot;
+  }
+
+  @override
+  Future<bool> attachRuntime() => _delegate.attachRuntime();
+  @override
+  Future<CanonicalRuntimeLeaseSnapshot> rebind(String binding) =>
+      _delegate.rebind(binding);
+  @override
+  Future<bool> beginDrain() => _delegate.beginDrain();
+  @override
+  Future<bool> quiesceRuntime() => _delegate.quiesceRuntime();
+  @override
+  Future<bool> release({required bool databaseClosed}) =>
+      _delegate.release(databaseClosed: databaseClosed);
+  @override
+  Future<CanonicalRuntimeLeaseSnapshot> status() => _delegate.status();
 }
 
 final AndroidProductionHeadlessCallAdmissionBackend

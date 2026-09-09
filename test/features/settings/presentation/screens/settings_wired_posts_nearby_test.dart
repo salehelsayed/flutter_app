@@ -155,8 +155,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -309,8 +308,12 @@ void main() {
       privacyRepository: privacyRepository,
     );
 
+    final nearbyRow = find.byKey(const ValueKey('settings-row-nearby'));
     expect(find.text('Share People Nearby'), findsOneWidget);
-    expect(find.text('Off'), findsOneWidget);
+    expect(
+      find.descendant(of: nearbyRow, matching: find.text('Off')),
+      findsOneWidget,
+    );
     expect(
       find.text(
         'Shares only an approximate location with direct friends. No live maps, and never strangers.',
@@ -318,14 +321,21 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.ensureVisible(find.byType(Switch).first);
+    final nearbySwitch = find.descendant(
+      of: nearbyRow,
+      matching: find.byType(Switch),
+    );
+    await tester.ensureVisible(nearbySwitch);
     await tester.pump();
-    await tester.tap(find.byType(Switch).first);
+    await tester.tap(nearbySwitch);
     await tester.pump(const Duration(milliseconds: 100));
 
     final settings = await privacyRepository.load();
     expect(settings.sharingEnabled, isTrue);
-    expect(find.text('On'), findsOneWidget);
+    expect(
+      find.descendant(of: nearbyRow, matching: find.text('On')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('enabling nearby sharing triggers interactive refresh', (

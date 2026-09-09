@@ -837,6 +837,7 @@ final class IosSetupReadinessEntryCoordinator {
   )
   private var iosCallNativeBridge: MknoonCallNativeBridge?
   private var iosVoipTokenBridge: MknoonVoipTokenBridge?
+  private var iosCallDiagnosticBridge: MknoonCallDiagnosticBridge?
   private let iosCallWakeChannelName = "mknoon/ios_call_wake"
   private var iosCallWakeChannel: FlutterMethodChannel?
   private let iosNotificationOpenChannelName = "mknoon/ios_notification_open"
@@ -905,6 +906,7 @@ final class IosSetupReadinessEntryCoordinator {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    MknoonAppDiagnostics.shared.record("startup", "launch", "started", "bootstrap")
     iosCallKitController.setCapabilityChangeHandler { [weak self] enabled in
       self?.iosVoipPushRegistry.applyCapability(enabled) ?? false
     }
@@ -962,8 +964,15 @@ final class IosSetupReadinessEntryCoordinator {
   override func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
-    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    withCompletionHandler rawCompletionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
+    let appTrace = UUID().uuidString.lowercased()
+    MknoonAppDiagnostics.shared.record("push", "receive", "ok", values: ["direction": "incoming"], traceId: appTrace)
+    let completionHandler: (UNNotificationPresentationOptions) -> Void = { options in
+      // Completion options request presentation; they do not prove a visible banner.
+      MknoonAppDiagnostics.shared.record("push", "presentation", options.isEmpty ? "blocked" : "pending", options.isEmpty ? "lifecycle_interrupted" : "none", traceId: appTrace)
+      rawCompletionHandler(options)
+    }
     let userInfo = notification.request.content.userInfo
 #if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
     if userInfo["mknoon_sims_recovery_sentinel"] as? Bool == true {
@@ -1833,6 +1842,7 @@ final class IosSetupReadinessEntryCoordinator {
     messenger: FlutterBinaryMessenger
   ) {
     guard iosCallNativeBridge == nil, iosVoipTokenBridge == nil else { return }
+    iosCallDiagnosticBridge = MknoonCallDiagnosticBridge(messenger: messenger)
     iosCallNativeBridge = MknoonCallNativeBridge(
       controller: iosCallKitController,
       messenger: messenger

@@ -63,9 +63,48 @@ class MknoonCallForegroundServiceTest {
             MknoonCallForegroundService.ACTION_START_ACTIVE,
             callId,
         )
+        runtime.audioActive = true
         assertEquals(Service.START_NOT_STICKY, service.onStartCommand(active, 0, 3))
         assertEquals(Service.START_NOT_STICKY, service.onStartCommand(active, 0, 4))
         assertEquals(listOf(callId), runtime.activeStarts)
+    }
+
+    @Test
+    fun `delayed active command cannot restore microphone mode after audio deactivation`() {
+        listOf(false, true).forEach { previouslyActive ->
+            val runtime = RecordingForegroundRuntime()
+            val service = MknoonCallForegroundService(runtime = runtime)
+            val callId = UUID.fromString(CALL_ID)
+            service.onStartCommand(
+                serviceIntent(MknoonCallForegroundService.ACTION_START_RINGING, callId),
+                0,
+                1,
+            )
+            if (previouslyActive) {
+                runtime.audioActive = true
+                service.onStartCommand(
+                    serviceIntent(MknoonCallForegroundService.ACTION_START_ACTIVE, callId),
+                    0,
+                    2,
+                )
+                runtime.audioActive = false
+                service.onStartCommand(
+                    serviceIntent(MknoonCallForegroundService.ACTION_START_INACTIVE, callId),
+                    0,
+                    3,
+                )
+            }
+            val activeStartsBefore = runtime.activeStarts.toList()
+
+            service.onStartCommand(
+                serviceIntent(MknoonCallForegroundService.ACTION_START_ACTIVE, callId),
+                0,
+                4,
+            )
+
+            assertEquals(activeStartsBefore, runtime.activeStarts)
+            assertEquals(listOf(callId), runtime.startFailures)
+        }
     }
 
     @Test
@@ -110,6 +149,15 @@ class MknoonCallForegroundServiceTest {
         assertEquals(listOf(callId), runtime.ringingStarts)
         assertEquals(listOf(callId), runtime.activeStarts)
         assertEquals(listOf(callId), runtime.inactiveStarts)
+        assertTrue(runtime.startFailures.isEmpty())
+
+        runtime.audioActive = true
+        service.onStartCommand(
+            serviceIntent(MknoonCallForegroundService.ACTION_START_ACTIVE, callId),
+            0,
+            6,
+        )
+        assertEquals(listOf(callId, callId), runtime.activeStarts)
         assertTrue(runtime.startFailures.isEmpty())
     }
 

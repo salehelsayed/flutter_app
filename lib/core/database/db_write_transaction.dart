@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:sqflite_sqlcipher/sqflite.dart';
+import '../diagnostics/app_diagnostic_events.dart';
 
 /// Marker key in the current Zone that signals the running closure is the
 /// body of a [dbWriteTransaction]. When set, calling Bridge.send is a bug:
@@ -61,18 +62,27 @@ Future<T> dbWriteTransaction<T>(
   Database db,
   Future<T> Function(Transaction txn) body, {
   bool? exclusive,
-}) {
-  return runZoned(
-    () => db.transaction(body, exclusive: exclusive),
-    zoneValues: {_dbWriteTxnZoneKey: true},
-  );
+}) async {
+  final elapsed = Stopwatch()..start();
+  var successful = false;
+  try {
+    final value = await runZoned(
+      () => db.transaction(body, exclusive: exclusive),
+      zoneValues: {_dbWriteTxnZoneKey: true},
+    );
+    successful = true;
+    return value;
+  } finally {
+    AppDiagnosticEvents.storageTransaction(
+      successful,
+      elapsed.elapsedMilliseconds,
+    );
+  }
 }
 
 /// Test-only helper to enter the same Zone marker that [dbWriteTransaction]
 /// installs, without needing a real [Database]. Lets unit tests verify the
 /// bridge guard fires from any code path that ends up calling Bridge.send.
-Future<T> runInDbWriteTransactionZoneForTest<T>(
-  Future<T> Function() body,
-) {
+Future<T> runInDbWriteTransactionZoneForTest<T>(Future<T> Function() body) {
   return runZoned(body, zoneValues: {_dbWriteTxnZoneKey: true});
 }

@@ -141,6 +141,63 @@ void main() {
   });
 
   test(
+    'closed diagnostic cause crosses completion without changing authority fields',
+    () async {
+      final channel = _FakeChannel();
+      await runAndroidHeadlessCallAdmission(
+        const <String>[nonce, callId, wakeHandle, '$expiresAtMs'],
+        resultChannel: channel,
+        runAdmission: ({required invocation, required isStopRequested}) async =>
+            const HeadlessCallAdmissionRunReport(
+              disposition: HeadlessCallAdmissionDisposition.deferred,
+              requiredPersistenceComplete: false,
+              databaseClosed: true,
+              leaseReleased: true,
+              diagnosticCause: 'graph_not_owner',
+            ),
+        emergencyShutdown: () async => throw StateError('unused'),
+      );
+      expect(channel.payloads.single, const <String, Object?>{
+        'nonce': nonce,
+        'callId': callId,
+        'wakeHandle': wakeHandle,
+        'expiresAtMs': expiresAtMs,
+        'disposition': 'deferred',
+        'requiredPersistenceComplete': false,
+        'databaseClosed': true,
+        'leaseReleased': true,
+        'diagnosticCause': 'graph_not_owner',
+      });
+    },
+  );
+
+  test(
+    'private or absent diagnostic cause retains the legacy completion shape',
+    () async {
+      for (final cause in <String?>[null, callId, 'private error text']) {
+        final channel = _FakeChannel();
+        await runAndroidHeadlessCallAdmission(
+          const <String>[nonce, callId, wakeHandle, '$expiresAtMs'],
+          resultChannel: channel,
+          runAdmission:
+              ({required invocation, required isStopRequested}) async =>
+                  HeadlessCallAdmissionRunReport(
+                    disposition: HeadlessCallAdmissionDisposition.deferred,
+                    requiredPersistenceComplete: false,
+                    databaseClosed: true,
+                    leaseReleased: true,
+                    diagnosticCause: cause,
+                  ),
+          emergencyShutdown: () async => throw StateError('unused'),
+        );
+        expect(channel.payloads.single.containsKey('diagnosticCause'), isFalse);
+        expect(channel.payloads.single.length, 8);
+        expect(channel.payloads.single['requiredPersistenceComplete'], isFalse);
+      }
+    },
+  );
+
+  test(
     'runner failure reports deferred with fail-closed cleanup facts',
     () async {
       final channel = _FakeChannel();

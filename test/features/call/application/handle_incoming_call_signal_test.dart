@@ -15,6 +15,7 @@ import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
 import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -139,10 +140,11 @@ final class _Effects implements CallEffectExecutor {
 }
 
 final class _Presenter implements IncomingCallPresenter {
-  _Presenter({this.succeeds = true, this.resultGate});
+  _Presenter({this.succeeds = true, this.resultGate, this.throwOnPresent = false});
 
   final bool succeeds;
   final Completer<bool>? resultGate;
+  final bool throwOnPresent;
   int calls = 0;
   int dismissCalls = 0;
   final Completer<void> started = Completer<void>();
@@ -151,6 +153,7 @@ final class _Presenter implements IncomingCallPresenter {
   Future<bool> present(IncomingCallPresentation presentation) async {
     calls++;
     if (!started.isCompleted) started.complete();
+    if (throwOnPresent) throw StateError('native call surface unavailable');
     return resultGate == null ? succeeds : resultGate!.future;
   }
 
@@ -978,6 +981,11 @@ void main() {
   );
 
   test('platform presentation failure terminates without ringing', () async {
+    final diagnostics = await CallDiagnostics.installForTesting();
+    addTearDown(() async {
+      await diagnostics.setEnabled(false);
+      await diagnostics.dispose();
+    });
     final effects = _Effects();
     final coordinator = _coordinator(effects);
     addTearDown(coordinator.dispose);
@@ -1001,12 +1009,133 @@ void main() {
     );
     expect(coordinator.activeSession, isNull);
     expect(coordinator.lastSnapshot?.state, CallState.ended);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.signalingFailed);
+    expect(effects.effects, contains(CallEffectType.sendTerminate));
     expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
     expect(
       effects.effects,
       isNot(contains(CallEffectType.prepareAcceptedMedia)),
     );
     expect(provisional.calls, <String>['authenticationFailed:$_callHandle']);
+    final records = (await diagnostics.eventsForTesting())
+        .where(
+          (event) =>
+              event['stage'] == 'presentation' && event['action'] == 'present',
+        )
+        .toList();
+    final trace = diagnostics.traceForCall(callId: _callId.value);
+    expect(trace, isNotNull);
+    expect(records.map((event) => event['outcome']), ['started', 'failed']);
+    expect(records.last['reason'], 'native_lifecycle_failed');
+    expect(records, everyElement(containsPair('traceId', trace)));
+    expect(jsonEncode(records), isNot(contains(_callHandle)));
+    expect(records.any((event) => event['reason'] == 'no_answer'), isFalse);
+  });
+
+  test('platform presentation exception is a signaling failure', () async {
+    final effects = _Effects();
+    final coordinator = _coordinator(effects);
+    addTearDown(coordinator.dispose);
+    final presenter = _Presenter(throwOnPresent: true);
+    final built = await _build(coordinator, presenter);
+
+    expect(
+      await built.handler.handle(
+        IncomingCallSignalFrame(
+          envelopeJson: built.envelope,
+          authenticatedTransportPeerId: 'sender-device',
+          route: CallRouteClass.direct,
+        ),
+      ),
+      IncomingCallSignalOutcome.rejected,
+    );
+    expect(coordinator.activeSession, isNull);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.signalingFailed);
+    expect(effects.effects, contains(CallEffectType.sendTerminate));
+    expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
+    expect(effects.effects, isNot(contains(CallEffectType.prepareAcceptedMedia)));
+  });
+
+  test('native decline survives a late presentation refusal', () async {
+    final effects = _Effects();
+    final coordinator = _coordinator(effects);
+    addTearDown(coordinator.dispose);
+    final resultGate = Completer<bool>();
+    final presenter = _Presenter(resultGate: resultGate);
+    final provisional = _ProvisionalLifecycle();
+    final built = await _build(
+      coordinator,
+      presenter,
+      provisionalNativeLifecycle: provisional,
+    );
+
+    final handling = built.handler.handle(
+      IncomingCallSignalFrame(
+        envelopeJson: built.envelope,
+        authenticatedTransportPeerId: 'sender-device',
+        route: CallRouteClass.ephemeralMailbox,
+      ),
+    );
+    await presenter.started.future;
+    await coordinator.dispatch(
+      CallEvent(
+        type: CallEventType.nativeAction,
+        eventId: 'native-decline-during-presentation',
+        occurredAt: DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true),
+        callId: _callId,
+        nativeAction: CallNativeAction.decline,
+      ),
+    );
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.declined);
+    resultGate.complete(false);
+
+    expect(await handling, IncomingCallSignalOutcome.rejected);
+    expect(coordinator.activeSession, isNull);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.declined);
+    expect(provisional.calls, <String>['remoteCancel:$_callHandle']);
+    expect(effects.effects, isNot(contains(CallEffectType.sendTerminate)));
+    expect(effects.effects, isNot(contains(CallEffectType.sendRinging)));
+  });
+
+  test('microphone denial after answer remains permission denied', () async {
+    final effects = _Effects(
+      onExecute: (effect, snapshot) =>
+          effect.type == CallEffectType.prepareAcceptedMedia
+          ? CallEvent(
+              type: CallEventType.negotiationFailed,
+              eventId: 'microphone-denied-after-answer',
+              occurredAt: snapshot.observedAt,
+              callId: snapshot.callId,
+              endReason: CallEndReason.permissionDenied,
+            )
+          : null,
+    );
+    final coordinator = _coordinator(effects);
+    addTearDown(coordinator.dispose);
+    final built = await _build(coordinator, _Presenter());
+    expect(
+      await built.handler.handle(
+        IncomingCallSignalFrame(
+          envelopeJson: built.envelope,
+          authenticatedTransportPeerId: 'sender-device',
+          route: CallRouteClass.direct,
+        ),
+      ),
+      IncomingCallSignalOutcome.accepted,
+    );
+    await coordinator.dispatch(
+      CallEvent(
+        type: CallEventType.answer,
+        eventId: 'answer-before-microphone-denial',
+        occurredAt: DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true),
+        callId: _callId,
+      ),
+    );
+
+    expect(effects.effects, contains(CallEffectType.prepareAcceptedMedia));
+    expect(coordinator.activeSession, isNull);
+    expect(coordinator.lastSnapshot?.endReason, CallEndReason.permissionDenied);
+    expect(effects.effects, isNot(contains(CallEffectType.sendAccept)));
   });
 
   test('expired native wake is retired before authentication or UI', () async {

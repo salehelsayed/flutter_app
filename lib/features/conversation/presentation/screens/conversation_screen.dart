@@ -273,8 +273,10 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onOverflow;
   final VoidCallback? onAvatarTap;
   final VoidCallback? onCall;
+  final VoidCallback? onCallRetry;
   final bool showCallAction;
   final bool callActionEnabled;
+  final bool callActionInFlight;
   final String callUnavailableMessage;
   final bool isLoadingMore;
   final bool hasMoreOlderMessages;
@@ -390,8 +392,10 @@ class ConversationScreen extends StatefulWidget {
     this.onOverflow,
     this.onAvatarTap,
     this.onCall,
+    this.onCallRetry,
     this.showCallAction = false,
     this.callActionEnabled = false,
+    this.callActionInFlight = false,
     this.callUnavailableMessage = 'Voice calling is unavailable right now',
     this.isLoadingMore = false,
     this.hasMoreOlderMessages = true,
@@ -756,10 +760,12 @@ class _ConversationScreenState extends State<ConversationScreen>
             onOverflow: widget.onOverflow,
             onAvatarTap: widget.onAvatarTap,
             onCall: widget.onCall,
+            onCallRetry: widget.onCallRetry,
             showCallAction: widget.showCallAction,
             callActionEnabled: widget.callActionEnabled,
             callActionInFlight:
-                !widget.callActionEnabled && widget.onCall != null,
+                widget.callActionInFlight ||
+                (!widget.callActionEnabled && widget.onCall != null),
             callUnavailableMessage: widget.callUnavailableMessage,
           ),
           // Intro banner above messages (when messages exist)
@@ -1151,6 +1157,14 @@ class _ConversationScreenState extends State<ConversationScreen>
                     privateVisualDecision?.reason ==
                         DirectPrivateMediaEligibilityReason.integrityFailed) {
                   return DirectPrivateMediaUnsupportedPlaceholder(
+                    requiresUpdate:
+                        message.privateMediaPolicy.isUnsupported &&
+                        message.privateMediaPolicy.version > 1 &&
+                        privateVisualDecision?.reason !=
+                            DirectPrivateMediaEligibilityReason
+                                .corruptPolicyState &&
+                        privateVisualDecision?.reason !=
+                            DirectPrivateMediaEligibilityReason.integrityFailed,
                     onReply: widget.onQuoteReply == null
                         ? null
                         : () => unawaited(
@@ -2048,8 +2062,7 @@ class _ConversationScreenState extends State<ConversationScreen>
         final stateCopy = switch (state) {
           PrivateMediaLifecycleState.consumed => l10n.private_media_consumed,
           PrivateMediaLifecycleState.expired => l10n.private_media_expired,
-          PrivateMediaLifecycleState.unsupported =>
-            l10n.private_media_unsupported,
+          PrivateMediaLifecycleState.unsupported => l10n.media_could_not_verify,
           _ => l10n.private_media_notification_body,
         };
         await showDialog<void>(

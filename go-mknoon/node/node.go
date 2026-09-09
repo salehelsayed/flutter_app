@@ -39,20 +39,23 @@ type EventCallback interface {
 
 // Node wraps a go-libp2p host with mknoon protocol handlers.
 type Node struct {
-	mu              sync.RWMutex
-	host            host.Host
-	ctx             context.Context
-	cancel          context.CancelFunc
-	peerId          string
-	isStarted       bool
-	startInProgress bool
-	relayAddresses  []string
-	relayPeerOrder  []peer.ID
-	featureFlags    *FeatureFlags
-	namespace       string
-	eventCallback   EventCallback
-	eventSub        event.Subscription
-	connections     map[string]connectionInfo
+	callDiagnosticsEnabled     bool
+	callDiagnosticConsentEpoch int64
+	callDiagnosticRelays       map[peer.ID]time.Time
+	mu                         sync.RWMutex
+	host                       host.Host
+	ctx                        context.Context
+	cancel                     context.CancelFunc
+	peerId                     string
+	isStarted                  bool
+	startInProgress            bool
+	relayAddresses             []string
+	relayPeerOrder             []peer.ID
+	featureFlags               *FeatureFlags
+	namespace                  string
+	eventCallback              EventCallback
+	eventSub                   event.Subscription
+	connections                map[string]connectionInfo
 	// peerSession is the FDC-12 network.Notifiee that keeps connections[peer] on
 	// the BEST live conn across a DCUtR relay->direct upgrade (and back). It is
 	// registered in Start (after n.host is set) and removed in Stop. nil before

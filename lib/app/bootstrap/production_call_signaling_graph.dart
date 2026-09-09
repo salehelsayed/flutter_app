@@ -14,6 +14,8 @@ import '../../core/services/incoming_message_router.dart';
 import '../../core/services/p2p_service.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../core/utils/flow_event_emitter.dart';
+import '../../features/call/diagnostics/call_diagnostics.dart';
+import '../../features/call/infrastructure/call_stats_sampler.dart';
 import '../../features/call/application/call_cleanup_coordinator.dart';
 import '../../features/call/application/call_audio_controller.dart';
 import '../../features/call/application/call_audio_interruption_coordinator.dart';
@@ -33,7 +35,9 @@ import '../../features/call/application/foreground_call_capability.dart';
 import '../../features/call/application/handle_incoming_call_signal.dart';
 import '../../features/call/application/outgoing_call_capability.dart';
 import '../../features/call/data/call_history_repository_impl.dart';
+import '../../features/call/domain/call_authority_lifetime.dart';
 import '../../features/call/domain/call_engine.dart';
+import '../../features/call/domain/call_end_reason.dart';
 import '../../features/call/domain/call_event.dart';
 import '../../features/call/domain/call_id.dart';
 import '../../features/call/domain/call_session_snapshot.dart';
@@ -110,6 +114,7 @@ final class ProductionCallSignalingGraph
         ForegroundCallCapability,
         ForegroundCallBackgroundLifecycle,
         CallSignalingCallabilityInvalidations,
+        CallSignalingDiagnosticInvalidations,
         CallSignalingDeferredAdvertisementRetries,
         CallSignalingWakeDrain,
         CallWakeHandleDistributionLifecycle {
@@ -203,6 +208,8 @@ final class ProductionCallSignalingGraph
 
   int? _advertisedPreferenceEpoch;
   String? _routingHandle;
+  Future<void> _advertisementTail = Future<void>.value();
+  bool _callabilityInvalidated = false;
   late final StreamSubscription<CallSessionSnapshot> _sessionSubscription;
   late final StreamSubscription<CallScopedMediaBundle?>
   _mediaBundleSubscription;
@@ -216,6 +223,14 @@ final class ProductionCallSignalingGraph
   final StreamController<void> _callabilityInvalidations =
       StreamController<void>.broadcast(sync: true);
   ForegroundCallProjection? _foregroundCurrent;
+  @override
+  String invalidationDiagnosticReason = 'unknown';
+  @override
+  String? invalidationDiagnosticOperationId;
+  String? _outgoingDiagnosticTraceId;
+  CallId? _diagnosticMediaVerifiedCallId;
+  Timer? _diagnosticSampleTimer;
+  bool _diagnosticSampleInFlight = false;
   CallAudioController? _observedAudioController;
   CallId? _activeConnectionSnapshotCallId;
   Future<CallConnectionSnapshot> Function()? _activeConnectionSnapshotReader;
@@ -304,35 +319,59 @@ final class ProductionCallSignalingGraph
   Future<PreparedOutgoingCall> prepareOutgoingCall(
     String contactAccountPeerId,
   ) async {
-    _requireOutgoingGraphActive();
-    return runCallNetworkActionIfAllowed(
-      gate: _networkEffectsAllowed,
-      action: () async {
-        // The network gate may itself yield while token invalidation withdraws
-        // this graph. Do not begin endpoint work after that withdrawal.
-        _requireOutgoingGraphActive();
-        final endpoint = await _resolveEndpoint(contactAccountPeerId);
-        _requireOutgoingGraphActive();
-        final nativeLifecycleReady =
-            await _nativeCallLifecycleAdapter?.reconcileBeforeOutgoing() ??
-            true;
-        if (!nativeLifecycleReady) {
-          throw StateError('native call lifecycle is unavailable');
-        }
-        if (!await _hasCurrentOutgoingWakeAuthority(contactAccountPeerId)) {
-          throw const _OutgoingCallWakeAuthorityUnavailable();
-        }
-        // This is the final commit boundary before placeCall enqueues the
-        // event which can emit an invite.
-        _requireOutgoingGraphActive();
-        final reduction = await coordinator.placeCall(
-          contactPeerId: contactAccountPeerId,
-          localAccountPeerId: localIdentity.peerId,
-          localDeviceId: localIdentity.peerId,
-        );
-        return PreparedOutgoingCall(endpoint: endpoint, reduction: reduction);
-      },
-    );
+    final diagnostics = CallDiagnostics.instance;
+    var reason = 'graph_shutdown';
+    try {
+      _requireOutgoingGraphActive();
+      reason = 'network_unavailable';
+      return await runCallNetworkActionIfAllowed(
+        gate: _networkEffectsAllowed,
+        action: () async {
+          reason = 'graph_shutdown';
+          _requireOutgoingGraphActive();
+          reason = 'endpoint_invalid';
+          final endpoint = await _resolveEndpoint(contactAccountPeerId);
+          reason = 'graph_shutdown';
+          _requireOutgoingGraphActive();
+          reason = 'native_lifecycle_failed';
+          final nativeLifecycleReady =
+              await _nativeCallLifecycleAdapter?.reconcileBeforeOutgoing() ??
+              true;
+          if (!nativeLifecycleReady) {
+            throw StateError('native call lifecycle is unavailable');
+          }
+          reason = 'wake_authority_missing';
+          if (!await _hasCurrentOutgoingWakeAuthority(contactAccountPeerId)) {
+            throw const _OutgoingCallWakeAuthorityUnavailable();
+          }
+          reason = 'graph_shutdown';
+          _requireOutgoingGraphActive();
+          _outgoingDiagnosticTraceId = diagnostics.currentTraceId;
+          reason = 'busy';
+          final reduction = await coordinator.placeCall(
+            contactPeerId: contactAccountPeerId,
+            localAccountPeerId: localIdentity.peerId,
+            localDeviceId: localIdentity.peerId,
+          );
+          if (reduction.decision != CallEventDecision.applied) {
+            diagnostics.finishAttempt(
+              outcome: 'preflight_failed',
+              reason: 'busy',
+            );
+          }
+          return PreparedOutgoingCall(endpoint: endpoint, reduction: reduction);
+        },
+      );
+    } catch (_) {
+      diagnostics.record(
+        stage: 'preflight',
+        action: 'check',
+        outcome: 'failed',
+        reason: reason,
+      );
+      diagnostics.finishAttempt(outcome: 'preflight_failed', reason: reason);
+      rethrow;
+    }
   }
 
   void _requireOutgoingGraphActive() {
@@ -425,12 +464,52 @@ final class ProductionCallSignalingGraph
 
   @override
   Future<ForegroundCallActionResult> answer(CallId callId) async {
-    final ios = iosCallLifecycleAdapter;
-    if (ios != null && await ios.answer(callId)) {
-      // CallKit owns the answer on iOS: a Dart-only accept never activates
-      // the CallKit audio session, so media start fails after the caller
-      // was already told the call was accepted.
-      return ForegroundCallActionResult.applied;
+    final session = coordinator.activeSession;
+    if (_shuttingDown ||
+        session == null ||
+        session.callId != callId ||
+        session.isTerminal) {
+      return ForegroundCallActionResult.unavailable;
+    }
+    final answerNatively =
+        iosCallLifecycleAdapter?.answer ??
+        androidCallLifecycleAdapter?.answerNatively;
+    if (answerNatively != null) {
+      final diagnostics = CallDiagnostics.instance;
+      final traceId = diagnostics.traceForCall(callId: callId.value);
+      final operationId = diagnostics.beginOperation(
+        reason: 'user_action',
+        traceId: traceId,
+      );
+      diagnostics.record(
+        stage: 'answer',
+        action: 'accept',
+        outcome: 'started',
+        traceId: traceId,
+        operationId: operationId,
+        reason: 'user_action',
+      );
+      // Native answer persists the user action and activates Telecom/CallKit.
+      // Only its journal event may accept the call in Dart; refusal cannot
+      // fall back to acceptance without the required native audio authority.
+      final accepted = await diagnostics.runWithTrace(
+        traceId,
+        () => diagnostics.runWithOperation(
+          operationId,
+          () => answerNatively(callId),
+        ),
+      );
+      diagnostics.record(
+        stage: 'answer',
+        action: 'accept',
+        outcome: accepted ? 'ok' : 'rejected',
+        reason: accepted ? 'none' : 'native_answer_refused',
+        traceId: traceId,
+        operationId: operationId,
+      );
+      return accepted
+          ? ForegroundCallActionResult.applied
+          : ForegroundCallActionResult.unavailable;
     }
     return _dispatchForegroundAction(CallEventType.answer, callId);
   }
@@ -490,6 +569,19 @@ final class ProductionCallSignalingGraph
     CallEventType type,
     CallId callId,
   ) async {
+    final diagnostics = CallDiagnostics.instance;
+    final traceId = diagnostics.traceForCall(callId: callId.value);
+    diagnostics.record(
+      stage: type == CallEventType.answer ? 'answer' : 'terminal',
+      action: switch (type) {
+        CallEventType.answer => 'accept',
+        CallEventType.cancel => 'cancel',
+        _ => 'stop',
+      },
+      outcome: 'started',
+      reason: 'user_action',
+      traceId: traceId,
+    );
     final session = coordinator.activeSession;
     if (_shuttingDown ||
         session == null ||
@@ -561,6 +653,7 @@ final class ProductionCallSignalingGraph
   }
 
   void _onSessionSnapshot(CallSessionSnapshot session) {
+    _recordDiagnosticSession(session);
     _ringback?.onSession(session);
     if (_shuttingDown || session.callId == null || session.isTerminal) {
       _clearConnectionSnapshotReader();
@@ -588,6 +681,171 @@ final class ProductionCallSignalingGraph
       ),
     );
   }
+
+  void _recordDiagnosticSession(CallSessionSnapshot session) {
+    final diagnostics = CallDiagnostics.instance;
+    final callId = session.callId;
+    if (!diagnostics.enabled || callId == null) return;
+    final traceId =
+        diagnostics.traceForCall(callId: callId.value) ??
+        (session.direction == CallDirection.outgoing
+            ? _outgoingDiagnosticTraceId
+            : null) ??
+        diagnostics.beginAttempt(
+          role: session.direction == CallDirection.outgoing
+              ? 'caller'
+              : 'callee',
+        );
+    if (traceId == null) return;
+    diagnostics.bindCall(
+      callId: callId.value,
+      traceId: traceId,
+      role: session.direction == CallDirection.outgoing ? 'caller' : 'callee',
+    );
+    final state = switch (session.state) {
+      CallState.preparing => 'outgoing_preparing',
+      CallState.incomingValidating => 'incoming_validating',
+      CallState.negotiating => 'connecting',
+      _ => session.state.name,
+    };
+    diagnostics.record(
+      stage: session.isTerminal ? 'terminal' : 'signaling',
+      action: 'commit',
+      outcome: session.state == CallState.connected ? 'connected' : 'ok',
+      traceId: traceId,
+      reason: _diagnosticEndReason(session.endReason),
+      values: <String, Object?>{
+        'state': state,
+        'accepted': session.acceptedAt != null,
+        'connected': session.connectedAt != null,
+        'terminal': session.isTerminal,
+      },
+    );
+    if (session.isTerminal) {
+      _diagnosticSampleTimer?.cancel();
+      _diagnosticSampleTimer = null;
+      final verified = _diagnosticMediaVerifiedCallId == callId;
+      final failed = switch (session.endReason) {
+        CallEndReason.signalingFailed ||
+        CallEndReason.mediaFailed ||
+        CallEndReason.reconnectFailed ||
+        CallEndReason.permissionDenied ||
+        CallEndReason.policyRejected ||
+        CallEndReason.unsupported => true,
+        _ => false,
+      };
+      final outcome = session.endReason == CallEndReason.appShutdown
+          ? 'interrupted_unknown'
+          : verified
+          ? (failed ? 'dropped_after_media' : 'completed_after_media')
+          : session.acceptedAt != null
+          ? (failed ? 'media_failed' : 'answered_without_verified_media')
+          : switch (session.endReason) {
+              CallEndReason.callerCancelled ||
+              CallEndReason.localHangup ||
+              CallEndReason.remoteHangup => 'canceled',
+              CallEndReason.declined => 'declined',
+              CallEndReason.busy => 'busy',
+              CallEndReason.noAnswer || CallEndReason.expired => 'no_answer',
+              CallEndReason.appShutdown => 'interrupted_unknown',
+              _ => 'signaling_failed',
+            };
+      diagnostics.finishAttempt(
+        traceId: traceId,
+        outcome: outcome,
+        reason: _diagnosticEndReason(session.endReason),
+        values: <String, Object?>{
+          'connected': session.connectedAt != null,
+          'accepted': session.acceptedAt != null,
+          'mediaFlowVerified': verified,
+          if (session.startedAt != null && session.endedAt != null)
+            'durationMs': session.endedAt!
+                .difference(session.startedAt!)
+                .inMilliseconds,
+        },
+      );
+      _outgoingDiagnosticTraceId = null;
+      return;
+    }
+    if (session.state == CallState.connected &&
+        _diagnosticSampleTimer == null) {
+      _diagnosticSampleTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+        if (!diagnostics.enabled ||
+            _shuttingDown ||
+            coordinator.activeSession?.callId != callId ||
+            coordinator.activeSession?.isTerminal != false) {
+          _diagnosticSampleTimer?.cancel();
+          _diagnosticSampleTimer = null;
+          return;
+        }
+        if (_diagnosticSampleInFlight) return;
+        final reader = _activeConnectionSnapshotReader;
+        if (reader == null) return;
+        _diagnosticSampleInFlight = true;
+        unawaited(
+          reader()
+              .then<void>((_) {}, onError: (Object _, StackTrace _) {})
+              .whenComplete(() => _diagnosticSampleInFlight = false),
+        );
+      });
+    }
+  }
+
+  /// Observation-only seam; authenticated current-call state is read, never changed.
+  void recordMediaDiagnostics(
+    CallId callId,
+    CallStatsSample sample,
+    CallRtpProgressSample progress,
+  ) {
+    final diagnostics = CallDiagnostics.instance;
+    final session = coordinator.activeSession;
+    if (!diagnostics.enabled ||
+        session?.callId != callId ||
+        session?.isTerminal != false) {
+      return;
+    }
+    final ready = session!.state == CallState.connected;
+    final verified = ready && progress.inbound && progress.outbound;
+    if (verified) _diagnosticMediaVerifiedCallId = callId;
+    diagnostics.record(
+      stage: 'media',
+      action: 'snapshot',
+      outcome: verified ? 'media_flow_verified' : 'ok',
+      traceId: diagnostics.traceForCall(callId: callId.value),
+      values: <String, Object?>{
+        'structuralReady': ready,
+        'inboundRtpObserved': sample.inboundAudioRtpObserved,
+        'outboundRtpObserved': sample.outboundAudioRtpObserved,
+        'inboundRtpProgress': progress.inbound,
+        'outboundRtpProgress': progress.outbound,
+        'mediaFlowVerified': verified,
+        'transport': switch (sample.transport) {
+          CallTransportClass.turnUdp => 'turn_udp',
+          CallTransportClass.turnTcpTls => 'turn_tls',
+          CallTransportClass.direct => 'direct',
+          _ => 'unknown',
+        },
+      },
+    );
+  }
+
+  static String _diagnosticEndReason(CallEndReason? reason) => switch (reason) {
+    null => 'none',
+    CallEndReason.localHangup => 'local_user',
+    CallEndReason.remoteHangup => 'remote_user',
+    CallEndReason.callerCancelled => 'canceled',
+    CallEndReason.declined => 'declined',
+    CallEndReason.busy => 'busy',
+    CallEndReason.noAnswer => 'no_answer',
+    CallEndReason.expired => 'expired',
+    CallEndReason.permissionDenied => 'permission_denied',
+    CallEndReason.unsupported => 'platform_unsupported',
+    CallEndReason.signalingFailed => 'transport_failed',
+    CallEndReason.mediaFailed => 'media_failed',
+    CallEndReason.reconnectFailed => 'media_stalled',
+    CallEndReason.appShutdown => 'graph_shutdown',
+    CallEndReason.policyRejected => 'authority_rejected',
+  };
 
   void _onMediaBundleChanged(CallScopedMediaBundle? bundle) {
     if (_shuttingDown) return;
@@ -634,6 +892,23 @@ final class ProductionCallSignalingGraph
           session?.isTerminal != false) {
         return;
       }
+      CallDiagnostics.instance.record(
+        stage: 'audio',
+        action: 'snapshot',
+        outcome: 'ok',
+        traceId: CallDiagnostics.instance.traceForCall(callId: callId.value),
+        values: <String, Object?>{
+          'audioActive': audio.active,
+          'muted': audio.muted,
+          'route': switch (audio.selectedRoute) {
+            CallAudioOutputRoute.systemDefault => 'system_default',
+            CallAudioOutputRoute.speaker => 'speaker',
+            CallAudioOutputRoute.earpiece => 'earpiece',
+            CallAudioOutputRoute.bluetooth => 'bluetooth',
+            CallAudioOutputRoute.wiredHeadset => 'wired_headset',
+          },
+        },
+      );
       _publishForeground(
         ForegroundCallProjection(session: session!, audio: audio),
       );
@@ -649,6 +924,8 @@ final class ProductionCallSignalingGraph
   }
 
   void _clearConnectionSnapshotReader() {
+    _diagnosticSampleTimer?.cancel();
+    _diagnosticSampleTimer = null;
     _activeConnectionSnapshotCallId = null;
     _activeConnectionSnapshotReader = null;
   }
@@ -675,36 +952,74 @@ final class ProductionCallSignalingGraph
   }
 
   @override
-  Future<bool> advertiseCapability() async {
+  Future<bool> advertiseCapability() {
+    final diagnostics = CallDiagnostics.instance;
+    final operationId =
+        diagnostics.currentOperationId ??
+        diagnostics.beginOperation(reason: 'resume_refresh');
+    return diagnostics.runWithOperation(
+      operationId,
+      _advertiseCapabilityInOperation,
+    );
+  }
+
+  Future<bool> _advertiseCapabilityInOperation() {
+    if (!_canAdvertiseCapability) return Future<bool>.value(false);
+    // Resume, contact changes, and outgoing preflight have independent lanes.
+    // Finish each signed publication before reserving the next relay epoch.
+    final attempt = _advertisementTail.then<bool>((_) {
+      if (!_canAdvertiseCapability) return false;
+      return _advertiseCapabilityOnce();
+    });
+    _advertisementTail = attempt.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return attempt;
+  }
+
+  bool get _canAdvertiseCapability =>
+      !_shuttingDown && !_callabilityInvalidated;
+
+  Future<bool> _advertiseCapabilityOnce() async {
     var stage = 'network_gate';
     try {
-      if (!await callNetworkEffectsAreAllowed(_networkEffectsAllowed)) {
-        return _failCapabilityAdvertisement(stage: stage);
+      final networkAllowed = await callNetworkEffectsAreAllowed(
+        _networkEffectsAllowed,
+      );
+      if (!_canAdvertiseCapability) return false;
+      if (!networkAllowed) {
+        return await _failCapabilityAdvertisement(stage: stage);
       }
       stage = 'voip_token';
       final tokenCoordinator = iosVoipTokenCoordinator;
       if (tokenCoordinator != null &&
           !await tokenCoordinator.publishForAuthenticatedGraph()) {
-        return _failCapabilityAdvertisement(stage: stage);
+        return await _failCapabilityAdvertisement(stage: stage);
       }
+      if (!_canAdvertiseCapability) return false;
       stage = 'android_call_token';
       // Best effort: direct calls work without it, so a missing or rejected
       // token never blocks the endpoint advertisement.
       await androidCallTokenCoordinator?.ensurePublished();
+      if (!_canAdvertiseCapability) return false;
       stage = 'wake_authority';
+      final eligibleContacts = await loadWakeEligibleContacts();
+      if (!_canAdvertiseCapability) return false;
       if (!await wakeAuthorizationCoordinator.reconcile(
-        eligibleContacts: await loadWakeEligibleContacts(),
+        eligibleContacts: eligibleContacts,
         localRecipientDevicePeerId: localIdentity.peerId,
         localDeviceKeyEpoch: localDeviceKeyEpoch,
       )) {
-        return _failCapabilityAdvertisement(stage: stage);
+        return await _failCapabilityAdvertisement(stage: stage);
       }
+      if (!_canAdvertiseCapability) return false;
       stage = 'identity_keys';
       final mlKemPublicKey = localIdentity.mlKemPublicKey?.trim() ?? '';
       if (mlKemPublicKey.isEmpty ||
           localIdentity.publicKey.trim().isEmpty ||
           localIdentity.privateKey.trim().isEmpty) {
-        return _failCapabilityAdvertisement(stage: stage);
+        return await _failCapabilityAdvertisement(stage: stage);
       }
       final now = _nowMs();
       final priorEpoch = _advertisedPreferenceEpoch;
@@ -720,18 +1035,20 @@ final class ProductionCallSignalingGraph
           devicePeerId: localIdentity.peerId,
           capabilities: const <String>{CallEndpointResolver.voiceCapability},
           platform: platform,
-          expiresAtMs: now + const Duration(hours: 6).inMilliseconds,
+          expiresAtMs: now + callBackgroundReachabilityLifetime.inMilliseconds,
           preferenceEpoch: preferenceEpoch,
           deviceKeyEpoch: localDeviceKeyEpoch,
           routingHandle: routingHandle,
         ),
         senderSigningPrivateKey: localIdentity.privateKey,
       );
+      if (!_canAdvertiseCapability) return false;
       _advertisedPreferenceEpoch = preferenceEpoch;
       stage = 'endpoint_publish';
       if (!await authorityClient.setEndpoint(signed)) {
-        return _failCapabilityAdvertisement(stage: stage);
+        return await _failCapabilityAdvertisement(stage: stage);
       }
+      if (!_canAdvertiseCapability) return false;
       _routingHandle = routingHandle;
       _emitCapabilityAdvertisementResult(stage: 'ready', outcome: 'ready');
       return true;
@@ -744,6 +1061,10 @@ final class ProductionCallSignalingGraph
     required String stage,
     String outcome = 'unavailable',
   }) {
+    if (!_canAdvertiseCapability) {
+      _emitCapabilityAdvertisementResult(stage: stage, outcome: outcome);
+      return Future<bool>.value(false);
+    }
     if (_hasLiveSession) {
       // A failed re-advertisement during a live call defers: nothing is
       // revoked and no native call ends. The terminal snapshot retries once.
@@ -862,6 +1183,9 @@ final class ProductionCallSignalingGraph
     if (androidTokenCoordinator != null) {
       await attempt(androidTokenCoordinator.close);
     }
+    // An endpoint write already in flight must settle before its exact epoch
+    // is revoked. Earlier stages stop at their next await boundary above.
+    await attempt(() => _advertisementTail);
     if (iosCallLifecycleAdapter != null || iosVoipTokenCoordinator != null) {
       // Native iOS presentation, token authority, and endpoint authority are
       // withdrawn as one ordered unit before either native channel detaches.
@@ -978,12 +1302,38 @@ final class ProductionCallSignalingGraph
   /// next resume build a fresh adapter instead of silently rejecting every
   /// later incoming call until the process restarts.
   void _handleNativeLifecycleInvalidation() {
+    invalidationDiagnosticReason = 'native_lifecycle_failed';
+    invalidationDiagnosticOperationId = CallDiagnostics.instance.beginOperation(
+      reason: invalidationDiagnosticReason,
+    );
+    CallDiagnostics.instance.record(
+      stage: 'authority',
+      action: 'invalidate',
+      outcome: 'failed',
+      reason: invalidationDiagnosticReason,
+      operationId: invalidationDiagnosticOperationId,
+    );
+    _callabilityInvalidated = true;
     if (!_callabilityInvalidations.isClosed) {
       _callabilityInvalidations.add(null);
     }
   }
 
-  Future<void> _handleIosTokenInvalidation() async {
+  Future<void> _handleIosTokenInvalidation() {
+    invalidationDiagnosticReason =
+        iosVoipTokenCoordinator?.invalidationDiagnosticReason ?? 'unknown';
+    invalidationDiagnosticOperationId =
+        iosVoipTokenCoordinator?.invalidationDiagnosticOperationId ??
+        CallDiagnostics.instance.beginOperation(
+          reason: invalidationDiagnosticReason,
+        );
+    return CallDiagnostics.instance.runWithOperation(
+      invalidationDiagnosticOperationId,
+      _handleIosTokenInvalidationInOperation,
+    );
+  }
+
+  Future<void> _handleIosTokenInvalidationInOperation() async {
     if (_hasLiveSession) {
       // Token authority is applied only at the terminal snapshot: the retry
       // re-publishes the token; a failed retry then performs the idle rollback
@@ -994,10 +1344,12 @@ final class ProductionCallSignalingGraph
     }
     // Withdraw composition/outgoing entry synchronously. Graph shutdown then
     // joins the same memoized rollback legs before detaching either channel.
+    _callabilityInvalidated = true;
     if (!_callabilityInvalidations.isClosed) {
       _callabilityInvalidations.add(null);
     }
     try {
+      await _advertisementTail;
       await _rollbackIosCallability(terminal: true);
     } catch (_) {
       // Shutdown propagates the fixed-shape cleanup failure after all attempts.
@@ -1319,6 +1671,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
           featureFlags['voice_call_always_relay_enabled'] == true
           ? CallTransportPolicy.relayOnly
           : CallTransportPolicy.all;
+      ProductionCallSignalingGraph? diagnosticGraph;
       mediaOwner = CallScopedMediaBundleOwner(
         createBundle: (callId) async {
           final session = coordinator.activeSession;
@@ -1345,7 +1698,19 @@ CallSignalingComposition createProductionCallSignalingComposition({
               nativeLifecycleAdapter ?? CallAudioRouteAdapter.flutterWebRtc();
           final engine = FlutterWebRtcCallEngine(
             adapter: FlutterWebRtcPeerConnectionAdapter(
+              onDiagnosticSample: (sample, progress) => diagnosticGraph
+                  ?.recordMediaDiagnostics(callId, sample, progress),
               onFailureStage: (stage) {
+                CallDiagnostics.instance.record(
+                  stage: 'media',
+                  action: 'check',
+                  outcome: 'failed',
+                  reason: 'negotiation_failed',
+                  values: <String, Object?>{'failureStage': stage.name},
+                  traceId: CallDiagnostics.instance.traceForCall(
+                    callId: callId.value,
+                  ),
+                );
                 emitFlowEvent(
                   layer: 'FL',
                   event: 'CALL_WEBRTC_FAILURE_STAGE',
@@ -1367,6 +1732,16 @@ CallSignalingComposition createProductionCallSignalingComposition({
             ),
             audioSession: audioSession,
             onEngineStartFailure: (stage) {
+              CallDiagnostics.instance.record(
+                stage: 'audio',
+                action: 'activate',
+                outcome: 'failed',
+                reason: 'audio_activation_failed',
+                values: <String, Object?>{'failureStage': stage.name},
+                traceId: CallDiagnostics.instance.traceForCall(
+                  callId: callId.value,
+                ),
+              );
               emitFlowEvent(
                 layer: 'FL',
                 event: 'CALL_AUDIO_ENGINE_START_FAILURE_STAGE',
@@ -1380,6 +1755,25 @@ CallSignalingComposition createProductionCallSignalingComposition({
             clock: callClock,
             requireTurnServer: true,
             onStartResult: (status) {
+              CallDiagnostics.instance.record(
+                stage: 'audio',
+                action: 'activate',
+                outcome: status == CallAudioStartStatus.started
+                    ? 'ok'
+                    : 'failed',
+                reason: switch (status) {
+                  CallAudioStartStatus.started => 'none',
+                  CallAudioStartStatus.audioSessionFailed =>
+                    'audio_session_failed',
+                  _ => 'audio_activation_failed',
+                },
+                traceId: CallDiagnostics.instance.traceForCall(
+                  callId: callId.value,
+                ),
+                values: <String, Object?>{
+                  'audioActive': status == CallAudioStartStatus.started,
+                },
+              );
               emitFlowEvent(
                 layer: 'FL',
                 event: 'CALL_AUDIO_START_RESULT',
@@ -1540,6 +1934,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         networkEffectsAllowed: networkEffectsAllowed,
         nowMs: clock,
       );
+      diagnosticGraph = graph;
       onGraphBuilt?.call(graph);
       return graph;
     },
@@ -1633,6 +2028,18 @@ enum _TerminalCleanupStatus { ready, blocked }
 enum _TerminalCleanupReason { none, callMedia, cleanupCapacity, otherRequired }
 
 void _emitTerminalCleanupResult(CallCleanupReport report) {
+  final diagnostics = CallDiagnostics.instance;
+  diagnostics.record(
+    stage: 'cleanup',
+    action: 'finish',
+    outcome: report.terminalAckReady ? 'ok' : 'blocked',
+    reason: report.terminalAckReady ? 'none' : 'cleanup_failed',
+    traceId: diagnostics.traceForCall(callId: report.callId?.value),
+    values: <String, Object?>{
+      'complete': report.completed,
+      'cleanupRemaining': report.failedStepNames.length,
+    },
+  );
   final status = report.terminalAckReady
       ? _TerminalCleanupStatus.ready
       : _TerminalCleanupStatus.blocked;

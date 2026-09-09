@@ -157,6 +157,7 @@ internal class MknoonCallNativeBridge(
     private val ringbackStopper: ((String) -> Boolean)? = null,
     private val mainHandler: Handler = Handler(Looper.getMainLooper()),
     private val registrationExecutor: Executor? = null,
+    private val diagnostics: MknoonCallDiagnostics? = null,
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     companion object {
         const val METHOD_CHANNEL = "mknoon/android_call_lifecycle"
@@ -166,6 +167,7 @@ internal class MknoonCallNativeBridge(
 
     private val methodChannel = messenger?.let { MethodChannel(it, METHOD_CHANNEL) }
     private val eventChannel = messenger?.let { EventChannel(it, EVENT_CHANNEL) }
+    private val diagnosticChannel = messenger?.let { diagnostics?.bridge(it) }
     private val sinkLock = Any()
     private val localOwnershipLock = Any()
     private var locallyCurrent = true
@@ -184,12 +186,51 @@ internal class MknoonCallNativeBridge(
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        val arguments = (call.arguments as? Map<*, *>)?.toMutableMap()
+        val rawMetadata = arguments?.remove("diagnostics") as? Map<*, *> ?: emptyMap<Any, Any>()
+        val metadata = MknoonCallDiagnosticSpool.context(rawMetadata.entries.filter { it.key is String }.associate { it.key as String to it.value }).toMutableMap()
+        metadata.putIfAbsent("operationId", UUID.randomUUID().toString())
+        val handle = arguments?.get("callHandle") as? String
+        val classification = when (call.method) {
+            "answer" -> "answer" to "accept"
+            "activateAudio" -> "audio" to "activate"
+            "deactivateAudio" -> "audio" to "stop"
+            "setCapabilityEnabled", "setCapability" -> "authority" to "configure"
+            "presentAuthenticated", "registerOutgoingAuthenticated" -> "presentation" to "present"
+            "end", "failClosed" -> "cleanup" to "finish"
+            else -> null
+        }
+        val cleaned = MethodCall(call.method, arguments ?: call.arguments)
+        if (classification == null) { handleCore(cleaned, result); return }
+        val (stage, action) = classification
+        val reason = metadata["reason"] as? String ?: "none"
+        (metadata["traceId"] as? String)?.let { if (handle != null) diagnostics?.bind(handle, it, metadata) }
+        diagnostics?.record(handle, stage, action, "started", reason, context = metadata)
+        MknoonCallDiagnosticScope.withContext(metadata) {
+            handleCore(cleaned, object : MethodChannel.Result {
+                override fun success(value: Any?) {
+                    diagnostics?.record(handle, stage, action, if (value == false) "rejected" else "ok",
+                        if (value == false && stage == "answer") "native_answer_refused" else reason,
+                        values = if (value is Boolean) mapOf("accepted" to value) else emptyMap(), context = metadata)
+                    result.success(value)
+                }
+                override fun error(code: String, message: String?, details: Any?) {
+                    diagnostics?.record(handle, stage, action, "failed", "invalid_request", context = metadata)
+                    result.error(code, message, details)
+                }
+                override fun notImplemented() { result.notImplemented() }
+            })
+        }
+    }
+
+    private fun handleCore(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "attach" -> attach(call.arguments, result)
             "detach" -> detach(call.arguments, result)
             "acknowledge" -> acknowledge(call.arguments, result)
             "markAdopted" -> withLegacyCallId(call.arguments, result, controller::markAdopted)
             "adopt" -> withDartCallHandle(call.arguments, result, controller::markAdopted)
+            "answer" -> withDartCallHandle(call.arguments, result, controller::answer)
             "activateAudio" -> withEitherCallIdentity(
                 call.arguments,
                 result,
@@ -248,6 +289,7 @@ internal class MknoonCallNativeBridge(
         }
         methodChannel?.setMethodCallHandler(null)
         eventChannel?.setStreamHandler(null)
+        diagnosticChannel?.setMethodCallHandler(null)
     }
 
     private fun attach(arguments: Any?, result: MethodChannel.Result) {

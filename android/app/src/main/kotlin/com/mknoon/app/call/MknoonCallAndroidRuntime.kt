@@ -173,6 +173,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     }
 
     private val applicationContext = context.applicationContext
+    private val diagnostics = MknoonCallDiagnostics.get(applicationContext)
     private val incomingCallRinger = MknoonIncomingCallRinger(
         AndroidMknoonCallRingtoneStarter(applicationContext),
     )
@@ -227,6 +228,8 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             onCleanupPending = ::scheduleCleanupRetry,
             onDeclineWithoutOwner = ::scheduleHeadlessDeclineReply,
             diagnosticSink = AndroidMknoonCallLifecycleDiagnosticSink,
+            journalDiagnostic = diagnostics::journal,
+            answerDiagnostic = { handle, outcome, reason -> diagnostics.record(handle, "answer", "accept", outcome, reason) },
         )
         reconcilePersistedDescriptor()
     }
@@ -324,6 +327,10 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                 return@synchronized MknoonCallPresentationResult.DUPLICATE
             }
             controller.present(payload).also { result ->
+                diagnostics.record(payload.callHandle, "presentation", "present",
+                    if (result == MknoonCallPresentationResult.PRESENTED) "ok" else if (result == MknoonCallPresentationResult.DUPLICATE) "duplicate" else "failed",
+                    if (result == MknoonCallPresentationResult.PRESENTED) "none" else "native_lifecycle_failed",
+                    context = mapOf("role" to "callee"))
                 android.util.Log.i(
                     MKNOON_CALL_PRESENTATION_DIAGNOSTIC_TAG,
                     "MKNOON_CALL_PRESENTATION_DIAG result=" + result.name,
@@ -404,6 +411,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             ringbackStarter = ::startOutgoingRingback,
             ringbackStopper = ::stopOutgoingRingback,
             registrationExecutor = registrationExecutor,
+            diagnostics = diagnostics,
         )
 
     fun foregroundRuntime(service: Service): MknoonCallForegroundRuntime =

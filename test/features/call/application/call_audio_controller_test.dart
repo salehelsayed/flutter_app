@@ -128,6 +128,120 @@ void main() {
       },
     );
 
+    test('interruption during startup remains paused until its end', () async {
+      final harness = _Harness();
+      final routesEntered = Completer<void>();
+      final routesGate = Completer<void>();
+      harness.engine
+        ..supportedRoutesEntered = routesEntered
+        ..supportedRoutesGate = routesGate;
+      final intents = <CallAudioInterruptionIntent>[];
+      final subscription = harness.controller.interruptionIntents.listen(
+        intents.add,
+      );
+      final starting = harness.start();
+      await routesEntered.future;
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      routesGate.complete();
+
+      final result = await starting;
+      await harness.controller.settle();
+
+      expect(result.status, CallAudioStartStatus.started);
+      expect(result.state.active, isFalse);
+      expect(harness.engine.audioSessionActive, isFalse);
+      expect(intents, <CallAudioInterruptionIntent>[
+        CallAudioInterruptionIntent.pausedReconnect,
+      ]);
+
+      harness.session.emit(const CallAudioSessionInterruption.end());
+      await harness.controller.settle();
+      expect(harness.engine.audioSessionActive, isTrue);
+      expect(harness.controller.state.active, isTrue);
+      expect(intents, <CallAudioInterruptionIntent>[
+        CallAudioInterruptionIntent.pausedReconnect,
+        CallAudioInterruptionIntent.recover,
+      ]);
+      await subscription.cancel();
+      await harness.controller.close();
+    });
+
+    test(
+      'completed interruption during startup does not leave audio paused',
+      () async {
+        final harness = _Harness();
+        final routesEntered = Completer<void>();
+        final routesGate = Completer<void>();
+        harness.engine
+          ..supportedRoutesEntered = routesEntered
+          ..supportedRoutesGate = routesGate;
+        final starting = harness.start();
+        await routesEntered.future;
+        harness.session.emit(const CallAudioSessionInterruption.begin());
+        harness.session.emit(const CallAudioSessionInterruption.end());
+        routesGate.complete();
+
+        final result = await starting;
+        await harness.controller.settle();
+        expect(result.state.active, isTrue);
+        expect(harness.engine.audioSessionActive, isTrue);
+        await harness.controller.close();
+      },
+    );
+
+    test(
+      'ownership lost during startup cannot advertise active audio',
+      () async {
+        final harness = _Harness();
+        final routesEntered = Completer<void>();
+        final routesGate = Completer<void>();
+        harness.engine
+          ..supportedRoutesEntered = routesEntered
+          ..supportedRoutesGate = routesGate;
+        final starting = harness.start();
+        await routesEntered.future;
+        harness.session.emit(const CallAudioSessionInterruption.begin());
+        harness.session.ownsSession = false;
+        harness.session.emit(const CallAudioSessionInterruption.end());
+        routesGate.complete();
+
+        final result = await starting;
+        await harness.controller.settle();
+        expect(result.state.active, isFalse);
+        expect(harness.engine.audioSessionActive, isFalse);
+        await harness.controller.close();
+      },
+    );
+
+    test(
+      'interruption end during startup pause is retained for recovery',
+      () async {
+        final harness = _Harness();
+        final routesEntered = Completer<void>();
+        final routesGate = Completer<void>();
+        final pauseEntered = Completer<void>();
+        final pauseGate = Completer<void>();
+        harness.engine
+          ..supportedRoutesEntered = routesEntered
+          ..supportedRoutesGate = routesGate
+          ..sessionDeactivationEntered = pauseEntered
+          ..sessionDeactivationGate = pauseGate;
+        final starting = harness.start();
+        await routesEntered.future;
+        harness.session.emit(const CallAudioSessionInterruption.begin());
+        routesGate.complete();
+        await pauseEntered.future;
+        harness.session.emit(const CallAudioSessionInterruption.end());
+        pauseGate.complete();
+
+        expect((await starting).status, CallAudioStartStatus.started);
+        await harness.controller.settle();
+        expect(harness.engine.audioSessionActive, isTrue);
+        expect(harness.controller.state.active, isTrue);
+        await harness.controller.close();
+      },
+    );
+
     test(
       'route inventory failure keeps an accepted audio connection alive',
       () async {
@@ -436,6 +550,210 @@ void main() {
       },
     );
 
+    for (final control in <String>['mute', 'route']) {
+      test(
+        '$control snapshot failure reports control failure without escaping',
+        () async {
+          final harness = _Harness();
+          await harness.start();
+          harness.engine.failSnapshot = true;
+
+          final state = control == 'mute'
+              ? await harness.controller.setMuted(true)
+              : await harness.controller.selectOutputRoute(
+                  CallAudioOutputRoute.speaker,
+                );
+
+          expect(state.failure, CallAudioFailure.controlFailed);
+          expect(
+            harness.controller.state.failure,
+            CallAudioFailure.controlFailed,
+          );
+          await harness.controller.close();
+        },
+      );
+    }
+
+    test('interruption snapshot failure stays inside the controller', () async {
+      final harness = _Harness();
+      await harness.start();
+      harness.engine.failSnapshot = true;
+
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      await harness.controller.settle();
+
+      expect(harness.engine.audioSessionActive, isFalse);
+      expect(
+        harness.controller.state.failure,
+        CallAudioFailure.interruptionFailed,
+      );
+      await harness.controller.close();
+    });
+
+    test('new interruption supersedes queued recovery', () async {
+      final harness = _Harness();
+      await harness.start();
+      final intents = <CallAudioInterruptionIntent>[];
+      final subscription = harness.controller.interruptionIntents.listen(
+        intents.add,
+      );
+
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      harness.session.emit(const CallAudioSessionInterruption.end());
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      await harness.controller.settle();
+
+      expect(intents, <CallAudioInterruptionIntent>[
+        CallAudioInterruptionIntent.pausedReconnect,
+        CallAudioInterruptionIntent.pausedReconnect,
+      ]);
+      expect(harness.engine.audioSessionActive, isFalse);
+      expect(
+        harness.calls.where((call) => call == 'engine.session:true'),
+        hasLength(1),
+      );
+      await subscription.cancel();
+      await harness.controller.close();
+    });
+
+    test('new interruption supersedes in-flight recovery', () async {
+      final harness = _Harness();
+      await harness.start();
+      final intents = <CallAudioInterruptionIntent>[];
+      final subscription = harness.controller.interruptionIntents.listen(
+        intents.add,
+      );
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      await harness.controller.settle();
+
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      harness.engine
+        ..sessionActivationEntered = entered
+        ..sessionActivationGate = release;
+      harness.session.emit(const CallAudioSessionInterruption.end());
+      await entered.future;
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      release.complete();
+      await harness.controller.settle();
+
+      expect(intents, <CallAudioInterruptionIntent>[
+        CallAudioInterruptionIntent.pausedReconnect,
+        CallAudioInterruptionIntent.pausedReconnect,
+      ]);
+      expect(harness.engine.audioSessionActive, isFalse);
+      await subscription.cancel();
+      await harness.controller.close();
+    });
+
+    test('newer interruption cycle supersedes earlier recovery', () async {
+      final harness = _Harness();
+      await harness.start();
+      final intents = <CallAudioInterruptionIntent>[];
+      final subscription = harness.controller.interruptionIntents.listen(
+        intents.add,
+      );
+
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      harness.session.emit(const CallAudioSessionInterruption.end());
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      harness.session.emit(const CallAudioSessionInterruption.end());
+      await harness.controller.settle();
+
+      expect(intents, <CallAudioInterruptionIntent>[
+        CallAudioInterruptionIntent.pausedReconnect,
+        CallAudioInterruptionIntent.pausedReconnect,
+        CallAudioInterruptionIntent.recover,
+      ]);
+      expect(harness.engine.audioSessionActive, isTrue);
+      expect(
+        harness.calls.where((call) => call == 'engine.session:true'),
+        hasLength(2),
+      );
+      await subscription.cancel();
+      await harness.controller.close();
+    });
+
+    test('new interruption suppresses a stale recovery snapshot', () async {
+      final harness = _Harness();
+      await harness.start();
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      await harness.controller.settle();
+      final states = <CallAudioControlState>[];
+      final subscription = harness.controller.stateChanges.listen(states.add);
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      harness.engine
+        ..snapshotEntered = entered
+        ..snapshotGate = release;
+
+      harness.session.emit(const CallAudioSessionInterruption.end());
+      await entered.future;
+      harness.session.emit(const CallAudioSessionInterruption.begin());
+      release.complete();
+      await harness.controller.settle();
+
+      expect(states.where((state) => state.active), isEmpty);
+      expect(harness.controller.state.active, isFalse);
+      await subscription.cancel();
+      await harness.controller.close();
+    });
+
+    for (final fallbackFails in <bool>[false, true]) {
+      test(
+        'new interruption suppresses stale recovery fallback (fails: $fallbackFails)',
+        () async {
+          final harness = _Harness();
+          await harness.start();
+          harness.session.emit(const CallAudioSessionInterruption.begin());
+          await harness.controller.settle();
+          final states = <CallAudioControlState>[];
+          final intents = <CallAudioInterruptionIntent>[];
+          final stateSubscription = harness.controller.stateChanges.listen(
+            states.add,
+          );
+          final intentSubscription = harness.controller.interruptionIntents
+              .listen(intents.add);
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          harness.engine
+            ..snapshotFailuresRemaining = fallbackFails ? 2 : 1
+            ..snapshotGateCall = harness.engine.snapshotCalls + 2
+            ..snapshotEntered = entered
+            ..snapshotGate = release;
+
+          harness.session.emit(const CallAudioSessionInterruption.end());
+          await entered.future;
+          harness.session.emit(const CallAudioSessionInterruption.begin());
+          release.complete();
+          await harness.controller.settle();
+
+          expect(states.where((state) => state.active), isEmpty);
+          expect(
+            states.where(
+              (state) => state.failure == CallAudioFailure.interruptionFailed,
+            ),
+            isEmpty,
+          );
+          expect(intents, <CallAudioInterruptionIntent>[
+            CallAudioInterruptionIntent.pausedReconnect,
+          ]);
+          expect(harness.controller.state.active, isFalse);
+
+          harness.session.emit(const CallAudioSessionInterruption.end());
+          await harness.controller.settle();
+          expect(harness.controller.state.active, isTrue);
+          expect(intents, <CallAudioInterruptionIntent>[
+            CallAudioInterruptionIntent.pausedReconnect,
+            CallAudioInterruptionIntent.recover,
+          ]);
+          await stateSubscription.cancel();
+          await intentSubscription.cancel();
+          await harness.controller.close();
+        },
+      );
+    }
+
     test('owned interruption end emits recovery after reactivation', () async {
       final harness = _Harness();
       await harness.start();
@@ -459,6 +777,41 @@ void main() {
   });
 
   group('VC2-03 foreground audio cleanup', () {
+    test('close suppresses a pending control fallback failure', () async {
+      final harness = _Harness();
+      await harness.start();
+      final states = <CallAudioControlState>[];
+      final subscription = harness.controller.stateChanges.listen(states.add);
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      harness.engine
+        ..snapshotFailuresRemaining = 2
+        ..snapshotGateCall = harness.engine.snapshotCalls + 2
+        ..snapshotEntered = entered
+        ..snapshotGate = release;
+
+      final muting = harness.controller.setMuted(true);
+      await entered.future;
+      final closing = harness.controller.close();
+      release.complete();
+      await muting;
+      await closing;
+
+      expect(states.where((state) => state.active), isEmpty);
+      expect(
+        states.where(
+          (state) => state.failure == CallAudioFailure.controlFailed,
+        ),
+        isEmpty,
+      );
+      expect(harness.controller.state.active, isFalse);
+      expect(harness.controller.state.failure, CallAudioFailure.none);
+      expect(harness.engine.closeCalls, 1);
+      expect(harness.session.deactivateCalls, 1);
+      expect(harness.conflicts.lease.releaseCalls, 1);
+      await subscription.cancel();
+    });
+
     test('publishes the final inactive state before closing changes', () async {
       final harness = _Harness();
       final states = <CallAudioControlState>[];
@@ -867,6 +1220,7 @@ final class _FakeCallEngine
   bool failCreate = false;
   bool failSupportedRoutes = false;
   bool failSnapshot = false;
+  int snapshotFailuresRemaining = 0;
   bool failClose = false;
   bool failSystemRoute = false;
   bool yieldDuringControls = false;
@@ -876,9 +1230,15 @@ final class _FakeCallEngine
   bool localAudioEnabled = false;
   CallAudioOutputRoute outputRoute = CallAudioOutputRoute.systemDefault;
   Completer<void>? snapshotGate;
+  int? snapshotGateCall;
+  Completer<void>? snapshotEntered;
   Completer<void>? supportedRoutesEntered;
   Completer<void>? supportedRoutesGate;
   Completer<void>? systemRouteGate;
+  Completer<void>? sessionActivationEntered;
+  Completer<void>? sessionActivationGate;
+  Completer<void>? sessionDeactivationEntered;
+  Completer<void>? sessionDeactivationGate;
   CallConnectionConfiguration? lastConfiguration;
 
   @override
@@ -954,6 +1314,15 @@ final class _FakeCallEngine
   @override
   Future<void> setAudioSessionActive(bool active) async {
     calls.add('engine.session:$active');
+    if (active) {
+      final entered = sessionActivationEntered;
+      if (entered != null && !entered.isCompleted) entered.complete();
+      await sessionActivationGate?.future;
+    } else {
+      final entered = sessionDeactivationEntered;
+      if (entered != null && !entered.isCompleted) entered.complete();
+      await sessionDeactivationGate?.future;
+    }
     if (active && failSessionActivation) {
       throw const CallEngineException(CallEngineErrorCode.other);
     }
@@ -1003,8 +1372,13 @@ final class _FakeCallEngine
   @override
   Future<CallConnectionSnapshot> snapshot() async {
     snapshotCalls++;
-    await snapshotGate?.future;
-    if (failSnapshot) {
+    if (snapshotGateCall == null || snapshotGateCall == snapshotCalls) {
+      final entered = snapshotEntered;
+      if (entered != null && !entered.isCompleted) entered.complete();
+      await snapshotGate?.future;
+    }
+    if (failSnapshot || snapshotFailuresRemaining > 0) {
+      if (snapshotFailuresRemaining > 0) snapshotFailuresRemaining--;
       throw const CallEngineException(CallEngineErrorCode.other);
     }
     return CallConnectionSnapshot(

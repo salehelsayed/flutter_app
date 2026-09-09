@@ -108,12 +108,15 @@ final class CallAudioRouteAdapter
 
   @override
   Future<List<CallAudioOutputRoute>> supportedOutputRoutes() async {
+    _ensureOpen(CallAudioRouteErrorCode.enumerationFailed);
     try {
       final platformRoutes = await _enumerateOutputs().timeout(
         _enumerationTimeout,
       );
+      _ensureOpen(CallAudioRouteErrorCode.enumerationFailed);
       return _supportedRoutes(platformRoutes);
     } on TimeoutException {
+      _ensureOpen(CallAudioRouteErrorCode.enumerationFailed);
       return _supportedRoutes(const <CallAudioOutputRoute>[]);
     } catch (_) {
       throw const CallAudioRouteException(
@@ -139,7 +142,9 @@ final class CallAudioRouteAdapter
 
   @override
   Future<void> selectOutputRoute(CallAudioOutputRoute route) async {
+    _ensureOpen(CallAudioRouteErrorCode.selectionFailed);
     final supported = await supportedOutputRoutes();
+    _ensureOpen(CallAudioRouteErrorCode.selectionFailed);
     if (!supported.contains(route)) {
       throw const CallAudioRouteException(CallAudioRouteErrorCode.unsupported);
     }
@@ -169,6 +174,7 @@ final class CallAudioRouteAdapter
         CallAudioRouteErrorCode.selectionFailed,
       );
     }
+    _ensureOpen(CallAudioRouteErrorCode.selectionFailed);
     if (deviceChangeGeneration == _deviceChangeGeneration) {
       _selectedRoute = route;
     }
@@ -177,6 +183,10 @@ final class CallAudioRouteAdapter
     // change inside this window as caused by the selection.
     _selectedRoute = route;
     _selectionSettledAt = _clock();
+  }
+
+  void _ensureOpen(CallAudioRouteErrorCode code) {
+    if (_closed) throw CallAudioRouteException(code);
   }
 
   final DateTime Function() _clock;

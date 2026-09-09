@@ -457,6 +457,24 @@ class ChatMessageListener {
     }
   }
 
+  void _retryNotificationDisplaysAfterCommit() {
+    if (retryNotificationDisplays == null) return;
+    // The handler already persisted/promoted display custody. Its existing
+    // projection owner retains retries; OS display is not transport custody.
+    // Do not delay the direct ACK or serial inbox drain on that separate lane.
+    unawaited(() async {
+      try {
+        await retryNotificationDisplays?.call();
+      } catch (_) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_LISTENER_NOTIFICATION_ERROR',
+          details: {'reason': 'display_retry_failed'},
+        );
+      }
+    }());
+  }
+
   Future<ChatMessageProcessOutcome> processIncomingMessage(
     ChatMessage message, {
     bool suppressNotification = false,
@@ -625,7 +643,7 @@ class ChatMessageListener {
       }
 
       if (result == HandleChatMessageResult.duplicate) {
-        await retryNotificationDisplays?.call();
+        _retryNotificationDisplaysAfterCommit();
         return finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.duplicate,
@@ -708,7 +726,7 @@ class ChatMessageListener {
           );
           // The handler already promoted marker-first custody. Retire it from
           // current policy immediately instead of waiting for a future resume.
-          await retryNotificationDisplays?.call();
+          _retryNotificationDisplaysAfterCommit();
           return finish(
             ChatMessageProcessOutcome(
               state: ChatMessageProcessState.stored,
@@ -735,7 +753,7 @@ class ChatMessageListener {
 
         // Show local notification (suppressed if viewing this conversation)
         if (retryNotificationDisplays != null) {
-          await retryNotificationDisplays!.call();
+          _retryNotificationDisplaysAfterCommit();
         } else if (notificationService != null && appVisibility != null) {
           final username =
               senderContact?.username ??

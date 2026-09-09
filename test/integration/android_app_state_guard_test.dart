@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../integration_test/scripts/run_intro_accept_notification_android.dart'
+    as intro_campaign;
 import '../../integration_test/support/android_app_state_guard.dart';
 
 void main() {
@@ -953,7 +955,7 @@ Future<void> main(List<String> arguments) async {
   });
 
   test(
-    'installed split APKs, permissions, and background process restore in place',
+    'installed split APKs, permissions, and isolated background process restore in place',
     () async {
       final root = await Directory.systemTemp.createTemp(
         'state-guard-installed-',
@@ -995,6 +997,10 @@ Future<void> main(List<String> arguments) async {
       expect(adb.permissions['android.permission.POST_NOTIFICATIONS'], isFalse);
       expect(adb.running, isTrue);
       expect(adb.foreground, isFalse);
+      expect(
+        adb.commands.join('\n'),
+        contains('am start -W -n $_packageName/com.mknoon.app.MainActivity'),
+      );
       expect(
         adb.commands.join('\n'),
         contains('install-multiple --no-streaming -r -d -t'),
@@ -1976,6 +1982,104 @@ Future<void> main(List<String> arguments) async {
     },
   );
 
+  group('isolated package launch contract', () {
+    for (final entry in const <String, (String, int)>{
+      'android_wake_token_directionality_campaign.dart': ('packageName', 1),
+      'capture_android_push_relay_registration.dart': ('appPackage', 1),
+      'android_direct_media_blob_custody_device_action.dart': (
+        'packageName',
+        1,
+      ),
+      'run_intro_accept_notification_android.dart': ('_appPackage', 1),
+      'run_connectivity_restore_sims.dart': ('packageName', 1),
+      'run_connectivity_restore_media_outbox_sims.dart': ('packageName', 1),
+      'capture_group_reaction_notification_device.dart': ('appPackage', 1),
+      'capture_1to1_reaction_head_provenance.dart': ('appPackage', 2),
+      'capture_android_background_crypto_preflight.dart': ('appPackage', 1),
+    }.entries) {
+      test('${entry.key} keeps the native activity namespace', () {
+        final source = File(
+          'integration_test/scripts/${entry.key}',
+        ).readAsStringSync();
+        final (packageVariable, launchCount) = entry.value;
+        final packageExpression = '\$$packageVariable';
+
+        // These campaign entry points accept a disposable applicationId. Its
+        // package selects the install; MainActivity retains its native class.
+        expect(source, contains('resolveAndroidAppPackage()'));
+        expect(
+          '$packageExpression/com.mknoon.app.MainActivity'
+              .allMatches(source)
+              .length,
+          launchCount,
+        );
+        expect(source, isNot(contains('$packageExpression/.MainActivity')));
+      });
+    }
+
+    test('timeout handoff accepts the exact native class', () {
+      for (final package in <String>['com.mknoon.app', _packageName]) {
+        expect(
+          intro_campaign.isAndroidActivityStartProvisionallyAccepted(
+            'Starting: Intent { cmp=$package/com.mknoon.app.MainActivity }\n',
+            packageName: package,
+          ),
+          isTrue,
+          reason: package,
+        );
+      }
+    });
+
+    test('timeout handoff rejects an isolated package derived class', () {
+      for (final component in <String>[
+        '$_packageName/.MainActivity',
+        '$_packageName/$_packageName.MainActivity',
+        'com.other.app/com.mknoon.app.MainActivity',
+        '$_packageName/com.mknoon.app.OtherActivity',
+        '$_packageName/com.mknoon.app.MainActivityExtra',
+        '$_packageName/com.mknoon.app.MainActivity } Error type 3: missing {',
+      ]) {
+        expect(
+          intro_campaign.isAndroidActivityStartProvisionallyAccepted(
+            'Starting: Intent { cmp=$component }\n',
+            packageName: _packageName,
+          ),
+          isFalse,
+          reason: component,
+        );
+      }
+    });
+
+    test('timeout recovery keeps one exact isolated component handoff', () async {
+      final launches = <bool>[];
+      var pidReads = 0;
+      const handoff =
+          'Starting: Intent { cmp=$_packageName/com.mknoon.app.MainActivity }\n';
+      final recovered = await intro_campaign
+          .runAndroidActivityLaunchWithSingleProcessRecovery(
+            launch: (waitForLaunch) async {
+              launches.add(waitForLaunch);
+              if (waitForLaunch) {
+                throw const intro_campaign.IntroCommandTimedOut(
+                  'host wait timed out',
+                  stdout: handoff,
+                );
+              }
+              return handoff;
+            },
+            readProcessId: () async {
+              pidReads += 1;
+              return '';
+            },
+            packageName: _packageName,
+          );
+
+      expect(recovered, isTrue);
+      expect(launches, <bool>[true, false]);
+      expect(pidReads, 1);
+    });
+  });
+
   test('source contract preserves archive and PASS ordering invariants', () {
     final guardSource = File(
       'integration_test/support/android_app_state_guard.dart',
@@ -2098,7 +2202,7 @@ Future<bool> _waitForProcessToDisappear(int processId) async {
   return false;
 }
 
-const String _packageName = 'com.mknoon.app';
+const String _packageName = 'com.mknoon.sims.stateguard';
 
 void _writePrivateTarFixture(
   File destination,
@@ -2601,7 +2705,9 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     if (_starts(shell, const <String>['dumpsys', 'activity', 'activities'])) {
       return _result(
         0,
-        foreground ? 'topResumedActivity=$_packageName/.MainActivity' : '',
+        foreground
+            ? 'topResumedActivity=$_packageName/com.mknoon.app.MainActivity'
+            : '',
         '',
       );
     }
@@ -2624,7 +2730,7 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
       'start',
       '-W',
       '-n',
-      '$_packageName/.MainActivity',
+      '$_packageName/com.mknoon.app.MainActivity',
     ])) {
       running = true;
       foreground = true;

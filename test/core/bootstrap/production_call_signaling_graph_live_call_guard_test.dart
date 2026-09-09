@@ -4,11 +4,13 @@ import 'dart:convert';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
@@ -35,7 +37,146 @@ final _callA = CallId.parse('11111111-1111-4111-8111-111111111111');
 final _activeAt = DateTime.fromMillisecondsSinceEpoch(2_000_000, isUtc: true);
 
 void main() {
+  test(
+    'production cleanup remains correlated after terminal summary commits',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final fixture = await _createFixture();
+      await fixture.composition.start();
+      final graph = fixture.graphs.single;
+      await _ringIncoming(graph);
+      final traceId = diagnostics.traceForCall(callId: _callA.value);
+      expect(traceId, isNotNull);
+      await _endCall(graph);
+      await _settle();
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.any(
+          (event) =>
+              event['traceId'] == traceId &&
+              event['stage'] == 'cleanup' &&
+              event['outcome'] == 'ok',
+        ),
+        isTrue,
+      );
+      expect(jsonEncode(events), isNot(contains('remote-account')));
+      expect(jsonEncode(events), isNot(contains(_callA.value)));
+    },
+  );
+
   tearDown(() => debugSetFlowEventSink(null));
+
+  test(
+    'published authority resolves after idle days without a new exchange',
+    () async {
+      const issuedAtMs = 2_000_000;
+      var nowMs = issuedAtMs;
+      final fixture = await _createFixture(nowMs: () => nowMs);
+      await fixture.composition.start();
+      final graph = fixture.graphs.single;
+      final issued = (await graph.issuedCallWakeHandleStore.readForContact(
+        'remote-account',
+      ))!;
+      expect(
+        await graph.markCallWakeHandleDistributed(
+          'remote-account',
+          issued.grant,
+        ),
+        isTrue,
+      );
+      final payload = Map<String, dynamic>.from(
+        fixture.bridge.requests.lastWhere(
+              (request) => request['cmd'] == 'call_endpoint_set_v1',
+            )['payload']
+            as Map,
+      );
+      final signature = payload.remove('signature') as String;
+      final record = CallEndpointRecord.fromMap(<String, dynamic>{
+        ...payload,
+        'schema': CallEndpointRecord.schema,
+        'version': CallEndpointRecord.version,
+      });
+      final signed = SignedCallEndpointRecord(
+        record: record,
+        signature: signature,
+        canonicalRecordBase64: base64Encode(
+          utf8.encode(record.canonicalRecordJson),
+        ),
+      );
+      final resolver = CallEndpointResolver(
+        nowMs: () => nowMs,
+        verifyEndpointSignature: (endpoint, publicKey) async =>
+            endpoint.signature == 'c2lnbmF0dXJl' &&
+            endpoint.canonicalRecordJson == record.canonicalRecordJson &&
+            publicKey == 'local-public-key',
+      );
+      Future<ResolvedCallEndpoint> resolve({bool blocked = false}) =>
+          resolver.resolve(
+            contactAccountPeerId: record.accountPeerId,
+            contactAccepted: true,
+            contactBlocked: blocked,
+            trustedDevices: <TrustedCallDeviceAuthority>[
+              TrustedCallDeviceAuthority(
+                accountPeerId: record.accountPeerId,
+                devicePeerId: record.devicePeerId,
+                linked: true,
+                deviceKeyEpoch: record.deviceKeyEpoch,
+                signingPublicKey: 'local-public-key',
+                mlKemPublicKey: 'local-mlkem-public-key',
+              ),
+            ],
+            relayCapabilities: <SignedCallEndpointRecord>[signed],
+            wakeHandleGrant: issued.grant,
+          );
+      await _settle();
+      final commandsBeforeIdle = List<String>.of(fixture.bridge.commands);
+      for (final idle in const <Duration>[
+        Duration(hours: 7),
+        Duration(hours: 25),
+        Duration(days: 29),
+      ]) {
+        nowMs = issuedAtMs + idle.inMilliseconds;
+        final endpoint = await resolve();
+        expect(endpoint.wakeHandle, issued.grant.handle);
+        expect(
+          endpoint.expiresAtMs,
+          issuedAtMs + const Duration(days: 30).inMilliseconds,
+        );
+        final persisted = await graph.issuedCallWakeHandleStore.readForContact(
+          'remote-account',
+        );
+        expect(persisted?.hasCurrentDistributionReceipt, isTrue);
+        expect(persisted?.distributionPending, isFalse);
+      }
+      await expectLater(
+        resolve(blocked: true),
+        throwsA(
+          isA<CallEndpointResolutionException>().having(
+            (error) => error.code,
+            'code',
+            CallEndpointResolutionCode.blocked,
+          ),
+        ),
+      );
+      nowMs = issuedAtMs + const Duration(days: 30).inMilliseconds;
+      await expectLater(
+        resolve(),
+        throwsA(
+          isA<CallEndpointResolutionException>().having(
+            (error) => error.code,
+            'code',
+            CallEndpointResolutionCode.stale,
+          ),
+        ),
+      );
+      expect(issued.grant.isValidAt(nowMs), isFalse);
+      expect(fixture.bridge.commands, commandsBeforeIdle);
+    },
+  );
 
   test(
     'failed advertisement during a live call revokes nothing and ends no CallKit call',
@@ -272,6 +413,131 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test(
+    'overlapping refreshes cannot publish an older endpoint after a newer one',
+    () async {
+      var nowMs = 2_000_000;
+      final fixture = await _createFixture(nowMs: () => nowMs);
+      await fixture.composition.start();
+      final firstSignEntered = Completer<void>();
+      final firstSignature = Completer<Map<String, Object?>>();
+      var signatureCount = 0;
+      fixture.bridge.responseHandlers['payload.sign'] = (_) async {
+        if (++signatureCount == 1) {
+          firstSignEntered.complete();
+          return firstSignature.future;
+        }
+        return const <String, Object?>{'ok': true, 'signature': 'c2lnbmF0dXJl'};
+      };
+      final publishedEpochs = <int>[];
+      var relayEpoch = nowMs;
+      fixture.bridge.responseHandlers['call_endpoint_set_v1'] =
+          (request) async {
+            final payload = request['payload']! as Map<String, dynamic>;
+            final epoch = payload['preferenceEpoch']! as int;
+            publishedEpochs.add(epoch);
+            if (epoch < relayEpoch) {
+              return const <String, Object?>{
+                'ok': false,
+                'errorCode': 'CALL_STALE_EPOCH',
+              };
+            }
+            relayEpoch = epoch;
+            return const <String, Object?>{'ok': true};
+          };
+
+      nowMs++;
+      final contactRefresh = fixture.composition.onContactEligibilityChanged();
+      await firstSignEntered.future;
+      nowMs++;
+      final resumeRefresh = fixture.composition.onResume();
+      // Let the independent resume lane run while the first signature is held.
+      await _settle();
+      firstSignature.complete(const <String, Object?>{
+        'ok': true,
+        'signature': 'c2lnbmF0dXJl',
+      });
+      await Future.wait(<Future<void>>[contactRefresh, resumeRefresh]);
+
+      expect(publishedEpochs, orderedEquals(<int>[2_000_001, 2_000_002]));
+      expect(fixture.composition.isStarted, isTrue);
+      expect(
+        fixture.bridge.commands,
+        isNot(contains('call_endpoint_revoke_v1')),
+      );
+      expect(fixture.bridge.commands, isNot(contains('call_token_revoke_v1')));
+      expect(fixture.lifecycleMethods, isNot(contains('failClosed')));
+    },
+  );
+
+  test(
+    'shutdown prevents a delayed signature from republishing an endpoint',
+    () async {
+      final fixture = await _createFixture();
+      await fixture.composition.start();
+      final graph = fixture.graphs.single;
+      final signEntered = Completer<void>();
+      final signature = Completer<Map<String, Object?>>();
+      fixture.bridge.responseHandlers['payload.sign'] = (_) {
+        signEntered.complete();
+        return signature.future;
+      };
+      final endpointSetsBefore = fixture.bridge.commands
+          .where((command) => command == 'call_endpoint_set_v1')
+          .length;
+
+      final refresh = graph.advertiseCapability();
+      await signEntered.future;
+      final shutdown = fixture.composition.shutdown();
+      await _settle();
+      signature.complete(const <String, Object?>{
+        'ok': true,
+        'signature': 'c2lnbmF0dXJl',
+      });
+
+      expect(await refresh, isFalse);
+      await shutdown;
+      expect(
+        fixture.bridge.commands.where(
+          (command) => command == 'call_endpoint_set_v1',
+        ),
+        hasLength(endpointSetsBefore),
+      );
+      expect(await graph.advertiseCapability(), isFalse);
+      expect(fixture.bridge.commands, contains('call_endpoint_revoke_v1'));
+    },
+  );
+
+  test('shutdown revokes an endpoint publication already in flight', () async {
+    final fixture = await _createFixture();
+    await fixture.composition.start();
+    final graph = fixture.graphs.single;
+    final publishEntered = Completer<void>();
+    final publishResponse = Completer<void>();
+    var relayHasEndpoint = true;
+    fixture.bridge.responseHandlers['call_endpoint_set_v1'] = (_) async {
+      publishEntered.complete();
+      await publishResponse.future;
+      relayHasEndpoint = true;
+      return const <String, Object?>{'ok': true};
+    };
+    fixture.bridge.responseHandlers['call_endpoint_revoke_v1'] = (_) async {
+      relayHasEndpoint = false;
+      return const <String, Object?>{'ok': true, 'revoked': true};
+    };
+
+    final refresh = graph.advertiseCapability();
+    await publishEntered.future;
+    final shutdown = fixture.composition.shutdown();
+    await _settle();
+    publishResponse.complete();
+
+    expect(await refresh, isFalse);
+    await shutdown;
+    expect(relayHasEndpoint, isFalse);
+    expect(fixture.lifecycleMethods, contains('detach'));
   });
 
   test(
@@ -532,7 +798,7 @@ final class _Fixture {
   final _P2P p2p;
 }
 
-Future<_Fixture> _createFixture() async {
+Future<_Fixture> _createFixture({int Function()? nowMs}) async {
   databaseFactory = databaseFactoryFfi;
   final database = await openDatabase(
     inMemoryDatabasePath,
@@ -670,7 +936,7 @@ Future<_Fixture> _createFixture() async {
           publicationAllowed: publicationAllowed,
         ),
     isForeground: () => true,
-    nowMs: () => 2_000_000,
+    nowMs: nowMs ?? () => 2_000_000,
     onGraphBuilt: graphs.add,
   );
   addTearDown(() async {

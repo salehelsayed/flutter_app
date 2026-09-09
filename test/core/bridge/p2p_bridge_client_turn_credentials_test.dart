@@ -37,6 +37,29 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
+    'opt-in TURN metadata uses its dedicated command and preserves validation',
+    () async {
+      final bridge = _TurnCredentialBridge()
+        ..response = {'ok': false, 'errorCode': 'TURN_CREDENTIALS_UNAVAILABLE'};
+      const diagnostics = <String, Object?>{
+        'traceId': '11111111-2222-4333-8444-555555555555',
+        'requestId': '22222222-2222-4333-8444-555555555555',
+      };
+      final result = await callP2PTurnCredentialsV1(
+        bridge,
+        diagnostics: diagnostics,
+      );
+      expect(bridge.request, <String, Object?>{
+        'cmd': 'turn_credentials_with_diagnostics_v1',
+        'payload': <String, Object?>{'diagnostics': diagnostics},
+      });
+      expect(result['ok'], isFalse);
+      expect(result['errorCode'], 'TURN_CREDENTIALS_UNAVAILABLE');
+      expect(result.containsKey('password'), isFalse);
+    },
+  );
+
+  test(
     'VC2-01 sends the exact action-only command and validates the canonical bundle',
     () async {
       final flowEvents = <Map<String, dynamic>>[];

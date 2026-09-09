@@ -178,6 +178,9 @@ void main() {
       'rendezvous:unregister': 'rendezvousUnregister',
       'rendezvous:discover': 'rendezvousDiscover',
       'relay:probe': 'relayProbe',
+      'call_diagnostics_v1': 'callDiagnosticsV1',
+      'turn_credentials_with_diagnostics_v1':
+          'turnCredentialsWithDiagnosticsV1',
       'call_store_v1': 'callStoreV1',
       'call_retrieve_v1': 'callRetrieveV1',
       'call_ack_v1': 'callAckV1',

@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostic_schema.dart';
 
 enum HeadlessCallAdmissionDisposition {
   admitted('admitted'),
@@ -115,12 +116,16 @@ final class HeadlessCallAdmissionRunReport {
     required this.requiredPersistenceComplete,
     required this.databaseClosed,
     required this.leaseReleased,
+    this.diagnosticCause,
   });
 
   final HeadlessCallAdmissionDisposition disposition;
   final bool requiredPersistenceComplete;
   final bool databaseClosed;
   final bool leaseReleased;
+
+  /// Optional closed diagnostic metadata; it never changes admission authority.
+  final String? diagnosticCause;
 }
 
 typedef RunHeadlessCallAdmission =
@@ -218,6 +223,11 @@ Future<void> runAndroidHeadlessCallAdmission(
         'requiredPersistenceComplete': report.requiredPersistenceComplete,
         'databaseClosed': report.databaseClosed,
         'leaseReleased': report.leaseReleased,
+        if (report.diagnosticCause != null &&
+            (callDiagnosticSchemaV1['reason'] as List).contains(
+              report.diagnosticCause,
+            ))
+          'diagnosticCause': report.diagnosticCause,
       },
     );
   } finally {

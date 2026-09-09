@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../diagnostics/call_diagnostics.dart';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -289,10 +291,49 @@ final class BridgeCallMailboxClient implements CallMailboxClient {
     Map<String, Object?> payload, {
     Set<String> tolerated = const <String>{},
   }) async {
+    final diagnostics = CallDiagnostics.instance;
+    final context = diagnostics.contextForWire(
+      callHandle: payload['callHandle'] as String?,
+    );
+    final wirePayload = <String, Object?>{...payload, 'diagnostics': ?context};
+    final action = command.contains('_revoke_')
+        ? 'revoke'
+        : command.contains('_set_')
+        ? 'publish'
+        : command.contains('_get_')
+        ? 'lookup'
+        : command.contains('_store_')
+        ? 'store'
+        : command.contains('_retrieve_')
+        ? 'retrieve'
+        : command.contains('_ack_')
+        ? 'ack'
+        : command.contains('_cancel_')
+        ? 'cancel'
+        : 'check';
+    void record(String outcome, [String reason = 'none']) {
+      // Uncorrelated background polling must not consume the call evidence budget.
+      if (context == null) return;
+      diagnostics.record(
+        stage: 'signaling',
+        action: action,
+        outcome: outcome,
+        reason: reason,
+        traceId: context['traceId'] as String?,
+        requestId: context['requestId'] as String?,
+        operationId: context['operationId'] as String?,
+        parentOperationId: context['parentOperationId'] as String?,
+      );
+    }
+
+    record('started');
     try {
       final raw = await _bridge
           .send(
-            jsonEncode(<String, Object?>{'cmd': command, 'payload': payload}),
+            jsonEncode(<String, Object?>{
+              'cmd': command,
+              'payload': wirePayload,
+            }),
           )
           .timeout(requestTimeout);
       final decoded = jsonDecode(raw);
@@ -300,6 +341,7 @@ final class BridgeCallMailboxClient implements CallMailboxClient {
         final code = decoded is Map<String, dynamic>
             ? _safeBridgeErrorCode(decoded['errorCode'])
             : 'MALFORMED_RESPONSE';
+        record('rejected', _diagnosticRelayReason(code));
         _emitBridgeFailure(
           operation: _safeBridgeOperation(command),
           code: code,
@@ -309,13 +351,28 @@ final class BridgeCallMailboxClient implements CallMailboxClient {
         }
         throw const CallMailboxException(CallMailboxErrorCode.bridgeFailure);
       }
+      record('ok');
       return decoded;
     } on CallMailboxException {
       rethrow;
     } catch (_) {
+      record('failed', 'bridge_unavailable');
       throw const CallMailboxException(CallMailboxErrorCode.bridgeFailure);
     }
   }
+
+  static String _diagnosticRelayReason(String code) => switch (code) {
+    'CALL_STALE_EPOCH' => 'stale_epoch',
+    'CALL_UNAUTHORIZED' => 'authority_rejected',
+    'CALL_RATE_LIMITED' => 'rate_limited',
+    'CALL_BACKEND_UNAVAILABLE' => 'backend_unavailable',
+    'CALL_CONTROL_UNSUPPORTED' => 'legacy_peer',
+    'CALL_INVALID_REQUEST' || 'INVALID_INPUT' => 'invalid_request',
+    'CALL_CONTROL_INVALID_RESPONSE' ||
+    'MALFORMED_RESPONSE' => 'malformed_response',
+    'CALL_EXPIRED' => 'expired',
+    _ => 'unknown',
+  };
 
   static String _safeBridgeOperation(String operation) => switch (operation) {
     callStoreV1BridgeCommand ||

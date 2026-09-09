@@ -69,6 +69,7 @@ func (e *CallControlRelayError) Error() string {
 func (e *CallControlRelayError) Unwrap() error { return ErrCallControlUnavailable }
 
 type CallStoreRequest struct {
+	Diagnostics           *CallDiagnosticContext `json:"-"`
 	RecipientDevicePeerID string
 	CallHandle            string
 	MessageID             string
@@ -93,8 +94,9 @@ type CallStoreReceipt struct {
 }
 
 type CallRetrieveRequest struct {
-	CallHandle string
-	Limit      int
+	Diagnostics *CallDiagnosticContext `json:"-"`
+	CallHandle  string
+	Limit       int
 }
 
 type CallMailboxEvent struct {
@@ -117,27 +119,30 @@ type CallRetrieveResult struct {
 }
 
 type CallAckRequest struct {
-	CallHandle string
-	MessageIDs []string
+	Diagnostics *CallDiagnosticContext `json:"-"`
+	CallHandle  string
+	MessageIDs  []string
 }
 
 type CallCancelRequest struct {
+	Diagnostics           *CallDiagnosticContext `json:"-"`
 	RecipientDevicePeerID string
 	CallHandle            string
 }
 
 type CallEndpointRecord struct {
-	Schema          string   `json:"schema,omitempty"`
-	Version         int      `json:"version,omitempty"`
-	AccountPeerID   string   `json:"accountPeerId"`
-	DevicePeerID    string   `json:"devicePeerId"`
-	Capabilities    []string `json:"capabilities"`
-	Platform        string   `json:"platform"`
-	ExpiresAtMs     int64    `json:"expiresAtMs"`
-	PreferenceEpoch uint64   `json:"preferenceEpoch"`
-	DeviceKeyEpoch  uint64   `json:"deviceKeyEpoch"`
-	RoutingHandle   string   `json:"routingHandle"`
-	Signature       string   `json:"signature"`
+	Diagnostics     *CallDiagnosticContext `json:"-"`
+	Schema          string                 `json:"schema,omitempty"`
+	Version         int                    `json:"version,omitempty"`
+	AccountPeerID   string                 `json:"accountPeerId"`
+	DevicePeerID    string                 `json:"devicePeerId"`
+	Capabilities    []string               `json:"capabilities"`
+	Platform        string                 `json:"platform"`
+	ExpiresAtMs     int64                  `json:"expiresAtMs"`
+	PreferenceEpoch uint64                 `json:"preferenceEpoch"`
+	DeviceKeyEpoch  uint64                 `json:"deviceKeyEpoch"`
+	RoutingHandle   string                 `json:"routingHandle"`
+	Signature       string                 `json:"signature"`
 }
 
 type CallEndpointResult struct {
@@ -147,20 +152,22 @@ type CallEndpointResult struct {
 }
 
 type CallWakeHandleRecord struct {
+	Diagnostics            *CallDiagnosticContext `json:"-"`
 	AuthorizedSenderPeerID string
 	WakeHandle             string
 	ExpiresAtMs            int64
 }
 
 type CallTokenRecord struct {
-	Kind              string `json:"tokenKind"`
-	Platform          string `json:"platform"`
-	Token             string `json:"token"`
-	ExpiresAtMs       int64  `json:"expiresAtMs"`
-	Environment       string `json:"environment,omitempty"`
-	Topic             string `json:"topic,omitempty"`
-	CapabilityVersion uint64 `json:"capabilityVersion,omitempty"`
-	RefreshEpoch      uint64 `json:"refreshEpoch,omitempty"`
+	Diagnostics       *CallDiagnosticContext `json:"-"`
+	Kind              string                 `json:"tokenKind"`
+	Platform          string                 `json:"platform"`
+	Token             string                 `json:"token"`
+	ExpiresAtMs       int64                  `json:"expiresAtMs"`
+	Environment       string                 `json:"environment,omitempty"`
+	Topic             string                 `json:"topic,omitempty"`
+	CapabilityVersion uint64                 `json:"capabilityVersion,omitempty"`
+	RefreshEpoch      uint64                 `json:"refreshEpoch,omitempty"`
 }
 
 type CallTokenSetResult struct {
@@ -240,7 +247,7 @@ func (n *Node) CallStoreV1(request CallStoreRequest) (CallStoreReceipt, error) {
 		CallHandle: request.CallHandle, MessageID: request.MessageID,
 		Envelope: request.Envelope, ExpiresAtMs: request.ExpiresAtMs,
 		WakeHandle: request.WakeHandle, WakeReceipt: true,
-	})
+	}, request.Diagnostics)
 	if err != nil {
 		return CallStoreReceipt{}, err
 	}
@@ -269,7 +276,7 @@ func (n *Node) CallRetrieveV1(request CallRetrieveRequest) (CallRetrieveResult, 
 	}
 	response, err := n.exchangeCallControl(callControlWireRequest{
 		Action: callRetrieveAction, CallHandle: request.CallHandle, Limit: request.Limit,
-	})
+	}, request.Diagnostics)
 	if err != nil {
 		return CallRetrieveResult{}, err
 	}
@@ -316,7 +323,7 @@ func (n *Node) CallAckV1(request CallAckRequest) (int, error) {
 	response, err := n.exchangeCallControl(callControlWireRequest{
 		Action: callAckAction, CallHandle: request.CallHandle,
 		MessageIDs: append([]string(nil), request.MessageIDs...),
-	})
+	}, request.Diagnostics)
 	if err != nil {
 		return 0, err
 	}
@@ -332,7 +339,7 @@ func (n *Node) CallCancelV1(request CallCancelRequest) error {
 	}
 	response, err := n.exchangeCallControl(callControlWireRequest{
 		Action: callCancelAction, To: request.RecipientDevicePeerID, CallHandle: request.CallHandle,
-	})
+	}, request.Diagnostics)
 	if err != nil {
 		return err
 	}
@@ -361,17 +368,17 @@ func (n *Node) CallEndpointSetV1(record CallEndpointRecord) error {
 		Platform: record.Platform, ExpiresAtMs: record.ExpiresAtMs,
 		PreferenceEpoch: record.PreferenceEpoch, DeviceKeyEpoch: record.DeviceKeyEpoch,
 		RoutingHandle: record.RoutingHandle, Signature: record.Signature,
-	})
+	}, record.Diagnostics)
 	return err
 }
 
-func (n *Node) CallEndpointGetV1(accountPeerID string) (CallEndpointResult, error) {
+func (n *Node) CallEndpointGetV1(accountPeerID string, diagnostics ...*CallDiagnosticContext) (CallEndpointResult, error) {
 	if !validCallPeerID(accountPeerID) {
 		return CallEndpointResult{}, ErrCallControlInvalidRequest
 	}
 	response, err := n.exchangeCallControl(callControlWireRequest{
 		Action: callEndpointGetAction, AccountPeerID: accountPeerID,
-	})
+	}, diagnosticContext(diagnostics))
 	if err != nil {
 		return CallEndpointResult{}, err
 	}
@@ -398,14 +405,14 @@ func (n *Node) CallEndpointGetV1(accountPeerID string) (CallEndpointResult, erro
 	return CallEndpointResult{Found: true, Endpoint: &copy, CanonicalRecord: canonical}, nil
 }
 
-func (n *Node) CallEndpointRevokeV1(accountPeerID string, preferenceEpoch uint64) error {
+func (n *Node) CallEndpointRevokeV1(accountPeerID string, preferenceEpoch uint64, diagnostics ...*CallDiagnosticContext) error {
 	if !validCallPeerID(accountPeerID) || preferenceEpoch == 0 {
 		return ErrCallControlInvalidRequest
 	}
 	response, err := n.exchangeCallControl(callControlWireRequest{
 		Action: callEndpointRevokeAction, AccountPeerID: accountPeerID,
 		PreferenceEpoch: preferenceEpoch,
-	})
+	}, diagnosticContext(diagnostics))
 	if err != nil {
 		return err
 	}
@@ -425,17 +432,17 @@ func (n *Node) CallWakeHandleSetV1(record CallWakeHandleRecord) error {
 	_, err := n.exchangeCallControl(callControlWireRequest{
 		Action: callWakeHandleSetAction, AuthorizedSenderPeerID: record.AuthorizedSenderPeerID,
 		WakeHandle: record.WakeHandle, ExpiresAtMs: record.ExpiresAtMs,
-	})
+	}, record.Diagnostics)
 	return err
 }
 
-func (n *Node) CallWakeHandleRevokeV1(authorizedSenderPeerID string) error {
+func (n *Node) CallWakeHandleRevokeV1(authorizedSenderPeerID string, diagnostics ...*CallDiagnosticContext) error {
 	if !validCallPeerID(authorizedSenderPeerID) {
 		return ErrCallControlInvalidRequest
 	}
 	response, err := n.exchangeCallControl(callControlWireRequest{
 		Action: callWakeHandleRevokeAction, AuthorizedSenderPeerID: authorizedSenderPeerID,
-	})
+	}, diagnosticContext(diagnostics))
 	if err != nil {
 		return err
 	}
@@ -454,7 +461,7 @@ func (n *Node) CallTokenSetV1(record CallTokenRecord) (CallTokenSetResult, error
 		Token: record.Token, ExpiresAtMs: record.ExpiresAtMs,
 		Environment: record.Environment, Topic: record.Topic,
 		CapabilityVersion: record.CapabilityVersion, RefreshEpoch: record.RefreshEpoch,
-	})
+	}, record.Diagnostics)
 	if err != nil {
 		return CallTokenSetResult{}, err
 	}
@@ -472,7 +479,7 @@ func (n *Node) CallTokenSetV1(record CallTokenRecord) (CallTokenSetResult, error
 	}, nil
 }
 
-func (n *Node) CallTokenRevokeV1(kind string, expectedRefreshEpoch uint64) (bool, error) {
+func (n *Node) CallTokenRevokeV1(kind string, expectedRefreshEpoch uint64, diagnostics ...*CallDiagnosticContext) (bool, error) {
 	if !validNodeCallTokenKind(kind) ||
 		(kind == CallTokenKindIOSVoIP && expectedRefreshEpoch == 0) ||
 		(kind == CallTokenKindStandard && expectedRefreshEpoch != 0) {
@@ -481,7 +488,7 @@ func (n *Node) CallTokenRevokeV1(kind string, expectedRefreshEpoch uint64) (bool
 	response, err := n.exchangeCallControl(callControlWireRequest{
 		Action: callTokenRevokeAction, TokenKind: kind,
 		ExpectedRefreshEpoch: expectedRefreshEpoch,
-	})
+	}, diagnosticContext(diagnostics))
 	if err != nil {
 		return false, err
 	}
@@ -494,7 +501,7 @@ func (n *Node) CallTokenRevokeV1(kind string, expectedRefreshEpoch uint64) (bool
 	return *response.Revoked, nil
 }
 
-func (n *Node) exchangeCallControl(request callControlWireRequest) (callControlWireResponse, error) {
+func (n *Node) exchangeCallControl(request callControlWireRequest, diagnostics ...*CallDiagnosticContext) (callControlWireResponse, error) {
 	n.mu.RLock()
 	h := n.host
 	ctx := n.ctx
@@ -509,7 +516,12 @@ func (n *Node) exchangeCallControl(request callControlWireRequest) (callControlW
 	var lastErr error
 	for _, relay := range relays {
 		for _, candidate := range relayInfoAttemptCandidates(relay) {
-			raw, err := exchangeCallControlRelay(ctx, h, candidate, request)
+			diagnostic := n.diagnosticForRelay(candidate.ID, diagnostics)
+			raw, err := exchangeCallControlRelay(ctx, h, candidate, request, diagnostic)
+			if err == nil && diagnostic != nil && diagnosticUnsupported(raw) {
+				n.setDiagnosticRelay(candidate.ID, false)
+				raw, err = exchangeCallControlRelay(ctx, h, candidate, request)
+			}
 			if err != nil {
 				lastErr = err
 				continue
@@ -540,6 +552,7 @@ func exchangeCallControlRelay(
 	h host.Host,
 	relay RelayInfo,
 	request callControlWireRequest,
+	diagnostics ...*CallDiagnosticContext,
 ) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, InboxTimeout)
 	defer cancel()
@@ -554,6 +567,7 @@ func exchangeCallControlRelay(
 	defer finishStream(stream, &streamOK)
 	setStreamDeadline(stream, InboxTimeout)
 	raw, err := json.Marshal(request)
+	raw = diagnosticWrapRequest(raw, diagnosticContext(diagnostics))
 	if err != nil || writeFrame(stream, raw) != nil {
 		return nil, ErrCallControlUnavailable
 	}

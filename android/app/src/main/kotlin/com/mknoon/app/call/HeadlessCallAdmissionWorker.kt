@@ -79,6 +79,7 @@ internal data class HeadlessCallAdmissionCompletion(
     val requiredPersistenceComplete: Boolean,
     val databaseClosed: Boolean,
     val leaseReleased: Boolean,
+    val diagnosticCause: String? = null,
 )
 
 internal data class HeadlessCallAdmissionRunIdentity(
@@ -109,7 +110,7 @@ internal object HeadlessCallAdmissionCompletionProtocol {
     ): HeadlessCallAdmissionCompletion? {
         if (method != "complete") return null
         val values = arguments as? Map<*, *> ?: return null
-        if (values.keys != RESULT_KEYS) return null
+        if (values.keys != RESULT_KEYS && values.keys != RESULT_KEYS + "diagnosticCause") return null
         val expiresAtMs = positiveIntegralLong(values["expiresAtMs"])
             ?: return null
         if (
@@ -139,6 +140,8 @@ internal object HeadlessCallAdmissionCompletionProtocol {
                 values["requiredPersistenceComplete"] as? Boolean ?: return null,
             databaseClosed = values["databaseClosed"] as? Boolean ?: return null,
             leaseReleased = values["leaseReleased"] as? Boolean ?: return null,
+            diagnosticCause = (values["diagnosticCause"] as? String)
+                ?.takeIf { MknoonCallDiagnosticSchema.reason.contains(it) },
         )
     }
 
@@ -348,6 +351,15 @@ internal enum class HeadlessCallAdmissionWorkOutcome {
     COMPLETED_WITHOUT_PRESENTATION,
 }
 
+/** Diagnostic-only fields; authority handles and invocation nonces stay outside the event. */
+internal data class HeadlessCallAdmissionDiagnostic(
+    val operationId: String,
+    val action: String,
+    val outcome: String,
+    val reason: String,
+    val values: Map<String, Any> = emptyMap(),
+)
+
 /**
  * Mechanical worker policy only: Dart owns authentication and custody; the
  * existing native call runtime remains the sole presentation state machine.
@@ -366,6 +378,8 @@ internal class HeadlessCallAdmissionExecution(
      * whatever Dart reported.
      */
     private val releaseDeclineReply: suspend (String) -> Unit = {},
+    private val diagnostic: (String?, HeadlessCallAdmissionDiagnostic) -> Unit = { _, _ -> },
+    private val monotonicMs: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
     private val lock = Any()
     private val stopRequested = AtomicBoolean(false)
@@ -379,14 +393,48 @@ internal class HeadlessCallAdmissionExecution(
         inputData: Data,
         runAttemptCount: Int = 0,
     ): HeadlessCallAdmissionWorkOutcome {
-        if (runAttemptCount != 0 || stopRequested.get() || isStopped()) {
-            return noPresentation()
+        // This separate operation reference never participates in the nonce or
+        // custody protocol. Even allocation, clock, and sink errors are contained.
+        val operationId = runCatching { UUID.randomUUID().toString() }.getOrNull()
+        val startedAt = runCatching(monotonicMs).getOrDefault(0L)
+        var diagnosticHandle: String? = null
+        fun observe(
+            action: String,
+            outcome: String,
+            reason: String = "none",
+            values: Map<String, Any> = emptyMap(),
+        ) {
+            if (operationId == null) return
+            runCatching {
+                diagnostic(
+                    diagnosticHandle,
+                    HeadlessCallAdmissionDiagnostic(
+                        operationId, action, outcome, reason,
+                        values + ("durationMs" to (monotonicMs() - startedAt).coerceAtLeast(0L)),
+                    ),
+                )
+            }
         }
-        val observedNow = runCatching(nowMs).getOrNull() ?: return noPresentation()
-        val invocation = parseInput(inputData, observedNow) ?: return noPresentation()
+        fun finish(
+            outcome: String,
+            reason: String,
+            values: Map<String, Any> = emptyMap(),
+            presented: Boolean = false,
+        ): HeadlessCallAdmissionWorkOutcome {
+            observe("finish", outcome, reason, values)
+            return if (presented) HeadlessCallAdmissionWorkOutcome.PRESENTED else noPresentation()
+        }
+        if (runAttemptCount != 0) return finish("skipped", "duplicate")
+        if (stopRequested.get() || isStopped()) return finish("canceled", "canceled")
+        val observedNow = runCatching(nowMs).getOrNull()
+            ?: return finish("failed", "native_lifecycle_failed")
+        val invocation = parseInput(inputData, observedNow)
+            ?: return finish("rejected", "invalid_request")
+        diagnosticHandle = invocation.callId
+        observe("start", "started", values = mapOf("attemptCount" to runAttemptCount))
         val nonce = runCatching(nonceFactory).getOrNull()
             ?.takeIf { it.isNotBlank() }
-            ?: return noPresentation()
+            ?: return finish("failed", "native_lifecycle_failed")
         val identity = HeadlessCallAdmissionRunIdentity(
             nonce = nonce,
             callId = invocation.callId,
@@ -394,12 +442,15 @@ internal class HeadlessCallAdmissionExecution(
             expiresAtMs = invocation.expiresAtMs,
             mode = invocation.mode,
         )
-        val runner = runCatching(runnerFactory).getOrNull() ?: return noPresentation()
+        val runner = runCatching(runnerFactory).getOrNull()
+            ?: return finish("failed", "native_lifecycle_failed")
         synchronized(lock) { activeRunner = runner }
 
         var completion: HeadlessCallAdmissionCompletion? = null
+        var executionFailure = "native_lifecycle_failed"
         try {
             if (stopRequested.get() || isStopped()) {
+                executionFailure = "canceled"
                 runner.requestStop()
             } else {
                 val remainingMillis = invocation.expiresAtMs - observedNow
@@ -408,10 +459,23 @@ internal class HeadlessCallAdmissionExecution(
                 }
             }
         } catch (_: TimeoutCancellationException) {
+            executionFailure = "timeout"
             runner.requestStop()
         } catch (_: Throwable) {
             runner.requestStop()
         }
+        val completionValues = completion?.let {
+            mapOf<String, Any>(
+                "admissionDisposition" to it.disposition.name.lowercase(),
+                "requiredPersistenceComplete" to it.requiredPersistenceComplete,
+                "databaseClosed" to it.databaseClosed,
+                "leaseReleased" to it.leaseReleased,
+            )
+        } ?: emptyMap()
+        val completionCause = completion?.diagnosticCause
+            ?.takeIf { MknoonCallDiagnosticSchema.reason.contains(it) }
+        if (completion != null) observe("response", "completed",
+            reason = completionCause ?: "none", values = completionValues)
 
         val safelyReleased = try {
             withContext(NonCancellable) { runner.finish() }
@@ -426,23 +490,32 @@ internal class HeadlessCallAdmissionExecution(
             // The reply run never presents or terminalizes: the native call
             // already ended when the user declined it.
             runCatching { releaseDeclineReply(identity.callId) }
-            return noPresentation()
+            return finish("completed", "none", completionValues)
         }
         val authenticated = completion?.takeIf {
             it.nonce == identity.nonce &&
                 it.callId == identity.callId &&
                 it.wakeHandle == identity.wakeHandle &&
-                it.expiresAtMs == identity.expiresAtMs &&
-                it.requiredPersistenceComplete &&
-                it.databaseClosed &&
-                it.leaseReleased
-        } ?: return noPresentation()
-        if (!safelyReleased || stopRequested.get() || isStopped()) {
-            return noPresentation()
+                it.expiresAtMs == identity.expiresAtMs
+        } ?: return finish(
+            if (executionFailure == "timeout") "timeout" else "failed",
+            if (completion != null) "malformed_response" else executionFailure,
+            completionValues,
+        )
+        if (!authenticated.requiredPersistenceComplete) {
+            // False means the admission persistence gate is unsatisfied; it does
+            // not establish that a write was attempted or failed.
+            return finish("pending", completionCause ?: "unknown", completionValues)
         }
-        val presentationNow = runCatching(nowMs).getOrNull() ?: return noPresentation()
+        if (!authenticated.databaseClosed || !authenticated.leaseReleased || !safelyReleased) {
+            return finish("rejected", "cleanup_failed", completionValues)
+        }
+        if (stopRequested.get() || isStopped()) return finish("canceled", "canceled", completionValues)
+        observe("check", "ok", values = completionValues)
+        val presentationNow = runCatching(nowMs).getOrNull()
+            ?: return finish("failed", "native_lifecycle_failed", completionValues)
         if (presentationNow < 0L || authenticated.expiresAtMs <= presentationNow) {
-            return noPresentation()
+            return finish("rejected", "expired", completionValues)
         }
 
         return when (authenticated.disposition) {
@@ -453,14 +526,14 @@ internal class HeadlessCallAdmissionExecution(
                     false
                 }
                 if (presented) {
-                    HeadlessCallAdmissionWorkOutcome.PRESENTED
+                    finish("ok", "none", completionValues, presented = true)
                 } else {
-                    noPresentation()
+                    finish("failed", "native_lifecycle_failed", completionValues)
                 }
             }
 
             HeadlessCallAdmissionDisposition.TERMINAL -> {
-                try {
+                val terminalized = try {
                     terminalizeAuthenticated(
                         authenticated.callId,
                         authenticated.expiresAtMs,
@@ -468,13 +541,16 @@ internal class HeadlessCallAdmissionExecution(
                 } catch (_: Throwable) {
                     false
                 }
-                noPresentation()
+                finish(if (terminalized) "completed" else "failed",
+                    if (terminalized) "remote_terminal" else "cleanup_failed", completionValues)
             }
 
-            HeadlessCallAdmissionDisposition.PERMANENT_REJECT,
-            HeadlessCallAdmissionDisposition.EMPTY_OR_ALREADY_ACKED,
-            HeadlessCallAdmissionDisposition.DEFERRED,
-            -> noPresentation()
+            HeadlessCallAdmissionDisposition.PERMANENT_REJECT ->
+                finish("rejected", "authority_rejected", completionValues)
+            HeadlessCallAdmissionDisposition.EMPTY_OR_ALREADY_ACKED ->
+                finish("not_found", "not_found_or_expired", completionValues)
+            HeadlessCallAdmissionDisposition.DEFERRED ->
+                finish("pending", completionCause ?: "unknown", completionValues)
         }
     }
 
@@ -613,6 +689,17 @@ internal class HeadlessCallAdmissionWorker(
                 withContext(Dispatchers.Main.immediate) {
                     MknoonCallRuntime.get(applicationContext).stopAdmissionForeground(callId)
                 }
+            },
+            diagnostic = { handle, event ->
+                com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(applicationContext).record(
+                    "push", "process", when (event.outcome) { "started" -> "started"; "ok", "completed" -> "ok"; "timeout" -> "timeout"; else -> "pending" },
+                    if (event.outcome == "timeout") "timeout" else "unknown",
+                    traceId = event.operationId,
+                )
+                MknoonCallDiagnostics.get(applicationContext).record(
+                    handle, "admission", event.action, event.outcome, event.reason, event.values,
+                    mapOf("operationId" to event.operationId, "role" to "callee"),
+                )
             },
         )
     }

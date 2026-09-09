@@ -3437,7 +3437,7 @@ func BlobEncrypt(paramsJSON string) (result string) {
 func BlobDecrypt(paramsJSON string) (result string) {
 	defer func() {
 		if r := recover(); r != nil {
-			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+			result = errJSON("INTERNAL_ERROR", "encrypted media operation failed")
 		}
 	}()
 
@@ -3447,16 +3447,25 @@ func BlobDecrypt(paramsJSON string) (result string) {
 		Nonce     string `json:"nonce"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		return errJSON("INVALID_INPUT", "invalid encrypted media request")
 	}
 
-	if params.FilePath == "" || params.KeyBase64 == "" || params.Nonce == "" {
-		return errJSON("INVALID_INPUT", "missing filePath, keyBase64, or nonce")
+	if params.FilePath == "" {
+		return errJSON("INVALID_INPUT", "missing encrypted media file path")
 	}
 
 	decryptedPath, err := mcrypto.DecryptFile(params.FilePath, params.KeyBase64, params.Nonce)
 	if err != nil {
-		return errJSON("DECRYPT_ERROR", err.Error())
+		switch {
+		case errors.Is(err, mcrypto.ErrFileAuthentication):
+			return errJSON("DECRYPT_AUTH_ERROR", "encrypted media authentication failed")
+		case errors.Is(err, mcrypto.ErrFileMetadata):
+			return errJSON("DECRYPT_METADATA_ERROR", "invalid encrypted media metadata")
+		case errors.Is(err, mcrypto.ErrFileIO):
+			return errJSON("DECRYPT_IO_ERROR", "encrypted media file operation failed")
+		default:
+			return errJSON("INTERNAL_ERROR", "encrypted media operation failed")
+		}
 	}
 
 	return okJSON(map[string]interface{}{

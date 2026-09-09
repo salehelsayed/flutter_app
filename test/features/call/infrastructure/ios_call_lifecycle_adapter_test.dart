@@ -376,6 +376,69 @@ void main() {
   );
 
   test(
+    'incoming presentation replay after adoption preserves the ringing call',
+    () async {
+      final native = _LifecycleNative();
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator);
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      await _bindRinging(adapter, coordinator);
+      expect(
+        native.callsOf('acknowledge').single.arguments['disposition'],
+        'ADOPTED',
+      );
+
+      // CallKit captured this envelope before attach/adoption, then the main
+      // queue delivered it after the same presented event was acknowledged.
+      native.events.add(_batch(<Map<String, Object?>>[_event(1, 'presented')]));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(native.callsOf('failClosed'), isEmpty);
+      expect(adapter.isBoundTo(_callId), isTrue);
+      expect(coordinator.activeSession?.state, CallState.ringing);
+      expect(native.callsOf('acknowledge'), hasLength(1));
+    },
+  );
+
+  test(
+    'incoming presentation replay still rejects descriptor or event mutations',
+    () async {
+      for (final mutation in <String>['expiry', 'direction', 'event_identity']) {
+        final native = _LifecycleNative();
+        final coordinator = _coordinator();
+        final adapter = _adapter(native, coordinator);
+        addTearDown(() async {
+          await adapter.close();
+          await coordinator.dispose();
+          await native.events.close();
+        });
+        await _bindRinging(adapter, coordinator);
+        final event = _event(1, 'presented');
+        final replay = _batch(<Map<String, Object?>>[event]);
+        final descriptor = replay['descriptor']! as Map<String, Object?>;
+        switch (mutation) {
+          case 'expiry':
+            descriptor['expiresAtMs'] = _expiresAtMs - 1;
+          case 'direction':
+            descriptor['direction'] = 'outgoing';
+          case 'event_identity':
+            event['eventId'] = '00000000-0000-4000-8000-999999999999';
+        }
+
+        native.events.add(replay);
+        await _until(() => native.callsOf('failClosed').isNotEmpty);
+
+        expect(native.callsOf('failClosed'), hasLength(1), reason: mutation);
+        expect(adapter.isBoundTo(_callId), isFalse, reason: mutation);
+      }
+    },
+  );
+
+  test(
     'attaches, adopts, acknowledges in order, and terminal precedence wins',
     () async {
       final native = _LifecycleNative(terminalAtAttach: true);

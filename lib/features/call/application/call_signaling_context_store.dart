@@ -1,5 +1,7 @@
 import 'dart:collection';
 
+import '../diagnostics/call_diagnostics.dart';
+
 import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
@@ -183,6 +185,17 @@ final class CallSignalingContextStore
       iceGeneration: iceGeneration,
       invitePayload: _copyPayload(invitePayload),
     );
+    final diagnostics = CallDiagnostics.instance;
+    final traceId =
+        diagnostics.traceForCall(callId: callId.value) ??
+        diagnostics.currentTraceId;
+    if (traceId != null) {
+      diagnostics.bindCall(
+        callId: callId.value,
+        callHandle: callHandle,
+        traceId: traceId,
+      );
+    }
   }
 
   @override

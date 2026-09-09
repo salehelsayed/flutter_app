@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -172,6 +173,24 @@ final class StrictDirectMediaBlobDownloadAckOwner {
     ),
   );
 
+  void _diagnostic(
+    String attachmentId,
+    String stage,
+    String outcome, {
+    String reason = 'none',
+    Map<String, Object?> values = const {},
+  }) {
+    final diagnostics = AppDiagnostics.instance;
+    diagnostics.record(
+      feature: 'media',
+      stage: stage,
+      outcome: outcome,
+      reason: reason,
+      traceId: diagnostics.traceForOperation('media:$attachmentId'),
+      values: values,
+    );
+  }
+
   Future<MediaAttachment?> _downloadAndAcknowledge({
     required MediaAttachment attachment,
     required String contactPeerId,
@@ -289,6 +308,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
         await _deleteRegularFile(relayCandidate);
         await _deleteRegularFile(File(privateDecryptStagingPath(absolutePath)));
       }
+      _diagnostic(attachment.id, 'download', 'started');
       final result = await callP2PMediaDownload(
         bridge,
         id: attachment.id,
@@ -301,11 +321,27 @@ final class StrictDirectMediaBlobDownloadAckOwner {
         expiresAtMs: custody.expiresAtMs,
         payloadSizeBytes: custody.ciphertextSize,
       );
-      if (!_isExactDownloadReceipt(result, custody) ||
-          !await _matchesCiphertext(relayCandidate, custody)) {
+      _diagnostic(
+        attachment.id,
+        'download',
+        result['ok'] == true ? 'ok' : 'failed',
+        reason: result['ok'] == true ? 'none' : 'network_unavailable',
+        values: {'transport': 'relay'},
+      );
+      final receiptMatches = _isExactDownloadReceipt(result, custody);
+      final ciphertextMatches =
+          receiptMatches && await _matchesCiphertext(relayCandidate, custody);
+      if (!receiptMatches || !ciphertextMatches) {
+        _diagnostic(
+          attachment.id,
+          'verify',
+          'failed',
+          reason: receiptMatches ? 'hash_mismatch' : 'invalid_payload',
+        );
         await _deleteRegularFile(relayCandidate);
         return null;
       }
+      _diagnostic(attachment.id, 'verify', 'ok');
       sourceRelayPeerId = result['custodyRelayPeerId'] as String;
       ciphertext = relayCandidate;
       ownsCiphertextCandidate = true;
@@ -328,25 +364,63 @@ final class StrictDirectMediaBlobDownloadAckOwner {
                 !await _authorizesPrivateTargets(absolutePath)) {
               return false;
             }
-            final decryptedPath = await callBlobDecrypt(
-              bridge,
-              filePath: ciphertext.path,
-              keyBase64: attachment.encryptionKeyBase64!,
-              nonce: attachment.encryptionNonce!,
-            );
+            late final String decryptedPath;
+            _diagnostic(attachment.id, 'decrypt', 'started');
+            try {
+              decryptedPath = await callBlobDecrypt(
+                bridge,
+                filePath: ciphertext.path,
+                keyBase64: attachment.encryptionKeyBase64!,
+                nonce: attachment.encryptionNonce!,
+              );
+              _diagnostic(attachment.id, 'decrypt', 'ok');
+            } catch (error) {
+              final reason = switch (error) {
+                BlobDecryptOperationalException(code: 'DECRYPT_IO_ERROR') =>
+                  'io_failed',
+                BlobDecryptOperationalException(code: 'BRIDGE_TIMEOUT') =>
+                  'timeout',
+                BlobDecryptOperationalException(code: 'BRIDGE_UNAVAILABLE') =>
+                  'bridge_unavailable',
+                StateError(
+                  message: 'blob:decrypt failed: DECRYPT_AUTH_ERROR',
+                ) =>
+                  'auth_failed',
+                StateError(
+                  message: 'blob:decrypt failed: DECRYPT_METADATA_ERROR',
+                ) =>
+                  'metadata_invalid',
+                _ => 'unknown',
+              };
+              _diagnostic(attachment.id, 'decrypt', 'failed', reason: reason);
+              rethrow;
+            }
             // The bridge's returned path is untrusted input. Anything other
             // than the exact authorized deterministic sibling is never
             // stat-ed, deleted, renamed, or promoted.
             if (privateDeterministicStaging &&
                 decryptedPath != privateDecryptStagingPath(absolutePath)) {
+              _diagnostic(
+                attachment.id,
+                'verify',
+                'failed',
+                reason: 'authority_lost',
+              );
               return false;
             }
             final decrypted = File(decryptedPath);
             if (!await decrypted.exists() ||
                 await decrypted.length() != attachment.size) {
+              _diagnostic(
+                attachment.id,
+                'verify',
+                'failed',
+                reason: 'size_mismatch',
+              );
               await _deleteRegularFile(decrypted);
               return false;
             }
+            _diagnostic(attachment.id, 'verify', 'ok');
             final canonical = File(absolutePath);
             await canonical.parent.create(recursive: true);
             if (decrypted.path != canonical.path) {
@@ -358,6 +432,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
             // disappearing deadline recheck, so the transaction can never
             // qualify against a different instant than it records.
             final commitAt = now().toUtc();
+            _diagnostic(attachment.id, 'commit', 'started');
             final didCommit = await incomingRepository
                 .commitIncomingDirectMediaBlobLocalPath(
                   expectedAttachment: attachment,
@@ -367,6 +442,13 @@ final class StrictDirectMediaBlobDownloadAckOwner {
                   updatedAt: commitAt.toIso8601String(),
                   nowMs: commitAt.millisecondsSinceEpoch,
                 );
+            _diagnostic(
+              attachment.id,
+              'commit',
+              didCommit ? 'ok' : 'failed',
+              reason: didCommit ? 'none' : 'authority_lost',
+              values: {'committed': didCommit},
+            );
             if (!didCommit) {
               // The DB refused this promotion — a deletion, hide, or crossed
               // projection won. Remove only the canonical plaintext this
@@ -428,6 +510,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
         expected.custodyRelayPeerId == null) {
       return false;
     }
+    _diagnostic(expected.attachmentId, 'receipt', 'started');
     try {
       final result = await callP2PMediaDelete(
         bridge,
@@ -441,6 +524,12 @@ final class StrictDirectMediaBlobDownloadAckOwner {
         custodyRelayPeerId: expected.custodyRelayPeerId,
       );
       if (_isExactAckReceipt(result, expected)) {
+        _diagnostic(
+          expected.attachmentId,
+          'receipt',
+          'ok',
+          values: {'acknowledged': true},
+        );
         return incomingRepository.deleteIncomingDirectMediaBlobAckIfExact(
           expected,
         );
@@ -449,6 +538,13 @@ final class StrictDirectMediaBlobDownloadAckOwner {
       // Persist the retry projection below; no proof-less/fan-out fallback.
     }
 
+    _diagnostic(
+      expected.attachmentId,
+      'receipt',
+      'pending',
+      reason: 'send_failed',
+      values: {'acknowledged': false, 'retryCount': expected.retryCount + 1},
+    );
     final attemptAt = now().toUtc();
     final retryCount = expected.retryCount + 1;
     final exponent = math.min(retryCount, 8);

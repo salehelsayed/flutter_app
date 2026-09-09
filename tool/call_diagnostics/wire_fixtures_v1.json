@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "contextFields": [
+    "traceId",
+    "requestId",
+    "operationId",
+    "parentOperationId",
+    "cause"
+  ],
+  "contexts": {
+    "attempt": {
+      "traceId": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000002",
+      "operationId": "00000000-0000-4000-8000-000000000003",
+      "parentOperationId": "00000000-0000-4000-8000-000000000004",
+      "cause": "user_action"
+    },
+    "authority": {
+      "requestId": "00000000-0000-4000-8000-000000000005",
+      "operationId": "00000000-0000-4000-8000-000000000006",
+      "cause": "calls_disabled"
+    }
+  }
+}

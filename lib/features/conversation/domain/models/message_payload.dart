@@ -44,6 +44,20 @@ class MessagePayload {
   /// [toInnerJson] and parsed only by [fromDecryptedJson].
   final PrivateMediaPolicy privateMediaPolicy;
 
+  /// Optional diagnostic correlation carried inside the encrypted payload;
+  /// never message or media authority.
+  final String? diagnosticTraceId;
+
+  static String? validatedDiagnosticTraceId(Object? value) {
+    if (value is! String ||
+        !RegExp(
+          r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+        ).hasMatch(value)) {
+      return null;
+    }
+    return value.toLowerCase();
+  }
+
   const MessagePayload({
     required this.id,
     required this.text,
@@ -58,6 +72,7 @@ class MessagePayload {
     this.dedupKey,
     this.isForwarded = false,
     this.privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
+    this.diagnosticTraceId,
   });
 
   bool get isEdit => action == actionEdit;
@@ -113,6 +128,9 @@ class MessagePayload {
         media: media,
         dedupKey: dedupKey,
         isForwarded: isForwarded,
+        diagnosticTraceId: validatedDiagnosticTraceId(
+          payload['diagnosticTraceId'],
+        ),
       );
     } catch (_) {
       return null;
@@ -147,7 +165,8 @@ class MessagePayload {
   ///
   /// The envelope contains the KEM ciphertext, AES ciphertext, and nonce
   /// alongside the sender's peer ID (cleartext for routing). The sender
-  /// username stays inside the encrypted inner payload.
+  /// username and diagnostic correlation stay inside the encrypted inner
+  /// payload. Relay custody requires the outer envelope's exact field set.
   static String buildEncryptedEnvelope({
     required String id,
     required String senderPeerId,
@@ -245,6 +264,9 @@ class MessagePayload {
         dedupKey: dedupKey,
         isForwarded: isForwarded,
         privateMediaPolicy: privateMediaPolicy,
+        diagnosticTraceId: validatedDiagnosticTraceId(
+          payload['diagnosticTraceId'],
+        ),
       );
     } catch (_) {
       return null;
@@ -271,6 +293,9 @@ class MessagePayload {
       if (isForwarded) 'isForwarded': true,
     };
     if (privateMedia != null) inner['privateMedia'] = privateMedia;
+    if (validatedDiagnosticTraceId(diagnosticTraceId) case final traceId?) {
+      inner['diagnosticTraceId'] = traceId;
+    }
     return jsonEncode(inner);
   }
 

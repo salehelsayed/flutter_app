@@ -14,6 +14,7 @@ class ConversationHeader extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback? onOverflow;
   final VoidCallback? onCall;
+  final VoidCallback? onCallRetry;
   final bool showCallAction;
   final bool callActionEnabled;
   final bool callActionInFlight;
@@ -31,6 +32,7 @@ class ConversationHeader extends StatelessWidget {
     this.onOverflow,
     this.onAvatarTap,
     this.onCall,
+    this.onCallRetry,
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
@@ -142,6 +144,7 @@ class ConversationHeader extends StatelessWidget {
                     inFlight: callActionInFlight,
                     unavailableMessage: callUnavailableMessage,
                     onCall: onCall,
+                    onRetry: onCallRetry,
                   ),
                 // Overflow button
                 GestureDetector(
@@ -174,12 +177,14 @@ class _ConversationCallAction extends StatelessWidget {
     required this.inFlight,
     required this.unavailableMessage,
     required this.onCall,
+    this.onRetry,
   });
 
   final bool enabled;
   final bool inFlight;
   final String unavailableMessage;
   final VoidCallback? onCall;
+  final VoidCallback? onRetry;
 
   String get _truthfulUnavailableMessage {
     final message = unavailableMessage.trim();
@@ -191,6 +196,7 @@ class _ConversationCallAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.backgroundReadableColors;
+    final canRetry = !inFlight && onRetry != null;
     final tooltip = inFlight
         ? 'Starting voice call'
         : enabled
@@ -199,9 +205,13 @@ class _ConversationCallAction extends StatelessWidget {
 
     return Semantics(
       button: true,
-      enabled: enabled,
+      enabled: enabled || canRetry,
       label: enabled ? 'Start voice call' : tooltip,
-      onTap: enabled ? onCall : null,
+      onTap: enabled
+          ? onCall
+          : canRetry
+          ? onRetry
+          : null,
       excludeSemantics: true,
       child: IconButton(
         tooltip: tooltip,
@@ -209,7 +219,7 @@ class _ConversationCallAction extends StatelessWidget {
             ? onCall
             : inFlight
             ? null
-            : () => _showUnavailable(context),
+            : onRetry ?? () => _showUnavailable(context),
         icon: const Icon(Icons.call_outlined),
         iconSize: 22,
         color: enabled ? colors.iconSecondary : colors.disabledForeground,

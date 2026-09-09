@@ -1,3 +1,4 @@
+import '../diagnostics/call_diagnostics.dart';
 import 'dart:async';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -164,6 +165,7 @@ final class CallSignalingService {
     // Invoke both before awaiting either so a slow/unreachable direct path can
     // never delay custody at the call mailbox.
     final directFuture = _sendDirect(
+      callHandle: callHandle,
       recipientDevicePeerId: endpoint.devicePeerId,
       envelopeJson: envelope,
     );
@@ -318,17 +320,40 @@ final class CallSignalingService {
   }
 
   Future<CallDirectSendResult> _sendDirect({
+    required String callHandle,
     required String recipientDevicePeerId,
     required String envelopeJson,
   }) async {
+    final diagnostics = CallDiagnostics.instance;
+    final traceId = diagnostics.traceForCall(callHandle: callHandle);
+    diagnostics.record(
+      stage: 'signaling',
+      action: 'send_direct',
+      outcome: 'started',
+      traceId: traceId,
+    );
     try {
       final result = await _directTransport.send(
         recipientDevicePeerId: recipientDevicePeerId,
         envelopeJson: envelopeJson,
       );
+      diagnostics.record(
+        stage: 'signaling',
+        action: 'send_direct',
+        outcome: result.accepted ? 'ok' : 'failed',
+        reason: result.accepted ? 'none' : 'transport_failed',
+        traceId: traceId,
+      );
       _emitLegResult(_CallSignalingLeg.directSend, result.accepted);
       return result;
     } catch (_) {
+      diagnostics.record(
+        stage: 'signaling',
+        action: 'send_direct',
+        outcome: 'failed',
+        reason: 'transport_failed',
+        traceId: traceId,
+      );
       _emitLegResult(_CallSignalingLeg.directSend, false);
       // A failed direct leg cannot erase committed mailbox custody.
       return const CallDirectSendResult(
@@ -345,6 +370,16 @@ final class CallSignalingService {
     required ResolvedCallEndpoint endpoint,
     required String envelope,
   }) async {
+    final diagnostics = CallDiagnostics.instance;
+    final traceId = diagnostics.traceForCall(callHandle: callHandle);
+    void record(bool stored) => diagnostics.record(
+      stage: 'signaling',
+      action: 'commit',
+      outcome: stored ? 'ok' : 'failed',
+      reason: stored ? 'none' : 'transport_failed',
+      traceId: traceId,
+      values: <String, Object?>{'storeCommitted': stored},
+    );
     try {
       final result = await _mailboxClient.store(
         CallMailboxStoreRequest(
@@ -359,6 +394,7 @@ final class CallSignalingService {
       final stored =
           result.expiresAtMs > signal.createdAtMs &&
           result.expiresAtMs <= signal.expiresAtMs;
+      record(stored);
       _emitLegResult(
         _CallSignalingLeg.mailboxStore,
         stored,
@@ -370,6 +406,7 @@ final class CallSignalingService {
             stored && result.wake == CallMailboxWakeStatus.dispatched,
       );
     } catch (_) {
+      record(false);
       _emitLegResult(_CallSignalingLeg.mailboxStore, false);
       return (stored: false, wakeDispatched: false);
     }

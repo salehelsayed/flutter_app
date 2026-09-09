@@ -110,6 +110,7 @@ final class FlutterWebRtcPeerConnectionAdapter
     Duration snapshotReadTimeout = const Duration(seconds: 1),
     Duration snapshotDeadlineTimeout = const Duration(seconds: 6),
     FlutterWebRtcFailureStageObserver? onFailureStage,
+    this.onDiagnosticSample,
     FlutterWebRtcAndroidAudioFocusConfigurator? configureAndroidAudioFocus,
     FlutterWebRtcPeerConnectionFactory? peerConnectionFactory,
   }) : assert(eventBufferCapacity > 0),
@@ -125,6 +126,10 @@ final class FlutterWebRtcPeerConnectionAdapter
            peerConnectionFactory ??
            ((configuration) => webrtc.createPeerConnection(configuration)),
        _failureStageGuard = FlutterWebRtcFailureStageGuard(onFailureStage);
+
+  final void Function(CallStatsSample, CallRtpProgressSample)?
+  onDiagnosticSample;
+  final CallRtpProgressSampler _rtpProgressSampler = CallRtpProgressSampler();
 
   final int _eventBufferCapacity;
   final Duration _snapshotReadTimeout;
@@ -530,12 +535,16 @@ final class FlutterWebRtcPeerConnectionAdapter
     final connection = _requireConnection();
     try {
       final senders = await connection.getSenders();
+      // The sender lookup can settle after teardown has released this peer.
+      _requireConnection();
       for (final sender in senders) {
         final track = sender.track;
         if (track?.kind == 'audio') {
           track!.enabled = enabled;
         }
       }
+    } on WebRtcAdapterException {
+      rethrow;
     } catch (_) {
       throw const WebRtcAdapterException(WebRtcFailureReason.other);
     }
@@ -631,15 +640,23 @@ final class FlutterWebRtcPeerConnectionAdapter
         timeout: _snapshotReadTimeout,
         onTimeout: () => <webrtc.StatsReport>[],
       );
-      final sample = _statsSampler.sample(
-        stats.map(
-          (report) => CallStatsRecord(
-            id: report.id,
-            type: report.type,
-            values: Map<Object?, Object?>.of(report.values),
-          ),
+      final diagnosticRecords = stats.map(
+        (report) => CallStatsRecord(
+          id: report.id,
+          type: report.type,
+          values: Map<Object?, Object?>.of(report.values),
         ),
       );
+      final sample = _statsSampler.sample(diagnosticRecords);
+      final observer = onDiagnosticSample;
+      if (observer != null) {
+        final progress = _rtpProgressSampler.sample(diagnosticRecords);
+        try {
+          observer(sample, progress);
+        } catch (_) {
+          // An optional diagnostic sink never changes media readiness.
+        }
+      }
       _inboundAudioRtpObserved |= sample.inboundAudioRtpObserved;
       _outboundAudioRtpObserved |= sample.outboundAudioRtpObserved;
 
@@ -990,6 +1007,7 @@ final class FlutterWebRtcCallEngine
   bool _audioSessionActive = false;
   bool _localAudioEnabled = false;
   int _iceGeneration = 0;
+
   /// Reconnect episodes per call. TURN credentials are refreshed on each
   /// restart, so a long call may recover from more than one network change.
   static const int maxIceRestarts = 8;
@@ -1657,22 +1675,25 @@ final class FlutterWebRtcCallEngine
       }
     }
 
-    await attempt(_adapterClosed, _adapter.close, () => _adapterClosed = true);
-
+    // Fence routes and the peer immediately; either platform teardown may
+    // suspend, so it must not delay the other resource's closed guard.
     final routePort = _audioRoutePort;
     final CallAudioRouteObserverLifecycle? routeLifecycle =
         routePort is CallAudioRouteObserverLifecycle
         ? routePort as CallAudioRouteObserverLifecycle
         : null;
+    Future<void>? routeClose;
     if (routeLifecycle == null) {
       _audioRouteLifecycleClosed = true;
     } else {
-      await attempt(
+      routeClose = attempt(
         _audioRouteLifecycleClosed,
         routeLifecycle.close,
         () => _audioRouteLifecycleClosed = true,
       );
     }
+    await attempt(_adapterClosed, _adapter.close, () => _adapterClosed = true);
+    if (routeClose != null) await routeClose;
 
     if (!_closeStateReset) {
       _connectionCreated = false;

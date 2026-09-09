@@ -1,5 +1,7 @@
+import '../diagnostics/call_diagnostics.dart';
 import 'dart:async';
 
+import '../domain/call_authority_lifetime.dart';
 import 'call_authority_client.dart';
 
 typedef IosVoipTokenMethodInvoker =
@@ -62,6 +64,9 @@ final class IosVoipTokenSnapshot {
     required this.capabilityVersion,
     required this.refreshEpoch,
     required this.invalidated,
+    this.invalidationReason = 'unknown',
+    this.operationId,
+    this.parentOperationId,
   });
 
   static const int protocolVersion = 1;
@@ -72,6 +77,9 @@ final class IosVoipTokenSnapshot {
   final int capabilityVersion;
   final int refreshEpoch;
   final bool invalidated;
+  final String invalidationReason;
+  final String? operationId;
+  final String? parentOperationId;
 
   String get relayEnvironment => switch (environment) {
     'development' => 'sandbox',
@@ -127,7 +135,12 @@ final class IosVoipTokenSnapshot {
       'refreshEpoch',
       'invalidated',
     };
-    if (map.keys.toSet().difference(keys).isNotEmpty ||
+    const diagnosticKeys = <String>{
+      'invalidationReason',
+      'operationId',
+      'parentOperationId',
+    };
+    if (map.keys.toSet().difference({...keys, ...diagnosticKeys}).isNotEmpty ||
         keys.difference(map.keys.toSet()).isNotEmpty ||
         map['version'] != protocolVersion ||
         map['token'] is! String ||
@@ -168,8 +181,27 @@ final class IosVoipTokenSnapshot {
       capabilityVersion: capabilityVersion,
       refreshEpoch: refreshEpoch,
       invalidated: invalidated,
+      invalidationReason:
+          const <String>{
+            'calls_disabled',
+            'pushkit_token_invalidated',
+            'native_token_updated',
+            'stale_epoch',
+          }.contains(map['invalidationReason'])
+          ? map['invalidationReason'] as String
+          : 'unknown',
+      operationId: _diagnosticUuid(map['operationId']),
+      parentOperationId: _diagnosticUuid(map['parentOperationId']),
     );
   }
+
+  static String? _diagnosticUuid(Object? value) =>
+      value is String &&
+          RegExp(
+            r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+          ).hasMatch(value)
+      ? value
+      : null;
 
   static final RegExp _lowercaseHex = RegExp(r'^[0-9a-f]+$');
   static final RegExp _apnsTopic = RegExp(
@@ -186,7 +218,7 @@ final class IosVoipTokenCoordinator {
     required CallAuthorityClient authorityClient,
     required DateTime Function() clock,
     IosVoipTokenPublicationAllowed? publicationAllowed,
-    this.registrationTtl = const Duration(days: 30),
+    this.registrationTtl = callBackgroundReachabilityLifetime,
     this.initialSnapshotWait = const Duration(seconds: 5),
     IosVoipTokenInitialSnapshotTimeout? waitForInitialReadTimeout,
     IosVoipTokenInitialSnapshotTimeout? waitForInitialSnapshotTimeout,
@@ -262,6 +294,8 @@ final class IosVoipTokenCoordinator {
   bool _invalid = false;
   bool _closed = false;
   bool _invalidationPublished = false;
+  String invalidationDiagnosticReason = 'unknown';
+  String? invalidationDiagnosticOperationId;
 
   Stream<void> get authorityInvalidations => _authorityInvalidations.stream;
 
@@ -293,6 +327,20 @@ final class IosVoipTokenCoordinator {
         case _IosVoipInitialStartKind.streamError ||
             _IosVoipInitialStartKind.nativeFailure ||
             _IosVoipInitialStartKind.timeout) {
+      invalidationDiagnosticReason = switch (outcome.kind) {
+        _IosVoipInitialStartKind.timeout => 'native_read_timeout',
+        _IosVoipInitialStartKind.streamError => 'native_stream_failed',
+        _ => 'native_lifecycle_failed',
+      };
+      invalidationDiagnosticOperationId = CallDiagnostics.instance
+          .beginOperation(reason: invalidationDiagnosticReason);
+      CallDiagnostics.instance.record(
+        stage: 'authority',
+        action: 'invalidate',
+        outcome: 'failed',
+        reason: invalidationDiagnosticReason,
+        operationId: invalidationDiagnosticOperationId,
+      );
       _invalid = true;
       _signalInitialSnapshotChange();
       await _schedule<void>(_revokeAndPublishInvalidation);
@@ -466,7 +514,9 @@ final class IosVoipTokenCoordinator {
       _completeInitialStart(_IosVoipInitialStartKind.streamError);
       return;
     }
-    unawaited(_schedule<void>(_failClosedNative));
+    unawaited(
+      _schedule<void>(() => _failClosedNative(reason: 'native_stream_failed')),
+    );
   }
 
   void _completeInitialStart(_IosVoipInitialStartKind kind) {
@@ -500,7 +550,43 @@ final class IosVoipTokenCoordinator {
     _signalInitialSnapshotChange();
   }
 
-  Future<bool> _reconcileAuthority({bool refreshExisting = false}) async {
+  Future<bool> _reconcileAuthority({bool refreshExisting = false}) {
+    final diagnostics = CallDiagnostics.instance;
+    final snapshot = _snapshot;
+    final reason = snapshot?.invalidated == true
+        ? snapshot!.invalidationReason
+        : refreshExisting
+        ? 'resume_refresh'
+        : 'bootstrap';
+    final operationId = snapshot?.invalidated == true
+        ? diagnostics.beginOperation(
+            reason: reason,
+            parentOperationId: snapshot?.operationId,
+          )
+        : diagnostics.currentOperationId ??
+              diagnostics.beginOperation(reason: reason);
+    invalidationDiagnosticReason = reason;
+    invalidationDiagnosticOperationId = operationId;
+    if (snapshot?.invalidated == true) {
+      diagnostics.record(
+        stage: 'authority',
+        action: 'invalidate',
+        outcome: 'ok',
+        reason: reason,
+        operationId: operationId,
+        parentOperationId: snapshot?.operationId,
+        values: <String, Object?>{'epoch': snapshot!.refreshEpoch},
+      );
+    }
+    return diagnostics.runWithOperation(
+      operationId,
+      () => _reconcileAuthorityInOperation(refreshExisting: refreshExisting),
+    );
+  }
+
+  Future<bool> _reconcileAuthorityInOperation({
+    bool refreshExisting = false,
+  }) async {
     if (_closed || _invalid) return false;
     if (!await _publicationAllowed() || _closed || _invalid) return false;
     final initial = _snapshot;
@@ -584,6 +670,9 @@ final class IosVoipTokenCoordinator {
       value = await _invokeMethod(advanceRefreshEpochMethod, <String, Object?>{
         'version': protocolVersion,
         'expectedRefreshEpoch': rejected.refreshEpoch,
+        'diagnostics': ?CallDiagnostics.instance.contextForWire(
+          reason: 'stale_epoch',
+        ),
       });
     } catch (_) {
       _reportEpochAdvance(IosVoipTokenEpochAdvanceOutcome.nativeFailure);
@@ -644,7 +733,20 @@ final class IosVoipTokenCoordinator {
     }
   }
 
-  Future<void> _failClosedNative() async {
+  Future<void> _failClosedNative({
+    String reason = 'native_snapshot_invalid',
+  }) async {
+    invalidationDiagnosticReason = reason;
+    invalidationDiagnosticOperationId = CallDiagnostics.instance.beginOperation(
+      reason: invalidationDiagnosticReason,
+    );
+    CallDiagnostics.instance.record(
+      stage: 'authority',
+      action: 'invalidate',
+      outcome: 'failed',
+      reason: invalidationDiagnosticReason,
+      operationId: invalidationDiagnosticOperationId,
+    );
     _invalid = true;
     _signalInitialSnapshotChange();
     await _revokeAndPublishInvalidation();
@@ -656,6 +758,12 @@ final class IosVoipTokenCoordinator {
   /// what poisons the relay's refresh-epoch high-water and turns one rejected
   /// re-set into a permanent `CALL_STALE_EPOCH` loop for this epoch.
   Future<void> _failClosedAuthority({int? rejectedEpoch}) async {
+    invalidationDiagnosticReason = 'authority_rejected';
+    invalidationDiagnosticOperationId =
+        CallDiagnostics.instance.currentOperationId ??
+        CallDiagnostics.instance.beginOperation(
+          reason: invalidationDiagnosticReason,
+        );
     if (rejectedEpoch != null) {
       _relayRejectedEpochs.add(rejectedEpoch);
       if (_publishedSnapshot?.refreshEpoch == rejectedEpoch) {
@@ -674,7 +782,13 @@ final class IosVoipTokenCoordinator {
     }
   }
 
-  Future<void> _revokeAndPublishInvalidation() async {
+  Future<void> _revokeAndPublishInvalidation() =>
+      CallDiagnostics.instance.runWithOperation(
+        invalidationDiagnosticOperationId,
+        _revokeAndPublishInvalidationInOperation,
+      );
+
+  Future<void> _revokeAndPublishInvalidationInOperation() async {
     Object? error;
     StackTrace? stackTrace;
     try {

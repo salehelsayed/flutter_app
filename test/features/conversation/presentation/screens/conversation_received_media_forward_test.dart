@@ -334,18 +334,14 @@ void main() {
           ),
         ),
       );
-      await pumpUntil(
-        tester,
-        () {
-          final screens = find.byType(ConversationScreen);
-          return screens.evaluate().isNotEmpty &&
-              tester
-                  .widget<ConversationScreen>(screens)
-                  .messages
-                  .any((candidate) => candidate.id == forwardedMessageId);
-        },
-        reason: 'the real DB message page must hydrate before receipt apply',
-      );
+      await pumpUntil(tester, () {
+        final screens = find.byType(ConversationScreen);
+        return screens.evaluate().isNotEmpty &&
+            tester
+                .widget<ConversationScreen>(screens)
+                .messages
+                .any((candidate) => candidate.id == forwardedMessageId);
+      }, reason: 'the real DB message page must hydrate before receipt apply');
 
       ConversationMessage visibleMessage([String id = forwardedMessageId]) =>
           tester
@@ -958,16 +954,30 @@ void main() {
             )
             .first,
       );
+      var deliveryCompleted = false;
       await tester.runAsync(() async {
         sendGesture.onTap!();
-        for (var i = 0; i < 80; i++) {
-          if ((await groupMessages.getMessagesPage(group.id)).isNotEmpty) {
+        // Snapshotting and encrypting media uses real filesystem IO. Wait for
+        // durable delivery and publication, rather than a fixed pump count.
+        final elapsed = Stopwatch()..start();
+        while (elapsed.elapsed < const Duration(seconds: 10)) {
+          if ((await groupMessages.getMessagesPage(group.id)).isNotEmpty &&
+              bridge.commandLog.contains('group:publish')) {
+            deliveryCompleted = true;
             return;
           }
           await Future<void>.delayed(const Duration(milliseconds: 25));
         }
       });
       await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(
+        deliveryCompleted,
+        isTrue,
+        reason:
+            'forwarding must persist the group message and publish within '
+            'the bounded real IO deadline',
+      );
 
       final delivered = await groupMessages.getMessagesPage(group.id);
       expect(delivered, hasLength(1));

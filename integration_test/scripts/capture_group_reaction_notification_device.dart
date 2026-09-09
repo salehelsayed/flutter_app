@@ -10325,7 +10325,7 @@ class _Plan257Capture {
       'start',
       '-W',
       '-n',
-      '$appPackage/.MainActivity',
+      '$appPackage/com.mknoon.app.MainActivity',
     ], environmentFailure: true);
   }
 

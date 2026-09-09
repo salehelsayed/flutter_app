@@ -2405,9 +2405,10 @@ func ensureInboxMessageID(entry inboxMessage) inboxMessage {
 
 // InboxStore wraps an InboxBackend and a PushService.
 type InboxStore struct {
-	backend  InboxBackend
-	push     *PushService
-	capacity int
+	appDiagnostics *appDiagnosticStore
+	backend        InboxBackend
+	push           *PushService
+	capacity       int
 	// now is injectable only for deterministic ACK-custody expiry tests. Every
 	// production constructor installs time.Now and nil falls back to time.Now.
 	now func() time.Time
@@ -4294,6 +4295,20 @@ func HandleInboxStream(
 	var resp inboxResponse
 
 	switch req.Action {
+	case appDiagnosticsAction:
+		var diagnostics *appDiagnosticStore
+		if inbox != nil {
+			diagnostics = inbox.appDiagnostics
+		}
+		handleAppDiagnosticRequest(s, requestBytes, remotePeer, diagnostics)
+		return
+	case callDiagnosticsAction:
+		var callControl *CallControlService
+		if len(callControls) > 0 {
+			callControl = callControls[0]
+		}
+		handleCallDiagnosticRequest(s, requestBytes, remotePeer, callControl, turnCredentials)
+		return
 	case turnCredentialsAction:
 		handleTurnCredentialRequest(s, requestBytes, remotePeer, turnCredentials)
 		return

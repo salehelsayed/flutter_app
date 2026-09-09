@@ -3846,4 +3846,176 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get call_audio_route_bluetooth => 'بلوتوث';
+
+  @override
+  String get settings_diagnostics_section => 'الدعم';
+
+  @override
+  String get settings_call_diagnostics_title => 'تشخيص المكالمات';
+
+  @override
+  String get settings_call_diagnostics_switch =>
+      'مشاركة بيانات تشخيص المكالمات';
+
+  @override
+  String get settings_call_diagnostics_summary =>
+      'ساعد في تشخيص المكالمات الناجحة والفاشلة. عند تفعيل المشاركة، تُرسل التقارير تلقائيًا عندما يتصل هذا الهاتف بالإنترنت.';
+
+  @override
+  String get settings_call_diagnostics_details =>
+      'تشمل مراحل المكالمات وأسباب فشلها وتوقيتها وإصدار التطبيق وحالة الاتصال وتدفّق حزم البيانات. لا تشمل الصوت أو الرسائل أو معرّفات جهات الاتصال أو الأجهزة أو الرموز السرية أو عناوين الشبكة.';
+
+  @override
+  String get settings_app_diagnostics_title => 'تشخيص التطبيق';
+
+  @override
+  String get settings_app_diagnostics_switch => 'مشاركة بيانات تشخيص التطبيق';
+
+  @override
+  String get settings_app_diagnostics_summary =>
+      'ساعد في اكتشاف مشكلات الرسائل والوسائط الخاصة والإشعارات وبدء تشغيل التطبيق. تُرسل التقارير تلقائيًا عندما يتصل هذا الهاتف بالإنترنت.';
+
+  @override
+  String get settings_app_diagnostics_details =>
+      'تشمل مراحل العمليات وفئات الأخطاء المحددة والتوقيت وإصدار التطبيق وتقارير التعطّل والتجمّد وحالة عمل نظام التقارير. لا تشمل الرسائل أو الصور أو الصوت أو المفاتيح أو معرّفات جهات الاتصال أو الأجهزة أو الرموز السرية أو عناوين الشبكة. انسخ رمز الدعم لمساعدتنا في العثور على المشكلة.';
+
+  @override
+  String get settings_diagnostics_sharing_on => 'المشاركة مفعّلة';
+
+  @override
+  String get settings_diagnostics_off => 'متوقفة';
+
+  @override
+  String get settings_diagnostics_status_unavailable =>
+      'حالة التشخيص غير متاحة مؤقتًا.';
+
+  @override
+  String get settings_diagnostics_storage_failed =>
+      'يتعذّر حفظ التقارير على هذا الهاتف. جرّب إيقاف المشاركة ثم تفعيلها مجددًا.';
+
+  @override
+  String get settings_diagnostics_setup_pending =>
+      'إعداد المشاركة قيد الانتظار. ستُرسل التقارير عند اكتماله.';
+
+  @override
+  String get settings_diagnostics_disable_pending =>
+      'المشاركة متوقفة على هذا الهاتف. تحديث الخادم قيد الانتظار.';
+
+  @override
+  String get settings_diagnostics_ready => 'المشاركة جاهزة.';
+
+  @override
+  String get settings_diagnostics_disabled => 'المشاركة متوقفة.';
+
+  @override
+  String settings_diagnostics_queued_events(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count حدث بانتظار الإرسال',
+      many: '$count حدثًا بانتظار الإرسال',
+      few: '$count أحداث بانتظار الإرسال',
+      two: 'حدثان بانتظار الإرسال',
+      one: 'حدث واحد بانتظار الإرسال',
+      zero: 'لا توجد أحداث بانتظار الإرسال',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String settings_diagnostics_last_upload(DateTime date, DateTime time) {
+    final intl.DateFormat dateDateFormat = intl.DateFormat.yMd(localeName);
+    final String dateString = dateDateFormat.format(date);
+    final intl.DateFormat timeDateFormat = intl.DateFormat.jm(localeName);
+    final String timeString = timeDateFormat.format(time);
+
+    return 'آخر إرسال: $dateString، $timeString';
+  }
+
+  @override
+  String settings_diagnostics_dropped_events(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'تم إسقاط $count حدث. قد تكون التقارير غير مكتملة.',
+      many: 'تم إسقاط $count حدثًا. قد تكون التقارير غير مكتملة.',
+      few: 'تم إسقاط $count أحداث. قد تكون التقارير غير مكتملة.',
+      two: 'تم إسقاط حدثين. قد تكون التقارير غير مكتملة.',
+      one: 'تم إسقاط حدث واحد. قد تكون التقارير غير مكتملة.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get settings_diagnostics_retry_pending =>
+      'الإرسال بانتظار إعادة المحاولة.';
+
+  @override
+  String get settings_diagnostics_update_failed =>
+      'تعذّر تحديث إعدادات التشخيص. يُرجى المحاولة مجددًا.';
+
+  @override
+  String settings_diagnostics_retention(int localDays, int serverDays) {
+    return 'تُحفظ التقارير على هذا الهاتف لمدة تصل إلى $localDays أيام وعلى الخادم لمدة تصل إلى $serverDays يومًا. المشاركة مفعّلة افتراضيًا. يمكنك إيقافها في أي وقت.';
+  }
+
+  @override
+  String get settings_diagnostics_support_code_copied =>
+      'تم نسخ رمز الدعم. شاركه عند الإبلاغ عن مشكلة.';
+
+  @override
+  String get settings_diagnostics_copy_support_code => 'نسخ رمز الدعم';
+
+  @override
+  String get settings_diagnostics_preview_report => 'معاينة تقرير الدعم';
+
+  @override
+  String get settings_diagnostics_report_copied => 'تم نسخ تقرير الدعم';
+
+  @override
+  String get settings_diagnostics_copy_report => 'نسخ تقرير الدعم';
+
+  @override
+  String get settings_diagnostics_cleared =>
+      'المشاركة متوقفة وتم مسح التقارير المحلية';
+
+  @override
+  String get settings_diagnostics_disable_and_clear =>
+      'إيقاف المشاركة ومسح التقارير';
+
+  @override
+  String get settings_safety_support_title => 'السلامة والدعم';
+
+  @override
+  String get settings_safety_support_description =>
+      'أبلغ مطوّر mknoon عن الإساءة أو المخاوف المتعلقة بسلامة الأطفال. استخدم العنوان أدناه أو افتح تطبيق البريد الإلكتروني لكتابة بلاغ.';
+
+  @override
+  String get settings_safety_support_email => 'كتابة رسالة بريد';
+
+  @override
+  String get settings_safety_support_copy_email => 'نسخ عنوان البريد';
+
+  @override
+  String get settings_safety_support_copied =>
+      'تم نسخ عنوان البريد الإلكتروني.';
+
+  @override
+  String get settings_safety_support_copy_failed =>
+      'تعذّر نسخ العنوان. يمكنك تحديده أعلاه ونسخه يدويًا.';
+
+  @override
+  String get settings_safety_support_email_unavailable =>
+      'تعذّر فتح تطبيق بريد إلكتروني. انسخ العنوان وتواصل معنا عبر خدمة البريد الإلكتروني التي تفضّلها.';
+
+  @override
+  String get settings_safety_support_browser_unavailable =>
+      'تعذّر فتح المتصفح. يمكنك نسخ رابط السياسة أدناه وفتحه بنفسك.';
+
+  @override
+  String get settings_safety_support_guidance =>
+      'صف المشكلة. لا ترسل أي مواد يُشتبه بأنها تتضمن اعتداءً جنسيًا على الأطفال، أو مفاتيح خاصة، أو عبارات استرداد.';
+
+  @override
+  String get settings_safety_support_standards => 'معايير سلامة الأطفال';
 }

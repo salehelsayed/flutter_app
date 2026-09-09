@@ -6,6 +6,19 @@ import XCTest
 @testable import Runner
 
 final class MknoonCallNativeBridgeTests: XCTestCase {
+  func testSharedWireContextSurvivesCapabilityWrapperWithoutChangingAuthorityFields() throws {
+    for wire in try nativeDiagnosticWireContexts().values {
+      let rig = makeBridgeRig()
+      var captured: [String: Any] = [:]
+      rig.controller.setCapabilityChangeHandler { _ in captured = MknoonCallDiagnosticScope.current; return true }
+      let bridge = MknoonCallNativeBridge(controller: rig.controller, messenger: nil)
+      XCTAssertEqual(invoke(bridge, "setCapabilityEnabled", ["version": 1, "enabled": false, "diagnostics": wire]) as? Bool, true)
+      var expected = wire
+      expected["reason"] = expected.removeValue(forKey: "cause")
+      XCTAssertEqual(captured as NSDictionary, expected as NSDictionary)
+      XCTAssertTrue(MknoonCallDiagnosticScope.current.isEmpty)
+    }
+  }
   private let now: Int64 = 1_900_000_000_000
   private let callId = UUID(uuidString: "123e4567-e89b-42d3-a456-426614174000")!
 

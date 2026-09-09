@@ -626,9 +626,27 @@ final class _KeepaliveCampaign {
             return null;
           }
           if (result['status'] == 'failed' || result['success'] == false) {
+            // Keep the precise app proof boundary through package cleanup,
+            // without exporting exception text, payloads or the full stack.
+            final stack = result['stackTrace'];
+            final sourceFrame = stack is String
+                ? RegExp(
+                    r'package:flutter_app/core/debug/keepalive_drop_e2e\.dart:\d+:\d+',
+                  ).firstMatch(stack)?.group(0)
+                : null;
+            final error = result['error'];
+            final precondition = error is String
+                ? RegExp(
+                    r'^Bad state: keepalive send precondition failed: '
+                    r'latch=(?:true|false) connected=(?:true|false) '
+                    r'local=(?:true|false)$',
+                  ).firstMatch(error)?.group(0)
+                : null;
             throw _CampaignFailure(
               'Production app step $stepId failed '
-              '(${result['errorType'] ?? 'unknown'}).',
+              '(${result['errorType'] ?? 'unknown'}'
+              '${sourceFrame == null ? '' : '; $sourceFrame'}'
+              '${precondition == null ? '' : '; $precondition'}).',
             );
           }
           if (result['status'] != expectedStatus || result['success'] != true) {
@@ -820,7 +838,7 @@ final class _KeepaliveCampaign {
       'start',
       '-W',
       '-n',
-      '$packageName/.MainActivity',
+      '$packageName/com.mknoon.app.MainActivity',
     ], allowFailure: true);
     if (result.exitCode != 0 || '${result.stdout}'.contains('Error:')) {
       throw _CampaignFailure('App launch failed on $device.');

@@ -545,10 +545,10 @@ final class _AndroidVoiceHost {
   }
 
   Future<void> _exchangeContacts(_Party sender, _Party receiver) async {
+    // Both pollers already run after identity bootstrap. A relaunch here can
+    // kill one after it consumes its config, leaving only a running receipt.
     await _stageContactBootstrap(sender, receiver);
     await _stageContactBootstrap(receiver, sender);
-    await _launch(sender);
-    await _launch(receiver);
     await Future.wait(<Future<void>>[
       _waitForGenericStep(sender, 'voice-contact-${sender.role}'),
       _waitForGenericStep(receiver, 'voice-contact-${receiver.role}'),
@@ -574,12 +574,25 @@ final class _AndroidVoiceHost {
 
   Future<void> _waitForGenericStep(_Party party, String stepId) async {
     final deadline = DateTime.now().add(const Duration(minutes: 3));
+    var lastPhase = 'unknown';
     while (DateTime.now().isBefore(deadline)) {
       final raw = await _readAppFile(party, 'intro_e2e_result.json');
       if (raw != null) {
         try {
           final decoded = jsonDecode(raw);
           if (decoded is Map && decoded['stepId'] == stepId) {
+            final phase = decoded['phase'];
+            if (const {
+              'p2p_ready',
+              'health_check',
+              'inbox_drain',
+              'contact_persistence',
+              'actions',
+              'snapshot',
+              'failure_snapshot',
+            }.contains(phase)) {
+              lastPhase = phase as String;
+            }
             if (decoded['status'] == 'failed' || decoded['success'] == false) {
               throw _VoiceFailure(
                 'test',
@@ -596,7 +609,9 @@ final class _AndroidVoiceHost {
       }
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
-    throw TimeoutException('Contact bootstrap timed out on ${party.deviceId}.');
+    throw TimeoutException(
+      'Contact bootstrap timed out on ${party.deviceId}; phase=$lastPhase.',
+    );
   }
 
   Map<String, Object?> _voiceConfig({
@@ -685,7 +700,7 @@ final class _AndroidVoiceHost {
       'start',
       '-W',
       '-n',
-      '$packageName/.MainActivity',
+      '$packageName/com.mknoon.app.MainActivity',
     ], mutate: true);
   }
 

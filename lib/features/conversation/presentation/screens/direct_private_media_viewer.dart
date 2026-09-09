@@ -1006,11 +1006,15 @@ class DirectPrivateMediaOpenFailurePlaceholder extends StatelessWidget {
 class DirectPrivateMediaUnsupportedPlaceholder extends StatelessWidget {
   const DirectPrivateMediaUnsupportedPlaceholder({
     super.key,
+    this.requiresUpdate = true,
     this.onReply,
     this.onInfo,
     this.onDelete,
   });
 
+  /// Only a newer wire policy indicates that updating may help. Verification
+  /// failures and malformed current-version metadata still fail closed.
+  final bool requiresUpdate;
   final VoidCallback? onReply;
   final VoidCallback? onInfo;
   final VoidCallback? onDelete;
@@ -1025,9 +1029,18 @@ class DirectPrivateMediaUnsupportedPlaceholder extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.system_update_alt_rounded),
+          Icon(
+            requiresUpdate
+                ? Icons.system_update_alt_rounded
+                : Icons.error_outline_rounded,
+          ),
           const SizedBox(height: 6),
-          Text(l10n.private_media_unsupported, textAlign: TextAlign.center),
+          Text(
+            requiresUpdate
+                ? l10n.private_media_unsupported
+                : l10n.media_could_not_verify,
+            textAlign: TextAlign.center,
+          ),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

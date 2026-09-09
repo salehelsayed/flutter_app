@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -59,7 +60,9 @@ func (d pushServiceCallWakeDispatcher) DispatchCallWake(
 		delays = delays[:2]
 	}
 	for attempt := 0; attempt <= len(delays); attempt++ {
+		callDiagnosticProvider(ctx, "android", attempt, true, nil)
 		_, sendErr := d.push.send(ctx, message)
+		callDiagnosticProvider(ctx, "android", attempt, false, sendErr)
 		if sendErr == nil {
 			return nil
 		}
@@ -90,6 +93,10 @@ func buildCallWakeMessage(route CallWakeRoute, payload CallWakePayload) (*messag
 	data := map[string]string{
 		"v": "1", "w": "call", "c": payload.CallHandle,
 		"h": payload.WakeHandle, "e": strconv.FormatInt(payload.ExpiresAtMs, 10),
+	}
+	if payload.Diagnostics != nil && payload.Diagnostics.SchemaVersion == 1 && diagnosticUUID.MatchString(payload.Diagnostics.TraceID) {
+		raw, _ := json.Marshal(payload.Diagnostics)
+		data["diagnostics"] = string(raw)
 	}
 	message := &messaging.Message{
 		Token: route.Token,

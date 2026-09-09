@@ -14,6 +14,7 @@ import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/call_mailbox_client.dart';
 import 'package:flutter_app/features/call/infrastructure/p2p_call_transport.dart';
@@ -295,6 +296,71 @@ Future<void> _prepare(CallCoordinator coordinator) async {
 }
 
 void main() {
+  test(
+    'durable diagnostics keep direct success distinct from failed mailbox custody',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final coordinator = _coordinator();
+      addTearDown(coordinator.dispose);
+      await _prepare(coordinator);
+      final trace = diagnostics.beginAttempt()!;
+      const handle = '33333333-3333-4333-8333-333333333333';
+      diagnostics.bindCall(
+        callId: _callId.value,
+        callHandle: handle,
+        traceId: trace,
+      );
+      final service = CallSignalingService(
+        codec: SecureCallEnvelopeCodec(crypto: _Crypto(), nowMs: () => _nowMs),
+        directTransport: _Direct(
+          const CallDirectSendResult(
+            outcome: CallDirectTransportOutcome.acceptedBytes,
+            transportAcknowledged: true,
+            route: CallDirectRoute.direct,
+          ),
+        ),
+        mailboxClient: _Mailbox(storeSucceeds: false, leakFailureDetails: true),
+        coordinator: coordinator,
+        networkEffectsAllowed: () => true,
+      );
+      final result = await service.send(
+        signal: _invite(),
+        callHandle: handle,
+        endpoint: _endpoint,
+        senderSigningPrivateKey: 'local-signing',
+      );
+      await result.mailboxStoreSettled;
+      expect(result.directAccepted, isTrue);
+      expect(coordinator.activeSession!.mailboxCustodyConfirmed, isFalse);
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.any(
+          (event) =>
+              event['traceId'] == trace &&
+              event['action'] == 'send_direct' &&
+              event['outcome'] == 'ok',
+        ),
+        isTrue,
+      );
+      expect(
+        events.any(
+          (event) =>
+              event['traceId'] == trace &&
+              event['action'] == 'commit' &&
+              event['outcome'] == 'failed' &&
+              (event['values'] as Map)['storeCommitted'] == false,
+        ),
+        isTrue,
+      );
+      expect(jsonEncode(events), isNot(contains('secret-token')));
+      expect(jsonEncode(events), isNot(contains(handle)));
+    },
+  );
+
   test(
     'direct acceptance exposes exact mailbox settlement before retirement',
     () {

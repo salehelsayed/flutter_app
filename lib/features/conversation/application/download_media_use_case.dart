@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -35,6 +36,91 @@ import 'strict_direct_media_blob_download_ack_owner.dart';
 final Map<_MediaDownloadInFlightKey, Future<MediaAttachment?>>
 _inFlightMediaDownloads =
     <_MediaDownloadInFlightKey, Future<MediaAttachment?>>{};
+
+// Private operation keys are resolved only through the collector's protected
+// local alias index. Event records contain only closed milestones and codes.
+class _MediaDiagnosticAttempt {
+  _MediaDiagnosticAttempt(this.traceId);
+  final String? traceId;
+  String failureReason = 'unknown';
+  bool hasFailure = false;
+  String stage = 'preflight';
+
+  void record(
+    String nextStage,
+    String outcome, {
+    String reason = 'none',
+    Map<String, Object?> values = const {},
+  }) {
+    stage = nextStage;
+    if (outcome == 'failed' || outcome == 'blocked') {
+      hasFailure = true;
+      failureReason = reason;
+    }
+    AppDiagnostics.instance.record(
+      feature: 'media',
+      stage: nextStage,
+      outcome: outcome,
+      reason: reason,
+      traceId: traceId,
+      values: values,
+    );
+  }
+
+  Future<String> decrypt(
+    Bridge bridge, {
+    required String filePath,
+    required String keyBase64,
+    required String nonce,
+  }) async {
+    record('decrypt', 'started');
+    try {
+      final path = await callBlobDecrypt(
+        bridge,
+        filePath: filePath,
+        keyBase64: keyBase64,
+        nonce: nonce,
+      );
+      record('decrypt', 'ok');
+      return path;
+    } catch (error) {
+      record('decrypt', 'failed', reason: _mediaDiagnosticErrorReason(error));
+      rethrow;
+    }
+  }
+}
+
+String _mediaEligibilityDiagnosticReason(
+  DirectPrivateMediaEligibilityReason reason,
+) => switch (reason) {
+  DirectPrivateMediaEligibilityReason.unsupported => 'unsupported',
+  DirectPrivateMediaEligibilityReason.corruptPolicyState => 'metadata_invalid',
+  // An existing quarantine does not reveal whether its cause was hash, auth or size.
+  DirectPrivateMediaEligibilityReason.integrityFailed => 'invalid_payload',
+  _ => 'authority_rejected',
+};
+
+String _mediaDiagnosticErrorReason(Object error) {
+  if (error is BlobDecryptOperationalException) {
+    return switch (error.code) {
+      'DECRYPT_IO_ERROR' => 'io_failed',
+      'BRIDGE_TIMEOUT' => 'timeout',
+      'BRIDGE_UNAVAILABLE' => 'bridge_unavailable',
+      'MALFORMED_RESPONSE' => 'malformed_response',
+      _ => 'unknown',
+    };
+  }
+  if (error is StateError) {
+    return switch (error.message) {
+      'blob:decrypt failed: DECRYPT_AUTH_ERROR' => 'auth_failed',
+      'blob:decrypt failed: DECRYPT_METADATA_ERROR' => 'metadata_invalid',
+      _ => 'unknown',
+    };
+  }
+  if (error is FileSystemException) return 'io_failed';
+  if (error is TimeoutException) return 'timeout';
+  return 'unknown';
+}
 
 enum MediaDownloadIntent { automatic, explicitUser }
 
@@ -643,6 +729,96 @@ Future<MediaAttachment?> downloadMedia({
   // promotion, or commit.
   GroupMediaPostClaimPreCommit? groupMediaPostClaimPreCommit,
 }) async {
+  final diagnostics = AppDiagnostics.instance;
+  return diagnostics.runWithAttempt(
+    feature: 'media',
+    traceId: diagnostics.traceForOperation('media:${attachment.id}'),
+    body: (traceId) async {
+      final diagnosticTimer = Stopwatch()..start();
+      final diagnosticAttempt = _MediaDiagnosticAttempt(traceId);
+      diagnosticAttempt.record('preflight', 'started');
+      try {
+        final result = await _downloadMediaDiagnosed(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          attachment: attachment,
+          contactPeerId: contactPeerId,
+          owner: owner,
+          messageRepo: messageRepo,
+          groupMessageRepo: groupMessageRepo,
+          intent: intent,
+          enforceGroupMediaPolicy: enforceGroupMediaPolicy,
+          transferStallTimeout: transferStallTimeout,
+          transferMaxTimeout: transferMaxTimeout,
+          latePrivateTransferScrubDelay: latePrivateTransferScrubDelay,
+          nowMs: nowMs,
+          groupMediaAutomaticDownloadAttemptStarted:
+              groupMediaAutomaticDownloadAttemptStarted,
+          groupMediaPostClaimPreCommit: groupMediaPostClaimPreCommit,
+          diagnosticAttempt: diagnosticAttempt,
+        );
+        diagnostics.finishAttempt(
+          feature: 'media',
+          traceId: traceId,
+          outcome: result != null ? 'success' : 'failed',
+          reason: result != null ? 'none' : diagnosticAttempt.failureReason,
+          values: {
+            'durationMs': diagnosticTimer.elapsedMilliseconds,
+            'retryCount': attachment.downloadRetryCount ?? 0,
+            'committed': result != null,
+          },
+        );
+        return result;
+      } catch (error) {
+        diagnosticAttempt.record(
+          diagnosticAttempt.stage,
+          'failed',
+          reason: _mediaDiagnosticErrorReason(error),
+        );
+        diagnostics.finishAttempt(
+          feature: 'media',
+          traceId: traceId,
+          outcome: 'failed',
+          reason: diagnosticAttempt.failureReason,
+          values: {'durationMs': diagnosticTimer.elapsedMilliseconds},
+        );
+        rethrow;
+      }
+    },
+  );
+}
+
+Future<MediaAttachment?> _downloadMediaDiagnosed({
+  required Bridge bridge,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required MediaFileManager mediaFileManager,
+  required MediaAttachment attachment,
+  required String contactPeerId,
+  required MediaOwnerLane owner,
+  MessageRepository? messageRepo,
+  GroupMessageRepository? groupMessageRepo,
+  MediaDownloadIntent? intent,
+  bool enforceGroupMediaPolicy = false,
+  Duration? transferStallTimeout,
+  Duration? transferMaxTimeout,
+  // Test-only scheduling seam. Production callers leave this null so the
+  // scrub retains the transfer watchdog's existing maximum-delay authority.
+  Duration? latePrivateTransferScrubDelay,
+  int Function()? nowMs,
+  // Compile-gated attempt observer used only by the main-app Android proof.
+  // It counts an eligible ordinary automatic-group invocation before local
+  // encrypted-companion recovery, so a fresh-process recovery is still an
+  // honest second attempt even when it avoids a redundant relay transfer.
+  GroupMediaAutomaticDownloadAttemptStarted?
+  groupMediaAutomaticDownloadAttemptStarted,
+  // Compile-gated main-app E2E seam. Production leaves this null. It is
+  // reached only by an ordinary automatic group download after the exact
+  // durable claim and one successful relay attempt, before validation,
+  // promotion, or commit.
+  GroupMediaPostClaimPreCommit? groupMediaPostClaimPreCommit,
+  required _MediaDiagnosticAttempt diagnosticAttempt,
+}) async {
   int currentNowMs() =>
       nowMs?.call() ?? DateTime.now().toUtc().millisecondsSinceEpoch;
 
@@ -683,6 +859,11 @@ Future<MediaAttachment?> downloadMedia({
       attachmentRequired: false,
     );
     if (!parentDecision.allows(DirectPrivateMediaAction.explicitDownload)) {
+      diagnosticAttempt.record(
+        'preflight',
+        'blocked',
+        reason: _mediaEligibilityDiagnosticReason(parentDecision.reason),
+      );
       return null;
     }
     requiresDirectPrivateCommit = policy.requiresRedaction;
@@ -702,6 +883,11 @@ Future<MediaAttachment?> downloadMedia({
         expectedAttachmentId: attachment.id,
       );
       if (!exactDecision.allows(DirectPrivateMediaAction.explicitDownload)) {
+        diagnosticAttempt.record(
+          'preflight',
+          'blocked',
+          reason: _mediaEligibilityDiagnosticReason(exactDecision.reason),
+        );
         return null;
       }
       // Private byte-routing authority comes only from the exact current row.
@@ -1650,6 +1836,12 @@ Future<MediaAttachment?> downloadMedia({
           'expectedBytes': attachment.size,
         },
       );
+      diagnosticAttempt.record(
+        'commit',
+        exists && bytes > 0 ? 'ok' : 'failed',
+        reason: exists && bytes > 0 ? 'none' : 'missing_file',
+        values: {'committed': exists && bytes > 0},
+      );
       if (exists && bytes > 0) {
         if (enforceGroupMediaPolicy) {
           _scheduleGroupMediaDownloadPostCommitProbes(
@@ -1863,10 +2055,17 @@ Future<MediaAttachment?> downloadMedia({
       if (enforceGroupMediaPolicy) {
         return;
       }
+      diagnosticAttempt.record('receipt', 'started');
       unawaited(() async {
         try {
           final response = await callP2PMediaDelete(bridge, id: attachment.id);
           if (response['ok'] != true) {
+            diagnosticAttempt.record(
+              'receipt',
+              'failed',
+              reason: 'send_failed',
+              values: {'acknowledged': false},
+            );
             emitFlowEvent(
               layer: 'FL',
               event: 'MEDIA_ACK_DELETE_FAILED',
@@ -1878,12 +2077,23 @@ Future<MediaAttachment?> downloadMedia({
             );
             return;
           }
+          diagnosticAttempt.record(
+            'receipt',
+            'ok',
+            values: {'acknowledged': true},
+          );
           emitFlowEvent(
             layer: 'FL',
             event: 'MEDIA_RELAY_BLOB_ACK_DELETED',
             details: {'blobId': idPrefix, 'source': source},
           );
         } catch (e) {
+          diagnosticAttempt.record(
+            'receipt',
+            'failed',
+            reason: 'send_failed',
+            values: {'acknowledged': false},
+          );
           emitFlowEvent(
             layer: 'FL',
             event: 'MEDIA_ACK_DELETE_FAILED',
@@ -1946,6 +2156,11 @@ Future<MediaAttachment?> downloadMedia({
           return null;
         }
         if (!attachment.hasEncryptionMetadata) {
+          diagnosticAttempt.record(
+            'preflight',
+            'blocked',
+            reason: 'metadata_invalid',
+          );
           await quarantineUnsafeGroupMedia(
             event: 'MEDIA_DOWNLOAD_REJECTED_INVALID_GROUP_ENCRYPTION',
             details: {
@@ -2070,6 +2285,11 @@ Future<MediaAttachment?> downloadMedia({
         // Discriminator case 3: key material whose scheme is outside
         // the v1 whitelist must never be decrypted with v1 logic.
         if (!attachment.hasEncryptionMetadata) {
+          diagnosticAttempt.record(
+            'preflight',
+            'blocked',
+            reason: 'metadata_invalid',
+          );
           await failClosedDirectEncryptedMedia(
             status: kMediaDownloadStatusIntegrityFailed,
             event: 'MEDIA_DOWNLOAD_REJECTED_UNKNOWN_ENCRYPTION_SCHEME',
@@ -2091,6 +2311,11 @@ Future<MediaAttachment?> downloadMedia({
                 expectedHash: attachment.contentHash,
               );
           if (!integrityValidation.isValid) {
+            diagnosticAttempt.record(
+              'verify',
+              'failed',
+              reason: 'hash_mismatch',
+            );
             if (failOpenOnCryptoFailure) {
               emitFlowEvent(
                 layer: 'FL',
@@ -2119,15 +2344,15 @@ Future<MediaAttachment?> downloadMedia({
 
         late final String decryptedPath;
         try {
-          decryptedPath = await callBlobDecrypt(
+          decryptedPath = await diagnosticAttempt.decrypt(
             bridge,
             filePath: stagedFile.path,
             keyBase64: attachment.encryptionKeyBase64!,
             nonce: attachment.encryptionNonce!,
           );
         } on StateError catch (e) {
-          // The bridge evaluated the ciphertext and rejected it
-          // (auth-tag/key mismatch) — cryptographic, not transient.
+          // Only an explicit native authentication or crypto-metadata verdict
+          // reaches this branch. Operational native failures use exceptions.
           if (failOpenOnCryptoFailure) {
             emitFlowEvent(
               layer: 'FL',
@@ -2154,8 +2379,8 @@ Future<MediaAttachment?> downloadMedia({
           );
           return _DirectStagedDecryptOutcome.terminal;
         } catch (e) {
-          // Transport-level failure — the ciphertext was never
-          // evaluated. Retryable `failed`, never integrity_failed.
+          // Transport or file I/O can fail before or after authentication.
+          // Neither proves invalid ciphertext: keep the bounded retry path.
           await failClosedDirectEncryptedMedia(
             status: kMediaDownloadStatusFailed,
             event: 'MEDIA_DOWNLOAD_DIRECT_DECRYPT_DEFERRED',
@@ -2172,6 +2397,7 @@ Future<MediaAttachment?> downloadMedia({
 
         final decryptedFile = File(decryptedPath);
         if (!await decryptedFile.exists()) {
+          diagnosticAttempt.record('verify', 'failed', reason: 'missing_file');
           await failClosedDirectEncryptedMedia(
             status: kMediaDownloadStatusIntegrityFailed,
             event: 'MEDIA_DOWNLOAD_REJECTED_INVALID_DIRECT_ENCRYPTION',
@@ -2201,6 +2427,7 @@ Future<MediaAttachment?> downloadMedia({
             ? await plaintextFile.length()
             : 0;
         if (plaintextLength <= 0 || plaintextLength != attachment.size) {
+          diagnosticAttempt.record('verify', 'failed', reason: 'size_mismatch');
           await deleteIfExists(
             plaintextFile,
             caller: 'downloadMedia.decryptAndPromoteStagedDirectBlob',
@@ -2222,6 +2449,7 @@ Future<MediaAttachment?> downloadMedia({
           return _DirectStagedDecryptOutcome.terminal;
         }
 
+        diagnosticAttempt.record('verify', 'ok');
         // All validations passed — the canonical plaintext is the
         // artifact of record; drop the staged ciphertext.
         await deleteIfExists(
@@ -2454,6 +2682,7 @@ Future<MediaAttachment?> downloadMedia({
               expectedHash: attachment.contentHash,
             );
         if (!integrityValidation.isValid) {
+          diagnosticAttempt.record('verify', 'failed', reason: 'hash_mismatch');
           await quarantineUnsafeGroupMedia(
             event: 'MEDIA_DOWNLOAD_REJECTED_INVALID_GROUP_INTEGRITY',
             details: {
@@ -2481,7 +2710,7 @@ Future<MediaAttachment?> downloadMedia({
 
         late final String decryptedPath;
         try {
-          decryptedPath = await callBlobDecrypt(
+          decryptedPath = await diagnosticAttempt.decrypt(
             bridge,
             filePath: encryptedCompanion.path,
             keyBase64: attachment.encryptionKeyBase64!,
@@ -2502,6 +2731,7 @@ Future<MediaAttachment?> downloadMedia({
 
         final decryptedFile = File(decryptedPath);
         if (!await decryptedFile.exists()) {
+          diagnosticAttempt.record('verify', 'failed', reason: 'missing_file');
           emitFlowEvent(
             layer: 'FL',
             event: 'MEDIA_DOWNLOAD_LOCAL_ENCRYPTED_COMPANION_DECRYPT_FAILED',
@@ -2862,6 +3092,7 @@ Future<MediaAttachment?> downloadMedia({
       }
 
       // 3. Download from relay
+      diagnosticAttempt.record('download', 'started');
       final result = await callP2PMediaDownload(
         bridge,
         id: attachment.id,
@@ -2869,6 +3100,18 @@ Future<MediaAttachment?> downloadMedia({
         payloadSizeBytes: attachment.size,
         stallTimeout: transferStallTimeout,
         maxTimeout: transferMaxTimeout,
+      );
+      diagnosticAttempt.record(
+        'download',
+        result['ok'] == true ? 'ok' : 'failed',
+        reason: result['ok'] == true ? 'none' : 'network_unavailable',
+        values: {
+          'transport': result['routedViaRelayStore'] == true
+              ? 'relay'
+              : result['servedByPhone'] == true
+              ? 'direct'
+              : 'unknown',
+        },
       );
       final routedViaRelayStore = result['routedViaRelayStore'] == true;
       final servedByPhone = result['servedByPhone'] == true;
@@ -3107,6 +3350,7 @@ Future<MediaAttachment?> downloadMedia({
               expectedHash: attachment.contentHash,
             );
         if (!integrityValidation.isValid) {
+          diagnosticAttempt.record('verify', 'failed', reason: 'hash_mismatch');
           final localAttachment =
               await useCompletedGroupLocalAttachmentIfAvailable(
                 event:
@@ -3137,7 +3381,7 @@ Future<MediaAttachment?> downloadMedia({
 
         late final String decryptedPath;
         try {
-          decryptedPath = await callBlobDecrypt(
+          decryptedPath = await diagnosticAttempt.decrypt(
             bridge,
             filePath: downloadPath,
             keyBase64: attachment.encryptionKeyBase64!,
@@ -3174,6 +3418,7 @@ Future<MediaAttachment?> downloadMedia({
         }
         final decryptedFile = File(decryptedPath);
         if (!await decryptedFile.exists()) {
+          diagnosticAttempt.record('verify', 'failed', reason: 'missing_file');
           final localAttachment =
               await useCompletedGroupLocalAttachmentIfAvailable(
                 event:
@@ -3391,6 +3636,13 @@ Future<MediaAttachment?> downloadMedia({
               return committed;
             });
         if (!finalized) {
+          if (!diagnosticAttempt.hasFailure) {
+            diagnosticAttempt.record(
+              'commit',
+              'failed',
+              reason: 'authority_lost',
+            );
+          }
           emitFlowEvent(
             layer: 'FL',
             event: 'MEDIA_DOWNLOAD_CLAIM_LOST',
@@ -3513,6 +3765,11 @@ Future<MediaAttachment?> downloadMedia({
         downloadStatus: kMediaDownloadStatusDone,
       );
     } catch (e) {
+      diagnosticAttempt.record(
+        diagnosticAttempt.stage,
+        'failed',
+        reason: _mediaDiagnosticErrorReason(e),
+      );
       if (requiresDirectPrivateCommit && privateTransferToken != null) {
         scheduleLatePrivateTransferScrub();
       }

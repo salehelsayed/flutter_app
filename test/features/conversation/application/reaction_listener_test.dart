@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
+import 'package:flutter_app/features/conversation/application/recovered_inbox_sibling_dispositions.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
@@ -14,8 +18,17 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
 import '../domain/repositories/fake_reaction_repository.dart';
+import '../../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
 const _senderPeerId = '12D3KooWSender';
+
+class _UnavailableInboxStagingRepository
+    extends InMemoryInboxStagingRepository {
+  @override
+  Future<List<String>> stageEntries(List<InboxStagingEntry> entries) async {
+    throw StateError('isolated staging unavailable');
+  }
+}
 
 ChatMessage _makeV2ReactionMessage({
   String action = 'add',
@@ -178,6 +191,212 @@ void main() {
         expect(received[0].emoji, '👍');
         expect(received[0].messageId, 'msg-1');
         expect(reactionRepo.saveReactionCallCount, 1);
+      },
+    );
+
+    for (final failure in ['synchronous', 'asynchronous', 'pending']) {
+      test(
+        'publishes committed reaction despite $failure display retry',
+        () async {
+          listener.dispose();
+          final retryStarted = Completer<void>();
+          final releaseRetry = Completer<void>();
+          addTearDown(() {
+            if (!releaseRetry.isCompleted) releaseRetry.complete();
+          });
+          listener = ReactionListener(
+            reactionStream: reactionStreamController.stream,
+            messageRepo: messageRepo,
+            reactionRepo: reactionRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            getOwnMlKemSecretKey: () async => 'own-secret-key',
+            retryNotificationDisplays: () {
+              retryStarted.complete();
+              if (failure == 'synchronous') {
+                throw StateError('isolated notification sink failure');
+              }
+              if (failure == 'asynchronous') {
+                return Future<void>.error(
+                  StateError('isolated notification sink failure'),
+                );
+              }
+              return releaseRetry.future;
+            },
+          );
+          final changes = <ReactionChange>[];
+          listener.incomingReactionChangeStream.listen(changes.add);
+          listener.start();
+          reactionStreamController.add(_makeV2ReactionMessage());
+          await retryStarted.future;
+          await pumpEventQueue();
+
+          expect(reactionRepo.reactions, hasLength(1));
+          expect(
+            changes,
+            hasLength(1),
+            reason: 'display cannot hide a durable reaction',
+          );
+          expect(changes.single.type, ReactionChangeType.upserted);
+          expect(changes.single.reaction?.id, 'r1');
+          releaseRetry.complete();
+          await pumpEventQueue();
+          expect(changes, hasLength(1));
+        },
+      );
+    }
+
+    for (final stageFails in [false, true]) {
+      for (final failure in ['synchronous', 'asynchronous', 'pending']) {
+        test(
+          'direct reaction ACK and UI survive $failure display with staging failure=$stageFails',
+          () async {
+            final retryStarted = Completer<void>();
+            final releaseRetry = Completer<void>();
+            addTearDown(() {
+              if (!releaseRetry.isCompleted) releaseRetry.complete();
+            });
+            final changes = <ReactionChange>[];
+            listener.incomingReactionChangeStream.listen(changes.add);
+            final staging = stageFails
+                ? _UnavailableInboxStagingRepository()
+                : InMemoryInboxStagingRepository();
+            final service = P2PServiceImpl(
+              bridge: bridge,
+              inboxStagingRepository: staging,
+              replayRecoveredInboxReaction:
+                  (message, {String? stagedEntryId}) async {
+                    final (result, change) = await handleIncomingReaction(
+                      message: message,
+                      messageRepo: messageRepo,
+                      reactionRepo: reactionRepo,
+                      contactRepo: contactRepo,
+                      bridge: bridge,
+                      ownMlKemSecretKey: 'own-secret-key',
+                      retryNotificationDisplays: () {
+                        retryStarted.complete();
+                        if (failure == 'synchronous') {
+                          throw StateError(
+                            'isolated notification sink failure',
+                          );
+                        }
+                        if (failure == 'asynchronous') {
+                          return Future<void>.error(
+                            StateError('isolated notification sink failure'),
+                          );
+                        }
+                        return releaseRetry.future;
+                      },
+                    );
+                    if (result == HandleReactionResult.success &&
+                        change != null) {
+                      listener.publishPersistedChange(change);
+                    }
+                    return mapReactionReplayResultToDisposition(result);
+                  },
+            );
+            addTearDown(service.dispose);
+            final envelope = _makeV2ReactionMessage();
+            bridge.onMessageReceived?.call(
+              ChatMessage(
+                from: envelope.from,
+                to: envelope.to,
+                content: envelope.content,
+                timestamp: envelope.timestamp,
+                isIncoming: true,
+                transport: 'direct',
+                confirmNonce: 'isolated-reaction-receipt',
+              ),
+            );
+            await retryStarted.future;
+            await pumpEventQueue();
+            expect(reactionRepo.reactions, hasLength(1));
+            expect(
+              bridge.sentMessages
+                  .map(jsonDecode)
+                  .where((request) => request['cmd'] == 'message:confirm')
+                  .map((request) => request['payload']),
+              [
+                {'nonce': 'isolated-reaction-receipt', 'ok': true},
+              ],
+            );
+            expect(changes, hasLength(1));
+            expect(changes.single.reaction?.id, 'r1');
+            expect(staging.entry('direct:isolated-reaction-receipt'), isNull);
+            releaseRetry.complete();
+            await pumpEventQueue();
+            expect(changes, hasLength(1));
+          },
+        );
+      }
+    }
+
+    test(
+      'failed notification custody keeps stage-error reaction unacknowledged',
+      () async {
+        final custodyAttempted = Completer<void>();
+        var displayRetries = 0;
+        final changes = <ReactionChange>[];
+        listener.incomingReactionChangeStream.listen(changes.add);
+        final service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: _UnavailableInboxStagingRepository(),
+          replayRecoveredInboxReaction:
+              (message, {String? stagedEntryId}) async {
+                final (result, change) = await handleIncomingReaction(
+                  message: message,
+                  messageRepo: messageRepo,
+                  reactionRepo: reactionRepo,
+                  contactRepo: contactRepo,
+                  bridge: bridge,
+                  ownMlKemSecretKey: 'own-secret-key',
+                  stageNotificationDisplayCustody:
+                      ({required payload, required targetMessage}) async {
+                        custodyAttempted.complete();
+                        throw StateError(
+                          'isolated notification custody unavailable',
+                        );
+                      },
+                  retryNotificationDisplays: () async => displayRetries++,
+                );
+                if (result == HandleReactionResult.success && change != null) {
+                  listener.publishPersistedChange(change);
+                }
+                return mapReactionReplayResultToDisposition(result);
+              },
+        );
+        addTearDown(service.dispose);
+        // Display custody is staged only for a locally authored target.
+        messageRepo.seed([
+          const ConversationMessage(
+            id: 'msg-1',
+            contactPeerId: _senderPeerId,
+            senderPeerId: 'my-peer',
+            text: 'isolated target',
+            timestamp: '2026-02-27T10:00:00.000Z',
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: '2026-02-27T10:00:00.000Z',
+          ),
+        ]);
+        final envelope = _makeV2ReactionMessage();
+        bridge.onMessageReceived?.call(
+          ChatMessage(
+            from: envelope.from,
+            to: envelope.to,
+            content: envelope.content,
+            timestamp: envelope.timestamp,
+            isIncoming: true,
+            transport: 'direct',
+            confirmNonce: 'isolated-reaction-custody-failure',
+          ),
+        );
+        await custodyAttempted.future;
+        await pumpEventQueue();
+        expect(reactionRepo.reactions, isEmpty);
+        expect(changes, isEmpty);
+        expect(displayRetries, 0);
+        expect(bridge.commandLog, isNot(contains('message:confirm')));
       },
     );
 

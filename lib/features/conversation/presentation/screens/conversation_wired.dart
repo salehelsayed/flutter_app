@@ -57,6 +57,7 @@ import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
@@ -663,6 +664,7 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _coalesceWantsMarkRead = false;
   bool _coalesceWantsIntroCheck = false;
   bool _outgoingCallStartInFlight = false;
+  String? _outgoingDiagnosticTraceId;
   bool _outgoingCallContactAvailable = false;
   int _outgoingCallAvailabilityGeneration = 0;
   final Set<String> _coalesceLiveEdgeCandidateIds = {};
@@ -6874,7 +6876,10 @@ class _ConversationWiredState extends State<ConversationWired>
         expectedContactPeerId: message.contactPeerId,
         expectedEnvelope: envelope,
         status: 'sent',
-        transport: 'inbox',
+        // Keeping the envelope retryable does not prove relay custody. Retain
+        // only the transport observed by the send; otherwise the pending
+        // bubble would falsely show the inbox glyph before any accepted store.
+        transport: message.transport,
         relayExpiresAt: null,
         mode: OutgoingOrdinarySettlementMode.live,
       );
@@ -7912,29 +7917,144 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   Future<void> _startOutgoingCall(OutgoingCallCapability capability) async {
-    if (_outgoingCallStartInFlight || !capability.isOutgoingCallAvailable) {
+    final diagnostics = CallDiagnostics.instance;
+    if (_outgoingCallStartInFlight) {
+      diagnostics.record(
+        stage: 'attempt',
+        action: 'start',
+        outcome: 'suppressed',
+        reason: 'duplicate',
+        traceId: _outgoingDiagnosticTraceId,
+      );
       return;
     }
+    final traceId = diagnostics.beginAttempt();
+    _outgoingDiagnosticTraceId = traceId;
+    if (_contact.isBlocked) {
+      diagnostics.finishAttempt(
+        traceId: traceId,
+        outcome: 'preflight_failed',
+        reason: 'blocked',
+      );
+      _showOutgoingCallMessage('Voice calling is unavailable right now');
+      return;
+    }
+    await diagnostics.runWithTrace(
+      traceId,
+      () => _startOutgoingCallInTrace(capability, traceId),
+    );
+  }
+
+  Future<void> _startOutgoingCallInTrace(
+    OutgoingCallCapability capability,
+    String? traceId,
+  ) async {
+    final diagnostics = CallDiagnostics.instance;
+    final contactPeerId = _contact.peerId;
+    final lifecycleGeneration = _appLifecycleGeneration;
+    bool stillOwnsCallAction() =>
+        mounted &&
+        !_contact.isBlocked &&
+        _contact.peerId == contactPeerId &&
+        identical(capability, widget.outgoingCallCapability) &&
+        _appLifecycleGeneration == lifecycleGeneration;
+    void finishInterrupted() => diagnostics.finishAttempt(
+      traceId: traceId,
+      outcome: 'interrupted_unknown',
+      reason: 'graph_not_owner',
+    );
+    // This explicit tap owns a fresh probe, replacing any older presentation
+    // probe whose negative result may arrive after the remote endpoint recovers.
+    _outgoingCallAvailabilityGeneration++;
     setState(() => _outgoingCallStartInFlight = true);
     var shouldShowFailure = false;
     var result = OutgoingCallStartResult.failed;
     try {
-      final contactAvailable = await capability.isOutgoingCallAvailableFor(
-        _contact.peerId,
-      );
-      if (!mounted) return;
+      if (!capability.isOutgoingCallAvailable) {
+        final recovered =
+            capability is OutgoingCallReadinessRecovery &&
+            await (capability as OutgoingCallReadinessRecovery)
+                .recoverOutgoingCallReadiness()
+                .timeout(
+                  const Duration(seconds: 10),
+                  onTimeout: () {
+                    diagnostics.finishAttempt(
+                      traceId: traceId,
+                      outcome: 'preflight_failed',
+                      reason: 'timeout',
+                    );
+                    return false;
+                  },
+                );
+        if (!stillOwnsCallAction()) {
+          finishInterrupted();
+          return;
+        }
+        if (!recovered || !capability.isOutgoingCallAvailable) {
+          diagnostics.finishAttempt(
+            traceId: traceId,
+            outcome: 'preflight_failed',
+            reason: 'graph_unavailable',
+          );
+          _showOutgoingCallMessage('Voice calling is unavailable right now');
+          return;
+        }
+      }
+      final contactAvailable = await capability
+          .isOutgoingCallAvailableFor(contactPeerId)
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              diagnostics.finishAttempt(
+                traceId: traceId,
+                outcome: 'preflight_failed',
+                reason: 'timeout',
+              );
+              return false;
+            },
+          );
+      if (!stillOwnsCallAction()) {
+        finishInterrupted();
+        return;
+      }
       if (!contactAvailable || !capability.isOutgoingCallAvailable) {
+        diagnostics.finishAttempt(
+          traceId: traceId,
+          outcome: 'preflight_failed',
+          reason: capability.isOutgoingCallAvailable
+              ? 'endpoint_not_found'
+              : 'graph_unavailable',
+        );
         if (_outgoingCallContactAvailable) {
           setState(() => _outgoingCallContactAvailable = false);
         }
+        _showOutgoingCallMessage('Voice calling is unavailable right now');
         return;
       }
+      if (!_outgoingCallContactAvailable) {
+        setState(() => _outgoingCallContactAvailable = true);
+      }
       shouldShowFailure = true;
-      result = await capability.startOutgoingCall(_contact.peerId);
+      result = await capability.startOutgoingCall(contactPeerId);
+      if (result != OutgoingCallStartResult.started) {
+        diagnostics.finishAttempt(
+          traceId: traceId,
+          outcome: 'preflight_failed',
+          reason: 'unavailable',
+        );
+      }
     } catch (_) {
+      diagnostics.finishAttempt(
+        traceId: traceId,
+        outcome: 'preflight_failed',
+        reason: 'authority_unreachable',
+      );
       // Presentation receives no adapter, endpoint, or route failure detail.
       if (!shouldShowFailure && mounted && _outgoingCallContactAvailable) {
         setState(() => _outgoingCallContactAvailable = false);
+      }
+      if (!shouldShowFailure) {
+        _showOutgoingCallMessage('Voice calling is unavailable right now');
       }
     } finally {
       if (mounted) {
@@ -7946,15 +8066,16 @@ class _ConversationWiredState extends State<ConversationWired>
         result == OutgoingCallStartResult.started) {
       return;
     }
+    _showOutgoingCallMessage("Couldn't start voice call. Please try again.");
+  }
+
+  void _showOutgoingCallMessage(String message) {
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
     if (messenger == null) return;
     messenger
       ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text("Couldn't start voice call. Please try again."),
-        ),
-      );
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _bindOutgoingCallAvailability() {
@@ -8044,9 +8165,15 @@ class _ConversationWiredState extends State<ConversationWired>
           onCall: outgoingCallAvailable && outgoingCallCapability != null
               ? () => unawaited(_startOutgoingCall(outgoingCallCapability))
               : null,
+          // A cached negative is advisory. A new user tap can recheck current
+          // authority; only the fresh, successful preflight may place a call.
+          onCallRetry: outgoingCallCapability == null
+              ? null
+              : () => unawaited(_startOutgoingCall(outgoingCallCapability)),
           showCallAction: outgoingCallCapability != null,
           callActionEnabled:
               outgoingCallAvailable && !_outgoingCallStartInFlight,
+          callActionInFlight: _outgoingCallStartInFlight,
           isLoadingMore: _isLoadingMore,
           hasMoreOlderMessages: _hasMoreOlderMessages,
           initialLoadDone: _initialLoadDone,

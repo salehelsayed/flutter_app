@@ -62,6 +62,17 @@ final class BridgeOperationUnavailableException implements Exception {
   String toString() => 'BridgeOperationUnavailableException';
 }
 
+/// The native blob operation did not establish a permanent crypto failure.
+/// Only closed error codes are retained; native messages can contain paths.
+final class BlobDecryptOperationalException implements Exception {
+  const BlobDecryptOperationalException._(this.code);
+
+  final String code;
+
+  @override
+  String toString() => 'BlobDecryptOperationalException($code)';
+}
+
 const Set<String> _bridgeUnavailableErrorCodes = <String>{
   'BRIDGE_TIMEOUT',
   'BRIDGE_UNAVAILABLE',
@@ -810,7 +821,9 @@ Future<({String encryptedPath, String nonce})> callBlobEncrypt(
 
 /// Calls the bridge to decrypt a file with AES-256-GCM.
 ///
-/// Returns the decrypted file path.
+/// Returns the decrypted file path. Only explicit authentication or crypto
+/// metadata rejection throws [StateError]. I/O, unavailable transport, malformed
+/// responses, and ambiguous legacy failures remain operational exceptions.
 Future<String> callBlobDecrypt(
   Bridge bridge, {
   required String filePath,
@@ -829,16 +842,52 @@ Future<String> callBlobDecrypt(
     details: {'filePath': filePath},
   );
 
-  final responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
-  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+  late final String responseJson;
+  try {
+    responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
+  } on TimeoutException {
+    throw const BlobDecryptOperationalException._('BRIDGE_TIMEOUT');
+  } on Object {
+    // A bridge implementation can itself throw StateError before evaluating
+    // the ciphertext. Keep that distinct from an explicit native verdict.
+    throw const BlobDecryptOperationalException._('BRIDGE_UNAVAILABLE');
+  }
 
-  if (response['ok'] != true) {
-    throw StateError(
-      'blob:decrypt failed: ${response['errorMessage'] ?? 'unknown'}',
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(responseJson);
+  } on Object {
+    throw const BlobDecryptOperationalException._('MALFORMED_RESPONSE');
+  }
+  if (decoded is! Map<String, dynamic> ||
+      (decoded['ok'] != true && decoded['ok'] != false)) {
+    throw const BlobDecryptOperationalException._('MALFORMED_RESPONSE');
+  }
+
+  if (decoded['ok'] == false) {
+    final code = decoded['errorCode'];
+    if (code == 'DECRYPT_AUTH_ERROR' || code == 'DECRYPT_METADATA_ERROR') {
+      throw StateError('blob:decrypt failed: $code');
+    }
+    const operationalCodes = <String>{
+      'DECRYPT_IO_ERROR',
+      'DECRYPT_ERROR',
+      'INVALID_INPUT',
+      'INTERNAL_ERROR',
+      ..._bridgeUnavailableErrorCodes,
+    };
+    throw BlobDecryptOperationalException._(
+      code is String && operationalCodes.contains(code)
+          ? code
+          : 'UNKNOWN_ERROR',
     );
   }
 
-  return response['decryptedPath'] as String;
+  final decryptedPath = decoded['decryptedPath'];
+  if (decryptedPath is! String || decryptedPath.trim().isEmpty) {
+    throw const BlobDecryptOperationalException._('MALFORMED_RESPONSE');
+  }
+  return decryptedPath;
 }
 
 /// Requests an iOS background task. Returns the task ID string on success,

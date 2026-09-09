@@ -5,8 +5,18 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
+)
+
+// Decryption classifications let callers distinguish rejected encrypted bytes
+// from a local file operation that can be retried. Wrapped causes are retained
+// for errors.Is/errors.As without requiring callers to inspect error text.
+var (
+	ErrFileAuthentication = errors.New("encrypted file authentication failed")
+	ErrFileMetadata       = errors.New("invalid encrypted file metadata")
+	ErrFileIO             = errors.New("encrypted file operation failed")
 )
 
 // GenerateSymmetricKey generates a random 32-byte AES-256 key and returns
@@ -69,20 +79,15 @@ func EncryptFile(filePath string, keyBase64 string) (string, string, error) {
 func DecryptFile(filePath string, keyBase64 string, nonceBase64 string) (string, error) {
 	key, err := base64.StdEncoding.DecodeString(keyBase64)
 	if err != nil {
-		return "", fmt.Errorf("decode key: %w", err)
+		return "", fmt.Errorf("%w: decode key: %w", ErrFileMetadata, err)
 	}
 	if len(key) != 32 {
-		return "", fmt.Errorf("invalid key length: got %d, want 32", len(key))
+		return "", fmt.Errorf("%w: invalid key length: got %d, want 32", ErrFileMetadata, len(key))
 	}
 
 	nonce, err := base64.StdEncoding.DecodeString(nonceBase64)
 	if err != nil {
-		return "", fmt.Errorf("decode nonce: %w", err)
-	}
-
-	ciphertext, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("read file: %w", err)
+		return "", fmt.Errorf("%w: decode nonce: %w", ErrFileMetadata, err)
 	}
 
 	block, err := aes.NewCipher(key)
@@ -94,15 +99,23 @@ func DecryptFile(filePath string, keyBase64 string, nonceBase64 string) (string,
 	if err != nil {
 		return "", fmt.Errorf("aes new gcm: %w", err)
 	}
+	if len(nonce) != gcm.NonceSize() {
+		return "", fmt.Errorf("%w: invalid nonce length: got %d, want %d", ErrFileMetadata, len(nonce), gcm.NonceSize())
+	}
+
+	ciphertext, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("%w: read file: %w", ErrFileIO, err)
+	}
 
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return "", fmt.Errorf("aes-gcm decrypt: %w", err)
+		return "", fmt.Errorf("%w: aes-gcm decrypt: %w", ErrFileAuthentication, err)
 	}
 
 	decryptedPath := filePath + ".dec"
 	if err := os.WriteFile(decryptedPath, plaintext, 0600); err != nil {
-		return "", fmt.Errorf("write decrypted file: %w", err)
+		return "", fmt.Errorf("%w: write decrypted file: %w", ErrFileIO, err)
 	}
 
 	return decryptedPath, nil

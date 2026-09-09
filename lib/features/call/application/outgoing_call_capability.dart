@@ -4,6 +4,12 @@ import 'dart:async';
 /// request. Adapter and routing failures deliberately stay behind this seam.
 enum OutgoingCallStartResult { started, unavailable, failed }
 
+/// Optional recovery for an explicit call action. Passive availability probes
+/// must not invoke this hook. Recovery never places a call or requests audio.
+abstract interface class OutgoingCallReadinessRecovery {
+  Future<bool> recoverOutgoingCallReadiness();
+}
+
 /// Presentation-neutral access to the one process-owned outgoing call graph.
 ///
 /// Availability is read at use time because the underlying graph may be

@@ -3,6 +3,7 @@ import 'dart:collection';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
+import '../domain/call_authority_lifetime.dart';
 import '../domain/call_signal.dart';
 import '../domain/call_wake_handle_grant.dart';
 import '../domain/issued_call_wake_handle_store.dart';
@@ -84,7 +85,7 @@ final class CallWakeAuthorizationCoordinator {
     required RevokeNativeCallWakeContact revokeNativeContact,
     required GenerateCallWakeHandle generateHandle,
     required int Function() nowMs,
-    this.grantLifetime = const Duration(days: 1),
+    this.grantLifetime = callBackgroundReachabilityLifetime,
   }) : _store = store,
        _setWakeHandle = setWakeHandle,
        _revokeWakeHandle = revokeWakeHandle,

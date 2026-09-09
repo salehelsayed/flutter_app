@@ -341,11 +341,11 @@ void main() {
         'lib/core/debug/auto_setup_config.dart',
       ).readAsStringSync();
       expect(
-        mainSource,
-        contains(
-          'runApplicationBootstrap(\n'
-          '    bootstrapFactory: ProductionApplicationBootstrap.new,',
-        ),
+        RegExp(
+          r'\bawait\s+runApplicationBootstrap\s*\(\s*'
+          r'bootstrapFactory:\s*ProductionApplicationBootstrap\.new\s*,',
+        ).allMatches(mainSource),
+        hasLength(1),
         reason: 'the public entrypoint must delegate through the stable runner',
       );
       final dartMainEntry = mainSource.indexOf(

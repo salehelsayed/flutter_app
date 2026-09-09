@@ -129,6 +129,15 @@ internal class MknoonCallForegroundService(
                     if (!reconcilesLifecycle(startId, nativeCallId, target)) {
                         return START_NOT_STICKY
                     }
+                    if (!audioStateMatches(
+                            startId,
+                            nativeCallId,
+                            target,
+                            expected = true,
+                            requireAuthoritative = true,
+                        )) {
+                        return START_NOT_STICKY
+                    }
                     if (!startSafely(startId, nativeCallId, target) {
                             target.startActive(nativeCallId)
                         }) {

@@ -15,6 +15,75 @@ void main() {
     timestamp: '2026-02-09T15:30:00.000Z',
   );
 
+  test(
+    'diagnostic UUID stays encrypted and preserves the relay custody envelope',
+    () {
+      const trace = '07cdbd8a-ae03-42de-8dbb-3e688e107967';
+      final inner =
+          jsonDecode(testPayload.toInnerJson()) as Map<String, dynamic>;
+      inner['diagnosticTraceId'] = trace.toUpperCase();
+      final parsed = MessagePayload.fromDecryptedJson(jsonEncode(inner))!;
+      expect(parsed.diagnosticTraceId, trace);
+      expect(parsed.text, testPayload.text);
+      expect(parsed.privateMediaPolicy, testPayload.privateMediaPolicy);
+      expect(jsonDecode(parsed.toInnerJson())['diagnosticTraceId'], trace);
+      final envelope = jsonDecode(
+        MessagePayload.buildEncryptedEnvelope(
+          id: testPayload.id,
+          senderPeerId: testPayload.senderPeerId,
+          senderUsername: testPayload.senderUsername,
+          kem: 'kem',
+          ciphertext: 'opaque',
+          nonce: 'nonce',
+        ),
+      );
+      expect(
+        envelope.keys,
+        unorderedEquals(['type', 'version', 'id', 'senderPeerId', 'encrypted']),
+      );
+      expect(envelope['encrypted']['ciphertext'], 'opaque');
+      expect(
+        jsonDecode(testPayload.toInnerJson()),
+        isNot(contains('diagnosticTraceId')),
+      );
+      expect(
+        jsonDecode(
+          MessagePayload.buildEncryptedEnvelope(
+            id: testPayload.id,
+            senderPeerId: testPayload.senderPeerId,
+            senderUsername: testPayload.senderUsername,
+            kem: 'kem',
+            ciphertext: 'opaque',
+            nonce: 'nonce',
+          ),
+        ),
+        isNot(contains('diagnosticTraceId')),
+      );
+    },
+  );
+
+  test(
+    'malformed diagnostic metadata cannot reject otherwise valid payloads',
+    () {
+      for (final value in [
+        null,
+        1,
+        {},
+        'private-contact-canary',
+        '07cdbd8a-ae03-12de-8dbb-3e688e107967',
+      ]) {
+        final inner =
+            jsonDecode(testPayload.toInnerJson()) as Map<String, dynamic>
+              ..['diagnosticTraceId'] = value;
+        final parsed = MessagePayload.fromDecryptedJson(jsonEncode(inner));
+        expect(parsed, isNotNull);
+        expect(parsed!.diagnosticTraceId, isNull);
+        expect(parsed.text, testPayload.text);
+        expect(parsed.toInnerJson(), isNot(contains('diagnosticTraceId')));
+      }
+    },
+  );
+
   group('MessagePayload', () {
     test('TC-345-01c wire payload cannot mint local media custody intent', () {
       const injectedIntent = '0123456789abcdef0123456789abcdef';

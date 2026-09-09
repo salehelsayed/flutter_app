@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -785,6 +786,140 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   DirectLinkedMediaFanoutContext? directLinkedMediaFanout,
   DirectPrivateMediaFanoutContext? directPrivateMediaFanout,
 }) async {
+  final diagnostics = AppDiagnostics.instance;
+  return diagnostics.runWithAttempt(
+    feature: 'message',
+    traceId: messageId == null
+        ? null
+        : diagnostics.traceForOperation('message:$messageId'),
+    body: (traceId) async {
+      final diagnosticTimer = Stopwatch()..start();
+      diagnostics.record(
+        feature: 'message',
+        stage: 'preflight',
+        outcome: 'started',
+        traceId: traceId,
+        values: {
+          'direction': 'outgoing',
+          'hasAttachments': mediaAttachments?.isNotEmpty ?? false,
+        },
+      );
+      try {
+        final result = await _sendChatMessageDiagnosed(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: targetPeerId,
+          text: text,
+          senderPeerId: senderPeerId,
+          senderUsername: senderUsername,
+          action: action,
+          editedAt: editedAt,
+          messageId: messageId,
+          preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+          timestamp: timestamp,
+          dedupKey: dedupKey,
+          isForwarded: isForwarded,
+          createdAt: createdAt,
+          bridge: bridge,
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+          quotedMessageId: quotedMessageId,
+          mediaAttachments: mediaAttachments,
+          privateMediaPolicy: privateMediaPolicy,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          emitTimingEvent: emitTimingEvent,
+          transportMetrics: transportMetrics,
+          storeInInboxDetailed: storeInInboxDetailed,
+          storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+          storeInMediaExpiryBoundedInboxDetailed:
+              storeInMediaExpiryBoundedInboxDetailed,
+          onDirectTextCustodyStaged: onDirectTextCustodyStaged,
+          directEventFanout: directEventFanout,
+          directLinkedMediaFanout: directLinkedMediaFanout,
+          directPrivateMediaFanout: directPrivateMediaFanout,
+          diagnosticTraceId: traceId,
+        );
+        final reason = switch (result.$1) {
+          SendChatMessageResult.success => 'none',
+          SendChatMessageResult.nodeNotRunning => 'offline',
+          SendChatMessageResult.invalidMessage => 'invalid_payload',
+          SendChatMessageResult.invalidPrivateMedia => 'unsupported',
+          SendChatMessageResult.encryptionRequired => 'recipient_key_missing',
+          SendChatMessageResult.mediaEncryptionRequired => 'metadata_invalid',
+          SendChatMessageResult.peerNotFound => 'authority_rejected',
+          SendChatMessageResult.dialFailed ||
+          SendChatMessageResult.sendFailed => 'send_failed',
+        };
+        diagnostics.finishAttempt(
+          feature: 'message',
+          traceId: traceId,
+          outcome: result.$1 == SendChatMessageResult.success
+              ? result.$2?.status == 'delivered'
+                    ? 'success'
+                    : 'pending'
+              : 'failed',
+          reason: reason,
+          values: {
+            'durationMs': diagnosticTimer.elapsedMilliseconds,
+            'direction': 'outgoing',
+            'committed': result.$2 != null,
+            'acknowledged': result.$2?.status == 'delivered',
+          },
+        );
+        return result;
+      } catch (_) {
+        diagnostics.finishAttempt(
+          feature: 'message',
+          traceId: traceId,
+          outcome: 'failed',
+          reason: 'unknown',
+          values: {
+            'direction': 'outgoing',
+            'durationMs': diagnosticTimer.elapsedMilliseconds,
+          },
+        );
+        rethrow;
+      }
+    },
+  );
+}
+
+Future<(SendChatMessageResult, ConversationMessage?)>
+_sendChatMessageDiagnosed({
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required String targetPeerId,
+  required String text,
+  required String senderPeerId,
+  required String senderUsername,
+  String action = MessagePayload.actionSend,
+  String? editedAt,
+  String? messageId,
+  bool preassignedMessageIdIsFresh = false,
+  String? timestamp,
+  // F8 tier-2: a normal send stamps `dedupKey = its own id` (the default
+  // below); one explicit Forward action passes its random operation token so
+  // retry/redelivery dedups without coupling later actions to the source.
+  String? dedupKey,
+  bool isForwarded = false,
+  String? createdAt,
+  Bridge? bridge,
+  String? recipientMlKemPublicKey,
+  String? quotedMessageId,
+  List<MediaAttachment>? mediaAttachments,
+  PrivateMediaPolicy? privateMediaPolicy,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  bool emitTimingEvent = true,
+  TransportMetrics? transportMetrics,
+  StoreInInboxDetailedFn? storeInInboxDetailed,
+  StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
+  StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
+  void Function(String messageId)? onDirectTextCustodyStaged,
+  DirectEventFanoutAuthoring? directEventFanout,
+  DirectLinkedMediaFanoutContext? directLinkedMediaFanout,
+  DirectPrivateMediaFanoutContext? directPrivateMediaFanout,
+  String? diagnosticTraceId,
+}) async {
   final sendStopwatch = clock.stopwatch()..start();
   final liveDeadline = OutgoingLiveDeadline(() => sendStopwatch.elapsed);
   final targetPrefix = targetPeerId.length > 10
@@ -829,6 +964,37 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     required String outcome,
     Map<String, dynamic> details = const {},
   }) {
+    AppDiagnostics.instance.record(
+      feature: 'message',
+      stage: outcome == 'success'
+          ? 'send'
+          : outcome.contains('encrypt')
+          ? 'encrypt'
+          : 'preflight',
+      outcome: outcome == 'success'
+          ? 'ok'
+          : outcome.contains('retained')
+          ? 'pending'
+          : 'failed',
+      reason: outcome == 'success'
+          ? 'none'
+          : outcome.contains('encrypt')
+          ? 'encryption_failed'
+          : outcome == 'invalid_private_media'
+          ? 'unsupported'
+          : outcome == 'invalid_message'
+          ? 'invalid_payload'
+          : outcome == 'node_not_running'
+          ? 'offline'
+          : outcome.contains('refused') || outcome.contains('blocked')
+          ? 'authority_rejected'
+          : 'send_failed',
+      traceId: diagnosticTraceId,
+      values: {
+        'durationMs': sendStopwatch.elapsedMilliseconds,
+        'direction': 'outgoing',
+      },
+    );
     if (!emitTimingEvent) return;
     emitFlowEvent(
       layer: 'FL',
@@ -1617,6 +1783,18 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   // 3. Build payload
   final resolvedMessageId = messageId ?? _uuid.v4();
+  if (diagnosticTraceId != null) {
+    AppDiagnostics.instance.traceForOperation(
+      'message:$resolvedMessageId',
+      propagatedTraceId: diagnosticTraceId,
+    );
+    for (final attachment in mediaAttachments ?? const <MediaAttachment>[]) {
+      AppDiagnostics.instance.traceForOperation(
+        'media:${attachment.id}',
+        propagatedTraceId: diagnosticTraceId,
+      );
+    }
+  }
   final resolvedTimestamp = ownsDirectMediaCaptionEditInboxCustody
       ? existingOutgoing!.timestamp
       : timestamp ??
@@ -1933,6 +2111,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   final payload = MessagePayload(
     id: resolvedMessageId,
+    diagnosticTraceId: AppDiagnostics.instance.traceForOperation(
+      'message:$resolvedMessageId',
+    ),
     text: sanitizedText,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
@@ -2058,6 +2239,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     jsonString = exactReplay.wireEnvelope;
   } else {
     try {
+      AppDiagnostics.instance.record(
+        feature: 'message',
+        stage: 'encrypt',
+        outcome: 'started',
+        traceId: diagnosticTraceId,
+      );
       final innerJson = payload.toInnerJson();
       final encryptStopwatch = Stopwatch()..start();
       final encryptResult = await callEncryptMessage(
@@ -2082,6 +2269,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         );
         return (SendChatMessageResult.sendFailed, null);
       }
+      AppDiagnostics.instance.record(
+        feature: 'message',
+        stage: 'encrypt',
+        outcome: 'ok',
+        traceId: diagnosticTraceId,
+      );
       jsonString = MessagePayload.buildEncryptedEnvelope(
         id: resolvedMessageId,
         senderPeerId: senderPeerId,
@@ -2630,6 +2823,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   }
 
   Future<InboxStoreOutcome> performInboxStoreCall() async {
+    AppDiagnostics.instance.record(
+      feature: 'message',
+      stage: 'store',
+      outcome: 'started',
+      traceId: diagnosticTraceId,
+      values: {'transport': 'relay'},
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN',
@@ -2722,6 +2922,21 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     final custodyAccepted = ownsDirectInboxCustody
         ? outcome.ackOrExpiryAccepted
         : outcome.accepted;
+    AppDiagnostics.instance.record(
+      feature: 'message',
+      stage: 'store',
+      outcome: custodyAccepted ? 'ok' : 'failed',
+      reason: custodyAccepted
+          ? 'none'
+          : outcome.status == InboxStoreStatus.rejectedFull
+          ? 'quota_exceeded'
+          : 'send_failed',
+      traceId: diagnosticTraceId,
+      values: {
+        'transport': 'relay',
+        'durationMs': inboxStopwatch.elapsedMilliseconds,
+      },
+    );
     transportMetrics?.recordAttempt(leg: 'inbox', succeeded: custodyAccepted);
     if (custodyAccepted) {
       await settleAcceptedInboxCustody(outcome);
@@ -3093,6 +3308,25 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // retained without suppressing any remaining authenticated attempt.
   for (final raceFuture in raceFutures) {
     void onResolved(_RaceResult result) {
+      AppDiagnostics.instance.record(
+        feature: 'message',
+        stage: 'send',
+        outcome: result.provesDeviceDeliveryForCurrentProtocol
+            ? 'ok'
+            : result.written
+            ? 'pending'
+            : 'failed',
+        reason: result.written ? 'none' : 'send_failed',
+        traceId: diagnosticTraceId,
+        values: {
+          'acknowledged': result.provesDeviceDeliveryForCurrentProtocol,
+          'transport': result.via == 'relay'
+              ? 'relay'
+              : result.via == null
+              ? 'unknown'
+              : 'direct',
+        },
+      );
       pendingCount--;
       if (result.provesDeviceDeliveryForCurrentProtocol) {
         if (!completer.isCompleted) {
@@ -4194,6 +4428,24 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
     expectedContactPeerId: targetPeerId,
   );
   final observedMessage = persistedMessage ?? message;
+  AppDiagnostics.instance.record(
+    feature: 'message',
+    stage: 'send',
+    outcome: acknowledged ? 'ok' : 'pending',
+    traceId: payload.diagnosticTraceId,
+    values: {
+      'acknowledged': acknowledged,
+      'transport': via == 'relay' || via == 'inbox' ? 'relay' : 'direct',
+    },
+  );
+  AppDiagnostics.instance.record(
+    feature: 'message',
+    stage: 'commit',
+    outcome: persistedMessage != null ? 'ok' : 'failed',
+    reason: persistedMessage != null ? 'none' : 'authority_lost',
+    traceId: payload.diagnosticTraceId,
+    values: {'committed': persistedMessage != null},
+  );
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_SEND_SUCCESS',
@@ -4409,6 +4661,9 @@ _authorDirectBlobFreeTextFanout({
 
   final payload = MessagePayload(
     id: resolvedMessageId,
+    diagnosticTraceId: AppDiagnostics.instance.traceForOperation(
+      'message:$resolvedMessageId',
+    ),
     text: sanitizedText,
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,

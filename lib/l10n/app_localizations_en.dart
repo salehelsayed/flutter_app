@@ -3787,4 +3787,167 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get call_audio_route_bluetooth => 'Bluetooth';
+
+  @override
+  String get settings_diagnostics_section => 'SUPPORT';
+
+  @override
+  String get settings_call_diagnostics_title => 'Call diagnostics';
+
+  @override
+  String get settings_call_diagnostics_switch => 'Share call diagnostics';
+
+  @override
+  String get settings_call_diagnostics_summary =>
+      'Help diagnose successful and failed calls. When enabled, reports are sent automatically when this phone is online.';
+
+  @override
+  String get settings_call_diagnostics_details =>
+      'Includes call stages, failure reasons, timing, app version, and connection and packet-flow status. No audio, messages, contact or device IDs, tokens, or network addresses.';
+
+  @override
+  String get settings_app_diagnostics_title => 'App diagnostics';
+
+  @override
+  String get settings_app_diagnostics_switch => 'Share app diagnostics';
+
+  @override
+  String get settings_app_diagnostics_summary =>
+      'Help identify problems with messages, private media, notifications, and app startup. Reports upload automatically when this phone is online.';
+
+  @override
+  String get settings_app_diagnostics_details =>
+      'Includes operation stages, fixed error categories, timing, app version, crash and freeze reports, and reporting health. No messages, images, audio, keys, contact or device IDs, tokens, or network addresses. Copy a support code to help us locate a problem.';
+
+  @override
+  String get settings_diagnostics_sharing_on => 'Sharing on';
+
+  @override
+  String get settings_diagnostics_off => 'Off';
+
+  @override
+  String get settings_diagnostics_status_unavailable =>
+      'Diagnostic status is temporarily unavailable.';
+
+  @override
+  String get settings_diagnostics_storage_failed =>
+      'Reports cannot be saved on this phone. Try turning sharing off and on.';
+
+  @override
+  String get settings_diagnostics_setup_pending =>
+      'Sharing setup is pending. Reports will upload when it completes.';
+
+  @override
+  String get settings_diagnostics_disable_pending =>
+      'Sharing is off on this phone. The server update is pending.';
+
+  @override
+  String get settings_diagnostics_ready => 'Sharing is ready.';
+
+  @override
+  String get settings_diagnostics_disabled => 'Sharing is off.';
+
+  @override
+  String settings_diagnostics_queued_events(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count events waiting to upload',
+      one: '1 event waiting to upload',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String settings_diagnostics_last_upload(DateTime date, DateTime time) {
+    final intl.DateFormat dateDateFormat = intl.DateFormat.yMd(localeName);
+    final String dateString = dateDateFormat.format(date);
+    final intl.DateFormat timeDateFormat = intl.DateFormat.jm(localeName);
+    final String timeString = timeDateFormat.format(time);
+
+    return 'Last upload: $dateString at $timeString';
+  }
+
+  @override
+  String settings_diagnostics_dropped_events(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count events were dropped. Reports may be incomplete.',
+      one: '1 event was dropped. Reports may be incomplete.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get settings_diagnostics_retry_pending =>
+      'Upload is waiting to retry.';
+
+  @override
+  String get settings_diagnostics_update_failed =>
+      'Could not update diagnostics. Please try again.';
+
+  @override
+  String settings_diagnostics_retention(int localDays, int serverDays) {
+    return 'Reports are kept on this phone for up to $localDays days and on the server for up to $serverDays days. Sharing is on by default. You can turn it off at any time.';
+  }
+
+  @override
+  String get settings_diagnostics_support_code_copied =>
+      'Support code copied. Share it when reporting a problem.';
+
+  @override
+  String get settings_diagnostics_copy_support_code => 'Copy support code';
+
+  @override
+  String get settings_diagnostics_preview_report => 'Preview support report';
+
+  @override
+  String get settings_diagnostics_report_copied => 'Support report copied';
+
+  @override
+  String get settings_diagnostics_copy_report => 'Copy support report';
+
+  @override
+  String get settings_diagnostics_cleared =>
+      'Sharing is off and local reports are cleared';
+
+  @override
+  String get settings_diagnostics_disable_and_clear =>
+      'Turn off and clear reports';
+
+  @override
+  String get settings_safety_support_title => 'Safety & support';
+
+  @override
+  String get settings_safety_support_description =>
+      'Report abuse or child-safety concerns to the mknoon developer. Use the address below or open your email app to write a report.';
+
+  @override
+  String get settings_safety_support_email => 'Write email';
+
+  @override
+  String get settings_safety_support_copy_email => 'Copy email address';
+
+  @override
+  String get settings_safety_support_copied => 'Email address copied.';
+
+  @override
+  String get settings_safety_support_copy_failed =>
+      'Couldn’t copy the address. You can select it above and copy it manually.';
+
+  @override
+  String get settings_safety_support_email_unavailable =>
+      'Couldn’t open an email app. Copy the address and contact us using your preferred email service.';
+
+  @override
+  String get settings_safety_support_browser_unavailable =>
+      'Couldn’t open a browser. You can copy the policy link below and open it yourself.';
+
+  @override
+  String get settings_safety_support_guidance =>
+      'Describe the concern. Do not send suspected child sexual abuse material, private keys, or recovery phrases.';
+
+  @override
+  String get settings_safety_support_standards => 'Child safety standards';
 }

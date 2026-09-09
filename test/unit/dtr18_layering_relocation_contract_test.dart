@@ -295,7 +295,16 @@ const _productionBootstrapNormalizedSha256 =
     // Account reconciliation now binds exact remote proofs before publishing
     // shared identity, with iOS gate setup before deferred Firebase startup.
     // This changes initialization order within the existing bootstrap owner.
-    'd11873880a88e6132609f516cc8776725c06785b62306a76b6fce791037a82ec';
+    // Beta call diagnostics initialize beside GoBridgeClient under the existing
+    // account-network gate and flush after bridge initialization. The two
+    // diagnostic imports and bootstrap hooks move no owner or relocation URI.
+    // App diagnostics attach their independently initialized transport to the
+    // same bridge and account-network gate. Removing only that import and
+    // attachment reproduces the previous reviewed normalized baseline.
+    // Reliability repair starts optional call diagnostics concurrently so a
+    // slow sink cannot hold bridge composition. The same bootstrap owner and
+    // account-network gate remain; pending-sink regressions cover startup.
+    '51480e4eb0a0942e5e05d1b96d6a1ba11ba502094e0522a4ffbfd4465980930a';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

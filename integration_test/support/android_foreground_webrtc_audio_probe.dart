@@ -1,10 +1,61 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/call_stats_sampler.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/webrtc_types.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
+
+/// Bounded relationships only; stats identifiers, addresses and counters never
+/// cross the device-proof diagnostic boundary.
+Map<String, Object> androidForegroundSelectedPairDiagnostic(
+  List<CallStatsRecord> records,
+) {
+  final byId = {for (final record in records) record.id: record};
+  final states = <String>[];
+  var missingReferences = 0;
+  var nominatedSucceeded = 0;
+  var nominatedOther = 0;
+  for (final record in records) {
+    if (record.type == 'transport') {
+      final id = record.values['selectedCandidatePairId'];
+      if (id == null) continue;
+      final pair = byId[id];
+      if (pair == null) {
+        missingReferences++;
+      } else {
+        final state = pair.values['state'];
+        states.add(switch (state) {
+          'frozen' ||
+          'waiting' ||
+          'in-progress' ||
+          'failed' ||
+          'succeeded' => state as String,
+          _ => 'unknown',
+        });
+      }
+    }
+    if (record.type == 'candidate-pair' &&
+        (record.values['nominated'] == true ||
+            record.values['nominated'] == 1)) {
+      if (record.values['state'] == 'succeeded') {
+        nominatedSucceeded++;
+      } else {
+        nominatedOther++;
+      }
+    }
+  }
+  return {
+    'transportSelectedPairs': states.length.clamp(0, 16),
+    'missingSelectedReferences': missingReferences.clamp(0, 16),
+    'selectedPairState': states.length == 1
+        ? states.single
+        : 'multiple_or_absent',
+    'nominatedSucceeded': nominatedSucceeded.clamp(0, 16),
+    'nominatedOther': nominatedOther.clamp(0, 16),
+  };
+}
 
 /// In-memory totals used only to collapse real WebRTC statistics into phase
 /// booleans. Instances are never serialized, logged, or placed in evidence.
@@ -228,6 +279,24 @@ final class AndroidForegroundWebRtcAudioProbeAdapter
   }
 
   static const CallStatsSampler _statsSampler = CallStatsSampler();
+  final CallRtpProgressSampler _rtpProgressSampler = CallRtpProgressSampler();
+  bool _reportedReadinessFailure = false;
+  Map<String, Object> _lastPairDiagnostic = const {};
+
+  void recordConnectedReadinessFailure() {
+    if (_reportedReadinessFailure) return;
+    _reportedReadinessFailure = true;
+    try {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CALL_PROOF_SELECTED_PAIR_SAMPLE',
+        details: _lastPairDiagnostic,
+      );
+    } catch (_) {
+      // Evidence collection cannot alter the adapter snapshot.
+    }
+  }
+
   static const WebRtcPeerConnectionEvent _connectedEvent =
       WebRtcPeerConnectionEvent(
         kind: WebRtcPeerConnectionEventKind.state,
@@ -622,15 +691,24 @@ final class AndroidForegroundWebRtcAudioProbeAdapter
           break;
         }
       }
-      final sample = _statsSampler.sample(
-        (await connection.getStats()).map(
-          (report) => CallStatsRecord(
-            id: report.id,
-            type: report.type,
-            values: Map<Object?, Object?>.of(report.values),
-          ),
-        ),
-      );
+      final records = (await connection.getStats())
+          .map(
+            (report) => CallStatsRecord(
+              id: report.id,
+              type: report.type,
+              values: Map<Object?, Object?>.of(report.values),
+            ),
+          )
+          .toList();
+      final sample = _statsSampler.sample(records);
+      final progress = _rtpProgressSampler.sample(records);
+      _lastPairDiagnostic = {
+        ...androidForegroundSelectedPairDiagnostic(records),
+        'inboundRtpObserved': sample.inboundAudioRtpObserved,
+        'outboundRtpObserved': sample.outboundAudioRtpObserved,
+        'inboundRtpProgress': progress.inbound,
+        'outboundRtpProgress': progress.outbound,
+      };
       final snapshot = WebRtcPeerConnectionSnapshot(
         isClosed: _closed,
         iceTransportPolicy:

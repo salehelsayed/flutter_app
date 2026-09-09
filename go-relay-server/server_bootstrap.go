@@ -139,6 +139,7 @@ func newControlPlaneStores(
 		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
 		stores.Inbox.SetWakeOutcomeAdmissionEnabled(false)
 		stores.GroupInbox.SetWakeOutcomeAdmissionEnabled(false)
+		stores.Inbox.appDiagnostics = initAppDiagnosticsFromEnvironment()
 		return stores, nil
 	case backendKindRedis:
 		if cfg.RedisURL == "" {
@@ -202,6 +203,8 @@ func newControlPlaneStores(
 			time.Now,
 		)
 
+		callControl.diagnostics = initCallDiagnosticsFromEnvironment()
+
 		stores := &controlPlaneStores{
 			Rendezvous: NewRendezvousStoreWithBackend(rzBackend),
 			Inbox: NewInboxStoreWithBackendAndCapacity(
@@ -227,6 +230,7 @@ func newControlPlaneStores(
 		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
 		stores.Inbox.SetWakeOutcomeAdmissionEnabled(true)
 		stores.GroupInbox.SetWakeOutcomeAdmissionEnabled(true)
+		stores.Inbox.appDiagnostics = initAppDiagnosticsFromEnvironment()
 		return stores, nil
 	default:
 		return nil, fmt.Errorf("unsupported relay backend: %s", cfg.Kind)
@@ -234,6 +238,9 @@ func newControlPlaneStores(
 }
 
 func (s *controlPlaneStores) Close() error {
+	if s != nil && s.Inbox != nil {
+		s.Inbox.appDiagnostics.close()
+	}
 	if s == nil || s.closeFn == nil {
 		return nil
 	}

@@ -244,6 +244,8 @@ final class CallAudioController {
   bool _audioSessionActivationAttempted = false;
   bool _interruptionSubscriptionCancelled = false;
   bool _interrupted = false;
+  int _interruptionRevision = 0;
+  CallAudioSessionInterruption? _pendingStartupInterruption;
   bool _pendingOutputRouteRefresh = false;
 
   CallAudioControlState get state => _state;
@@ -334,6 +336,7 @@ final class CallAudioController {
     if (_closeRequested) return _closedResult(permissionStatus);
 
     var engineStartStage = CallAudioEngineStartStage.setAudioSessionActive;
+    var startupInterrupted = false;
     try {
       await _engine.setAudioSessionActive(true);
       if (_closeRequested) return _closedResult(permissionStatus);
@@ -349,12 +352,24 @@ final class CallAudioController {
         ];
       }
       if (_closeRequested) return _closedResult(permissionStatus);
+      // Native focus may change after activation while capture or route
+      // discovery is still pending. Preserve that callback and fence media
+      // readiness before publishing the initial control state.
+      startupInterrupted =
+          _pendingStartupInterruption != null &&
+          (_pendingStartupInterruption!.isBeginning ||
+              !_audioSession.ownsSession);
+      if (startupInterrupted) {
+        engineStartStage = CallAudioEngineStartStage.setAudioSessionActive;
+        await _engine.setAudioSessionActive(false);
+        if (_closeRequested) return _closedResult(permissionStatus);
+      }
       _updateState(
         CallAudioControlState(
           muted: !configuration.captureAudio,
           selectedRoute: CallAudioOutputRoute.systemDefault,
           supportedRoutes: _deduplicate(supportedRoutes),
-          active: true,
+          active: !startupInterrupted,
           failure: CallAudioFailure.none,
         ),
       );
@@ -369,6 +384,14 @@ final class CallAudioController {
     }
 
     _started = true;
+    if (startupInterrupted) {
+      _interrupted = true;
+      _interruptionRevision++;
+      _interruptionIntents.add(CallAudioInterruptionIntent.pausedReconnect);
+    }
+    final pendingInterruption = _pendingStartupInterruption;
+    _pendingStartupInterruption = null;
+    if (pendingInterruption != null) _onInterruption(pendingInterruption);
     if (_pendingOutputRouteRefresh) {
       _pendingOutputRouteRefresh = false;
       _onOutputRouteChanged(CallAudioOutputRoute.systemDefault);
@@ -412,7 +435,7 @@ final class CallAudioController {
         if (!_canControl) return _unavailableControlState();
         try {
           await _engine.setLocalAudioEnabled(!muted);
-          return _refreshState();
+          return await _refreshState();
         } catch (_) {
           return _recoverControlState(CallAudioFailure.controlFailed);
         }
@@ -435,7 +458,7 @@ final class CallAudioController {
         }
         try {
           await _engine.selectOutputRoute(route);
-          return _refreshState(supportedRoutes: supported);
+          return await _refreshState(supportedRoutes: supported);
         } catch (_) {
           return _recoverControlState(
             CallAudioFailure.controlFailed,
@@ -636,10 +659,17 @@ final class CallAudioController {
   }
 
   void _onInterruption(CallAudioSessionInterruption interruption) {
-    if (!_started || _closeRequested) return;
+    if (_closeRequested) return;
+    if (!_started) {
+      if (_audioSessionActivationAttempted) {
+        _pendingStartupInterruption = interruption;
+      }
+      return;
+    }
     if (interruption.isBeginning) {
       if (_interrupted) return;
       _interrupted = true;
+      _interruptionRevision++;
       if (!_interruptionIntents.isClosed) {
         _interruptionIntents.add(CallAudioInterruptionIntent.pausedReconnect);
       }
@@ -648,7 +678,7 @@ final class CallAudioController {
           if (!_canControl) return _unavailableControlState();
           try {
             await _engine.setAudioSessionActive(false);
-            return _refreshState();
+            return await _refreshState();
           } catch (_) {
             return _recoverControlState(CallAudioFailure.interruptionFailed);
           }
@@ -659,21 +689,31 @@ final class CallAudioController {
 
     if (!_interrupted) return;
     _interrupted = false;
+    final recoveryRevision = ++_interruptionRevision;
     if (!_audioSession.ownsSession) return;
     unawaited(
       _enqueueCommand<CallAudioControlState>(() async {
         if (!_canControl || !_audioSession.ownsSession) {
           return _unavailableControlState();
         }
+        if (recoveryRevision != _interruptionRevision) return _state;
         try {
           await _engine.setAudioSessionActive(true);
-          final refreshed = await _refreshState();
-          if (_canControl && _audioSession.ownsSession) {
+          if (recoveryRevision != _interruptionRevision) return _state;
+          final refreshed = await _refreshState(
+            interruptionRevision: recoveryRevision,
+          );
+          if (_canControl &&
+              _audioSession.ownsSession &&
+              recoveryRevision == _interruptionRevision) {
             _interruptionIntents.add(CallAudioInterruptionIntent.recover);
           }
           return refreshed;
         } catch (_) {
-          return _recoverControlState(CallAudioFailure.interruptionFailed);
+          return _recoverControlState(
+            CallAudioFailure.interruptionFailed,
+            interruptionRevision: recoveryRevision,
+          );
         }
       }),
     );
@@ -713,10 +753,15 @@ final class CallAudioController {
   Future<CallAudioControlState> _refreshState({
     List<CallAudioOutputRoute>? supportedRoutes,
     CallAudioFailure failure = CallAudioFailure.none,
+    int? interruptionRevision,
   }) async {
     final routes = supportedRoutes ?? await _engine.supportedOutputRoutes();
     final snapshot = await _engine.snapshot();
-    if (_closeRequested) return _state;
+    if (_closeRequested ||
+        (interruptionRevision != null &&
+            interruptionRevision != _interruptionRevision)) {
+      return _state;
+    }
     _updateState(
       CallAudioControlState(
         muted: !snapshot.localAudioEnabled,
@@ -732,13 +777,20 @@ final class CallAudioController {
   Future<CallAudioControlState> _recoverControlState(
     CallAudioFailure failure, {
     List<CallAudioOutputRoute>? supportedRoutes,
+    int? interruptionRevision,
   }) async {
     try {
       return await _refreshState(
         supportedRoutes: supportedRoutes,
         failure: failure,
+        interruptionRevision: interruptionRevision,
       );
     } catch (_) {
+      if (_closeRequested ||
+          (interruptionRevision != null &&
+              interruptionRevision != _interruptionRevision)) {
+        return _state;
+      }
       _recordFailure(failure);
       return _state;
     }

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
+
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
@@ -213,6 +215,10 @@ class DirectPrivateMediaViewerGrant {
   bool _firstFrameRecorded = false;
   bool _lifecycleSettled = false;
   bool _protectionReleased = false;
+  // These references scope observation across UI callbacks; no authority gate
+  // reads them, and neither is serialized or retained beyond the grant.
+  Zone? _diagnosticZone;
+  String? _diagnosticTraceId;
   DirectPrivateMediaSettleResult? _settleResult;
   Future<DirectPrivateMediaSettleResult>? _settleOperation;
 
@@ -294,7 +300,43 @@ class DirectPrivateMediaViewerController {
     }
     final existing = _preparing[identity];
     if (existing != null) return existing;
-    final operation = _prepareResult(identity, continuityGuard);
+    final diagnostics = AppDiagnostics.instance;
+    final operation = diagnostics.runWithAttempt(
+      feature: 'private_media',
+      traceId: diagnostics.traceForOperation('media:${identity.attachmentId}'),
+      body: (traceId) {
+        diagnostics.record(
+          feature: 'private_media',
+          stage: 'prepare',
+          outcome: 'started',
+          traceId: traceId,
+        );
+        return _prepareResult(identity, continuityGuard).then((result) {
+          final grant = result.grant;
+          if (grant != null) {
+            grant._diagnosticZone = Zone.current;
+            grant._diagnosticTraceId = traceId;
+          }
+          final reason = _diagnosticPrepareReason(result.failureReason);
+          diagnostics.record(
+            feature: 'private_media',
+            stage: 'prepare',
+            outcome: result.isGranted ? 'ok' : 'failed',
+            reason: reason,
+            traceId: traceId,
+          );
+          if (!result.isGranted) {
+            diagnostics.finishAttempt(
+              feature: 'private_media',
+              traceId: traceId,
+              outcome: 'failed',
+              reason: reason,
+            );
+          }
+          return result;
+        });
+      },
+    );
     _preparing[identity] = operation;
     return operation.whenComplete(() => _preparing.remove(identity));
   }
@@ -609,6 +651,15 @@ class DirectPrivateMediaViewerController {
       return false;
     }
     grant._firstFrameRecorded = true;
+    (grant._diagnosticZone ?? Zone.current).run(() {
+      AppDiagnostics.instance.record(
+        feature: 'private_media',
+        stage: 'present',
+        outcome: 'ok',
+        traceId: grant._diagnosticTraceId,
+        values: {'firstFrame': true},
+      );
+    });
     return true;
   }
 
@@ -755,11 +806,55 @@ class DirectPrivateMediaViewerController {
             DirectPrivateMediaSettleDisposition.indeterminateFailClosed;
       }
     }
-    return grant._settleResult ??= DirectPrivateMediaSettleResult(
+    final result = grant._settleResult ??= DirectPrivateMediaSettleResult(
       disposition: disposition,
       exitReason: reason,
       firstFrameRecorded: grant._firstFrameRecorded,
     );
+    (grant._diagnosticZone ?? Zone.current).run(() {
+      final diagnostics = AppDiagnostics.instance;
+      final traceId = grant._diagnosticTraceId;
+      final uncertain =
+          disposition ==
+          DirectPrivateMediaSettleDisposition.indeterminateFailClosed;
+      final diagnosticReason = uncertain
+          ? 'storage_failed'
+          : _diagnosticExitReason(reason);
+      diagnostics.record(
+        feature: 'private_media',
+        stage: 'consume',
+        outcome: uncertain
+            ? 'failed'
+            : disposition == DirectPrivateMediaSettleDisposition.terminalized
+            ? 'ok'
+            : 'pending',
+        reason: diagnosticReason,
+        traceId: traceId,
+        values: {
+          'firstFrame': grant._firstFrameRecorded,
+          'committed':
+              disposition == DirectPrivateMediaSettleDisposition.terminalized,
+        },
+      );
+      diagnostics.finishAttempt(
+        feature: 'private_media',
+        traceId: traceId,
+        outcome: uncertain
+            ? 'failed'
+            : reason == DirectPrivateMediaExitReason.close
+            ? grant._firstFrameRecorded
+                  ? 'success'
+                  : 'canceled'
+            : reason == DirectPrivateMediaExitReason.expiry
+            ? 'expired'
+            : diagnosticReason == 'lifecycle_interrupted'
+            ? 'interrupted_unknown'
+            : 'failed',
+        reason: diagnosticReason,
+        values: {'firstFrame': grant._firstFrameRecorded},
+      );
+    });
+    return result;
   }
 
   Future<void> releaseProtectionOwner(
@@ -1068,3 +1163,40 @@ class DirectPrivateMediaViewerController {
     await _routeEventController.close();
   }
 }
+
+// Closed diagnostic reasons describe the local viewer boundary only. They do
+// not participate in protection, opening leases or consume/rollback decisions.
+String _diagnosticPrepareReason(
+  DirectPrivateMediaPrepareFailureReason? reason,
+) => switch (reason) {
+  null => 'none',
+  DirectPrivateMediaPrepareFailureReason.invalidIdentity => 'invalid_payload',
+  DirectPrivateMediaPrepareFailureReason.unsupportedMediaKind => 'unsupported',
+  DirectPrivateMediaPrepareFailureReason.protectionEnterFailed ||
+  DirectPrivateMediaPrepareFailureReason.protectionIncident =>
+    'protection_failed',
+  DirectPrivateMediaPrepareFailureReason.senderLocalBytesMissing =>
+    'missing_file',
+  DirectPrivateMediaPrepareFailureReason.routeContinuityLost => 'route_failed',
+  DirectPrivateMediaPrepareFailureReason.disposed ||
+  DirectPrivateMediaPrepareFailureReason.appLifecycleContinuityLost =>
+    'lifecycle_interrupted',
+  DirectPrivateMediaPrepareFailureReason.localAuthorityMissing ||
+  DirectPrivateMediaPrepareFailureReason.leaseUnavailable ||
+  DirectPrivateMediaPrepareFailureReason.revalidationFailed => 'authority_lost',
+  _ => 'prepare_failed',
+};
+
+String _diagnosticExitReason(DirectPrivateMediaExitReason reason) =>
+    switch (reason) {
+      DirectPrivateMediaExitReason.close => 'user_action',
+      DirectPrivateMediaExitReason.expiry => 'expired',
+      DirectPrivateMediaExitReason.routePushFailure ||
+      DirectPrivateMediaExitReason.routeContinuityLoss => 'route_failed',
+      DirectPrivateMediaExitReason.protectionEnterFailure ||
+      DirectPrivateMediaExitReason.capture => 'protection_failed',
+      DirectPrivateMediaExitReason.revalidationFailure => 'authority_lost',
+      DirectPrivateMediaExitReason.preFrameDecodeFailure ||
+      DirectPrivateMediaExitReason.postFrameFailure => 'prepare_failed',
+      _ => 'lifecycle_interrupted',
+    };

@@ -14,6 +14,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -1220,8 +1221,7 @@ void main() {
     }
 
     testWidgets(
-      'TC-192-02 online-glitch snackbar is the honest queued-retry one-liner, '
-      'not the offline copy and not error-red',
+      'TC-192-02 online-glitch retry shows inbox only after custody acceptance',
       (tester) async {
         final messageRepo = _FakeMessageRepository();
         final recorder = _GatedSendRecorder();
@@ -1257,6 +1257,21 @@ void main() {
         await tester.pump(const Duration(milliseconds: 800));
 
         expect(find.text(queuedRetryCopy), findsOneWidget);
+        final outgoingCard = find.byType(LetterCard);
+        expect(outgoingCard, findsOneWidget);
+        expect(
+          find.descendant(of: outgoingCard, matching: find.byIcon(Icons.inbox)),
+          findsNothing,
+          reason: 'a saved retry has no relay inbox acceptance yet',
+        );
+        expect(
+          find.descendant(
+            of: outgoingCard,
+            matching: find.byIcon(Icons.done_rounded),
+          ),
+          findsOneWidget,
+        );
+        expect(messageRepo.store[sentId]!.transport, isNull);
         // The phone believes it is online — the wifi-off "back online" promise
         // would be dishonest here; so would the contact-blaming/generic red.
         expect(find.text("Will send when you're back online"), findsNothing);
@@ -1291,6 +1306,28 @@ void main() {
               ?.text,
           '',
         );
+
+        // A later successful retry owns the inbox transition and updates the
+        // existing bubble through the repository's ordinary change stream.
+        await messageRepo.settleOutgoingOrdinaryTransport(
+          messageId: sentId,
+          expectedContactPeerId: _contactPeerId,
+          expectedEnvelope: failedMessage.wireEnvelope,
+          status: 'inboxed',
+          transport: 'inbox',
+          relayExpiresAt: DateTime.utc(2026, 7, 3).millisecondsSinceEpoch,
+          mode: OutgoingOrdinarySettlementMode.live,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump();
+
+        expect(messageRepo.store[sentId]!.status, 'inboxed');
+        expect(
+          find.descendant(of: outgoingCard, matching: find.byIcon(Icons.inbox)),
+          findsOneWidget,
+        );
+        expect(recorder.callCount, 1);
       },
     );
 

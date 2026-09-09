@@ -1,4 +1,5 @@
 import '../../../core/utils/flow_event_emitter.dart';
+import '../diagnostics/call_diagnostics.dart';
 import '../application/call_endpoint_resolver.dart';
 import '../domain/received_call_wake_handle_store.dart';
 import 'call_authority_client.dart';
@@ -65,6 +66,28 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
     );
     return endpoint;
   } on CallEndpointResolutionException catch (error) {
+    final reason = switch (error.code) {
+      CallEndpointResolutionCode.blocked => 'blocked',
+      CallEndpointResolutionCode.notAccepted => 'authority_rejected',
+      CallEndpointResolutionCode.invalidSignature => 'signature_invalid',
+      CallEndpointResolutionCode.stale => 'expired',
+      CallEndpointResolutionCode.unavailable when relayEndpoint == null =>
+        'endpoint_not_found',
+      CallEndpointResolutionCode.unavailable when wakeHandleGrant == null =>
+        'wake_authority_missing',
+      CallEndpointResolutionCode.unavailable => 'capability_unavailable',
+      _ => 'endpoint_invalid',
+    };
+    final diagnostics = CallDiagnostics.instance;
+    diagnostics.record(
+      stage: 'preflight',
+      action: 'lookup',
+      outcome: 'rejected',
+      reason: reason,
+    );
+    if (diagnostics.currentTraceId != null) {
+      diagnostics.finishAttempt(outcome: 'preflight_failed', reason: reason);
+    }
     emitCallEndpointResolutionResult(
       stage: 'endpoint_resolve',
       outcome: 'unavailable',
@@ -103,6 +126,20 @@ void emitCallEndpointResolutionResult({
   required String reason,
 }) {
   try {
+    CallDiagnostics.instance.record(
+      stage: 'preflight',
+      action: 'lookup',
+      outcome: outcome == 'available'
+          ? 'ok'
+          : outcome == 'error'
+          ? 'failed'
+          : 'rejected',
+      reason: outcome == 'available'
+          ? 'none'
+          : outcome == 'error'
+          ? 'authority_unreachable'
+          : 'authority_invalid',
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'CALL_ENDPOINT_RESOLUTION_RESULT',

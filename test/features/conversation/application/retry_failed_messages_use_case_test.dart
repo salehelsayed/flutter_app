@@ -3074,50 +3074,54 @@ void main() {
       },
     );
 
-    test('retryFailedMessages skips storeInInbox when message transport '
-        'is already inbox', () async {
-      identityRepo.seed(makeIdentity());
-      // Simulate the post-crash state: message was successfully stored
-      // in inbox but app crashed before DB was updated. On resume,
-      // a recovery path re-saved the row with transport='inbox'.
-      final msgWithInboxTransport = ConversationMessage(
-        id: 'msg-crash-001',
-        contactPeerId: 'peer-target',
-        senderPeerId: 'my-peer-id',
-        text: 'Crash test',
-        timestamp: '2026-01-01T00:00:00.000Z',
-        status: 'failed',
-        isIncoming: false,
-        createdAt: '2026-01-01T00:00:00.000Z',
-        transport: 'inbox', // already delivered via inbox before crash
-        wireEnvelope:
-            '{"type":"chat","version":"1","payload":{"id":"msg-crash-001"}}',
-      );
-      messageRepo.seed([msgWithInboxTransport]);
+    for (final storeAccepted in [false, true]) {
+      test('failed inbox transport requires a new custody receipt '
+          '(accepted=$storeAccepted)', () async {
+        identityRepo.seed(makeIdentity());
+        // An inbox route can survive a rejected STORE or an older UI recovery.
+        // The route is not evidence that the relay accepted the envelope.
+        final msgWithInboxTransport = ConversationMessage(
+          id: 'msg-crash-001',
+          contactPeerId: 'peer-target',
+          senderPeerId: 'my-peer-id',
+          text: 'Crash test',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          transport: 'inbox',
+          wireEnvelope:
+              '{"type":"chat_message","version":"2","id":"msg-crash-001",'
+              '"senderPeerId":"my-peer-id","encrypted":'
+              '{"kem":"test-kem","ciphertext":"test-cipher","nonce":"test-nonce"}}',
+        );
+        messageRepo.seed([msgWithInboxTransport]);
 
-      final p2pService = FakeP2PService(
-        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        storeInInboxResult: true,
-      );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: storeAccepted,
+        );
 
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
 
-      // storeInInbox should NOT be called — message already has transport='inbox'
-      expect(p2pService.storeInInboxCallCount, 0);
-      // F6: already-inbox is custody, not delivery — settled 'inboxed' with the
-      // envelope retained (no send happened), riding the receipt repair.
-      expect(count, 1);
-      final saved = messageRepo.lastSavedMessage;
-      expect(saved, isNotNull);
-      expect(saved!.status, 'inboxed');
-      expect(saved.wireEnvelope, isNotNull);
-    });
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(
+          p2pService.lastStoreInInboxMessage,
+          msgWithInboxTransport.wireEnvelope,
+        );
+        expect(count, storeAccepted ? 1 : 0);
+        final saved = await messageRepo.getMessage(msgWithInboxTransport.id);
+        expect(saved, isNotNull);
+        expect(saved!.status, storeAccepted ? 'inboxed' : 'failed');
+        expect(saved.wireEnvelope, msgWithInboxTransport.wireEnvelope);
+      });
+    }
 
     test('calls getFailedOutgoingMessages on messageRepo', () async {
       identityRepo.seed(makeIdentity());

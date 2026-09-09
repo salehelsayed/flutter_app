@@ -149,6 +149,8 @@ internal class MknoonCallLifecycleController(
     private val diagnosticSink: MknoonCallLifecycleDiagnosticSink =
         MknoonCallLifecycleDiagnosticSink { _ -> },
     private val terminalAckTimeoutMs: Long = TERMINAL_ACK_TIMEOUT_MS,
+    private val journalDiagnostic: (String, PendingNativeCallEventType) -> Unit = { _, _ -> },
+    private val answerDiagnostic: (String, String, String) -> Unit = { _, _, _ -> },
 ) : MknoonCallActionHandler {
     private val lock = Any()
     private var attached = false
@@ -448,13 +450,18 @@ internal class MknoonCallLifecycleController(
         var newlyPersisted = false
         val accepted = synchronized(lock) {
             if (cleanupState != null || !hasActiveLifecycle(nativeCallId)) {
+                runCatching { answerDiagnostic(nativeCallId.toString(), "rejected", "native_answer_refused") }
                 return@synchronized false
             }
             if (answerRequestedCallId == nativeCallId) {
+                runCatching { answerDiagnostic(nativeCallId.toString(), "duplicate", "duplicate") }
                 return@synchronized duplicateIsSuccess
             }
             val event = append(nativeCallId, PendingNativeCallEventType.ANSWER_REQUESTED)
-                ?: return@synchronized false
+                ?: run {
+                    runCatching { answerDiagnostic(nativeCallId.toString(), "failed", "native_persistence_failed") }
+                    return@synchronized false
+                }
             answerRequestedCallId = nativeCallId
             emitIfAttached(event)
             newlyPersisted = true
@@ -473,6 +480,7 @@ internal class MknoonCallLifecycleController(
                     }
                 }
             } catch (_: Exception) {
+                runCatching { answerDiagnostic(nativeCallId.toString(), "failed", "native_lifecycle_failed") }
                 synchronized(lock) {
                     terminateInternal(
                         nativeCallId,
@@ -483,6 +491,7 @@ internal class MknoonCallLifecycleController(
                 return false
             }
         }
+        runCatching { answerDiagnostic(nativeCallId.toString(), "ok", "none") }
         return true
     }
 
@@ -837,7 +846,12 @@ internal class MknoonCallLifecycleController(
             }
             val normalized = routes.filter { it in ROUTES }.distinct().take(MAX_AVAILABLE_ROUTES)
             if (normalized == availableRoutes) return@synchronized false
+            val event = append(nativeCallId, PendingNativeCallEventType.ROUTE_CHANGED)
+                ?: return@synchronized false
             availableRoutes = normalized
+            // Dart refreshes both the selected route and its inventory from
+            // this event, including a headset change that leaves audio on speaker.
+            emitIfAttached(event)
             true
         }
 
@@ -1016,6 +1030,7 @@ internal class MknoonCallLifecycleController(
             null
         }
         if (stored != null) {
+            runCatching { journalDiagnostic(nativeCallId.toString(), type) }
             adoptedState?.takeIf { it.nativeCallId == nativeCallId }?.record(stored)
             return stored
         }

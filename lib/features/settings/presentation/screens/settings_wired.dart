@@ -1,3 +1,6 @@
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
+import '../widgets/call_diagnostics_settings_section.dart';
+import '../widgets/app_diagnostics_settings_section.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -44,6 +47,7 @@ import 'package:flutter_app/features/settings/presentation/widgets/media_storage
 import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_introduction_debug_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/safety_support_sheet.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_transport_diagnostics_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/group_exit_diagnostics_sheet.dart';
 import 'settings_screen.dart';
@@ -722,6 +726,12 @@ class _SettingsWiredState extends State<SettingsWired> {
     );
   }
 
+  Future<void> _openSafetySupportSheet() {
+    return _showSettingsSheet(
+      builder: (sheetContext, setSheetState) => const SafetySupportSheet(),
+    );
+  }
+
   Future<void> _openBackgroundSheet() {
     return _showSettingsSheet(
       builder: (sheetContext, setSheetState) => BackgroundChoiceControl(
@@ -912,6 +922,7 @@ class _SettingsWiredState extends State<SettingsWired> {
       onOpenVideoQualitySheet: _openVideoQualitySheet,
       onOpenMediaStorageSheet: _openMediaStorageSheet,
       onOpenRecoverySheet: _openRecoverySheet,
+      onOpenSafetySupport: _openSafetySupportSheet,
       currentBackgroundPreference: _currentBackgroundPreference,
       currentQuality: _currentQuality,
       currentVideoQuality: _currentVideoQuality,
@@ -920,6 +931,14 @@ class _SettingsWiredState extends State<SettingsWired> {
       onMoveAccountToNewPhone: identity == null
           ? null
           : _onMoveAccountToNewPhone,
+      appDiagnosticsSection: const AppDiagnosticsSettingsSection(),
+      callDiagnosticsSection: CallDiagnosticsSettingsSection(
+        enabled: CallDiagnostics.instance.enabledListenable,
+        setEnabled: CallDiagnostics.instance.setEnabled,
+        exportPreview: CallDiagnostics.instance.exportPreview,
+        clear: CallDiagnostics.instance.clear,
+        status: CallDiagnostics.instance.status,
+      ),
       groupExitDiagnosticsSection: widget.groupExitDiagnosticRepository == null
           ? null
           : GroupExitDiagnosticsSection(

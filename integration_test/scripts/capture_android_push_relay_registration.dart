@@ -258,7 +258,7 @@ class _RelayRegistrationCampaign {
       'start',
       '-W',
       '-n',
-      '$appPackage/.MainActivity',
+      '$appPackage/com.mknoon.app.MainActivity',
     ]);
     final log = await _waitForProofLog();
     _flowEvidence = _parseProofLog(log);

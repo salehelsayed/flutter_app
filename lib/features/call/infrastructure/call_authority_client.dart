@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../diagnostics/call_diagnostics.dart';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -495,10 +497,44 @@ final class BridgeCallAuthorityClient implements CallAuthorityClient {
     String command,
     Map<String, Object?> payload,
   ) async {
+    final diagnostics = CallDiagnostics.instance;
+    final context = diagnostics.contextForWire(
+      callHandle: payload['callHandle'] as String?,
+    );
+    final wirePayload = <String, Object?>{...payload, 'diagnostics': ?context};
+    final action = command.contains('_revoke_')
+        ? 'revoke'
+        : command.contains('_set_')
+        ? 'publish'
+        : command.contains('_get_')
+        ? 'lookup'
+        : command.contains('_store_')
+        ? 'store'
+        : command.contains('_retrieve_')
+        ? 'retrieve'
+        : command.contains('_ack_')
+        ? 'ack'
+        : command.contains('_cancel_')
+        ? 'cancel'
+        : 'check';
+    void record(String outcome, [String reason = 'none']) => diagnostics.record(
+      stage: 'authority',
+      action: action,
+      outcome: outcome,
+      reason: reason,
+      traceId: context?['traceId'] as String?,
+      requestId: context?['requestId'] as String?,
+      operationId: context?['operationId'] as String?,
+      parentOperationId: context?['parentOperationId'] as String?,
+    );
+    record('started');
     try {
       final raw = await _bridge
           .send(
-            jsonEncode(<String, Object?>{'cmd': command, 'payload': payload}),
+            jsonEncode(<String, Object?>{
+              'cmd': command,
+              'payload': wirePayload,
+            }),
           )
           .timeout(requestTimeout);
       final response = jsonDecode(raw);
@@ -506,6 +542,7 @@ final class BridgeCallAuthorityClient implements CallAuthorityClient {
         final code = response is Map<String, dynamic>
             ? _safeBridgeErrorCode(response['errorCode'])
             : 'MALFORMED_RESPONSE';
+        record('rejected', _diagnosticRelayReason(code));
         _emitBridgeFailure(operation: command, code: code);
         throw CallAuthorityException(
           CallAuthorityErrorCode.bridgeFailure,
@@ -514,13 +551,28 @@ final class BridgeCallAuthorityClient implements CallAuthorityClient {
               : code,
         );
       }
+      record('ok');
       return response;
     } on CallAuthorityException {
       rethrow;
     } catch (_) {
+      record('failed', 'bridge_unavailable');
       throw const CallAuthorityException(CallAuthorityErrorCode.bridgeFailure);
     }
   }
+
+  static String _diagnosticRelayReason(String code) => switch (code) {
+    'CALL_STALE_EPOCH' => 'stale_epoch',
+    'CALL_UNAUTHORIZED' => 'authority_rejected',
+    'CALL_RATE_LIMITED' => 'rate_limited',
+    'CALL_BACKEND_UNAVAILABLE' => 'backend_unavailable',
+    'CALL_CONTROL_UNSUPPORTED' => 'legacy_peer',
+    'CALL_INVALID_REQUEST' || 'INVALID_INPUT' => 'invalid_request',
+    'CALL_CONTROL_INVALID_RESPONSE' ||
+    'MALFORMED_RESPONSE' => 'malformed_response',
+    'CALL_EXPIRED' => 'expired',
+    _ => 'unknown',
+  };
 
   static String _safeBridgeErrorCode(Object? value) {
     if (value is String &&

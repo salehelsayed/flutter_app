@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -697,6 +698,116 @@ void main() {
     messageRepo = FakeMessageRepository();
   });
 
+  test(
+    'diagnostics joins incoming decrypt commit and actual receipt completion',
+    () async {
+      final diagnosticDirectory = await Directory.systemTemp.createTemp(
+        'incoming-diagnostics-',
+      );
+      addTearDown(() => diagnosticDirectory.delete(recursive: true));
+      final diagnostics = await AppDiagnostics.installForTesting(
+        directory: diagnosticDirectory,
+      );
+      addTearDown(diagnostics.dispose);
+      const trace = '07cdbd8a-ae03-42de-8dbb-3e688e107967';
+      const id = 'diagnostic-private-message';
+      final inner = MessagePayload(
+        id: id,
+        text: 'private-text-canary',
+        senderPeerId: senderPeerId,
+        senderUsername: 'Alice',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        diagnosticTraceId: trace,
+      );
+      final bridge = FakeDecryptBridge()
+        ..decryptResponse = {'ok': true, 'plaintext': inner.toInnerJson()};
+      final receiptGate = Completer<void>();
+      final message = buildP2PMessage(
+        MessagePayload.buildEncryptedEnvelope(
+          id: id,
+          senderPeerId: senderPeerId,
+          senderUsername: 'Alice',
+          kem: 'private-kem',
+          ciphertext: 'private-cipher',
+          nonce: 'private-nonce',
+        ),
+      );
+      final (result, _, _) = await handleIncomingChatMessage(
+        message: message,
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        ownMlKemSecretKey: 'private-secret',
+        transport: 'inbox',
+        stagedEntryId: 'private-entry',
+        sendDeliveryReceipt: (_) {
+          expect(messageRepo.saved, isNotEmpty);
+          return receiptGate.future;
+        },
+      );
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(bridge.decryptCallCount, 1);
+      var events = (await diagnostics.eventsForTesting())
+          .where((event) => event['traceId'] == trace)
+          .toList();
+      expect(
+        events,
+        contains(
+          predicate<Map<String, Object?>>(
+            (e) => e['stage'] == 'commit' && e['outcome'] == 'ok',
+          ),
+        ),
+      );
+      expect(
+        events.where((e) => e['stage'] == 'receipt' && e['outcome'] == 'ok'),
+        isEmpty,
+      );
+      receiptGate.complete();
+      await Future<void>.delayed(Duration.zero);
+      events = (await diagnostics.eventsForTesting())
+          .where((event) => event['traceId'] == trace)
+          .toList();
+      expect(
+        events,
+        contains(
+          predicate<Map<String, Object?>>(
+            (e) => e['stage'] == 'receipt' && e['outcome'] == 'ok',
+          ),
+        ),
+      );
+      expect(
+        events,
+        contains(
+          predicate<Map<String, Object?>>(
+            (e) => e['stage'] == 'finish' && e['outcome'] == 'success',
+          ),
+        ),
+      );
+      for (final canary in [
+        'private-text-canary',
+        'private-secret',
+        'private-cipher',
+        id,
+        senderPeerId,
+      ]) {
+        expect(jsonEncode(events), isNot(contains(canary)));
+      }
+      await diagnostics.dispose();
+      final restarted = await AppDiagnostics.installForTesting(
+        directory: diagnosticDirectory,
+      );
+      addTearDown(restarted.dispose);
+      expect(
+        restarted.traceForOperation('message:$id'),
+        trace,
+        reason: 'incoming shared correlation survives a later app process',
+      );
+      final archive = await restarted.eventsForTesting();
+      expect(archive.where((e) => e['traceId'] == trace), isNotEmpty);
+      expect(jsonEncode(archive), isNot(contains(id)));
+    },
+  );
+
   group('TC-361-03a linked transport authority', () {
     String linkedEnvelope({String id = 'linked-msg-1'}) => jsonEncode({
       'type': 'chat_message',
@@ -750,11 +861,9 @@ void main() {
           senderPeerId,
           reason: 'the durable row belongs to the LOGICAL contact',
         );
-        expect(
-          messageRepo.linkedApplyTransports,
-          [linkedTransportPeerId],
-          reason: 'the durable apply re-authorizes the physical transport',
-        );
+        expect(messageRepo.linkedApplyTransports, [
+          linkedTransportPeerId,
+        ], reason: 'the durable apply re-authorizes the physical transport');
       },
     );
 
@@ -1359,6 +1468,8 @@ void main() {
     );
 
     test('unknown private shape persists unsupported and redacted', () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
       final mediaRepo = FakeMediaAttachmentRepository();
 
       final (result, stored, _) = await handleIncomingChatMessage(
@@ -1400,6 +1511,28 @@ void main() {
       );
       expect(stored?.text, isEmpty);
       expect(stored?.privateMediaPolicy.isUnsupported, isTrue);
+      final events = (await diagnostics.eventsForTesting())
+          .where((e) => e['feature'] == 'message')
+          .toList();
+      final blocked = events.singleWhere(
+        (e) => e['stage'] == 'verify' && e['outcome'] == 'blocked',
+      );
+      expect(blocked['reason'], 'unsupported');
+      expect(events.last['stage'], 'finish');
+      expect(
+        events.last['outcome'],
+        'success',
+        reason:
+            'quarantined delivery is durable even though the card cannot be opened',
+      );
+      expect(events.last['traceId'], blocked['traceId']);
+      expect(events.last['attemptId'], blocked['attemptId']);
+      expect(
+        events.where((e) => e['stage'] == 'present' || e['stage'] == 'consume'),
+        isEmpty,
+      );
+      expect(jsonEncode(events), isNot(contains('caption-must-not-survive')));
+      expect(jsonEncode(events), isNot(contains('future-mode')));
     });
 
     test(
@@ -3616,11 +3749,9 @@ void main() {
         expect(mediaRepo.saved, hasLength(1));
         expect(mediaRepo.saved.single.id, 'blob-owner-direct-001');
         expect(mediaRepo.savedOwnerLanes, hasLength(1));
-        expect(
-          mediaRepo.savedOwnerLanes.toSet(),
-          {MediaOwnerLane.direct},
-          reason: 'every 1:1 incoming media save must pass the direct lane',
-        );
+        expect(mediaRepo.savedOwnerLanes.toSet(), {
+          MediaOwnerLane.direct,
+        }, reason: 'every 1:1 incoming media save must pass the direct lane');
       });
 
       test('does not persist media when payload has no media', () async {
@@ -5487,11 +5618,9 @@ void main() {
               'terminal replay must reach the dedicated owner '
               '($scenario)',
         );
-        expect(
-          replay.effects,
-          <String>['receipt'],
-          reason: 'exactly one receipt and zero display work ($scenario)',
-        );
+        expect(replay.effects, <String>[
+          'receipt',
+        ], reason: 'exactly one receipt and zero display work ($scenario)');
         // Zero attachment, key, marker or promotion effects were applied.
         expect(
           (await fixture.db.query(

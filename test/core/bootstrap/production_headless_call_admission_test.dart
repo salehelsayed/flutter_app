@@ -1,4 +1,6 @@
 import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
@@ -14,6 +16,141 @@ void main() {
     wakeHandle: '33333333333343338333333333333333',
     expiresAtMs: 1_800_000_045_000,
   );
+
+  test(
+    'diagnostic cause distinguishes local binding and lease refusal without retrying acquisition',
+    () async {
+      for (final scenario in const [
+        (binding: false, bridgeFailure: false, cause: 'authority_invalid'),
+        (binding: true, bridgeFailure: false, cause: 'graph_not_owner'),
+        (binding: true, bridgeFailure: true, cause: 'bridge_unavailable'),
+      ]) {
+        final lease = _DiagnosticLeaseGateway(fail: scenario.bridgeFailure);
+        final backend = AndroidProductionHeadlessCallAdmissionBackend(
+          secureKeyStore: _DiagnosticSecureStore(hasBinding: scenario.binding),
+          leaseGateway: lease,
+        );
+        final report = await ProductionHeadlessCallAdmissionRunner(
+          backend: backend,
+          nowMs: () => 1_800_000_000_000,
+        ).run(invocation: invocation, isStopRequested: () => false);
+        expect(report.disposition, HeadlessCallAdmissionDisposition.deferred);
+        expect(report.diagnosticCause, scenario.cause);
+        expect(report.requiredPersistenceComplete, false);
+        expect(report.databaseClosed, true);
+        expect(report.leaseReleased, true);
+        expect(lease.acquireCalls, scenario.binding ? 1 : 0);
+      }
+    },
+  );
+
+  test(
+    'diagnostic cause distinguishes mailbox retrieval pagination and evaluation failure',
+    () async {
+      for (final cause in [
+        'transport_failed',
+        'unavailable',
+        'adoption_failed',
+        'authority_unreachable',
+      ]) {
+        final mailbox = _Mailbox([_event()], hasMore: cause == 'unavailable');
+        if (cause == 'transport_failed') {
+          mailbox.retrieveFailure = StateError('PRIVATE_FETCH_ERROR');
+        }
+        final session = MailboxProductionHeadlessCallAdmissionSession(
+          mailboxClient: mailbox,
+          authenticateEvent: ({required invocation, required event}) async {
+            if (cause == 'authority_unreachable') {
+              throw const IncomingCallPrePresentationAdmissionException(
+                IncomingCallPrePresentationAdmissionFailureCode.deferred,
+              );
+            }
+            throw StateError('PRIVATE_EVALUATION_ERROR');
+          },
+          closeResources: () async => _Session.safeCleanup,
+        );
+        final report = await ProductionHeadlessCallAdmissionRunner(
+          backend: _Backend(session),
+          nowMs: () => 1_800_000_000_000,
+        ).run(invocation: invocation, isStopRequested: () => false);
+        expect(report.disposition, HeadlessCallAdmissionDisposition.deferred);
+        expect(report.diagnosticCause, cause);
+        expect(report.requiredPersistenceComplete, false);
+        expect(report.databaseClosed, true);
+        expect(report.leaseReleased, true);
+        expect(mailbox.retrievedHandles, [invocation.callId]);
+        expect(mailbox.ackedMessageIds, isEmpty);
+      }
+    },
+  );
+
+  test(
+    'diagnostic cause distinguishes owned session from actual teardown failure',
+    () async {
+      final busy = await ProductionHeadlessCallAdmissionRunner(
+        backend: _Backend(null, diagnosticCause: 'busy'),
+        nowMs: () => 1_800_000_000_000,
+      ).run(invocation: invocation, isStopRequested: () => false);
+      expect(busy.diagnosticCause, 'busy');
+      expect(busy.disposition, HeadlessCallAdmissionDisposition.deferred);
+      expect(busy.requiredPersistenceComplete, false);
+      expect(busy.databaseClosed && busy.leaseReleased, true);
+
+      final cleanup = await ProductionHeadlessCallAdmissionRunner(
+        backend: _Backend(
+          _Session(
+            HeadlessCallAdmissionDisposition.admitted,
+            cleanup: const HeadlessCallAdmissionCleanup(
+              databaseClosed: true,
+              leaseReleased: false,
+            ),
+          ),
+        ),
+        nowMs: () => 1_800_000_000_000,
+      ).run(invocation: invocation, isStopRequested: () => false);
+      expect(cleanup.diagnosticCause, 'cleanup_failed');
+      expect(cleanup.disposition, HeadlessCallAdmissionDisposition.deferred);
+      expect(cleanup.requiredPersistenceComplete, false);
+      expect(cleanup.databaseClosed, true);
+      expect(cleanup.leaseReleased, false);
+    },
+  );
+
+  test(
+    'throwing session diagnostics preserve admitted result and one cleanup',
+    () async {
+      final session = _Session(
+        HeadlessCallAdmissionDisposition.admitted,
+        diagnosticThrows: true,
+      );
+      final backend = _Backend(session);
+      final report = await ProductionHeadlessCallAdmissionRunner(
+        backend: backend,
+        nowMs: () => 1_800_000_000_000,
+      ).run(invocation: invocation, isStopRequested: () => false);
+      expect(report.disposition, HeadlessCallAdmissionDisposition.admitted);
+      expect(report.requiredPersistenceComplete, true);
+      expect(report.databaseClosed && report.leaseReleased, true);
+      expect(report.diagnosticCause, isNull);
+      expect(session.evaluateCalls, 1);
+      expect(session.closeCalls, 1);
+      expect(backend.emergencyCalls, 0);
+    },
+  );
+
+  test('throwing backend diagnostics preserve one deferred cleanup', () async {
+    final backend = _Backend(null, diagnosticThrows: true);
+    final report = await ProductionHeadlessCallAdmissionRunner(
+      backend: backend,
+      nowMs: () => 1_800_000_000_000,
+    ).run(invocation: invocation, isStopRequested: () => false);
+    expect(report.disposition, HeadlessCallAdmissionDisposition.deferred);
+    expect(report.requiredPersistenceComplete, false);
+    expect(report.databaseClosed && report.leaseReleased, true);
+    expect(report.diagnosticCause, isNull);
+    expect(backend.acquireCalls, 1);
+    expect(backend.emergencyCalls, 1);
+  });
 
   test(
     'authenticated invite reports admitted only after proven teardown',
@@ -919,6 +1056,7 @@ final class _Mailbox implements CallMailboxClient {
   final List<List<String>> ackedMessageIds = <List<String>>[];
   final void Function()? onAck;
   Object? ackFailure;
+  Object? retrieveFailure;
 
   @override
   Future<CallMailboxRetrieveResult> retrieve({
@@ -926,6 +1064,7 @@ final class _Mailbox implements CallMailboxClient {
     int limit = 64,
   }) async {
     retrievedHandles.add(callHandle);
+    if (retrieveFailure case final Object failure) throw failure;
     return CallMailboxRetrieveResult(
       events: events,
       receiptAtMs: 1_800_000_000_001,
@@ -958,8 +1097,57 @@ final class _Mailbox implements CallMailboxClient {
       throw StateError('headless admission must not store');
 }
 
-final class _Backend implements ProductionHeadlessCallAdmissionBackend {
-  _Backend(this.session);
+final class _DiagnosticSecureStore implements SecureKeyStore {
+  _DiagnosticSecureStore({required this.hasBinding});
+  final bool hasBinding;
+  @override
+  Future<String?> read(String key) async =>
+      hasBinding && key == canonicalRuntimeAccountBindingStorageKey
+      ? 'v1:${'a' * 64}'
+      : null;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _DiagnosticLeaseGateway implements CanonicalRuntimeLeaseGateway {
+  _DiagnosticLeaseGateway({required this.fail});
+  final bool fail;
+  int acquireCalls = 0;
+  @override
+  Future<CanonicalRuntimeLeaseSnapshot> acquire(String binding) async {
+    acquireCalls++;
+    if (fail) throw StateError('PRIVATE_LEASE_BRIDGE_ERROR');
+    return const CanonicalRuntimeLeaseSnapshot(
+      state: CanonicalRuntimeLeaseState.draining,
+      generation: null,
+      binding: null,
+      role: null,
+      maximumConcurrentWritableOwners: 1,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _Backend
+    implements
+        ProductionHeadlessCallAdmissionBackend,
+        HeadlessCallAdmissionDiagnosticSource {
+  _Backend(
+    this.session, {
+    String? diagnosticCause,
+    this.diagnosticThrows = false,
+  }) : _diagnosticCause = diagnosticCause;
+
+  @override
+  String? get diagnosticCause {
+    if (diagnosticThrows) throw StateError('PRIVATE_DIAGNOSTIC_ERROR');
+    return _diagnosticCause;
+  }
+
+  final String? _diagnosticCause;
+  final bool diagnosticThrows;
 
   final ProductionHeadlessCallAdmissionSession? session;
   int acquireCalls = 0;
@@ -983,8 +1171,23 @@ final class _Backend implements ProductionHeadlessCallAdmissionBackend {
   }
 }
 
-final class _Session implements ProductionHeadlessCallAdmissionSession {
-  _Session(this.disposition, {this.cleanup = safeCleanup, this.evaluateError});
+final class _Session
+    implements
+        ProductionHeadlessCallAdmissionSession,
+        HeadlessCallAdmissionDiagnosticSource {
+  _Session(
+    this.disposition, {
+    this.cleanup = safeCleanup,
+    this.evaluateError,
+    this.diagnosticThrows = false,
+  });
+
+  final bool diagnosticThrows;
+  @override
+  String? get diagnosticCause {
+    if (diagnosticThrows) throw StateError('PRIVATE_DIAGNOSTIC_ERROR');
+    return null;
+  }
 
   static const safeCleanup = HeadlessCallAdmissionCleanup(
     databaseClosed: true,

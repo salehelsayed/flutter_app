@@ -147,6 +147,7 @@ final class CriticalTaskRegistry {
 /// MethodChannel `com.mknoon/go_bridge` handles request/response calls.
 /// EventChannel `com.mknoon/go_bridge_events` streams push events from Go.
 class GoBridge: NSObject {
+    private let appDiagnosticBridge: MknoonAppDiagnosticBridge
     private let methodChannel: FlutterMethodChannel
     private let eventChannel: FlutterEventChannel
     private var eventSink: FlutterEventSink?
@@ -160,6 +161,7 @@ class GoBridge: NSObject {
         criticalTaskRegistry: CriticalTaskRegistry = .shared
     ) {
         self.criticalTaskRegistry = criticalTaskRegistry
+        appDiagnosticBridge = MknoonAppDiagnosticBridge(messenger: messenger)
         methodChannel = FlutterMethodChannel(
             name: "com.mknoon/go_bridge",
             binaryMessenger: messenger
@@ -172,6 +174,7 @@ class GoBridge: NSObject {
 
         methodChannel.setMethodCallHandler(handleMethodCall)
         eventChannel.setStreamHandler(self)
+        MknoonAppDiagnostics.shared.record("startup", "bridge", "ok", "bootstrap", values: ["phase": "bridge_initialized"])
 
         // Initialize the Go singleton with our event callback
         BridgeInitialize(self)
@@ -216,7 +219,8 @@ class GoBridge: NSObject {
     }
     #endif
 
-    func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    func handleMethodCall(_ call: FlutterMethodCall, result rawResult: @escaping FlutterResult) {
+        let result = MknoonAppDiagnostics.shared.wrapBridge(call.method, arguments: call.arguments, result: rawResult)
         let args = call.arguments as? String
 
         switch call.method {
@@ -273,6 +277,12 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeRelayProbe(args ?? "") }, method: "relayProbe", result: result)
         case "relayTurnCredentialsV1":
             runOnBackground({ BridgeTurnCredentialsV1() }, result: result)
+        case "turnCredentialsWithDiagnosticsV1", "relayTurnCredentialsWithDiagnosticsV1":
+            runOnBackground({ BridgeTurnCredentialsWithDiagnosticsV1(args ?? "") }, result: result)
+        case "callDiagnosticsV1":
+            runOnBackground({ BridgeCallDiagnosticsV1(args ?? "") }, result: result)
+        case "appDiagnosticsV1":
+            runOnBackground({ BridgeAppDiagnosticsV1(args ?? "") }, result: result)
         // Presence (FDC-08/09)
         case "relayPresenceGet":
             runOnBackground({ BridgePresenceGet(args ?? "") }, result: result)

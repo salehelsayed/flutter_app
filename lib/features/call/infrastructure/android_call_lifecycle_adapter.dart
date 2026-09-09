@@ -1,3 +1,4 @@
+import '../diagnostics/call_diagnostics.dart';
 import 'dart:async';
 
 import '../application/call_audio_controller.dart';
@@ -334,10 +335,12 @@ final class AndroidCallLifecycleAdapter
       _onSnapshot,
       onError: (Object _) => _queueInvalidation(),
     );
-    final capabilityEnabled = await _invokeBoolean(
-      'setCapabilityEnabled',
-      const <String, Object?>{'version': protocolVersion, 'enabled': true},
-    );
+    final capabilityEnabled =
+        await _invokeBoolean('setCapabilityEnabled', <String, Object?>{
+          'version': protocolVersion,
+          'enabled': true,
+          'diagnostics': ?CallDiagnostics.instance.contextForWire(),
+        });
     if (_closed) return;
     if (!capabilityEnabled) {
       await _schedule<void>(() async => _invalidate());
@@ -924,10 +927,10 @@ final class AndroidCallLifecycleAdapter
     });
   }
 
-  /// iOS in-app Answer: CallKit must perform the answer so its audio session
-  /// activates; the native `answerRequested` event then drives the accept.
-  /// Returns false when this call is not the bound native call, so the
-  /// caller can fall back to a direct Dart answer.
+  /// In-app Answer must use Telecom/CallKit so native audio is authorized;
+  /// the durable native `answerRequested` event then drives the Dart accept.
+  /// A refusal or mismatched binding returns false and must not fall back to
+  /// a direct Dart answer while this native lifecycle owns the call.
   Future<bool> answerNatively(CallId callId) async {
     await start();
     final handle = _boundHandle;
@@ -1500,7 +1503,7 @@ final class AndroidCallLifecycleAdapter
       throw const FormatException('event follows terminal acknowledgement');
     }
     final descriptor = batch.descriptor;
-    var delayedOutgoingAdoptionReplay = false;
+    var delayedAdoptionReplay = false;
     if (descriptor == null &&
         batch.events.isEmpty &&
         batch.nativeCallId == null &&
@@ -1522,14 +1525,13 @@ final class AndroidCallLifecycleAdapter
       // first. Permit only that exact, already-acknowledged presented event;
       // every handle, expiry, direction, payload, and sequence mutation keeps
       // the existing fail-closed descriptor fence.
-      delayedOutgoingAdoptionReplay =
+      delayedAdoptionReplay =
           current != null &&
           current.callHandle == descriptor.callHandle &&
           current.expiresAt == descriptor.expiresAt &&
           current.presented &&
           descriptor.presented &&
-          current.direction == _NativeCallDirection.outgoing &&
-          descriptor.direction == _NativeCallDirection.outgoing &&
+          current.direction == descriptor.direction &&
           current.phase == _NativeDescriptorPhase.journal &&
           descriptor.phase == _NativeDescriptorPhase.preStart &&
           batch.events.length == 1 &&
@@ -1538,7 +1540,7 @@ final class AndroidCallLifecycleAdapter
           _observedEvents[batch.events.single.sequence] == batch.events.single;
       if (current != null &&
           current != descriptor &&
-          !delayedOutgoingAdoptionReplay) {
+          !delayedAdoptionReplay) {
         throw const FormatException('native descriptor changed');
       }
       final bound = _coordinator.activeSession;
@@ -1548,7 +1550,7 @@ final class AndroidCallLifecycleAdapter
               (descriptor.direction == _NativeCallDirection.incoming))) {
         throw const FormatException('native descriptor direction mismatch');
       }
-      if (!delayedOutgoingAdoptionReplay) _descriptor = descriptor;
+      if (!delayedAdoptionReplay) _descriptor = descriptor;
     }
     if (batch.events.isNotEmpty && descriptor == null && _descriptor == null) {
       throw const FormatException('event batch has no descriptor');
@@ -1588,7 +1590,7 @@ final class AndroidCallLifecycleAdapter
       _events[event.sequence] = event;
     }
     if (batch.highestSequence != _highestObservedSequence &&
-        !delayedOutgoingAdoptionReplay) {
+        !delayedAdoptionReplay) {
       throw const FormatException('native high sequence mismatch');
     }
     final terminalSequences = _events.values
@@ -1846,12 +1848,18 @@ final class AndroidCallLifecycleAdapter
     if (!_outputRouteChanges.isClosed) await _outputRouteChanges.close();
   }
 
-  static Map<String, Object?> _versionArguments() => const <String, Object?>{
+  static Map<String, Object?> _versionArguments() => <String, Object?>{
     'version': protocolVersion,
+    'diagnostics': ?CallDiagnostics.instance.contextForWire(),
   };
 
-  static Map<String, Object?> _handleArguments(String handle) =>
-      <String, Object?>{'version': protocolVersion, 'callHandle': handle};
+  static Map<String, Object?> _handleArguments(
+    String handle,
+  ) => <String, Object?>{
+    'version': protocolVersion,
+    'callHandle': handle,
+    'diagnostics': ?CallDiagnostics.instance.contextForWire(callHandle: handle),
+  };
 
   static bool _validHandle(String? value) =>
       value != null && _uuid.hasMatch(value);

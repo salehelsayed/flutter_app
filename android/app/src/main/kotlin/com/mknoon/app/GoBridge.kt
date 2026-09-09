@@ -21,6 +21,9 @@ class GoBridge internal constructor(
     private val runtimeHost: GoRuntimeHost = ProcessGoRuntimeHost.instance,
 ) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
+    private val appDiagnostics = com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(context)
+    private val appDiagnosticChannel = appDiagnostics.bridge(flutterEngine.dartExecutor.binaryMessenger)
+
     // FDC-S5 (M1): only emit bridge dispatch queue-wait timing on debuggable
     // builds, so the deferred two-device M1 run can read it while release builds
     // pay nothing. Derived from the app's debuggable flag (BuildConfig is not
@@ -50,6 +53,7 @@ class GoBridge internal constructor(
     init {
         methodChannel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
+        appDiagnostics.record("startup", "bridge", "ok", "bootstrap", mapOf("phase" to "bridge_initialized"))
     }
 
     private fun runOnBackground(work: () -> Any?, result: MethodChannel.Result, method: String = "") {
@@ -98,7 +102,9 @@ class GoBridge internal constructor(
         runtimeHost.emitOwnerEvent(ownerToken, json)
     }
 
-    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+    override fun onMethodCall(call: MethodCall, rawResult: MethodChannel.Result) {
+        val result = com.mknoon.app.diagnostics.MknoonAppDiagnosticBridgeResult.wrap(call.method, call.arguments, rawResult,
+            { outcome, reason, values, trace -> appDiagnostics.record("runtime", "bridge", outcome, reason, values, trace) })
         if (disposed.get()) {
             result.error("GO_BRIDGE_DISPOSED", "Go bridge is detached", null)
             return
@@ -137,6 +143,9 @@ class GoBridge internal constructor(
             "relayReconnect" -> runOnBackground({ GoMknoon.relayReconnect() }, result)
             "relayProbe" -> runOnBackground({ GoMknoon.relayProbe(args ?: "") }, result, "relayProbe")
             "relayTurnCredentialsV1" -> runOnBackground({ GoMknoon.turnCredentialsV1() }, result)
+            "turnCredentialsWithDiagnosticsV1", "relayTurnCredentialsWithDiagnosticsV1" -> runOnBackground({ GoMknoon.turnCredentialsWithDiagnosticsV1(args ?: "") }, result)
+            "callDiagnosticsV1" -> runOnBackground({ GoMknoon.callDiagnosticsV1(args ?: "") }, result)
+            "appDiagnosticsV1" -> runOnBackground({ GoMknoon.appDiagnosticsV1(args ?: "") }, result)
             // Presence (FDC-08/09) — Dart case names map to Go presenceGet/presenceSet bindings
             "relayPresenceGet" -> runOnBackground({ GoMknoon.presenceGet(args ?: "") }, result)
             "relayPresenceSet" -> runOnBackground({ GoMknoon.presenceSet(args ?: "") }, result)
@@ -313,6 +322,7 @@ class GoBridge internal constructor(
     fun dispose(): Boolean {
         if (!disposed.compareAndSet(false, true)) return false
         methodChannel.setMethodCallHandler(null)
+        appDiagnosticChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         eventSink = null
         synchronized(pendingEventsLock) {

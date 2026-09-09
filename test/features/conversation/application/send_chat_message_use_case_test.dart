@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:convert';
 import 'dart:async';
 
@@ -2103,6 +2104,34 @@ void main() {
     messageRepo = FakeMessageRepository();
   });
 
+  test(
+    'diagnostics captures preflight failure before encryption or transport',
+    () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'private-target',
+        text: '',
+        senderPeerId: 'private-sender',
+        senderUsername: 'private-name',
+      );
+      expect(result, SendChatMessageResult.invalidMessage);
+      expect(message, isNull);
+      expect(p2pService.sendCallCount, 0);
+      final events = (await diagnostics.eventsForTesting())
+          .where((event) => event['feature'] == 'message')
+          .toList();
+      expect(events.first['stage'], 'start');
+      expect(events.last['stage'], 'finish');
+      expect(events.last['reason'], 'invalid_payload');
+      expect(events.last['outcome'], 'failed');
+      expect(events.where((event) => event['stage'] == 'encrypt'), isEmpty);
+      expect(jsonEncode(events), isNot(contains('private-target')));
+    },
+  );
+
   group('TC-361-02a blob-free fanout sender adapter', () {
     const contactAccount = 'peer-contact-account';
     const transportA = 'peer-device-transport-a';
@@ -2446,11 +2475,9 @@ void main() {
       );
 
       expect(result, SendChatMessageResult.success);
-      expect(
-        storedEnvelopes,
-        ['exact-survivor-envelope'],
-        reason: 'B/C roster drift still retries B only, with exact bytes',
-      );
+      expect(storedEnvelopes, [
+        'exact-survivor-envelope',
+      ], reason: 'B/C roster drift still retries B only, with exact bytes');
       expect(snapshotReads, 0, reason: 'survivors precede the resolver');
       expect(encrypts, 0, reason: 'survivors precede bridge crypto');
       expect(messageRepo.directCustodyRows, isEmpty);
@@ -6141,6 +6168,8 @@ void main() {
     );
 
     test('sends v2 encrypted envelope without plaintext payload', () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
       final bridge = FakeBridge(
         initialResponses: {
           'message.encrypt': {
@@ -6172,6 +6201,44 @@ void main() {
       expect(envelope['encrypted'], isA<Map<String, dynamic>>());
       expect(p2pService.lastSentMessage, isNot(contains('Secret relay text')));
       expect(p2pService.lastSentMessage, isNot(contains('Private Me')));
+      expect(
+        envelope.keys,
+        unorderedEquals(['type', 'version', 'id', 'senderPeerId', 'encrypted']),
+      );
+      final encryptCommand = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .singleWhere((command) => command['cmd'] == 'message.encrypt');
+      final inner =
+          jsonDecode(
+                (encryptCommand['payload'] as Map<String, dynamic>)['plaintext']
+                    as String,
+              )
+              as Map<String, dynamic>;
+      final traceId = inner['diagnosticTraceId'];
+      expect(AppDiagnostics.isValidTraceId(traceId), isTrue);
+      final events = (await diagnostics.eventsForTesting())
+          .where((event) => event['traceId'] == traceId)
+          .toList();
+      expect(
+        events,
+        contains(
+          predicate<Map<String, Object?>>(
+            (event) => event['stage'] == 'encrypt' && event['outcome'] == 'ok',
+          ),
+        ),
+      );
+      expect(
+        events,
+        contains(
+          predicate<Map<String, Object?>>(
+            (event) =>
+                event['stage'] == 'finish' && event['outcome'] == 'success',
+          ),
+        ),
+      );
+      expect(jsonEncode(events), isNot(contains('Secret relay text')));
+      expect(jsonEncode(events), isNot(contains('Private Me')));
+      expect(jsonEncode(events), isNot(contains('target-peer')));
     });
 
     test('returns success and persists message on successful send', () async {

@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -202,7 +203,11 @@ class _FakeBridge implements Bridge {
             (index) => encrypted[index] == prefix[index],
           ).every((matches) => matches);
       if (!hasPrefix) {
-        return jsonEncode({'ok': false, 'errorMessage': 'decrypt failed'});
+        return jsonEncode({
+          'ok': false,
+          'errorCode': 'DECRYPT_AUTH_ERROR',
+          'errorMessage': 'decrypt failed',
+        });
       }
       final decryptedPath = '$filePath.dec';
       await File(decryptedPath).writeAsBytes(
@@ -1152,6 +1157,8 @@ void main() {
     test(
       'unsupported parent denies explicit download before mutation',
       () async {
+        final diagnostics = await AppDiagnostics.installForTesting();
+        addTearDown(diagnostics.dispose);
         final messageRepo = InMemoryMessageRepository();
         await messageRepo.saveMessage(
           ConversationMessage(
@@ -1185,6 +1192,16 @@ void main() {
         expect(bridge.commandLog, isEmpty);
         expect(mediaRepo.downloadStatusUpdates, isEmpty);
         expect(mediaRepo.localPathUpdates, isEmpty);
+        final events = (await diagnostics.eventsForTesting())
+            .where((e) => e['feature'] == 'media')
+            .toList();
+        expect(events.last['reason'], 'unsupported');
+        expect(
+          events.where(
+            (e) => e['stage'] == 'download' || e['stage'] == 'decrypt',
+          ),
+          isEmpty,
+        );
       },
     );
 
@@ -4055,6 +4072,7 @@ void main() {
           };
           bridge.decryptResponse = {
             'ok': false,
+            'errorCode': 'DECRYPT_AUTH_ERROR',
             'errorMessage': 'decrypt failed',
           };
 
@@ -4700,6 +4718,8 @@ void main() {
     }
 
     test('TC-347-06b strict download commits before same-source ACK', () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
       final fixture = await MediaRepositoryRealDbFixture.create();
       addTearDown(fixture.dispose);
       const expiresAtMs = 1_900_001_000_000;
@@ -4762,7 +4782,13 @@ void main() {
         expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
       };
 
-      final downloaded = await downloadMedia(
+      final downloadEntered = Completer<void>();
+      final releaseDownload = Completer<void>();
+      bridge.beforeDownloadResponse = (_) async {
+        downloadEntered.complete();
+        await releaseDownload.future;
+      };
+      final pendingDownload = downloadMedia(
         bridge: bridge,
         mediaAttachmentRepo: fixture.repo,
         mediaFileManager: manager,
@@ -4772,6 +4798,24 @@ void main() {
         messageRepo: fixture.messageRepo,
         nowMs: () => 1_800_000_000_000,
       );
+      await downloadEntered.future;
+      expect(
+        await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: manager,
+          attachment: attachment.copyWith(
+            messageId: 'crossed-parent-without-authority',
+          ),
+          contactPeerId: 'tc347-download-sender',
+          owner: MediaOwnerLane.direct,
+          messageRepo: fixture.messageRepo,
+          nowMs: () => 1_800_000_000_000,
+        ),
+        isNull,
+      );
+      releaseDownload.complete();
+      final downloaded = await pendingDownload;
       expect(downloaded, isNotNull);
       expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
       expect(bridge.commandLog, <String>[
@@ -4786,6 +4830,37 @@ void main() {
         isNull,
         reason: 'only the exact successful same-source ACK retires v111',
       );
+      final events = (await diagnostics.eventsForTesting())
+          .where((e) => e['feature'] == 'media')
+          .toList();
+      final milestones = events
+          .where((e) => e['outcome'] == 'ok')
+          .map((e) => e['stage'])
+          .toList();
+      expect(
+        milestones,
+        containsAllInOrder([
+          'download',
+          'verify',
+          'decrypt',
+          'verify',
+          'commit',
+          'receipt',
+        ]),
+      );
+      expect(events.last['stage'], 'finish');
+      expect(events.last['outcome'], 'success');
+      final terminals = events.where((e) => e['stage'] == 'finish').toList();
+      expect(terminals.map((e) => e['outcome']).toSet(), {'failed', 'success'});
+      expect(
+        terminals.map((e) => e['attemptId']).toSet(),
+        hasLength(2),
+        reason:
+            'a simultaneous authority refusal must not close the valid transfer attempt',
+      );
+      expect(events.map((e) => e['traceId']).toSet(), hasLength(1));
+      expect(jsonEncode(events), isNot(contains(attachment.id)));
+      expect(jsonEncode(events), isNot(contains(custody.contentHash)));
     });
 
     test(
@@ -5218,6 +5293,198 @@ void main() {
         whereArgs: [messageId],
       );
     }
+
+    test(
+      'private decrypt failures retry only operational errors and preserve protection',
+      () async {
+        final diagnostics = await AppDiagnostics.installForTesting();
+        addTearDown(diagnostics.dispose);
+        for (final mode in ['protected', 'view_once']) {
+          for (final code in [
+            'DECRYPT_IO_ERROR',
+            'DECRYPT_ERROR',
+            'DECRYPT_AUTH_ERROR',
+            'DECRYPT_METADATA_ERROR',
+          ]) {
+            final retryable =
+                code == 'DECRYPT_IO_ERROR' || code == 'DECRYPT_ERROR';
+            final fixture = await MediaRepositoryRealDbFixture.create();
+            try {
+              final messageId = 'decrypt-recovery-$mode-$code';
+              final attachmentId = '$messageId-photo';
+              await seedProtectedParent(fixture, messageId);
+              await fixture.db.update(
+                'messages',
+                {'private_media_mode': mode},
+                where: 'id = ?',
+                whereArgs: [messageId],
+              );
+              final attachment = _encryptedGroupAttachment(
+                MediaAttachment(
+                  id: attachmentId,
+                  messageId: messageId,
+                  mime: 'image/jpeg',
+                  size: _jpegBytes.length,
+                  mediaType: 'image',
+                  downloadStatus: kMediaDownloadStatusPending,
+                  createdAt: '2026-09-08T18:06:00.000Z',
+                ),
+                _jpegBytes,
+              );
+              await fixture.repo.saveAttachment(
+                attachment,
+                owner: MediaOwnerLane.direct,
+              );
+              final encrypted = _encryptedBytes(_jpegBytes);
+              final localBridge = _FakeBridge()
+                ..downloadedBytes = encrypted
+                ..downloadResponse = {
+                  'ok': true,
+                  'id': attachmentId,
+                  'mime': 'application/octet-stream',
+                  'size': encrypted.length,
+                }
+                ..decryptResponse = {
+                  'ok': false,
+                  'errorCode': code,
+                  'errorMessage': 'write decrypted file: permission denied',
+                };
+              final deleted = Completer<void>();
+              localBridge.onDeleteRequest = () => deleted.complete();
+              final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+              Future<MediaAttachment?> attempt(MediaAttachment current) =>
+                  downloadMedia(
+                    bridge: localBridge,
+                    mediaAttachmentRepo: fixture.repo,
+                    mediaFileManager: manager,
+                    attachment: current,
+                    contactPeerId: 'contact-private',
+                    owner: MediaOwnerLane.direct,
+                    messageRepo: fixture.messageRepo,
+                    intent: MediaDownloadIntent.explicitUser,
+                    nowMs: () => 1200,
+                  );
+
+              expect(await attempt(attachment), isNull);
+              final trace = diagnostics.traceForOperation(
+                'media:$attachmentId',
+              );
+              var diagnosticEvents = (await diagnostics.eventsForTesting())
+                  .where((e) => e['traceId'] == trace)
+                  .toList();
+              final reason = switch (code) {
+                'DECRYPT_IO_ERROR' => 'io_failed',
+                'DECRYPT_AUTH_ERROR' => 'auth_failed',
+                'DECRYPT_METADATA_ERROR' => 'metadata_invalid',
+                _ => 'unknown',
+              };
+              expect(
+                diagnosticEvents,
+                contains(
+                  predicate<Map<String, Object?>>(
+                    (e) =>
+                        e['stage'] == 'decrypt' &&
+                        e['outcome'] == 'failed' &&
+                        e['reason'] == reason,
+                  ),
+                ),
+              );
+              expect(
+                diagnosticEvents.where((e) => e['stage'] == 'receipt'),
+                isEmpty,
+              );
+              final failedAttempt = diagnosticEvents.last['attemptId'];
+
+              final failed = (await fixture.repo.getAttachmentsForMessage(
+                messageId,
+                owner: MediaOwnerLane.direct,
+              )).single;
+              expect(
+                failed.downloadStatus,
+                retryable
+                    ? kMediaDownloadStatusFailed
+                    : kMediaDownloadStatusIntegrityFailed,
+              );
+              expect(failed.downloadRetryCount ?? 0, retryable ? 1 : 0);
+              expect(failed.localPath, isNull);
+              expect(localBridge.deleteRequests, isEmpty);
+              expect(
+                (await fixture.messageRepo.getMessage(
+                  messageId,
+                ))!.privateMediaState,
+                PrivateMediaLifecycleState.available,
+              );
+              final canonical = await manager.localPathForAttachment(
+                contactPeerId: 'contact-private',
+                blobId: attachmentId,
+                mime: attachment.mime,
+              );
+              expect(File(canonical).existsSync(), isFalse);
+              expect(File('$canonical.enc.dec').existsSync(), isFalse);
+
+              localBridge.decryptResponse = null;
+              if (!retryable) {
+                final callsBeforeRetry = localBridge.commandLog.length;
+                expect(await attempt(failed), isNull);
+                expect(localBridge.commandLog, hasLength(callsBeforeRetry));
+                expect(localBridge.deleteRequests, isEmpty);
+                continue;
+              }
+              final recovered = await attempt(failed);
+              expect(recovered, isNotNull);
+              expect(recovered!.downloadStatus, kMediaDownloadStatusDone);
+              expect(File(recovered.localPath!).readAsBytesSync(), _jpegBytes);
+              await deleted.future.timeout(const Duration(seconds: 1));
+              await Future<void>.delayed(Duration.zero);
+              expect(localBridge.deleteRequests, hasLength(1));
+              diagnosticEvents = (await diagnostics.eventsForTesting())
+                  .where((e) => e['traceId'] == trace)
+                  .toList();
+              final success = diagnosticEvents
+                  .where(
+                    (e) => e['stage'] == 'finish' && e['outcome'] == 'success',
+                  )
+                  .single;
+              expect(success['attemptId'], isNot(failedAttempt));
+              expect(
+                diagnosticEvents,
+                contains(
+                  predicate<Map<String, Object?>>(
+                    (e) => e['stage'] == 'commit' && e['outcome'] == 'ok',
+                  ),
+                ),
+              );
+              expect(
+                diagnosticEvents,
+                contains(
+                  predicate<Map<String, Object?>>(
+                    (e) => e['stage'] == 'receipt' && e['outcome'] == 'ok',
+                  ),
+                ),
+              );
+              expect(
+                jsonEncode(diagnosticEvents),
+                isNot(contains(attachmentId)),
+              );
+              expect(
+                jsonEncode(diagnosticEvents),
+                isNot(contains('permission denied')),
+              );
+
+              expect(
+                (await fixture.messageRepo.getMessage(
+                  messageId,
+                ))!.privateMediaState,
+                PrivateMediaLifecycleState.available,
+                reason: 'download recovery must not consume a view-once photo',
+              );
+            } finally {
+              await fixture.dispose();
+            }
+          }
+        }
+      },
+    );
 
     test(
       'private entry rejects wrong contact before bridge or mutation',

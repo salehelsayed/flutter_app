@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../domain/call_authority_lifetime.dart';
 import 'call_authority_client.dart';
 
 typedef AndroidCallTokenReader = Future<String?> Function();
@@ -24,7 +25,7 @@ final class AndroidCallTokenCoordinator {
     required AndroidCallTokenReader readToken,
     required Stream<String> tokenRefreshes,
     required CallTokenPublicationAllowed publicationAllowed,
-    this.registrationTtl = const Duration(days: 30),
+    this.registrationTtl = callBackgroundReachabilityLifetime,
     AndroidCallTokenResultObserver? onResult,
   }) : _authorityClient = authorityClient,
        _clock = clock,

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'bridge.dart';
 import '../database/db_write_transaction.dart';
+import '../diagnostics/app_diagnostics.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 import '../local_discovery/local_discovery_service.dart';
@@ -125,6 +126,12 @@ class GoBridgeClient extends Bridge {
     turnCredentialsV1BridgeCommand: _CmdSpec(
       turnCredentialsV1NativeMethod,
       false,
+    ),
+    'call_diagnostics_v1': _CmdSpec('callDiagnosticsV1', true),
+    'app_diagnostics_v1': _CmdSpec('appDiagnosticsV1', true),
+    'turn_credentials_with_diagnostics_v1': _CmdSpec(
+      'turnCredentialsWithDiagnosticsV1',
+      true,
     ),
     'call_store_v1': _CmdSpec('callStoreV1', true),
     'call_retrieve_v1': _CmdSpec('callRetrieveV1', true),
@@ -933,6 +940,44 @@ class GoBridgeClient extends Bridge {
     );
 
     final bridgeStopwatch = Stopwatch()..start();
+    const diagnosticOperations = {
+      'node:start': 'node_start',
+      'node:stop': 'node_stop',
+      'relay:reconnect': 'relay_reconnect',
+      'relay:probe': 'relay_probe',
+      'peer:dial': 'peer_dial',
+      'peer:disconnect': 'peer_disconnect',
+    };
+    final diagnosticOperation = diagnosticOperations[cmd];
+    final diagnosticTrace = diagnosticOperation == null
+        ? null
+        : AppDiagnostics.instance.startAttempt(feature: 'network');
+    void reportDiagnostic(bool success, String reason) {
+      // A broken diagnostic transport must not report itself recursively.
+      if (cmd == 'app_diagnostics_v1' || cmd == 'call_diagnostics_v1') return;
+      final values = <String, Object?>{
+        'operation': diagnosticOperation ?? 'other',
+        'durationMs': bridgeStopwatch.elapsedMilliseconds,
+      };
+      if (diagnosticOperation != null) {
+        AppDiagnostics.instance.finishAttempt(
+          feature: 'network',
+          traceId: diagnosticTrace,
+          outcome: success ? 'success' : 'failed',
+          reason: reason,
+          values: values,
+        );
+      } else if (!success) {
+        AppDiagnostics.instance.record(
+          feature: 'runtime',
+          stage: 'bridge',
+          outcome: 'failed',
+          reason: reason,
+          values: values,
+        );
+      }
+    }
+
     try {
       final String? result;
       if (spec.hasPayload && payload != null) {
@@ -956,6 +1001,7 @@ class GoBridgeClient extends Bridge {
       );
 
       if (result == null) {
+        reportDiagnostic(false, 'malformed_response');
         return jsonEncode({
           'ok': false,
           'errorCode': 'NULL_RESPONSE',
@@ -963,11 +1009,19 @@ class GoBridgeClient extends Bridge {
         });
       }
       if (spec.allowRawStringResponse) {
+        reportDiagnostic(true, 'none');
         return result;
       }
-      return _sanitizeBridgeResult(result);
+      final sanitized = _sanitizeBridgeResult(result);
+      final decoded = jsonDecode(sanitized) as Map;
+      reportDiagnostic(
+        decoded['ok'] == true,
+        decoded['ok'] == true ? 'none' : 'bridge_rejected',
+      );
+      return sanitized;
     } on MissingPluginException catch (e) {
       bridgeStopwatch.stop();
+      reportDiagnostic(false, 'bridge_handler_missing');
       emitFlowEvent(
         layer: 'FL',
         event: 'BRIDGE_CALL_TIMING',
@@ -998,6 +1052,7 @@ class GoBridgeClient extends Bridge {
       });
     } on PlatformException catch (e) {
       bridgeStopwatch.stop();
+      reportDiagnostic(false, 'bridge_unavailable');
       emitFlowEvent(
         layer: 'FL',
         event: 'BRIDGE_CALL_TIMING',
@@ -1025,6 +1080,10 @@ class GoBridgeClient extends Bridge {
       });
     } catch (e) {
       bridgeStopwatch.stop();
+      reportDiagnostic(
+        false,
+        e is TimeoutException ? 'bridge_timeout' : 'bridge_unavailable',
+      );
       final safeError = sanitizeDiagnosticText(e);
       emitFlowEvent(
         layer: 'FL',

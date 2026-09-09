@@ -20,12 +20,15 @@ final class CallCleanupStep {
 
 final class CallCleanupReport {
   const CallCleanupReport({
+    this.callId,
     required this.completed,
     required this.alreadyCompleted,
     required this.terminalAckReady,
     required this.failedStepNames,
   });
 
+  /// Private correlation only; never part of a diagnostic payload.
+  final CallId? callId;
   final bool completed;
   final bool alreadyCompleted;
   final bool terminalAckReady;
@@ -78,7 +81,8 @@ final class CallCleanupCoordinator {
     if (_completed.contains(callId)) {
       return Future<CallCleanupReport>.value(
         _observe(
-          const CallCleanupReport(
+          CallCleanupReport(
+            callId: callId,
             completed: true,
             alreadyCompleted: true,
             terminalAckReady: true,
@@ -93,7 +97,8 @@ final class CallCleanupCoordinator {
       if (_pendingStepIndexes.length >= completedTombstoneCapacity) {
         return Future<CallCleanupReport>.value(
           _observe(
-            const CallCleanupReport(
+            CallCleanupReport(
+              callId: callId,
               completed: false,
               alreadyCompleted: false,
               terminalAckReady: false,
@@ -139,6 +144,7 @@ final class CallCleanupCoordinator {
           .toList(growable: false);
       return _observe(
         CallCleanupReport(
+          callId: callId,
           completed: completed,
           alreadyCompleted: false,
           terminalAckReady: pending.every(

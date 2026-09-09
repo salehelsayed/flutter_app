@@ -45,6 +45,7 @@ class SettingsScreen extends StatelessWidget {
   /// storage totals/actions). Row hidden when null.
   final VoidCallback? onOpenMediaStorageSheet;
   final VoidCallback? onOpenRecoverySheet;
+  final VoidCallback? onOpenSafetySupport;
   final BackgroundPreference currentBackgroundPreference;
   final ImageQualityPreference currentQuality;
   final ImageQualityPreference currentVideoQuality;
@@ -52,6 +53,8 @@ class SettingsScreen extends StatelessWidget {
   final ValueChanged<bool>? onNearbySharingChanged;
   final VoidCallback? onMoveAccountToNewPhone;
   final Widget? groupExitDiagnosticsSection;
+  final Widget? callDiagnosticsSection;
+  final Widget? appDiagnosticsSection;
   final Widget? debugSection;
   final void Function(String) onSwitchView;
   final String activeTab;
@@ -76,6 +79,7 @@ class SettingsScreen extends StatelessWidget {
     this.onOpenVideoQualitySheet,
     this.onOpenMediaStorageSheet,
     this.onOpenRecoverySheet,
+    this.onOpenSafetySupport,
     this.currentBackgroundPreference = BackgroundPreference.defaultBackground,
     this.currentQuality = ImageQualityPreference.compressed,
     this.currentVideoQuality = ImageQualityPreference.compressed,
@@ -83,6 +87,8 @@ class SettingsScreen extends StatelessWidget {
     this.onNearbySharingChanged,
     this.onMoveAccountToNewPhone,
     this.groupExitDiagnosticsSection,
+    this.callDiagnosticsSection,
+    this.appDiagnosticsSection,
     this.debugSection,
     required this.onSwitchView,
     required this.activeTab,
@@ -257,7 +263,21 @@ class SettingsScreen extends StatelessWidget {
                             ),
                           ),
                           // Right spacer
-                          const SizedBox(width: 40),
+                          SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: onOpenSafetySupport == null
+                                ? null
+                                : IconButton(
+                                    key: const ValueKey(
+                                      'settings-safety-support-action',
+                                    ),
+                                    tooltip: l10n.settings_safety_support_title,
+                                    onPressed: onOpenSafetySupport,
+                                    color: readableColors.iconPrimary,
+                                    icon: const Icon(Icons.help_outline),
+                                  ),
+                          ),
                         ],
                       ),
                     ),
@@ -300,6 +320,8 @@ class SettingsScreen extends StatelessWidget {
                           const SizedBox(height: 14),
                         ],
                         ?groupExitDiagnosticsSection,
+                        ?callDiagnosticsSection,
+                        ?appDiagnosticsSection,
                         ?debugSection,
                       ],
                     ),

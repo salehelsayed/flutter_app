@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -537,6 +538,107 @@ void main() {
       expect(deletions, [incoming.id]);
     },
   );
+
+  testWidgets(
+    'private verification failures remain closed without suggesting an update',
+    (tester) async {
+      for (final policy in const [
+        PrivateMediaPolicy.protected(),
+        PrivateMediaPolicy.viewOnce(),
+        PrivateMediaPolicy.unsupported(sourceVersion: 1),
+      ]) {
+        for (final corruptState in [false, true]) {
+          final message = privateMessage(
+            id: 'unverified-private',
+            isIncoming: true,
+            policy: policy,
+            state: policy.isUnsupported
+                ? PrivateMediaLifecycleState.unsupported
+                : corruptState
+                ? PrivateMediaLifecycleState.none
+                : PrivateMediaLifecycleState.available,
+            media: [
+              attachment(
+                id: 'unverified-attachment',
+                messageId: 'unverified-private',
+                mime: 'image/jpeg',
+                mediaType: 'image',
+              ).copyWith(
+                downloadStatus: corruptState ? 'pending' : 'integrity_failed',
+              ),
+            ],
+          );
+          await pumpConversation(tester, messages: [message]);
+          final l10n = AppLocalizations.of(tester.element(slot(message.id)))!;
+          expect(find.text(l10n.media_could_not_verify), findsOneWidget);
+          expect(find.text(l10n.private_media_unsupported), findsNothing);
+          expect(find.byIcon(Icons.system_update_alt_rounded), findsNothing);
+          expect(
+            find.byKey(const ValueKey('private-media-open')),
+            findsNothing,
+          );
+          expectSlotInsideDecoratedBody(tester, message.id);
+          expect(tester.takeException(), isNull);
+        }
+      }
+    },
+  );
+
+  testWidgets('private Info does not claim an update fixes a rejected policy', (
+    tester,
+  ) async {
+    final message = privateMessage(
+      id: 'invalid-private-policy',
+      isIncoming: true,
+      policy: const PrivateMediaPolicy.unsupported(sourceVersion: 1),
+      state: PrivateMediaLifecycleState.unsupported,
+    );
+    var loads = 0;
+    await pumpConversation(
+      tester,
+      messages: [message],
+      onLoadPrivateParentDecision: (id) async {
+        loads++;
+        return DirectPrivateMediaActionEligibility.evaluate(
+          parent: message,
+          attachment: null,
+          expectedMessageId: id,
+          attachmentRequired: false,
+        );
+      },
+    );
+    final l10n = AppLocalizations.of(tester.element(slot(message.id)))!;
+    await tester.tap(find.byKey(const ValueKey('private-action-info')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(loads, 1);
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text(l10n.media_could_not_verify),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text(l10n.private_media_unsupported), findsNothing);
+    expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
+  });
+
+  testWidgets('future private policy still suggests updating without opening', (
+    tester,
+  ) async {
+    final message = privateMessage(
+      id: 'future-private-policy',
+      isIncoming: true,
+      policy: const PrivateMediaPolicy.unsupported(sourceVersion: 9),
+      state: PrivateMediaLifecycleState.unsupported,
+    );
+    await pumpConversation(tester, messages: [message]);
+    final l10n = AppLocalizations.of(tester.element(slot(message.id)))!;
+    expect(find.text(l10n.private_media_unsupported), findsOneWidget);
+    expect(find.text(l10n.media_could_not_verify), findsNothing);
+    expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
+    expectSlotInsideDecoratedBody(tester, message.id);
+  });
 
   testWidgets('non-view-once terminal cards retain generic copy and actions', (
     tester,

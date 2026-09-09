@@ -3,6 +3,7 @@ import UserNotifications
 
 final class NotificationService: UNNotificationServiceExtension {
   private let completionGate = NotificationServiceCompletionGate()
+  private var appDiagnosticScope: MknoonNseAppDiagnosticScope?
   private var contentHandler: ((UNNotificationContent) -> Void)?
   private var bestAttemptContent: UNNotificationContent?
   private var resolvedPreview: NotificationPreviewResult?
@@ -68,15 +69,22 @@ final class NotificationService: UNNotificationServiceExtension {
 
   override func didReceive(
     _ request: UNNotificationRequest,
-    withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+    withContentHandler rawContentHandler: @escaping (UNNotificationContent) -> Void
   ) {
+    let diagnosticScope = MknoonNseAppDiagnosticScope()
+    diagnosticScope.record("receive", "ok"); diagnosticScope.record("process", "started")
+    let contentHandler: (UNNotificationContent) -> Void = { content in
+      // This is a handoff request, never proof that iOS displayed a banner.
+      diagnosticScope.record("presentation", "pending")
+      rawContentHandler(content)
+    }
     previewEventEmitter.emit(event: "PUSH_NSE_DID_RECEIVE", details: [:])
 
     // The fixed wake is classified from Apple's immutable original before any
     // rich-route staging, copying or resolver work. It never becomes a fake
     // provider envelope.
     if NseMailboxWakeClassifier.isExactFixedWake(request.content.userInfo) {
-      receiveFixedWake(request, contentHandler: contentHandler)
+      receiveFixedWake(request, contentHandler: contentHandler, diagnosticScope: diagnosticScope)
       return
     }
 
@@ -92,6 +100,7 @@ final class NotificationService: UNNotificationServiceExtension {
     }
     let generation = completionGate.reset { _ in
       self.contentHandler = contentHandler
+      self.appDiagnosticScope = diagnosticScope
       bestAttemptContent = mutableContent
       resolvedPreview = nil
       requestIdentifier = request.identifier
@@ -129,10 +138,12 @@ final class NotificationService: UNNotificationServiceExtension {
 
   private func receiveFixedWake(
     _ request: UNNotificationRequest,
-    contentHandler: @escaping (UNNotificationContent) -> Void
+    contentHandler: @escaping (UNNotificationContent) -> Void,
+    diagnosticScope: MknoonNseAppDiagnosticScope
   ) {
     let generation = completionGate.reset { _ in
       self.contentHandler = contentHandler
+      self.appDiagnosticScope = diagnosticScope
       fixedOriginalContent = request.content
       bestAttemptContent = nil
       resolvedPreview = nil
@@ -174,12 +185,15 @@ final class NotificationService: UNNotificationServiceExtension {
     fixedResolution: NseMailboxWakeResolution? = nil
   ) {
     var handler: ((UNNotificationContent) -> Void)?
+    var diagnosticScope: MknoonNseAppDiagnosticScope?
     var content: UNNotificationContent?
     var preview: NotificationPreviewResult?
     var claimedRequestIdentifier: String?
     var originalFixedContent: UNNotificationContent?
     let claimed = completionGate.claim(generation: generation) {
       handler = contentHandler
+      diagnosticScope = appDiagnosticScope
+      appDiagnosticScope = nil
       content = bestAttemptContent
       preview = resolvedPreview
       contentHandler = nil
@@ -194,6 +208,7 @@ final class NotificationService: UNNotificationServiceExtension {
       return
     }
 
+    diagnosticScope?.record("process", expiry ? "timeout" : "ok", expiry ? "timeout" : "none")
     if let originalFixedContent {
       let resolution = fixedResolution ?? .generic(lease: nil)
       switch resolution {

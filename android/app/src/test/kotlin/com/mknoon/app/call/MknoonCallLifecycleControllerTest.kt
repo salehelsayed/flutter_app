@@ -12,6 +12,16 @@ import org.junit.Test
 
 class MknoonCallLifecycleControllerTest {
     @Test
+    fun `diagnostic sink failure cannot change persisted native answer or audio admission`() {
+        val rig = LifecycleRig(journalDiagnostic = { _, _ -> error("diagnostic sink unavailable") })
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertTrue(rig.controller.answer(rig.payload.nativeCallId))
+        assertTrue(requireNotNull(rig.controller.snapshot()).answerRequested)
+        assertEquals(0, rig.platform.startMicrophoneCalls)
+        assertFalse(rig.controller.answer(rig.payload.nativeCallId))
+        assertTrue(rig.controller.endFromDart(rig.payload.nativeCallId))
+    }
+    @Test
     fun `durable create and successful Telecom registration precede presentation side effects`() {
         val rig = LifecycleRig()
 
@@ -645,6 +655,68 @@ class MknoonCallLifecycleControllerTest {
     }
 
     @Test
+    fun `endpoint inventory changes notify Dart even when the selected route is unchanged`() {
+        val rig = LifecycleRig()
+        val callId = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertNotNull(rig.controller.attach())
+        assertTrue(rig.controller.onRouteChanged(callId, "speaker"))
+        assertTrue(rig.controller.onAvailableRoutesChanged(callId, listOf("speaker", "earpiece")))
+        rig.eventSink.events.clear()
+        val sequenceBefore = requireNotNull(rig.controller.snapshot()).highestSequence
+
+        assertTrue(
+            rig.controller.onAvailableRoutesChanged(
+                callId,
+                listOf("speaker", "earpiece", "bluetooth", "bluetooth", "invalid"),
+            ),
+        )
+
+        val added = rig.eventSink.events.single()
+        assertEquals(PendingNativeCallEventType.ROUTE_CHANGED, added.type)
+        assertEquals(sequenceBefore + 1L, added.sequence)
+        assertEquals("speaker", rig.controller.audioState().route)
+        assertEquals(listOf("speaker", "earpiece", "bluetooth"), rig.controller.audioState().availableRoutes)
+        assertFalse(
+            rig.controller.onAvailableRoutesChanged(callId, listOf("speaker", "earpiece", "bluetooth")),
+        )
+        assertEquals(1, rig.eventSink.events.size)
+
+        assertTrue(rig.controller.onAvailableRoutesChanged(callId, listOf("speaker", "earpiece")))
+        assertEquals(listOf("speaker", "earpiece"), rig.controller.audioState().availableRoutes)
+        assertEquals(listOf(added.sequence, added.sequence + 1L), rig.eventSink.events.map { it.sequence })
+    }
+
+    @Test
+    fun `endpoint inventory publishes only after durable journal append and rejects stale callbacks`() {
+        val rig = LifecycleRig()
+        val callId = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.present(rig.payload))
+        assertNotNull(rig.controller.attach())
+        assertTrue(rig.controller.onAvailableRoutesChanged(callId, listOf("speaker")))
+        rig.eventSink.events.clear()
+        rig.store.appendFailuresRemaining = 1
+
+        assertFalse(rig.controller.onAvailableRoutesChanged(callId, listOf("speaker", "bluetooth")))
+        assertEquals(listOf("speaker"), rig.controller.audioState().availableRoutes)
+        assertTrue(rig.eventSink.events.isEmpty())
+        assertTrue(rig.controller.onAvailableRoutesChanged(callId, listOf("speaker", "bluetooth")))
+        assertEquals(1, rig.eventSink.events.size)
+        rig.eventSink.events.clear()
+        assertFalse(
+            rig.controller.onAvailableRoutesChanged(UUID.fromString(OTHER_CALL_ID), listOf("earpiece")),
+        )
+        assertEquals(listOf("speaker", "bluetooth"), rig.controller.audioState().availableRoutes)
+        assertTrue(rig.eventSink.events.isEmpty())
+
+        assertTrue(rig.controller.endFromDart(callId))
+        rig.eventSink.events.clear()
+        assertFalse(rig.controller.onAvailableRoutesChanged(callId, listOf("bluetooth")))
+        assertTrue(rig.controller.audioState().availableRoutes.isEmpty())
+        assertTrue(rig.eventSink.events.isEmpty())
+    }
+
+    @Test
     fun `initial outgoing Telecom unmute is durably journaled once and duplicate is deduped`() {
         val rig = LifecycleRig()
         assertEquals(
@@ -1200,6 +1272,7 @@ class MknoonCallLifecycleControllerTest {
 internal class LifecycleRig(
     capabilityEnabled: Boolean = true,
     recordAudioGranted: Boolean = true,
+    journalDiagnostic: (String, PendingNativeCallEventType) -> Unit = { _, _ -> },
 ) {
     val operations = mutableListOf<String>()
     val store = LifecycleFakeStore(operations)
@@ -1233,6 +1306,7 @@ internal class LifecycleRig(
             declineReplyAccepted
         },
         diagnosticSink = diagnosticSink,
+        journalDiagnostic = journalDiagnostic,
     )
 }
 

@@ -48,6 +48,7 @@ var (
 )
 
 func CallStoreV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -65,6 +66,7 @@ func CallStoreV1(paramsJSON string) (result string) {
 		return callBridgeInvalidInput()
 	}
 	receipt, err := callStoreV1Invoke(n, node.CallStoreRequest{
+		Diagnostics:           diagnostics,
 		RecipientDevicePeerID: params.ToPeerID, CallHandle: params.CallHandle,
 		MessageID: params.MessageID, Envelope: params.Envelope,
 		ExpiresAtMs: params.ExpiresAtMs, WakeHandle: params.WakeHandle,
@@ -82,6 +84,7 @@ func CallStoreV1(paramsJSON string) (result string) {
 }
 
 func CallRetrieveV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -95,7 +98,8 @@ func CallRetrieveV1(paramsJSON string) (result string) {
 		return callBridgeInvalidInput()
 	}
 	retrieved, err := callRetrieveV1Invoke(n, node.CallRetrieveRequest{
-		CallHandle: params.CallHandle, Limit: params.Limit,
+		Diagnostics: diagnostics,
+		CallHandle:  params.CallHandle, Limit: params.Limit,
 	})
 	if err != nil {
 		return callBridgeError(err)
@@ -108,6 +112,7 @@ func CallRetrieveV1(paramsJSON string) (result string) {
 }
 
 func CallAckV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -121,7 +126,8 @@ func CallAckV1(paramsJSON string) (result string) {
 		return callBridgeInvalidInput()
 	}
 	acked, err := callAckV1Invoke(n, node.CallAckRequest{
-		CallHandle: params.CallHandle, MessageIDs: append([]string(nil), params.MessageIDs...),
+		Diagnostics: diagnostics,
+		CallHandle:  params.CallHandle, MessageIDs: append([]string(nil), params.MessageIDs...),
 	})
 	if err != nil {
 		return callBridgeError(err)
@@ -130,6 +136,7 @@ func CallAckV1(paramsJSON string) (result string) {
 }
 
 func CallCancelV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -143,6 +150,7 @@ func CallCancelV1(paramsJSON string) (result string) {
 		return callBridgeInvalidInput()
 	}
 	if err := callCancelV1Invoke(n, node.CallCancelRequest{
+		Diagnostics:           diagnostics,
 		RecipientDevicePeerID: params.ToPeerID, CallHandle: params.CallHandle,
 	}); err != nil {
 		return callBridgeError(err)
@@ -151,6 +159,7 @@ func CallCancelV1(paramsJSON string) (result string) {
 }
 
 func CallEndpointSetV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -162,6 +171,7 @@ func CallEndpointSetV1(paramsJSON string) (result string) {
 		(record.Version != 0 && record.Version != node.CallControlVersion) {
 		return callBridgeInvalidInput()
 	}
+	record.Diagnostics = diagnostics
 	if err := callEndpointSetV1Invoke(n, record); err != nil {
 		return callBridgeError(err)
 	}
@@ -169,6 +179,7 @@ func CallEndpointSetV1(paramsJSON string) (result string) {
 }
 
 func CallEndpointGetV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -180,7 +191,7 @@ func CallEndpointGetV1(paramsJSON string) (result string) {
 	if decodeCallBridgeParams(paramsJSON, &params) != nil {
 		return callBridgeInvalidInput()
 	}
-	endpoint, err := callEndpointGetV1Invoke(n, params.AccountPeerID)
+	endpoint, err := callEndpointGetDiagnosticInvoke(n, params.AccountPeerID, diagnostics)
 	if err != nil {
 		return callBridgeError(err)
 	}
@@ -196,6 +207,7 @@ func CallEndpointGetV1(paramsJSON string) (result string) {
 }
 
 func CallEndpointRevokeV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -208,13 +220,14 @@ func CallEndpointRevokeV1(paramsJSON string) (result string) {
 	if decodeCallBridgeParams(paramsJSON, &params) != nil {
 		return callBridgeInvalidInput()
 	}
-	if err := callEndpointRevokeV1Invoke(n, params.AccountPeerID, params.PreferenceEpoch); err != nil {
+	if err := callEndpointRevokeDiagnosticInvoke(n, params.AccountPeerID, params.PreferenceEpoch, diagnostics); err != nil {
 		return callBridgeError(err)
 	}
 	return okJSON(map[string]any{"ok": true, "revoked": true})
 }
 
 func CallWakeHandleSetV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -229,6 +242,7 @@ func CallWakeHandleSetV1(paramsJSON string) (result string) {
 		return callBridgeInvalidInput()
 	}
 	if err := callWakeHandleSetV1Invoke(n, node.CallWakeHandleRecord{
+		Diagnostics:            diagnostics,
 		AuthorizedSenderPeerID: params.AuthorizedSenderPeerID,
 		WakeHandle:             params.WakeHandle, ExpiresAtMs: params.ExpiresAtMs,
 	}); err != nil {
@@ -238,6 +252,7 @@ func CallWakeHandleSetV1(paramsJSON string) (result string) {
 }
 
 func CallWakeHandleRevokeV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -249,13 +264,14 @@ func CallWakeHandleRevokeV1(paramsJSON string) (result string) {
 	if decodeCallBridgeParams(paramsJSON, &params) != nil {
 		return callBridgeInvalidInput()
 	}
-	if err := callWakeHandleRevokeV1Invoke(n, params.AuthorizedSenderPeerID); err != nil {
+	if err := callWakeHandleRevokeDiagnosticInvoke(n, params.AuthorizedSenderPeerID, diagnostics); err != nil {
 		return callBridgeError(err)
 	}
 	return okJSON(map[string]any{"ok": true, "revoked": true})
 }
 
 func CallTokenSetV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -283,6 +299,7 @@ func CallTokenSetV1(paramsJSON string) (result string) {
 	if !validCallBridgeTokenShape(record) {
 		return callBridgeInvalidInput()
 	}
+	record.Diagnostics = diagnostics
 	setResult, err := callTokenSetV1Invoke(n, record)
 	if err != nil {
 		return callBridgeError(err)
@@ -301,6 +318,7 @@ func CallTokenSetV1(paramsJSON string) (result string) {
 }
 
 func CallTokenRevokeV1(paramsJSON string) (result string) {
+	paramsJSON, diagnostics := splitCallBridgeDiagnostics(paramsJSON)
 	defer callBridgeRecover(&result)
 	n := currentCallBridgeNode()
 	if n == nil {
@@ -316,7 +334,7 @@ func CallTokenRevokeV1(paramsJSON string) (result string) {
 		(params.TokenKind == node.CallTokenKindStandard && params.ExpectedRefreshEpoch != 0) {
 		return callBridgeInvalidInput()
 	}
-	revoked, err := callTokenRevokeV1Invoke(n, params.TokenKind, params.ExpectedRefreshEpoch)
+	revoked, err := callTokenRevokeDiagnosticInvoke(n, params.TokenKind, params.ExpectedRefreshEpoch, diagnostics)
 	if err != nil {
 		return callBridgeError(err)
 	}

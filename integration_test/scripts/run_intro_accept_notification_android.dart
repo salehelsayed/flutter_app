@@ -106,9 +106,13 @@ bool isAndroidActivityStartProvisionallyAccepted(
   String output, {
   required String packageName,
 }) {
+  // Android abbreviates the class only when its namespace matches the package.
+  final activityName = packageName == 'com.mknoon.app'
+      ? r'(?:\.MainActivity|com\.mknoon\.app\.MainActivity)'
+      : r'com\.mknoon\.app\.MainActivity';
   return RegExp(
-    '^Starting: Intent \\{ cmp=${RegExp.escape(packageName)}/'
-    r'\.MainActivity \}[ \t]*\r?\n?$',
+    '^Starting: Intent \\{ cmp=${RegExp.escape(packageName)}/$activityName'
+    r' \}[ \t]*\r?\n?$',
   ).hasMatch(output);
 }
 
@@ -704,7 +708,7 @@ class _Campaign {
                 'start',
                 if (waitForLaunch) '-W',
                 '-n',
-                '$_appPackage/.MainActivity',
+                '$_appPackage/com.mknoon.app.MainActivity',
               ], propagateTimeout: true),
               readProcessId: () => _adbShell(
                 party.deviceId,

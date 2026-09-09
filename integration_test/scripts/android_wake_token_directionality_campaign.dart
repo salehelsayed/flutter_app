@@ -679,7 +679,7 @@ final class _AndroidWakeTokenHost {
       'start',
       '-W',
       '-n',
-      '$packageName/.MainActivity',
+      '$packageName/com.mknoon.app.MainActivity',
     ], mutate: true);
   }
 

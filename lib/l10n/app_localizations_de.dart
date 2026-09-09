@@ -3874,4 +3874,170 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get call_audio_route_bluetooth => 'Bluetooth';
+
+  @override
+  String get settings_diagnostics_section => 'SUPPORT';
+
+  @override
+  String get settings_call_diagnostics_title => 'Anrufdiagnose';
+
+  @override
+  String get settings_call_diagnostics_switch => 'Anrufdiagnosedaten teilen';
+
+  @override
+  String get settings_call_diagnostics_summary =>
+      'Hilf dabei, erfolgreiche und fehlgeschlagene Anrufe zu untersuchen. Wenn die Funktion aktiviert ist, werden Berichte automatisch gesendet, sobald dieses Gerät online ist.';
+
+  @override
+  String get settings_call_diagnostics_details =>
+      'Enthält Anrufphasen, Fehlerursachen, Zeitangaben, die App-Version sowie den Verbindungsstatus und den Status der Paketübertragung. Keine Audiodaten, Nachrichten, Kontakt- oder Gerätekennungen, Tokens oder Netzwerkadressen.';
+
+  @override
+  String get settings_app_diagnostics_title => 'App-Diagnose';
+
+  @override
+  String get settings_app_diagnostics_switch => 'App-Diagnosedaten teilen';
+
+  @override
+  String get settings_app_diagnostics_summary =>
+      'Hilf dabei, Probleme mit Nachrichten, privaten Medien, Benachrichtigungen und dem App-Start zu erkennen. Berichte werden automatisch hochgeladen, sobald dieses Gerät online ist.';
+
+  @override
+  String get settings_app_diagnostics_details =>
+      'Enthält Vorgangsphasen, festgelegte Fehlerkategorien, Zeitangaben, die App-Version, Berichte über Abstürze und Einfrieren sowie den Zustand der Berichterstattung. Keine Nachrichten, Bilder, Audiodaten, Schlüssel, Kontakt- oder Gerätekennungen, Tokens oder Netzwerkadressen. Kopiere einen Supportcode, damit wir das Problem finden können.';
+
+  @override
+  String get settings_diagnostics_sharing_on => 'Teilen aktiviert';
+
+  @override
+  String get settings_diagnostics_off => 'Aus';
+
+  @override
+  String get settings_diagnostics_status_unavailable =>
+      'Der Diagnosestatus ist vorübergehend nicht verfügbar.';
+
+  @override
+  String get settings_diagnostics_storage_failed =>
+      'Berichte können auf diesem Gerät nicht gespeichert werden. Versuche, das Teilen aus- und wieder einzuschalten.';
+
+  @override
+  String get settings_diagnostics_setup_pending =>
+      'Die Einrichtung zum Teilen steht noch aus. Berichte werden hochgeladen, sobald sie abgeschlossen ist.';
+
+  @override
+  String get settings_diagnostics_disable_pending =>
+      'Das Teilen ist auf diesem Gerät ausgeschaltet. Die Aktualisierung auf dem Server steht noch aus.';
+
+  @override
+  String get settings_diagnostics_ready => 'Das Teilen ist bereit.';
+
+  @override
+  String get settings_diagnostics_disabled => 'Das Teilen ist ausgeschaltet.';
+
+  @override
+  String settings_diagnostics_queued_events(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Ereignisse warten auf die Übertragung',
+      one: '1 Ereignis wartet auf die Übertragung',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String settings_diagnostics_last_upload(DateTime date, DateTime time) {
+    final intl.DateFormat dateDateFormat = intl.DateFormat.yMd(localeName);
+    final String dateString = dateDateFormat.format(date);
+    final intl.DateFormat timeDateFormat = intl.DateFormat.jm(localeName);
+    final String timeString = timeDateFormat.format(time);
+
+    return 'Letzte Übertragung: $dateString um $timeString';
+  }
+
+  @override
+  String settings_diagnostics_dropped_events(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count Ereignisse wurden verworfen. Berichte sind möglicherweise unvollständig.',
+      one:
+          '1 Ereignis wurde verworfen. Berichte sind möglicherweise unvollständig.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get settings_diagnostics_retry_pending =>
+      'Die Übertragung wartet auf einen erneuten Versuch.';
+
+  @override
+  String get settings_diagnostics_update_failed =>
+      'Die Diagnoseeinstellungen konnten nicht aktualisiert werden. Bitte versuche es erneut.';
+
+  @override
+  String settings_diagnostics_retention(int localDays, int serverDays) {
+    return 'Berichte bleiben bis zu $localDays Tage auf diesem Gerät und bis zu $serverDays Tage auf dem Server gespeichert. Das Teilen ist standardmäßig aktiviert. Du kannst es jederzeit ausschalten.';
+  }
+
+  @override
+  String get settings_diagnostics_support_code_copied =>
+      'Supportcode kopiert. Gib ihn bei einer Problemmeldung an.';
+
+  @override
+  String get settings_diagnostics_copy_support_code => 'Supportcode kopieren';
+
+  @override
+  String get settings_diagnostics_preview_report => 'Supportbericht ansehen';
+
+  @override
+  String get settings_diagnostics_report_copied => 'Supportbericht kopiert';
+
+  @override
+  String get settings_diagnostics_copy_report => 'Supportbericht kopieren';
+
+  @override
+  String get settings_diagnostics_cleared =>
+      'Das Teilen ist ausgeschaltet und lokale Berichte wurden gelöscht';
+
+  @override
+  String get settings_diagnostics_disable_and_clear =>
+      'Ausschalten und Berichte löschen';
+
+  @override
+  String get settings_safety_support_title => 'Sicherheit & Hilfe';
+
+  @override
+  String get settings_safety_support_description =>
+      'Melde Missbrauch oder Bedenken zur Sicherheit von Kindern an den Entwickler von mknoon. Nutze die folgende Adresse oder öffne deine E-Mail-App, um eine Meldung zu schreiben.';
+
+  @override
+  String get settings_safety_support_email => 'E-Mail schreiben';
+
+  @override
+  String get settings_safety_support_copy_email => 'E-Mail-Adresse kopieren';
+
+  @override
+  String get settings_safety_support_copied => 'E-Mail-Adresse kopiert.';
+
+  @override
+  String get settings_safety_support_copy_failed =>
+      'Die Adresse konnte nicht kopiert werden. Du kannst sie oben auswählen und manuell kopieren.';
+
+  @override
+  String get settings_safety_support_email_unavailable =>
+      'Es konnte keine E-Mail-App geöffnet werden. Kopiere die Adresse und kontaktiere uns über deinen bevorzugten E-Mail-Dienst.';
+
+  @override
+  String get settings_safety_support_browser_unavailable =>
+      'Es konnte kein Browser geöffnet werden. Du kannst den Link zur Richtlinie unten kopieren und selbst öffnen.';
+
+  @override
+  String get settings_safety_support_guidance =>
+      'Beschreibe dein Anliegen. Sende kein mutmaßliches Material über sexuellen Kindesmissbrauch, keine privaten Schlüssel und keine Wiederherstellungsphrasen.';
+
+  @override
+  String get settings_safety_support_standards =>
+      'Standards zum Schutz von Kindern';
 }

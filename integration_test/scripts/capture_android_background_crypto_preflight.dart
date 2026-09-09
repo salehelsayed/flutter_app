@@ -3144,7 +3144,7 @@ class _Campaign {
 
   Future<void> _launchExplicitActivityClearingStoppedState() async {
     // An explicit component start clears Android's force-stop/stopped state.
-    await _adbShell(['am', 'start', '-W', '-n', '$appPackage/.MainActivity']);
+    await _adbShell(['am', 'start', '-W', '-n', '$appPackage/com.mknoon.app.MainActivity']);
   }
 
   Future<void> _quiescePackageForPushDelivery() async {

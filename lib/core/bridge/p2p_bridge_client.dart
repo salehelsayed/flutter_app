@@ -183,7 +183,10 @@ Future<Map<String, dynamic>> callP2PRelayReconnect(Bridge bridge) async {
 /// validates the relay response; this second strict decode prevents malformed
 /// or stale native responses from entering WebRTC configuration. Failures are
 /// returned as privacy-safe typed maps and never include the raw response.
-Future<Map<String, dynamic>> callP2PTurnCredentialsV1(Bridge bridge) async {
+Future<Map<String, dynamic>> callP2PTurnCredentialsV1(
+  Bridge bridge, {
+  Map<String, Object?>? diagnostics,
+}) async {
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_TURN_CREDENTIALS_V1_REQUEST',
@@ -193,8 +196,12 @@ Future<Map<String, dynamic>> callP2PTurnCredentialsV1(Bridge bridge) async {
   try {
     final responseJson = await bridge
         .send(
-          jsonEncode(const <String, dynamic>{
-            'cmd': turnCredentialsV1BridgeCommand,
+          jsonEncode(<String, dynamic>{
+            'cmd': diagnostics == null
+                ? turnCredentialsV1BridgeCommand
+                : 'turn_credentials_with_diagnostics_v1',
+            if (diagnostics != null)
+              'payload': <String, Object?>{'diagnostics': diagnostics},
           }),
         )
         .timeout(const Duration(seconds: 5));

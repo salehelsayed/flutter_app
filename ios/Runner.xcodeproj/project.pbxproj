@@ -60,13 +60,20 @@
 		F25011040000000000000004 /* MknoonCallKitController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010040000000000000004 /* MknoonCallKitController.swift */; };
 		F25011050000000000000005 /* MknoonCallNativeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010050000000000000005 /* MknoonCallNativeBridge.swift */; };
 		F25011060000000000000006 /* MknoonVoipPushRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25010060000000000000006 /* MknoonVoipPushRegistry.swift */; };
+		F260D1010000000000000001 /* MknoonCallDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F260D1020000000000000001 /* MknoonCallDiagnostics.swift */; };
+		F260E1010000000000000001 /* MknoonAppDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F260E1020000000000000001 /* MknoonAppDiagnostics.swift */; };
+		F260E1010000000000000002 /* MknoonAppDiagnosticSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = F260E1020000000000000002 /* MknoonAppDiagnosticSchema.swift */; };
+		F260E1010000000000000003 /* MknoonNseAppDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F260E1020000000000000003 /* MknoonNseAppDiagnostics.swift */; };
 		F25021010000000000000001 /* VoipPayloadParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020010000000000000001 /* VoipPayloadParserTests.swift */; };
 		F25021020000000000000002 /* PendingNativeCallStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020020000000000000002 /* PendingNativeCallStoreTests.swift */; };
 		F25021030000000000000003 /* OpaqueCallContactResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020030000000000000003 /* OpaqueCallContactResolverTests.swift */; };
 		F25021040000000000000004 /* MknoonCallKitLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020040000000000000004 /* MknoonCallKitLifecycleTests.swift */; };
 		F25021050000000000000005 /* MknoonCallNativeBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020050000000000000005 /* MknoonCallNativeBridgeTests.swift */; };
 		F25021060000000000000006 /* MknoonVoipPushRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020060000000000000006 /* MknoonVoipPushRegistryTests.swift */; };
+		F260D2010000000000000001 /* MknoonCallDiagnosticSpoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F260D2020000000000000001 /* MknoonCallDiagnosticSpoolTests.swift */; };
+		F260E2010000000000000001 /* MknoonAppDiagnosticSpoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F260E2020000000000000001 /* MknoonAppDiagnosticSpoolTests.swift */; };
 		F25021070000000000000007 /* IosCallConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25020070000000000000007 /* IosCallConfigurationTests.swift */; };
+		F260D3010000000000000001 /* wire_fixtures_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = F260D3020000000000000001 /* wire_fixtures_v1.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -197,13 +204,20 @@
 		F25010040000000000000004 /* MknoonCallKitController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonCallKitController.swift; sourceTree = "<group>"; };
 		F25010050000000000000005 /* MknoonCallNativeBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonCallNativeBridge.swift; sourceTree = "<group>"; };
 		F25010060000000000000006 /* MknoonVoipPushRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonVoipPushRegistry.swift; sourceTree = "<group>"; };
+		F260D1020000000000000001 /* MknoonCallDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonCallDiagnostics.swift; sourceTree = "<group>"; };
+		F260E1020000000000000001 /* MknoonAppDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonAppDiagnostics.swift; sourceTree = "<group>"; };
+		F260E1020000000000000002 /* MknoonAppDiagnosticSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonAppDiagnosticSchema.swift; sourceTree = "<group>"; };
+		F260E1020000000000000003 /* MknoonNseAppDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MknoonNseAppDiagnostics.swift; path = ../NotificationService/MknoonNseAppDiagnostics.swift; sourceTree = "<group>"; };
 		F25020010000000000000001 /* VoipPayloadParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoipPayloadParserTests.swift; sourceTree = "<group>"; };
 		F25020020000000000000002 /* PendingNativeCallStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingNativeCallStoreTests.swift; sourceTree = "<group>"; };
 		F25020030000000000000003 /* OpaqueCallContactResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpaqueCallContactResolverTests.swift; sourceTree = "<group>"; };
 		F25020040000000000000004 /* MknoonCallKitLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonCallKitLifecycleTests.swift; sourceTree = "<group>"; };
 		F25020050000000000000005 /* MknoonCallNativeBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonCallNativeBridgeTests.swift; sourceTree = "<group>"; };
 		F25020060000000000000006 /* MknoonVoipPushRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonVoipPushRegistryTests.swift; sourceTree = "<group>"; };
+		F260D2020000000000000001 /* MknoonCallDiagnosticSpoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonCallDiagnosticSpoolTests.swift; sourceTree = "<group>"; };
+		F260E2020000000000000001 /* MknoonAppDiagnosticSpoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MknoonAppDiagnosticSpoolTests.swift; sourceTree = "<group>"; };
 		F25020070000000000000007 /* IosCallConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosCallConfigurationTests.swift; sourceTree = "<group>"; };
+		F260D3020000000000000001 /* wire_fixtures_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = wire_fixtures_v1.json; path = ../../tool/call_diagnostics/wire_fixtures_v1.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -302,6 +316,9 @@
 				F25020040000000000000004 /* MknoonCallKitLifecycleTests.swift */,
 				F25020050000000000000005 /* MknoonCallNativeBridgeTests.swift */,
 				F25020060000000000000006 /* MknoonVoipPushRegistryTests.swift */,
+				F260D2020000000000000001 /* MknoonCallDiagnosticSpoolTests.swift */,
+				F260E2020000000000000001 /* MknoonAppDiagnosticSpoolTests.swift */,
+				F260D3020000000000000001 /* wire_fixtures_v1.json */,
 				F25020070000000000000007 /* IosCallConfigurationTests.swift */,
 				D371B00573A7000000000001 /* app_visibility_snapshot_v1.json */,
 				E373100673A8000000000001 /* ios_nse_mailbox_v1.json */,
@@ -401,6 +418,10 @@
 				F25010040000000000000004 /* MknoonCallKitController.swift */,
 				F25010050000000000000005 /* MknoonCallNativeBridge.swift */,
 				F25010060000000000000006 /* MknoonVoipPushRegistry.swift */,
+				F260D1020000000000000001 /* MknoonCallDiagnostics.swift */,
+				F260E1020000000000000001 /* MknoonAppDiagnostics.swift */,
+				F260E1020000000000000002 /* MknoonAppDiagnosticSchema.swift */,
+				F260E1020000000000000003 /* MknoonNseAppDiagnostics.swift */,
 				D371B00173A7000000000001 /* IosAppVisibilitySnapshot.swift */,
 				D371B00273A7000000000001 /* IosAppVisibilityCoordinator.swift */,
 				C333A00173A6000000000002 /* IosNotificationRecovery.swift */,
@@ -609,6 +630,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D371A00573A7000000000001 /* app_visibility_snapshot_v1.json in Resources */,
+				F260D3010000000000000001 /* wire_fixtures_v1.json in Resources */,
 				E373000673A8000000000001 /* ios_nse_mailbox_v1.json in Resources */,
 				E373000773A8000000000001 /* local_notification_ledger_v1.json in Resources */,
 			);
@@ -796,6 +818,8 @@
 				F25021040000000000000004 /* MknoonCallKitLifecycleTests.swift in Sources */,
 				F25021050000000000000005 /* MknoonCallNativeBridgeTests.swift in Sources */,
 				F25021060000000000000006 /* MknoonVoipPushRegistryTests.swift in Sources */,
+				F260D2010000000000000001 /* MknoonCallDiagnosticSpoolTests.swift in Sources */,
+				F260E2010000000000000001 /* MknoonAppDiagnosticSpoolTests.swift in Sources */,
 				F25021070000000000000007 /* IosCallConfigurationTests.swift in Sources */,
 				D371A00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift in Sources */,
 				E373000173A8000000000001 /* IosLocalNotificationFinalEffect.swift in Sources */,
@@ -852,6 +876,10 @@
 				F25011040000000000000004 /* MknoonCallKitController.swift in Sources */,
 				F25011050000000000000005 /* MknoonCallNativeBridge.swift in Sources */,
 				F25011060000000000000006 /* MknoonVoipPushRegistry.swift in Sources */,
+				F260D1010000000000000001 /* MknoonCallDiagnostics.swift in Sources */,
+				F260E1010000000000000001 /* MknoonAppDiagnostics.swift in Sources */,
+				F260E1010000000000000002 /* MknoonAppDiagnosticSchema.swift in Sources */,
+				F260E1010000000000000003 /* MknoonNseAppDiagnostics.swift in Sources */,
 				D371A00173A7000000000001 /* IosAppVisibilitySnapshot.swift in Sources */,
 				D371A00273A7000000000001 /* IosAppVisibilityCoordinator.swift in Sources */,
 				C333A00173A6000000000001 /* IosNotificationRecovery.swift in Sources */,

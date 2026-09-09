@@ -728,6 +728,111 @@ void main() {
     expect(events, isEmpty);
   });
 
+  test(
+    'default grant survives idle days with its exact distribution receipt',
+    () async {
+      final events = <String>[];
+      final store = _MemoryIssuedStore(events: events);
+      final effects = _Effects(events);
+      var currentMs = nowMs;
+      final coordinator = CallWakeAuthorizationCoordinator(
+        store: store,
+        setWakeHandle: effects.setWakeHandle,
+        revokeWakeHandle: effects.revokeWakeHandle,
+        publishNativeContact: effects.publishNativeContact,
+        revokeNativeContact: effects.revokeNativeContact,
+        generateHandle: () => '0123456789abcdef0123456789abcdef',
+        nowMs: () => currentMs,
+      );
+      addTearDown(coordinator.close);
+      final issued = (await coordinator.resolveOrIssueGrantForContact(
+        contact: contact(),
+        localRecipientDevicePeerId: localDevice,
+        localDeviceKeyEpoch: 1,
+      ))!;
+      expect(
+        await coordinator.markDistributed(
+          contactAccountPeerId: 'contactAccount1',
+          grant: issued,
+        ),
+        isTrue,
+      );
+      events.clear();
+      currentMs += const Duration(days: 2).inMilliseconds;
+      expect(
+        await coordinator.resolveOrIssueGrantForContact(
+          contact: contact(),
+          localRecipientDevicePeerId: localDevice,
+          localDeviceKeyEpoch: 1,
+        ),
+        issued,
+      );
+      final retained = await store.readForContact('contactAccount1');
+      expect(retained?.hasCurrentDistributionReceipt, isTrue);
+      expect(retained?.distributionPending, isFalse);
+      expect(events, isEmpty);
+      currentMs = nowMs + const Duration(days: 30).inMilliseconds;
+      expect(issued.isValidAt(currentMs - 1), isTrue);
+      expect(issued.isValidAt(currentMs), isFalse);
+      expect(
+        await coordinator.resolveOrIssueGrantForContact(
+          contact: contact(),
+          localRecipientDevicePeerId: localDevice,
+          localDeviceKeyEpoch: 1,
+        ),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'longer default preserves a usable legacy signed grant and receipt',
+    () async {
+      final events = <String>[];
+      final store = _MemoryIssuedStore(events: events);
+      final effects = _Effects(events);
+      final legacy = grant();
+      store.seed(
+        CallIssuedWakeHandleRecord(
+          contactAccountPeerId: 'contactAccount1',
+          grant: legacy,
+          authorizedSenderDevicePeerIds: const <String>['senderDevice1'],
+          distributionPending: false,
+          distributionReceiptVersion:
+              CallIssuedWakeHandleRecord.currentDistributionReceiptVersion,
+        ),
+      );
+      final coordinator = CallWakeAuthorizationCoordinator(
+        store: store,
+        setWakeHandle: effects.setWakeHandle,
+        revokeWakeHandle: effects.revokeWakeHandle,
+        publishNativeContact: effects.publishNativeContact,
+        revokeNativeContact: effects.revokeNativeContact,
+        generateHandle: () => 'fedcba9876543210fedcba9876543210',
+        nowMs: () => nowMs + const Duration(hours: 23).inMilliseconds,
+      );
+      addTearDown(coordinator.close);
+      expect(await coordinator.rearmCurrentGrantDistribution(), isTrue);
+      expect(
+        await coordinator.reconcile(
+          eligibleContacts: <CallWakeEligibleContact>[contact()],
+          localRecipientDevicePeerId: localDevice,
+          localDeviceKeyEpoch: 1,
+        ),
+        isTrue,
+      );
+      final retained = await store.readForContact('contactAccount1');
+      expect(retained?.grant, legacy);
+      expect(retained?.hasCurrentDistributionReceipt, isTrue);
+      expect(retained?.distributionPending, isFalse);
+      expect(events, <String>[
+        'native:publish:Alice',
+        'relay:set:senderDevice1',
+      ]);
+      expect(effects.setRecords.single.expiresAtMs, legacy.expiresAtMs);
+    },
+  );
+
   test('closed coordinator does not report rearm completion', () async {
     final coordinator = _coordinator(
       store: _MemoryIssuedStore(events: <String>[]),

@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
+import 'package:flutter_app/app/bootstrap/production_app_diagnostics.dart';
 import 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
 import 'package:flutter_app/app/bootstrap/production_headless_canonical_recovery.dart';
@@ -15,11 +16,13 @@ export 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart'
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await DebugE2ECompositionRoot.acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured();
-  await runApplicationBootstrap(
-    bootstrapFactory: ProductionApplicationBootstrap.new,
-    host: const FlutterApplicationHost(),
-  );
+  await runWithProductionAppDiagnostics(() async {
+    await DebugE2ECompositionRoot.acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured();
+    await runApplicationBootstrap(
+      bootstrapFactory: ProductionApplicationBootstrap.new,
+      host: const FlutterApplicationHost(),
+    );
+  });
 }
 
 /// Debug receiver entrypoint. It creates no widget tree or application root.

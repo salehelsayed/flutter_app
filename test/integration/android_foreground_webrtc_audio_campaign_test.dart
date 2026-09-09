@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/features/call/infrastructure/webrtc_types.dart';
+import 'package:flutter_app/features/call/infrastructure/call_stats_sampler.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../tool/sims/artifact_evidence.dart';
@@ -352,6 +353,63 @@ Map<String, Object?> _relayAggregate() =>
     );
 
 void main() {
+  test('selected relay probe cannot report complete campaign success', () {
+    final result = AndroidForegroundWebRtcAudioCampaignResult.relayProbePassed(
+      AndroidForegroundWebRtcAudioRelayMode.turnTcp,
+    );
+    expect(result.processExitCode, 78);
+    expect(result.json['status'], 'BLOCKED');
+    expect(result.json['selectedTransport'], 'turnTcp');
+    expect(result.json['selectedTransportStatus'], 'PASS');
+    expect(result.json['fullCampaignCompleted'], isFalse);
+    expect(result.json['artifactPresent'], isFalse);
+  });
+
+  test('invalid relay probe fails before target or artifact work', () async {
+    final result = await runAndroidForegroundWebRtcAudioCampaign(
+      devices: const [],
+      artifactPath: null,
+      environment: const {'SIMS_FOREGROUND_WEBRTC_RELAY_PROBE': 'invalid'},
+    );
+    expect(result.processExitCode, 78);
+    expect(result.json['detail'], contains('must name turnUdp or turnTcp'));
+    expect(result.json['assertionsAttempted'], 0);
+  });
+
+  test('selected pair evidence keeps relationships without stats material', () {
+    final evidence = androidForegroundSelectedPairDiagnostic([
+      CallStatsRecord(
+        id: 'private-transport-id',
+        type: 'transport',
+        values: {'selectedCandidatePairId': 'private-pair-id'},
+      ),
+      CallStatsRecord(
+        id: 'private-pair-id',
+        type: 'candidate-pair',
+        values: {
+          'state': 'in-progress',
+          'nominated': true,
+          'address': '192.0.2.99',
+          'bytesSent': 9999,
+        },
+      ),
+      CallStatsRecord(
+        id: 'another-private-pair',
+        type: 'candidate-pair',
+        values: {'state': 'succeeded', 'nominated': true},
+      ),
+    ]);
+    expect(evidence, {
+      'transportSelectedPairs': 1,
+      'missingSelectedReferences': 0,
+      'selectedPairState': 'in-progress',
+      'nominatedSucceeded': 1,
+      'nominatedOther': 1,
+    });
+    expect(jsonEncode(evidence), isNot(contains('private')));
+    expect(jsonEncode(evidence), isNot(contains('192.0.2.99')));
+    expect(jsonEncode(evidence), isNot(contains('9999')));
+  });
   test('generic artifact wrapper preserves canonical and relay proofs', () {
     final directory = Directory.systemTemp.createTempSync(
       'foreground-webrtc-audio-artifact-',

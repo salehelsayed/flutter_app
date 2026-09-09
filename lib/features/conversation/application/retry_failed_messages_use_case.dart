@@ -1063,27 +1063,10 @@ Future<bool> _retryFailedMessageCandidate({
         return outcome.outcome.authorizesTransport;
       }
 
-      if (msg.transport == 'inbox') {
-        // Already in the relay inbox — that is custody, not receiver delivery
-        // (F6). Keep it 'inboxed' (envelope retained) so the custody sweep +
-        // DeliveryReceiptListener flip it to 'delivered' only on the receiver's
-        // confirmation; a false terminal 'delivered' here is uncorrectable.
-        if (!await persistCachedEnvelopeTransport(
-          status: 'inboxed',
-          transport: 'inbox',
-        )) {
-          return false;
-        }
-        await cleanupSettledPrivateTerminalMedia();
-        await cleanupSettledMediaStaging();
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RETRY_FAILED_MESSAGE_ALREADY_INBOX',
-          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
-        );
-        return true;
-      }
-
+      // This fresh row is still failed. Its last attempted route can be inbox
+      // after a rejected STORE or an older UI recovery, so only a new accepting
+      // STORE below can restore custody. Replay the same immutable bytes even
+      // if an earlier STORE succeeded but its response or local update was lost.
       final cachedEditEventId = _cachedEditEventId(msg);
       final unsafeLegacyEnvelope =
           isUnsafeLegacyOutboundEnvelope(msg.wireEnvelope!) ||

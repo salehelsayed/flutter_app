@@ -3471,7 +3471,7 @@ final class _AndroidNotificationCampaign {
         'start',
         '-W',
         '-n',
-        '$packageName/.MainActivity',
+        '$packageName/com.mknoon.app.MainActivity',
       ], allowFailure: true);
       final output = '${result.stdout}\n${result.stderr}';
       final rejected =

@@ -96,7 +96,16 @@ const _expectedGroupApiFingerprint = '3ffab64f';
 // 405: the direct handoff adds only `callEntries`, the already-loaded local
 // call-history projection for this contact. ConversationScreen merges it into
 // the display pass and remains presentation-only; no owner moved.
-const _expectedDirectHandoffFingerprint = '6dfaa77f';
+// Beta call retry: the direct handoff adds only `onCallRetry`, which delegates
+// an explicit tap to the same authority-gated call owner, and
+// `callActionInFlight`, which keeps duplicate taps disabled during the probe.
+// The screen remains presentation-only; existing handoff expressions and
+// controller owners are unchanged.
+// Opt-in call diagnostics: `onCallRetry` now remains present when the process
+// capability exists but is unavailable, so an explicit tap can be recorded
+// before the call owner rejects it. The wired widget regression proves that
+// this unavailable tap neither probes the endpoint nor places a call.
+const _expectedDirectHandoffFingerprint = 'cfa5d939';
 const _expectedGroupHandoffFingerprint = '74b2fe80';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -773,11 +782,30 @@ void main() {
 
     final directApi = _publicApiFingerprint(directWidget);
     final groupApi = _publicApiFingerprint(groupWidget);
-    final directHandoff = _handoffFingerprint(
-      _screenHandoff(directState, 'ConversationScreen'),
+    final directHandoffArguments = _screenHandoff(
+      directState,
+      'ConversationScreen',
     );
+    final directHandoff = _handoffFingerprint(directHandoffArguments);
     final groupHandoff = _handoffFingerprint(
       _screenHandoff(groupState, 'GroupConversationScreen'),
+    );
+
+    // Only explicit taps reach the diagnostics/authority owner. An absent
+    // capability keeps retry absent; the normal call action remains gated.
+    expect(
+      directHandoffArguments['onCallRetry'],
+      'outgoingCallCapability == null ? null : () => '
+      'unawaited(_startOutgoingCall(outgoingCallCapability))',
+    );
+    expect(
+      directHandoffArguments['onCall'],
+      'outgoingCallAvailable && outgoingCallCapability != null ? () => '
+      'unawaited(_startOutgoingCall(outgoingCallCapability)) : null',
+    );
+    expect(
+      directHandoffArguments['callActionInFlight'],
+      '_outgoingCallStartInFlight',
     );
 
     // Keep these diagnostics useful when an intentional public API migration

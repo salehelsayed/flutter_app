@@ -212,6 +212,26 @@ class MknoonFirebaseMessagingServiceTest {
     }
 
     @Test
+    @Config(sdk = [34])
+    fun `optional diagnostic metadata cannot alter strict call wake authority`() {
+        val delegated = mutableListOf<RemoteMessage>()
+        val service = classifierService(delegated, mutableListOf(), mutableListOf())
+        service.callNowMs = callNowMs
+        val valid = mapOf("v" to "1", "w" to "call", "c" to "00112233445566778899aabbccddeeff",
+            "h" to "10112233445566778899aabbccddeeff", "e" to (callNowMs + 45_000L).toString())
+        val metadata = listOf(
+            "{\"schemaVersion\":1,\"traceId\":\"223e4567-e89b-42d3-a456-426614174001\"}",
+            "malformed-private-metadata", "{\"token\":\"private-token\"}",
+            "{\"schemaVersion\":1,\"traceId\":\"00112233-4455-6677-8899-aabbccddeeff\"}",
+        )
+        for (value in metadata) service.onMessageReceived(dataMessage(valid + ("diagnostics" to value)))
+        assertEquals(metadata.size, service.callDispatches.size)
+        assertTrue(delegated.isEmpty())
+        service.onMessageReceived(dataMessage(valid + ("diagnostics" to metadata.first()) + ("extra" to "invalid")))
+        assertEquals(metadata.size, service.callDispatches.size)
+    }
+
+    @Test
     @Config(sdk = [26])
     fun `real deletion override creates reserved channel and coalesces reserved card on API 26`() {
         service().onDeletedMessages()

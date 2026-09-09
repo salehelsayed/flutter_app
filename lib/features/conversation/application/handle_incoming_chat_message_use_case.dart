@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -152,6 +153,180 @@ handleIncomingChatMessage({
   // `null` keeps the incumbent transport==logical equality byte-identically.
   DirectTransportAuthorityResolver? transportAuthority,
 }) async {
+  final diagnostics = AppDiagnostics.instance;
+  final diagnosticTimer = Stopwatch()..start();
+  final outer = MessagePayload.parseEncryptedEnvelope(message.content);
+  // Relay custody requires the established outer envelope shape. Correlation
+  // travels only inside ciphertext, so resolve it with the same single decrypt
+  // the handler already needs. Pass the typed result through, including key
+  // and bridge failures, without retrying or bypassing the handler's admission.
+  final decrypted = outer != null && predecryptedText == null
+      ? await _decryptV2ChatEnvelope(
+          v2Envelope: outer,
+          bridge: bridge,
+          ownMlKemSecretKey: ownMlKemSecretKey,
+          fallbackMlKemSecretKeys: fallbackMlKemSecretKeys,
+        )
+      : null;
+  final innerText = predecryptedText ?? decrypted?.plaintext;
+  final incomingTrace = outer != null && innerText != null
+      ? MessagePayload.fromDecryptedJson(innerText)?.diagnosticTraceId
+      : null;
+  return diagnostics.runWithAttempt(
+    feature: 'message',
+    // Correlation is never sender, target, or persistence authority.
+    traceId: incomingTrace,
+    body: (traceId) async {
+      diagnostics.record(
+        feature: 'message',
+        stage: 'preflight',
+        outcome: 'started',
+        traceId: traceId,
+        values: {'direction': 'incoming'},
+      );
+      try {
+        final result = await _handleIncomingChatMessageDiagnosed(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: ownMlKemSecretKey,
+          fallbackMlKemSecretKeys: fallbackMlKemSecretKeys,
+          predecryptedText: predecryptedText,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          transport: transport,
+          sendDeliveryReceipt: sendDeliveryReceipt,
+          sendMutationDeliveryReceipt: sendMutationDeliveryReceipt,
+          stagedEntryId: stagedEntryId,
+          confirmatoryDirectLanEnabled: confirmatoryDirectLanEnabled,
+          stageNotificationDisplayCustody: stageNotificationDisplayCustody,
+          promoteNotificationDisplayCustody: promoteNotificationDisplayCustody,
+          transportAuthority: transportAuthority,
+          diagnosticTraceId: traceId,
+          decryptionOutcome: decrypted,
+        );
+        final stored = result.$2;
+        if (stored != null && traceId != null) {
+          diagnostics.traceForOperation(
+            'message:${stored.id}',
+            propagatedTraceId: traceId,
+          );
+          for (final attachment in stored.media) {
+            diagnostics.traceForOperation(
+              'media:${attachment.id}',
+              propagatedTraceId: traceId,
+            );
+          }
+        }
+        final reason = switch (result.$1) {
+          HandleChatMessageResult.chatMessage => 'none',
+          HandleChatMessageResult.duplicate ||
+          HandleChatMessageResult.ignoredEdit ||
+          HandleChatMessageResult.durablySuperseded => 'duplicate',
+          HandleChatMessageResult.decryptionFailed => 'auth_failed',
+          HandleChatMessageResult.decryptionDeferred => 'bridge_unavailable',
+          HandleChatMessageResult.missingMlKemSecret => 'recipient_key_missing',
+          HandleChatMessageResult.notChatMessage => 'invalid_payload',
+          HandleChatMessageResult.linkedModalityRefused => 'unsupported',
+          _ => 'authority_rejected',
+        };
+        if (result.$1 == HandleChatMessageResult.decryptionFailed ||
+            result.$1 == HandleChatMessageResult.decryptionDeferred ||
+            result.$1 == HandleChatMessageResult.missingMlKemSecret) {
+          diagnostics.record(
+            feature: 'message',
+            stage: 'decrypt',
+            outcome: 'failed',
+            reason: reason,
+            traceId: traceId,
+            values: {'direction': 'incoming'},
+          );
+        }
+        final succeeded = reason == 'none' || reason == 'duplicate';
+        final pending =
+            result.$1 == HandleChatMessageResult.decryptionDeferred ||
+            result.$1 == HandleChatMessageResult.missingMlKemSecret;
+        diagnostics.finishAttempt(
+          feature: 'message',
+          traceId: traceId,
+          outcome: succeeded
+              ? 'success'
+              : pending
+              ? 'pending'
+              : 'failed',
+          reason: reason,
+          values: {
+            'direction': 'incoming',
+            'durationMs': diagnosticTimer.elapsedMilliseconds,
+            'committed': result.$1 == HandleChatMessageResult.chatMessage,
+          },
+        );
+        return result;
+      } catch (_) {
+        diagnostics.finishAttempt(
+          feature: 'message',
+          traceId: traceId,
+          outcome: 'failed',
+          reason: 'unknown',
+          values: {
+            'direction': 'incoming',
+            'durationMs': diagnosticTimer.elapsedMilliseconds,
+          },
+        );
+        rethrow;
+      }
+    },
+  );
+}
+
+Future<(HandleChatMessageResult, ConversationMessage?, ContactModel?)>
+_handleIncomingChatMessageDiagnosed({
+  required ChatMessage message,
+  required MessageRepository messageRepo,
+  required ContactRepository contactRepo,
+  Bridge? bridge,
+  String? ownMlKemSecretKey,
+  // Prior ML-KEM secrets (newest first) tried in order when the primary
+  // secret fails CRYPTOGRAPHICALLY — same-device recovery of traffic
+  // encrypted to a pre-restore key (P0-B). Never consulted on transient
+  // failures.
+  List<String>? fallbackMlKemSecretKeys,
+  // 147: when non-null, the inbox-drain decrypt-prefetch pass already decrypted
+  // this message's v2 envelope (concurrently, ahead of the serial commit loop)
+  // and supplies the inner plaintext JSON here. The handler then SKIPS its own
+  // bridge decrypt + ML-KEM fallback ring and uses this verbatim. When null (the
+  // live default + every gate-off path) the handler decrypts itself, byte-
+  // identically to before. A prefetch that failed/omitted an entry leaves this
+  // null, so the entry simply falls back to the in-handler decrypt (never
+  // dropped, never mis-disposed).
+  String? predecryptedText,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  // Used by the duplicate-replay media repair to invalidate staged
+  // artifacts left behind by a previous key/nonce (112 Phase 1).
+  MediaFileManager? mediaFileManager,
+  String? transport,
+  // 115 P2: delivery-receipt hook + arrival-origin marker. The hook fires
+  // AFTER a durable persist (and on duplicate receives, closing the
+  // lost-receipt repair loop) — but ONLY for relay-inbox arrivals per the
+  // shared origin contract (shouldMintDeliveryReceipt): 'direct:'/'lan:'
+  // staged replays are confirmed by their own acks.
+  SendIncomingMessageDeliveryReceipt? sendDeliveryReceipt,
+  SendIncomingMessageMutationDeliveryReceipt? sendMutationDeliveryReceipt,
+  String? stagedEntryId,
+  // 132 Phase 1: when true (the live default), a confirmatory receipt is minted
+  // for direct/LAN/non-inbox durable arrivals too. Test seam — production passes
+  // the const default.
+  bool confirmatoryDirectLanEnabled = kConfirmatoryDirectLanReceiptEnabled,
+  StageDirectMessageNotificationDisplayCustody? stageNotificationDisplayCustody,
+  PromoteDirectMessageNotificationDisplayCustody?
+  promoteNotificationDisplayCustody,
+  // 361: when present, the shared physical->logical reverse authority.
+  // `null` keeps the incumbent transport==logical equality byte-identically.
+  DirectTransportAuthorityResolver? transportAuthority,
+  String? diagnosticTraceId,
+  _V2ChatDecryptOutcome? decryptionOutcome,
+}) async {
   Future<void> maybeSendDeliveryReceipt(
     String messageId, {
     String? mutationEventId,
@@ -193,24 +368,50 @@ handleIncomingChatMessage({
     // `Future.sync` wraps the call so a hook that throws SYNCHRONOUSLY (before
     // returning a Future) is funnelled into the same `.catchError` — matching
     // the old `try { await ... } catch` which caught both sync and async throws.
+    AppDiagnostics.instance.record(
+      feature: 'message',
+      stage: 'receipt',
+      outcome: 'started',
+      traceId: diagnosticTraceId,
+    );
     unawaited(
       Future.sync(
-        () => mutationEventId != null && sendMutationDeliveryReceipt != null
-            ? sendMutationDeliveryReceipt(
-                messageId,
-                mutationEventId: mutationEventId,
-              )
-            : sendDeliveryReceipt?.call(messageId) ?? Future<void>.value(),
-      ).catchError((Object e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'DELIVERY_RECEIPT_HOOK_ERROR',
-          details: {
-            'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
-            'error': e.toString(),
-          },
-        );
-      }),
+            () => mutationEventId != null && sendMutationDeliveryReceipt != null
+                ? sendMutationDeliveryReceipt(
+                    messageId,
+                    mutationEventId: mutationEventId,
+                  )
+                : sendDeliveryReceipt?.call(messageId) ?? Future<void>.value(),
+          )
+          .then<void>((_) {
+            AppDiagnostics.instance.record(
+              feature: 'message',
+              stage: 'receipt',
+              outcome: 'ok',
+              traceId: diagnosticTraceId,
+              values: {'acknowledged': true, 'direction': 'incoming'},
+            );
+          })
+          .catchError((Object e) {
+            AppDiagnostics.instance.record(
+              feature: 'message',
+              stage: 'receipt',
+              outcome: 'failed',
+              reason: 'send_failed',
+              traceId: diagnosticTraceId,
+            );
+
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'DELIVERY_RECEIPT_HOOK_ERROR',
+              details: {
+                'id': messageId.length > 8
+                    ? messageId.substring(0, 8)
+                    : messageId,
+                'error': e.toString(),
+              },
+            );
+          }),
     );
   }
 
@@ -246,12 +447,14 @@ handleIncomingChatMessage({
     } else {
       // v2 encrypted message — decrypt in-handler (the live default and the
       // fallback for any entry the prefetch omitted/failed).
-      final decryptOutcome = await _decryptV2ChatEnvelope(
-        v2Envelope: v2Envelope,
-        bridge: bridge,
-        ownMlKemSecretKey: ownMlKemSecretKey,
-        fallbackMlKemSecretKeys: fallbackMlKemSecretKeys,
-      );
+      final decryptOutcome =
+          decryptionOutcome ??
+          await _decryptV2ChatEnvelope(
+            v2Envelope: v2Envelope,
+            bridge: bridge,
+            ownMlKemSecretKey: ownMlKemSecretKey,
+            fallbackMlKemSecretKeys: fallbackMlKemSecretKeys,
+          );
       switch (decryptOutcome.status) {
         case _V2DecryptStatus.missingKey:
           emitFlowEvent(
@@ -343,9 +546,19 @@ handleIncomingChatMessage({
   }
 
   // Sanitize incoming text and username to strip bidi control characters
+  if (v2Envelope != null) {
+    AppDiagnostics.instance.record(
+      feature: 'message',
+      stage: 'decrypt',
+      outcome: 'ok',
+      traceId: diagnosticTraceId,
+      values: {'direction': 'incoming'},
+    );
+  }
   final incomingPrivateMediaPolicy = payload.privateMediaPolicy;
   payload = MessagePayload(
     id: payload.id,
+    diagnosticTraceId: payload.diagnosticTraceId,
     text: incomingPrivateMediaPolicy.requiresRedaction
         ? ''
         : sanitizeMessageText(payload.text),
@@ -432,6 +645,20 @@ handleIncomingChatMessage({
       },
     );
     return (HandleChatMessageResult.unknownSender, null, null);
+  }
+
+  // A quarantined message can be durably delivered while its private card
+  // remains intentionally unopenable. Record that separately, after sender
+  // authentication/contact admission, without changing the store disposition.
+  if (incomingPrivateMediaPolicy.isUnsupported) {
+    AppDiagnostics.instance.record(
+      feature: 'message',
+      stage: 'verify',
+      outcome: 'blocked',
+      reason: 'unsupported',
+      traceId: diagnosticTraceId,
+      values: {'direction': 'incoming'},
+    );
   }
 
   // 361: the restricted linked role supported blob-free ordinary text events
@@ -1446,6 +1673,13 @@ handleIncomingChatMessage({
     if (!isOrdinaryDirectText) {
       await messageRepo.saveMessage(conversationMessage);
     }
+    AppDiagnostics.instance.record(
+      feature: 'message',
+      stage: 'commit',
+      outcome: 'ok',
+      traceId: diagnosticTraceId,
+      values: {'committed': true, 'direction': 'incoming'},
+    );
     // 115 P2: the message is durably persisted — confirm custody to the
     // sender (relay-drain arrivals only, per the origin contract).
     await maybeSendDeliveryReceipt(
@@ -1528,6 +1762,13 @@ handleIncomingChatMessage({
 
   final storedTextPreview = buildTextPreview(conversationMessage.text);
 
+  AppDiagnostics.instance.record(
+    feature: 'message',
+    stage: 'store',
+    outcome: 'ok',
+    traceId: diagnosticTraceId,
+    values: {'committed': true, 'direction': 'incoming'},
+  );
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_RECEIVE_STORED',

@@ -50,6 +50,7 @@ class MainActivity : FlutterActivity() {
     private var mdnsResolver: MdnsResolver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.mknoon.app.diagnostics.MknoonAppDiagnostics.get(this).record("startup", "launch", "started", "bootstrap")
         // N04: commit launch invalidation before FlutterActivity can expose a
         // stale foreground route to Dart. Failure remains fail-notify inside the
         // one process-scoped store; lifecycle startup itself must stay total.

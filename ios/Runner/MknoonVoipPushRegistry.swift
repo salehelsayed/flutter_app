@@ -2,6 +2,13 @@ import Flutter
 import Foundation
 import PushKit
 
+/// Diagnostic provenance only. Never participates in token or call authority.
+internal enum MknoonVoipInvalidationReason: String, Codable {
+  case unknown
+  case callsDisabled = "calls_disabled"
+  case pushkitTokenInvalidated = "pushkit_token_invalidated"
+}
+
 internal struct MknoonVoipTokenSnapshot: Codable, Equatable {
   static let protocolVersion = 1
   static let capabilityVersion = 1
@@ -13,9 +20,12 @@ internal struct MknoonVoipTokenSnapshot: Codable, Equatable {
   let capabilityVersion: Int
   let refreshEpoch: Int64
   let invalidated: Bool
+  var invalidationReason: MknoonVoipInvalidationReason? = nil
+  var operationId: UUID? = nil
+  var parentOperationId: UUID? = nil
 
   var wireValue: [String: Any] {
-    [
+    var value: [String: Any] = [
       "version": version,
       "token": token,
       "environment": environment,
@@ -24,6 +34,31 @@ internal struct MknoonVoipTokenSnapshot: Codable, Equatable {
       "refreshEpoch": refreshEpoch,
       "invalidated": invalidated,
     ]
+    if let invalidationReason { value["invalidationReason"] = invalidationReason.rawValue }
+    if let operationId { value["operationId"] = operationId.uuidString.lowercased() }
+    if let parentOperationId { value["parentOperationId"] = parentOperationId.uuidString.lowercased() }
+    return value
+  }
+}
+
+extension MknoonVoipTokenSnapshot {
+  private enum CodingKeys: String, CodingKey {
+    case version, token, environment, topic, capabilityVersion, refreshEpoch, invalidated
+    case invalidationReason, operationId, parentOperationId
+  }
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    version = try values.decode(Int.self, forKey: .version)
+    token = try values.decode(String.self, forKey: .token)
+    environment = try values.decode(String.self, forKey: .environment)
+    topic = try values.decode(String.self, forKey: .topic)
+    capabilityVersion = try values.decode(Int.self, forKey: .capabilityVersion)
+    refreshEpoch = try values.decode(Int64.self, forKey: .refreshEpoch)
+    invalidated = try values.decode(Bool.self, forKey: .invalidated)
+    // Diagnostic corruption/forward-version metadata cannot reject valid authority.
+    invalidationReason = try? values.decodeIfPresent(MknoonVoipInvalidationReason.self, forKey: .invalidationReason)
+    operationId = try? values.decodeIfPresent(UUID.self, forKey: .operationId)
+    parentOperationId = try? values.decodeIfPresent(UUID.self, forKey: .parentOperationId)
   }
 }
 
@@ -207,7 +242,11 @@ internal final class MknoonVoipTokenAuthority {
   /// Keeps the last exact epoch across process restart so Dart can revoke that
   /// generation without ever receiving or persisting a guessed environment.
   @discardableResult
-  func invalidate() -> Bool {
+  func invalidate(
+    reason: MknoonVoipInvalidationReason = .unknown,
+    operationId: UUID? = nil,
+    parentOperationId: UUID? = nil
+  ) -> Bool {
     synchronized {
       let current: MknoonVoipTokenSnapshot
       switch readState() {
@@ -226,7 +265,10 @@ internal final class MknoonVoipTokenAuthority {
         topic: current.topic,
         capabilityVersion: MknoonVoipTokenSnapshot.capabilityVersion,
         refreshEpoch: current.refreshEpoch,
-        invalidated: true
+        invalidated: true,
+        invalidationReason: reason,
+        operationId: operationId ?? (MknoonCallDiagnosticScope.current["operationId"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID(),
+        parentOperationId: parentOperationId ?? (MknoonCallDiagnosticScope.current["parentOperationId"] as? String).flatMap(UUID.init(uuidString:))
       )
       guard commit(invalidated) else { return false }
       eventHandler?(invalidated)
@@ -350,6 +392,16 @@ internal final class MknoonVoipTokenBridge: NSObject, FlutterStreamHandler {
   }
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    var arguments = call.arguments as? [String: Any]
+    let metadata = arguments?.removeValue(forKey: "diagnostics") as? [String: Any] ?? [:]
+    let cleaned: Any?
+    if let arguments { cleaned = arguments } else { cleaned = call.arguments }
+    MknoonCallDiagnosticScope.withContext(MknoonCallDiagnosticSpool.context(metadata)) {
+      handleCore(FlutterMethodCall(methodName: call.method, arguments: cleaned), result: result)
+    }
+  }
+
+  private func handleCore(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "readCurrent":
       guard Self.versionOnly(call.arguments) else {
@@ -364,6 +416,7 @@ internal final class MknoonVoipTokenBridge: NSObject, FlutterStreamHandler {
       }
       let minimum = Int64(max(0, now().timeIntervalSince1970.rounded(.down)))
       guard let advanced = authority.advanceRefreshEpoch(expected: expected, minimum: minimum) else {
+        MknoonCallDiagnostics.shared.record(stage: "authority", action: "replace", outcome: "rejected", reason: "stale_epoch")
         result(
           FlutterError(
             code: "epoch_advance_refused",
@@ -373,6 +426,7 @@ internal final class MknoonVoipTokenBridge: NSObject, FlutterStreamHandler {
         )
         return
       }
+      MknoonCallDiagnostics.shared.record(stage: "authority", action: "replace", outcome: "ok", reason: "stale_epoch")
       result(advanced.wireValue)
     default:
       result(FlutterMethodNotImplemented)
@@ -560,8 +614,13 @@ internal protocol MknoonVoipEnvironmentProviding {
 
 internal protocol MknoonVoipPushRegistrationDriving: AnyObject {
   var enabled: Bool { get }
+  var cachedToken: Data? { get }
   func enable(delegate: PKPushRegistryDelegate)
   func disable()
+}
+
+extension MknoonVoipPushRegistrationDriving {
+  var cachedToken: Data? { nil }
 }
 
 internal final class SystemVoipPushRegistrationDriver: MknoonVoipPushRegistrationDriving {
@@ -569,6 +628,10 @@ internal final class SystemVoipPushRegistrationDriver: MknoonVoipPushRegistratio
 
   var enabled: Bool {
     registry?.desiredPushTypes?.contains(.voIP) == true
+  }
+
+  var cachedToken: Data? {
+    registry?.pushToken(for: .voIP)
   }
 
   func enable(delegate: PKPushRegistryDelegate) {
@@ -680,6 +743,7 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
   private let parser: VoipPayloadParser
   let tokenAuthority: MknoonVoipTokenAuthority
   private let capability: NativeCallCapabilityPersisting
+  private var requestedCapabilityEnabled: Bool
   private let registrationDriver: MknoonVoipPushRegistrationDriving
   private let environmentProvider: MknoonVoipEnvironmentProviding
   private let bundleIdentifier: () -> String?
@@ -703,6 +767,7 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
     self.parser = parser
     self.tokenAuthority = tokenAuthority
     self.capability = capability
+    self.requestedCapabilityEnabled = capability.enabled
     self.registrationDriver = registrationDriver
     self.environmentProvider = environmentProvider
     self.bundleIdentifier = bundleIdentifier
@@ -713,7 +778,7 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
 
   @discardableResult
   func start() -> Bool {
-    applyCapability(capability.enabled)
+    applyCapability(requestedCapabilityEnabled)
   }
 
   func stop() {
@@ -722,15 +787,29 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
 
   @discardableResult
   func applyCapability(_ enabled: Bool) -> Bool {
-    onMain {
+    MknoonCallDiagnostics.shared.record(stage: "authority", action: enabled ? "enable" : "disable",
+                                        outcome: "started", reason: enabled ? "bootstrap" : "calls_disabled")
+    return onMain {
+      // The controller invokes this before persisting disable. Even when that
+      // write fails, retained push delivery must stay admission-disabled.
+      self.requestedCapabilityEnabled = enabled
+      // The receiver belongs to the process, including a cold PushKit launch
+      // with calls disabled. A push already accepted by iOS still requires a
+      // CallKit report; unregistering or dropping its delegate here can leave
+      // that push without a callback and terminate the app with 0xbaadca11.
+      // Logical capability below still gates admission and token publication.
+      self.registrationDriver.enable(delegate: self)
+      self.diagnosticSink(.registration(enabled: true))
       if enabled {
-        self.registrationDriver.enable(delegate: self)
-        self.diagnosticSink(.registration(enabled: true))
+        // A retained registry may have the same OS token after re-enable and
+        // receive no rotation callback. Restore its invalidated local epoch
+        // through the same capability-checked token update path.
+        if let token = self.registrationDriver.cachedToken {
+          _ = self.acceptUpdatedVoipToken(token)
+        }
         return true
       }
-      self.registrationDriver.disable()
-      self.diagnosticSink(.registration(enabled: false))
-      let invalidated = self.tokenAuthority.invalidate()
+      let invalidated = self.tokenAuthority.invalidate(reason: .callsDisabled)
       self.diagnosticSink(.tokenInvalidation(accepted: invalidated))
       return invalidated
     }
@@ -747,10 +826,11 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
 
   @discardableResult
   func acceptUpdatedVoipToken(_ token: Data) -> Bool {
-    guard capability.enabled,
+    guard effectiveCapabilityEnabled,
           let environment = environmentProvider.environment(),
           let bundle = bundleIdentifier(), !bundle.isEmpty
     else {
+      MknoonCallDiagnostics.shared.record(stage: "authority", action: "publish", outcome: "rejected", reason: "capability_unavailable")
       diagnosticSink(.tokenUpdate(accepted: false))
       return false
     }
@@ -760,6 +840,8 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
       topic: bundle + ".voip"
     )
     diagnosticSink(.tokenUpdate(accepted: accepted))
+    MknoonCallDiagnostics.shared.record(stage: "authority", action: "commit", outcome: accepted ? "ok" : "failed",
+                                        reason: accepted ? "native_token_updated" : "native_persistence_failed")
     return accepted
   }
 
@@ -768,7 +850,8 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
     didInvalidatePushTokenFor type: PKPushType
   ) {
     guard type == .voIP else { return }
-    let invalidated = tokenAuthority.invalidate()
+    let invalidated = tokenAuthority.invalidate(reason: .pushkitTokenInvalidated)
+    MknoonCallDiagnostics.shared.record(stage: "authority", action: "invalidate", outcome: invalidated ? "ok" : "failed", reason: "pushkit_token_invalidated")
     diagnosticSink(.tokenInvalidation(accepted: invalidated))
   }
 
@@ -821,17 +904,27 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
     reportPolicy: MknoonVoipPushReportPolicy,
     completion: @escaping () -> Void
   ) {
+    let appTrace = UUID().uuidString.lowercased()
+    MknoonAppDiagnostics.shared.record("push", "receive", "ok", values: ["direction": "incoming"], traceId: appTrace)
     let gate = VoipPushCompletionGate(completion)
     let emitDiagnostic = diagnosticSink
+    let (authorityPayload, diagnosticTrace) = MknoonCallDiagnostics.pushMetadata(dictionary)
+    let diagnosticContext: [String: Any] = diagnosticTrace.map { ["traceId": $0, "role": "callee"] } ?? ["role": "callee"]
+    MknoonCallDiagnostics.shared.record(stage: "push", action: "receive", outcome: "ok", context: diagnosticContext)
     emitDiagnostic(.delegateEntry(reportPolicy))
-    emitDiagnostic(.capability(enabled: capability.enabled))
+    emitDiagnostic(.capability(enabled: effectiveCapabilityEnabled))
     let payload: VoipWakePayload
-    switch parser.parse(dictionary: dictionary) {
+    switch parser.parse(dictionary: authorityPayload) {
     case let .accepted(acceptedPayload):
+      MknoonAppDiagnostics.shared.record("push", "parse", "ok", traceId: appTrace)
       emitDiagnostic(.parserAccepted)
       payload = acceptedPayload
+      if let diagnosticTrace { MknoonCallDiagnostics.shared.bind(handle: payload.callHandle, traceId: diagnosticTrace) }
+      MknoonCallDiagnostics.shared.record(handle: payload.callHandle, stage: "push", action: "parse", outcome: "ok", context: diagnosticContext)
     case let .rejected(reason):
+      MknoonAppDiagnostics.shared.record("push", "parse", "rejected", "invalid_payload", traceId: appTrace)
       emitDiagnostic(.parserRejected(reason))
+      MknoonCallDiagnostics.shared.record(stage: "push", action: "parse", outcome: "rejected", reason: "rejected_payload", context: diagnosticContext)
       guard reportPolicy != .notRequired else {
         emitDiagnostic(.rejectedWithoutReportCompleted)
         gate.complete()
@@ -843,14 +936,36 @@ internal final class MknoonVoipPushRegistry: NSObject, PKPushRegistryDelegate {
       }
       return
     }
-    let shouldWakeRuntime = capability.enabled
-    controller.presentIncoming(payload, reportPolicy: reportPolicy) { result in
+    let completePresentation: (MknoonCallPresentationResult) -> Void = { result in
+      MknoonAppDiagnostics.shared.record("push", "presentation", result == .presented ? "ok" : result == .duplicate ? "ok" : "failed",
+                                       result == .presented || result == .duplicate ? "none" : "unknown", values: ["committed": result == .presented], traceId: appTrace)
       emitDiagnostic(.presentation(result))
+      MknoonCallDiagnostics.shared.record(handle: payload.callHandle, stage: "presentation", action: "present",
+                                          outcome: result == .presented ? "ok" : result == .duplicate ? "duplicate" : "failed",
+                                          reason: result == .presented || result == .duplicate ? "none" : "native_lifecycle_failed", context: diagnosticContext)
       gate.complete()
     }
+    guard effectiveCapabilityEnabled else {
+      // A failed disable persistence write may leave the durable capability
+      // true. Never offer that late push to the admission path; fulfill only
+      // the OS-required report, without a descriptor or Flutter wake.
+      if reportPolicy == .notRequired {
+        completePresentation(.disabled)
+      } else {
+        controller.satisfyRequiredVoipPushReport(reportPolicy: reportPolicy) {
+          completePresentation(.disabled)
+        }
+      }
+      return
+    }
+    controller.presentIncoming(payload, reportPolicy: reportPolicy, completion: completePresentation)
     // This may cause the established implicit engine to attach, but it is not
     // part of the completion chain above.
-    if shouldWakeRuntime { runtimeWake() }
+    if effectiveCapabilityEnabled { runtimeWake() }
+  }
+
+  private var effectiveCapabilityEnabled: Bool {
+    requestedCapabilityEnabled && capability.enabled
   }
 
   private func onMain<T>(_ action: @escaping () -> T) -> T {

@@ -3823,7 +3823,7 @@ class _HeadProvenanceCampaign {
       '-f',
       '0x10000000',
       '-n',
-      '$appPackage/.MainActivity',
+      '$appPackage/com.mknoon.app.MainActivity',
     ]);
 
     await resumeLauncherRoot();
@@ -5333,7 +5333,7 @@ class _HeadProvenanceCampaign {
       'start',
       '-W',
       '-n',
-      '$appPackage/.MainActivity',
+      '$appPackage/com.mknoon.app.MainActivity',
     ]);
   }
 

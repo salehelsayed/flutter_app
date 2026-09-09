@@ -674,23 +674,34 @@ Future<void> runIntroE2EActions({
   await _deleteConfigIfPresent();
 
   final resultFile = await _resultFile();
-  await resultFile.writeAsString(
-    jsonEncode({'stepId': config['stepId'], 'status': 'running'}),
-  );
+  Future<void> writeProgress(String phase) async {
+    await resultFile.writeAsString(
+      jsonEncode({
+        'stepId': config['stepId'],
+        'status': 'running',
+        'phase': phase,
+      }),
+    );
+  }
+  await writeProgress('p2p_ready');
 
   try {
     await _waitForP2PReady(p2pService);
+    await writeProgress('health_check');
     await _performImmediateHealthCheckForIntroE2E(p2pService);
+    await writeProgress('inbox_drain');
     await _drainOfflineInboxForIntroE2E(p2pService, phase: 'generic_preamble');
 
     // Main-app device campaigns learn peer QR payloads only after both app
     // processes have launched. Make the existing `add_contacts` contract work
     // for those live configs as well as configs staged before startup. The add
     // use case is idempotent, so pre-populated simulator contacts remain safe.
+    await writeProgress('contact_persistence');
     await prePopulateContactsFromIntroE2EConfig(
       contactRepo: contactRepo,
       configOverride: config,
     );
+    await writeProgress('actions');
 
     if (config['send_contact_requests_for_added_contacts'] == true) {
       await _sendContactRequestsForAddedContacts(
@@ -812,6 +823,7 @@ Future<void> runIntroE2EActions({
       openConversationByPeerId: openConversationByPeerId,
     );
 
+    await writeProgress('snapshot');
     final snapshot = config['skip_snapshot'] == true
         ? <String, dynamic>{'skipped': true}
         : await _collectSnapshot(
@@ -836,6 +848,7 @@ Future<void> runIntroE2EActions({
       }),
     );
   } catch (e, stackTrace) {
+    await writeProgress('failure_snapshot');
     final snapshot = config['skip_snapshot'] == true
         ? <String, dynamic>{'skipped': true}
         : await _collectSnapshot(

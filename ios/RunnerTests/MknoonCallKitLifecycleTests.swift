@@ -170,7 +170,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     rig.provider.delayedReportCompletions[0](nil)
 
     XCTAssertEqual(authenticatedResult, true)
-    XCTAssertEqual(pushResult, .duplicate)
+    XCTAssertNil(pushResult, "each PushKit delivery must await its own CallKit callback")
     XCTAssertEqual(rig.store.snapshot()?.events.map(\.type), [.presented])
 
     rig.provider.delayedReportCompletions[1](NSError(
@@ -178,9 +178,146 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       code: CXErrorCodeIncomingCallError.Code.callUUIDAlreadyExists.rawValue
     ))
 
+    XCTAssertEqual(pushResult, .duplicate)
     XCTAssertTrue(rig.provider.endReports.isEmpty)
     XCTAssertNil(rig.store.snapshot()?.terminalEvent)
     XCTAssertEqual(rig.store.snapshot()?.presented, true)
+  }
+
+  func testCoalescedPushWaitsForBothReportCallbacksAndCompletesExactlyOnce() {
+    let rig = makeRig()
+    rig.provider.delayedReportCompletion = { _ in }
+    var pushResults: [MknoonCallPresentationResult] = []
+    rig.controller.presentAuthenticated(
+      callHandle: callA.uuidString.lowercased(), expiresAtMs: now + 30_000
+    ) { _ in }
+    rig.controller.presentIncoming(payload(callA), reportPolicy: .legacyRequired) {
+      pushResults.append($0)
+    }
+    guard rig.provider.delayedReportCompletions.count == 2 else {
+      return XCTFail("each required push needs its own CallKit report")
+    }
+    let alreadyReported = NSError(
+      domain: CXErrorDomainIncomingCall,
+      code: CXErrorCodeIncomingCallError.Code.callUUIDAlreadyExists.rawValue
+    )
+    rig.provider.delayedReportCompletions[1](alreadyReported)
+    XCTAssertTrue(pushResults.isEmpty, "application presentation is still unresolved")
+    rig.provider.delayedReportCompletions[0](nil)
+    XCTAssertEqual(pushResults, [.duplicate])
+    rig.provider.delayedReportCompletions[1](alreadyReported)
+    XCTAssertEqual(pushResults, [.duplicate])
+  }
+
+  func testSuccessfulCoalescedPushAfterTerminalClosesItsNewCallKitReport() {
+    let rig = makeRig()
+    rig.provider.delayedReportCompletion = { _ in }
+    var pushResults: [MknoonCallPresentationResult] = []
+    rig.controller.presentAuthenticated(
+      callHandle: callA.uuidString.lowercased(), expiresAtMs: now + 30_000
+    ) { _ in }
+    rig.controller.presentIncoming(payload(callA), reportPolicy: .metadataRequired) {
+      pushResults.append($0)
+    }
+    guard rig.provider.delayedReportCompletions.count == 2 else {
+      return XCTFail("each required push needs its own CallKit report")
+    }
+    rig.provider.delayedReportCompletions[0](nil)
+    XCTAssertTrue(rig.controller.endFromDart(callA))
+    let terminal = rig.store.snapshot()?.terminalEvent
+    XCTAssertEqual(rig.provider.endReports.map(\.0), [callA])
+    XCTAssertTrue(pushResults.isEmpty)
+
+    rig.provider.delayedReportCompletions[1](nil)
+
+    XCTAssertEqual(rig.provider.endReports.map(\.0), [callA, callA],
+                   "a successful late report creates another OS surface to retire")
+    XCTAssertEqual(rig.store.snapshot()?.terminalEvent, terminal)
+    XCTAssertEqual(pushResults.count, 1)
+  }
+
+  func testCoalescedPushSuccessCanOwnCallBeforePrimaryAlreadyExistsCallback() {
+    let rig = makeRig()
+    rig.provider.delayedReportCompletion = { _ in }
+    var authenticatedResult: Bool?
+    var pushResults: [MknoonCallPresentationResult] = []
+    rig.controller.presentAuthenticated(
+      callHandle: callA.uuidString.lowercased(), expiresAtMs: now + 30_000
+    ) { authenticatedResult = $0 }
+    rig.controller.presentIncoming(payload(callA), reportPolicy: .metadataRequired) {
+      pushResults.append($0)
+    }
+    guard rig.provider.delayedReportCompletions.count == 2 else {
+      return XCTFail("each required push needs its own CallKit report")
+    }
+    rig.provider.delayedReportCompletions[1](nil)
+    XCTAssertTrue(pushResults.isEmpty)
+    rig.provider.delayedReportCompletions[0](NSError(
+      domain: CXErrorDomainIncomingCall,
+      code: CXErrorCodeIncomingCallError.Code.callUUIDAlreadyExists.rawValue
+    ))
+
+    XCTAssertEqual(authenticatedResult, true)
+    XCTAssertEqual(pushResults, [.duplicate])
+    XCTAssertTrue(rig.provider.endReports.isEmpty)
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    XCTAssertEqual(rig.store.snapshot()?.events.map(\.type), [.presented])
+  }
+
+  func testControllerReleaseStillCompletesEveryPendingRequiredPush() {
+    var rig: CallKitRig? = makeRig()
+    let provider = rig!.provider
+    provider.delayedReportCompletion = { _ in }
+    var results: [MknoonCallPresentationResult] = []
+    rig!.controller.presentIncoming(payload(callA), reportPolicy: .metadataRequired) {
+      results.append($0)
+    }
+    rig!.controller.presentIncoming(payload(callA), reportPolicy: .metadataRequired) {
+      results.append($0)
+    }
+    weak var controller = rig!.controller
+    rig = nil
+    XCTAssertNil(controller)
+    guard provider.delayedReportCompletions.count == 2 else {
+      return XCTFail("each required push needs its own CallKit report")
+    }
+    provider.delayedReportCompletions[0](nil)
+    XCTAssertEqual(results, [.callKitFailure])
+    provider.delayedReportCompletions[1](nil)
+    XCTAssertEqual(results, [.callKitFailure, .callKitFailure])
+    provider.delayedReportCompletions[1](nil)
+    XCTAssertEqual(results.count, 2)
+  }
+
+  func testSuccessfulLegacyDuplicateReportPreservesPresentedIncomingCall() {
+    let rig = makeRig()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+
+    XCTAssertEqual(present(rig, payload(callA), reportPolicy: .legacyRequired), .duplicate)
+
+    XCTAssertEqual(rig.provider.incomingReports.map(\.0), [callA, callA])
+    XCTAssertTrue(rig.provider.endReports.isEmpty)
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    XCTAssertEqual(rig.store.snapshot()?.events.map(\.type), [.presented])
+  }
+
+  func testLegacyDuplicateReportSuccessAfterTerminalDoesNotReopenIncomingCall() {
+    let rig = makeRig()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    rig.provider.delayedReportCompletion = { _ in }
+    var results: [MknoonCallPresentationResult] = []
+    rig.controller.presentIncoming(payload(callA), reportPolicy: .legacyRequired) {
+      results.append($0)
+    }
+    XCTAssertTrue(rig.controller.endFromDart(callA))
+    let terminal = rig.store.snapshot()?.terminalEvent
+    XCTAssertEqual(rig.provider.endReports.map(\.0), [callA])
+
+    rig.provider.delayedReportCompletions[0](nil)
+
+    XCTAssertEqual(rig.provider.endReports.map(\.0), [callA, callA])
+    XCTAssertEqual(rig.store.snapshot()?.terminalEvent, terminal)
+    XCTAssertEqual(results, [.duplicate])
   }
 
   func testAuthenticatedReceiptReplayCannotClaimPresentationWithoutCallKit() throws {
@@ -796,6 +933,154 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(rig.provider.endReports.last?.1, .failed)
   }
 
+  func testFailedDisablePersistenceStillBlocksEveryNativeAdmissionUntilExplicitEnable() {
+    let rig = makeRig()
+    rig.capability.failWrites = true
+    XCTAssertFalse(rig.controller.setCapabilityEnabled(false))
+    XCTAssertTrue(rig.capability.enabled)
+    XCTAssertFalse(rig.controller.isCapabilityEnabled())
+    XCTAssertEqual(present(rig, payload(callA)), .disabled)
+    var authenticated: Bool?
+    var outgoing: Bool?
+    rig.controller.presentAuthenticated(
+      callHandle: callA.uuidString.lowercased(), expiresAtMs: now + 30_000
+    ) { authenticated = $0 }
+    rig.controller.registerOutgoingAuthenticated(
+      callHandle: callA.uuidString.lowercased(), expiresAtMs: now + 30_000
+    ) { outgoing = $0 }
+    XCTAssertEqual(authenticated, false)
+    XCTAssertEqual(outgoing, false)
+    XCTAssertNil(rig.store.snapshot())
+    XCTAssertTrue(rig.provider.incomingReports.isEmpty)
+    XCTAssertTrue(rig.provider.outgoingConnecting.isEmpty)
+
+    XCTAssertEqual(present(rig, payload(callA), reportPolicy: .metadataRequired), .disabled)
+    XCTAssertEqual(rig.provider.incomingReports.count, 1)
+    XCTAssertEqual(rig.provider.endReports.map(\.0), rig.provider.incomingReports.map(\.0))
+    XCTAssertNil(rig.store.snapshot(), "mandatory reporting does not re-enable application calls")
+
+    rig.capability.failWrites = false
+    XCTAssertTrue(rig.controller.setCapabilityEnabled(true))
+    XCTAssertTrue(rig.controller.isCapabilityEnabled())
+    XCTAssertEqual(present(rig, payload(callB)), .presented)
+  }
+
+  func testFailedDisableCannotReadoptIncomingDescriptorWhoseTerminalWriteFailed() {
+    let rig = makeRig()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    rig.capability.failWrites = true
+    rig.backend.failWrites = true
+    XCTAssertFalse(rig.controller.setCapabilityEnabled(false))
+    XCTAssertTrue(rig.capability.enabled)
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    var accepted: Bool?
+
+    rig.controller.presentAuthenticated(
+      callHandle: callA.uuidString.lowercased(), expiresAtMs: now + 30_000
+    ) { accepted = $0 }
+
+    XCTAssertEqual(accepted, false)
+    XCTAssertFalse(rig.controller.isCapabilityEnabled())
+    XCTAssertFalse(rig.controller.adopt(callA))
+    XCTAssertEqual(rig.provider.incomingReports.map(\.0), [callA])
+  }
+
+  func testRecoveredStorageCannotReviveWithdrawnIncomingOrOutgoingCall() {
+    for outgoing in [false, true] {
+      let rig = makeRig()
+      if outgoing {
+        rig.controller.registerOutgoingAuthenticated(
+          callHandle: callA.uuidString.lowercased(), expiresAtMs: now + 30_000
+        ) { XCTAssertTrue($0) }
+      } else {
+        XCTAssertEqual(present(rig, payload(callA)), .presented)
+        XCTAssertTrue(rig.controller.handleAnswer(callA))
+      }
+      let sequence = rig.store.snapshot()!.highestSequence
+      XCTAssertTrue(rig.controller.acknowledge(callA, through: sequence, disposition: .adopted))
+      XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callA))
+      rig.capability.failWrites = true
+      rig.backend.failWrites = true
+      XCTAssertFalse(rig.controller.setCapabilityEnabled(false))
+      rig.backend.failWrites = false
+      rig.capability.failWrites = false
+      let retained = rig.store.snapshot()
+      let prepared = rig.audio.prepareCount
+      let transactions = rig.transactions.transactions.count
+      let provider = CXProvider(configuration: CXProviderConfiguration())
+
+      XCTAssertFalse(rig.controller.handleAnswer(callA))
+      rig.controller.answerFromDart(callA) { XCTAssertFalse($0) }
+      XCTAssertEqual(rig.transactions.transactions.count, transactions)
+      XCTAssertFalse(rig.controller.acknowledge(callA, through: sequence, disposition: .adopted))
+      XCTAssertFalse(rig.controller.adopt(callA))
+      for state in ["ringing", "connecting", "active", "connected"] {
+        XCTAssertFalse(rig.controller.project(callA, state: state))
+      }
+      XCTAssertFalse(rig.controller.handleMute(callA, muted: true))
+      XCTAssertFalse(rig.controller.recordAudioActivatedForTests(callA))
+      rig.controller.provider(provider, didActivate: AVAudioSession.sharedInstance())
+      XCTAssertFalse(rig.controller.activateAudio(callA))
+      XCTAssertFalse(rig.controller.startRingback(callA))
+      XCTAssertFalse(rig.controller.requestRoute(callA, route: "speaker"))
+      let start = RecordedStartCallAction(call: callA, handle: CXHandle(type: .generic, value: "call"))
+      rig.controller.provider(provider, perform: start)
+      XCTAssertEqual(start.failures, 1)
+      XCTAssertEqual(start.fulfillments, 0)
+      XCTAssertEqual(rig.audio.prepareCount, prepared)
+      XCTAssertEqual(rig.store.snapshot(), retained)
+      XCTAssertFalse(rig.controller.audioState(callA)?.active ?? true)
+
+      XCTAssertTrue(rig.controller.project(callA, state: "ended"), "terminal cleanup remains writable")
+      let terminalSequence = rig.store.snapshot()!.highestSequence
+      XCTAssertTrue(rig.controller.acknowledge(callA, through: terminalSequence, disposition: .terminal))
+      XCTAssertNil(rig.store.snapshot())
+    }
+  }
+
+  func testPendingIncomingReportCannotPresentAfterFailedDisableAndStorageRecovery() {
+    let rig = makeRig()
+    rig.provider.delayedReportCompletion = { _ in }
+    var result: MknoonCallPresentationResult?
+    rig.controller.presentIncoming(payload(callA), reportPolicy: .metadataRequired) { result = $0 }
+    rig.capability.failWrites = true
+    rig.backend.failWrites = true
+    XCTAssertFalse(rig.controller.setCapabilityEnabled(false))
+    rig.backend.failWrites = false
+    rig.capability.failWrites = false
+    XCTAssertEqual(rig.provider.endReports.map(\.0), [callA])
+
+    rig.provider.delayedReportCompletions[0](nil)
+
+    XCTAssertEqual(result, .disabled)
+    XCTAssertEqual(rig.provider.endReports.map(\.0), [callA, callA])
+    XCTAssertFalse(rig.store.snapshot()?.presented ?? true)
+    XCTAssertNotNil(rig.store.snapshot()?.terminalEvent)
+    XCTAssertFalse(rig.controller.isCapabilityEnabled())
+  }
+
+  func testPendingOutgoingTransactionCannotConnectAfterFailedDisableAndStorageRecovery() {
+    let rig = makeRig()
+    rig.transactions.delayRequests = true
+    var accepted: Bool?
+    rig.controller.registerOutgoingAuthenticated(
+      callHandle: callA.uuidString.lowercased(), expiresAtMs: now + 30_000
+    ) { accepted = $0 }
+    rig.capability.failWrites = true
+    rig.backend.failWrites = true
+    XCTAssertFalse(rig.controller.setCapabilityEnabled(false))
+    rig.backend.failWrites = false
+    rig.capability.failWrites = false
+
+    rig.transactions.delayedCompletion?(nil)
+
+    XCTAssertEqual(accepted, false)
+    XCTAssertTrue(rig.provider.outgoingConnecting.isEmpty)
+    XCTAssertFalse(rig.store.snapshot()?.presented ?? true)
+    XCTAssertNotNil(rig.store.snapshot()?.terminalEvent)
+    XCTAssertFalse(rig.controller.isCapabilityEnabled())
+  }
+
   func testCapabilityEnableStillRequiresDurabilityBeforeRegistration() {
     let rig = makeRig()
     rig.capability.enabled = false
@@ -940,6 +1225,81 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
   }
 
   // MARK: - Ringback
+
+  func testAudioSessionConfigurationFailureFailsAnswerAndEndsTheCall() {
+    let rig = makeRig()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    rig.audio.prepareError = NSError(domain: "audio-test", code: 1)
+    let action = RecordedAnswerCallAction(call: callA)
+    let provider = CXProvider(configuration: CXProviderConfiguration())
+
+    rig.controller.provider(provider, perform: action)
+
+    XCTAssertEqual(action.failures, 1)
+    XCTAssertEqual(action.fulfillments, 0)
+    XCTAssertEqual(rig.store.snapshot()?.terminalEvent?.type, .nativeFailure)
+    XCTAssertEqual(rig.provider.endReports.last?.1, .failed)
+    XCTAssertFalse(rig.controller.audioState(callA)?.active ?? true)
+  }
+
+  func testAudioSessionConfigurationFailureFailsStartAndEndsTheCall() {
+    let rig = makeRig()
+    registerOutgoing(rig)
+    rig.audio.prepareError = NSError(domain: "audio-test", code: 1)
+    let action = RecordedStartCallAction(call: callA, handle: CXHandle(type: .generic, value: "call"))
+    let provider = CXProvider(configuration: CXProviderConfiguration())
+
+    rig.controller.provider(provider, perform: action)
+
+    XCTAssertEqual(action.failures, 1)
+    XCTAssertEqual(action.fulfillments, 0)
+    XCTAssertEqual(rig.store.snapshot()?.terminalEvent?.type, .nativeFailure)
+    XCTAssertEqual(rig.provider.endReports.last?.1, .failed)
+    XCTAssertFalse(rig.controller.startRingback(callA))
+  }
+
+  func testInterruptionAndMediaResetPauseRingbackUntilCallKitReactivates() {
+    for notification in [
+      AVAudioSession.interruptionNotification,
+      AVAudioSession.mediaServicesWereResetNotification,
+    ] {
+      let rig = makeRig()
+      registerOutgoing(rig)
+      XCTAssertTrue(rig.controller.recordAudioActivatedForTests(callA))
+      XCTAssertTrue(rig.controller.startRingback(callA))
+      rig.notificationCenter.post(
+        name: notification,
+        object: nil,
+        userInfo: [
+          AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue,
+        ]
+      )
+
+      XCTAssertFalse(rig.controller.audioState(callA)?.active ?? true)
+      XCTAssertFalse(rig.ringback.playing, "an inactive session must not retain a playing tone")
+      XCTAssertEqual(rig.ringback.stopCount, 1)
+      rig.notificationCenter.post(
+        name: AVAudioSession.interruptionNotification,
+        object: nil,
+        userInfo: [
+          AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.ended.rawValue,
+        ]
+      )
+      XCTAssertEqual(rig.ringback.startCount, 1, "notification alone cannot reactivate audio")
+
+      let provider = CXProvider(configuration: CXProviderConfiguration())
+      rig.controller.provider(provider, didActivate: AVAudioSession.sharedInstance())
+      XCTAssertTrue(rig.ringback.playing)
+      XCTAssertEqual(rig.ringback.startCount, 2, "CallKit reactivation restarts the wanted tone")
+      XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+
+      XCTAssertTrue(rig.controller.endFromDart(callA))
+      rig.notificationCenter.post(name: notification, object: nil)
+      rig.controller.provider(provider, didActivate: AVAudioSession.sharedInstance())
+      XCTAssertFalse(rig.ringback.playing)
+      XCTAssertEqual(rig.ringback.startCount, 2, "callbacks after teardown cannot restart the tone")
+    }
+  }
 
   private func registerOutgoing(_ rig: CallKitRig) {
     var registered: Bool?
@@ -1158,18 +1518,38 @@ final class FakeCallProvider: MknoonCallProviding {
   }
 }
 
+private final class RecordedStartCallAction: CXStartCallAction {
+  var failures = 0
+  var fulfillments = 0
+
+  override func fail() { failures += 1 }
+  override func fulfill() { fulfillments += 1 }
+}
+
+private final class RecordedAnswerCallAction: CXAnswerCallAction {
+  var failures = 0
+  var fulfillments = 0
+
+  override func fail() { failures += 1 }
+  override func fulfill() { fulfillments += 1 }
+}
+
 final class FakeCallTransactions: MknoonCallTransactionRequesting {
   var transactions: [CXTransaction] = []
   var nextError: Error?
+  var delayRequests = false
+  var delayedCompletion: ((Error?) -> Void)?
 
   func request(_ transaction: CXTransaction, completion: @escaping (Error?) -> Void) {
     transactions.append(transaction)
-    completion(nextError)
+    if delayRequests { delayedCompletion = completion }
+    else { completion(nextError) }
   }
 }
 
 final class FakeCallAudio: MknoonCallAudioManaging {
   var prepareCount = 0
+  var prepareError: Error?
   var releaseCount = 0
   var requestedRoutes: [String] = []
   var state = (
@@ -1177,7 +1557,10 @@ final class FakeCallAudio: MknoonCallAudioManaging {
     available: ["system_default", "earpiece", "speaker", "wired_headset", "bluetooth"]
   )
 
-  func prepareForCallKitActivation() throws { prepareCount += 1 }
+  func prepareForCallKitActivation() throws {
+    prepareCount += 1
+    if let prepareError { throw prepareError }
+  }
   func releaseAfterCallKitDeactivation() { releaseCount += 1 }
   func routeState() -> (route: String, available: [String]) { state }
   func requestRoute(_ route: String) -> Bool {

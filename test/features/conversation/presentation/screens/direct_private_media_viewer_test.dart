@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
@@ -394,6 +395,8 @@ void main() {
   test(
     'typed prepare and settle distinguish success from lifecycle disposition',
     () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
       final guard = _MutableContinuityGuard();
       final protected = _fixture(mode: PrivateMediaMode.protected);
       final prepared = await protected.controller.prepareResult(
@@ -403,6 +406,17 @@ void main() {
       expect(prepared.isGranted, isTrue);
       expect(prepared.failureReason, isNull);
       final grant = prepared.grant!;
+      final refused = await protected.controller.prepareResult(
+        const DirectPrivateMediaViewerIdentity(
+          messageId: '',
+          attachmentId: 'attachment-1',
+        ),
+        guard,
+      );
+      expect(
+        refused.failureReason,
+        DirectPrivateMediaPrepareFailureReason.invalidIdentity,
+      );
       expect(await protected.controller.markFirstFrame(grant), isTrue);
 
       final first = await protected.controller.settle(
@@ -428,6 +442,53 @@ void main() {
       expect(displayed.wasDisplayed, isTrue);
       expect(displayed.settleResult, first);
       expect(displayed.canRetry, isFalse);
+      final events = (await diagnostics.eventsForTesting())
+          .where((e) => e['feature'] == 'private_media')
+          .toList();
+      expect(events.where((e) => e['stage'] == 'present'), hasLength(1));
+      final terminals = events.where((e) => e['stage'] == 'finish').toList();
+      expect(terminals, hasLength(2));
+      expect(terminals.map((e) => e['outcome']).toSet(), {'failed', 'success'});
+      expect(terminals.map((e) => e['attemptId']).toSet(), hasLength(2));
+      final shown = events.singleWhere((e) => e['stage'] == 'present');
+      expect(
+        shown['attemptId'],
+        terminals.singleWhere((e) => e['outcome'] == 'success')['attemptId'],
+        reason:
+            'a separate preparation refusal must not own the granted viewer callbacks',
+      );
+      expect(events.last['outcome'], 'success');
+      expect(events.last['values'], containsPair('firstFrame', true));
+    },
+  );
+
+  test(
+    'diagnostics records protection refusal without first frame or consume',
+    () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
+      final denied = _fixture(
+        mode: PrivateMediaMode.viewOnce,
+        nativeEnterGate: Completer<Object?>()..complete({'ok': false}),
+      );
+      final prepared = await denied.controller.prepareResult(
+        identity,
+        _MutableContinuityGuard(),
+      );
+      expect(prepared.isGranted, isFalse);
+      expect(
+        prepared.failureReason,
+        DirectPrivateMediaPrepareFailureReason.protectionEnterFailed,
+      );
+      final events = (await diagnostics.eventsForTesting())
+          .where((e) => e['feature'] == 'private_media')
+          .toList();
+      expect(events.last['stage'], 'finish');
+      expect(events.last['reason'], 'protection_failed');
+      expect(
+        events.where((e) => e['stage'] == 'present' || e['stage'] == 'consume'),
+        isEmpty,
+      );
     },
   );
 

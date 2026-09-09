@@ -123,18 +123,36 @@ func handleCallControlRequest(
 	authenticatedPeerID string,
 	service *CallControlService,
 ) {
-	if service == nil || service.backend == nil {
-		writeCallControlResponse(s, callControlErrorResponse(ErrCallBackendUnavailable))
-		return
-	}
+	response := callControlErrorResponse(ErrCallBackendUnavailable)
+	var action string
+	var wakeStatus CallWakeStatus
+	defer func() { recordCallControlRequest(action, response, wakeStatus) }()
 	request, err := decodeCallControlRequest(raw)
-	if err != nil {
-		writeCallControlResponse(s, callControlErrorResponse(ErrCallInvalidRequest))
+	if err == nil {
+		action = request.Action
+	}
+	if service == nil || service.backend == nil {
+		writeErr := writeCallControlResponse(s, response)
+		callDiagnosticSpanFromStream(s).result(request, response, writeErr)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if err != nil {
+		response = callControlErrorResponse(ErrCallInvalidRequest)
+		writeErr := writeCallControlResponse(s, response)
+		callDiagnosticSpanFromStream(s).result(request, response, writeErr)
+		return
+	}
+	span := callDiagnosticSpanFromStream(s)
+	if span != nil {
+		span.authorityKind = diagnosticAuthorityKind(request)
+	}
+	ctx, cancel := context.WithTimeout(callDiagnosticWithContext(context.Background(), span), 3*time.Second)
+	if span != nil && request.Action != callRetrieveAction {
+		stage, action := diagnosticAction(request.Action)
+		span.emit(stage, action, "started", span.diagnostics.Reason, nil)
+	}
 	defer cancel()
-	response := callControlWireResponse{Status: "OK"}
+	response = callControlWireResponse{Status: "OK"}
 	switch request.Action {
 	case callStoreAction:
 		receipt, callErr := service.Store(ctx, authenticatedPeerID, CallStoreRequest{
@@ -142,6 +160,9 @@ func handleCallControlRequest(
 			MessageID: request.MessageID, Envelope: []byte(request.Envelope),
 			ExpiresAtMs: request.ExpiresAtMs, WakeHandle: request.WakeHandle,
 		})
+		// Observe wake delivery even for clients that did not opt in to the
+		// additional wire receipt field.
+		wakeStatus = receipt.WakeStatus
 		if callErr != nil {
 			response = callControlErrorResponse(callErr)
 			break
@@ -273,6 +294,11 @@ func handleCallControlRequest(
 			response.RefreshEpoch = stored.RefreshEpoch
 			response.Generation = stored.Generation
 		}
+		if callErr == nil {
+			if _, v2 := s.(*callDiagnosticStream); !v2 {
+				service.diagnostics.invalidateLegacyPushCapability(authenticatedPeerID)
+			}
+		}
 	case callTokenRevokeAction:
 		kind := CallTokenKind(request.TokenKind)
 		if kind == CallTokenKindIOSVoIP {
@@ -299,7 +325,8 @@ func handleCallControlRequest(
 			}
 		}
 	}
-	writeCallControlResponse(s, response)
+	writeErr := writeCallControlResponse(s, response)
+	span.result(request, response, writeErr)
 }
 
 func decodeCallControlRequest(raw []byte) (callControlWireRequest, error) {
@@ -460,12 +487,12 @@ func callControlErrorResponse(err error) callControlWireResponse {
 	return callControlWireResponse{Status: "ERROR", ErrorCode: code}
 }
 
-func writeCallControlResponse(s network.Stream, response callControlWireResponse) {
+func writeCallControlResponse(s network.Stream, response callControlWireResponse) error {
 	raw, err := json.Marshal(response)
 	if err != nil {
 		raw = []byte(`{"status":"ERROR","errorCode":"CALL_BACKEND_UNAVAILABLE"}`)
 	}
-	_ = writeFrame(s, raw)
+	return writeFrame(s, raw)
 }
 
 func callControlBool(value bool) *bool {

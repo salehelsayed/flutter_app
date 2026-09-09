@@ -91,6 +91,18 @@ class HeadlessCallAdmissionWorkerTest {
     }
 
     @Test
+    fun `completion diagnostic cause cannot reject valid authority or admit invalid authority`() {
+        for (cause in listOf<Any?>("graph_not_owner", "private failure $CALL_ID", 123, null)) {
+            val identity = identity()
+            val payload = validCompletion(identity) + ("diagnosticCause" to cause)
+            val parsed = HeadlessCallAdmissionCompletionProtocol.parse("complete", payload, identity)
+            assertTrue("optional diagnostic metadata must not reject a valid old authority result", parsed != null)
+            assertEquals(if (cause == "graph_not_owner") cause else null, parsed?.diagnosticCause)
+            assertEquals(null, HeadlessCallAdmissionCompletionProtocol.parse("complete", payload + ("nonce" to "wrong"), identity))
+        }
+    }
+
+    @Test
     fun `engine destruction is fenced by this owner and not a warm foreign owner`() {
         val safe = validCompletionObject(identity())
 
@@ -622,6 +634,140 @@ class HeadlessCallAdmissionWorkerTest {
     }
 
     @Test
+    fun `diagnostics distinguish deferred completion and incomplete custody without admitting either`() = runBlocking {
+        for (unsafeField in listOf("none", "databaseClosed", "leaseReleased", "requiredPersistenceComplete")) {
+            val events = mutableListOf<HeadlessCallAdmissionDiagnostic>()
+            val runner = FakeHeadlessCallAdmissionRunner { identity ->
+                validCompletionObject(identity).copy(
+                    disposition = HeadlessCallAdmissionDisposition.DEFERRED,
+                    databaseClosed = unsafeField != "databaseClosed",
+                    leaseReleased = unsafeField != "leaseReleased",
+                    requiredPersistenceComplete = unsafeField != "requiredPersistenceComplete",
+                )
+            }
+            var presented = false
+            val result = execution(
+                runner = runner,
+                nowMs = { NOW_MS },
+                presentAuthenticated = { _, _ -> presented = true; true },
+                diagnostic = { _, event -> events += event },
+            ).execute(validInput())
+
+            assertFalse(presented)
+            assertEquals(HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION, result)
+            assertTrue("native-only admission must leave durable start/result evidence", events.isNotEmpty())
+            val completion = events.single { it.action == "response" }
+            assertEquals("deferred", completion.values["admissionDisposition"])
+            assertEquals(unsafeField != "databaseClosed", completion.values["databaseClosed"])
+            assertEquals(unsafeField != "leaseReleased", completion.values["leaseReleased"])
+            assertEquals(unsafeField != "requiredPersistenceComplete", completion.values["requiredPersistenceComplete"])
+            val reason = when (unsafeField) {
+                "none" -> "unknown"
+                "requiredPersistenceComplete" -> "unknown"
+                else -> "cleanup_failed"
+            }
+            assertEquals(reason, events.last().reason)
+            if (unsafeField == "requiredPersistenceComplete") assertEquals("pending", events.last().outcome)
+            assertEquals(1, events.map { it.operationId }.distinct().size)
+            assertTrue(events.all { MknoonCallDiagnosticSpool.uuid(it.operationId) })
+            assertFalse(events.toString().contains(CALL_ID))
+            assertFalse(events.toString().contains(WAKE_HANDLE))
+            assertFalse(events.toString().contains("nonce-a"))
+        }
+    }
+
+    @Test
+    fun `deferred cause is diagnostic only with unsatisfied persistence gate`() = runBlocking {
+        for (cause in listOf("graph_not_owner", "authority_invalid", "transport_failed", "private error")) {
+            val events = mutableListOf<HeadlessCallAdmissionDiagnostic>()
+            val runner = FakeHeadlessCallAdmissionRunner { validCompletionObject(it).copy(
+                disposition = HeadlessCallAdmissionDisposition.DEFERRED,
+                requiredPersistenceComplete = false, diagnosticCause = cause,
+            ) }
+            var presented = false
+            val result = execution(runner = runner, nowMs = { NOW_MS },
+                presentAuthenticated = { _, _ -> presented = true; true },
+                diagnostic = { _, event -> events += event }).execute(validInput())
+            assertFalse(presented)
+            assertEquals(HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION, result)
+            assertEquals("pending", events.last().outcome)
+            assertEquals(if (cause == "private error") "unknown" else cause, events.last().reason)
+            assertFalse(events.toString().contains("private error"))
+        }
+    }
+
+    @Test
+    fun `diagnostics preserve exact admitted terminal rejection empty and deferred dispositions`() = runBlocking {
+        val expected = mapOf(
+            HeadlessCallAdmissionDisposition.ADMITTED to "ok",
+            HeadlessCallAdmissionDisposition.TERMINAL to "completed",
+            HeadlessCallAdmissionDisposition.PERMANENT_REJECT to "rejected",
+            HeadlessCallAdmissionDisposition.EMPTY_OR_ALREADY_ACKED to "not_found",
+            HeadlessCallAdmissionDisposition.DEFERRED to "pending",
+        )
+        for ((disposition, outcome) in expected) {
+            val events = mutableListOf<HeadlessCallAdmissionDiagnostic>()
+            val runner = FakeHeadlessCallAdmissionRunner { validCompletionObject(it).copy(disposition = disposition) }
+            var presentations = 0
+            val result = execution(
+                runner = runner,
+                nowMs = { NOW_MS },
+                presentAuthenticated = { _, _ -> presentations += 1; true },
+                diagnostic = { _, event -> events += event },
+            ).execute(validInput())
+            assertEquals(disposition.name.lowercase(), events.single { it.action == "response" }.values["admissionDisposition"])
+            assertEquals(outcome, events.last().outcome)
+            assertEquals(if (disposition == HeadlessCallAdmissionDisposition.ADMITTED) 1 else 0, presentations)
+            assertEquals(
+                if (presentations == 1) HeadlessCallAdmissionWorkOutcome.PRESENTED else HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION,
+                result,
+            )
+        }
+    }
+
+    @Test
+    fun `diagnostics distinguish engine timeout from exception without recording error text`() = runBlocking {
+        for (timeout in listOf(false, true)) {
+            val events = mutableListOf<HeadlessCallAdmissionDiagnostic>()
+            val runner = FakeHeadlessCallAdmissionRunner {
+                if (timeout) CompletableDeferred<HeadlessCallAdmissionCompletion>().await()
+                else throw IllegalStateException("private-error-$WAKE_HANDLE")
+            }
+            val result = execution(
+                runner = runner,
+                nowMs = { NOW_MS },
+                timeoutMillis = 25L,
+                presentAuthenticated = { _, _ -> error("must not present") },
+                diagnostic = { _, event -> events += event },
+            ).execute(validInput())
+            assertEquals(HeadlessCallAdmissionWorkOutcome.COMPLETED_WITHOUT_PRESENTATION, result)
+            assertTrue("failure must remain diagnosable without a Dart completion", events.isNotEmpty())
+            assertEquals(if (timeout) "timeout" else "native_lifecycle_failed", events.last().reason)
+            assertTrue((events.last().values["durationMs"] as Long) >= 0L)
+            assertFalse(events.toString().contains("private-error"))
+            assertFalse(events.toString().contains(WAKE_HANDLE))
+            assertEquals(1, runner.stopCalls)
+            assertEquals(1, runner.finishCalls)
+        }
+    }
+
+    @Test
+    fun `diagnostic sink failure cannot change authenticated presentation or cleanup ordering`() = runBlocking {
+        val order = mutableListOf<String>()
+        val runner = FakeHeadlessCallAdmissionRunner { validCompletionObject(it) }.also {
+            it.onFinish = { order += "finish"; true }
+        }
+        val result = execution(
+            runner = runner,
+            nowMs = { NOW_MS },
+            presentAuthenticated = { _, _ -> order += "present"; true },
+            diagnostic = { _, _ -> throw IllegalStateException("sink unavailable") },
+        ).execute(validInput())
+        assertEquals(HeadlessCallAdmissionWorkOutcome.PRESENTED, result)
+        assertEquals(listOf("finish", "present"), order)
+    }
+
+    @Test
     fun `production source exposes only the fixed headless contract and authenticated presenter`() {
         val source = sourceFile("HeadlessCallAdmissionWorker.kt").readText()
         val service = File(
@@ -657,6 +803,7 @@ class HeadlessCallAdmissionWorkerTest {
         presentAuthenticated: suspend (String, Long) -> Boolean,
         terminalizeAuthenticated: suspend (String, Long) -> Boolean = { _, _ -> true },
         releaseDeclineReply: suspend (String) -> Unit = {},
+        diagnostic: (String?, HeadlessCallAdmissionDiagnostic) -> Unit = { _, _ -> },
     ): HeadlessCallAdmissionExecution = HeadlessCallAdmissionExecution(
         runnerFactory = { runner },
         isStopped = { false },
@@ -666,6 +813,7 @@ class HeadlessCallAdmissionWorkerTest {
         presentAuthenticated = presentAuthenticated,
         terminalizeAuthenticated = terminalizeAuthenticated,
         releaseDeclineReply = releaseDeclineReply,
+        diagnostic = diagnostic,
     )
 
     private fun identity() = HeadlessCallAdmissionRunIdentity(

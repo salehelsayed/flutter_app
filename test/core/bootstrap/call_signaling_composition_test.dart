@@ -9,6 +9,8 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
+import 'package:flutter_app/features/call/infrastructure/call_stats_sampler.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -60,6 +62,7 @@ final class _Graph
         CallSignalingGraphLifecycle,
         ForegroundCallCapability,
         ForegroundCallBackgroundLifecycle,
+        CallSignalingCallabilityInvalidations,
         CallSignalingWakeDrain,
         CallWakeHandleDistributionLifecycle {
   _Graph(
@@ -90,6 +93,14 @@ final class _Graph
   final bool throwOnForegroundChanges;
   final bool throwOnStart;
   final bool throwOnAdvertise;
+  Future<bool> Function()? onAdvertise;
+  final StreamController<void> callabilityInvalidationsController =
+      StreamController<void>.broadcast(sync: true);
+
+  @override
+  Stream<void> get callabilityInvalidations =>
+      callabilityInvalidationsController.stream;
+
   final List<String> outgoingPeerIds = <String>[];
   final List<String> availabilityPeerIds = <String>[];
   final List<String> wakeGrantPeerIds = <String>[];
@@ -166,6 +177,8 @@ final class _Graph
     if (throwOnAdvertise) {
       throw StateError('private capability detail');
     }
+    final override = onAdvertise;
+    if (override != null) return override();
     return _advertisementResults.length > 1
         ? _advertisementResults.removeAt(0)
         : _advertisementResults.single;
@@ -391,6 +404,644 @@ ForegroundCallProjection _projection({
 
 void main() {
   test(
+    'production graph emits no-answer separately from presentation refusal',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final fixture = await _createProductionSpeakerRouteFixture();
+      addTearDown(fixture.graph.shutdown);
+      final graph = fixture.graph;
+      for (final type in [
+        CallEventType.incomingValidated,
+        CallEventType.systemUiPresented,
+      ]) {
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: type,
+            eventId: 'unanswered-${type.name}',
+            occurredAt: graph.coordinator.clock(),
+            callId: _callA,
+            contactPeerId: 'remote-account',
+          ),
+        );
+      }
+      final trace = diagnostics.traceForCall(callId: _callA.value);
+      await graph.coordinator.dispatch(
+        CallEvent(
+          type: CallEventType.timeout,
+          timeoutKind: CallTimeoutKind.noAnswer,
+          eventId: 'unanswered-deadline',
+          occurredAt: graph.coordinator.clock().add(
+            const Duration(seconds: 31),
+          ),
+          callId: _callA,
+        ),
+      );
+      final summaries = (await diagnostics.eventsForTesting())
+          .where(
+            (event) =>
+                event['stage'] == 'terminal' && event['action'] == 'finish',
+          )
+          .toList();
+      expect(summaries, hasLength(1));
+      expect(summaries.single['traceId'], trace);
+      expect(summaries.single['outcome'], 'no_answer');
+      expect(summaries.single['reason'], 'no_answer');
+      expect((summaries.single['values'] as Map)['accepted'], isFalse);
+    },
+  );
+
+  for (final nativeAudioAccepted in [false, true]) {
+    test(
+      'production factory emits ${nativeAudioAccepted ? 'engine activation' : 'native audio session'} refusal on the call trace',
+      () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        final diagnostics = await CallDiagnostics.installForTesting();
+        addTearDown(() async {
+          await diagnostics.setEnabled(false);
+          await diagnostics.dispose();
+        });
+        final fixture = await _createProductionIosFixture(
+          outgoingContactAccountPeerId: 'remote-account',
+          microphonePermission: const _GrantedCallMicrophonePermission(),
+          nativeHandleOverride: '33333333-3333-4333-8333-333333333333',
+          attachResponse: <String, Object?>{
+            'version': 1,
+            'descriptor': {
+              'callHandle': '33333333-3333-4333-8333-333333333333',
+              'expiresAtMs': 2045000,
+              'presented': true,
+              'phase': 'preStart',
+              'direction': 'incoming',
+            },
+            'events': [
+              {
+                'callHandle': '33333333-3333-4333-8333-333333333333',
+                'sequence': 1,
+                'eventId': '44444444-4444-4444-8444-444444444444',
+                'type': 'presented',
+                'occurredAtMs': 2000000,
+              },
+            ],
+            'nativeCallId': '33333333-3333-4333-8333-333333333333',
+            'highestSequence': 1,
+          },
+          lifecycleOverride: (method, _) async =>
+              method == 'activateAudio' ? nativeAudioAccepted : null,
+        );
+        await fixture.composition.start();
+        expect(fixture.composition.isStarted, isTrue);
+        final graph = fixture.graphs.single;
+        final admission = await graph.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.remoteInvite,
+            eventId: 'audio-refusal-invite',
+            occurredAt: graph.coordinator.clock(),
+            callId: _callA,
+            contactPeerId: 'remote-account',
+            localAccountPeerId: 'local-account',
+            localDeviceId: 'local-account',
+            remoteAccountPeerId: 'remote-account',
+            remoteDeviceId: 'remote-device',
+            expiresAt: graph.coordinator.clock().add(
+              const Duration(seconds: 45),
+            ),
+            transportRoute: CallRouteClass.direct,
+          ),
+        );
+        expect(admission.decision, CallEventDecision.applied);
+        expect(graph.coordinator.activeSession, isNotNull);
+        expect(
+          await graph.iosCallLifecycleAdapter!.present(
+            IncomingCallPresentation(
+              callId: _callA,
+              callerAccountPeerId: 'remote-account',
+              expiresAt: graph.coordinator.clock().add(
+                const Duration(seconds: 45),
+              ),
+            ),
+          ),
+          isTrue,
+        );
+        final trace = diagnostics.traceForCall(callId: _callA.value);
+        expect(trace, isNotNull);
+        final wallNow = DateTime.now().millisecondsSinceEpoch;
+        final credentials = <String, Object?>{
+          'ok': true,
+          'schema': 'turn_credentials',
+          'version': 1,
+          'urls': ['turn:relay.invalid:3478?transport=udp'],
+          'username': 'private-turn-user',
+          'password': 'private-turn-secret',
+          'ttlSeconds': 600,
+          'serverTimeMs': wallNow,
+          'expiresAtMs': wallNow + 600000,
+        };
+        fixture.bridge.responses['relay:turn_credentials_v1'] = credentials;
+        fixture.bridge.responses['turn_credentials_with_diagnostics_v1'] =
+            credentials;
+        // Exercise the actual production bundle and preparer with its accepted
+        // effect input; no diagnostic observer is invoked directly by this test.
+        final failure = await graph.mediaOwner.execute(
+          const CallEffect(CallEffectType.prepareAcceptedMedia),
+          graph.coordinator.activeSession!.copyWith(
+            state: CallState.accepted,
+            acceptedAt: graph.coordinator.clock(),
+          ),
+        );
+        expect(failure?.type, CallEventType.negotiationFailed);
+        expect(fixture.lifecycleMethods, contains('activateAudio'));
+        final events = await diagnostics.eventsForTesting();
+        if (nativeAudioAccepted) {
+          // Host WebRTC has no native plugin: connection creation fails after
+          // the actual native audio adapter has accepted activation.
+          expect(
+            events.any(
+              (event) =>
+                  event['traceId'] == trace &&
+                  (event['values'] as Map)['failureStage'] ==
+                      'create_connection',
+            ),
+            isTrue,
+          );
+        }
+        expect(
+          events.any(
+            (event) =>
+                event['stage'] == 'audio' &&
+                event['action'] == 'activate' &&
+                event['outcome'] == 'failed' &&
+                event['traceId'] == trace &&
+                event['reason'] ==
+                    (nativeAudioAccepted
+                        ? 'audio_activation_failed'
+                        : 'audio_session_failed'),
+          ),
+          isTrue,
+        );
+        expect(
+          events.any(
+            (event) =>
+                event['stage'] == 'audio' &&
+                event['action'] == 'activate' &&
+                event['outcome'] == 'ok',
+          ),
+          isFalse,
+        );
+        expect(jsonEncode(events), isNot(contains('private-turn-secret')));
+      },
+    );
+  }
+
+  for (final accepted in [false, true]) {
+    test(
+      'terminal diagnostics preserve ${accepted ? 'connected without RTP' : 'user decline'} through late shutdown',
+      () async {
+        final diagnostics = await CallDiagnostics.installForTesting();
+        addTearDown(() async {
+          await diagnostics.setEnabled(false);
+          await diagnostics.dispose();
+        });
+        final fixture = await _createProductionSpeakerRouteFixture();
+        final graph = fixture.graph;
+        for (final type in [
+          CallEventType.incomingValidated,
+          CallEventType.systemUiPresented,
+          if (accepted) ...[
+            CallEventType.answer,
+            CallEventType.negotiationReady,
+            CallEventType.mediaConnected,
+          ],
+        ]) {
+          await graph.coordinator.dispatch(
+            CallEvent(
+              type: type,
+              eventId: 'terminal-${type.name}',
+              occurredAt: graph.coordinator.clock(),
+              callId: _callA,
+              contactPeerId: 'remote-account',
+            ),
+          );
+        }
+        if (accepted) {
+          expect(await graph.end(_callA), ForegroundCallActionResult.applied);
+        } else {
+          expect(
+            await graph.decline(_callA),
+            ForegroundCallActionResult.applied,
+          );
+        }
+        await graph.shutdown();
+        final summaries = (await diagnostics.eventsForTesting())
+            .where(
+              (event) =>
+                  event['stage'] == 'terminal' && event['action'] == 'finish',
+            )
+            .toList();
+        expect(summaries, hasLength(1));
+        expect(
+          summaries.single['outcome'],
+          accepted ? 'answered_without_verified_media' : 'declined',
+        );
+        expect(
+          summaries.single['reason'],
+          accepted ? 'local_user' : 'declined',
+        );
+        expect(
+          (summaries.single['values'] as Map)['mediaFlowVerified'],
+          isFalse,
+        );
+      },
+    );
+  }
+
+  test(
+    'production graph reports media progress and preserves caller intent at terminal',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final fixture = await _createProductionSpeakerRouteFixture();
+      addTearDown(fixture.graph.shutdown);
+      final graph = fixture.graph;
+      for (final type in [
+        CallEventType.incomingValidated,
+        CallEventType.systemUiPresented,
+        CallEventType.answer,
+        CallEventType.negotiationReady,
+        CallEventType.mediaConnected,
+      ]) {
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: type,
+            eventId: 'diag-${type.name}',
+            occurredAt: DateTime.fromMillisecondsSinceEpoch(
+              2000000,
+              isUtc: true,
+            ),
+            callId: _callA,
+            contactPeerId: 'private-contact-not-exported',
+          ),
+        );
+      }
+      expect(graph.coordinator.activeSession!.state, CallState.connected);
+      final trace = diagnostics.traceForCall(callId: _callA.value);
+      const sample = CallStatsSample(
+        selectedPairSucceeded: true,
+        selectedPairNominated: true,
+        selectedRelayProtocol: CallRelayProtocol.udp,
+        dtlsReady: true,
+        transport: CallTransportClass.turnUdp,
+        inboundAudioRtpObserved: true,
+        outboundAudioRtpObserved: true,
+      );
+      graph.recordMediaDiagnostics(
+        _callA,
+        sample,
+        const CallRtpProgressSample(inbound: false, outbound: false),
+      );
+      expect(
+        (await diagnostics.eventsForTesting()).any(
+          (event) => event['outcome'] == 'media_flow_verified',
+        ),
+        isFalse,
+      );
+      graph.recordMediaDiagnostics(
+        _callA,
+        sample,
+        const CallRtpProgressSample(inbound: true, outbound: true),
+      );
+      await graph.end(_callA);
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.any(
+          (event) =>
+              event['traceId'] == trace &&
+              event['outcome'] == 'media_flow_verified',
+        ),
+        isTrue,
+      );
+      expect(
+        events.any(
+          (event) =>
+              event['traceId'] == trace &&
+              event['outcome'] == 'completed_after_media' &&
+              event['reason'] == 'local_user',
+        ),
+        isTrue,
+      );
+      expect(
+        events
+            .where((event) => event['traceId'] == trace)
+            .every((event) => event['role'] == 'callee'),
+        isTrue,
+      );
+      expect(jsonEncode(events), isNot(contains(_callA.value)));
+    },
+  );
+
+  test(
+    'production graph reports accepted media failure without claiming a successful call',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final fixture = await _createProductionSpeakerRouteFixture();
+      addTearDown(fixture.graph.shutdown);
+      final graph = fixture.graph;
+      for (final type in [
+        CallEventType.incomingValidated,
+        CallEventType.systemUiPresented,
+        CallEventType.answer,
+        CallEventType.negotiationFailed,
+      ]) {
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: type,
+            eventId: 'diag-fail-${type.name}',
+            occurredAt: DateTime.fromMillisecondsSinceEpoch(
+              2000000,
+              isUtc: true,
+            ),
+            callId: _callA,
+            contactPeerId: 'private-contact-not-exported',
+          ),
+        );
+      }
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.any(
+          (event) =>
+              event['outcome'] == 'media_failed' &&
+              event['reason'] == 'media_failed',
+        ),
+        isTrue,
+      );
+      expect(
+        events.any((event) => event['outcome'] == 'completed_after_media'),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'explicit call recovery retries transient signaling readiness once',
+    () async {
+      var readinessAttempts = 0;
+      final graph = _Graph(<String>[]);
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.ios,
+        isForeground: () => true,
+        awaitReadiness: () async {
+          if (++readinessAttempts == 1) throw StateError('transport starting');
+        },
+        buildGraph: () async => graph,
+        requestOutgoingMicrophonePermission: () async =>
+            MicPermissionStatus.granted,
+      );
+      addTearDown(composition.shutdown);
+      await composition.start();
+      expect(composition.isOutgoingCallAvailable, isFalse);
+      expect(await composition.isOutgoingCallAvailableFor('remote'), isFalse);
+      expect(
+        readinessAttempts,
+        1,
+        reason: 'passive probing cannot restart the graph',
+      );
+      final Object recovery = composition;
+      final recovered =
+          recovery is OutgoingCallReadinessRecovery &&
+          await recovery.recoverOutgoingCallReadiness();
+      expect(recovered, isTrue);
+      expect(readinessAttempts, 2);
+      expect(graph.outgoingPeerIds, isEmpty);
+      expect(
+        await composition.startOutgoingCall('remote'),
+        OutgoingCallStartResult.started,
+      );
+      expect(graph.outgoingPeerIds, <String>['remote']);
+    },
+  );
+
+  test(
+    'explicit call recovery rebuilds after idle resume withdrawal',
+    () async {
+      final first = _Graph(<String>[], advertisementResults: [true, false]);
+      final replacement = _Graph(<String>[]);
+      var builds = 0;
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.ios,
+        isForeground: () => true,
+        awaitReadiness: () async {},
+        buildGraph: () async => builds++ == 0 ? first : replacement,
+      );
+      addTearDown(composition.shutdown);
+      await composition.start();
+      await composition.onResume();
+      expect(composition.isOutgoingCallAvailable, isFalse);
+      expect(await composition.recoverOutgoingCallReadiness(), isTrue);
+      expect(builds, 2);
+      expect(first.events, contains('call_shutdown'));
+      expect(first.outgoingPeerIds, isEmpty);
+      expect(replacement.outgoingPeerIds, isEmpty);
+    },
+  );
+
+  test(
+    'explicit call recovery coalesces and invalidates a backgrounded intent',
+    () async {
+      final readiness = Completer<void>();
+      final graph = _Graph(<String>[]);
+      var readinessAttempts = 0;
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.ios,
+        isForeground: () => true,
+        awaitReadiness: () {
+          readinessAttempts++;
+          return readiness.future;
+        },
+        buildGraph: () async => graph,
+      );
+      addTearDown(composition.shutdown);
+      final first = composition.recoverOutgoingCallReadiness();
+      final second = composition.recoverOutgoingCallReadiness();
+      expect(identical(first, second), isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(readinessAttempts, 1);
+      await composition.onBackgrounded();
+      readiness.complete();
+      expect(await first, isFalse);
+      expect(await second, isFalse);
+      expect(graph.outgoingPeerIds, isEmpty);
+    },
+  );
+
+  test('explicit call recovery times out without late call placement', () {
+    fakeAsync((async) {
+      final readiness = Completer<void>();
+      final graph = _Graph(<String>[]);
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.ios,
+        isForeground: () => true,
+        awaitReadiness: () => readiness.future,
+        buildGraph: () async => graph,
+      );
+      bool? result;
+      composition.recoverOutgoingCallReadiness().then(
+        (value) => result = value,
+      );
+      async.flushMicrotasks();
+      expect(result, isNull);
+      async.elapse(const Duration(seconds: 10));
+      async.flushMicrotasks();
+      expect(result, isFalse);
+      readiness.complete();
+      async.flushMicrotasks();
+      expect(graph.outgoingPeerIds, isEmpty);
+      expect(result, isFalse);
+      unawaited(composition.shutdown());
+      async.flushMicrotasks();
+    });
+  });
+
+  for (final guard in [
+    'disabled',
+    'outgoing disabled',
+    'background',
+    'shutdown',
+    'live call',
+  ]) {
+    test('explicit call recovery preserves $guard guard', () async {
+      final flags = _enabledFlags();
+      if (guard == 'disabled') flags['voice_call_capability_v1'] = false;
+      if (guard == 'outgoing disabled') {
+        flags['voice_call_outgoing_enabled'] = false;
+      }
+      final graph = _Graph(<String>[]);
+      var builds = 0;
+      final composition = CallSignalingComposition(
+        featureFlags: flags,
+        platform: CallEndpointPlatform.ios,
+        isForeground: () => guard != 'background',
+        awaitReadiness: () async {},
+        buildGraph: () async {
+          builds++;
+          return graph;
+        },
+      );
+      addTearDown(composition.shutdown);
+      if (guard == 'shutdown') await composition.shutdown();
+      if (guard == 'live call') {
+        await composition.start();
+        graph.emitForeground(_projection(state: CallState.ringing));
+      }
+      final initialBuilds = builds;
+      final initialEvents = List<String>.of(graph.events);
+      expect(await composition.recoverOutgoingCallReadiness(), isFalse);
+      expect(builds, initialBuilds);
+      expect(graph.events, initialEvents);
+      expect(graph.outgoingPeerIds, isEmpty);
+    });
+  }
+
+  test(
+    'diagnostics capture unavailable attempt before any graph or network exists',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () async {},
+        buildGraph: () async => throw StateError('must not construct a graph'),
+      );
+      addTearDown(composition.shutdown);
+      expect(
+        await composition.startOutgoingCall('private-contact-not-for-export'),
+        OutgoingCallStartResult.unavailable,
+      );
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.where(
+          (event) => event['stage'] == 'attempt' && event['action'] == 'start',
+        ),
+        hasLength(1),
+      );
+      expect(
+        events.any(
+          (event) =>
+              event['outcome'] == 'preflight_failed' &&
+              event['reason'] == 'graph_unavailable',
+        ),
+        isTrue,
+      );
+      expect(
+        jsonEncode(events),
+        isNot(contains('private-contact-not-for-export')),
+      );
+    },
+  );
+
+  test(
+    'diagnostics reuse explicit tap trace through microphone refusal without creating a second attempt',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final graph = _Graph(<String>[]);
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        awaitReadiness: () async {},
+        requestOutgoingMicrophonePermission: () async =>
+            MicPermissionStatus.denied,
+        buildGraph: () async => graph,
+      );
+      addTearDown(composition.shutdown);
+      await composition.start();
+      final traceId = diagnostics.beginAttempt();
+      final result = await diagnostics.runWithTrace(
+        traceId,
+        () => composition.startOutgoingCall('private-contact-not-for-export'),
+      );
+      expect(result, OutgoingCallStartResult.failed);
+      expect(graph.outgoingPeerIds, isEmpty);
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.where(
+          (event) => event['stage'] == 'attempt' && event['action'] == 'start',
+        ),
+        hasLength(1),
+      );
+      expect(
+        events.any(
+          (event) =>
+              event['traceId'] == traceId &&
+              event['outcome'] == 'preflight_failed' &&
+              event['reason'] == 'microphone_denied',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
     'mailbox polling follows native calls through hidden and background states',
     () {
       fakeAsync((time) {
@@ -492,6 +1143,193 @@ void main() {
       expect(projections.single?.session.endReason, CallEndReason.mediaFailed);
       await subscription.cancel();
       await graph.shutdown();
+    },
+  );
+
+  for (final ios in <bool>[false, true]) {
+    for (final nativeResult in <String>['accepted', 'refused', 'exception']) {
+      test('production ${ios ? 'iOS' : 'Android'} foreground Answer '
+          'uses native authority when $nativeResult', () async {
+        final diagnostics = await CallDiagnostics.installForTesting();
+        addTearDown(() async {
+          await diagnostics.setEnabled(false);
+          await diagnostics.dispose();
+        });
+        const handle = '33333333-3333-4333-8333-333333333333';
+        const nativeAnswerEventId = '44444444-4444-4444-8444-444444444444';
+        final events = StreamController<Object?>.broadcast(sync: true);
+        final answerArguments = <Map<String, Object?>>[];
+        Map<String, Object?> batch({bool answer = false}) => {
+          'version': 1,
+          'descriptor': {
+            'callHandle': handle,
+            'expiresAtMs': 2_045_000,
+            'presented': true,
+            'phase': answer ? 'journal' : 'preStart',
+            'direction': 'incoming',
+          },
+          'events': [
+            {
+              'callHandle': handle,
+              'sequence': answer ? 2 : 1,
+              'eventId': answer
+                  ? nativeAnswerEventId
+                  : '55555555-5555-4555-8555-555555555555',
+              'type': answer ? 'answer' : 'presented',
+              'occurredAtMs': 2_000_000,
+            },
+          ],
+          'nativeCallId': handle,
+          'highestSequence': answer ? 2 : 1,
+        };
+        Future<Object?> invoke(
+          String method,
+          Map<String, Object?> arguments,
+        ) async {
+          if (method == 'attach') return batch();
+          if (method == 'answer') {
+            answerArguments.add(Map.of(arguments));
+            if (nativeResult == 'exception') {
+              throw StateError('native answer refused');
+            }
+            return nativeResult == 'accepted';
+          }
+          return true;
+        }
+
+        final fixture = await _createProductionSpeakerRouteFixture(
+          nativeLifecycleFactory: (coordinator) => ios
+              ? IosCallLifecycleAdapter(
+                  invokeMethod: invoke,
+                  nativeEvents: events.stream,
+                  coordinator: coordinator,
+                  resolveAuthenticatedHandle: (callId) =>
+                      callId == _callA ? handle : null,
+                  clock: coordinator.clock,
+                )
+              : AndroidCallLifecycleAdapter(
+                  invokeMethod: invoke,
+                  nativeEvents: events.stream,
+                  coordinator: coordinator,
+                  resolveAuthenticatedHandle: (callId) =>
+                      callId == _callA ? handle : null,
+                  clock: coordinator.clock,
+                ),
+        );
+        final graph = fixture.graph;
+        final coordinator = graph.coordinator;
+        addTearDown(() async {
+          await graph.shutdown();
+          await coordinator.dispose();
+          await events.close();
+        });
+        await coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.incomingValidated,
+            eventId: 'foreground-answer-validated',
+            occurredAt: coordinator.clock(),
+            callId: _callA,
+          ),
+        );
+        final native =
+            graph.iosCallLifecycleAdapter ?? graph.androidCallLifecycleAdapter!;
+        expect(
+          await native.present(
+            IncomingCallPresentation(
+              callId: _callA,
+              callerAccountPeerId: 'remote-account',
+              expiresAt: coordinator.clock().add(const Duration(seconds: 45)),
+            ),
+          ),
+          isTrue,
+        );
+        await coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.systemUiPresented,
+            eventId: 'foreground-answer-presented',
+            occurredAt: coordinator.clock(),
+            callId: _callA,
+          ),
+        );
+        expect(coordinator.activeSession?.state, CallState.ringing);
+        expect(
+          await graph.answer(_callB),
+          ForegroundCallActionResult.unavailable,
+        );
+        expect(answerArguments, isEmpty);
+
+        expect(
+          await graph.answer(_callA),
+          nativeResult == 'accepted'
+              ? ForegroundCallActionResult.applied
+              : ForegroundCallActionResult.unavailable,
+        );
+        expect(answerArguments, hasLength(1));
+        expect(answerArguments.single['version'], 1);
+        expect(answerArguments.single['callHandle'], handle);
+        final answerTrace = diagnostics.traceForCall(callId: _callA.value);
+        expect(
+          (answerArguments.single['diagnostics'] as Map)['traceId'],
+          answerTrace,
+        );
+        final answerEvents = (await diagnostics.eventsForTesting())
+            .where(
+              (event) =>
+                  event['stage'] == 'answer' && event['action'] == 'accept',
+            )
+            .toList();
+        expect(answerEvents.map((event) => event['outcome']), [
+          'started',
+          nativeResult == 'accepted' ? 'ok' : 'rejected',
+        ]);
+        expect(
+          answerEvents,
+          everyElement(containsPair('traceId', answerTrace)),
+        );
+        if (nativeResult != 'accepted') {
+          expect(answerEvents.last['reason'], 'native_answer_refused');
+        }
+        // Native acceptance, not the button callback, must produce the
+        // canonical answer that authorizes native audio acquisition.
+        expect(coordinator.activeSession?.state, CallState.ringing);
+        if (nativeResult == 'accepted') {
+          events.add(batch(answer: true));
+          await _untilComposition(
+            () => coordinator.activeSession?.state == CallState.accepted,
+          );
+          expect(
+            coordinator.activeSession?.recentEventIds,
+            contains(nativeAnswerEventId),
+          );
+        }
+      });
+    }
+  }
+
+  test(
+    'production foreground Answer keeps the non-native acceptance path',
+    () async {
+      final fixture = await _createProductionSpeakerRouteFixture();
+      final graph = fixture.graph;
+      addTearDown(() async {
+        await graph.shutdown();
+        await graph.coordinator.dispose();
+      });
+      for (final type in <CallEventType>[
+        CallEventType.incomingValidated,
+        CallEventType.systemUiPresented,
+      ]) {
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: type,
+            eventId: 'non-native-${type.name}',
+            occurredAt: graph.coordinator.clock(),
+            callId: _callA,
+          ),
+        );
+      }
+      expect(await graph.answer(_callA), ForegroundCallActionResult.applied);
+      expect(graph.coordinator.activeSession?.state, CallState.accepted);
     },
   );
 
@@ -1147,6 +1985,70 @@ void main() {
     },
   );
 
+  for (final contactRefresh in <bool>[false, true]) {
+    for (final throws in <bool>[false, true]) {
+      test(
+        'late ${contactRefresh ? 'contact' : 'resume'} advertisement '
+        '${throws ? 'exception' : 'failure'} preserves replacement readiness',
+        () async {
+          final first = _Graph(<String>[]);
+          final second = _Graph(<String>[]);
+          var builds = 0;
+          final composition = CallSignalingComposition(
+            featureFlags: _enabledFlags(),
+            platform: CallEndpointPlatform.android,
+            awaitReadiness: () async {},
+            requestOutgoingMicrophonePermission: () async =>
+                MicPermissionStatus.granted,
+            buildGraph: () async => builds++ == 0 ? first : second,
+          );
+          addTearDown(() async {
+            await composition.shutdown();
+            await first.callabilityInvalidationsController.close();
+            await second.callabilityInvalidationsController.close();
+          });
+          await composition.start();
+
+          final advertisementEntered = Completer<void>();
+          final advertisementResult = Completer<bool>();
+          first.onAdvertise = () {
+            advertisementEntered.complete();
+            return advertisementResult.future;
+          };
+          final staleRefresh = contactRefresh
+              ? composition.onContactEligibilityChanged()
+              : composition.onResume();
+          await advertisementEntered.future;
+          first.callabilityInvalidationsController.add(null);
+          expect(composition.isOutgoingCallAvailable, isFalse);
+          await composition.start();
+          expect(composition.isStarted, isTrue);
+          expect(composition.isOutgoingCallAvailable, isTrue);
+
+          if (throws) {
+            advertisementResult.completeError(StateError('old advertisement'));
+          } else {
+            advertisementResult.complete(false);
+          }
+          await staleRefresh;
+
+          expect(composition.isStarted, isTrue);
+          expect(composition.isOutgoingCallAvailable, isTrue);
+          final replacement = _projection(callId: _callB);
+          second.emitForeground(replacement);
+          expect(composition.current, same(replacement));
+          expect(second.events, isNot(contains('call_shutdown')));
+          expect(
+            await composition.startOutgoingCall('peer-after-replacement'),
+            OutgoingCallStartResult.started,
+          );
+          expect(second.outgoingPeerIds, <String>['peer-after-replacement']);
+          expect(first.outgoingPeerIds, isEmpty);
+        },
+      );
+    }
+  }
+
   test(
     'stable foreground capability replays current graph and fences stale actions',
     () async {
@@ -1381,6 +2283,111 @@ void main() {
       expect(graph.events, isNot(contains('call_shutdown')));
     },
   );
+
+  for (final platform in <CallEndpointPlatform>[
+    CallEndpointPlatform.android,
+    CallEndpointPlatform.ios,
+  ]) {
+    for (final arrivesInBackground in <bool>[false, true]) {
+      test(
+        '${arrivesInBackground ? 'background arrival' : 'foreground'} '
+        '${platform.name} native ringing exposes controls only after validated presentation',
+        () async {
+          var foreground = !arrivesInBackground;
+          final graph = _Graph(<String>[]);
+          final composition = CallSignalingComposition(
+            featureFlags: _enabledFlags(),
+            platform: platform,
+            awaitReadiness: () async {},
+            buildGraph: () async => graph,
+            isForeground: () => foreground,
+            clock: () => _callNow,
+          );
+          final subscription = composition.changes.listen((_) {});
+          addTearDown(subscription.cancel);
+          addTearDown(composition.shutdown);
+          await composition.start();
+          if (arrivesInBackground) await composition.onBackgrounded();
+
+          // The production native presenter owns registration; composition's
+          // present() is never called, even after that presenter succeeds.
+          graph.emitForeground(
+            _projection(
+              direction: CallDirection.incoming,
+              state: CallState.incomingValidating,
+              incomingValidated: true,
+            ),
+          );
+          expect(composition.current, isNull);
+          expect(
+            await composition.answer(_callA),
+            ForegroundCallActionResult.unavailable,
+          );
+          graph.emitForeground(_projection(direction: CallDirection.incoming));
+          expect(composition.current, isNull);
+
+          final ringing = _projection(
+            direction: CallDirection.incoming,
+            incomingValidated: true,
+          );
+          graph.emitForeground(ringing);
+          if (arrivesInBackground) {
+            expect(composition.current, isNull);
+            expect(graph.foregroundActions, isEmpty);
+            foreground = true;
+            await composition.onResume();
+          }
+          expect(composition.current, same(ringing));
+          expect(graph.foregroundActions, isEmpty);
+          expect(
+            await composition.answer(_callB),
+            ForegroundCallActionResult.unavailable,
+          );
+
+          foreground = false;
+          await composition.onBackgrounded();
+          expect(composition.current, isNull);
+          graph.emitForeground(ringing);
+          expect(composition.current, isNull);
+          expect(
+            await composition.answer(_callA),
+            ForegroundCallActionResult.unavailable,
+          );
+
+          // A notification body tap only resumes the app. It neither accepts
+          // the call nor needs the composition-owned presentation marker.
+          foreground = true;
+          await composition.onResume();
+          expect(composition.current, same(ringing));
+          expect(graph.foregroundActions, isEmpty);
+          expect(
+            await composition.answer(_callA),
+            ForegroundCallActionResult.applied,
+          );
+          expect(graph.foregroundActions, <(String, CallId, bool?)>[
+            ('answer', _callA, null),
+          ]);
+
+          graph.emitForeground(
+            ForegroundCallProjection(
+              session: ringing.session.copyWith(
+                state: CallState.ended,
+                endedAt: _callNow,
+                endReason: CallEndReason.noAnswer,
+              ),
+              audio: ringing.audio,
+            ),
+          );
+          expect(composition.current, isNull);
+          expect(
+            await composition.answer(_callA),
+            ForegroundCallActionResult.unavailable,
+          );
+          expect(graph.foregroundActions, hasLength(1));
+        },
+      );
+    }
+  }
 
   test(
     'resume restores a validated incoming active call after native UI',
@@ -3530,6 +4537,9 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   Future<Object?> Function()? disableCapability,
   CallNetworkEffectsAllowed? networkEffectsAllowed,
   String? outgoingContactAccountPeerId,
+  CallMicrophonePermission? microphonePermission,
+  String? nativeHandleOverride,
+  Future<Object?> Function(String, Map<String, Object?>)? lifecycleOverride,
 }) async {
   databaseFactory = databaseFactoryFfi;
   final database = await openDatabase(
@@ -3597,6 +4607,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     loadIdentity: () async => identity,
     networkEffectsAllowed: networkEffectsAllowed ?? () => true,
     isVoiceNoteRecording: () => false,
+    microphonePermission: microphonePermission,
     issuedCallWakeHandleStore: callWakeStores.issued,
     receivedCallWakeHandleStore: callWakeStores.received,
     iosCallLifecycleAdapterFactory:
@@ -3607,6 +4618,10 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
         }) => IosCallLifecycleAdapter(
           invokeMethod: (method, arguments) async {
             lifecycleMethods.add(method);
+            if (lifecycleOverride != null) {
+              final overridden = await lifecycleOverride(method, arguments);
+              if (overridden != null) return overridden;
+            }
             if (method == 'setCapabilityEnabled') {
               capabilityArguments.add(Map<String, Object?>.of(arguments));
             }
@@ -3632,7 +4647,9 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
           },
           nativeEvents: const Stream<Object?>.empty(),
           coordinator: coordinator,
-          resolveAuthenticatedHandle: resolveAuthenticatedHandle,
+          resolveAuthenticatedHandle: nativeHandleOverride == null
+              ? resolveAuthenticatedHandle
+              : (callId) => callId == _callA ? nativeHandleOverride : null,
           clock: clock,
         ),
     iosVoipTokenCoordinatorFactory:
@@ -3715,6 +4732,7 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
     CallAudioOutputRoute.speaker,
   ],
   CallAudioOutputRoute initialRoute = CallAudioOutputRoute.speaker,
+  NativeCallLifecycleAdapter Function(CallCoordinator)? nativeLifecycleFactory,
 }) async {
   const nowMs = 2_000_000;
   final now = DateTime.fromMillisecondsSinceEpoch(nowMs, isUtc: true);
@@ -3761,6 +4779,7 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
     idSource: () => _callA,
   );
   final mailbox = _UnusedCallMailboxClient();
+  final nativeLifecycle = nativeLifecycleFactory?.call(coordinator);
   final callWakeStores = _newCallWakeStores();
   final codec = SecureCallEnvelopeCodec(
     crypto: _UnusedCallEnvelopeCrypto(),
@@ -3812,7 +4831,15 @@ Future<_ProductionSpeakerRouteFixture> _createProductionSpeakerRouteFixture({
       createdAt: '2026-08-30T00:00:00.000Z',
       updatedAt: '2026-08-30T00:00:00.000Z',
     ),
-    platform: CallEndpointPlatform.android,
+    platform: nativeLifecycle is IosCallLifecycleAdapter
+        ? CallEndpointPlatform.ios
+        : CallEndpointPlatform.android,
+    androidCallLifecycleAdapter: nativeLifecycle is AndroidCallLifecycleAdapter
+        ? nativeLifecycle
+        : null,
+    iosCallLifecycleAdapter: nativeLifecycle is IosCallLifecycleAdapter
+        ? nativeLifecycle
+        : null,
     mediaOwner: mediaOwner,
     networkEffectsAllowed: () => true,
     nowMs: () => nowMs,

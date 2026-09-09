@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../../core/permissions/mic_permission_gateway.dart';
 import '../../core/utils/flow_event_emitter.dart';
+import '../../features/call/diagnostics/call_diagnostics.dart';
 import '../../features/call/application/foreground_call_capability.dart';
 import '../../features/call/application/ringing_call_mailbox_poller.dart';
 import '../../features/call/application/handle_incoming_call_signal.dart';
@@ -67,6 +68,12 @@ abstract interface class CallSignalingCallabilityInvalidations {
   Stream<void> get callabilityInvalidations;
 }
 
+/// Diagnostic metadata follows invalidation without becoming authority.
+abstract interface class CallSignalingDiagnosticInvalidations {
+  String get invalidationDiagnosticReason;
+  String? get invalidationDiagnosticOperationId;
+}
+
 /// Optional graph signal: a capability advertisement that was deferred
 /// because a call was live can be retried now (the call reached a terminal
 /// snapshot). The composition owns the retry so it stays serialized with
@@ -109,6 +116,7 @@ abstract interface class CallWakeHandleDistributionLifecycle {
 final class CallSignalingComposition
     implements
         OutgoingCallCapability,
+        OutgoingCallReadinessRecovery,
         ForegroundCallCapability,
         IncomingCallPresenter {
   CallSignalingComposition({
@@ -166,6 +174,8 @@ final class CallSignalingComposition
   CallId? _presentedIncomingCallId;
   int _foregroundGeneration = 0;
   Future<void>? _startInFlight;
+  Future<bool>? _outgoingReadinessRecoveryInFlight;
+  int _outgoingReadinessLifecycleGeneration = 0;
   Future<bool>? _callWakeDistributionRearmInFlight;
   Future<void>? _shutdownInFlight;
   Future<void> _contactReconciliationTail = Future<void>.value();
@@ -217,6 +227,48 @@ final class CallSignalingComposition
       isStarted &&
       _graph != null;
 
+  /// An explicit tap may retry an idle graph withdrawn by a transient startup
+  /// or advertisement failure. Passive probes keep observing current state.
+  @override
+  Future<bool> recoverOutgoingCallReadiness() {
+    if (!isEnabled ||
+        _featureFlags['voice_call_outgoing_enabled'] != true ||
+        _terminal ||
+        !_foregroundAllowed ||
+        !_isForeground() ||
+        _hasLiveForegroundCall) {
+      return Future<bool>.value(false);
+    }
+    if (isOutgoingCallAvailable) return Future<bool>.value(true);
+    final inFlight = _outgoingReadinessRecoveryInFlight;
+    if (inFlight != null) return inFlight;
+    final generation = _outgoingReadinessLifecycleGeneration;
+    late final Future<bool> attempt;
+    attempt = _recoverOutgoingCallReadiness(generation).whenComplete(() {
+      if (identical(_outgoingReadinessRecoveryInFlight, attempt)) {
+        _outgoingReadinessRecoveryInFlight = null;
+      }
+    });
+    _outgoingReadinessRecoveryInFlight = attempt;
+    return attempt;
+  }
+
+  Future<bool> _recoverOutgoingCallReadiness(int generation) async {
+    try {
+      await Future.any(<Future<void>>[
+        start(),
+        _terminalSignal.future,
+      ]).timeout(const Duration(seconds: 10));
+    } catch (_) {
+      return false;
+    }
+    return generation == _outgoingReadinessLifecycleGeneration &&
+        _foregroundAllowed &&
+        _isForeground() &&
+        !_hasLiveForegroundCall &&
+        isOutgoingCallAvailable;
+  }
+
   @override
   Future<bool> isOutgoingCallAvailableFor(String contactAccountPeerId) async {
     final graph = _graph;
@@ -237,22 +289,69 @@ final class CallSignalingComposition
   @override
   Future<OutgoingCallStartResult> startOutgoingCall(
     String contactAccountPeerId,
+  ) {
+    final diagnostics = CallDiagnostics.instance;
+    final traceId = diagnostics.currentTraceId ?? diagnostics.beginAttempt();
+    return diagnostics.runWithTrace(
+      traceId,
+      () => _startOutgoingCallWithDiagnostics(contactAccountPeerId, traceId),
+    );
+  }
+
+  Future<OutgoingCallStartResult> _startOutgoingCallWithDiagnostics(
+    String contactAccountPeerId,
+    String? traceId,
   ) async {
+    final diagnostics = CallDiagnostics.instance;
+    OutgoingCallStartResult reject(String reason, {bool failed = false}) {
+      diagnostics.record(
+        stage: 'preflight',
+        action: 'check',
+        outcome: 'rejected',
+        reason: reason,
+        traceId: traceId,
+      );
+      diagnostics.finishAttempt(
+        traceId: traceId,
+        outcome: 'preflight_failed',
+        reason: reason,
+      );
+      return failed
+          ? OutgoingCallStartResult.failed
+          : OutgoingCallStartResult.unavailable;
+    }
+
     final graph = _graph;
     if (!isOutgoingCallAvailable || graph == null) {
-      return OutgoingCallStartResult.unavailable;
+      return reject(_terminal ? 'graph_shutdown' : 'graph_unavailable');
     }
     final graphGeneration = _foregroundGeneration;
+    var failureReason = 'microphone_denied';
     try {
       final permissionStatus = await _requestOutgoingMicrophonePermission();
+      diagnostics.record(
+        stage: 'preflight',
+        action: 'check',
+        outcome: permissionStatus == MicPermissionStatus.granted
+            ? 'ok'
+            : 'rejected',
+        reason: permissionStatus == MicPermissionStatus.granted
+            ? 'none'
+            : 'microphone_denied',
+        traceId: traceId,
+        values: <String, Object?>{
+          'microphoneAllowed': permissionStatus == MicPermissionStatus.granted,
+        },
+      );
       if (permissionStatus != MicPermissionStatus.granted) {
-        return OutgoingCallStartResult.failed;
+        return reject('microphone_denied', failed: true);
       }
       if (!isOutgoingCallAvailable ||
           !identical(_graph, graph) ||
           _foregroundGeneration != graphGeneration) {
-        return OutgoingCallStartResult.unavailable;
+        return reject('graph_replaced');
       }
+      failureReason = 'capability_publish_failed';
       late final bool callerAuthorityReady;
       try {
         callerAuthorityReady = await graph.advertiseCapability();
@@ -261,39 +360,52 @@ final class CallSignalingComposition
             _foregroundGeneration == graphGeneration) {
           await _withdrawGraph(graph);
         }
-        return OutgoingCallStartResult.failed;
+        return reject('capability_publish_failed', failed: true);
       }
       if (!callerAuthorityReady) {
         if (identical(_graph, graph) &&
             _foregroundGeneration == graphGeneration) {
           await _withdrawGraph(graph);
         }
-        return OutgoingCallStartResult.unavailable;
+        return reject('capability_unavailable');
       }
       if (!isOutgoingCallAvailable ||
           !identical(_graph, graph) ||
           _foregroundGeneration != graphGeneration) {
-        return OutgoingCallStartResult.unavailable;
+        return reject('graph_replaced');
       }
+      failureReason = 'wake_authority_missing';
       late final bool callerWakeAuthorityReady;
       try {
         callerWakeAuthorityReady = await _ensureOutgoingCallWakeAuthority(
           contactAccountPeerId,
         );
       } catch (_) {
-        return OutgoingCallStartResult.failed;
+        return reject('wake_authority_missing', failed: true);
       }
-      if (!callerWakeAuthorityReady) {
-        return OutgoingCallStartResult.unavailable;
-      }
+      if (!callerWakeAuthorityReady) return reject('wake_authority_missing');
       if (!isOutgoingCallAvailable ||
           !identical(_graph, graph) ||
           _foregroundGeneration != graphGeneration) {
-        return OutgoingCallStartResult.unavailable;
+        return reject('graph_replaced');
       }
-      return await graph.startOutgoingCall(contactAccountPeerId);
+      failureReason = 'authority_unreachable';
+      final result = await graph.startOutgoingCall(contactAccountPeerId);
+      if (result != OutgoingCallStartResult.started) {
+        return reject(
+          'unavailable',
+          failed: result == OutgoingCallStartResult.failed,
+        );
+      }
+      diagnostics.record(
+        stage: 'preflight',
+        action: 'finish',
+        outcome: 'ok',
+        traceId: traceId,
+      );
+      return result;
     } catch (_) {
-      return OutgoingCallStartResult.failed;
+      return reject(failureReason, failed: true);
     }
   }
 
@@ -656,6 +768,7 @@ final class CallSignalingComposition
   /// production graph to end only its current call through the canonical
   /// reducer. The graph itself remains started for the next resume.
   Future<void> onBackgrounded() async {
+    _outgoingReadinessLifecycleGeneration++;
     _foregroundAllowed = false;
     _presentedIncomingCallId = null;
     _publishForeground(null);
@@ -673,9 +786,13 @@ final class CallSignalingComposition
   }
 
   Future<void> _withdrawGraph(CallSignalingGraphLifecycle graph) async {
-    if (identical(_graph, graph)) _graph = null;
-    _started = false;
-    _publishOutgoingCallAvailability();
+    if (identical(_graph, graph)) {
+      _graph = null;
+      // A superseded graph may finish a failed advertisement after its
+      // replacement has started. Cleanup must preserve the new readiness.
+      _started = false;
+      _publishOutgoingCallAvailability();
+    }
     await _unbindForegroundGraph(graph);
     try {
       await graph.shutdown();
@@ -741,7 +858,21 @@ final class CallSignalingComposition
     _callabilityInvalidationSubscription = callability?.callabilityInvalidations
         .listen((_) {
           if (identical(_graph, graph)) {
-            unawaited(_withdrawGraph(graph));
+            final metadata = graph is CallSignalingDiagnosticInvalidations
+                ? graph as CallSignalingDiagnosticInvalidations
+                : null;
+            final diagnostics = CallDiagnostics.instance;
+            final operationId =
+                metadata?.invalidationDiagnosticOperationId ??
+                diagnostics.beginOperation(
+                  reason: metadata?.invalidationDiagnosticReason ?? 'unknown',
+                );
+            unawaited(
+              diagnostics.runWithOperation(
+                operationId,
+                () => _withdrawGraph(graph),
+              ),
+            );
           }
         });
     final deferredRetries = graph is CallSignalingDeferredAdvertisementRetries
@@ -831,7 +962,11 @@ final class CallSignalingComposition
     if (session.direction == CallDirection.incoming &&
         (!session.incomingValidated ||
             (session.acceptedAt == null &&
-                _presentedIncomingCallId != callId))) {
+                _presentedIncomingCallId != callId &&
+                // Native presenter success commits canonical ringing without
+                // calling present() here. Foreground controls may then show,
+                // including after a notification tap resumes the app.
+                (session.state != CallState.ringing || !_isForeground())))) {
       _publishForeground(null);
       return;
     }
