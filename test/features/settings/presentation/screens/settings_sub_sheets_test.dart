@@ -54,6 +54,7 @@ void main() {
     FakeSecureKeyStore? store,
     String mnemonic = twelveWords,
     ThemeData? themeOverride,
+    bool callPrivacyAvailable = false,
   }) async {
     final repo =
         identityRepo ??
@@ -79,6 +80,9 @@ void main() {
           contactRepo: FakeContactRepository(),
           p2pService: FakeP2PService(),
           secureKeyStore: store ?? FakeSecureKeyStore(),
+          voiceCallFeatureFlags: {
+            'voice_call_always_relay_enabled': callPrivacyAvailable,
+          },
           imageProcessor: ImageProcessor(),
           appShellController: shell,
           postsPrivacySettingsRepository: privacyRepo,
@@ -101,6 +105,33 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  testWidgets(
+    'call privacy availability opens the persisted setting in the existing sheet',
+    (tester) async {
+      final store = FakeSecureKeyStore();
+      await pumpWired(tester, store: store);
+      expect(
+        find.byKey(const ValueKey('settings-row-call-privacy')),
+        findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox());
+      await pumpWired(tester, store: store, callPrivacyAvailable: true);
+      final row = find.byKey(const ValueKey('settings-row-call-privacy'));
+      await tester.ensureVisible(row);
+      await tester.tap(row);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 100));
+      final toggle = find.byKey(
+        const ValueKey('settings-always-relay-calls-switch'),
+      );
+      expect(tester.widget<Switch>(toggle).value, false);
+      await tester.tap(toggle);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(await store.read('settings_always_relay_calls'), 'true');
+      expect(tester.widget<Switch>(toggle).value, true);
+    },
+  );
 
   testWidgets('Settings help opens the reporting contact and safety policy', (
     tester,

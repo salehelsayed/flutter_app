@@ -40,7 +40,21 @@ configuration and signed artifact, not just the Dart revision or version label.
   message content out of shared reports. Use synthetic fixture content.
 - `docs/**/*.md` is already indexed by `codex-memory/config.json`. No new memory
   database or service is required. Read this file before selecting tests; use
-  Codex document recall for focused prior decisions and Graphify for code impact.
+  Codex document recall for focused prior decisions and targeted source searches
+  for code impact in Codex. Claude's separate navigation configuration is unchanged.
+
+Codex's Graphify integration was removed on 2026-09-11. Document-memory
+advisories use source searches for code questions, checkpoints accept absent
+legacy graph metadata, and every document-memory experiment profile keeps the
+retired Codex graph gates off. The `codex-tooling` selection runs the host
+contracts for this boundary. Historical graph telemetry remains readable;
+Claude's graph tooling and generated graphs remain installed. An already
+running Codex session may retain previously loaded agent/skill instructions
+until a new session starts.
+Verified evidence: `.codex-test-logs/codex-graphify-removal-checks/results.json`
+records 247 passing Codex host tests plus passing fast/workflow/schema checks.
+Python check selectors must enumerate files: wildcard expansion is implemented
+for Flutter selectors, while the Python runner forwards paths to `unittest`.
 
 ## Daily commands
 
@@ -582,6 +596,72 @@ visible and cannot become an ordinary first-attempt PASS.
   single-batch counterexample; `focused.log` records the passing regression and
   preservation suites. Crypto primitives and native WebRTC remain fakes, so this
   evidence establishes the application boundary, not live audio or device RTP.
+- **Mixed ICE policies and media privacy:** relay-only is a local gathering and
+  transport policy. Authenticated remote host, server-reflexive, peer-reflexive
+  and relay candidates must pass the same structural/native validation under
+  either local policy. Applying the local relay filter to remote trickle ICE or
+  embedded SDP terminated otherwise valid mixed-policy negotiation. The engine
+  now separates common fingerprint/video/candidate validation from local SDP
+  privacy validation; local trickle and SDP also reject unsanitized TURN `raddr`
+  and `rport`. Native `iceTransportPolicy=relay` remains the primary control at
+  creation and server replacement/restart; filtering SDP alone does not prevent
+  direct connectivity checks. No SDP rewriting or policy downgrade is used.
+  The locked `flutter_webrtc` 1.6.0 Android dependency is WebRTC SDK 144.7559.09.
+  Its M144 source maps relay to `CF_RELAY`, sanitizes TURN related addresses when
+  reflexive candidates are forbidden, and skips remote DNS/mDNS resolution in
+  relay mode. The stats sampler follows `localCandidateId`; a remote relay with
+  an ordinary local host/reflexive candidate cannot prove local compliance.
+  Native testing also caught M144 changing a TURN candidate to `prflx` after
+  address remapping while retaining its TURN port. `RTCStatsCollector` exposes
+  `relayProtocol` for exactly that local case. The sampler now recognizes only
+  known local UDP/TCP/TLS relay protocols on `prflx`; generic `protocol`, URLs,
+  remote relay fields and missing/unrecognized local evidence cannot certify it.
+  See the SDK's [stats collector](https://github.com/webrtc-sdk/webrtc/blob/30d5e63ae91da483e06577b5c35ee91cc5e5c3db/pc/rtc_stats_collector.cc#L1037)
+  and [candidate remapping](https://github.com/webrtc-sdk/webrtc/blob/30d5e63ae91da483e06577b5c35ee91cc5e5c3db/p2p/base/connection.cc#L1812).
+  Host regressions cover all four policy combinations in both directions,
+  embedded/trickle ICE before and after restart, egress, and late negotiation
+  work after hangup. Existing fingerprint, sender, size/capacity and generation
+  sentinels remain required. Red/green and separate native evidence are retained
+  under `.codex-test-logs/mixed-call-policy/`. The optional existing real-adapter
+  integration test extension audits raw native candidates, wrapper egress,
+  gathered SDP address fields, selected local native statistics and advancing
+  bidirectional RTP. Its local broker bypasses production signaling and cannot
+  prove authenticated libp2p delivery, audible audio, or signed/iOS parity.
+  The Pixel 6 (API 37) / Android emulator (API 35) TCP run passed all eight
+  policy/direction cases and their restarts: 32 endpoint observations, including
+  16 protected observations with sanitized native egress and selected local TURN.
+  The final receipt records 6 or 8 real host candidates plus 2 relay candidates
+  from normal peers, and exactly 2 relay candidates from protected peers. Thus
+  the native mixed-policy cases exercised remote non-relay ingress explicitly.
+  One normal endpoint selected a local host candidate while the protected peer
+  selected its local relay, establishing an actual direct/TURN media pairing.
+  The initial UDP attempt failed reverse all/all negotiation because the proof
+  delayed SDP publication until full candidate gathering. The physical answerer
+  failed ICE before its late answer was sent; a repeat also exhausted the proof's
+  gathering deadline before sending the reverse offer. Production already sends
+  SDP promptly. The proof now matches that ordering and exchanges bounded,
+  generation-specific candidate batches while both endpoints gather. It accepts
+  gathering completion only after a current-generation candidate, then audits
+  native gathered SDP separately. That bounded audit allows 60 seconds because
+  native UDP gathering was observed near 40 seconds even with working media;
+  it does not gate SDP publication or extend production call deadlines.
+  The current native run exercises remote
+  trickle ICE; embedded remote SDP remains covered by the host regressions and
+  earlier full-gather TCP evidence. This changes the proof, not media policy or
+  production signaling. The test relay port range also stays below this macOS
+  host's ephemeral UDP range after an observed startup bind conflict.
+  The corrected UDP matrix passed all eight policy/direction cases and restarts:
+  32 endpoint observations, including 16 protected observations (12 local relay
+  and 4 local TURN-backed `prflx`). SDP acknowledgment took 24–317 ms while the
+  longest gathering observation took about 40 seconds. The red/green receipts
+  and scoped checks are retained under `.codex-test-logs/mixed-call-udp/`.
+  The same final APK also passed the complete TCP preservation matrix.
+  Earlier fixture failures and the native selected-pair regression remain in
+  the evidence directory; a later passing run does not erase them. The runner
+  requires explicit endpoint receipts because this Flutter driver was observed
+  exiting zero even when its device log reported failed integration tests.
+  Direct libp2p signaling can independently reveal an address; this media policy
+  does not make all application traffic anonymous.
 - **Readiness observation exceptions:** native snapshot reads can throw
   `WebRtcAdapterException(other)` after recording a fixed WebRTC read stage.
   The real engine wrapper now translates this to `observationUnavailable`;
@@ -602,6 +682,69 @@ visible and cannot become an ordinary first-attempt PASS.
   optional diagnostic sink failure. Red/green evidence is retained under
   `.codex-test-logs/readiness-exceptions/`. These are host lifecycle and ownership
   proofs, not live microphone, libp2p, audible audio or signed-device evidence.
+- **TURN availability and frozen call policy:** normal (`all`) setup and restart
+  may attempt direct media after a five-second credential timeout or a typed
+  transient service failure. Preserve the approved STUN entries supplied by the
+  production build configuration; direct host candidates alone do not prove
+  LAN or arbitrary-NAT reachability. Relay-only still requires unexpired TURN.
+  Invalid/expired bundles,
+  unsupported responses, explicit authorization rejections and unknown errors
+  fail closed. Legacy native `UNAVAILABLE` responses are also ambiguous and
+  fail closed: only the new classified `TRANSIENT` native code is eligible for
+  fallback. Go preserves non-transient rejections across relay attempts;
+  connection errors before authentication are conservative unless a deadline is
+  proven. One validated bundle is retained per call, reused only while unexpired
+  on transient refresh failure, and cleared on close. There is no persistent
+  storage or background retry loop.
+  Initial preparation and restart recheck exact call ownership after awaiting
+  credentials. Late results never install credentials or trigger a restart;
+  a later canonical restart fetches again with the call's frozen policy and
+  replaces old ICE servers, including clearing TURN on a transient outage.
+  `call_turn_policy_test.dart` exercises the real coordinator, preparer, provider,
+  executor and WebRTC wrapper using a virtual clock and controlled futures.
+  It also caught reconnect timer scheduling after the credential wait; scheduling
+  now precedes restart so retrieval consumes the existing 15-second window.
+  Focused bridge/provider tests preserve strict validation and coarse diagnostics.
+  The production composition test preserves native audio-failure diagnostics
+  after startup cleanup ends the call; stale success remains fenced so it cannot
+  notify native readiness for a retired call.
+  These host tests model selected direct/TURN routes; they do not prove live
+  Wi-Fi calling, TURN allocation or audible device media. Red/green evidence is
+  retained under `.codex-test-logs/turn-policy/`.
+- **Saved call privacy and rollout policy:** availability of **Always relay
+  calls** no longer selects a transport. Its stable secure-store preference is
+  independent of `VOICE_CALL_FORCE_RELAY_ENABLED`; the release defines disable
+  that restriction for normal calls after the mixed-policy proofs below, while
+  the production-audio Sims profile explicitly retains it for its TURN oracle. No build
+  flag seeds or overwrites the preference. An absent value permits normal mode;
+  read errors, a two-second read timeout and unknown values resolve relay-only.
+  The settings sheet waits for durable writes, reports failures and disables
+  changes when a read fails. The production composition captures the policy at
+  the coordinator's first admitted session, before ringing/native adoption or
+  media allocation, and retains it in that call's executor for ICE restarts.
+  Later preference changes affect subsequent calls, including when the settings
+  feature is hidden. Approved STUN comes from the operator's build configuration
+  and is kept alongside the existing authenticated TURN provider.
+  Production composition, secure-storage MethodChannel, settings-sheet and real
+  WebRTC-adapter configuration tests cover these boundaries. They do not prove
+  native persistent storage across an actual installed upgrade.
+  The current Pixel 6/API 37 and API 35 emulator native media proof passed the
+  eight policy/direction cases plus restarts over UDP and TCP: 64 endpoint
+  observations, with local TURN and sanitized egress on all 32 protected
+  observations. Normal/all peers selected direct routes on Wi-Fi and TURN/TCP
+  when physical Wi-Fi was disabled and TURN remained reachable over USB; the
+  original Wi-Fi setting was restored. Evidence is retained under
+  `.codex-test-logs/call-transport-settings/`. This local-broker proof does not
+  exercise production signaling, the settings-to-native wake journey, audible
+  media, iOS parity or signed artifacts. Opening the direct-first source default
+  does not certify publication of a signed release. Direct libp2p signaling may
+  independently reveal an address.
+  The mixed-policy driver must be classified as a support wrapper in reliability
+  simulation discovery. An unclassified driver also fails the global discovery
+  assertion used by the PiP native contract; it does not indicate a PiP failure.
+  Pin the SDK resolved by this checkout's package configuration: using the
+  shell's Flutter 3.41.4 with these Flutter 3.47.2 packages failed native-asset
+  kernel loading and Flutter UI compilation; the pinned 3.47.2 build passed.
 - **Sustained call-event delivery:** adapter and engine history capacity is not
   a lifetime callback quota. The old delivered-event totals fabricated overflow
   once capacity was reached, even with synchronous consumers keeping up. Both
@@ -630,6 +773,20 @@ visible and cannot become an ordinary first-attempt PASS.
   arguments and semantic owners, rather than global source-text occurrence
   counts. The exact system-owned Answer, RTP/oracle and cleanup assertions
   remain required; host contracts cannot certify actual audio or publication.
+  UIAutomator reads must be coalesced per device: concurrent Connected/control
+  assertions otherwise compete for Android's UiAutomation connection. Treat a
+  missing-file message from `adb exec-out cat` as an unavailable capture even
+  when its host exit code is zero; it never proves that a control is absent.
+  Retry only inside the existing semantic deadline and reopen the native shade
+  for each Answer attempt because an incoming window may replace it. The
+  foreground WebRTC harness uses the same current-call guard and per-call TURN
+  provider lifecycle as production; its importing readiness test belongs in the
+  call-signaling gate so preparer API changes cannot leave it uncompilable.
+  The foreground relay campaign's three-second p95 gate remains independent of
+  transport success: a typed latency failure reports the measured p95 after
+  valid direct/UDP/TCP media and cleanup legs, rather than hiding it as an
+  unexpected malformed-evidence exception. A latency failure is still FAIL and
+  produces no passing campaign artifact.
   The Pixel 6/API 35 emulator run passed all 27 actual audio assertions with
   both native call resources released and original app state restored.
 

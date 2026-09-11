@@ -822,9 +822,7 @@ void main() {
     final source = File(
       'lib/app/bootstrap/production_application_bootstrap.dart',
     ).readAsStringSync();
-    final recovery = source.indexOf(
-      'requestReciprocalCallWakeRecovery:',
-    );
+    final recovery = source.indexOf('requestReciprocalCallWakeRecovery:');
     final nextOwner = source.indexOf(
       'shouldSuppressPresentationForPeerId:',
       recovery,

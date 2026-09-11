@@ -4044,4 +4044,23 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get settings_safety_support_standards =>
       'Standards zum Schutz von Kindern';
+
+  @override
+  String get settings_always_relay_calls => 'Anrufe immer weiterleiten';
+
+  @override
+  String get settings_call_privacy_description =>
+      'Direkte Audioverbindungen können der anderen Person deine IP-Adresse zeigen. Aktiviere diese Einstellung, um Audio über einen Relay-Server zu senden. Änderungen gelten für neue Anrufe. Die direkte Signalisierung kann unabhängig davon weiterhin eine Adresse offenlegen.';
+
+  @override
+  String get settings_call_privacy_rollout =>
+      'Diese Version leitet derzeit alle Anrufe über Relay-Server weiter. Deine Auswahl wird für die Verfügbarkeit direkter Anrufe gespeichert.';
+
+  @override
+  String get settings_call_privacy_load_failed =>
+      'Deine Datenschutzeinstellung konnte nicht geladen werden. Anrufe verwenden Relay-Server. Versuche es erneut, um die Einstellung zu ändern.';
+
+  @override
+  String get settings_call_privacy_save_failed =>
+      'Deine Auswahl konnte nicht gespeichert werden. Bitte versuche es erneut.';
 }

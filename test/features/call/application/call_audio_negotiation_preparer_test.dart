@@ -1,3 +1,8 @@
+import 'dart:async';
+
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/features/call/infrastructure/bridge_call_ice_server_provider.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/call_audio_negotiation_preparer.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
@@ -34,11 +39,93 @@ CallAudioStartResult _result(CallAudioStartStatus status) =>
     CallAudioStartResult(status: status, state: CallAudioControlState.idle);
 
 void main() {
+  for (final policy in CallTransportPolicy.values) {
+    test('credential timeout permits media only under all policy: $policy', () {
+      fakeAsync((time) {
+        final pending = Completer<Map<String, dynamic>>();
+        final provider = BridgeCallIceServerProvider(
+          bridge: _Bridge(),
+          fetch: (_) => pending.future,
+          clock: () => _now.add(time.elapsed),
+        );
+        final starts = <CallConnectionConfiguration>[];
+        Object? failure;
+        final preparer = CallAudioNegotiationPreparer(
+          isCurrentCall: (id) => id == _callId,
+          startAudio:
+              ({required locallyAccepted, required configuration}) async {
+                starts.add(configuration);
+                return _result(CallAudioStartStatus.started);
+              },
+          readInitialIceServers: provider.read,
+          clock: () => _now.add(time.elapsed),
+        );
+        unawaited(
+          preparer
+              .prepareLocallyAcceptedMedia(
+                snapshot: _snapshot(acceptedAt: _now),
+                configuration: CallConnectionConfiguration(
+                  transportPolicy: policy,
+                  receiveAudio: true,
+                  receiveVideo: false,
+                  captureAudio: true,
+                  captureVideo: false,
+                ),
+              )
+              .catchError((Object error) {
+                failure = error;
+              }),
+        );
+        time.flushMicrotasks();
+        time.elapse(const Duration(seconds: 5));
+        time.flushMicrotasks();
+        if (policy == CallTransportPolicy.all) {
+          expect(failure, isNull);
+          expect(starts, hasLength(1));
+          expect(starts.single.transportPolicy, policy);
+        } else {
+          expect(failure, isA<CallNegotiationPortException>());
+          expect(starts, isEmpty);
+        }
+        pending.complete({
+          'ok': false,
+          'errorCode': 'TURN_CREDENTIALS_UNAVAILABLE',
+        });
+        time.flushMicrotasks();
+        expect(starts, hasLength(policy == CallTransportPolicy.all ? 1 : 0));
+      });
+    });
+  }
+
+  test('normal mode does not swallow a rejected credential reader', () async {
+    var starts = 0;
+    final preparer = CallAudioNegotiationPreparer(
+      isCurrentCall: (id) => id == _callId,
+      startAudio: ({required locallyAccepted, required configuration}) async {
+        starts++;
+        return _result(CallAudioStartStatus.started);
+      },
+      readInitialIceServers: (_) async =>
+          throw const CallNegotiationPortException(
+            CallNegotiationPortErrorCode.iceServersUnavailable,
+          ),
+    );
+    await expectLater(
+      preparer.prepareLocallyAcceptedMedia(
+        snapshot: _snapshot(acceptedAt: _now),
+        configuration: _configuration,
+      ),
+      throwsA(isA<CallNegotiationPortException>()),
+    );
+    expect(starts, 0);
+  });
+
   test(
     'forwards only reducer-proven local acceptance to audio start',
     () async {
       bool? observedAcceptance;
       final preparer = CallAudioNegotiationPreparer(
+        isCurrentCall: (id) => id == _callId,
         startAudio: ({required locallyAccepted, required configuration}) async {
           observedAcceptance = locallyAccepted;
           expect(configuration.transportPolicy, _configuration.transportPolicy);
@@ -59,6 +146,7 @@ void main() {
 
   test('permission refusal maps to fixed negotiation failure', () async {
     final preparer = CallAudioNegotiationPreparer(
+      isCurrentCall: (id) => id == _callId,
       startAudio: ({required locallyAccepted, required configuration}) async =>
           _result(CallAudioStartStatus.permissionDenied),
     );
@@ -81,6 +169,7 @@ void main() {
   test('reports one fixed audio start status before mapping failure', () async {
     final observed = <CallAudioStartStatus>[];
     final preparer = CallAudioNegotiationPreparer(
+      isCurrentCall: (id) => id == _callId,
       startAudio: ({required locallyAccepted, required configuration}) async =>
           _result(CallAudioStartStatus.engineFailed),
       onStartResult: observed.add,
@@ -106,6 +195,7 @@ void main() {
   test('missing reducer acceptance never reaches microphone adapter', () async {
     var starts = 0;
     final preparer = CallAudioNegotiationPreparer(
+      isCurrentCall: (id) => id == _callId,
       startAudio: ({required locallyAccepted, required configuration}) async {
         starts++;
         return _result(CallAudioStartStatus.started);
@@ -131,13 +221,13 @@ void main() {
     );
     CallConnectionConfiguration? startedWith;
     final preparer = CallAudioNegotiationPreparer(
+      isCurrentCall: (id) => id == _callId,
       startAudio: ({required locallyAccepted, required configuration}) async {
         startedWith = configuration;
         return _result(CallAudioStartStatus.started);
       },
       readInitialIceServers: (_) async => <CallIceServer>[turn],
       clock: () => _now,
-      requireTurnServer: true,
     );
 
     await preparer.prepareLocallyAcceptedMedia(
@@ -152,6 +242,7 @@ void main() {
   test('always-relay fails closed before capture without fresh TURN', () async {
     var starts = 0;
     final preparer = CallAudioNegotiationPreparer(
+      isCurrentCall: (id) => id == _callId,
       startAudio: ({required locallyAccepted, required configuration}) async {
         starts++;
         return _result(CallAudioStartStatus.started);
@@ -181,4 +272,9 @@ void main() {
     );
     expect(starts, 0);
   });
+}
+
+final class _Bridge implements Bridge {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

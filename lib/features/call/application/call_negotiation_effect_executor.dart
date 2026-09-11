@@ -401,9 +401,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     // new generation per reconnect episode.
     if (_restartAttempted) return null;
     _restartAttempted = true;
-    final generation = await engine.restartIce(
-      iceServers: await _unexpiredStagedIceServers(callId),
-    );
+    final servers = await _unexpiredStagedIceServers(snapshot);
+    final generation = await engine.restartIce(iceServers: servers);
+    if (!_isCurrentSession(snapshot)) return null;
     await signaling.sendIceRestart(callId: callId, iceGeneration: generation);
     final offer = await engine.createOffer();
     if (!_isAuthenticatedDescription(offer, CallSessionDescriptionType.offer)) {
@@ -427,9 +427,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       snapshot.callId!,
       CallEventType.mediaRecovered,
     ));
-    final generation = await engine.restartIce(
-      iceServers: await _unexpiredStagedIceServers(snapshot.callId!),
-    );
+    final servers = await _unexpiredStagedIceServers(snapshot);
+    final generation = await engine.restartIce(iceServers: servers);
+    if (!_isCurrentSession(snapshot)) return null;
     if (generation != announcedGeneration) {
       return _followUp(CallEventType.negotiationFailed, snapshot);
     }
@@ -450,12 +450,34 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     return null;
   }
 
-  Future<List<CallIceServer>> _unexpiredStagedIceServers(CallId callId) async {
+  Future<List<CallIceServer>> _unexpiredStagedIceServers(
+    CallSessionSnapshot snapshot,
+  ) async {
+    if (!_isCurrentSession(snapshot) || engine.isClosed) {
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.mediaUnavailable,
+      );
+    }
+    final staged = await readStagedIceServers(snapshot.callId!);
+    if (!_isCurrentSession(snapshot) || engine.isClosed) {
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.mediaUnavailable,
+      );
+    }
     final now = clock().toUtc();
-    final staged = await readStagedIceServers(callId);
-    return List<CallIceServer>.unmodifiable(
-      staged.where((server) => server.expiresAt.isAfter(now)),
+    final servers = List<CallIceServer>.unmodifiable(
+      [
+        ...configuration.iceServers,
+        ...staged,
+      ].where((server) => server.expiresAt.isAfter(now)),
     );
+    if (configuration.transportPolicy == CallTransportPolicy.relayOnly &&
+        !servers.any((server) => server.containsTurnUrl)) {
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.iceServersUnavailable,
+      );
+    }
+    return servers;
   }
 
   void _announceLocalDescription(int generation) {
@@ -519,7 +541,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       snapshot: snapshot,
       configuration: configuration,
     );
-    if (_closed) {
+    if (!_isCurrentSession(snapshot)) {
       throw const CallNegotiationPortException(
         CallNegotiationPortErrorCode.mediaUnavailable,
       );

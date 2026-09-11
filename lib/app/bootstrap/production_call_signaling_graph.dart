@@ -8,6 +8,8 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/bridge/bridge.dart';
+import '../../core/secure_storage/secure_key_store.dart';
+import '../../features/settings/application/call_privacy_preference_use_cases.dart';
 import '../../core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import '../../core/media/audio_recorder_service.dart';
 import '../../core/services/incoming_message_router.dart';
@@ -1379,6 +1381,8 @@ CallAudioOutputRoute? _preferredNonSpeakerRoute(CallAudioControlState state) {
 /// the existing identity/contact/database/bridge prerequisites are ready.
 CallSignalingComposition createProductionCallSignalingComposition({
   required Map<String, bool> featureFlags,
+  required SecureKeyStore secureKeyStore,
+  List<CallIceServer> iceServers = const <CallIceServer>[],
   required CallEndpointPlatform? platform,
   required Database database,
   required Bridge bridge,
@@ -1506,7 +1510,10 @@ CallSignalingComposition createProductionCallSignalingComposition({
       final boundEffects = _BoundCallEffectExecutor();
       late final CallScopedMediaBundleOwner mediaOwner;
       late final CallControlEffectExecutor controlExecutor;
-      final coordinator = CallCoordinator(
+      CallId? policyCallId;
+      Future<CallTransportPolicy>? pendingTransportPolicy;
+      late final CallCoordinator coordinator;
+      coordinator = CallCoordinator(
         reducer: const CallReducer(),
         cleanupCoordinator: CallCleanupCoordinator(
           <CallCleanupStep>[
@@ -1534,6 +1541,23 @@ CallSignalingComposition createProductionCallSignalingComposition({
         terminalEffectTimeout: const Duration(milliseconds: 500),
         terminalHistoryTimeout: const Duration(milliseconds: 250),
         onAppliedStateTransition: (trigger, resultingState, endReason) {
+          // Capture at admission, before ringing/acceptance and before any
+          // native wake/adoption effects. A settings change during ringing
+          // must apply to the next call too, not just after media starts.
+          final session = coordinator.activeSession;
+          if (session != null && !session.isTerminal) {
+            if (policyCallId != session.callId) {
+              policyCallId = session.callId;
+              pendingTransportPolicy = resolveCallTransportPolicy(
+                secureKeyStore: secureKeyStore,
+                forceRelay:
+                    featureFlags['voice_call_force_relay_enabled'] == true,
+              );
+            }
+          } else {
+            policyCallId = null;
+            pendingTransportPolicy = null;
+          }
           emitFlowEvent(
             layer: 'FL',
             event: 'CALL_STATE_TRANSITION',
@@ -1653,27 +1677,19 @@ CallSignalingComposition createProductionCallSignalingComposition({
         clock: callClock,
         messageIdSource: _newCallId,
       );
-      final iceServerProvider = BridgeCallIceServerProvider(
-        bridge: bridge,
-        clock: callClock,
-      );
-      Future<List<CallIceServer>> readFreshIceServers(CallId callId) async {
-        final servers = await iceServerProvider.read(callId);
-        if (!servers.any((server) => server.containsTurnUrl)) {
-          throw const CallNegotiationPortException(
-            CallNegotiationPortErrorCode.iceServersUnavailable,
-          );
-        }
-        return servers;
-      }
-
-      final transportPolicy =
-          featureFlags['voice_call_always_relay_enabled'] == true
-          ? CallTransportPolicy.relayOnly
-          : CallTransportPolicy.all;
       ProductionCallSignalingGraph? diagnosticGraph;
       mediaOwner = CallScopedMediaBundleOwner(
         createBundle: (callId) async {
+          // Shared by incoming, outgoing and native wake/adoption paths. The
+          // existing owner memoizes this bundle, including during ICE restarts.
+          final pendingPolicy = pendingTransportPolicy;
+          if (policyCallId != callId || pendingPolicy == null) {
+            throw const CallScopedMediaBundleOwnerException(
+              CallScopedMediaBundleOwnerErrorCode.activeCallMismatch,
+            );
+          }
+          final transportPolicy = await pendingPolicy;
+          // Storage may have awaited unlock while this call ended/replaced.
           final session = coordinator.activeSession;
           if (session == null ||
               session.callId != callId ||
@@ -1749,11 +1765,19 @@ CallSignalingComposition createProductionCallSignalingComposition({
               );
             },
           );
+          final iceServerProvider = BridgeCallIceServerProvider(
+            bridge: bridge,
+            clock: callClock,
+          );
           final mediaPreparer = CallAudioNegotiationPreparer(
             startAudio: audioController.start,
-            readInitialIceServers: readFreshIceServers,
+            isCurrentCall: (id) =>
+                id == callId &&
+                !engine.isClosed &&
+                coordinator.activeSession?.callId == callId &&
+                coordinator.activeSession?.isTerminal == false,
+            readInitialIceServers: iceServerProvider.read,
             clock: callClock,
-            requireTurnServer: true,
             onStartResult: (status) {
               CallDiagnostics.instance.record(
                 stage: 'audio',
@@ -1795,13 +1819,13 @@ CallSignalingComposition createProductionCallSignalingComposition({
               receiveVideo: false,
               captureAudio: true,
               captureVideo: false,
-              iceServers: const <CallIceServer>[],
+              iceServers: List<CallIceServer>.unmodifiable(iceServers),
             ),
             dispatchEvent: (event) async {
               await coordinator.dispatch(event);
             },
             readActiveSnapshot: () => coordinator.activeSession,
-            readStagedIceServers: readFreshIceServers,
+            readStagedIceServers: iceServerProvider.read,
             clock: callClock,
           );
           final interruptionCoordinator = CallAudioInterruptionCoordinator(
@@ -1818,11 +1842,14 @@ CallSignalingComposition createProductionCallSignalingComposition({
             engine: engine,
             audioController: audioController,
             negotiationExecutor: negotiationExecutor,
-            close: () => _closeCallMediaBundle(
-              interruptionCoordinator: interruptionCoordinator,
-              audioController: audioController,
-              negotiationExecutor: negotiationExecutor,
-            ),
+            close: () {
+              iceServerProvider.close();
+              return _closeCallMediaBundle(
+                interruptionCoordinator: interruptionCoordinator,
+                audioController: audioController,
+                negotiationExecutor: negotiationExecutor,
+              );
+            },
           );
         },
       );

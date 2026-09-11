@@ -1513,8 +1513,8 @@ def _initial_message(hint: str | None) -> str:
         "Codex-memory advisory (non-blocking): a broad plan/spec/document search "
         "started without compact document recall. The current call was allowed. "
         f"Before another corpus sweep, run `{_query_command(hint)}`. A direct "
-        "complete read of one named plan/spec remains allowed; code relationships "
-        "belong in Graphify."
+        "complete read of one named plan/spec remains allowed; verify code "
+        "relationships with targeted source searches."
     )
 
 

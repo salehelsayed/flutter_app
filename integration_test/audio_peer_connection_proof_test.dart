@@ -8,8 +8,11 @@ import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_eng
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import 'support/mixed_policy_native_audio_proof.dart';
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  registerMixedPolicyNativeAudioProof();
 
   test(
     'VC2-01 real adapter creates and closes a bare audio-only connection',

@@ -181,6 +181,24 @@ final class AndroidForegroundWebRtcAudioCampaignResult {
     },
   );
 
+  factory AndroidForegroundWebRtcAudioCampaignResult.latencyExceeded(
+    AndroidForegroundWebRtcAudioLatencyExceeded failure,
+  ) => AndroidForegroundWebRtcAudioCampaignResult._(
+    processExitCode: 1,
+    json: <String, Object?>{
+      'status': 'FAIL',
+      'assertionsAttempted': androidForegroundWebRtcAudioAssertionCount,
+      'artifactPresent': false,
+      'printOnly': false,
+      'blocker': 'product',
+      'exitCode': 1,
+      'detail':
+          'Direct, TURN/UDP and TURN/TCP media and cleanup checks completed, '
+          'but relay accept-to-audio p95=${failure.p95Ms}ms exceeded '
+          '${AndroidForegroundWebRtcAudioLatencyExceeded.thresholdMs}ms.',
+    },
+  );
+
   final int processExitCode;
   final Map<String, Object?> json;
 }
@@ -301,6 +319,8 @@ runAndroidForegroundWebRtcAudioCampaign({
       detail: failure.detail,
       artifactPresent: false,
     );
+  } on AndroidForegroundWebRtcAudioLatencyExceeded catch (failure) {
+    return AndroidForegroundWebRtcAudioCampaignResult.latencyExceeded(failure);
   } on Object catch (error) {
     return AndroidForegroundWebRtcAudioCampaignResult.fail(
       blocker: 'harness',

@@ -896,7 +896,7 @@ def profile_mismatches(variant: str, policy: dict[str, Any]) -> list[str]:
             "graphify_reminder": False,
             "graphify_enforce": False,
             "graphify_affected_enforce": False,
-            "graphify_telemetry": True,
+            "graphify_telemetry": False,
             "graphify_observe_only": False,
             "graphify_debug": False,
             "memory_reminder": False,
@@ -910,11 +910,11 @@ def profile_mismatches(variant: str, policy: dict[str, Any]) -> list[str]:
     elif variant == "shadow":
         checks = {
             "task_run_variant": "shadow",
-            "graphify_reminder": True,
+            "graphify_reminder": False,
             "graphify_enforce": False,
             "graphify_affected_enforce": False,
-            "graphify_telemetry": True,
-            "graphify_observe_only": True,
+            "graphify_telemetry": False,
+            "graphify_observe_only": False,
             "graphify_debug": False,
             "memory_reminder": True,
             "memory_auto_recall": True,
@@ -927,10 +927,10 @@ def profile_mismatches(variant: str, policy: dict[str, Any]) -> list[str]:
     else:
         checks = {
             "task_run_variant": "active",
-            "graphify_reminder": True,
-            "graphify_enforce": True,
-            "graphify_affected_enforce": True,
-            "graphify_telemetry": True,
+            "graphify_reminder": False,
+            "graphify_enforce": False,
+            "graphify_affected_enforce": False,
+            "graphify_telemetry": False,
             "memory_reminder": True,
             "memory_auto_recall": True,
             "memory_repeat_guard": True,
@@ -959,13 +959,15 @@ def profile_mismatches(variant: str, policy: dict[str, Any]) -> list[str]:
 
 
 def profile_environment(variant: str) -> dict[str, str]:
+    # Keep retired Codex graph gates off even when inherited shell flags are on.
+    # Legacy diagnostic fields remain readable for historical comparisons.
     common = {
         "CODEX_MEMORY_CONFIG": str((MEMORY_DIR / "config.json").resolve()),
         "CODEX_TASK_RUN_ROLLOVER_ARM": "unspecified",
         "GRAPHIFY_CODEX_REMINDER_CEILING": "10",
         "GRAPHIFY_CODEX_REMINDER_BATCH_BUDGET": "8",
         "GRAPHIFY_CODEX_REMINDER_DEBUG": "0",
-        "GRAPHIFY_CONTEXT_LOG": "1",
+        "GRAPHIFY_CONTEXT_LOG": "0",
         "CODEX_MEMORY_REMINDER_CEILING": "4",
         "CODEX_MEMORY_PRIMARY_IDLE_SECONDS": "86400",
         "CODEX_MEMORY_SECONDARY_BUDGET": "300",
@@ -999,10 +1001,10 @@ def profile_environment(variant: str) -> dict[str, str]:
         return {
             **common,
             "CODEX_TASK_RUN_VARIANT": "shadow",
-            "GRAPHIFY_CODEX_REMINDER": "1",
+            "GRAPHIFY_CODEX_REMINDER": "0",
             "GRAPHIFY_CODEX_ENFORCE": "0",
             "GRAPHIFY_CODEX_AFFECTED_ENFORCE": "0",
-            "GRAPHIFY_CODEX_OBSERVE_ONLY": "1",
+            "GRAPHIFY_CODEX_OBSERVE_ONLY": "0",
             "CODEX_MEMORY_REMINDER": "1",
             "CODEX_MEMORY_AUTO_RECALL": "1",
             "CODEX_MEMORY_REPEAT_GUARD": "0",
@@ -1012,9 +1014,9 @@ def profile_environment(variant: str) -> dict[str, str]:
     return {
         **common,
         "CODEX_TASK_RUN_VARIANT": "active",
-        "GRAPHIFY_CODEX_REMINDER": "1",
-        "GRAPHIFY_CODEX_ENFORCE": "1",
-        "GRAPHIFY_CODEX_AFFECTED_ENFORCE": "1",
+        "GRAPHIFY_CODEX_REMINDER": "0",
+        "GRAPHIFY_CODEX_ENFORCE": "0",
+        "GRAPHIFY_CODEX_AFFECTED_ENFORCE": "0",
         "CODEX_MEMORY_REMINDER": "1",
         "CODEX_MEMORY_AUTO_RECALL": "1",
         "CODEX_MEMORY_REPEAT_GUARD": "1",
@@ -3535,7 +3537,7 @@ def _start_event(
     )
     if selected_rollover_arm in ROLLOVER_ARMS and variant != "active":
         raise ValueError(
-            "rollover experiments require the active Graphify/memory profile in both arms"
+            "rollover experiments require the active document-memory profile in both arms"
         )
     selected_rollover_policy = rollover_policy(metadata, selected_rollover_arm)
     return {

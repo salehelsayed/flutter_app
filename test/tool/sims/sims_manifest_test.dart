@@ -487,6 +487,7 @@ void main() {
       'VOICE_CALL_TURN_ENABLED': 'true',
       'VOICE_CALL_ANDROID_NATIVE_ENABLED': 'true',
       'VOICE_CALL_ALWAYS_RELAY_ENABLED': 'true',
+      'VOICE_CALL_FORCE_RELAY_ENABLED': 'true',
       'ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED': 'true',
     });
 

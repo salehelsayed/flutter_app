@@ -1,4 +1,6 @@
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
+import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
+import '../widgets/call_privacy_settings_control.dart';
 import '../widgets/call_diagnostics_settings_section.dart';
 import '../widgets/app_diagnostics_settings_section.dart';
 import 'dart:async';
@@ -72,6 +74,7 @@ class SettingsWired extends StatefulWidget {
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
   final bool showNavigationBar;
+  final Map<String, bool>? voiceCallFeatureFlags;
 
   /// 209 — host-built QR entries (the orbit host wraps its existing
   /// `_onMyQR`/`_onScanQR`; the returned Future completes when the pushed QR
@@ -107,6 +110,7 @@ class SettingsWired extends StatefulWidget {
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.showNavigationBar = true,
+    this.voiceCallFeatureFlags,
     this.onMyQrRequested,
     this.onScanQrRequested,
     this.mediaStorageManager,
@@ -732,6 +736,16 @@ class _SettingsWiredState extends State<SettingsWired> {
     );
   }
 
+  Future<void> _openCallPrivacySheet() => _showSettingsSheet(
+    builder: (sheetContext, setSheetState) => CallPrivacySettingsControl(
+      secureKeyStore: widget.secureKeyStore,
+      forceRelay:
+          (widget.voiceCallFeatureFlags ??
+              productionVoiceCallFeatureFlags())['voice_call_force_relay_enabled'] ==
+          true,
+    ),
+  );
+
   Future<void> _openBackgroundSheet() {
     return _showSettingsSheet(
       builder: (sheetContext, setSheetState) => BackgroundChoiceControl(
@@ -921,6 +935,12 @@ class _SettingsWiredState extends State<SettingsWired> {
       onOpenPhotoQualitySheet: _openPhotoQualitySheet,
       onOpenVideoQualitySheet: _openVideoQualitySheet,
       onOpenMediaStorageSheet: _openMediaStorageSheet,
+      onOpenCallPrivacySheet:
+          (widget.voiceCallFeatureFlags ??
+                  productionVoiceCallFeatureFlags())['voice_call_always_relay_enabled'] ==
+              true
+          ? _openCallPrivacySheet
+          : null,
       onOpenRecoverySheet: _openRecoverySheet,
       onOpenSafetySupport: _openSafetySupportSheet,
       currentBackgroundPreference: _currentBackgroundPreference,

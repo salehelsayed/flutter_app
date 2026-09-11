@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../../../core/bridge/bridge.dart';
 import '../../../core/bridge/p2p_bridge_client.dart';
+import '../application/call_negotiation_effect_executor.dart';
 import '../domain/call_engine.dart';
 import '../diagnostics/call_diagnostics.dart';
 import '../domain/call_id.dart';
@@ -9,15 +10,17 @@ import '../domain/call_id.dart';
 typedef CallTurnCredentialFetcher =
     Future<Map<String, dynamic>> Function(Bridge bridge);
 
-/// Reads a fresh native-authenticated TURN bundle for the one bounded ICE
-/// restart. Nothing is cached, so credential lifetime never becomes call
-/// lifetime and there is no static fallback after expiry or relay failure.
+/// Reads a fresh native-authenticated bundle for setup or an ICE restart.
+/// Only a transient outage returns an empty list; invalid/rejected responses
+/// throw. The consumer applies the frozen call policy to that empty result.
+/// Retains at most one validated bundle for this call's restart fallback.
+/// Every read still attempts refresh; late fetches have no media side effects.
 final class BridgeCallIceServerProvider {
   BridgeCallIceServerProvider({
     required Bridge bridge,
     CallTurnCredentialFetcher? fetch,
     DateTime Function()? clock,
-    this.requestTimeout = const Duration(seconds: 10),
+    this.requestTimeout = const Duration(seconds: 5),
   }) : _bridge = bridge,
        _fetch = fetch,
        _clock = clock ?? DateTime.now;
@@ -26,8 +29,34 @@ final class BridgeCallIceServerProvider {
   final CallTurnCredentialFetcher? _fetch;
   final DateTime Function() _clock;
   final Duration requestTimeout;
+  CallId? _callId;
+  bool _closed = false;
+  List<CallIceServer> _lastValidServers = const [];
+
+  void close() {
+    _closed = true;
+    _lastValidServers = const [];
+  }
+
+  void _requireOwner(CallId callId) {
+    if (_closed || (_callId != null && _callId != callId)) {
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.mediaUnavailable,
+      );
+    }
+    _callId = callId;
+  }
+
+  List<CallIceServer> _unexpiredFallback(CallId callId) {
+    _requireOwner(callId);
+    final now = _clock().toUtc();
+    return _lastValidServers = List.unmodifiable(
+      _lastValidServers.where((server) => server.expiresAt.isAfter(now)),
+    );
+  }
 
   Future<List<CallIceServer>> read(CallId callId) async {
+    _requireOwner(callId);
     final diagnostics = CallDiagnostics.instance;
     final traceId =
         diagnostics.traceForCall(callId: callId.value) ??
@@ -56,9 +85,20 @@ final class BridgeCallIceServerProvider {
                     ),
                   ))
               .timeout(requestTimeout);
+      _requireOwner(callId);
       if (response['ok'] != true) {
-        failed('turn_credential_failed');
-        return const <CallIceServer>[];
+        if (response['errorCode'] == 'TURN_CREDENTIALS_UNAVAILABLE') {
+          failed('turn_credential_failed');
+          return _unexpiredFallback(callId);
+        }
+        failed(
+          response['errorCode'] == 'TURN_CREDENTIALS_INVALID_RESPONSE'
+              ? 'malformed_response'
+              : 'turn_credential_failed',
+        );
+        throw const CallNegotiationPortException(
+          CallNegotiationPortErrorCode.iceServersUnavailable,
+        );
       }
 
       final rawUrls = response['urls'];
@@ -69,19 +109,25 @@ final class BridgeCallIceServerProvider {
           rawUrls.isEmpty ||
           rawUrls.length > 16 ||
           username is! String ||
-          username.isEmpty ||
+          !validTurnCredentialText(username) ||
           password is! String ||
-          password.isEmpty ||
+          !validTurnCredentialText(password) ||
           expiresAtMs is! int) {
         failed('malformed_response');
-        return const <CallIceServer>[];
+        throw const CallNegotiationPortException(
+          CallNegotiationPortErrorCode.iceServersUnavailable,
+        );
       }
 
       final urls = <String>[];
       for (final value in rawUrls) {
-        if (value is! String || !_isTurnUrl(value)) {
+        if (value is! String ||
+            value.length > 2048 ||
+            !validTurnCredentialUrl(value)) {
           failed('malformed_response');
-          return const <CallIceServer>[];
+          throw const CallNegotiationPortException(
+            CallNegotiationPortErrorCode.iceServersUnavailable,
+          );
         }
         urls.add(value);
       }
@@ -89,9 +135,14 @@ final class BridgeCallIceServerProvider {
         expiresAtMs,
         isUtc: true,
       );
-      if (!expiresAt.isAfter(_clock().toUtc())) {
+      if (!expiresAt.isAfter(_clock().toUtc()) ||
+          !urls.any(
+            (url) => url.startsWith('turn:') || url.startsWith('turns:'),
+          )) {
         failed('malformed_response');
-        return const <CallIceServer>[];
+        throw const CallNegotiationPortException(
+          CallNegotiationPortErrorCode.iceServersUnavailable,
+        );
       }
       diagnostics.record(
         stage: 'turn',
@@ -99,28 +150,24 @@ final class BridgeCallIceServerProvider {
         outcome: 'ok',
         traceId: traceId,
       );
-      return <CallIceServer>[
+      return _lastValidServers = List.unmodifiable(<CallIceServer>[
         CallIceServer(
           urls: urls,
           username: username,
           credential: password,
           expiresAt: expiresAt,
         ),
-      ];
+      ]);
     } on TimeoutException {
       failed('timeout');
-      return const <CallIceServer>[];
+      return _unexpiredFallback(callId);
+    } on CallNegotiationPortException {
+      rethrow;
     } catch (_) {
       failed('turn_credential_failed');
-      return const <CallIceServer>[];
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.iceServersUnavailable,
+      );
     }
-  }
-
-  static bool _isTurnUrl(String value) {
-    if (value.isEmpty || value.length > 2048 || value.trim() != value) {
-      return false;
-    }
-    final lower = value.toLowerCase();
-    return lower.startsWith('turn:') || lower.startsWith('turns:');
   }
 }

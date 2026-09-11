@@ -1078,8 +1078,8 @@ void main() {
 
       expect(lost.snapshot.state, CallState.reconnecting);
       expect(lost.effects.map((effect) => effect.type), <CallEffectType>[
-        CallEffectType.restartIce,
         CallEffectType.scheduleReconnectTimeout,
+        CallEffectType.restartIce,
       ]);
       expect(
         lost.effects
@@ -1176,8 +1176,8 @@ void main() {
         expect(followed.decision, CallEventDecision.applied);
         expect(followed.snapshot.state, CallState.reconnecting);
         expect(followed.effects.map((effect) => effect.type), <CallEffectType>[
-          CallEffectType.restartIce,
           CallEffectType.scheduleReconnectTimeout,
+          CallEffectType.restartIce,
         ]);
 
         // The callee never restarts on its own; it asks the caller.
@@ -1199,8 +1199,8 @@ void main() {
         expect(
           calleeLost.effects.map((effect) => effect.type),
           <CallEffectType>[
-            CallEffectType.requestIceRestart,
             CallEffectType.scheduleReconnectTimeout,
+            CallEffectType.requestIceRestart,
           ],
         );
       },

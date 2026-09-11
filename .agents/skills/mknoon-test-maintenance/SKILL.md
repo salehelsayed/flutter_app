@@ -18,7 +18,7 @@ evidence. Do not invoke other skills without a separate explicit user request.
    inventory. Distinguish discovered files/suites from inspected assertions and
    actual runner-reported cases; generated cases cannot be counted from names.
 2. Inspect the affected assertions, shared helpers, production boundaries, and
-   existing diagnostics using the project Graphify/document-memory policies.
+   existing diagnostics using targeted source searches and the document-memory policy.
    Reuse relevant prior evidence before adding logging. Widen inspection when
    shared dependency impact demands it; avoid an unrelated whole-repo reaudit.
 3. Reuse or strengthen an existing test first. Add application tests only for a

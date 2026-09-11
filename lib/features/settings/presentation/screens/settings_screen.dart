@@ -44,6 +44,7 @@ class SettingsScreen extends StatelessWidget {
   /// 229: opens the Media & storage sheet (auto-download matrix + scoped
   /// storage totals/actions). Row hidden when null.
   final VoidCallback? onOpenMediaStorageSheet;
+  final VoidCallback? onOpenCallPrivacySheet;
   final VoidCallback? onOpenRecoverySheet;
   final VoidCallback? onOpenSafetySupport;
   final BackgroundPreference currentBackgroundPreference;
@@ -78,6 +79,7 @@ class SettingsScreen extends StatelessWidget {
     this.onOpenPhotoQualitySheet,
     this.onOpenVideoQualitySheet,
     this.onOpenMediaStorageSheet,
+    this.onOpenCallPrivacySheet,
     this.onOpenRecoverySheet,
     this.onOpenSafetySupport,
     this.currentBackgroundPreference = BackgroundPreference.defaultBackground,
@@ -178,6 +180,13 @@ class SettingsScreen extends StatelessWidget {
           icon: Icons.download_for_offline_outlined,
           label: l10n.settings_media_storage,
           onTap: onOpenMediaStorageSheet,
+        ),
+      if (onOpenCallPrivacySheet != null)
+        SettingsListRow(
+          key: const ValueKey('settings-row-call-privacy'),
+          icon: Icons.shield_outlined,
+          label: l10n.settings_always_relay_calls,
+          onTap: onOpenCallPrivacySheet,
         ),
       if (onNearbySharingChanged != null)
         SettingsListRow(

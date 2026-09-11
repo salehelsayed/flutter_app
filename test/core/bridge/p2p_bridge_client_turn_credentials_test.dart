@@ -9,6 +9,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 class _TurnCredentialBridge extends Bridge {
   Map<String, dynamic>? request;
+  String? rawResponse;
+  Object? error;
   Map<String, dynamic> response = <String, dynamic>{'ok': true};
 
   @override
@@ -29,7 +31,8 @@ class _TurnCredentialBridge extends Bridge {
   @override
   Future<String> send(String message) async {
     request = jsonDecode(message) as Map<String, dynamic>;
-    return jsonEncode(response);
+    if (error case final failure?) throw failure;
+    return rawResponse ?? jsonEncode(response);
   }
 }
 
@@ -37,10 +40,51 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
+    'legacy ambiguous native outage is not permission for direct fallback',
+    () async {
+      final legacy = _TurnCredentialBridge()
+        ..response = {'ok': false, 'errorCode': 'TURN_CREDENTIALS_UNAVAILABLE'};
+      final classified = _TurnCredentialBridge()
+        ..response = {'ok': false, 'errorCode': 'TURN_CREDENTIALS_TRANSIENT'};
+      expect(
+        (await callP2PTurnCredentialsV1(legacy))['errorCode'],
+        'TURN_CREDENTIALS_REJECTED',
+      );
+      expect(
+        (await callP2PTurnCredentialsV1(classified))['errorCode'],
+        'TURN_CREDENTIALS_UNAVAILABLE',
+      );
+    },
+  );
+
+  test(
+    'credential rejection and malformed JSON are never temporary outages',
+    () async {
+      for (final bridge in [
+        _TurnCredentialBridge()
+          ..response = {
+            'ok': false,
+            'errorCode': 'TURN_CREDENTIALS_UNAUTHORIZED',
+          },
+        _TurnCredentialBridge()
+          ..response = {'ok': false, 'errorCode': 'NOT_INITIALIZED'},
+        _TurnCredentialBridge()
+          ..error = PlatformException(code: 'trust_failed', message: 'private'),
+        _TurnCredentialBridge()..rawResponse = '{private malformed',
+      ]) {
+        final result = await callP2PTurnCredentialsV1(bridge);
+        expect(result['ok'], isFalse);
+        expect(result['errorCode'], isNot('TURN_CREDENTIALS_UNAVAILABLE'));
+        expect(jsonEncode(result), isNot(contains('private')));
+      }
+    },
+  );
+
+  test(
     'opt-in TURN metadata uses its dedicated command and preserves validation',
     () async {
       final bridge = _TurnCredentialBridge()
-        ..response = {'ok': false, 'errorCode': 'TURN_CREDENTIALS_UNAVAILABLE'};
+        ..response = {'ok': false, 'errorCode': 'TURN_CREDENTIALS_TRANSIENT'};
       const diagnostics = <String, Object?>{
         'traceId': '11111111-2222-4333-8444-555555555555',
         'requestId': '22222222-2222-4333-8444-555555555555',
@@ -238,7 +282,7 @@ void main() {
       final limitedRelay = _TurnCredentialBridge()
         ..response = <String, dynamic>{
           'ok': false,
-          'errorCode': 'TURN_CREDENTIALS_UNAVAILABLE',
+          'errorCode': 'TURN_CREDENTIALS_TRANSIENT',
           'errorMessage': 'Credential mint temporarily unavailable',
           'retryAfterMs': 2500,
         };

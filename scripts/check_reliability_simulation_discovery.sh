@@ -192,6 +192,10 @@ classify_path() {
   esac
 
   case "$path" in
+    integration_test/scripts/run_mixed_policy_native_audio.py)
+      record "support" "$path" "support" "Pinned Android pair and disposable coturn driver for the optional mixed-policy native audio proof; explicit devices and APK required"
+      return
+      ;;
     integration_test/scripts/run_production_audio_call_sims.dart)
       record "support" "$path" "support" "399 external local-coturn/Pion staging wrapper around the manifest-owned production-main Android call scenario"
       return

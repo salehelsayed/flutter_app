@@ -1880,5 +1880,10 @@
   "settings_safety_support_email_unavailable": "Es konnte keine E-Mail-App geöffnet werden. Kopiere die Adresse und kontaktiere uns über deinen bevorzugten E-Mail-Dienst.",
   "settings_safety_support_browser_unavailable": "Es konnte kein Browser geöffnet werden. Du kannst den Link zur Richtlinie unten kopieren und selbst öffnen.",
   "settings_safety_support_guidance": "Beschreibe dein Anliegen. Sende kein mutmaßliches Material über sexuellen Kindesmissbrauch, keine privaten Schlüssel und keine Wiederherstellungsphrasen.",
-  "settings_safety_support_standards": "Standards zum Schutz von Kindern"
+  "settings_safety_support_standards": "Standards zum Schutz von Kindern",
+  "settings_always_relay_calls": "Anrufe immer weiterleiten",
+  "settings_call_privacy_description": "Direkte Audioverbindungen können der anderen Person deine IP-Adresse zeigen. Aktiviere diese Einstellung, um Audio über einen Relay-Server zu senden. Änderungen gelten für neue Anrufe. Die direkte Signalisierung kann unabhängig davon weiterhin eine Adresse offenlegen.",
+  "settings_call_privacy_rollout": "Diese Version leitet derzeit alle Anrufe über Relay-Server weiter. Deine Auswahl wird für die Verfügbarkeit direkter Anrufe gespeichert.",
+  "settings_call_privacy_load_failed": "Deine Datenschutzeinstellung konnte nicht geladen werden. Anrufe verwenden Relay-Server. Versuche es erneut, um die Einstellung zu ändern.",
+  "settings_call_privacy_save_failed": "Deine Auswahl konnte nicht gespeichert werden. Bitte versuche es erneut."
 }

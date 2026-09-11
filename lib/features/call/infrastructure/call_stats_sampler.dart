@@ -176,7 +176,10 @@ final class CallStatsSampler {
         _string(transportRecord.values['selectedCandidatePairId']) == pair.id;
     final nominated = _bool(pair.values['nominated']) || selectedByTransport;
     final localId = _string(pair.values['localCandidateId']);
-    final local = localId == null ? null : byId[localId];
+    final referencedLocal = localId == null ? null : byId[localId];
+    final local = referencedLocal?.type == 'local-candidate'
+        ? referencedLocal
+        : null;
 
     return CallStatsSample(
       selectedPairSucceeded: succeeded,
@@ -209,12 +212,15 @@ final class CallStatsSampler {
     final candidateType = _string(
       candidate.values['candidateType'],
     )?.toLowerCase();
+    final relayedPrflx = _isTurnBackedPrflx(candidate, candidateType);
     if (candidateType == 'host' ||
         candidateType == 'srflx' ||
-        candidateType == 'prflx') {
+        (candidateType == 'prflx' && !relayedPrflx)) {
       return CallTransportClass.direct;
     }
-    if (candidateType != 'relay') return CallTransportClass.unknown;
+    if (candidateType != 'relay' && !relayedPrflx) {
+      return CallTransportClass.unknown;
+    }
     final protocol =
         _string(candidate.values['relayProtocol'])?.toLowerCase() ??
         _string(candidate.values['protocol'])?.toLowerCase();
@@ -230,12 +236,15 @@ final class CallStatsSampler {
     final candidateType = _string(
       candidate.values['candidateType'],
     )?.toLowerCase();
+    final relayedPrflx = _isTurnBackedPrflx(candidate, candidateType);
     if (candidateType == 'host' ||
         candidateType == 'srflx' ||
-        candidateType == 'prflx') {
+        (candidateType == 'prflx' && !relayedPrflx)) {
       return CallRelayProtocol.notRelay;
     }
-    if (candidateType != 'relay') return CallRelayProtocol.unknown;
+    if (candidateType != 'relay' && !relayedPrflx) {
+      return CallRelayProtocol.unknown;
+    }
     return switch (_string(candidate.values['relayProtocol'])?.toLowerCase()) {
       'udp' => CallRelayProtocol.udp,
       'tcp' => CallRelayProtocol.tcp,
@@ -243,6 +252,22 @@ final class CallStatsSampler {
       null || _ => CallRelayProtocol.unknown,
     };
   }
+
+  // M144 Connection::MaybeUpdateLocalCandidate can remap a TURN candidate to
+  // prflx while retaining its TURN port. RTCStatsCollector explicitly exposes
+  // relayProtocol for that local prflx candidate. Require this native evidence;
+  // ordinary prflx, generic protocol, URLs, and remote relays cannot prove TURN.
+  static bool _isTurnBackedPrflx(
+    CallStatsRecord candidate,
+    String? candidateType,
+  ) =>
+      candidateType == 'prflx' &&
+      candidate.type == 'local-candidate' &&
+      const {
+        'udp',
+        'tcp',
+        'tls',
+      }.contains(_string(candidate.values['relayProtocol'])?.toLowerCase());
 
   static String? _string(Object? value) =>
       value is String && value.isNotEmpty ? value : null;

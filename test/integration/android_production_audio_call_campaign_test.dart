@@ -394,6 +394,58 @@ void main() {
   );
 
   test(
+    'concurrent call-surface checks share one device hierarchy read',
+    () async {
+      final runner = _ConcurrentHierarchyRunner();
+      final driver = SystemAndroidProductionAudioCallCampaignDriver(
+        physicalDeviceId: 'pixel',
+        emulatorDeviceId: 'emulator-5554',
+        artifact: File('${Directory.systemTemp.path}/plan399-unused.apk'),
+        artifactSha256: _apkSha,
+        packageName: androidProductionAudioCallAppPackage,
+        relayHost: '192.168.0.60',
+        relayPort: 44001,
+        proofDirectory: Directory.systemTemp,
+        runner: runner,
+      );
+      final checks = Future.wait([
+        driver.waitForSemantic('pixel', 'Connected'),
+        driver.waitForSemantic('pixel', 'Call controls'),
+      ]);
+      await runner.started.future;
+      await Future<void>.delayed(Duration.zero);
+      runner.release.complete();
+      await checks;
+      expect(runner.dumpCalls, 1);
+    },
+  );
+
+  test(
+    'native Answer reopens shade after an incoming window replaces it',
+    () async {
+      final runner = _NotificationShadeAnswerRunner(interruptFirstDump: true);
+      final driver = SystemAndroidProductionAudioCallCampaignDriver(
+        physicalDeviceId: 'pixel',
+        emulatorDeviceId: 'emulator-5554',
+        artifact: File('${Directory.systemTemp.path}/plan399-unused.apk'),
+        artifactSha256: _apkSha,
+        packageName: androidProductionAudioCallAppPackage,
+        relayHost: '192.168.0.60',
+        relayPort: 44001,
+        proofDirectory: Directory.systemTemp,
+        runner: runner,
+      );
+
+      expect(await driver.tapNativeAnswer('pixel'), 'com.android.systemui');
+      expect(runner.dumps, 2);
+      expect(
+        runner.invocations.where((args) => args.last == 'expand-notifications'),
+        hasLength(2),
+      );
+    },
+  );
+
+  test(
     'opening a conversation foregrounds the app-side navigated conversation without a UI tap or force-stop',
     () async {
       final runner = _ConversationForegroundRunner();
@@ -2328,9 +2380,39 @@ a=candidate:1 1 UDP 1 192.168.0.44 52705 typ host
   }
 }
 
+final class _ConcurrentHierarchyRunner implements AndroidHostProcessRunner {
+  final started = Completer<void>();
+  final release = Completer<void>();
+  int dumpCalls = 0;
+
+  @override
+  Future<ProcessResult> run(String executable, List<String> args) async {
+    if (args.contains('uiautomator')) {
+      dumpCalls++;
+      if (!started.isCompleted) started.complete();
+      await release.future;
+      return ProcessResult(1, 0, 'UI hierarchy dumped to file', '');
+    }
+    if (args.contains('exec-out') && args.contains('cat')) {
+      return ProcessResult(1, 0, '''
+<hierarchy>
+  <node content-desc="Connected" enabled="true" package="com.mknoon.sims.productionaudio" bounds="[0,0][100,100]" />
+  <node content-desc="Call controls" enabled="true" package="com.mknoon.sims.productionaudio" bounds="[0,100][100,200]" />
+</hierarchy>
+''', '');
+    }
+    if (args.contains('rm')) return ProcessResult(1, 0, '', '');
+    throw StateError('Unexpected hierarchy runner command');
+  }
+}
+
 final class _NotificationShadeAnswerRunner implements AndroidHostProcessRunner {
+  _NotificationShadeAnswerRunner({this.interruptFirstDump = false});
+
+  final bool interruptFirstDump;
   final List<List<String>> invocations = <List<String>>[];
   bool _notificationShadeExpanded = false;
+  int dumps = 0;
 
   @override
   Future<ProcessResult> run(String executable, List<String> arguments) async {
@@ -2375,8 +2457,19 @@ final class _NotificationShadeAnswerRunner implements AndroidHostProcessRunner {
     if (arguments.length == 5 &&
         arguments[2] == 'exec-out' &&
         arguments[3] == 'cat') {
+      dumps++;
       if (!_notificationShadeExpanded) {
         return ProcessResult(1, 1, '', 'notification shade not expanded');
+      }
+      if (interruptFirstDump && dumps == 1) {
+        _notificationShadeExpanded = false;
+        // exec-out can report shell failure text with a zero host exit code.
+        return ProcessResult(
+          1,
+          0,
+          'cat: private.xml: No such file or directory\n',
+          '',
+        );
       }
       return ProcessResult(1, 0, '''
 <hierarchy>

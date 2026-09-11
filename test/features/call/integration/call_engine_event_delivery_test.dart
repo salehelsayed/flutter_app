@@ -610,6 +610,9 @@ final class _NativePeer implements webrtc.RTCPeerConnection {
     webrtc.MediaStreamTrack? track,
   ]) async => [];
   @override
+  Future<void> setConfiguration(Map<String, dynamic> configuration) async {}
+
+  @override
   Future<void> restartIce() async => restartCalls++;
   @override
   Future<void> close() async => closeCalls++;

@@ -68,9 +68,13 @@ func TestTurnCredentialsV1Bridge_TypedSafeFailures(t *testing.T) {
 		wantCode  string
 		wantRetry float64
 	}{
+		{name: "unauthorized", err: &node.TurnCredentialsRelayError{Code: "TURN_CREDENTIALS_UNAUTHORIZED"}, wantCode: "TURN_CREDENTIALS_REJECTED"},
+		{name: "unknown rejection", err: &node.TurnCredentialsRelayError{Code: "UNKNOWN_TRUST_FAILURE"}, wantCode: "TURN_CREDENTIALS_REJECTED"},
+		{name: "unknown exception", err: errors.New("private trust failure"), wantCode: "TURN_CREDENTIALS_REJECTED"},
+		{name: "classified outage", err: node.ErrTurnCredentialsUnavailable, wantCode: "TURN_CREDENTIALS_TRANSIENT"},
 		{name: "old relay", err: node.ErrTurnCredentialsUnsupported, wantCode: "TURN_CREDENTIALS_UNSUPPORTED"},
 		{name: "invalid response", err: node.ErrTurnCredentialsInvalidResponse, wantCode: "TURN_CREDENTIALS_INVALID_RESPONSE"},
-		{name: "finite relay failure", err: &node.TurnCredentialsRelayError{Code: "RATE_LIMITED", RetryAfter: 2500 * time.Millisecond}, wantCode: "TURN_CREDENTIALS_UNAVAILABLE", wantRetry: 2500},
+		{name: "finite relay failure", err: &node.TurnCredentialsRelayError{Code: "RATE_LIMITED", RetryAfter: 2500 * time.Millisecond}, wantCode: "TURN_CREDENTIALS_TRANSIENT", wantRetry: 2500},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {

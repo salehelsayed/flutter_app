@@ -172,6 +172,7 @@ void main() {
         'state': pairState,
         'nominated': nominated,
         'localCandidateId': 'local',
+        'remoteCandidateId': 'remote',
       },
     ),
     if (includeLocalCandidate)
@@ -355,6 +356,68 @@ void main() {
     expect(noLocalCandidate.transport, CallTransportClass.unknown);
     expect(noLocalCandidate.selectedRelayProtocol, CallRelayProtocol.unknown);
   });
+
+  test(
+    'native TURN-backed prflx uses only the selected local relayProtocol',
+    () {
+      for (final entry in {
+        'udp': CallTransportClass.turnUdp,
+        'tcp': CallTransportClass.turnTcpTls,
+        'tls': CallTransportClass.turnTcpTls,
+      }.entries) {
+        final sample = sampler.sample(
+          selectedPair(
+            candidateType: 'prflx',
+            protocol: 'udp',
+            relayProtocol: entry.key,
+          ),
+        );
+        expect(sample.transport, entry.value);
+        expect(sample.selectedRelayProtocol.name, entry.key);
+      }
+      for (final protocol in [null, '', 'quic']) {
+        final sample = sampler.sample(
+          selectedPair(
+            candidateType: 'prflx',
+            protocol: 'udp',
+            relayProtocol: protocol,
+          ),
+        );
+        expect(sample.transport, CallTransportClass.direct);
+        expect(sample.selectedRelayProtocol, CallRelayProtocol.notRelay);
+      }
+    },
+  );
+
+  test(
+    'a remote relay never proves that the selected local side is relayed',
+    () {
+      for (final localType in ['host', 'srflx', 'prflx', 'relay', null]) {
+        final records = selectedPair(
+          candidateType: localType,
+          protocol: 'udp',
+          relayProtocol: localType == 'relay' ? 'udp' : null,
+          includeLocalCandidate: localType != null,
+        );
+        records.add(
+          const CallStatsRecord(
+            id: 'remote',
+            type: 'remote-candidate',
+            values: {'candidateType': 'relay', 'protocol': 'udp'},
+          ),
+        );
+        final sample = sampler.sample(records);
+        expect(
+          sample.transport,
+          localType == null
+              ? CallTransportClass.unknown
+              : localType == 'relay'
+              ? CallTransportClass.turnUdp
+              : CallTransportClass.direct,
+        );
+      }
+    },
+  );
 
   test('never upgrades incomplete transport state to ready', () {
     final sample = sampler.sample(

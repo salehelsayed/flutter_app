@@ -36,6 +36,7 @@ var (
 	ErrTurnCredentialsUnsupported     = errors.New("turn credentials unsupported")
 	ErrTurnCredentialsInvalidResponse = errors.New("turn credentials response invalid")
 	ErrTurnCredentialsUnavailable     = errors.New("turn credentials unavailable")
+	ErrTurnCredentialsRejected        = errors.New("turn credential retrieval rejected")
 	ErrTurnCredentialsRequired        = errors.New("valid turn credentials required")
 )
 
@@ -69,6 +70,13 @@ func (e *TurnCredentialsRelayError) Error() string {
 
 func (e *TurnCredentialsRelayError) Unwrap() error {
 	return ErrTurnCredentialsUnavailable
+}
+
+// Transient is deliberately an allowlist. Authentication, invalid requests and
+// unknown relay codes must not authorize a direct fallback at the call layer.
+func (e *TurnCredentialsRelayError) Transient() bool {
+	return e != nil && (e.Code == "TURN_CREDENTIALS_UNAVAILABLE" ||
+		e.Code == "TURN_CREDENTIALS_RATE_LIMITED" || e.Code == "RATE_LIMITED")
 }
 
 type turnCredentialsWireResponse struct {
@@ -153,12 +161,12 @@ func requestTurnCredentialsV1(
 	ctx, cancel := context.WithTimeout(parent, RelayProbeTimeout)
 	defer cancel()
 	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
-		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
+		return TurnCredentialBundle{}, turnCredentialConnectError(err)
 	}
 
 	stream, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 	if err != nil {
-		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
+		return TurnCredentialBundle{}, turnCredentialConnectError(err)
 	}
 	streamOK := false
 	defer finishStream(stream, &streamOK)
@@ -180,14 +188,38 @@ func requestTurnCredentialsV1(
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
 	}
 	responseBytes, err := readFrame(stream)
-	if err != nil || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
+	}
+	if err != nil {
+		var timeout net.Error
+		if errors.As(err, &timeout) && timeout.Timeout() {
+			return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
+		}
+		// Includes invalid frame lengths and truncated responses. Do not turn
+		// an unvalidated response into permission to attempt direct media.
+		return TurnCredentialBundle{}, ErrTurnCredentialsInvalidResponse
 	}
 	streamOK = true
 	if diagnosticContext(diagnostics) != nil && diagnosticUnsupported(responseBytes) {
 		return TurnCredentialBundle{}, errTurnDiagnosticUnsupported
 	}
 	return parseTurnCredentialsV1Response(responseBytes, now)
+}
+
+// Before an authenticated stream exists, an arbitrary transport error may be
+// a peer identity or security negotiation rejection. Only a proven deadline
+// permits transient treatment; do not expose the underlying address/error.
+func turnCredentialConnectError(err error) error {
+	// Unwrap only a single causal chain. A joined dial failure can contain both
+	// a deadline and a trust rejection, and must remain conservative. Context
+	// expiry alone must never relabel a separately reported authentication error.
+	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+		if cause == context.DeadlineExceeded {
+			return ErrTurnCredentialsUnavailable
+		}
+	}
+	return ErrTurnCredentialsRejected
 }
 
 func parseTurnCredentialsV1Response(raw []byte, now time.Time) (TurnCredentialBundle, error) {
@@ -377,6 +409,13 @@ func preferTurnCredentialError(previous, candidate error) error {
 	if previous == nil {
 		return candidate
 	}
+	// Do not let a later outage erase a received malformed/authentication error.
+	if turnCredentialFailureIsFatal(previous) {
+		return previous
+	}
+	if turnCredentialFailureIsFatal(candidate) {
+		return candidate
+	}
 	var previousRelay, candidateRelay *TurnCredentialsRelayError
 	if errors.As(candidate, &candidateRelay) {
 		return candidate
@@ -394,6 +433,14 @@ func preferTurnCredentialError(previous, candidate error) error {
 		return candidate
 	}
 	return previous
+}
+
+func turnCredentialFailureIsFatal(err error) bool {
+	var relayErr *TurnCredentialsRelayError
+	if errors.As(err, &relayErr) {
+		return !relayErr.Transient()
+	}
+	return !errors.Is(err, ErrTurnCredentialsUnavailable) && !errors.Is(err, ErrTurnCredentialsUnsupported)
 }
 
 func absDuration(value time.Duration) time.Duration {

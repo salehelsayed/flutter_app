@@ -332,9 +332,24 @@
         "test/features/call/application/call_negotiation_test.dart",
         "test/features/call/integration/call_remote_ice_drain_test.dart",
         "test/features/call/integration/call_readiness_exception_test.dart",
-        "test/features/call/integration/call_engine_event_delivery_test.dart"
+        "test/features/call/integration/call_engine_event_delivery_test.dart",
+        "test/features/call/integration/call_turn_policy_test.dart",
+        "test/features/call/application/call_audio_negotiation_preparer_test.dart",
+        "test/features/call/infrastructure/bridge_call_ice_server_provider_test.dart",
+        "test/features/call/application/call_negotiation_effect_executor_test.dart",
+        "test/features/call/infrastructure/flutter_webrtc_call_engine_test.dart",
+        "test/features/call/infrastructure/call_stats_sampler_test.dart",
+        "test/core/bridge/p2p_bridge_client_turn_credentials_test.dart",
+        "test/core/bootstrap/call_signaling_composition_test.dart",
+        "test/integration/android_foreground_webrtc_audio_readiness_diagnostic_test.dart",
+        "test/features/settings/application/call_privacy_preference_use_cases_test.dart",
+        "test/features/settings/presentation/widgets/call_privacy_settings_control_test.dart",
+        "test/features/settings/presentation/screens/settings_sub_sheets_test.dart",
+        "test/features/call/application/voice_call_release_policy_test.dart",
+        "test/features/call/infrastructure/flutter_webrtc_build_contract_test.dart",
+        "test/tool/sims/sims_manifest_test.dart"
       ],
-      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup; sustained native/engine event delivery, bounded history and coalescing, failure/disconnect priority, reentrant callbacks and terminal fencing",
+      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup; sustained native/engine event delivery, bounded history and coalescing, failure/disconnect priority, reentrant callbacks and terminal fencing; policy-aware TURN retrieval with transient-only direct attempts, strict credential/authentication rejection, exact-call late-result fences, frozen restart policy and canonical setup/reconnect deadlines; mixed local/remote ICE policies in both directions, local SDP/candidate egress including related addresses, and selected local candidate classification; production per-call policy captured at admission for incoming/outgoing/native paths, secure privacy preference persistence and fail-closed loading, feature availability versus rollout restriction, native all/relay configuration, and settings persistence/error visibility",
       "limitations": "Fake crypto/transports/native lifecycle; no microphone/RTP/audible audio evidence",
       "timeout_seconds": 900,
       "estimated_seconds": 3,
@@ -562,6 +577,32 @@
         "lib/features/settings/*"
       ],
       "inspected": false
+    },
+    "codex-tooling": {
+      "kind": "python",
+      "paths": [
+        "codex-memory/tests/test_codex_memory.py",
+        "codex-memory/tests/test_context_rollover.py",
+        "codex-memory/tests/test_memory_coverage_metrics.py",
+        "codex-memory/tests/test_memory_opportunity_metrics.py",
+        "codex-memory/tests/test_memory_secondary_preflight.py",
+        "codex-memory/tests/test_rollover_metrics.py",
+        "codex-memory/tests/test_rollover_project_integration.py",
+        "codex-memory/tests/test_task_run.py"
+      ],
+      "boundary": "Codex document recall, checkpoint readiness, profile isolation, and token-accounting contracts",
+      "limitations": "Host fixtures; does not prove configuration reload in an already-running Codex session",
+      "timeout_seconds": 300,
+      "estimated_seconds": null,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "codex-memory/",
+        ".codex/",
+        "AGENTS.md"
+      ],
+      "inspected": true
     },
     "workflow": {
       "kind": "python",
@@ -1059,6 +1100,8 @@
       "kind": "flutter",
       "paths": [
         "test/integration/android_production_audio_call_campaign_test.dart",
+        "test/integration/android_foreground_webrtc_audio_campaign_test.dart",
+        "test/integration/android_foreground_webrtc_audio_readiness_diagnostic_test.dart",
         "test/tool/sims/sims_build_cache_test.dart",
         "test/integration/android_app_package_test.dart",
         "test/tool/sims/sims_ios_group_media_269_profile_test.dart",
@@ -1073,6 +1116,8 @@
       ],
       "investigate": [
         "integration_test/scripts/android_production_audio_call_campaign.dart",
+        "integration_test/scripts/android_foreground_webrtc_audio_campaign.dart",
+        "integration_test/support/android_foreground_webrtc_audio_evidence.dart",
         "integration_test/scripts/run_production_audio_call_sims.dart",
         "tool/sims/build_orchestrator.dart"
       ],
@@ -1447,6 +1492,20 @@
       "why": "Feed async projection and subscription lifetime have independent host regressions"
     },
     {
+      "id": "codex-tooling",
+      "patterns": [
+        "codex-memory/*.py",
+        "codex-memory/tests/*",
+        ".codex/*",
+        "AGENTS.md",
+        ".agents/skills/*"
+      ],
+      "checks": [
+        "codex-tooling"
+      ],
+      "why": "Codex navigation removal must preserve document recall and prevent experiment profiles from re-enabling retired gates"
+    },
+    {
       "id": "workflow",
       "patterns": [
         "scripts/mknoon_checks.py",
@@ -1779,6 +1838,13 @@
       "id": "production-audio-disposable-harness",
       "patterns": [
         "integration_test/scripts/android_production_audio_call_campaign.dart",
+        "integration_test/scripts/android_foreground_webrtc_audio_campaign.dart",
+        "integration_test/support/android_foreground_webrtc_audio_evidence.dart",
+        "integration_test/support/android_foreground_webrtc_audio_canonical_stack.dart",
+        "integration_test/support/mixed_policy_native_audio_proof.dart",
+        "integration_test/scripts/run_mixed_policy_native_audio.py",
+        "integration_test/audio_peer_connection_proof_test.dart",
+        "test/integration/android_foreground_webrtc_audio_campaign_test.dart",
         "integration_test/scripts/run_production_audio_call_sims.dart",
         "test/integration/android_production_audio_call_campaign_test.dart",
         "tool/sims/build_orchestrator.dart",
@@ -1857,6 +1923,24 @@
         "bootstrap"
       ],
       "why": "A reviewed bootstrap fingerprint must stay synchronized without weakening relocation, import and scoped-callback ownership assertions"
+    },
+    {
+      "id": "call-privacy-settings",
+      "patterns": [
+        "lib/features/settings/application/call_privacy_preference_use_cases.dart",
+        "lib/features/settings/presentation/widgets/call_privacy_settings_control.dart",
+        "lib/features/settings/presentation/screens/settings_wired.dart",
+        "lib/features/settings/presentation/screens/settings_screen.dart",
+        "test/features/settings/application/call_privacy_preference_use_cases_test.dart",
+        "test/features/settings/presentation/widgets/call_privacy_settings_control_test.dart",
+        "test/features/settings/presentation/screens/settings_sub_sheets_test.dart",
+        "tool/build/voice_call_release_defines.json"
+      ],
+      "checks": [
+        "call-signaling",
+        "affected-calls"
+      ],
+      "why": "Saved settings and feature/build gates govern production call privacy independently of settings UI visibility"
     }
   ],
   "documentation_only": [

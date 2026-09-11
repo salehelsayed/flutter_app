@@ -16,7 +16,7 @@ Do not invoke other skills without a separate explicit user request.
 ## Workflow
 
 1. Inspect the complete relevant diff, including staged, unstaged, untracked,
-   renamed, and deleted files. Use the project Graphify policy to inspect shared
+   renamed, and deleted files. Use targeted source searches to inspect shared
    consumers and assertions when an executable mapping needs review.
 2. Run `python3 scripts/mknoon_checks.py validate`.
 3. Preview local changes with

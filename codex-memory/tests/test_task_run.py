@@ -1606,6 +1606,18 @@ class QualityAndComparisonTest(unittest.TestCase):
 
 
 class PolicyConfigurationTest(unittest.TestCase):
+    def test_memory_experiment_profiles_keep_retired_codex_graph_gates_off(self) -> None:
+        switches = (
+            "GRAPHIFY_CODEX_REMINDER", "GRAPHIFY_CODEX_ENFORCE",
+            "GRAPHIFY_CODEX_AFFECTED_ENFORCE", "GRAPHIFY_CODEX_OBSERVE_ONLY",
+            "GRAPHIFY_CONTEXT_LOG",
+        )
+        for variant in ("off", "shadow", "active"):
+            with self.subTest(variant=variant):
+                profile = task_run.profile_environment(variant)
+                self.assertEqual({key: profile[key] for key in switches},
+                                 dict.fromkeys(switches, "0"))
+
     def test_profile_uses_canonical_config_and_alternate_path_content_is_hashed_only(self) -> None:
         canonical_path = (task_run.MEMORY_DIR / "config.json").resolve()
         profile = task_run.profile_environment("active")
@@ -1693,10 +1705,10 @@ class PrivacyAndDispatchTest(unittest.TestCase):
     def _active_policy() -> dict[str, object]:
         return {
             "task_run_variant": "active",
-            "graphify_reminder": True,
-            "graphify_enforce": True,
-            "graphify_affected_enforce": True,
-            "graphify_telemetry": True,
+            "graphify_reminder": False,
+            "graphify_enforce": False,
+            "graphify_affected_enforce": False,
+            "graphify_telemetry": False,
             "memory_reminder": True,
             "memory_auto_recall": True,
             "memory_repeat_guard": True,

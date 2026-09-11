@@ -626,14 +626,16 @@ final class CallReducer {
             event,
             CallState.reconnecting,
             effects: <CallEffect>[
+              // Credential retrieval and restart signaling consume this same
+              // reconnect window; awaiting them must not postpone its start.
+              CallEffect(
+                CallEffectType.scheduleReconnectTimeout,
+                delay: policy.reconnectTimeout,
+              ),
               CallEffect(
                 snapshot.direction == CallDirection.incoming
                     ? CallEffectType.requestIceRestart
                     : CallEffectType.restartIce,
-              ),
-              CallEffect(
-                CallEffectType.scheduleReconnectTimeout,
-                delay: policy.reconnectTimeout,
               ),
             ],
           );
@@ -646,11 +648,11 @@ final class CallReducer {
             event,
             CallState.reconnecting,
             effects: <CallEffect>[
-              const CallEffect(CallEffectType.restartIce),
               CallEffect(
                 CallEffectType.scheduleReconnectTimeout,
                 delay: policy.reconnectTimeout,
               ),
+              const CallEffect(CallEffectType.restartIce),
             ],
           );
         }

@@ -233,7 +233,7 @@ class ContextRolloverTest(unittest.TestCase):
             self.assertGreater(row["checkpoint_tokens_estimate"], 0)
             self.assertNotIn("lib/example.dart", raw)
 
-    def test_non_plan_and_not_yet_grounded_are_explicit_not_silent(self) -> None:
+    def test_non_plan_checkpoint_needs_no_graph_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             runtime, _plan = fixture(Path(temporary))
             snapshot = rollover._empty_snapshot()
@@ -246,7 +246,7 @@ class ContextRolloverTest(unittest.TestCase):
                         "query_id": "",
                         "evidence_digest": "",
                     },
-                    "next_action": "Run the first focused Graphify query",
+                    "next_action": "Locate the relevant code with a targeted source search",
                 }
             )
             checkpoint, reasons = rollover.save_checkpoint(
@@ -260,7 +260,7 @@ class ContextRolloverTest(unittest.TestCase):
             self.assertEqual(reasons, [])
             self.assertTrue(checkpoint["ready"])
 
-            snapshot["graphify"]["status"] = ""
+            snapshot.pop("graphify")
             _checkpoint, reasons = rollover.save_checkpoint(
                 runtime,
                 session_id="missing-graph-status",
@@ -269,7 +269,9 @@ class ContextRolloverTest(unittest.TestCase):
                 outstanding_work="none",
                 now=BASE,
             )
-            self.assertIn("graph_status_missing", reasons)
+            self.assertEqual(reasons, [])
+            self.assertTrue(_checkpoint["ready"])
+            self.assertNotIn("Graphify", rollover._render_context(_checkpoint))
 
     def test_outstanding_work_is_required_and_running_blocks_ready(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

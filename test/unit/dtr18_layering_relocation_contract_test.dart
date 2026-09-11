@@ -311,10 +311,12 @@ const _productionBootstrapNormalizedSha256 =
     // and protected replay composition here. Direct/group upload retry signals
     // also enter the existing retrier here. These reviewed additions move no
     // owner or relocation URI; their behavior has separate causal tests.
-    'f03a4924221fa5b6fbfa4b9f545caea0a34e5a9d2ad376362631131fddffa5ad';
+    // Call privacy adds the existing secure store and approved STUN configuration
+    // to this same call composition. No lifecycle or layer ownership changes.
+    '49350bc5838b833b8a407fd3b964fbd7e9a92428a1c63eef46190e54f1280d66';
 
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '5a9ff4140f3e24ed0bc98a6b2fcbcd755f5c57120d7414bff0ec59ce0fa971c4';
+    '4495142c4dd46c814323a4c3e0caa3e2bce4a569bce6448c9dda20125c49b3a1';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

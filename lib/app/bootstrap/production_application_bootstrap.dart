@@ -5310,16 +5310,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     bridge = GoBridgeClient();
     AppDiagnostics.instance.attachTransport(
       bridge: bridge,
-      networkAllowed: () => allowsAccountRuntimeNetworkSideEffects(
-        'app_diagnostics',
-      ),
+      networkAllowed: () =>
+          allowsAccountRuntimeNetworkSideEffects('app_diagnostics'),
     );
     unawaited(
       initializeProductionCallDiagnostics(
         bridge: bridge,
-        networkAllowed: () => allowsAccountRuntimeNetworkSideEffects(
-          'call_diagnostics',
-        ),
+        networkAllowed: () =>
+            allowsAccountRuntimeNetworkSideEffects('call_diagnostics'),
       ),
     );
     // Declared before the drain composition so its per-kick live read can
@@ -6284,6 +6282,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           },
         );
     callSignalingComposition = createProductionCallSignalingComposition(
+      secureKeyStore: secureKeyStore,
+      iceServers: productionVoiceCallStunServers(),
       onCallHistoryProjected: (entry, inserted) {
         if (!callHistoryProjected.isClosed) callHistoryProjected.add(null);
         unawaited(missedCallNotifier.notifyTerminal(entry, inserted: inserted));

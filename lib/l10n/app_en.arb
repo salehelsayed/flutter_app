@@ -2018,5 +2018,10 @@
   "settings_safety_support_email_unavailable": "Couldn’t open an email app. Copy the address and contact us using your preferred email service.",
   "settings_safety_support_browser_unavailable": "Couldn’t open a browser. You can copy the policy link below and open it yourself.",
   "settings_safety_support_guidance": "Describe the concern. Do not send suspected child sexual abuse material, private keys, or recovery phrases.",
-  "settings_safety_support_standards": "Child safety standards"
+  "settings_safety_support_standards": "Child safety standards",
+  "settings_always_relay_calls": "Always relay calls",
+  "settings_call_privacy_description": "Direct audio can reveal your IP address to the other participant. Enable this setting to send audio through a relay. Changes apply to new calls. Direct signaling can still reveal an address independently of this setting.",
+  "settings_call_privacy_rollout": "This version currently relays all calls. Your choice is saved for when direct calls become available.",
+  "settings_call_privacy_load_failed": "Could not load your privacy preference. Calls will use relays. Retry to change this setting.",
+  "settings_call_privacy_save_failed": "Could not save your choice. Please try again."
 }

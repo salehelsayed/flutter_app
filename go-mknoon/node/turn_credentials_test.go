@@ -466,3 +466,33 @@ func turnCredentialsNode(t *testing.T, relays ...host.Host) *Node {
 	n.mu.Unlock()
 	return n
 }
+
+func TestTurnCredentialsV1_FatalFailureSurvivesLaterOutage(t *testing.T) {
+	for _, fatal := range []error{
+		ErrTurnCredentialsInvalidResponse,
+		ErrTurnCredentialsRejected,
+		&TurnCredentialsRelayError{Code: "TURN_CREDENTIALS_UNAUTHORIZED"},
+		&TurnCredentialsRelayError{Code: "TURN_CREDENTIALS_INVALID_REQUEST"},
+		&TurnCredentialsRelayError{Code: "UNKNOWN_TRUST_FAILURE"},
+	} {
+		for _, transient := range []error{ErrTurnCredentialsUnavailable, &TurnCredentialsRelayError{Code: "TURN_CREDENTIALS_RATE_LIMITED"}} {
+			if preferTurnCredentialError(fatal, transient) != fatal || preferTurnCredentialError(transient, fatal) != fatal {
+				t.Fatal("transient failure erased a fatal credential failure")
+			}
+		}
+	}
+}
+
+func TestTurnCredentialsV1_ConnectFailureClassification(t *testing.T) {
+	if turnCredentialConnectError(errors.New("private peer identity mismatch")) != ErrTurnCredentialsRejected {
+		t.Fatal("unclassified connection rejection permitted transient fallback")
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Time{})
+	defer cancel()
+	if turnCredentialConnectError(ctx.Err()) != ErrTurnCredentialsUnavailable {
+		t.Fatal("deadline was not classified as transient")
+	}
+	if turnCredentialConnectError(errors.Join(ctx.Err(), errors.New("private trust failure"))) != ErrTurnCredentialsRejected {
+		t.Fatal("deadline erased a joined trust failure")
+	}
+}

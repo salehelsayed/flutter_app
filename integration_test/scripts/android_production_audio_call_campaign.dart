@@ -30,6 +30,14 @@ const int _maximumScreenshotBytes = 20 * 1024 * 1024;
 const int _maximumTelecomDumpBytes = 4 * 1024 * 1024;
 const int _maximumTelecomCallBlockLines = 4096;
 const Duration _coldAppLaunchTimeout = Duration(minutes: 6);
+
+final class _UiHierarchyUnavailable implements Exception {
+  const _UiHierarchyUnavailable();
+
+  @override
+  String toString() => 'UIAutomator did not return a complete hierarchy.';
+}
+
 const Set<String> _nativeSemanticPlatformPackageCandidates = <String>{
   'com.android.systemui',
   'com.android.dialer',
@@ -1092,6 +1100,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
   AndroidAppStateGuard? _stateGuard;
   final Map<String, Future<Set<String>>> _nativeSemanticPackages =
       <String, Future<Set<String>>>{};
+  final Map<String, Future<String>> _pendingUiDumps = {};
 
   @override
   Future<AndroidProductionAudioCallTargetKind> classifyTarget(
@@ -1498,7 +1507,6 @@ final class SystemAndroidProductionAudioCallCampaignDriver
       );
     }
     final allowedPackages = await _allowedSemanticPackages(deviceId, 'Answer');
-    await _revealNativeAnswerSurface(deviceId);
     var answered = false;
     try {
       final node = await _tapSemanticNode(
@@ -1532,8 +1540,21 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     final deadline = DateTime.now().add(const Duration(seconds: 30));
     final observedNativeMarkers = <String>{};
     final observedAnswerOwnerClasses = <String>{};
+    var unavailableUiReads = 0;
     while (DateTime.now().isBefore(deadline)) {
-      final xml = await _uiDump(deviceId);
+      if (label == 'Answer' && allowExactText) {
+        // Incoming native windows can replace the shade after it was opened.
+        // Each bounded attempt must observe the current system-owned surface.
+        await _revealNativeAnswerSurface(deviceId);
+      }
+      final String xml;
+      try {
+        xml = await _uiDump(deviceId);
+      } on _UiHierarchyUnavailable {
+        unavailableUiReads++;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        continue;
+      }
       if (label == 'Answer' && allowExactText) {
         final diagnostic =
             inspectAndroidProductionAudioCallNativeSemanticSurface(xml);
@@ -1571,7 +1592,8 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     );
     throw AndroidProductionAudioCallSelectorException(
       'Expected exactly one enabled, clickable semantic node "$label"; '
-      'found 0 before timeout; $diagnostic.',
+      'found 0 before timeout; $diagnostic; '
+      'unavailableUiReads=$unavailableUiReads.',
     );
   }
 
@@ -1582,8 +1604,15 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     if (nativeAnswer) await _revealNativeAnswerSurface(deviceId);
     final deadline = DateTime.now().add(const Duration(seconds: 45));
     while (DateTime.now().isBefore(deadline)) {
+      final String xml;
+      try {
+        xml = await _uiDump(deviceId);
+      } on _UiHierarchyUnavailable {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        continue;
+      }
       final matches = _exactSemanticNodes(
-        await _uiDump(deviceId),
+        xml,
         label: label,
         requireClickable: false,
         allowedPackages: allowedPackages,
@@ -1631,8 +1660,15 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     final allowedPackages = await _allowedSemanticPackages(deviceId, label);
     final deadline = DateTime.now().add(const Duration(seconds: 30));
     while (DateTime.now().isBefore(deadline)) {
+      final String xml;
+      try {
+        xml = await _uiDump(deviceId);
+      } on _UiHierarchyUnavailable {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        continue;
+      }
       final matches = _exactSemanticNodes(
-        await _uiDump(deviceId),
+        xml,
         label: label,
         requireClickable: false,
         allowedPackages: allowedPackages,
@@ -1967,7 +2003,22 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     }
   }
 
-  Future<String> _uiDump(String deviceId) async {
+  Future<String> _uiDump(String deviceId) {
+    final pending = _pendingUiDumps[deviceId];
+    if (pending != null) return pending;
+    // Android permits one UiAutomation connection. Concurrent assertions on
+    // the same phone share a capture instead of disconnecting one another.
+    late final Future<String> capture;
+    capture = _readUiDump(deviceId).whenComplete(() {
+      if (identical(_pendingUiDumps[deviceId], capture)) {
+        _pendingUiDumps.remove(deviceId);
+      }
+    });
+    _pendingUiDumps[deviceId] = capture;
+    return capture;
+  }
+
+  Future<String> _readUiDump(String deviceId) async {
     final remote = '/data/local/tmp/plan399-${_token('ui')}.xml';
     try {
       final dump = await _adbShell(deviceId, <String>[
@@ -1985,12 +2036,23 @@ final class SystemAndroidProductionAudioCallCampaignDriver
         'exec-out',
         'cat',
         remote,
-      ]);
+      ], allowFailure: true);
       final xml = '${result.stdout}';
+      final hierarchy = xml.trim().replaceFirst(
+        RegExp(r'^<\?xml[^>]*\?>\s*'),
+        '',
+      );
+      final completeHierarchy =
+          RegExp(r'^<hierarchy(?:\s[^>]*)?/>$').hasMatch(hierarchy) ||
+          ((hierarchy.startsWith('<hierarchy>') ||
+                  hierarchy.startsWith('<hierarchy ')) &&
+              hierarchy.endsWith('</hierarchy>'));
       if (result.exitCode != 0 ||
-          xml.isEmpty ||
+          !completeHierarchy ||
           utf8.encode(xml).length > _maximumUiDumpBytes) {
-        throw StateError('UIAutomator dump is missing or exceeds its bound.');
+        // exec-out may report a missing file as stdout with exitCode == 0.
+        // Shell error text is neither an empty UI nor proof that a node is absent.
+        throw const _UiHierarchyUnavailable();
       }
       return xml;
     } finally {

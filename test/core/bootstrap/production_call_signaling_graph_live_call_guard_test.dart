@@ -857,6 +857,7 @@ Future<_Fixture> _createFixture({int Function()? nowMs}) async {
   );
   final secureKeyStore = FakeSecureKeyStore();
   final composition = createProductionCallSignalingComposition(
+    secureKeyStore: FakeSecureKeyStore(),
     featureFlags: <String, bool>{
       ...defaultVoiceCallFeatureFlags(),
       'voice_call_capability_v1': true,

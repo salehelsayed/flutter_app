@@ -1186,6 +1186,7 @@ final class FlutterWebRtcCallEngine
   Future<void> setLocalDescription(CallSessionDescription description) {
     _requireConnectionCreated();
     _validateDescription(description);
+    _validateLocalDescriptionPrivacy(description);
     final applied = _localDescription;
     if (applied != null) {
       if (_sameDescription(applied, description)) return Future<void>.value();
@@ -1223,7 +1224,10 @@ final class FlutterWebRtcCallEngine
     late final Future<void> attempt;
     attempt = _adapter
         .setLocalDescription(description)
-        .then((_) => _localDescription = description)
+        .then((_) {
+          _ensureOpen();
+          _localDescription = description;
+        })
         .whenComplete(() {
           if (identical(_localDescriptionFuture, attempt)) {
             _localDescriptionFuture = null;
@@ -1301,10 +1305,12 @@ final class FlutterWebRtcCallEngine
           CallEngineErrorCode.futureIceGeneration,
         );
       }
-      if (_transportPolicy == CallTransportPolicy.relayOnly &&
-          !_candidateIsRelay(candidate.value)) {
+      // The remote endpoint owns its gathering policy. A local TURN candidate
+      // can pair with a remote host/reflexive candidate without exposing our
+      // direct addresses. Native ICE still validates and processes the candidate.
+      if (_candidateTokens(candidate.value) == null) {
         throw const CallEngineException(
-          CallEngineErrorCode.relayPolicyViolation,
+          CallEngineErrorCode.configurationRejected,
         );
       }
     }
@@ -1327,21 +1333,24 @@ final class FlutterWebRtcCallEngine
     if (_restartCount >= maxIceRestarts) {
       throw const CallEngineException(CallEngineErrorCode.restartLimitReached);
     }
-    if (iceServers.isNotEmpty) {
-      if (!_validIceServers(iceServers)) {
-        throw const CallEngineException(
-          CallEngineErrorCode.configurationRejected,
-        );
-      }
-      final WebRtcIceServerUpdater? updater = _adapter is WebRtcIceServerUpdater
-          ? _adapter as WebRtcIceServerUpdater
-          : null;
-      if (updater == null) {
-        throw const CallEngineException(CallEngineErrorCode.notReady);
-      }
-      await updater.updateIceServers(iceServers);
+    if (!_validIceServers(iceServers)) {
+      throw const CallEngineException(
+        CallEngineErrorCode.configurationRejected,
+      );
     }
+    final updater = _adapter is WebRtcIceServerUpdater
+        ? _adapter as WebRtcIceServerUpdater
+        : null;
+    if (updater != null) {
+      // An empty replacement is meaningful after a transient credential outage:
+      // clear previous (possibly expired) TURN, preserving the frozen policy.
+      await updater.updateIceServers(iceServers);
+    } else if (iceServers.isNotEmpty) {
+      throw const CallEngineException(CallEngineErrorCode.notReady);
+    }
+    _ensureOpen();
     await _adapter.restartIce();
+    _ensureOpen();
     _restartCount += 1;
     _iceGeneration += 1;
     _deferredCandidates.clear();
@@ -1457,7 +1466,7 @@ final class FlutterWebRtcCallEngine
     if (_closed || _localCandidates.isClosed) return;
     if (candidate.iceGeneration != _iceGeneration) return;
     if (_transportPolicy == CallTransportPolicy.relayOnly &&
-        !_candidateIsRelay(candidate.value)) {
+        !_candidatePreservesLocalRelayPrivacy(candidate.value)) {
       return;
     }
     _localCandidates.add(candidate);
@@ -1517,6 +1526,7 @@ final class FlutterWebRtcCallEngine
       CallSessionDescriptionType.offer => await _adapter.createOffer(),
       CallSessionDescriptionType.answer => await _adapter.createAnswer(),
     };
+    _ensureOpen();
     if (raw.type != expectedType) {
       throw const CallEngineException(
         CallEngineErrorCode.configurationRejected,
@@ -1524,6 +1534,7 @@ final class FlutterWebRtcCallEngine
     }
     final description = _withExtractedFingerprint(raw);
     _validateDescription(description);
+    _validateLocalDescriptionPrivacy(description);
     return description;
   }
 
@@ -1531,6 +1542,7 @@ final class FlutterWebRtcCallEngine
     CallSessionDescription description,
   ) async {
     await _adapter.setRemoteDescription(description);
+    _ensureOpen();
     _remoteDescription = description;
     _remoteDescriptionSet = true;
     await _drainDeferredCandidates();
@@ -1538,8 +1550,11 @@ final class FlutterWebRtcCallEngine
 
   Future<void> _drainDeferredCandidates() async {
     if (_deferredCandidates.isEmpty) return;
+    final generation = _iceGeneration;
     final queued = List<CallIceCandidate>.unmodifiable(_deferredCandidates);
     await _adapter.addIceCandidates(queued);
+    _ensureOpen();
+    if (_iceGeneration != generation) return;
     _deferredCandidates.removeRange(0, queued.length);
   }
 
@@ -1572,14 +1587,28 @@ final class FlutterWebRtcCallEngine
     if (authenticated != inSdp) {
       throw const CallEngineException(CallEngineErrorCode.fingerprintMismatch);
     }
-    if (_transportPolicy == CallTransportPolicy.relayOnly) {
-      for (final rawLine in description.value.split(RegExp(r'\r?\n'))) {
-        final line = rawLine.trim();
-        if (_isCandidateAttribute(line) && !_candidateIsRelay(line)) {
-          throw const CallEngineException(
-            CallEngineErrorCode.relayPolicyViolation,
-          );
-        }
+    for (final rawLine in description.value.split(RegExp(r'\r?\n'))) {
+      final line = rawLine.trim();
+      if (_isCandidateAttribute(line) && _candidateTokens(line) == null) {
+        throw const CallEngineException(
+          CallEngineErrorCode.configurationRejected,
+        );
+      }
+    }
+  }
+
+  // Egress defense in addition to native iceTransportPolicy=relay. Apply only
+  // to our descriptions, including restart offers/answers, before signaling.
+  // Do not rewrite SDP: the native agent must also restrict connectivity checks.
+  void _validateLocalDescriptionPrivacy(CallSessionDescription description) {
+    if (_transportPolicy != CallTransportPolicy.relayOnly) return;
+    for (final rawLine in description.value.split(RegExp(r'\r?\n'))) {
+      final line = rawLine.trim();
+      if (_isCandidateAttribute(line) &&
+          !_candidatePreservesLocalRelayPrivacy(line)) {
+        throw const CallEngineException(
+          CallEngineErrorCode.relayPolicyViolation,
+        );
       }
     }
   }
@@ -1615,8 +1644,8 @@ final class FlutterWebRtcCallEngine
   static bool _isCandidateAttribute(String line) =>
       RegExp(r'^a=candidate:', caseSensitive: false).hasMatch(line);
 
-  static bool _candidateIsRelay(String candidate) {
-    if (candidate.contains('\r') || candidate.contains('\n')) return false;
+  static List<String>? _candidateTokens(String candidate) {
+    if (candidate.contains('\r') || candidate.contains('\n')) return null;
     var normalized = candidate.trim();
     if (normalized.length >= 2 &&
         normalized.substring(0, 2).toLowerCase() == 'a=') {
@@ -1626,9 +1655,33 @@ final class FlutterWebRtcCallEngine
     if (tokens.length < 8 ||
         !tokens.first.toLowerCase().startsWith('candidate:') ||
         tokens[6].toLowerCase() != 'typ') {
-      return false;
+      return null;
     }
-    return tokens[7].toLowerCase() == 'relay';
+    if (!const {
+      'host',
+      'srflx',
+      'prflx',
+      'relay',
+    }.contains(tokens[7].toLowerCase())) {
+      return null;
+    }
+    return tokens;
+  }
+
+  static bool _candidatePreservesLocalRelayPrivacy(String candidate) {
+    final tokens = _candidateTokens(candidate);
+    if (tokens == null || tokens[7].toLowerCase() != 'relay') return false;
+    // libwebrtc's relay filter sanitizes TURN relatedAddress/relatedPort to
+    // an unspecified address and zero. Refuse unsanitized native output before
+    // egress, including a public reflexive address hidden in a relay candidate.
+    for (var i = 8; i < tokens.length; i += 2) {
+      if (i + 1 >= tokens.length) return false;
+      final key = tokens[i].toLowerCase();
+      final value = tokens[i + 1];
+      if (key == 'raddr' && value != '0.0.0.0' && value != '::') return false;
+      if (key == 'rport' && value != '0') return false;
+    }
+    return true;
   }
 
   void _onAdapterEvent(WebRtcPeerConnectionEvent event) {

@@ -238,7 +238,7 @@ Future<Map<String, dynamic>> callP2PTurnCredentialsV1(
       },
     );
     return result;
-  } catch (_) {
+  } on TimeoutException {
     final result = _turnCredentialsV1UnavailableResult();
     emitFlowEvent(
       layer: 'FL',
@@ -250,6 +250,10 @@ Future<Map<String, dynamic>> callP2PTurnCredentialsV1(
       },
     );
     return result;
+  } on FormatException {
+    return _invalidTurnCredentialsV1Result();
+  } catch (_) {
+    return _turnCredentialsV1RejectedResult();
   }
 }
 
@@ -285,9 +289,9 @@ Map<String, dynamic> _validateTurnCredentialsV1Success(
       urlsValue.isEmpty ||
       urlsValue.length > 16 ||
       username is! String ||
-      !_validTurnCredentialText(username) ||
+      !validTurnCredentialText(username) ||
       password is! String ||
-      !_validTurnCredentialText(password) ||
+      !validTurnCredentialText(password) ||
       ttlSeconds is! int ||
       ttlSeconds <= 0 ||
       ttlSeconds > 3600 ||
@@ -303,7 +307,7 @@ Map<String, dynamic> _validateTurnCredentialsV1Success(
 
   final urls = <String>[];
   for (final value in urlsValue) {
-    if (value is! String || !_validTurnCredentialUrl(value)) {
+    if (value is! String || !validTurnCredentialUrl(value)) {
       return _invalidTurnCredentialsV1Result();
     }
     urls.add(value);
@@ -340,6 +344,12 @@ Map<String, dynamic> _turnCredentialsV1FailureResult(
   if (code == 'TURN_CREDENTIALS_INVALID_RESPONSE') {
     return _invalidTurnCredentialsV1Result();
   }
+  // Older native bridges collapsed authorization rejections into UNAVAILABLE.
+  // Only the new, classified native code may authorize a direct attempt; the
+  // Dart watchdog independently classifies an actual local timeout.
+  if (code != 'TURN_CREDENTIALS_TRANSIENT') {
+    return _turnCredentialsV1RejectedResult();
+  }
   final retryAfterMs = response['retryAfterMs'];
   return <String, dynamic>{
     ..._turnCredentialsV1UnavailableResult(),
@@ -364,7 +374,15 @@ Map<String, dynamic> _turnCredentialsV1UnavailableResult() => <String, dynamic>{
   'errorMessage': 'Credential mint temporarily unavailable',
 };
 
-bool _validTurnCredentialText(String value) =>
+Map<String, dynamic> _turnCredentialsV1RejectedResult() => <String, dynamic>{
+  'ok': false,
+  'unsupported': false,
+  'errorCode': 'TURN_CREDENTIALS_REJECTED',
+  'errorMessage': 'Credential retrieval rejected',
+};
+
+/// Shared strict field validation for bridge and call credential consumers.
+bool validTurnCredentialText(String value) =>
     value.isNotEmpty &&
     value.length <= 4096 &&
     value.trim() == value &&
@@ -372,8 +390,9 @@ bool _validTurnCredentialText(String value) =>
     !value.contains('\r') &&
     !value.contains('\u0000');
 
-bool _validTurnCredentialUrl(String value) {
-  if (!_validTurnCredentialText(value) ||
+/// Validates only supported ICE URLs without userinfo or arbitrary parameters.
+bool validTurnCredentialUrl(String value) {
+  if (!validTurnCredentialText(value) ||
       value.contains('@') ||
       value.contains('%')) {
     return false;

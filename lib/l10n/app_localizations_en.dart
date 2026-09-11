@@ -3954,4 +3954,23 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settings_safety_support_standards => 'Child safety standards';
+
+  @override
+  String get settings_always_relay_calls => 'Always relay calls';
+
+  @override
+  String get settings_call_privacy_description =>
+      'Direct audio can reveal your IP address to the other participant. Enable this setting to send audio through a relay. Changes apply to new calls. Direct signaling can still reveal an address independently of this setting.';
+
+  @override
+  String get settings_call_privacy_rollout =>
+      'This version currently relays all calls. Your choice is saved for when direct calls become available.';
+
+  @override
+  String get settings_call_privacy_load_failed =>
+      'Could not load your privacy preference. Calls will use relays. Retry to change this setting.';
+
+  @override
+  String get settings_call_privacy_save_failed =>
+      'Could not save your choice. Please try again.';
 }

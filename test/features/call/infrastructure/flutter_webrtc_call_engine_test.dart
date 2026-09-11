@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter_app/features/settings/application/call_privacy_preference_use_cases.dart';
+import '../../../core/secure_storage/fake_secure_key_store.dart';
+
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/call_audio_route_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
@@ -84,6 +87,7 @@ final class _RecordingWebRtcAdapter
   bool _closed = false;
   bool failClose = false;
   Completer<void>? closeGate;
+  Completer<void>? offerGate;
 
   WebRtcPeerConnectionConfiguration? createdWith;
   CallSessionDescription offer = _offer();
@@ -128,6 +132,7 @@ final class _RecordingWebRtcAdapter
   @override
   Future<CallSessionDescription> createOffer() async {
     createOfferCalls += 1;
+    if (offerGate case final gate?) await gate.future;
     return offer;
   }
 
@@ -297,6 +302,19 @@ final class _AudioSender implements webrtc.RTCRtpSender {
 }
 
 final class _RetryablePeerConnection implements webrtc.RTCPeerConnection {
+  Map<String, dynamic>? lastConfiguration;
+  int restartCalls = 0;
+
+  @override
+  Future<void> setConfiguration(Map<String, dynamic> configuration) async {
+    lastConfiguration = configuration;
+  }
+
+  @override
+  Future<void> restartIce() async {
+    restartCalls++;
+  }
+
   int closeCalls = 0;
   int disposeCalls = 0;
   bool failDispose = false;
@@ -406,6 +424,144 @@ Future<void> _createAudioConnection(
 );
 
 void main() {
+  test(
+    'real wrapper proves TURN-backed local prflx from native stats only',
+    () async {
+      for (final localProtocol in [null, 'tcp']) {
+        final peer = _StatsPeerConnection([
+          [
+            webrtc.StatsReport('transport', 'transport', 1, {
+              'selectedCandidatePairId': 'pair',
+              'dtlsState': 'connected',
+            }),
+            webrtc.StatsReport('pair', 'candidate-pair', 1, {
+              'localCandidateId': 'local',
+              'remoteCandidateId': 'remote',
+              'state': 'succeeded',
+              'nominated': true,
+            }),
+            webrtc.StatsReport('local', 'local-candidate', 1, {
+              'candidateType': 'prflx',
+              'protocol': 'udp',
+              'relayProtocol': ?localProtocol,
+            }),
+            webrtc.StatsReport('remote', 'remote-candidate', 1, {
+              'candidateType': 'relay',
+              'protocol': 'udp',
+              'relayProtocol': 'tcp',
+            }),
+          ],
+        ]);
+        final engine = FlutterWebRtcCallEngine(
+          adapter: FlutterWebRtcPeerConnectionAdapter(
+            peerConnectionFactory: (_) async => peer,
+            configureAndroidAudioFocus: () async {},
+          ),
+        );
+        addTearDown(engine.close);
+        await engine.createConnection(
+          const CallConnectionConfiguration(
+            transportPolicy: CallTransportPolicy.relayOnly,
+            receiveAudio: true,
+            receiveVideo: false,
+            captureAudio: false,
+            captureVideo: false,
+          ),
+        );
+        if (localProtocol == null) {
+          await expectLater(
+            engine.snapshot(),
+            _throwsCallEngineCode(CallEngineErrorCode.relayPolicyViolation),
+          );
+        } else {
+          final snapshot = await engine.snapshot();
+          expect(snapshot.transport, CallTransportClass.turnTcpTls);
+          expect(snapshot.selectedRelayProtocol, CallRelayProtocol.tcp);
+        }
+      }
+    },
+  );
+
+  for (final alwaysRelay in [false, true]) {
+    test(
+      'saved privacy=$alwaysRelay reaches the native PeerConnection configuration',
+      () async {
+        final store = FakeSecureKeyStore();
+        await saveAlwaysRelayCallsPreference(
+          secureKeyStore: store,
+          alwaysRelay: alwaysRelay,
+        );
+        final policy = await resolveCallTransportPolicy(
+          secureKeyStore: store,
+          forceRelay: false,
+        );
+        Map<String, dynamic>? nativeConfiguration;
+        final peer = _RetryablePeerConnection();
+        final engine = FlutterWebRtcCallEngine(
+          adapter: FlutterWebRtcPeerConnectionAdapter(
+            peerConnectionFactory: (configuration) async {
+              nativeConfiguration = configuration;
+              return peer;
+            },
+            configureAndroidAudioFocus: () async {},
+          ),
+        );
+        addTearDown(engine.close);
+        await engine.createConnection(
+          CallConnectionConfiguration(
+            transportPolicy: policy,
+            receiveAudio: true,
+            receiveVideo: false,
+            captureAudio: false,
+            captureVideo: false,
+            iceServers: [
+              CallIceServer(
+                urls: ['stun:approved.invalid:3478'],
+                expiresAt: DateTime.utc(9999),
+              ),
+              CallIceServer(
+                urls: ['turn:approved.invalid:3478'],
+                username: 'fixture-user',
+                credential: 'fixture-secret',
+                expiresAt: DateTime.utc(9999),
+              ),
+            ],
+          ),
+        );
+        expect(
+          nativeConfiguration!['iceTransportPolicy'],
+          alwaysRelay ? 'relay' : 'all',
+        );
+        expect(
+          (nativeConfiguration!['iceServers'] as List).map(
+            (s) => (s as Map)['urls'],
+          ),
+          [
+            ['stun:approved.invalid:3478'],
+            ['turn:approved.invalid:3478'],
+          ],
+        );
+        await saveAlwaysRelayCallsPreference(
+          secureKeyStore: store,
+          alwaysRelay: !alwaysRelay,
+        );
+        await engine.restartIce();
+        expect(peer.restartCalls, 1);
+        expect(
+          peer.lastConfiguration!['iceTransportPolicy'],
+          alwaysRelay ? 'relay' : 'all',
+        );
+        expect(
+          await resolveCallTransportPolicy(
+            secureKeyStore: store,
+            forceRelay: false,
+          ),
+          alwaysRelay ? CallTransportPolicy.all : CallTransportPolicy.relayOnly,
+        );
+      },
+    );
+  }
+
   late _RecordingWebRtcAdapter adapter;
   late FlutterWebRtcCallEngine engine;
 
@@ -1270,7 +1426,7 @@ void main() {
     );
 
     test(
-      'relay-only filters adversarial outbound, inbound, and embedded candidates',
+      'relay-only filters local candidates and accepts remote candidate types',
       () async {
         await _createAudioConnection(
           engine,
@@ -1295,13 +1451,12 @@ void main() {
         expect(observed, <CallIceCandidate>[relay]);
 
         await engine.setRemoteDescription(_offer());
-        await expectLater(
-          () =>
-              engine.addIceCandidates(const <CallIceCandidate>[disguisedHost]),
-          _throwsCallEngineCode(CallEngineErrorCode.relayPolicyViolation),
-        );
+        await engine.addIceCandidates(const <CallIceCandidate>[disguisedHost]);
         await engine.addIceCandidates(const <CallIceCandidate>[relay]);
-        expect(adapter.addedCandidateBatches.single, <CallIceCandidate>[relay]);
+        expect(adapter.addedCandidateBatches, [
+          [disguisedHost],
+          [relay],
+        ]);
 
         await subscription.cancel();
         await engine.close();
@@ -1325,11 +1480,116 @@ void main() {
           fingerprint: _validFingerprint,
         );
 
-        await expectLater(
-          () => engine.setRemoteDescription(embeddedHost),
-          _throwsCallEngineCode(CallEngineErrorCode.relayPolicyViolation),
+        await engine.setRemoteDescription(embeddedHost);
+        expect(adapter.remoteDescriptions, [embeddedHost]);
+      },
+    );
+
+    test(
+      'relay egress rejects direct and related addresses across restart',
+      () async {
+        await _createAudioConnection(
+          engine,
+          policy: CallTransportPolicy.relayOnly,
         );
-        expect(adapter.remoteDescriptions, isEmpty);
+        final observed = <CallIceCandidate>[];
+        final subscription = engine.localCandidates.listen(observed.add);
+        addTearDown(subscription.cancel);
+        for (final generation in [0, 1]) {
+          if (generation == 1) await engine.restartIce();
+          for (final suffix in [
+            'typ host',
+            'typ srflx raddr 10.0.0.1 rport 1234',
+            'typ prflx',
+            'typ relay raddr 198.51.100.1 rport 1234',
+            'typ relay raddr 2001:db8::1 rport 1234',
+            'typ relay raddr 0.0.0.0 rport 1234',
+          ]) {
+            final value = 'candidate:1 1 UDP 1 192.0.2.1 10000 $suffix';
+            adapter.emitLocalCandidate(
+              CallIceCandidate(
+                value: value,
+                mediaId: '0',
+                mediaLineIndex: 0,
+                iceGeneration: generation,
+              ),
+            );
+            adapter.offer = CallSessionDescription(
+              type: CallSessionDescriptionType.offer,
+              value: '${_audioSdp(_validFingerprint)}\r\na=$value',
+            );
+            await expectLater(
+              engine.createOffer(),
+              _throwsCallEngineCode(CallEngineErrorCode.relayPolicyViolation),
+            );
+          }
+          expect(observed, isEmpty);
+          for (final address in ['0.0.0.0', '::']) {
+            final value =
+                'candidate:2 1 UDP 1 192.0.2.2 10000 typ relay '
+                'raddr $address rport 0';
+            adapter.emitLocalCandidate(
+              CallIceCandidate(
+                value: value,
+                mediaId: '0',
+                mediaLineIndex: 0,
+                iceGeneration: generation,
+              ),
+            );
+            adapter.offer = CallSessionDescription(
+              type: CallSessionDescriptionType.offer,
+              value: '${_audioSdp(_validFingerprint)}\r\na=$value',
+            );
+          }
+          expect(observed, hasLength(2));
+          observed.clear();
+          final offer = await engine.createOffer();
+          await engine.setLocalDescription(offer);
+        }
+      },
+    );
+
+    test(
+      'relay-only still rejects malformed remote candidate framing',
+      () async {
+        await _createAudioConnection(
+          engine,
+          policy: CallTransportPolicy.relayOnly,
+        );
+        await engine.setRemoteDescription(_offer());
+        for (final value in [
+          'garbage',
+          'candidate:1 typ relay',
+          'candidate:1 1 UDP 1 192.0.2.1 9 typ host\r\na=invalid',
+        ]) {
+          await expectLater(
+            engine.addIceCandidates([
+              CallIceCandidate(value: value, mediaId: '0', mediaLineIndex: 0),
+            ]),
+            _throwsCallEngineCode(CallEngineErrorCode.configurationRejected),
+          );
+        }
+        expect(adapter.addedCandidateBatches, isEmpty);
+      },
+    );
+
+    test(
+      'closing during offer generation prevents late local SDP egress',
+      () async {
+        await _createAudioConnection(
+          engine,
+          policy: CallTransportPolicy.relayOnly,
+        );
+        final gate = adapter.offerGate = Completer<void>();
+        final offer = engine.createOffer();
+        final rejected = expectLater(
+          offer,
+          _throwsCallEngineCode(CallEngineErrorCode.closed),
+        );
+        await engine.close();
+        gate.complete();
+        await rejected;
+        expect(adapter.localDescriptions, isEmpty);
       },
     );
 

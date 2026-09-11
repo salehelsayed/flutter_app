@@ -27,13 +27,6 @@ final _now = DateTime.utc(2026, 9, 11, 12);
 const _fingerprint =
     'sha-256 00:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D:0E:0F:'
     '10:11:12:13:14:15:16:17:18:19:1A:1B:1C:1D:1E:1F';
-const _configuration = CallConnectionConfiguration(
-  transportPolicy: CallTransportPolicy.relayOnly,
-  receiveAudio: true,
-  receiveVideo: false,
-  captureAudio: true,
-  captureVideo: false,
-);
 
 CallSessionDescription _description(CallSessionDescriptionType type) =>
     CallSessionDescription(
@@ -248,41 +241,78 @@ void main() {
     },
   );
 
-  test(
-    'malformed material and non-relay candidates still fail closed',
-    () async {
-      for (final malformed in <bool>[true, false]) {
-        final h = _Harness();
-        addTearDown(h.close);
-        await h.start();
-        await h.remoteDescription();
-        await h.settle();
-        if (malformed) {
-          // Exercise the executor's validation independently of the wire schema.
-          final result = await h.deliverMaterial(const <String, Object?>{
-            'candidate': 42,
-          });
-          expect(result?.type, CallEventType.negotiationFailed);
-          await h.coordinator.dispatch(result!);
-        } else {
-          await h.ice(
-            const CallIceCandidate(
-              value: 'candidate:1 1 UDP 1 192.0.2.1 10000 typ host',
-              mediaId: '0',
-              mediaLineIndex: 0,
-              iceGeneration: 0,
-            ),
-          );
-        }
-        expect(h.native.batches, isEmpty);
-        expect(
-          h.coordinator.lastSnapshot?.endReason,
-          CallEndReason.mediaFailed,
-        );
-        expect(h.cleanupCount, 1);
+  for (final localPolicy in CallTransportPolicy.values) {
+    for (final remotePolicy in CallTransportPolicy.values) {
+      for (final incoming in [true, false]) {
+        test('mixed policy ${localPolicy.name}/${remotePolicy.name} '
+            '${incoming ? 'incoming' : 'outgoing'} accepts authenticated '
+            'remote SDP and trickle ICE before and after restart', () async {
+          final h = _Harness(incoming: incoming, policy: localPolicy);
+          addTearDown(h.close);
+          await h.start();
+          for (final generation in [0, 1]) {
+            if (generation == 1) {
+              await h.coordinator.dispatch(
+                h.event(CallEventType.mediaConnected),
+              );
+              if (!incoming) {
+                await h.send(CallSignalType.iceRestart, generation: 1);
+              }
+              await h.settle();
+            }
+            final candidates = [
+              for (final type
+                  in remotePolicy == CallTransportPolicy.all
+                      ? ['host', 'srflx', 'prflx', 'relay']
+                      : ['relay'])
+                CallIceCandidate(
+                  value: 'candidate:1 1 UDP 1 192.0.2.1 10000 typ $type',
+                  mediaId: '0',
+                  mediaLineIndex: 0,
+                  iceGeneration: generation,
+                ),
+            ];
+            final frame = await h.remoteDescriptionFrame(
+              generation: generation,
+              embedded: candidates,
+            );
+            for (final c in candidates) {
+              expect(await h.ice(c), IncomingCallSignalOutcome.accepted);
+            }
+            expect(
+              await h.receiver.handle(frame),
+              IncomingCallSignalOutcome.accepted,
+            );
+            await h.settle();
+            expect(h.coordinator.activeSession, isNotNull);
+            expect(
+              h.native.applied
+                  .where((c) => c.iceGeneration == generation)
+                  .map((c) => c.value),
+              candidates.map((c) => c.value),
+            );
+            expect(h.cleanupCount, 0);
+          }
+        });
       }
-    },
-  );
+    }
+  }
+
+  test('malformed material still fails closed', () async {
+    final h = _Harness();
+    addTearDown(h.close);
+    await h.start();
+    await h.remoteDescription();
+    await h.settle();
+    final result = await h.deliverMaterial(const <String, Object?>{
+      'candidate': 42,
+    });
+    expect(result?.type, CallEventType.negotiationFailed);
+    await h.coordinator.dispatch(result!);
+    expect(h.native.batches, isEmpty);
+    expect(h.coordinator.lastSnapshot?.endReason, CallEndReason.mediaFailed);
+    expect(h.cleanupCount, 1);
+  });
 
   test(
     'restart drops buffered stale ICE and drains current generation in order',
@@ -485,7 +515,11 @@ void main() {
 /// Production admission, reducer, material storage, executor and engine. Only
 /// external crypto primitives, signaling/media ports and native WebRTC are fake.
 final class _Harness {
-  _Harness({this.incoming = true, int? batchCapacity}) {
+  _Harness({
+    this.incoming = true,
+    int? batchCapacity,
+    CallTransportPolicy policy = CallTransportPolicy.relayOnly,
+  }) {
     engine = batchCapacity == null
         ? FlutterWebRtcCallEngine(adapter: native)
         : FlutterWebRtcCallEngine(
@@ -497,12 +531,25 @@ final class _Harness {
       materialStore: materials,
       mediaPreparer: _Preparer(engine),
       signaling: signaling,
-      configuration: _configuration,
+      configuration: CallConnectionConfiguration(
+        transportPolicy: policy,
+        receiveAudio: true,
+        receiveVideo: false,
+        captureAudio: true,
+        captureVideo: false,
+      ),
       dispatchEvent: (event) async {
         await coordinator.dispatch(event);
       },
       readActiveSnapshot: () => coordinator.activeSession,
-      readStagedIceServers: (_) async => const <CallIceServer>[],
+      readStagedIceServers: (_) async => <CallIceServer>[
+        CallIceServer(
+          urls: ['turn:relay.invalid:3478'],
+          username: 'fixture',
+          credential: 'fixture',
+          expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+        ),
+      ],
       clock: () => _now,
     );
     effects = _Effects(executor);
@@ -640,15 +687,18 @@ final class _Harness {
 
   Future<IncomingCallSignalFrame> remoteDescriptionFrame({
     int generation = 0,
+    List<CallIceCandidate> embedded = const [],
   }) => frame(
     incoming ? CallSignalType.offer : CallSignalType.answer,
     generation: generation,
     payload: <String, Object?>{
-      'description': _description(
-        incoming
-            ? CallSessionDescriptionType.offer
-            : CallSessionDescriptionType.answer,
-      ).value,
+      'description':
+          _description(
+            incoming
+                ? CallSessionDescriptionType.offer
+                : CallSessionDescriptionType.answer,
+          ).value +
+          embedded.map((c) => '\r\na=${c.value}').join(),
       'fingerprint': _fingerprint,
     },
   );
@@ -740,7 +790,10 @@ final class _Signaling implements CallNegotiationSignalingPort {
   }) async {}
 }
 
-final class _Native implements WebRtcPeerConnectionAdapter {
+final class _Native
+    implements WebRtcPeerConnectionAdapter, WebRtcIceServerUpdater {
+  @override
+  Future<void> updateIceServers(List<CallIceServer> iceServers) async {}
   final eventsController =
       StreamController<WebRtcPeerConnectionEvent>.broadcast(sync: true);
   final batches = <List<CallIceCandidate>>[];

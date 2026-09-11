@@ -872,6 +872,17 @@ validateAndroidForegroundWebRtcAudioRelayEndpoint(
   return const AndroidForegroundWebRtcAudioValidation.accept();
 }
 
+/// A valid transport campaign can still miss the product's latency target.
+/// Keep that failure distinct from malformed evidence without relaxing the gate.
+final class AndroidForegroundWebRtcAudioLatencyExceeded
+    extends FormatException {
+  const AndroidForegroundWebRtcAudioLatencyExceeded(this.p95Ms)
+    : super('foreground WebRTC relay campaign p95 exceeded the product target');
+
+  static const thresholdMs = 3000;
+  final int p95Ms;
+}
+
 Map<String, Object?> aggregateAndroidForegroundWebRtcAudioRelayEvidence({
   required List<AndroidForegroundWebRtcAudioRelayLegEvidence> legs,
   required String sharedApkSha256,
@@ -1021,11 +1032,9 @@ Map<String, Object?> aggregateAndroidForegroundWebRtcAudioRelayEvidence({
   const percentile = 95;
   final rank = (percentile * latencySamples.length + 99) ~/ 100;
   final p95Ms = latencySamples[rank - 1];
-  const thresholdMs = 3000;
+  const thresholdMs = AndroidForegroundWebRtcAudioLatencyExceeded.thresholdMs;
   if (p95Ms > thresholdMs) {
-    throw const FormatException(
-      'foreground WebRTC relay campaign p95 exceeded the product target',
-    );
+    throw AndroidForegroundWebRtcAudioLatencyExceeded(p95Ms);
   }
   final evidence = <String, Object?>{
     'schema': androidForegroundWebRtcAudioRelayEvidenceSchema,

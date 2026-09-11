@@ -1865,17 +1865,8 @@ def _validation_reasons(
         and (not isinstance(tests, list) or not isinstance(gates, list) or not (tests or gates))
     ):
         reasons.append("test_and_gate_anchors_missing")
-    graphify = checkpoint.get("graphify")
-    graph_status = str(graphify.get("status") or "") if isinstance(graphify, dict) else ""
-    query_id = str(graphify.get("query_id") or "") if isinstance(graphify, dict) else ""
-    evidence = str(graphify.get("evidence_digest") or "") if isinstance(graphify, dict) else ""
-    if graph_status not in {"grounded", "not-applicable", "not-yet-grounded"}:
-        reasons.append("graph_status_missing")
-    elif graph_status == "grounded":
-        if not HEX_ANCHOR.fullmatch(query_id):
-            reasons.append("graph_query_missing")
-        if not HEX_ANCHOR.fullmatch(evidence):
-            reasons.append("graph_evidence_missing")
+    # Older checkpoints can retain graph metadata for historical inspection.
+    # Code navigation no longer depends on a graph query or evidence digest.
     outstanding = str(checkpoint.get("outstanding_work") or "")
     if outstanding not in {"none", "completed", "running"}:
         reasons.append("outstanding_work_missing")
@@ -2479,10 +2470,8 @@ def _render_context(
     maximum_bytes = _context_token_limit(token_limit) * 4
     plan_value = checkpoint.get("plan")
     phase_value = checkpoint.get("phase")
-    graphify_value = checkpoint.get("graphify")
     plan = plan_value if isinstance(plan_value, dict) else {}
     phase = phase_value if isinstance(phase_value, dict) else {}
-    graphify = graphify_value if isinstance(graphify_value, dict) else {}
     tests = checkpoint.get("tests") if isinstance(checkpoint.get("tests"), list) else []
     gates = checkpoint.get("gates") if isinstance(checkpoint.get("gates"), list) else []
     changed = (
@@ -2505,16 +2494,6 @@ def _render_context(
         ),
         "Phase: {}.".format(_clean_text(phase.get("id"), 180)),
         "Next exact action: {}".format(_clean_text(checkpoint.get("next_action"), 700)),
-        (
-            "Graphify branch: query_id={} evidence_digest={}.".format(
-                _clean_text(graphify.get("query_id"), 80),
-                _clean_text(graphify.get("evidence_digest"), 80),
-            )
-            if graphify.get("status") == "grounded"
-            else "Graphify status: {}.".format(
-                _clean_text(graphify.get("status"), 80)
-            )
-        ),
         "Outstanding work: {}.".format(
             _clean_text(checkpoint.get("outstanding_work"), 40)
         ),
@@ -2653,7 +2632,7 @@ def _recovery_context(
         lines.append("No independently verified active-plan locator is available.")
     lines.append(
         "Do not trust stale phase, next-action, evidence, test, or gate fields; "
-        "re-establish focused Graphify context before code browsing."
+        "re-establish the relevant code context with targeted source searches."
     )
     return _fit_utf8(
         "\n".join(lines), _context_token_limit(token_limit) * 4

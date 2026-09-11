@@ -69,6 +69,32 @@ Future<void> _flushAsync([int turns = 8]) async {
 }
 
 void main() {
+  for (final replaced in [false, true]) {
+    test(
+      'restart credentials cannot mutate ${replaced ? 'a replacement' : 'an ended call'}',
+      () async {
+        final pending = Completer<List<CallIceServer>>();
+        final h = _Harness(
+          snapshot: _snapshot(CallState.reconnecting),
+          stagedReader: (_) => pending.future,
+        );
+        addTearDown(h.executor.close);
+        final result = h.executor.execute(
+          const CallEffect(CallEffectType.restartIce),
+          h.snapshot,
+        );
+        await _flushAsync();
+        h.snapshot = replaced
+            ? _snapshot(CallState.negotiating, callId: _otherCallId)
+            : _snapshot(CallState.ended);
+        pending.complete(h.stagedServers);
+        expect(await result, isNull);
+        expect(h.engine.restartCalls, 0);
+        expect(h.signaling.restartGenerations, isEmpty);
+      },
+    );
+  }
+
   test(
     'processed remote ICE does not exhaust capacity across restarts',
     () async {
@@ -1779,14 +1805,25 @@ final class _Harness {
   _Harness({
     required this.snapshot,
     List<String>? calls,
-    this.stagedServers = const <CallIceServer>[],
+    List<CallIceServer>? stagedServers,
+    CallStagedIceServerReader? stagedReader,
     int maxPendingLocalCandidates = 8,
     int maxPendingRemoteCandidates = 8,
     int maxLocalCandidateBatchSize = 2,
     CallTimerScheduler? mediaReadinessTimerScheduler,
     Duration mediaReadinessPollInterval = const Duration(milliseconds: 100),
     int? maxMediaReadinessSamples,
-  }) : calls = calls ?? <String>[],
+  }) : stagedServers =
+           stagedServers ??
+           <CallIceServer>[
+             CallIceServer(
+               urls: ['turn:relay.invalid:3478'],
+               username: 'fixture',
+               credential: 'fixture',
+               expiresAt: _now.add(const Duration(minutes: 5)),
+             ),
+           ],
+       calls = calls ?? <String>[],
        materialStore = CallNegotiationMaterialStore() {
     engine = _FakeEngine(this.calls);
     preparer = _FakePreparer(this.calls);
@@ -1801,7 +1838,7 @@ final class _Harness {
         dispatched.add(event);
       },
       readActiveSnapshot: () => snapshot,
-      readStagedIceServers: (_) async => stagedServers,
+      readStagedIceServers: stagedReader ?? (_) async => this.stagedServers,
       clock: () => _now,
       maxPendingLocalCandidates: maxPendingLocalCandidates,
       maxPendingRemoteCandidates: maxPendingRemoteCandidates,

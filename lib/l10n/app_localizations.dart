@@ -6577,6 +6577,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Child safety standards'**
   String get settings_safety_support_standards;
+
+  /// No description provided for @settings_always_relay_calls.
+  ///
+  /// In en, this message translates to:
+  /// **'Always relay calls'**
+  String get settings_always_relay_calls;
+
+  /// No description provided for @settings_call_privacy_description.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct audio can reveal your IP address to the other participant. Enable this setting to send audio through a relay. Changes apply to new calls. Direct signaling can still reveal an address independently of this setting.'**
+  String get settings_call_privacy_description;
+
+  /// No description provided for @settings_call_privacy_rollout.
+  ///
+  /// In en, this message translates to:
+  /// **'This version currently relays all calls. Your choice is saved for when direct calls become available.'**
+  String get settings_call_privacy_rollout;
+
+  /// No description provided for @settings_call_privacy_load_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load your privacy preference. Calls will use relays. Retry to change this setting.'**
+  String get settings_call_privacy_load_failed;
+
+  /// No description provided for @settings_call_privacy_save_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save your choice. Please try again.'**
+  String get settings_call_privacy_save_failed;
 }
 
 class _AppLocalizationsDelegate

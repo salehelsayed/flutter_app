@@ -1,4 +1,5 @@
 import '../domain/call_engine.dart';
+import '../domain/call_id.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_state.dart';
 import 'call_audio_controller.dart';
@@ -18,9 +19,9 @@ final class CallAudioNegotiationPreparer
     implements CallNegotiationMediaPreparer {
   CallAudioNegotiationPreparer({
     required StartCallAudio startAudio,
+    required this.isCurrentCall,
     CallStagedIceServerReader? readInitialIceServers,
     DateTime Function()? clock,
-    this.requireTurnServer = false,
     CallAudioStartResultObserver? onStartResult,
   }) : _startAudio = startAudio,
        _readInitialIceServers = readInitialIceServers,
@@ -30,7 +31,7 @@ final class CallAudioNegotiationPreparer
   final StartCallAudio _startAudio;
   final CallStagedIceServerReader? _readInitialIceServers;
   final DateTime Function() _clock;
-  final bool requireTurnServer;
+  final bool Function(CallId callId) isCurrentCall;
   final CallAudioStartResultObserver? _onStartResult;
 
   @override
@@ -46,35 +47,33 @@ final class CallAudioNegotiationPreparer
           CallState.reconnecting => true,
           _ => false,
         };
-    if (!accepted) {
+    if (!accepted ||
+        snapshot.callId == null ||
+        !isCurrentCall(snapshot.callId!)) {
       throw const CallNegotiationPortException(
         CallNegotiationPortErrorCode.mediaUnavailable,
       );
     }
 
-    final now = _clock().toUtc();
-    var iceServers = configuration.iceServers
-        .where((server) => server.expiresAt.isAfter(now))
-        .toList(growable: true);
     final reader = _readInitialIceServers;
-    if (reader != null) {
-      try {
-        final staged = await reader(snapshot.callId!);
-        iceServers.addAll(
-          staged.where((server) => server.expiresAt.isAfter(now)),
-        );
-      } catch (_) {
-        if (requireTurnServer ||
-            configuration.transportPolicy == CallTransportPolicy.relayOnly) {
-          throw const CallNegotiationPortException(
-            CallNegotiationPortErrorCode.iceServersUnavailable,
-          );
-        }
-      }
+    // The bounded reader alone classifies transient failure. Never swallow an
+    // authentication/validation exception merely because direct ICE is allowed.
+    final staged = reader == null
+        ? const <CallIceServer>[]
+        : await reader(snapshot.callId!);
+    if (!isCurrentCall(snapshot.callId!)) {
+      throw const CallNegotiationPortException(
+        CallNegotiationPortErrorCode.mediaUnavailable,
+      );
     }
+    // Recheck expiry after the wait, including approved preconfigured STUN.
+    final now = _clock().toUtc();
+    var iceServers = [
+      ...configuration.iceServers,
+      ...staged,
+    ].where((server) => server.expiresAt.isAfter(now)).toList();
     final hasTurn = iceServers.any((server) => server.containsTurnUrl);
-    if ((requireTurnServer ||
-            configuration.transportPolicy == CallTransportPolicy.relayOnly) &&
+    if (configuration.transportPolicy == CallTransportPolicy.relayOnly &&
         !hasTurn) {
       throw const CallNegotiationPortException(
         CallNegotiationPortErrorCode.iceServersUnavailable,
@@ -94,6 +93,13 @@ final class CallAudioNegotiationPreparer
       locallyAccepted: true,
       configuration: effectiveConfiguration,
     );
+    // Failed startup can close the engine and terminate its call during
+    // cleanup. Preserve that call-bound failure diagnostic, but never report
+    // a late success that could notify native audio readiness for a stale call.
+    if (!isCurrentCall(snapshot.callId!) &&
+        result.status == CallAudioStartStatus.started) {
+      return;
+    }
     _onStartResult?.call(result.status);
     switch (result.status) {
       case CallAudioStartStatus.started:

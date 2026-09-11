@@ -2,6 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/features/settings/application/call_privacy_preference_use_cases.dart';
+import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
+
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
@@ -453,6 +457,134 @@ void main() {
       expect((summaries.single['values'] as Map)['accepted'], isFalse);
     },
   );
+
+  for (final direction in CallDirection.values) {
+    for (final policyCase in [
+      (choice: null, available: true, forced: false),
+      (choice: 'false', available: true, forced: false),
+      (choice: 'true', available: true, forced: false),
+      (choice: 'unreadable-version', available: true, forced: false),
+      (choice: 'true', available: false, forced: false),
+      (choice: 'false', available: true, forced: true),
+    ]) {
+      final choice = policyCase.choice;
+      test(
+        'production $direction freezes privacy=$policyCase before media',
+        () async {
+          TestWidgetsFlutterBinding.ensureInitialized();
+          final store = FakeSecureKeyStore();
+          if (choice != null) {
+            await store.write(alwaysRelayCallsStorageKey, choice);
+          }
+          final fixture = await _createProductionIosFixture(
+            outgoingContactAccountPeerId: 'remote-account',
+            privacyStore: store,
+            privacyFlags: {
+              'voice_call_always_relay_enabled': policyCase.available,
+              'voice_call_force_relay_enabled': policyCase.forced,
+              'voice_call_ios_native_enabled':
+                  direction == CallDirection.incoming,
+            },
+            nativeHandleOverride: '33333333-3333-4333-8333-333333333333',
+          );
+          await fixture.composition.start();
+          final graph = fixture.graphs.single;
+          final endpointRead = Completer<void>();
+          final endpointResult = Completer<Map<String, Object?>>();
+          fixture.bridge.responseHandlers['call_endpoint_get_v1'] = (_) {
+            if (!endpointRead.isCompleted) endpointRead.complete();
+            return endpointResult.future;
+          };
+          final placement = graph.coordinator.dispatch(
+            CallEvent(
+              type: direction == CallDirection.incoming
+                  ? CallEventType.remoteInvite
+                  : CallEventType.place,
+              eventId: 'privacy-call',
+              occurredAt: graph.coordinator.clock(),
+              callId: _callA,
+              contactPeerId: 'remote-account',
+              localAccountPeerId: 'local-account',
+              localDeviceId: 'local-account',
+              remoteAccountPeerId: 'remote-account',
+              remoteDeviceId: 'remote-device',
+              expiresAt: graph.coordinator.clock().add(
+                const Duration(seconds: 45),
+              ),
+            ),
+          );
+          if (direction == CallDirection.incoming) {
+            await placement;
+            expect(
+              await graph.iosCallLifecycleAdapter!.present(
+                IncomingCallPresentation(
+                  callId: _callA,
+                  callerAccountPeerId: 'remote-account',
+                  expiresAt: graph.coordinator.clock().add(
+                    const Duration(seconds: 45),
+                  ),
+                ),
+              ),
+              true,
+            );
+          } else {
+            // Hold unrelated endpoint work while checking the same production
+            // bundle from the reducer's real outgoing session.
+            await endpointRead.future;
+          }
+          try {
+            final bundles = <CallScopedMediaBundle>[];
+            final sub = graph.mediaOwner.bundleChanges.listen((b) {
+              if (b != null) bundles.add(b);
+            });
+            addTearDown(sub.cancel);
+            final snapshot = graph.coordinator.activeSession!;
+            expect(snapshot.direction, direction);
+            // A change while ringing/preparing must already belong to the next
+            // call, before the lazy media bundle or native PC exists.
+            await saveAlwaysRelayCallsPreference(
+              secureKeyStore: store,
+              alwaysRelay: choice == null || choice == 'false',
+            );
+            await graph.mediaOwner.execute(
+              const CallEffect(CallEffectType.queueIceCandidate),
+              snapshot,
+            );
+            final executor =
+                bundles.single.negotiationExecutor
+                    as CallNegotiationEffectExecutor;
+            final expected =
+                !policyCase.forced && (choice == null || choice == 'false')
+                ? CallTransportPolicy.all
+                : CallTransportPolicy.relayOnly;
+            expect(executor.configuration.transportPolicy, expected);
+            await saveAlwaysRelayCallsPreference(
+              secureKeyStore: store,
+              alwaysRelay: expected == CallTransportPolicy.all,
+            );
+            await graph.mediaOwner.execute(
+              const CallEffect(CallEffectType.queueIceCandidate),
+              snapshot,
+            );
+            expect(bundles, hasLength(1));
+            expect(executor.configuration.transportPolicy, expected);
+            expect(
+              await resolveCallTransportPolicy(
+                secureKeyStore: store,
+                forceRelay: false,
+              ),
+              expected == CallTransportPolicy.all
+                  ? CallTransportPolicy.relayOnly
+                  : CallTransportPolicy.all,
+            );
+          } finally {
+            endpointResult.complete({'ok': false});
+            await placement;
+          }
+        },
+      );
+    }
+  }
 
   for (final nativeAudioAccepted in [false, true]) {
     test(
@@ -3016,6 +3148,7 @@ void main() {
       );
       final callWakeStores = _newCallWakeStores();
       final composition = createProductionCallSignalingComposition(
+        secureKeyStore: FakeSecureKeyStore(),
         featureFlags: _enabledFlags(),
         platform: CallEndpointPlatform.android,
         database: database,
@@ -3108,6 +3241,7 @@ void main() {
       final callWakeStores = _newCallWakeStores();
       final tokenOutcomes = <String>[];
       final composition = createProductionCallSignalingComposition(
+        secureKeyStore: FakeSecureKeyStore(),
         featureFlags: _enabledFlags(),
         platform: CallEndpointPlatform.android,
         database: database,
@@ -3235,6 +3369,7 @@ void main() {
       final nativeMethods = <String>[];
       final callWakeStores = _newCallWakeStores();
       final composition = createProductionCallSignalingComposition(
+        secureKeyStore: FakeSecureKeyStore(),
         featureFlags: _enabledFlags(),
         platform: CallEndpointPlatform.android,
         database: database,
@@ -3356,6 +3491,7 @@ void main() {
       };
       final callWakeStores = _newCallWakeStores();
       final composition = createProductionCallSignalingComposition(
+        secureKeyStore: FakeSecureKeyStore(),
         featureFlags: flags,
         platform: CallEndpointPlatform.ios,
         database: database,
@@ -4541,6 +4677,8 @@ final class _ProductionIosFixture {
 }
 
 Future<_ProductionIosFixture> _createProductionIosFixture({
+  SecureKeyStore? privacyStore,
+  Map<String, bool> privacyFlags = const {},
   Map<String, Object?>? endpointSetResponse,
   Map<String, Object?>? tokenSetResponse,
   Object? attachResponse,
@@ -4605,10 +4743,12 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   );
   final callWakeStores = _newCallWakeStores();
   final composition = createProductionCallSignalingComposition(
+    secureKeyStore: privacyStore ?? FakeSecureKeyStore(),
     featureFlags: <String, bool>{
       ..._enabledFlags(),
       'voice_call_android_native_enabled': false,
       'voice_call_ios_native_enabled': true,
+      ...privacyFlags,
     },
     platform: CallEndpointPlatform.ios,
     database: database,

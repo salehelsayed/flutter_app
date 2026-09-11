@@ -4022,4 +4022,23 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get settings_safety_support_standards => 'معايير سلامة الأطفال';
+
+  @override
+  String get settings_always_relay_calls => 'تمرير المكالمات دائمًا عبر وسيط';
+
+  @override
+  String get settings_call_privacy_description =>
+      'قد يكشف الاتصال الصوتي المباشر عنوان IP الخاص بك للطرف الآخر. فعّل هذا الإعداد لإرسال الصوت عبر خادم وسيط. تسري التغييرات على المكالمات الجديدة. قد تكشف إشارات الاتصال المباشرة عنوانًا بشكل مستقل عن هذا الإعداد.';
+
+  @override
+  String get settings_call_privacy_rollout =>
+      'يمرّر هذا الإصدار جميع المكالمات حاليًا عبر خادم وسيط. يُحفظ اختيارك لحين إتاحة المكالمات المباشرة.';
+
+  @override
+  String get settings_call_privacy_load_failed =>
+      'تعذّر تحميل تفضيل الخصوصية. ستستخدم المكالمات خوادم وسيطة. أعد المحاولة لتغيير هذا الإعداد.';
+
+  @override
+  String get settings_call_privacy_save_failed =>
+      'تعذّر حفظ اختيارك. يرجى المحاولة مجددًا.';
 }

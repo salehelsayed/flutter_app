@@ -58,10 +58,13 @@ func turnCredentialsV1ErrorJSON(err error) string {
 
 	var relayErr *node.TurnCredentialsRelayError
 	if errors.As(err, &relayErr) {
+		if !relayErr.Transient() {
+			return errJSON("TURN_CREDENTIALS_REJECTED", "Credential retrieval rejected")
+		}
 		response := map[string]interface{}{
 			"ok":           false,
 			"unsupported":  false,
-			"errorCode":    "TURN_CREDENTIALS_UNAVAILABLE",
+			"errorCode":    "TURN_CREDENTIALS_TRANSIENT",
 			"errorMessage": "Credential mint temporarily unavailable",
 		}
 		if relayErr.RetryAfter > 0 {
@@ -69,7 +72,10 @@ func turnCredentialsV1ErrorJSON(err error) string {
 		}
 		return okJSON(response)
 	}
-	return errJSON("TURN_CREDENTIALS_UNAVAILABLE", "Credential mint temporarily unavailable")
+	if errors.Is(err, node.ErrTurnCredentialsUnavailable) {
+		return errJSON("TURN_CREDENTIALS_TRANSIENT", "Credential mint temporarily unavailable")
+	}
+	return errJSON("TURN_CREDENTIALS_REJECTED", "Credential retrieval rejected")
 }
 
 // TurnCredentialsWithDiagnosticsV1 adds only optional outer diagnostic metadata.

@@ -528,6 +528,7 @@ void main() {
       'voice_call_android_native_enabled': false,
       'voice_call_ios_native_enabled': false,
       'voice_call_always_relay_enabled': false,
+      'voice_call_force_relay_enabled': false,
     });
   });
 }

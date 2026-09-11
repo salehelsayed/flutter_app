@@ -353,6 +353,18 @@ Map<String, Object?> _relayAggregate() =>
     );
 
 void main() {
+  test('latency failure reports the product gate without claiming success', () {
+    final result = AndroidForegroundWebRtcAudioCampaignResult.latencyExceeded(
+      const AndroidForegroundWebRtcAudioLatencyExceeded(3001),
+    );
+    expect(result.processExitCode, 1);
+    expect(result.json['status'], 'FAIL');
+    expect(result.json['blocker'], 'product');
+    expect(result.json['artifactPresent'], isFalse);
+    expect(result.json['assertionsAttempted'], 18);
+    expect(result.json['detail'], contains('p95=3001ms exceeded 3000ms'));
+  });
+
   test('selected relay probe cannot report complete campaign success', () {
     final result = AndroidForegroundWebRtcAudioCampaignResult.relayProbePassed(
       AndroidForegroundWebRtcAudioRelayMode.turnTcp,
@@ -1538,7 +1550,13 @@ void main() {
         ],
         sharedApkSha256: _apkDigest,
       ),
-      throwsFormatException,
+      throwsA(
+        isA<AndroidForegroundWebRtcAudioLatencyExceeded>().having(
+          (error) => error.p95Ms,
+          'p95Ms',
+          3001,
+        ),
+      ),
     );
   });
 

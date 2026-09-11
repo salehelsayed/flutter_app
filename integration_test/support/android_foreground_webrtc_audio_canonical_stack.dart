@@ -153,9 +153,6 @@ final class AndroidForegroundWebRtcCanonicalEndpoint {
     final turnBridge = turnFixture == null
         ? null
         : _TestScopedTurnCredentialsBridge(turnFixture);
-    final turnProvider = turnBridge == null
-        ? null
-        : BridgeCallIceServerProvider(bridge: turnBridge);
     telemetry.configureRelay(turnFixture: turnFixture, bridge: turnBridge);
     final crypto = _TestScopedAuthenticatedCallEnvelopeCrypto();
     final codec = SecureCallEnvelopeCodec(
@@ -271,6 +268,10 @@ final class AndroidForegroundWebRtcCanonicalEndpoint {
         telemetry.assertReducerAccepted('media_bundle_create');
         telemetry.recordBundleCreation(callId);
 
+        final turnProvider = turnBridge == null
+            ? null
+            : BridgeCallIceServerProvider(bridge: turnBridge);
+
         final routeAdapter = CallAudioRouteAdapter.flutterWebRtc();
         final probe = AndroidForegroundWebRtcAudioProbeAdapter();
         final nativeEngine = FlutterWebRtcCallEngine(
@@ -296,6 +297,11 @@ final class AndroidForegroundWebRtcCanonicalEndpoint {
           audioSession: audioSession,
         );
         final mediaPreparer = CallAudioNegotiationPreparer(
+          isCurrentCall: (id) =>
+              id == callId &&
+              !engine.isClosed &&
+              coordinator.activeSession?.callId == callId &&
+              coordinator.activeSession?.isTerminal == false,
           startAudio:
               ({
                 required bool locallyAccepted,
@@ -310,7 +316,6 @@ final class AndroidForegroundWebRtcCanonicalEndpoint {
               },
           clock: clock.now,
           readInitialIceServers: turnProvider?.read,
-          requireTurnServer: turnFixture != null,
         );
         final negotiationExecutor = CallNegotiationEffectExecutor(
           engine: engine,
@@ -332,7 +337,8 @@ final class AndroidForegroundWebRtcCanonicalEndpoint {
             telemetry.recordNegotiationDispatch(event, reduction);
           },
           readActiveSnapshot: () => coordinator.activeSession,
-          readStagedIceServers: (_) async => const <CallIceServer>[],
+          readStagedIceServers:
+              turnProvider?.read ?? (_) async => const <CallIceServer>[],
           clock: clock.now,
         );
         final interruptionCoordinator = CallAudioInterruptionCoordinator(
@@ -358,13 +364,16 @@ final class AndroidForegroundWebRtcCanonicalEndpoint {
           engine: engine,
           audioController: audioController,
           negotiationExecutor: negotiationExecutor,
-          close: () => _closeProofMediaBundle(
-            callId: callId,
-            telemetry: telemetry,
-            interruptionCoordinator: interruptionCoordinator,
-            audioController: audioController,
-            negotiationExecutor: negotiationExecutor,
-          ),
+          close: () {
+            turnProvider?.close();
+            return _closeProofMediaBundle(
+              callId: callId,
+              telemetry: telemetry,
+              interruptionCoordinator: interruptionCoordinator,
+              audioController: audioController,
+              negotiationExecutor: negotiationExecutor,
+            );
+          },
         );
       },
     );
