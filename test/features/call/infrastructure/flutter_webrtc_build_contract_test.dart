@@ -347,7 +347,7 @@ void main() {
           r'FlutterWebRtcFailureStage\.snapshotSenders,\s*'
           r'connection\.getSenders,\s*'
           r'timeout:\s*_snapshotReadTimeout,\s*'
-          r'onTimeout:\s*\(\)\s*=>\s*<webrtc\.RTCRtpSender>\[\],',
+          r'onTimeout:\s*\(\)\s*=>\s*incomplete\(<webrtc\.RTCRtpSender>\[\]\),',
         ).hasMatch(snapshotOnceBody),
         isTrue,
       );
@@ -357,7 +357,7 @@ void main() {
           r'FlutterWebRtcFailureStage\.snapshotTransceivers,\s*'
           r'connection\.getTransceivers,\s*'
           r'timeout:\s*_snapshotReadTimeout,\s*'
-          r'onTimeout:\s*\(\)\s*=>\s*<webrtc\.RTCRtpTransceiver>\[\],',
+          r'onTimeout:\s*\(\)\s*=>\s*incomplete\(<webrtc\.RTCRtpTransceiver>\[\]\),',
         ).hasMatch(snapshotOnceBody),
         isTrue,
       );
@@ -377,7 +377,7 @@ void main() {
       );
       expect(
         snapshotOnceBody,
-        contains('transceivers.length,\n              null,'),
+        matches(RegExp(r'transceivers\.length,\s*null,')),
       );
       expect(
         RegExp(
@@ -385,7 +385,7 @@ void main() {
           r'FlutterWebRtcFailureStage\.snapshotReceivers,\s*'
           r'connection\.getReceivers,\s*'
           r'timeout:\s*_snapshotReadTimeout,\s*'
-          r'onTimeout:\s*\(\)\s*=>\s*<webrtc\.RTCRtpReceiver>\[\],',
+          r'onTimeout:\s*\(\)\s*=>\s*incomplete\(<webrtc\.RTCRtpReceiver>\[\]\),',
         ).hasMatch(snapshotOnceBody),
         isTrue,
       );
@@ -395,7 +395,7 @@ void main() {
           r'FlutterWebRtcFailureStage\.snapshotStats,\s*'
           r'connection\.getStats,\s*'
           r'timeout:\s*_snapshotReadTimeout,\s*'
-          r'onTimeout:\s*\(\)\s*=>\s*<webrtc\.StatsReport>\[\],',
+          r'onTimeout:\s*\(\)\s*=>\s*incomplete\(<webrtc\.StatsReport>\[\]\),',
         ).hasMatch(snapshotOnceBody),
         isTrue,
       );
@@ -407,6 +407,10 @@ void main() {
         reason: 'snapshot metadata reads must not use an unbounded guard',
       );
       expect(snapshotOnceBody, isNot(contains('runWithDeadlineFallback')));
+      expect(
+        snapshotOnceBody,
+        contains('if (!observationComplete) return _conservativeSnapshot();'),
+      );
 
       for (final zeroField in const <String>[
         'localAudioCaptureTrackCount',

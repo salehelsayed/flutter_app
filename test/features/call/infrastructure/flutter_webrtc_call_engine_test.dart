@@ -339,6 +339,8 @@ final class _StatsPeerConnection implements webrtc.RTCPeerConnection {
 
   final List<List<webrtc.StatsReport>> _statsSamples;
   var _statsSampleIndex = 0;
+  Completer<void>? transceiversGate;
+  Object? statsError;
 
   @override
   webrtc.RTCPeerConnectionState? get connectionState =>
@@ -356,8 +358,10 @@ final class _StatsPeerConnection implements webrtc.RTCPeerConnection {
       <webrtc.RTCRtpSender>[];
 
   @override
-  Future<List<webrtc.RTCRtpTransceiver>> getTransceivers() async =>
-      <webrtc.RTCRtpTransceiver>[];
+  Future<List<webrtc.RTCRtpTransceiver>> getTransceivers() async {
+    if (transceiversGate case final gate?) await gate.future;
+    return <webrtc.RTCRtpTransceiver>[];
+  }
 
   @override
   Future<List<webrtc.RTCRtpReceiver>> getReceivers() async =>
@@ -367,6 +371,7 @@ final class _StatsPeerConnection implements webrtc.RTCPeerConnection {
   Future<List<webrtc.StatsReport>> getStats([
     webrtc.MediaStreamTrack? track,
   ]) async {
+    if (statsError case final error?) throw error;
     final index = _statsSampleIndex.clamp(0, _statsSamples.length - 1);
     _statsSampleIndex += 1;
     return _statsSamples[index];
@@ -642,6 +647,95 @@ void main() {
     expect(laterEmptySample.toString(), isNot(contains('123456')));
     expect(laterEmptySample.toString(), isNot(contains('654321')));
   });
+
+  test(
+    'incomplete native observation never retains partial readiness proof',
+    () async {
+      final peer = _StatsPeerConnection([
+        [
+          webrtc.StatsReport('transport', 'transport', 1, {
+            'dtlsState': 'connected',
+          }),
+        ],
+      ]);
+      final stages = <FlutterWebRtcFailureStage>[];
+      final native = FlutterWebRtcPeerConnectionAdapter(
+        configureAndroidAudioFocus: () async {},
+        peerConnectionFactory: (_) async => peer,
+        snapshotReadTimeout: const Duration(milliseconds: 1),
+        snapshotDeadlineTimeout: const Duration(seconds: 1),
+        onFailureStage: stages.add,
+      );
+      final wrapper = FlutterWebRtcCallEngine(adapter: native);
+      addTearDown(wrapper.close);
+      await wrapper.createConnection(
+        const CallConnectionConfiguration(
+          transportPolicy: CallTransportPolicy.all,
+          receiveAudio: true,
+          receiveVideo: false,
+          captureAudio: false,
+          captureVideo: false,
+        ),
+      );
+      expect((await wrapper.snapshot()).dtlsReady, isTrue);
+      final pending = peer.transceiversGate = Completer<void>();
+      final incomplete = await wrapper.snapshot();
+      expect(incomplete.isMediaReady, isFalse);
+      expect(incomplete.dtlsReady, isFalse);
+      expect(incomplete.state, CallConnectionState.newConnection);
+      expect(stages, [FlutterWebRtcFailureStage.snapshotTransceivers]);
+      pending.complete();
+      peer.transceiversGate = null;
+      expect((await wrapper.snapshot()).dtlsReady, isTrue);
+      expect(wrapper.isClosed, isFalse);
+    },
+  );
+
+  test(
+    'native stats failure is retryable and optional diagnostics cannot fail media',
+    () async {
+      final peer = _StatsPeerConnection([
+        [
+          webrtc.StatsReport('transport', 'transport', 1, {
+            'dtlsState': 'connected',
+          }),
+        ],
+      ])..statsError = StateError('private plugin text');
+      final stages = <FlutterWebRtcFailureStage>[];
+      var diagnosticCalls = 0;
+      final native = FlutterWebRtcPeerConnectionAdapter(
+        configureAndroidAudioFocus: () async {},
+        peerConnectionFactory: (_) async => peer,
+        onFailureStage: stages.add,
+        onDiagnosticSample: (_, _) {
+          diagnosticCalls++;
+          throw StateError('private optional sink text');
+        },
+      );
+      final wrapper = FlutterWebRtcCallEngine(adapter: native);
+      addTearDown(wrapper.close);
+      await wrapper.createConnection(
+        const CallConnectionConfiguration(
+          transportPolicy: CallTransportPolicy.all,
+          receiveAudio: true,
+          receiveVideo: false,
+          captureAudio: false,
+          captureVideo: false,
+        ),
+      );
+      await expectLater(
+        wrapper.snapshot(),
+        _throwsCallEngineCode(CallEngineErrorCode.observationUnavailable),
+      );
+      expect(stages, [FlutterWebRtcFailureStage.snapshotStats]);
+      expect(diagnosticCalls, 0);
+      expect(wrapper.isClosed, isFalse);
+      peer.statsError = null;
+      expect((await wrapper.snapshot()).dtlsReady, isTrue);
+      expect(diagnosticCalls, 1);
+      expect(wrapper.isClosed, isFalse);
+    },
+  );
 
   group('privacy-safe WebRTC failure stage guard', () {
     test(
@@ -1289,6 +1383,8 @@ void main() {
     test('supported route selection reflects the actual route port', () async {
       final routePort = _RecordingAudioRoutePort();
       await engine.close();
+      await adapter.dispose();
+      adapter = _RecordingWebRtcAdapter();
       engine = FlutterWebRtcCallEngine(
         adapter: adapter,
         audioRoutePort: routePort,
@@ -1353,6 +1449,8 @@ void main() {
       () async {
         final routePort = _RecordingAudioRoutePort();
         await engine.close();
+        await adapter.dispose();
+        adapter = _RecordingWebRtcAdapter();
         engine = FlutterWebRtcCallEngine(
           adapter: adapter,
           audioRoutePort: routePort,

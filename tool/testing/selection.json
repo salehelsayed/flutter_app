@@ -330,9 +330,10 @@
       "paths": [
         "test/features/call/integration/call_direct_mailbox_convergence_test.dart",
         "test/features/call/application/call_negotiation_test.dart",
-        "test/features/call/integration/call_remote_ice_drain_test.dart"
+        "test/features/call/integration/call_remote_ice_drain_test.dart",
+        "test/features/call/integration/call_readiness_exception_test.dart"
       ],
-      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup",
+      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup; native snapshot exception normalization through the real engine/executor/audio owner, bounded observation recovery, exact-call fatal dispatch, stale completion and cleanup",
       "limitations": "Fake crypto/transports/native lifecycle; no microphone/RTP/audible audio evidence",
       "timeout_seconds": 900,
       "estimated_seconds": 3,

@@ -52,7 +52,13 @@ enum CallEngineEventType { state, statistics, overflow, closed }
 
 enum CallEngineErrorCode {
   configurationRejected,
+  transportUnavailable,
   notReady,
+
+  /// A snapshot read failed without establishing a media/transport failure.
+  /// Retry observation within the existing setup/reconnect deadline; never
+  /// substitute a previous successful readiness sample.
+  observationUnavailable,
   malformedFingerprint,
   fingerprintMismatch,
   candidateOverflow,

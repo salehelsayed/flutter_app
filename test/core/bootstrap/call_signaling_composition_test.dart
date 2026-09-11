@@ -545,6 +545,11 @@ void main() {
             credentials;
         // Exercise the actual production bundle and preparer with its accepted
         // effect input; no diagnostic observer is invoked directly by this test.
+        final terminals = <CallSessionSnapshot>[];
+        final subscription = graph.coordinator.snapshots
+            .where((snapshot) => snapshot.isTerminal)
+            .listen(terminals.add);
+        addTearDown(subscription.cancel);
         final failure = await graph.mediaOwner.execute(
           const CallEffect(CallEffectType.prepareAcceptedMedia),
           graph.coordinator.activeSession!.copyWith(
@@ -552,7 +557,13 @@ void main() {
             acceptedAt: graph.coordinator.clock(),
           ),
         );
-        expect(failure?.type, CallEventType.negotiationFailed);
+        // Startup cleanup emits the engine's closed event before preparation
+        // settles. That canonical failure retires the effect; it must not
+        // return a second failure after its call is already terminal.
+        expect(failure, isNull);
+        expect(terminals, hasLength(1));
+        expect(terminals.single.callId, _callA);
+        expect(terminals.single.endReason, CallEndReason.mediaFailed);
         expect(fixture.lifecycleMethods, contains('activateAudio'));
         final events = await diagnostics.eventsForTesting();
         if (nativeAudioAccepted) {

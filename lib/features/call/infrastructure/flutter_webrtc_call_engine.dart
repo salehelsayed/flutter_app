@@ -565,13 +565,19 @@ final class FlutterWebRtcPeerConnectionAdapter
     webrtc.RTCPeerConnection connection,
   ) async {
     try {
+      var observationComplete = true;
+      T incomplete<T>(T fallback) {
+        observationComplete = false;
+        return fallback;
+      }
+
       var localAudioCaptureTrackCount = 0;
       var localVideoCaptureTrackCount = 0;
       final senders = await _failureStageGuard.runWithTimeoutFallback(
         FlutterWebRtcFailureStage.snapshotSenders,
         connection.getSenders,
         timeout: _snapshotReadTimeout,
-        onTimeout: () => <webrtc.RTCRtpSender>[],
+        onTimeout: () => incomplete(<webrtc.RTCRtpSender>[]),
       );
       var localAudioEnabled = false;
       var localAudioSenderAttached = false;
@@ -592,7 +598,7 @@ final class FlutterWebRtcPeerConnectionAdapter
         FlutterWebRtcFailureStage.snapshotTransceivers,
         connection.getTransceivers,
         timeout: _snapshotReadTimeout,
-        onTimeout: () => <webrtc.RTCRtpTransceiver>[],
+        onTimeout: () => incomplete(<webrtc.RTCRtpTransceiver>[]),
       );
       final directions = await _failureStageGuard
           .runWithTimeoutFallback<List<webrtc.TransceiverDirection?>>(
@@ -601,10 +607,12 @@ final class FlutterWebRtcPeerConnectionAdapter
               transceivers.map((transceiver) => transceiver.getDirection()),
             ),
             timeout: _snapshotReadTimeout,
-            onTimeout: () => List<webrtc.TransceiverDirection?>.filled(
-              transceivers.length,
-              null,
-              growable: false,
+            onTimeout: () => incomplete(
+              List<webrtc.TransceiverDirection?>.filled(
+                transceivers.length,
+                null,
+                growable: false,
+              ),
             ),
           );
       for (var index = 0; index < transceivers.length; index += 1) {
@@ -626,7 +634,7 @@ final class FlutterWebRtcPeerConnectionAdapter
         FlutterWebRtcFailureStage.snapshotReceivers,
         connection.getReceivers,
         timeout: _snapshotReadTimeout,
-        onTimeout: () => <webrtc.RTCRtpReceiver>[],
+        onTimeout: () => incomplete(<webrtc.RTCRtpReceiver>[]),
       );
       for (final receiver in receivers) {
         if (receiver.track?.kind == 'audio') {
@@ -638,8 +646,12 @@ final class FlutterWebRtcPeerConnectionAdapter
         FlutterWebRtcFailureStage.snapshotStats,
         connection.getStats,
         timeout: _snapshotReadTimeout,
-        onTimeout: () => <webrtc.StatsReport>[],
+        onTimeout: () => incomplete(<webrtc.StatsReport>[]),
       );
+      // A per-read timeout invalidates this observation just like the aggregate
+      // deadline. In particular, missing transceiver/direction data must not
+      // be combined with successful stats to certify media readiness.
+      if (!observationComplete) return _conservativeSnapshot();
       final diagnosticRecords = stats.map(
         (report) => CallStatsRecord(
           id: report.id,
@@ -650,8 +662,8 @@ final class FlutterWebRtcPeerConnectionAdapter
       final sample = _statsSampler.sample(diagnosticRecords);
       final observer = onDiagnosticSample;
       if (observer != null) {
-        final progress = _rtpProgressSampler.sample(diagnosticRecords);
         try {
+          final progress = _rtpProgressSampler.sample(diagnosticRecords);
           observer(sample, progress);
         } catch (_) {
           // An optional diagnostic sink never changes media readiness.
@@ -1357,7 +1369,32 @@ final class FlutterWebRtcCallEngine
   @override
   Future<CallConnectionSnapshot> snapshot() async {
     _requireConnectionCreated();
-    final snapshot = await _adapter.snapshot();
+    final WebRtcPeerConnectionSnapshot snapshot;
+    try {
+      snapshot = await _adapter.snapshot();
+    } on WebRtcAdapterException catch (error, stackTrace) {
+      // Native snapshot reads report `other` after recording a fixed failure
+      // stage. A failed observation says nothing about transport health.
+      final code = switch (error.reason) {
+        WebRtcFailureReason.other => CallEngineErrorCode.observationUnavailable,
+        WebRtcFailureReason.notReady => CallEngineErrorCode.notReady,
+        WebRtcFailureReason.transportUnavailable =>
+          CallEngineErrorCode.transportUnavailable,
+        WebRtcFailureReason.configurationRejected =>
+          CallEngineErrorCode.configurationRejected,
+        WebRtcFailureReason.closed => CallEngineErrorCode.closed,
+        WebRtcFailureReason.none => CallEngineErrorCode.other,
+      };
+      Error.throwWithStackTrace(CallEngineException(code), stackTrace);
+    }
+    _ensureOpen();
+    if (snapshot.isClosed ||
+        snapshot.connectionState == WebRtcConnectionState.closed) {
+      throw const CallEngineException(CallEngineErrorCode.closed);
+    }
+    if (snapshot.connectionState == WebRtcConnectionState.failed) {
+      throw const CallEngineException(CallEngineErrorCode.transportUnavailable);
+    }
     final transport = _mapAdapterTransport(snapshot.transport);
     final relaySelectionProven = switch (transport) {
       CallTransportClass.relay ||

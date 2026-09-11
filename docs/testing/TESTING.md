@@ -582,6 +582,26 @@ visible and cannot become an ordinary first-attempt PASS.
   single-batch counterexample; `focused.log` records the passing regression and
   preservation suites. Crypto primitives and native WebRTC remain fakes, so this
   evidence establishes the application boundary, not live audio or device RTP.
+- **Readiness observation exceptions:** native snapshot reads can throw
+  `WebRtcAdapterException(other)` after recording a fixed WebRTC read stage.
+  The real engine wrapper now translates this to `observationUnavailable`;
+  readiness retries it and `notReady` on the existing cadence/sample cap without
+  resetting the canonical setup/reconnect deadline or reusing successful media
+  evidence. Per-read timeouts return the same conservative snapshot as the
+  aggregate deadline; partial transceiver/statistics reads cannot certify
+  readiness. Explicit transport/configuration/relay-policy failures and
+  unexpected exceptions request one exact-call canonical failure. Closed or
+  replaced work is fenced before dispatch; successful cleanup still belongs to
+  the coordinator/audio owner. Executor diagnostics retain only fixed stages,
+  codes and counts; native stage diagnostics retain the failing read boundary.
+  `call_readiness_exception_test.dart` uses the real coordinator, executor,
+  audio controller and engine wrapper with fake platform/signaling ports and
+  captures unhandled asynchronous errors. It checks initial/later observation,
+  bounded retry, terminal cleanup, dispatch errors and subsequent-call isolation.
+  Engine tests additionally cover native stats failure, incomplete reads and
+  optional diagnostic sink failure. Red/green evidence is retained under
+  `.codex-test-logs/readiness-exceptions/`. These are host lifecycle and ownership
+  proofs, not live microphone, libp2p, audible audio or signed-device evidence.
 - **Local Android audio isolation:** the existing production-call journey now
   fixes its build/cache/driver identity to `com.mknoon.sims.productionaudio`.
   Its activity class remains `com.mknoon.app.MainActivity`. Keep native calls

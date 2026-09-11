@@ -142,10 +142,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   final Set<int> _announcedLocalDescriptionGenerations = <int>{};
   int? _remoteDescriptionGeneration;
 
-  Future<void>? _candidateDrainFuture;
-  Future<void>? _engineEventDrainFuture;
+  bool _candidateDrainInFlight = false;
+  bool _engineEventDrainInFlight = false;
   Future<void>? _closeFuture;
-  CallEngineEvent? _pendingEngineEvent;
+  _PendingEngineEvent? _pendingEngineEvent;
   CallTimerHandle? _mediaReadinessTimer;
   CallId? _mediaReadinessCallId;
   CallEventType? _mediaReadinessEventType;
@@ -154,11 +154,16 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   int _candidateInFlightCount = 0;
   int _nextEventSequence = 0;
   int _dispatchFailureCount = 0;
+  int _observationFailureCount = 0;
+  int _unexpectedFailureCount = 0;
+  int _staleCompletionCount = 0;
+  String? _lastFailureStage;
+  String? _lastFailureCode;
+  final Set<CallId> _failureDispatchedCallIds = <CallId>{};
   int _mediaReadinessEpoch = 0;
   int _mediaReadinessSampleCount = 0;
   bool _restartAttempted = false;
   bool _candidateEgressFailed = false;
-  bool _candidateFailureDispatched = false;
   bool _closed = false;
   bool _engineEventSubscriptionClosed = false;
   bool _candidateSubscriptionClosed = false;
@@ -195,15 +200,26 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
           return null;
       }
     } on CallNegotiationPortException catch (error) {
-      return _followUp(
-        CallEventType.negotiationFailed,
+      if (!_isCurrentSession(snapshot)) {
+        _staleCompletionCount++;
+        return null;
+      }
+      _recordFailure(error, 'effect');
+      return _failureForSession(
         snapshot,
         endReason: error.code == CallNegotiationPortErrorCode.permissionDenied
             ? CallEndReason.permissionDenied
             : null,
       );
-    } on CallEngineException {
-      return _followUp(CallEventType.negotiationFailed, snapshot);
+    } catch (error) {
+      // Effect failures are not observational: partially applied signaling or
+      // media mutations must retire through the coordinator's cleanup owner.
+      if (!_isCurrentSession(snapshot)) {
+        _staleCompletionCount++;
+        return null;
+      }
+      _recordFailure(error, 'effect');
+      return _failureForSession(snapshot);
     }
   }
 
@@ -591,7 +607,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (_closed ||
         _candidateEgressFailed ||
         _pendingLocalCandidates.isEmpty ||
-        _candidateDrainFuture != null) {
+        _candidateDrainInFlight) {
       return;
     }
     if (!_announcedLocalDescriptionGenerations.contains(
@@ -599,9 +615,8 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     )) {
       return;
     }
-    final drain = _drainLocalCandidates();
-    _candidateDrainFuture = drain;
-    unawaited(drain);
+    _candidateDrainInFlight = true;
+    unawaited(_drainLocalCandidates());
   }
 
   Future<void> _drainLocalCandidates() async {
@@ -634,7 +649,12 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
             callId: first.callId,
             candidates: List<CallIceCandidate>.unmodifiable(batch),
           );
-        } catch (_) {
+        } catch (error) {
+          if (!_isCurrentSession(current)) {
+            _staleCompletionCount++;
+            return;
+          }
+          _recordFailure(error, 'candidateDrain');
           _failCandidateEgress(current);
           return;
         } finally {
@@ -642,7 +662,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         }
       }
     } finally {
-      _candidateDrainFuture = null;
+      _candidateDrainInFlight = false;
       if (!_closed &&
           !_candidateEgressFailed &&
           _pendingLocalCandidates.isNotEmpty) {
@@ -652,59 +672,67 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   }
 
   void _failCandidateEgress(CallSessionSnapshot snapshot) {
+    if (!_isCurrentSession(snapshot)) return;
     if (_candidateEgressFailed) return;
     _candidateEgressFailed = true;
     _pendingLocalCandidates.clear();
-    if (_candidateFailureDispatched || _closed) return;
-    _candidateFailureDispatched = true;
-    unawaited(
-      _dispatchCanonical(_followUp(CallEventType.negotiationFailed, snapshot)),
-    );
+    unawaited(_dispatchFailureForSession(snapshot));
   }
 
-  void _onCandidateStreamError(Object _, StackTrace _) {
+  void _onCandidateStreamError(Object error, StackTrace _) {
+    if (_closed) return;
+    _recordFailure(error, 'candidateStream');
     final snapshot = _readSnapshotSafely();
     if (snapshot != null) _failCandidateEgress(snapshot);
   }
 
   void _onEngineEvent(CallEngineEvent event) {
     if (_closed) return;
+    final session = _readSnapshotSafely();
+    if (session == null || session.callId == null || session.isTerminal) return;
     if (_isFailureEngineEvent(event)) {
       _cancelMediaReadinessWatch(closeActivePhase: true);
     } else if (event.connectionState != CallConnectionState.connected) {
       _cancelMediaReadinessWatch();
     }
     final pending = _pendingEngineEvent;
-    final pendingIsFailure = pending != null && _isFailureEngineEvent(pending);
+    final pendingIsFailure =
+        pending != null && _isFailureEngineEvent(pending.event);
     // Latest wins unless a failure is already pending: a `connected` that
     // follows a coalesced `checking` or `disconnected` must not be dropped,
     // or the readiness watch never runs and the reconnect timer fires.
     if (pending == null || _isFailureEngineEvent(event) || !pendingIsFailure) {
-      _pendingEngineEvent = event;
+      _pendingEngineEvent = _PendingEngineEvent(event, session);
     }
     _ensureEngineEventDrain();
   }
 
   void _ensureEngineEventDrain() {
-    if (_closed ||
-        _pendingEngineEvent == null ||
-        _engineEventDrainFuture != null) {
+    if (_closed || _pendingEngineEvent == null || _engineEventDrainInFlight) {
       return;
     }
-    final drain = _drainEngineEvents();
-    _engineEventDrainFuture = drain;
-    unawaited(drain);
+    // Claim the drain before a synchronous callback/early return can clear it.
+    // Preserve immediate event processing while avoiding a completed-future
+    // assignment that could permanently strand subsequent events.
+    _engineEventDrainInFlight = true;
+    unawaited(_drainEngineEvents());
   }
 
   Future<void> _drainEngineEvents() async {
     try {
       while (!_closed && _pendingEngineEvent != null) {
-        final event = _pendingEngineEvent!;
+        final pending = _pendingEngineEvent!;
         _pendingEngineEvent = null;
-        await _bridgeEngineEvent(event);
+        try {
+          if (_isCurrentSession(pending.session)) {
+            await _bridgeEngineEvent(pending.event);
+          }
+        } catch (error) {
+          await _handleAsyncFailure(error, pending.session, 'engineEventDrain');
+        }
       }
     } finally {
-      _engineEventDrainFuture = null;
+      _engineEventDrainInFlight = false;
       if (!_closed && _pendingEngineEvent != null) {
         scheduleMicrotask(_ensureEngineEventDrain);
       }
@@ -720,10 +748,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     _trackedCallIds.add(session.callId!);
 
     if (_isFailureEngineEvent(event)) {
-      _closeMediaReadinessPhase(session);
-      await _dispatchCanonical(
-        _followUp(CallEventType.negotiationFailed, session),
-      );
+      await _dispatchFailureForSession(session);
       return;
     }
     if (event.connectionState == CallConnectionState.disconnected) {
@@ -748,7 +773,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     await _startMediaReadinessWatch(session, type);
   }
 
-  void _onEngineStreamError(Object _, StackTrace _) {
+  void _onEngineStreamError(Object error, StackTrace _) {
+    if (_closed) return;
+    _recordFailure(error, 'engineStream');
     _cancelMediaReadinessWatch(closeActivePhase: true);
     unawaited(_dispatchFailureForCurrentSnapshot());
   }
@@ -764,10 +791,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (snapshot == null || snapshot.callId == null || snapshot.isTerminal) {
       return;
     }
-    _closeMediaReadinessPhase(snapshot);
-    await _dispatchCanonical(
-      _followUp(CallEventType.negotiationFailed, snapshot),
-    );
+    await _dispatchFailureForSession(snapshot);
   }
 
   Future<void> _startMediaReadinessWatch(
@@ -797,22 +821,33 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (session == null) return;
     _mediaReadinessSampleCount++;
 
-    CallConnectionSnapshot media;
+    CallConnectionSnapshot? media;
     try {
       media = await engine.snapshot();
-    } on CallEngineException {
+    } catch (error) {
       session = _currentMediaReadinessSession(epoch);
-      if (session == null) return;
-      _closeMediaReadinessPhase(session, expectedEpoch: epoch);
-      await _dispatchCanonical(
-        _followUp(CallEventType.negotiationFailed, session),
-      );
-      return;
+      if (session == null) {
+        _staleCompletionCount++;
+        return;
+      }
+      _recordFailure(error, 'mediaReadiness');
+      if (error is! CallEngineException ||
+          (error.code != CallEngineErrorCode.observationUnavailable &&
+              error.code != CallEngineErrorCode.notReady)) {
+        await _dispatchFailureForSession(session);
+        return;
+      }
+      _observationFailureCount++;
+      // Consume this sample without claiming readiness. Retry on the same
+      // cadence/cap, bounded in production by the canonical phase deadline.
     }
 
     session = _currentMediaReadinessSession(epoch);
-    if (session == null) return;
-    if (media.isMediaReady) {
+    if (session == null) {
+      _staleCompletionCount++;
+      return;
+    }
+    if (media?.isMediaReady == true) {
       final type = _mediaReadinessEventType!;
       _closedMediaReadinessPhases.add((session.callId!, type));
       _cancelMediaReadinessWatch(expectedEpoch: epoch);
@@ -833,8 +868,14 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     _mediaReadinessTimer = _mediaReadinessTimerScheduler.schedule(
       mediaReadinessPollInterval,
       () async {
-        if (_closed || epoch != _mediaReadinessEpoch) return;
-        await _sampleMediaReadiness(epoch);
+        final current = _currentMediaReadinessSession(epoch);
+        if (current == null) return;
+        _mediaReadinessTimer = null;
+        try {
+          await _sampleMediaReadiness(epoch);
+        } catch (error) {
+          await _handleAsyncFailure(error, current, 'mediaReadinessTimer');
+        }
       },
     );
   }
@@ -892,15 +933,67 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (_closed) return;
     try {
       await dispatchEvent(event);
-    } catch (_) {
+    } catch (error) {
       _dispatchFailureCount++;
+      _recordFailure(error, 'dispatch');
     }
+  }
+
+  bool _isCurrentSession(CallSessionSnapshot session) {
+    if (_closed || session.callId == null || session.isTerminal) return false;
+    final current = _readSnapshotSafely();
+    return current?.callId == session.callId && current?.isTerminal == false;
+  }
+
+  CallEvent? _failureForSession(
+    CallSessionSnapshot session, {
+    CallEndReason? endReason,
+  }) {
+    if (!_isCurrentSession(session) ||
+        !_failureDispatchedCallIds.add(session.callId!)) {
+      return null;
+    }
+    _closeMediaReadinessPhase(session);
+    return _followUp(
+      CallEventType.negotiationFailed,
+      session,
+      endReason: endReason,
+    );
+  }
+
+  Future<void> _dispatchFailureForSession(CallSessionSnapshot session) async {
+    final event = _failureForSession(session);
+    if (event != null) await _dispatchCanonical(event);
+  }
+
+  Future<void> _handleAsyncFailure(
+    Object error,
+    CallSessionSnapshot session,
+    String stage,
+  ) async {
+    if (!_isCurrentSession(session)) {
+      _staleCompletionCount++;
+      return;
+    }
+    _recordFailure(error, stage);
+    await _dispatchFailureForSession(session);
+  }
+
+  void _recordFailure(Object error, String stage) {
+    _lastFailureStage = stage;
+    _lastFailureCode = switch (error) {
+      CallEngineException(:final code) => code.name,
+      CallNegotiationPortException(:final code) => code.name,
+      _ => 'unexpected',
+    };
+    if (_lastFailureCode == 'unexpected') _unexpectedFailureCount++;
   }
 
   CallSessionSnapshot? _readSnapshotSafely() {
     try {
       return readActiveSnapshot();
-    } catch (_) {
+    } catch (error) {
+      _recordFailure(error, 'readActiveSnapshot');
       return null;
     }
   }
@@ -992,6 +1085,12 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     'restartAttempted': _restartAttempted,
     'candidateEgressFailed': _candidateEgressFailed,
     'mediaReadinessSampling': _mediaReadinessCallId != null,
+    'engineEventDrainInFlight': _engineEventDrainInFlight,
+    'observationFailureCount': _observationFailureCount,
+    'unexpectedFailureCount': _unexpectedFailureCount,
+    'staleCompletionCount': _staleCompletionCount,
+    'lastFailureStage': _lastFailureStage,
+    'lastFailureCode': _lastFailureCode,
     'pendingLocalCandidateCount':
         _pendingLocalCandidates.length + _candidateInFlightCount,
     'pendingRemoteCandidateCount': _pendingRemoteCandidates.length,
@@ -1025,6 +1124,13 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         CallState.reconnecting => CallEventType.mediaRecovered,
         _ => null,
       };
+}
+
+final class _PendingEngineEvent {
+  const _PendingEngineEvent(this.event, this.session);
+
+  final CallEngineEvent event;
+  final CallSessionSnapshot session;
 }
 
 final class _PendingLocalCandidate {
