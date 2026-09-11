@@ -948,6 +948,9 @@ final class _ProofDiagnosticCallEngine
   int get iceGeneration => _delegate.iceGeneration;
 
   @override
+  int get candidateBatchCapacity => _delegate.candidateBatchCapacity;
+
+  @override
   Future<void> createConnection(CallConnectionConfiguration configuration) =>
       _observe(() => _delegate.createConnection(configuration));
 

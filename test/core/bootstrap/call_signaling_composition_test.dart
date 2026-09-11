@@ -4898,6 +4898,9 @@ final class _ProductionSpeakerRouteEngine implements CallEngine {
   bool get isClosed => closed;
 
   @override
+  int get candidateBatchCapacity => 8;
+
+  @override
   int get iceGeneration => 0;
 
   @override

@@ -263,10 +263,11 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     }
 
     await _prepareMedia(snapshot);
+    if (!_isCurrentRemoteWork(snapshot, material.iceGeneration)) return null;
     await engine.setRemoteDescription(offer);
-    if (_closed) return null;
-    await _acceptRemoteDescription(material.iceGeneration);
-    if (_closed) return null;
+    if (!await _acceptRemoteDescription(snapshot, material.iceGeneration)) {
+      return null;
+    }
     final answer = await engine.createAnswer();
     if (_closed) return null;
     if (!_isAuthenticatedDescription(
@@ -307,7 +308,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       return _followUp(CallEventType.negotiationFailed, snapshot);
     }
     await engine.setRemoteDescription(answer);
-    await _acceptRemoteDescription(material.iceGeneration);
+    await _acceptRemoteDescription(snapshot, material.iceGeneration);
     return null;
   }
 
@@ -446,9 +447,22 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     _ensureCandidateDrain();
   }
 
-  Future<void> _acceptRemoteDescription(int generation) async {
+  bool _isCurrentRemoteWork(CallSessionSnapshot snapshot, int generation) {
+    final active = _readSnapshotSafely();
+    return !_closed &&
+        !engine.isClosed &&
+        engine.iceGeneration == generation &&
+        active != null &&
+        active.callId == snapshot.callId &&
+        _canApplyCandidate(active.state);
+  }
+
+  Future<bool> _acceptRemoteDescription(
+    CallSessionSnapshot snapshot,
+    int generation,
+  ) async {
+    if (!_isCurrentRemoteWork(snapshot, generation)) return false;
     _remoteDescriptionGeneration = generation;
-    if (_pendingRemoteCandidates.isEmpty) return;
     final ready = <CallIceCandidate>[];
     final future = ListQueue<CallIceCandidate>();
     while (_pendingRemoteCandidates.isNotEmpty) {
@@ -460,7 +474,21 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       }
     }
     _pendingRemoteCandidates.addAll(future);
-    if (ready.isNotEmpty) await engine.addIceCandidates(ready);
+    // Take ownership before awaiting: a partially applied batch must never be
+    // replayed. Failures propagate to the coordinator's terminal cleanup.
+    final capacity = engine.candidateBatchCapacity;
+    for (var offset = 0; offset < ready.length; offset += capacity) {
+      if (!_isCurrentRemoteWork(snapshot, generation) ||
+          _remoteDescriptionGeneration != generation) {
+        return false;
+      }
+      final end = offset + capacity;
+      await engine.addIceCandidates(
+        ready.sublist(offset, end < ready.length ? end : ready.length),
+      );
+    }
+    return _isCurrentRemoteWork(snapshot, generation) &&
+        _remoteDescriptionGeneration == generation;
   }
 
   Future<void> _prepareMedia(CallSessionSnapshot snapshot) async {

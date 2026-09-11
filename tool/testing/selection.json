@@ -329,9 +329,10 @@
       "kind": "flutter",
       "paths": [
         "test/features/call/integration/call_direct_mailbox_convergence_test.dart",
-        "test/features/call/application/call_negotiation_test.dart"
+        "test/features/call/application/call_negotiation_test.dart",
+        "test/features/call/integration/call_remote_ice_drain_test.dart"
       ],
-      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation and privacy",
+      "boundary": "Direct/mailbox old-generation hangup convergence/cleanup, negotiation material generation/privacy, authenticated remote ICE through the real executor and WebRTC wrapper batch limit, restart filtering and interrupted drain cleanup",
       "limitations": "Fake crypto/transports/native lifecycle; no microphone/RTP/audible audio evidence",
       "timeout_seconds": 900,
       "estimated_seconds": 3,

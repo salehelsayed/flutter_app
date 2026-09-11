@@ -947,7 +947,7 @@ final class FlutterWebRtcCallEngine
     required WebRtcPeerConnectionAdapter adapter,
     CallAudioRoutePort? audioRoutePort,
     int eventBufferCapacity = 64,
-    int candidateBatchCapacity = 8,
+    this.candidateBatchCapacity = 8,
     int deferredCandidateCapacity = 64,
   }) : assert(eventBufferCapacity > 0),
        assert(candidateBatchCapacity > 0),
@@ -955,7 +955,6 @@ final class FlutterWebRtcCallEngine
        _adapter = adapter,
        _audioRoutePort = audioRoutePort,
        _eventBufferCapacity = eventBufferCapacity,
-       _candidateBatchCapacity = candidateBatchCapacity,
        _deferredCandidateCapacity = deferredCandidateCapacity {
     _adapterSubscription = _adapter.events.listen(
       _onAdapterEvent,
@@ -976,7 +975,8 @@ final class FlutterWebRtcCallEngine
   final WebRtcPeerConnectionAdapter _adapter;
   final CallAudioRoutePort? _audioRoutePort;
   final int _eventBufferCapacity;
-  final int _candidateBatchCapacity;
+  @override
+  final int candidateBatchCapacity;
   final int _deferredCandidateCapacity;
   final StreamController<CallEngineEvent> _events =
       StreamController<CallEngineEvent>.broadcast(sync: true);
@@ -1255,7 +1255,7 @@ final class FlutterWebRtcCallEngine
   Future<void> addIceCandidates(List<CallIceCandidate> candidates) async {
     _requireConnectionCreated();
     if (candidates.isEmpty) return;
-    if (candidates.length > _candidateBatchCapacity) {
+    if (candidates.length > candidateBatchCapacity) {
       throw const CallEngineException(CallEngineErrorCode.candidateOverflow);
     }
     // Candidates of a superseded generation stay in flight for a short while

@@ -200,7 +200,7 @@ List<String> _namedArgumentExpressions(String invocation, String name) {
 
 void main() {
   test(
-    'P269 proof accept supplies the complete device-bound recipient tuple',
+    'P269 proof accept selects the complete recipient tuple by authority mode',
     () {
       final compositionSource = File(
         'lib/debug/debug_e2e_composition_root.dart',
@@ -211,21 +211,34 @@ void main() {
       ).where((invocation) => invocation.contains('groupId: groupId'));
 
       expect(acceptInvocations, hasLength(1));
-      final accept = _compactDart(acceptInvocations.single);
-      expect(accept, contains('senderPeerId:identity.peerId'));
-      expect(accept, contains('ownDeviceId:transportPeerId'));
-      expect(accept, contains('ownTransportPeerId:transportPeerId'));
-      expect(accept, contains('ownMlKemPublicKey:identity.mlKemPublicKey'));
-      expect(
+      final accept = acceptInvocations.single;
+      // Ordinary Android primaries use the existing account-bound tuple.
+      // Distinct-device proofs must still supply every device-bound field.
+      const legacyBranch =
+          'authorityMode=='
+          'GroupMediaReliabilityAuthorityMode.accountBoundLegacy?null:';
+      for (final argument in <String, String>{
+        'senderPeerId': 'identity.peerId',
+        'ownDeviceId': '${legacyBranch}transportPeerId',
+        'ownTransportPeerId': '${legacyBranch}transportPeerId',
+        'ownMlKemPublicKey': 'identity.mlKemPublicKey',
+        'ownKeyPackagePublicMaterial': 'identity.mlKemPublicKey',
+      }.entries) {
+        expect(_namedArgumentExpressions(accept, argument.key), <String>[
+          argument.value,
+        ], reason: '${argument.key} must preserve both authority modes');
+      }
+      final keyPackageIds = _namedArgumentExpressions(
         accept,
-        contains(
-          'ownKeyPackageId:defaultGroupWelcomeKeyPackageIdForDevice('
-          'transportPeerId,)',
-        ),
+        'ownKeyPackageId',
       );
+      expect(keyPackageIds, hasLength(1));
       expect(
-        accept,
-        contains('ownKeyPackagePublicMaterial:identity.mlKemPublicKey'),
+        keyPackageIds.single,
+        matches(
+          '^${RegExp.escape(legacyBranch)}'
+          r'defaultGroupWelcomeKeyPackageIdForDevice\(transportPeerId,?\)$',
+        ),
       );
     },
   );

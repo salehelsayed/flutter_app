@@ -25,6 +25,9 @@ class _FakeCallEngine implements CallEngine {
   bool get isClosed => _closed;
 
   @override
+  int get candidateBatchCapacity => 8;
+
+  @override
   int get iceGeneration => 0;
 
   @override

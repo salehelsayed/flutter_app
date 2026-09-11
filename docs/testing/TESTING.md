@@ -464,6 +464,11 @@ visible and cannot become an ordinary first-attempt PASS.
   receipts are refused. Real SQLCipher/schema, media/render, ACL, retry and reset
   assertions remain required. Host fixture tests do not certify native crypto.
   The separate linked-group B1b pass covers its actual linked bootstrap scope.
+  The invite-accept wiring sentinel checks both branches: legacy mode omits
+  device/transport/key-package IDs, while distinct mode supplies the complete
+  tuple; both retain the account and ML-KEM material. Its former unconditional
+  tuple assertion rejected the intentional legacy branch. Preserve these
+  authority checks when changing the proof composition.
 
 - **Strict forwarded-media fixture consistency:** prepared group-media staging
   writes its parent and attachments into the same database. Pairing it with an
@@ -561,6 +566,22 @@ visible and cannot become an ordinary first-attempt PASS.
   prevent an old process from starting effects or deleting a failed request.
   Resume/reopen paths already used the correct order and remain unchanged.
 
+- **Remote ICE drain capacity:** authenticated ICE can overtake its earlier
+  SDP within the existing 64-sequence reordering window. The executor could
+  retain 64 candidates but submitted them as one batch to a WebRTC wrapper
+  limited to eight; nine or 64 ended negotiation. The executor now reads the
+  engine's batch capacity, preserves order and future generations, and fences
+  each batch against closure, call replacement and generation changes. A later
+  partially applied batch terminalizes through existing cleanup without replay;
+  answer delivery now shares the coordinator's hangup interruption fence.
+  `call_remote_ice_drain_test.dart` covers authenticated admission through the
+  real executor and wrapper, including 0/1/8/9/64, overflow, configured capacity,
+  deduplication, malformed material, relay policy, restart and controlled waits.
+  It is registered in `call-signaling` in the existing selection manifest.
+  `.codex-test-logs/remote-ice-drain/red-reordered.log` retains the failing
+  single-batch counterexample; `focused.log` records the passing regression and
+  preservation suites. Crypto primitives and native WebRTC remain fakes, so this
+  evidence establishes the application boundary, not live audio or device RTP.
 - **Local Android audio isolation:** the existing production-call journey now
   fixes its build/cache/driver identity to `com.mknoon.sims.productionaudio`.
   Its activity class remains `com.mknoon.app.MainActivity`. Keep native calls

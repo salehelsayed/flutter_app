@@ -258,6 +258,9 @@ abstract interface class CallEngine {
 
   int get iceGeneration;
 
+  /// Positive maximum accepted by [addIceCandidates], fixed for this engine.
+  int get candidateBatchCapacity;
+
   Future<void> createConnection(CallConnectionConfiguration configuration);
 
   Future<CallSessionDescription> createOffer();

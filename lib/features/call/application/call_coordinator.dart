@@ -365,7 +365,11 @@ final class CallCoordinator {
     final previousInterruption = _preparationInterruption;
     final interruption =
         reduction.effects.any(
-          (effect) => _isMediaPreparationEffect(effect.type),
+          // Remote answers can also wait while buffered ICE is drained. Let
+          // terminal events retire that work through the same cleanup fence.
+          (effect) =>
+              _isMediaPreparationEffect(effect.type) ||
+              effect.type == CallEffectType.deliverAnswer,
         )
         ? _CallPreparationInterruption(snapshot.callId!)
         : null;

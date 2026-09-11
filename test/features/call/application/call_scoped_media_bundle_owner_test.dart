@@ -496,6 +496,9 @@ final class _Engine implements CallEngine {
   bool get isClosed => closeCalls > 0;
 
   @override
+  int get candidateBatchCapacity => 8;
+
+  @override
   int get iceGeneration => 0;
 
   @override
