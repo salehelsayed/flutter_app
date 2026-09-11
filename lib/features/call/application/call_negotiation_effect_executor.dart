@@ -698,11 +698,22 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     final pending = _pendingEngineEvent;
     final pendingIsFailure =
         pending != null && _isFailureEngineEvent(pending.event);
-    // Latest wins unless a failure is already pending: a `connected` that
-    // follows a coalesced `checking` or `disconnected` must not be dropped,
-    // or the readiness watch never runs and the reconnect timer fires.
+    // Keep a disconnect edge as well as the latest state: overwriting either
+    // can lose mediaLost or the connected update that starts recovery. This
+    // remains one coalesced record (at most two events), never a callback FIFO.
+    // A failure supersedes both and cannot be overwritten by ordinary updates.
     if (pending == null || _isFailureEngineEvent(event) || !pendingIsFailure) {
-      _pendingEngineEvent = _PendingEngineEvent(event, session);
+      _pendingEngineEvent = _PendingEngineEvent(
+        event,
+        session,
+        disconnect: _isFailureEngineEvent(event)
+            ? null
+            : event.connectionState == CallConnectionState.disconnected
+            ? event
+            : pending?.session.callId == session.callId
+            ? pending?.disconnect
+            : null,
+      );
     }
     _ensureEngineEventDrain();
   }
@@ -725,7 +736,18 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         _pendingEngineEvent = null;
         try {
           if (_isCurrentSession(pending.session)) {
-            await _bridgeEngineEvent(pending.event);
+            final disconnect = pending.disconnect;
+            if (disconnect != null) await _bridgeEngineEvent(disconnect);
+            final next = _pendingEngineEvent;
+            final failureWaiting =
+                next?.session.callId == pending.session.callId &&
+                next != null &&
+                _isFailureEngineEvent(next.event);
+            if (!identical(disconnect, pending.event) &&
+                !failureWaiting &&
+                _isCurrentSession(pending.session)) {
+              await _bridgeEngineEvent(pending.event);
+            }
           }
         } catch (error) {
           await _handleAsyncFailure(error, pending.session, 'engineEventDrain');
@@ -1086,6 +1108,7 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     'candidateEgressFailed': _candidateEgressFailed,
     'mediaReadinessSampling': _mediaReadinessCallId != null,
     'engineEventDrainInFlight': _engineEventDrainInFlight,
+    'pendingEngineEventCount': _pendingEngineEvent?.eventCount ?? 0,
     'observationFailureCount': _observationFailureCount,
     'unexpectedFailureCount': _unexpectedFailureCount,
     'staleCompletionCount': _staleCompletionCount,
@@ -1127,10 +1150,14 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
 }
 
 final class _PendingEngineEvent {
-  const _PendingEngineEvent(this.event, this.session);
+  const _PendingEngineEvent(this.event, this.session, {this.disconnect});
 
   final CallEngineEvent event;
   final CallSessionSnapshot session;
+  final CallEngineEvent? disconnect;
+
+  int get eventCount =>
+      disconnect != null && !identical(disconnect, event) ? 2 : 1;
 }
 
 final class _PendingLocalCandidate {

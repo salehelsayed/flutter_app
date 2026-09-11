@@ -166,8 +166,9 @@ final class FlutterWebRtcPeerConnectionAdapter
   bool _inboundAudioRtpObserved = false;
   bool _outboundAudioRtpObserved = false;
   int _iceGeneration = 0;
-  int _deliveredEventCount = 0;
-  bool _overflowDelivered = false;
+  bool _eventDeliveryInFlight = false;
+  WebRtcPeerConnectionEvent? _pendingEvent;
+  WebRtcPeerConnectionEvent? _pendingDisconnect;
 
   @override
   Stream<WebRtcPeerConnectionEvent> get events => _events.stream;
@@ -492,10 +493,6 @@ final class FlutterWebRtcPeerConnectionAdapter
     try {
       await _requireConnection().restartIce();
       _iceGeneration += 1;
-      // A restart begins a new event budget; the old one must not turn the
-      // recovered call's state events into an overflow failure.
-      _deliveredEventCount = 0;
-      _overflowDelivered = false;
     } catch (_) {
       throw const WebRtcAdapterException(WebRtcFailureReason.other);
     }
@@ -735,31 +732,51 @@ final class FlutterWebRtcPeerConnectionAdapter
   void _emit(WebRtcPeerConnectionEvent event, {bool allowWhenClosed = false}) {
     if ((_closed && !allowWhenClosed) || _events.isClosed) return;
 
-    if (allowWhenClosed) {
-      _retain(event);
-      _events.add(event);
-      return;
+    // A native callback may reenter through a synchronous listener. Broadcast
+    // controllers cannot add while firing. Retain only a disconnect edge and
+    // the latest state until that delivery returns; failures supersede both.
+    // This bounds actual reentrant work independently of diagnostic history.
+    final pending = _pendingEvent;
+    if (pending == null ||
+        _isFailureEvent(event) ||
+        !_isFailureEvent(pending)) {
+      _pendingEvent = event;
+      if (_isFailureEvent(event)) {
+        _pendingDisconnect = null;
+      } else if (event.connectionState == WebRtcConnectionState.disconnected) {
+        _pendingDisconnect = event;
+      }
     }
-
-    if (_deliveredEventCount < _eventBufferCapacity) {
-      _deliveredEventCount += 1;
-      _retain(event);
-      _events.add(event);
-      return;
+    if (_eventDeliveryInFlight) return;
+    _eventDeliveryInFlight = true;
+    try {
+      while (true) {
+        final next = _takePendingEvent();
+        if (next == null) break;
+        if (_closed && next.kind != WebRtcPeerConnectionEventKind.closed) {
+          continue;
+        }
+        _retain(next);
+        _events.add(next);
+      }
+    } finally {
+      _eventDeliveryInFlight = false;
     }
-    if (_overflowDelivered) return;
-
-    _overflowDelivered = true;
-    final overflow = WebRtcPeerConnectionEvent(
-      kind: WebRtcPeerConnectionEventKind.overflow,
-      connectionState: event.connectionState,
-      transport: WebRtcTransportClass.unknown,
-      quality: WebRtcQualityBand.unknown,
-      failureReason: WebRtcFailureReason.none,
-    );
-    _retain(overflow);
-    _events.add(overflow);
   }
+
+  WebRtcPeerConnectionEvent? _takePendingEvent() {
+    final next = _pendingDisconnect ?? _pendingEvent;
+    if (identical(next, _pendingDisconnect)) _pendingDisconnect = null;
+    if (identical(next, _pendingEvent)) _pendingEvent = null;
+    return next;
+  }
+
+  static bool _isFailureEvent(WebRtcPeerConnectionEvent event) =>
+      event.kind == WebRtcPeerConnectionEventKind.overflow ||
+      event.kind == WebRtcPeerConnectionEventKind.closed ||
+      event.connectionState == WebRtcConnectionState.failed ||
+      event.connectionState == WebRtcConnectionState.closed ||
+      event.failureReason != WebRtcFailureReason.none;
 
   void _retain(WebRtcPeerConnectionEvent event) {
     if (_recentEvents.length == _eventBufferCapacity) {
@@ -781,6 +798,8 @@ final class FlutterWebRtcPeerConnectionAdapter
   void _fenceForClose() {
     if (_closed) return;
     _closed = true;
+    _pendingEvent = null;
+    _pendingDisconnect = null;
     _peerConnectionPendingClose = _peerConnection;
     _peerConnection = null;
     _peerConnectionCloseCompleted = false;
@@ -1026,8 +1045,6 @@ final class FlutterWebRtcCallEngine
 
   int _restartCount = 0;
   CallTransportPolicy? _transportPolicy;
-  int _deliveredEventCount = 0;
-  bool _overflowDelivered = false;
   CallSessionDescription? _createdOffer;
   CallSessionDescription? _createdAnswer;
   CallSessionDescription? _localDescription;
@@ -1327,8 +1344,6 @@ final class FlutterWebRtcCallEngine
     await _adapter.restartIce();
     _restartCount += 1;
     _iceGeneration += 1;
-    _deliveredEventCount = 0;
-    _overflowDelivered = false;
     _deferredCandidates.clear();
     _resetDescriptions();
     return _iceGeneration;
@@ -1642,31 +1657,10 @@ final class FlutterWebRtcCallEngine
 
   void _emit(CallEngineEvent event, {bool allowWhenClosed = false}) {
     if ((_closed && !allowWhenClosed) || _events.isClosed) return;
-
-    if (allowWhenClosed) {
-      _retain(event);
-      _events.add(event);
-      return;
-    }
-
-    if (_deliveredEventCount < _eventBufferCapacity) {
-      _deliveredEventCount += 1;
-      _retain(event);
-      _events.add(event);
-      return;
-    }
-    if (_overflowDelivered) return;
-
-    _overflowDelivered = true;
-    final overflow = CallEngineEvent(
-      type: CallEngineEventType.overflow,
-      connectionState: event.connectionState,
-      transport: CallTransportClass.unknown,
-      quality: CallQualityBand.unknown,
-      failureReason: CallFailureReason.none,
-    );
-    _retain(overflow);
-    _events.add(overflow);
+    // The executor consumes synchronously and coalesces its asynchronous work.
+    // Retained history is bounded independently of lifetime delivery volume.
+    _retain(event);
+    _events.add(event);
   }
 
   void _retain(CallEngineEvent event) {

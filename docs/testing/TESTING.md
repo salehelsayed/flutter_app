@@ -602,6 +602,26 @@ visible and cannot become an ordinary first-attempt PASS.
   optional diagnostic sink failure. Red/green evidence is retained under
   `.codex-test-logs/readiness-exceptions/`. These are host lifecycle and ownership
   proofs, not live microphone, libp2p, audible audio or signed-device evidence.
+- **Sustained call-event delivery:** adapter and engine history capacity is not
+  a lifetime callback quota. The old delivered-event totals fabricated overflow
+  once capacity was reached, even with synchronous consumers keeping up. Both
+  layers now keep delivering while evicting old diagnostic history. The native
+  emitter handles reentrant callbacks with at most a disconnect edge plus the
+  latest event. The executor likewise retains one coalesced record (at most two
+  pending events) behind one asynchronous drain; failure supersedes ordinary
+  updates, and a disconnect cannot hide the latest recovery state. Production
+  consumers keep stream subscriptions unpaused and coalesce awaited work in the
+  executor. This does not bound buffers created by arbitrary paused subscribers.
+  Candidate queues, batch capacities and the coordinator's pending-event limit
+  remain independent and enforced. ICE restart still advances generation; it
+  does not reset an event-delivery quota. `call_engine_event_delivery_test.dart`
+  drives a fake native peer through both real emitters and the real executor and
+  coordinator, checking 65/256/1,000 consumed callbacks, slow readiness, priority,
+  reentrancy, close and stale callbacks. The build contract now asserts complete
+  delivery and bounded history rather than the defective lifetime cutoff.
+  `.codex-test-logs/event-delivery/` retains red/green evidence. These deterministic
+  host tests establish application queue and cleanup behavior, not native callback
+  frequency, long-duration device memory usage or live call quality.
 - **Local Android audio isolation:** the existing production-call journey now
   fixes its build/cache/driver identity to `com.mknoon.sims.productionaudio`.
   Its activity class remains `com.mknoon.app.MainActivity`. Keep native calls

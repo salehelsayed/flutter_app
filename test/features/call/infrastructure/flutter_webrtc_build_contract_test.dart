@@ -489,11 +489,12 @@ void main() {
       }
       await Future<void>.delayed(Duration.zero);
 
-      expect(observed, isNotEmpty);
+      // Capacity bounds retained history, not callbacks already consumed by
+      // this synchronous listener. The old lifetime cutoff fabricated overflow.
+      expect(observed, hasLength(64));
       expect(
-        observed.length,
-        lessThanOrEqualTo(9),
-        reason: 'capacity 8 plus at most one terminal/overflow marker',
+        observed.any((event) => event.type == CallEngineEventType.overflow),
+        isFalse,
       );
       expect(engine.recentEvents, hasLength(lessThanOrEqualTo(8)));
 
